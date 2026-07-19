@@ -7,7 +7,7 @@ async function installPausedClock(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/demo');
   await page.evaluate(() => window.localStorage.clear());
   await page.reload();
 });

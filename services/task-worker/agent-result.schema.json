@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "waiting_for_human"]
+    },
+    "progress": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+    },
+    "result": { "type": ["string", "null"], "maxLength": 4000 },
+    "proposedChildTasks": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "acceptanceCriteria": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          }
+        },
+        "required": ["title", "objective", "acceptanceCriteria"]
+      }
+    },
+    "humanQuestion": { "type": ["string", "null"], "maxLength": 2000 },
+    "detail": { "type": "string", "minLength": 1, "maxLength": 2000 }
+  },
+  "required": ["status", "progress", "result", "proposedChildTasks", "humanQuestion", "detail"]
+}

@@ -1,186 +1,141 @@
 # Cicada Steward
 
-**Status** — working security-focused alpha · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — independently authored human-led agent control plane, durable engineer and manager runtimes, responsive operator console, cheap-first routing, impact observer, and human deployment-authorization boundary; excludes production deployment, a verifier runtime, and a production-grade model-backed manager inspector.
+**Status** — working alpha · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — durable human-triggered task board, fixed agent ownership, one-shot Codex/Claude workers, responsive operator UI, and human-only production authority; excludes automatic deployment and hard multi-tenant isolation.
 
 ## Summary
 
-Cicada Steward is a small agent orchestrator for software work with a human in control. An engineer agent can work unattended through Research → Plan → Execute → Test (RPET), while a person can see its current action, inspect its progress journal, queue later outcomes, interrupt it, or pause the workspace from desktop or mobile.
+Cicada Steward is a shared todo list for people and software agents. Each agent has a permanent identity, a fixed role, and one owned part of a software system. The model process is temporary: it starts for one human-triggered run, records its result, and exits.
 
-The web app is only a view and control surface. Supervisors, checkpoints, queues, and provider processes live outside the frontend. Taking the frontend down for an update does not stop agents; when it returns, `/live` loads an authoritative snapshot and resumes a sequenced event stream.
+Only three actions wake an agent:
 
-Six terms define the system:
+- a human assigns a task;
+- a human answers the agent's open question;
+- a human explicitly resumes the agent.
 
-- An **agent lane** is a stable agent ID, fixed role, queue, and checkpoint history.
-- A **supervisor** is the long-running process that owns one lane, provider boundary, local checkpoint, and durable outbox.
-- The **control plane** is the independently deployed authority for lane registration, human commands, leases, tasks, progress, and UI discovery.
-- The **impact observer** is a read-only, weak-model projection that explains user impact from bounded and redacted evidence. It cannot command an agent.
-- A **production check** is manager-accepted evidence awaiting a separate human decision. Displaying it in `/live` is neither approval nor deployment.
-- A **deployment grant** is a short-lived, one-use human authorization for one manager handoff, artifact digest, release-manifest digest, environment, workspace, and task. It is not a deployment.
+Creating tasks, adding notes, proposing child work, finishing another task, and timers do not wake agents. There is no agent heartbeat or online lease in the default runtime.
 
-## Running topology
+The browser is a disposable frontend. Projects, tasks, messages, questions, runs, interrupts, and wakeups live in the SQLite task board. Closing or updating the UI does not stop an active worker. Reopening it reconstructs every agent from durable records.
+
+Five terms define the core:
+
+- An **agent profile** is the persistent role, owned area, mission, model label, and credential hash.
+- A **task** is a result-oriented todo with workspace references, acceptance criteria, a parent, an assignee, and an agent-time estimate in 15-minute increments.
+- A **wakeup** is one durable human assignment, answer, or resume event.
+- A **run** is one claimed wakeup and one temporary model process.
+- A **worker** is the lightweight process that waits for one agent's wakeups. Waiting uses a server-held request and no model tokens.
+
+## Core topology
 
 ```mermaid
 flowchart LR
-    UI[Desktop / mobile /live] -->|snapshot · SSE · human commands| CP[Control plane]
-    SUP[Lane supervisor] -->|register · lease · durable events| CP
-    CP --> LOG[(Owner-locked JSONL)]
-    SUP --> OUT[(Checkpoint · registration intent · outbox)]
-    SUP --> HOST[Integrity-pinned provider host]
-    HOST --> CLI[Codex or Claude CLI]
-    OBS[Impact observer] -->|read-only identity| CP
-    UI -->|separate output token| OBS
-    EVID[Passing engineer evidence] --> REVIEW[Manager-review coordinator]
-    MANAGER[Fixed manager reviewer] --> REVIEW
-    REVIEW -->|one-use task-scoped permit| CP
-    UI -->|separate production-check read token| REVIEW
-    REVIEW -->|accepted handoff| BROKER[Deployment broker]
-    HUMAN[Authenticated human] --> BROKER
-    EXEC[External executor] --> BROKER
+    HUMAN[Human] -->|create · assign · answer · resume · interrupt| UI[Desktop / mobile UI]
+    UI -->|authoritative reads and commands| BOARD[SQLite task board]
+    WORKER[One lightweight worker per agent] -->|held wakeup claim| BOARD
+    BOARD -->|assignment · answer · resume only| WORKER
+    WORKER -->|one contained run| MODEL[Codex or Claude CLI]
+    MODEL -->|progress · result · proposal · question| WORKER
+    WORKER --> BOARD
+    BOARD --> DB[(Owner-only SQLite)]
 ```
 
-The topology is intentionally smaller than a company simulator: one durable control plane, one independent supervisor per lane, one optional observer, one narrow manager-review coordinator, and one credential-separated authorization broker.
+The frontend does not own the board, worker, or model process. A human note is data for a later run; it is not a command. An interrupt is also not inferred from silence: the board records it, the worker terminates the model process group, and the run settles as interrupted.
 
 ## What is implemented
 
 | Boundary | Current behavior |
 |---|---|
-| Live oversight | `/live` discovers registered lanes, shows exact current action, queue, lease, task start/end, 15-minute agent-only forecast, RPET journal, plain-language impact, and separately authenticated read-only production checks. |
-| Human control | Queue, interrupt, workspace hold, and resume are authenticated, idempotent, versioned commands. Interrupt/hold remain pending until the runtime acknowledges and settles. |
-| Frontend independence | Supervisors never run in the browser. Snapshot plus ordered SSE reconstructs state after a frontend outage. |
-| Workload identity | Every runtime token is bound to one workspace, lane, agent, and immutable role. The server issues a private per-generation proof with each contiguous fencing epoch; the token and public epoch alone cannot replace a protected runtime. |
-| Restart safety | The exact registration request and random proof challenge are persisted before POST. The successful proof remains in owner-only runtime state, so a crash can retry a lost response or authorize the next process without exposing that capability in the control-plane log. |
-| Engineer execution | Only an engineer enters RPET. Research and Plan are read-only, Execute may modify the development workspace, and Test is source-read-only. A failed Test opens the next Research iteration. |
-| Provider edge | Real adapters run in a bounded framed child host. The entrypoint is outside work/state roots, owner-safe, and SHA-256 pinned before every launch and import. Output and process I/O are bounded and credential-shaped output is rejected before persistence. |
-| Process settlement | On POSIX, the provider host owns a process group. Interrupt, timeout, failure, and shutdown perform TERM → KILL and verify group absence before claiming settlement. The real-provider path fails closed on Windows. |
-| Cheap-first routing | Model IDs, capacities, and optional rate cards come from a strict caller catalog. Engineer retries can escalate from Codex economy only after observed failed tests; the impact observer is fixed to Claude economy and zero tools. |
-| Impact projection | The observer accepts only a dedicated read-only control-plane identity, strips secrets and implementation detail, bounds context/output, stores the last safe summary, and exposes authenticated routing audit data. |
-| Manager execution | A dedicated runtime claims only typed manager-review tasks, exposes its exact current action, performs a bounded read-only inspection loop, honors human interrupt/hold/resume commands, and submits through the one-use permit path. Its generation proof and exact pending registration request remain in private durable state across crashes. |
-| Manager-review coordination | A human queues a typed manager-review task bound to one completed engineer task, evidence ID, and digest. Review writes consume one durable control-plane permit ordered with interrupt, hold, and runtime replacement; exact retries recover the original permit and runtime audit. Accepted reviews retry an exact broker v3 handoff, while changes remain durably readable by the trusted engineer-evidence projection. |
-| Production authorization | A service-authenticated accepted manager handoff is required before a human can mint a grant. The handoff and grant are single-use; a separately authenticated executor can claim only the exact bound release. The broker has no deployment credentials or deploy method. |
+| Durable board | Projects, fixed agents, tasks, append-only messages/events, questions, wakeups, runs, and interrupts survive restarts in owner-only SQLite. Schema v1 upgrades in place to v2. |
+| Human-only wakes | Assignment, answer, and explicit resume are the only database paths that emit a wakeup. Agent proposals and messages cannot start other agents. |
+| Task lifecycle | Assignment queues work. Claim records the exact start and expected completion. A question blocks the task and ends the process. Success records result/end time; failure or interrupt leaves the task blocked and resumable. |
+| Concurrency | SQLite permits one active run per agent. Claims, answers, assignment, lifecycle changes, and interruption use atomic transactions or compare-and-swap versions. |
+| Idle cost | The worker waits on a bounded server-held claim. No model process exists while the agent is idle or waiting for a human. |
+| Real providers | A run launches the installed Codex or Claude CLI in its own POSIX process group with bounded context/output, a strict result schema, a fixed environment allowlist, timeout, TERM → KILL settlement, and confirmed group absence. |
+| Fixed roles | Engineer runs may write in the configured development directory. Manager and verifier runs are read-only and receive different role instructions. No role can deploy. |
+| Operator UI | `/` is the authoritative Cicada task board. It supports desktop and mobile, project/agent/task creation, assignment, exact timing, progress history, question answers, resume, notes, and interrupt. It has no fake-data fallback. |
+| Frontend independence | The UI reads the board on return and periodically refreshes durable state while visible. These reads are read-only and never wake a model. |
 
-The fixed verifier policy exists, but its dedicated runner is not complete and the generic supervisor fails closed instead of giving that lane the modifying engineer workflow. The dedicated manager runtime is implemented with a bounded frozen-evidence inspector; a production-grade model-backed read-only inspector is still external work. Queue discovery remains a read-only snapshot, but a review write requires the exact assigned task to be the manager runtime's current action and atomically consumes its control-plane permit. `/live` separately polls accepted production checks and exposes the review task and permit audit without any approval or deploy action. Routes other than `/live` remain a local visual demo, not authoritative runtime state.
+The earlier lease-based control plane remains available at `/live` for compatibility and its separate manager-review, impact-observer, and deployment-authorization experiments. The local visual prototype remains at `/demo`. Neither is the default runtime.
 
-## How an engineer agent works
+## How one agent run works
 
-1. A human queues a result-oriented objective and an agent-time estimate in a 15-minute increment.
-2. The control plane assigns only the head of that lane's queue.
-3. The supervisor records the exact task start and runs Research, Plan, Execute, then Test.
-4. Before every provider step, the host derives allowed operations from the lane's fixed role and phase. Provider output cannot add permissions.
-5. Each phase writes a bounded, outcome-oriented progress entry and a live current action.
-6. A failed Test increments the iteration and returns to Research. Routing may escalate only from that observed failure evidence.
-7. A passing Test records the result and exact end time. It does not authorize production.
+1. A human creates a backlog task. This does not wake an agent.
+2. A human assigns an agent and confirms the agent-only estimate. The board records one `human_assignment` wakeup.
+3. The worker's held claim returns. Claiming moves the task to `in_progress`, records `startedAt`, and computes `expectedCompletedAt` from the 15-minute estimate.
+4. The worker starts one contained provider process with only the role, owned area, mission, compact project memory, task, acceptance criteria, parent summary, new messages, question context, and workspace references.
+5. An engineer is instructed to follow Research → Plan → Execute → Test inside that run and repeat after a failed test. Manager and verifier roles remain read-only.
+6. The worker writes bounded progress, child-task proposals, or a plain-language result to the task board.
+7. If human judgment is required, the worker writes one question, the board blocks the task, and the process exits. Answering creates one `human_answer` wakeup with the answer in the next bounded context.
+8. Completion records the result and exact end time. It creates no deployment authority and wakes nobody else.
 
-Queueing never interrupts current work. An interrupt is a separate causal barrier: requested → runtime acknowledged → provider process group absent → settled.
-
-## What happens during outages
-
-| Component unavailable | Result |
-|---|---|
-| Frontend | Agents continue. Returning clients rediscover every retained lane from the control plane. |
-| Control plane | Supervisors preserve durable evidence and enter a safe hold instead of inventing server state or starting new work. They reconcile when it returns. |
-| One supervisor | That lane stops and eventually appears offline. Its state directory allows a replacement process to resume after server fencing. |
-| Provider host | The active step fails/holds; the supervisor confirms containment before a later host can start. |
-| Impact observer | Agent work is unaffected. `/live` retains the last good overview and marks it stale. |
-| Manager-review coordinator | Development is unaffected. `/live` retains the last valid production-check list and marks it stale; no production decision is inferred. |
-| Deployment broker | Development is unaffected. No new production authorization can be created or consumed. |
+The current provider returns its progress batch with its terminal structured result. The board shows `running` and supports direct interruption during execution, but phase-by-phase streaming is still follow-up work.
 
 ## Roles and production oversight
 
-- **Engineer** — may research, plan, modify a development workspace, and run tests. It cannot review itself, approve production, claim a grant, or deploy.
-- **Verifier** — policy permits independent read/test evidence but no workspace modification or production authority. Its dedicated runtime is pending.
-- **Manager** — policy permits review and coordination, not engineering modification or production authority. Its dedicated runtime accepts only evidence-bound review tasks and needs a one-use control-plane permit for every new decision.
-- **Impact observer** — may summarize bounded read-only evidence with the economy tier and no tools.
-- **Human owner** — may control lanes and make the production decision for an exact accepted handoff.
+- **Engineer** — may research, plan, modify one configured development working directory, and run tests. It cannot deploy or approve its own work.
+- **Manager** — may inspect assigned work and record a read-only decision. A human must create and assign the manager task; engineer completion does not wake the manager.
+- **Verifier** — may independently inspect and run non-modifying checks. A human must assign it explicitly.
+- **Human owner** — chooses tasks, assigns every run, answers authority questions, interrupts work, and controls production outside the core board.
 
-The implemented broker lifecycle is:
+The core has no deployment endpoint, credentials, or automatic post-completion action. A safe review sequence is an engineer task followed by a human-created child manager task, then a separate human production decision. The compatibility manager-review and deployment-broker services contain a stricter evidence/grant experiment, but they are not yet connected to the new task board.
 
-```text
-accepted manager handoff
-  -> authenticated human grant for exact handoff + artifact + manifest + environment
-  -> authenticated executor claims grant once
-  -> external deployment system performs an idempotent deployment
-```
+## Outage behavior
 
-The last step is deliberately outside this repository.
+| Component unavailable | Result |
+|---|---|
+| Frontend | Board and worker continue. Reopening the UI reloads every durable agent and task. |
+| Task board | An active model run can finish locally, but the worker cannot commit new output or claim more work. It retains a private recovery journal and retries when the board returns. |
+| One worker | That agent cannot claim a wakeup. Its profile and queued task remain durable; restarting the same worker resumes from its journal. |
+| Model CLI | The run fails or is interrupted; the task remains blocked and resumable. No other agent starts automatically. |
 
-## Run locally
+## Run the real core locally
 
-Use Node 22 or 24+. Node 23 is intentionally outside the supported engine range.
+Use Node 22.5+ or Node 24+. The built-in SQLite module is still marked experimental by Node 23.
 
 ```bash
 cd steward
-nvm use
 npm ci
-npm run build:all
+npm run build:task-board
+npm run build:task-worker
+npm run build:web
+install -d -m 700 .steward-data
 ```
 
-Start the control plane with distinct tokens. The workload JSON binds the engineer role before first registration:
+Choose a human token of at least 32 characters and start the task board on loopback:
 
 ```bash
-STEWARD_WORKSPACE_ID=workspace-alpha \
-STEWARD_STORE_PATH=./data/control-plane.jsonl \
-STEWARD_WORKLOAD_IDENTITIES_JSON='[{"workspaceId":"workspace-alpha","agentId":"agent-patch","laneId":"lane-patch","role":"engineer","token":"lane-token-change-me-0001"}]' \
-STEWARD_HUMAN_TOKEN=human-token-change-me-0002 \
-STEWARD_OBSERVER_READ_TOKEN=observer-token-change-me-0003 \
-STEWARD_MANAGER_REVIEW_PERMIT_TOKEN=review-permit-token-change-me-0004 \
-STEWARD_RUNTIME_GENERATION_PROOF_KEY=runtime-proof-key-change-me-0005 \
-STEWARD_CORS_ORIGINS=http://localhost:4173 \
-npm run dev:control-plane
+export STEWARD_TASK_BOARD_HUMAN_TOKEN='replace-with-a-private-human-token-0001'
+STEWARD_TASK_BOARD_DB_PATH="$PWD/.steward-data/board.sqlite" \
+STEWARD_TASK_BOARD_HUMAN_TOKEN="$STEWARD_TASK_BOARD_HUMAN_TOKEN" \
+STEWARD_TASK_BOARD_HUMAN_PRINCIPAL='human:operator' \
+npm run dev:task-board
 ```
 
-Start the responsive app and open `http://localhost:4173/live`:
+In a second terminal, run the frontend through its same-origin board proxy and open `http://127.0.0.1:4173/`:
 
 ```bash
-npm run dev
+STEWARD_TASK_BOARD_HUMAN_TOKEN="$STEWARD_TASK_BOARD_HUMAN_TOKEN" \
+npm run dev -- --host 127.0.0.1
 ```
 
-A supervisor reads `STEWARD_CONFIG_FILE` or the fields in [`services/supervisor/src/config.ts`](services/supervisor/src/config.ts). `runtimeInstanceId` must not be configured; each boot creates one and crash recovery reuses only a durable pending registration intent.
+Use the UI to create a project and agent. Copy the generated one-time agent token before submitting; the board stores only its SHA-256 hash. Set the agent's model label to the same caller-selected model used below.
 
-```json
-{
-  "controlPlaneUrl": "http://127.0.0.1:4317",
-  "supervisorToken": "lane-token-change-me-0001",
-  "workspaceId": "workspace-alpha",
-  "agentId": "agent-patch",
-  "laneId": "lane-patch",
-  "displayName": "Patch",
-  "role": "engineer",
-  "provider": { "name": "codex", "model": "caller-configured-economy-model" },
-  "softwareVersion": "0.1.0",
-  "workingDirectory": "/absolute/development/project",
-  "stateDirectory": "/absolute/steward-state/agent-patch",
-  "leaseIntervalMs": 5000
-}
-```
-
-For the included real CLI adapter, build it, place its trusted install outside both directories above, and pin its entrypoint:
+Start one worker for that agent in a third terminal. The process remains model-free until a human assigns work:
 
 ```bash
-STEWARD_CONFIG_FILE=/absolute/supervisor.json \
-STEWARD_PROVIDER_ADAPTER_MODULE=/absolute/steward/services/cli-provider-adapter/dist/src/index.js \
-STEWARD_PROVIDER_ADAPTER_SHA256=<64-lowercase-hex-sha256> \
-CICADA_STEWARD_MODEL_CATALOG_JSON='<caller-supplied-six-profile-catalog>' \
-CODEX_API_KEY=<provider-key> \
-npm run dev:supervisor
+STEWARD_TASK_WORKER_PROVIDER=codex \
+STEWARD_TASK_WORKER_ID=worker-billing-engineer \
+STEWARD_TASK_WORKER_AGENT_ID=billing-engineer \
+STEWARD_TASK_WORKER_STATE_PATH="$PWD/.steward-data/workers/billing-engineer/journal.json" \
+STEWARD_TASK_BOARD_URL=http://127.0.0.1:4318 \
+STEWARD_TASK_WORKER_AGENT_TOKEN='<one-time-agent-token-from-the-ui>' \
+STEWARD_TASK_WORKER_MODEL='<caller-selected-codex-model-id>' \
+STEWARD_TASK_WORKER_WORKING_DIRECTORY='/absolute/development/repository' \
+npm run dev:task-worker
 ```
 
-The catalog contains `codex` and `claude`, each with `economy`, `balanced`, and `frontier` profiles. Every profile supplies `provider`, `tier`, `modelId`, `contextWindowTokens`, `maximumOutputTokens`, and an optional caller-owned rate card. No model IDs or prices are hard-coded by Steward.
+Set `STEWARD_TASK_WORKER_PROVIDER=claude` and provide a caller-selected Claude model ID to use Claude instead. Provider credentials come from the installed CLI's supported environment. Steward does not hard-code model IDs or pricing.
 
-The deterministic fake provider is test-only:
-
-```bash
-NODE_ENV=test STEWARD_FAKE_PROVIDER=true \
-STEWARD_CONFIG_FILE=/absolute/supervisor.json \
-npm run dev:supervisor
-```
-
-Impact-observer configuration is defined in [`services/impact-observer/src/config.ts`](services/impact-observer/src/config.ts). Its read token must be `STEWARD_OBSERVER_READ_TOKEN`, while its separate browser output token must differ. A strict model catalog is required even for the fake adapter so routing remains auditable.
-
-The deployment broker's three credentials are intentionally separate: `STEWARD_DEPLOYMENT_HANDOFF_ISSUER_TOKEN`, `STEWARD_DEPLOYMENT_HUMAN_TOKEN`, and `STEWARD_DEPLOYMENT_EXECUTOR_TOKEN`. Its built-in HTTP listener also accepts only literal loopback binds; terminate remote TLS and authentication at a gateway. See [`services/deployment-broker/src/main.ts`](services/deployment-broker/src/main.ts) for the complete environment contract.
-
-The manager-review coordinator runs separately with `npm run dev:manager-review`. Its strict environment contract is defined in [`services/manager-review/src/runtime-config.ts`](services/manager-review/src/runtime-config.ts): evidence issuer, production-check reader, every fixed manager, control-plane observer, permit consumer, and broker handoff issuer use distinct capabilities. `STEWARD_MANAGER_REVIEW_CONTROL_PLANE_PERMIT_CONSUME_TOKEN` must equal the control plane's `STEWARD_MANAGER_REVIEW_PERMIT_TOKEN` and must not be exposed to a browser or manager process. A direct `/live` browser connection requires its exact origin in `STEWARD_MANAGER_REVIEW_CORS_ORIGINS`; a same-origin reverse proxy is the alternative. The service itself binds only to literal loopback, so remote access still terminates TLS at a gateway.
-
-The dedicated manager process runs with `npm run dev:manager-runtime`. Its environment contract is defined in [`services/manager-runtime/src/main.ts`](services/manager-runtime/src/main.ts): it needs one lane-bound control-plane token, its separate fixed-manager review token, a private state-file path, and a read-only evidence directory. Each ordinary process boot creates a fresh runtime instance ID; only an exact durable registration intent is reused after a lost response. The included inspector reads bounded, no-follow `<evidenceId>.review.json` bundles and exposes no command execution or workspace-write method.
+Creating a task leaves it in backlog. Click **Assign and wake agent** only when the worker is running and the task scope is ready. Adding a human note never wakes it.
 
 ## Verification
 
@@ -192,29 +147,36 @@ npm run test:e2e
 npm audit --audit-level=high
 ```
 
+The focused durable core suites are also available directly:
+
+```bash
+npm run test:task-board
+npm run test:task-worker
+npx vitest run src/task-board/client.test.ts
+npx playwright test tests/e2e/task-board.spec.ts
+```
+
 ## Production limits
 
-This alpha is not production-ready.
+This alpha is usable for local development orchestration, not a production multi-tenant control plane.
 
-- **Hard provider isolation** — same-user subprocesses and process groups are not containers, cgroups, job objects, or dedicated UIDs. A provider that creates a new session can escape process-group containment, and Codex read-only still permits broad host reads. Production must add an externally owned filesystem, network, credential, and process boundary.
-- **Trusted adapter install** — the adapter entrypoint is pinned; its transitive dependency tree relies on an immutable, trusted install outside the agent workspace.
-- **Manager/verifier execution** — the dedicated manager runtime is bounded and read-only, but its included frozen-bundle inspector is not a production model adapter. The verifier runner is still incomplete, and the generic supervisor fails closed for either specialized workflow. Queue discovery is only a snapshot; review authority comes from the separately consumed task-scoped permit.
-- **Production-check projection** — `/live` reads accepted checks from manager review with a separate credential and cannot approve or deploy. The service list is unpaginated and has no sequence or ETag; the browser rejects more than 1,000 items or 8 MiB and cannot detect a valid-but-older response.
-- **Deployment execution** — the broker issues a one-use authorization but does not deploy. The external executor and target must durably deduplicate `authorizationId`; cross-system exactly-once behavior is not implemented here.
-- **Storage and HA** — control, observer, manager-review, and broker stores are owner-locked single-node files, not replicated transactional databases. The manager-review and deployment-broker stores fail closed on a leftover lock; an operator must verify that no writer is alive before removing it. History compaction, pagination, multi-instance leases, backup, and disaster recovery remain.
-- **Permit materialization** — permit consumption and human control are atomic in the single control-plane log, but the later manager-review JSONL append is a separate transaction. A stable operation ID recovers a committed permit after a crash; it is not distributed ACID. Pre-permit manager-review records require an explicit offline migration and are never upgraded into production authority by inference.
-- **Identity and transport** — static development tokens remain in use. Production needs an identity provider, rotation, revocation, TLS termination, rate limiting, and audit export. Application clients already reject remote plaintext bearer transport.
-- **Routing evidence** — engineer retries use observed failed tests, but task risk and complexity are not yet authoritative protocol fields. The impact adapter seam receives the selected model; this repository does not include a provider API implementation for it.
-- **Release coordination** — the broker verifies an exact manifest digest, not the manifest contents. A trusted release service must create and preserve that canonical manifest.
+- **Workspace enforcement** — task `workspaceRefs` are bounded context and audit data. The OS sandbox is configured from one worker working directory; references do not create separate filesystem permissions.
+- **Hard isolation** — a same-user POSIX process group is not a container, cgroup, dedicated UID, or VM. Production needs an externally owned filesystem, network, credential, and process boundary.
+- **Streaming progress** — the UI sees the durable run immediately, but detailed RPET progress currently arrives with the provider's terminal structured output rather than phase by phase.
+- **Review integration** — manager and verifier workers are read-only, but automatic evidence packaging, manager child-task creation, the weak-model impact observer, and human production checks are not yet connected to the default board.
+- **Deployment** — the core deliberately has no deploy method. The older broker can issue one-use authorization, but an external trusted release system must still perform and deduplicate deployment.
+- **Storage and HA** — SQLite is owner-locked and single-node. Backup, replication, pagination beyond bounded recent projections, and multi-instance failover remain operator responsibilities.
+- **Identity and transport** — local static bearer tokens remain in use. Production needs an identity provider, secure same-origin gateway, TLS, rotation, revocation, rate limiting, CSRF protection, and audit export.
+- **Model routing** — each event-driven worker currently uses one caller-configured provider/model for its one-shot run. The older RPET runtime contains cheap-first phase routing, but that router is not yet connected to the new worker.
 
 ## Independent implementation
 
-This code was written independently with project-owned TypeScript and Node built-ins. No Paperclip or Paseo source was copied. Their public designs were used only as product research: durable control-plane separation and cheap summarization were useful ideas, while Steward keeps a smaller topology and makes causal human control and human-only production authority explicit.
+This code was written independently with project-owned TypeScript, React, Tailwind, and Node built-ins. No Paperclip or Paseo source was copied. Their public designs informed product research only.
 
 ## Alternatives considered
 
-- **Fork an existing orchestrator** — rejected because its broader company/task machinery and license obligations are unnecessary for this smaller control plane.
-- **Run agents in the browser** — rejected because frontend deploys, tabs, and mobile connectivity must never own agent lifetime.
-- **Treat a pause click as proof of stopping** — rejected because accepted intent is not process settlement.
-- **Use a frontier model for every phase** — rejected because low-risk work starts on the configured economy tier and escalation requires evidence.
-- **Let a manager or passing test deploy** — rejected because review evidence is not human production authority.
+- **Fork a larger orchestrator** — rejected because its company simulation, scheduler, and licensing surface are unnecessary for a shared todo list.
+- **Use agent heartbeats** — rejected for the core because agent identity and work state are durable records, not proof that a model process should stay alive.
+- **Wake agents from messages or timers** — rejected because it creates token spend and causal work without a human decision.
+- **Run agents in the browser** — rejected because frontend deploys, tabs, and mobile connectivity must not own agent lifetime.
+- **Let completion trigger review or deployment** — rejected because finishing work is evidence, not human authority for another model run or production.
