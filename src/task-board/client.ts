@@ -527,6 +527,14 @@ export interface TaskBoardClient {
   createProject(input: CreateProjectInput): Promise<void>;
   createAgent(input: CreateAgentInput): Promise<void>;
   createTask(input: CreateTaskInput): Promise<void>;
+  createAgentQuery(input: {
+    projectId: string;
+    agentId: string;
+    assignedRole: AgentRole;
+    prompt: string;
+    workspaceRefs: string[];
+    routingContext?: string;
+  }): Promise<void>;
   assignTask(taskId: string, input: { agentId: string; expectedAgentMinutes: number; version: number }): Promise<void>;
   addMessage(taskId: string, input: { body: string; version: number }): Promise<void>;
   answerQuestion(questionId: string, input: { answer: string }): Promise<void>;
@@ -669,6 +677,27 @@ export function createTaskBoardClient(options: {
         ...task,
         assignedAgentId: null,
         assignedRole: null,
+      });
+    },
+    async createAgentQuery(input) {
+      const prompt = input.prompt.trim();
+      if (prompt.length === 0) throw new Error('Enter a question or request for this agent');
+      if (prompt.length > 8_000) throw new Error('Agent questions and requests cannot exceed 8,000 characters');
+      const routingContext = input.routingContext?.trim();
+      const contextSuffix = routingContext ? `\n\nCompany routing map (use this only to identify the best project or agent):\n${routingContext}` : '';
+      if (prompt.length + contextSuffix.length > 8_000) throw new Error('This request and its routing context exceed 8,000 characters');
+      const workspaceRefs = [...new Set(input.workspaceRefs)].slice(0, 32);
+      const titlePrefix = `Request for ${input.agentId}: `;
+      const titleSummary = prompt.replace(/\s+/gu, ' ');
+      await post(`/v1/projects/${encodeURIComponent(input.projectId)}/tasks`, {
+        parentTaskId: null,
+        title: `${titlePrefix}${titleSummary}`.slice(0, 240).trimEnd(),
+        objective: `${prompt}${contextSuffix}`,
+        acceptanceCriteria: 'Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.',
+        workspaceRefs,
+        assignedAgentId: input.agentId,
+        assignedRole: input.assignedRole,
+        expectedAgentMinutes: 15,
       });
     },
     async assignTask(taskId, input) {

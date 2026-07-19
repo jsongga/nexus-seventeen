@@ -161,6 +161,62 @@ describe('task-board protocol projection', () => {
 });
 
 describe('task-board HTTP client', () => {
+  it('creates an assigned agent query and wake with one atomic task request', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push([String(url), init]);
+      return new Response('{}');
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+    const workspaceRefs = [
+      '/workspace/billing',
+      '/workspace/billing',
+      ...Array.from({ length: 34 }, (_, index) => `/workspace/reference-${index}`),
+    ];
+
+    await client.createAgentQuery({
+      projectId: project.projectId,
+      agentId: agent.agentId,
+      assignedRole: 'engineer',
+      prompt: '  Explain the invoice retry behavior\nand propose follow-up work if needed.  ',
+      workspaceRefs,
+      routingContext: '- Billing: billing-engineer (engineer, Billing)',
+    });
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(calls[0]?.[0]).toBe('https://board.example.test/v1/projects/project-one/tasks');
+    expect(calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
+      parentTaskId: null,
+      title: 'Request for billing-engineer: Explain the invoice retry behavior and propose follow-up work if needed.',
+      objective: 'Explain the invoice retry behavior\nand propose follow-up work if needed.\n\nCompany routing map (use this only to identify the best project or agent):\n- Billing: billing-engineer (engineer, Billing)',
+      acceptanceCriteria: 'Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.',
+      workspaceRefs: ['/workspace/billing', ...workspaceRefs.slice(2, 33)],
+      assignedAgentId: 'billing-engineer',
+      assignedRole: 'engineer',
+      expectedAgentMinutes: 15,
+    });
+    expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
+    expect(calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  it('does not send an empty agent query', async () => {
+    const request = vi.fn();
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.createAgentQuery({
+      projectId: project.projectId,
+      agentId: agent.agentId,
+      assignedRole: 'engineer',
+      prompt: '   ',
+      workspaceRefs: [],
+    })).rejects.toThrow(/question or request/u);
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('uses the exact API and keeps notes separate from the three wake operations', async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

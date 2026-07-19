@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const apiVersion = 'steward.task-board/v1';
 const project = {
@@ -67,6 +67,15 @@ function board() {
   };
 }
 
+async function openCompanyRail(page: Page): Promise<Locator> {
+  if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  }
+  const companyNavigation = page.getByRole('navigation', { name: 'Company navigation' });
+  await expect(companyNavigation).toBeVisible();
+  return companyNavigation.locator('../..');
+}
+
 test('the default app reads real board state and assignment is an explicit human wake', async ({ page }) => {
   let assignment: Record<string, unknown> | null = null;
   await page.route('**/board-api/v1/**', async (route) => {
@@ -92,16 +101,14 @@ test('the default app reads real board state and assignment is an explicit human
   });
 
   await page.goto('/');
-  await expect(page.getByLabel('Project')).toHaveValue('project-cicada');
-  await expect(page.getByRole('heading', { name: 'Shared todo list' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
   await expect(page.getByText('Improve invoice recovery', { exact: true }).first()).toBeVisible();
-  if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
-    await page.getByRole('button', { name: 'Agents 1' }).click();
-    await expect(page.getByText('Billing and subscriptions').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Tasks 1' }).click();
-  } else {
-    await expect(page.getByText('Billing and subscriptions').first()).toBeVisible();
-  }
+  const companyRail = await openCompanyRail(page);
+  await expect(companyRail.getByText('Cicada', { exact: true })).toBeVisible();
+  await expect(companyRail.getByRole('button', { name: 'Task List' })).toBeVisible();
+  await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
+  await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toBeVisible();
+  await companyRail.getByRole('button', { name: 'Task List' }).click();
   await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
   await page.getByRole('button', { name: 'Assign and wake agent' }).click();
 
@@ -112,6 +119,102 @@ test('the default app reads real board state and assignment is an explicit human
     expectedAgentMinutes: 30,
     status: 'queued',
   });
+});
+
+test('the Cicada sidebar navigates company work and an agent message is one atomic 15-minute wake', async ({ page }) => {
+  const projectTask = {
+    ...task,
+    workspaceRefs: ['/workspace/billing', 'https://docs.example.com/invoice-recovery'],
+  };
+  const mutations: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== 'GET') {
+      mutations.push({
+        method: request.method(),
+        path: url.pathname,
+        body: request.postDataJSON() as Record<string, unknown> | null,
+      });
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: { ...board(), agents: [agent, manager], tasks: [projectTask] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${projectTask.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/tasks` && request.method() === 'POST') {
+      await route.fulfill({
+        status: 201,
+        json: {
+          task: {
+            ...projectTask,
+            ...request.postDataJSON(),
+            taskId: 'agent-query-one',
+            status: 'queued',
+            version: 1,
+          },
+        },
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  let companyRail = await openCompanyRail(page);
+  await expect(companyRail.getByText('Cicada', { exact: true })).toBeVisible();
+  await expect(companyRail.getByText('Point of contact', { exact: true })).toBeVisible();
+  await expect(companyRail.getByText('Acting POC · ask or route work', { exact: true })).toBeVisible();
+  await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toBeVisible();
+  await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /release-manager/u })).toBeVisible();
+
+  await companyRail.getByRole('button', { name: 'Documents' }).click();
+  await expect(page.getByRole('heading', { name: 'Documents' })).toBeVisible();
+  await expect(page.getByText('Project brief', { exact: true })).toBeVisible();
+  await expect(page.getByText('docs.example.com', { exact: true })).toBeVisible();
+
+  companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /Cicada platform/u }).click();
+  await expect(page.getByRole('heading', { name: 'Cicada platform' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent updates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Project setup' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Docs & links' })).toBeVisible();
+  await expect(page.getByText('/workspace/billing', { exact: true })).toBeVisible();
+
+  companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u }).click();
+  await expect(page.getByRole('heading', { name: 'billing-engineer', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Talk to billing-engineer' })).toBeVisible();
+  await expect(page.getByText('Ready for a task', { exact: true })).toBeVisible();
+
+  const prompt = 'Summarize what customers gain from the invoice recovery work.';
+  const message = page.getByLabel('Message billing-engineer');
+  await message.fill(prompt);
+  await page.getByRole('button', { name: 'Send and wake agent' }).click();
+  await expect.poll(() => mutations).toHaveLength(1);
+  await expect(message).toHaveValue('');
+
+  expect(mutations).toEqual([{
+    method: 'POST',
+    path: `/board-api/v1/projects/${project.projectId}/tasks`,
+    body: {
+      parentTaskId: null,
+      title: `Request for ${agent.agentId}: ${prompt}`,
+      objective: `${prompt}\n\nCompany routing map (use this only to identify the best project or agent):\n- Cicada platform: billing-engineer (engineer, Billing and subscriptions), release-manager (manager, Release review)`,
+      acceptanceCriteria: 'Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.',
+      workspaceRefs: [],
+      assignedAgentId: agent.agentId,
+      assignedRole: 'engineer',
+      expectedAgentMinutes: 15,
+    },
+  }]);
 });
 
 test('a failed authoritative read never falls back to demo agents', async ({ page }) => {

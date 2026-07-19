@@ -1,6 +1,6 @@
 import {
   Activity,
-  Bot,
+  ArrowLeft,
   CheckCircle2,
   ChevronRight,
   CircleAlert,
@@ -13,17 +13,18 @@ import {
   Plus,
   RefreshCw,
   Send,
-  Settings2,
   Sparkles,
   Square,
   UserRoundCheck,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Avatar, Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
+import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
 import { createTaskBoardClient, type TaskBoardClient } from './client';
 import { parseTaskProposal, proposalChildInput, proposalIsOnBoard, type TaskProposal } from './proposals';
+import { AgentPage, DocumentsPage, ProjectPage } from './WorkspacePages';
+import { WorkspaceFrame, type BoardPage } from './WorkspaceSidebar';
+import { isExplicitPointOfContact, selectPointOfContact } from './workspace-model';
 import type {
-  AgentStatus,
   BoardAgent,
   BoardMessage,
   BoardQuestion,
@@ -66,15 +67,6 @@ const statusTone: Record<TaskStatus, 'neutral' | 'green' | 'amber' | 'red' | 'bl
   completed: 'green',
   failed: 'red',
   interrupted: 'red',
-};
-
-const agentStatusTone: Record<AgentStatus, 'neutral' | 'green' | 'amber' | 'red' | 'blue'> = {
-  sleeping: 'neutral',
-  queued: 'blue',
-  running: 'green',
-  interrupting: 'amber',
-  waiting_for_human: 'amber',
-  failed: 'red',
 };
 
 const agentMinuteOptions = [15, 30, 45, 60, 90, 120, 180, 240] as const;
@@ -169,56 +161,18 @@ function FormError({ children }: { children: ReactNode }) {
   );
 }
 
-function AgentCard({
-  agent,
-  selected,
-  currentTask,
-  onSelect,
-}: {
-  agent: BoardAgent;
-  selected: boolean;
-  currentTask: BoardTask | undefined;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        'w-full rounded-xl border p-3.5 text-left transition-colors',
-        selected ? 'border-teal-500 bg-teal-soft/45' : 'border-line bg-white',
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <Avatar name={agent.name} color={selected ? '#b9e5e0' : '#eef0f2'} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="truncate text-sm font-bold text-ink">{agent.name}</h3>
-            <Pill tone={agentStatusTone[agent.status]} dot>{prettyStatus(agent.status)}</Pill>
-          </div>
-          <p className="mt-1 text-xs font-semibold text-teal-700">{agent.role} · {agent.area}</p>
-          <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{agent.mission}</p>
-          {currentTask ? <p className="mt-2 truncate rounded-md bg-white/70 px-2 py-1.5 text-[11px] font-semibold text-ink">Current: {currentTask.title}</p> : null}
-        </div>
-      </div>
-      <div className="mt-3 flex items-center justify-between border-t border-line/70 pt-2.5 text-[11px] text-muted">
-        <span>{agent.model ?? 'Model chosen by worker'}</span>
-        <span title={fullTime(agent.lastEventAt)}>{agent.lastEventAt ? formatTime(agent.lastEventAt) : 'No runs yet'}</span>
-      </div>
-    </button>
-  );
-}
-
 function TaskRow({
   task,
   selected,
   agent,
+  projectName,
   openQuestion,
   onSelect,
 }: {
   task: BoardTask;
   selected: boolean;
   agent: BoardAgent | undefined;
+  projectName?: string;
   openQuestion: boolean;
   onSelect: () => void;
 }) {
@@ -252,6 +206,7 @@ function TaskRow({
             ) : (
               <>
                 <span>{agent ? `${agent.name} · ${agent.area}` : task.requiredRole ? `Needs ${task.requiredRole}` : 'Unassigned'}</span>
+                {projectName ? <span>{projectName}</span> : null}
                 <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {task.expectedAgentMinutes} agent min</span>
                 {task.expectedCompletedAt ? <span>Due {formatTime(task.expectedCompletedAt)}</span> : null}
               </>
@@ -646,10 +601,12 @@ export function BoardApp() {
   const [connection, setConnection] = useState<ConnectionSettings>(initialConnection);
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: connection.baseUrl, token: connection.token }), [connection]);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [page, setPage] = useState<BoardPage>({ kind: 'tasks' });
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [mobileSection, setMobileSection] = useState<'agents' | 'tasks' | 'detail'>('tasks');
+  const [taskDetailOpen, setTaskDetailOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogName>(null);
+  const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -671,7 +628,11 @@ export function BoardApp() {
       setError(null);
       setConnected(true);
       setLastSyncedAt(new Date().toISOString());
-      setSelectedProjectId((current) => current && next.projects.some((project) => project.id === current) ? current : next.projects[0]?.id ?? null);
+      setPage((current) => {
+        if (current.kind === 'project' && !next.projects.some((project) => project.id === current.projectId)) return { kind: 'tasks' };
+        if (current.kind === 'agent' && !next.agents.some((agent) => agent.id === current.agentId)) return { kind: 'tasks' };
+        return current;
+      });
       setSelectedTaskId((current) => current && next.tasks.some((task) => task.id === current) ? current : null);
     } catch (caught) {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return;
@@ -685,8 +646,9 @@ export function BoardApp() {
   useEffect(() => {
     refreshController.current?.abort();
     setSnapshot(null);
-    setSelectedProjectId(null);
+    setPage({ kind: 'tasks' });
     setSelectedTaskId(null);
+    setTaskDetailOpen(false);
     setConnected(false);
     setLastSyncedAt(null);
     setError(null);
@@ -706,7 +668,7 @@ export function BoardApp() {
     };
   }, [refresh]);
 
-  const mutate = useCallback(async (operation: () => Promise<void>): Promise<boolean> => {
+  const mutate = useCallback(async (operation: () => Promise<unknown>): Promise<boolean> => {
     if (!connected) {
       setError('The task board is disconnected. Reconnect before making changes');
       return false;
@@ -726,16 +688,30 @@ export function BoardApp() {
     }
   }, [connected, refresh]);
 
-  const project = snapshot?.projects.find((item) => item.id === selectedProjectId);
-  const projectAgents = useMemo(() => snapshot?.agents.filter((agent) => agent.projectId === selectedProjectId) ?? [], [selectedProjectId, snapshot]);
-  const projectTasks = useMemo(() => (snapshot?.tasks.filter((task) => task.projectId === selectedProjectId) ?? []).sort((left, right) => taskStatusOrder[left.status] - taskStatusOrder[right.status] || right.updatedAt.localeCompare(left.updatedAt)), [selectedProjectId, snapshot]);
-  const selectedTask = projectTasks.find((task) => task.id === selectedTaskId) ?? projectTasks[0];
+  const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => taskStatusOrder[left.status] - taskStatusOrder[right.status] || right.updatedAt.localeCompare(left.updatedAt)), [snapshot]);
+  const selectedTask = allTasks.find((task) => task.id === selectedTaskId) ?? allTasks[0];
+  const selectedTaskAgents = snapshot?.agents.filter((agent) => agent.projectId === selectedTask?.projectId) ?? [];
   const taskMessages = snapshot?.messages.filter((message) => message.taskId === selectedTask?.id).sort((left, right) => left.createdAt.localeCompare(right.createdAt)) ?? [];
   const taskQuestions = snapshot?.questions.filter((question) => question.taskId === selectedTask?.id) ?? [];
   const taskRuns = snapshot?.runs.filter((run) => run.taskId === selectedTask?.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt)) ?? [];
   const openQuestionIds = new Set(snapshot?.questions.filter((question) => question.status === 'open').map((question) => question.taskId));
-  const activeCount = projectTasks.filter((task) => task.status === 'running' || task.status === 'queued').length;
-  const waitingCount = projectTasks.filter((task) => task.status === 'waiting_for_human' || (task.kind === 'human_check' && task.endedAt === null)).length;
+  const pointOfContact = selectPointOfContact(snapshot?.agents ?? []);
+  const pageProject = page.kind === 'project' ? snapshot?.projects.find((project) => project.id === page.projectId) : undefined;
+  const pageAgent = page.kind === 'agent' ? snapshot?.agents.find((agent) => agent.id === page.agentId) : undefined;
+  const contextProjectId = dialogProjectId ?? pageProject?.id ?? pageAgent?.projectId ?? selectedTask?.projectId ?? snapshot?.projects[0]?.id ?? null;
+  const contextProject = snapshot?.projects.find((project) => project.id === contextProjectId);
+  const contextTasks = snapshot?.tasks.filter((task) => task.projectId === contextProjectId) ?? [];
+
+  function openTask(taskId: string) {
+    setSelectedTaskId(taskId);
+    setPage({ kind: 'tasks' });
+    setTaskDetailOpen(true);
+  }
+
+  function openDialog(name: Exclude<DialogName, null>, projectId?: string) {
+    setDialogProjectId(projectId ?? null);
+    setDialog(name);
+  }
 
   async function createProject(input: CreateProjectInput): Promise<void> {
     await mutate(() => client.createProject(input));
@@ -749,128 +725,52 @@ export function BoardApp() {
     await mutate(() => client.createTask(input));
   }
 
+  let content: ReactNode;
+  if (loading && snapshot === null) {
+    content = <main className="p-4 sm:p-6 lg:p-8"><Card><EmptyState icon={<RefreshCw className="animate-spin" size={20} />} title="Locating your agents" body="Reading durable projects, tasks, questions, and progress from the task board." /></Card></main>;
+  } else if (snapshot === null) {
+    content = <main className="p-4 sm:p-6 lg:p-8"><Card><EmptyState icon={<CircleAlert size={20} />} title="Connect the task board" body="Start the task-board service or update the connection. The frontend intentionally has no local demo fallback." action={<Button variant="primary" onClick={() => openDialog('connection')}>Connection settings</Button>} /></Card></main>;
+  } else if (snapshot.projects.length === 0) {
+    content = <main className="p-4 sm:p-6 lg:p-8"><Card><EmptyState icon={<FolderKanban size={20} />} title="Create the first project" body="A project groups permanent agent identities, their owned areas, and the shared todo list." action={<Button variant="primary" icon={<Plus size={16} />} onClick={() => openDialog('project')}>Create project</Button>} /></Card></main>;
+  } else if (page.kind === 'documents') {
+    content = <DocumentsPage snapshot={snapshot} onProject={(projectId) => setPage({ kind: 'project', projectId })} />;
+  } else if (page.kind === 'project' && pageProject) {
+    content = <ProjectPage project={pageProject} snapshot={snapshot} onAddTask={() => openDialog('task', pageProject.id)} onAddAgent={() => openDialog('agent', pageProject.id)} onTask={openTask} onAgent={(agentId) => setPage({ kind: 'agent', agentId })} />;
+  } else if (page.kind === 'agent' && pageAgent) {
+    content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext) => mutate(() => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext }))} />;
+  } else {
+    content = (
+      <>
+        <header className="flex flex-col gap-4 border-b border-line bg-white px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-700">Company work</p><h1 className="mt-1 font-display text-2xl font-semibold tracking-[-0.035em] sm:text-[28px]">Task List</h1><p className="mt-1 text-sm text-muted">One durable queue across every project. Only a human assignment, answer, resume, or direct request wakes an agent.</p></div>
+          <div className="flex flex-wrap gap-2"><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button><Button size="sm" icon={<Plus size={15} />} disabled={!connected} onClick={() => openDialog('project')}>Project</Button><Button size="sm" variant="primary" icon={<Plus size={15} />} disabled={!connected || !contextProject} onClick={() => openDialog('task', contextProject?.id)}>Add task</Button></div>
+        </header>
+        <main className="mx-auto max-w-[1500px] p-4 sm:p-6 lg:p-8">
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(360px,.92fr)_minmax(420px,1.08fr)]">
+            <Card className={cn('overflow-hidden', taskDetailOpen ? 'hidden xl:block' : 'block')}>
+              <div className="flex items-center justify-between border-b border-line px-4 py-3.5 sm:px-5"><div><h2 className="text-sm font-bold">All projects</h2><p className="mt-0.5 text-[11px] text-muted">{allTasks.length} tasks · ordered by attention</p></div><ListTodo size={18} className="text-teal-700" /></div>
+              {allTasks.length > 0 ? allTasks.map((task) => <TaskRow key={task.id} task={task} selected={task.id === selectedTask?.id} agent={snapshot.agents.find((agent) => agent.id === task.assignedAgentId)} projectName={snapshot.projects.find((project) => project.id === task.projectId)?.name} openQuestion={openQuestionIds.has(task.id)} onSelect={() => openTask(task.id)} />) : <EmptyState icon={<ListTodo size={19} />} title="Todo list is empty" body="Record a user outcome, then assign it when you want an agent to start." action={<Button size="sm" variant="primary" onClick={() => openDialog('task', contextProject?.id)}>Add task</Button>} />}
+            </Card>
+            <div className={cn(taskDetailOpen ? 'block' : 'hidden xl:block')}>
+              {taskDetailOpen ? <Button className="mb-3 xl:hidden" size="sm" icon={<ArrowLeft size={15} />} onClick={() => setTaskDetailOpen(false)}>Back to task list</Button> : null}
+              {selectedTask ? <TaskDetail key={selectedTask.id} task={selectedTask} childTasks={allTasks.filter((task) => task.parentTaskId === selectedTask.id)} agents={selectedTaskAgents} messages={taskMessages} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={async (agentId, expectedAgentMinutes) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, expectedAgentMinutes, version: selectedTask.version })); }} onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }} onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }} onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }} onMessage={async (body) => { await mutate(() => client.addMessage(selectedTask.id, { body, version: selectedTask.version })); }} onPromoteProposal={async (proposal) => { await mutate(() => client.createTask(proposalChildInput(selectedTask, proposal))); }} onDecideHumanCheck={async (status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to inspect its durable progress record and human controls." /></Card>}
+            </div>
+          </div>
+        </main>
+      </>
+    );
+  }
+
   return (
-    <div className="min-h-dvh bg-canvas text-ink">
-      <header className="border-b border-white/10 bg-ink text-white">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <img src="/cicada-mark.svg" alt="" className="size-8 shrink-0 rounded-lg bg-teal-500 p-1.5" />
-            <div className="min-w-0"><div className="flex items-center gap-2"><span className="font-display text-sm font-bold tracking-[-0.01em]">Cicada Steward</span><Pill tone="dark">task board</Pill></div><p className="hidden text-[11px] text-white/55 sm:block">Agents sleep until a human needs them</p></div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 text-[11px] text-white/60 md:flex"><span className={cn('size-1.5 rounded-full', connected ? 'bg-teal-300' : 'bg-white/30')} /> {lastSyncedAt ? `Last read ${formatTime(lastSyncedAt)}` : 'No durable state read'} · no agent heartbeat</div>
-            <button type="button" onClick={() => setDialog('connection')} className="flex size-10 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 hover:text-white" aria-label="Connection settings"><Settings2 size={18} /></button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8">
-        <section className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-teal-700"><FolderKanban size={15} /><span>Project ownership</span></div>
-            <div className="mt-1 flex flex-wrap items-center gap-3">
-              {snapshot && snapshot.projects.length > 0 ? (
-                <select aria-label="Project" className="max-w-full bg-transparent font-display text-2xl font-semibold tracking-[-0.035em] text-ink outline-none" value={selectedProjectId ?? ''} onChange={(event) => { setSelectedProjectId(event.target.value); setSelectedTaskId(null); }}>
-                  {snapshot.projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-              ) : <h1 className="font-display text-2xl font-semibold tracking-[-0.035em]">Your agent workspace</h1>}
-            </div>
-            {project?.description ? <p className="mt-1 max-w-2xl text-sm text-muted">{project.description}</p> : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button>
-            <Button size="sm" icon={<Plus size={15} />} disabled={!connected} onClick={() => setDialog('project')}>Project</Button>
-            {project ? <><Button size="sm" icon={<Bot size={15} />} disabled={!connected} onClick={() => setDialog('agent')}>Agent</Button><Button size="sm" variant="primary" icon={<Plus size={15} />} disabled={!connected} onClick={() => setDialog('task')}>Task</Button></> : null}
-          </div>
-        </section>
-
-        {error ? (
-          <FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5 opacity-80">{error}. No demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => setDialog('connection')}>Configure</button></div></FormError>
-        ) : null}
-
-        {loading && snapshot === null ? (
-          <Card className="mt-5"><EmptyState icon={<RefreshCw className="animate-spin" size={20} />} title="Locating your agents" body="Reading durable project, task, question, and run records from the task board." /></Card>
-        ) : snapshot === null ? (
-          <Card className="mt-5"><EmptyState icon={<CircleAlert size={20} />} title="Connect the task board" body="Start the task-board service or update the connection. The frontend intentionally has no local demo fallback." action={<Button variant="primary" onClick={() => setDialog('connection')}>Connection settings</Button>} /></Card>
-        ) : snapshot.projects.length === 0 ? (
-          <Card className="mt-5"><EmptyState icon={<FolderKanban size={20} />} title="Create the first project" body="A project groups permanent agent identities, their owned areas, and the shared todo list." action={<Button variant="primary" icon={<Plus size={16} />} onClick={() => setDialog('project')}>Create project</Button>} /></Card>
-        ) : (
-          <>
-            <section className="mb-4 grid grid-cols-3 gap-2 sm:max-w-lg sm:gap-3">
-              <Card className="px-3 py-3 sm:px-4"><p className="font-mono text-lg font-medium">{projectAgents.length}</p><p className="text-[11px] text-muted">owned areas</p></Card>
-              <Card className="px-3 py-3 sm:px-4"><p className="font-mono text-lg font-medium">{activeCount}</p><p className="text-[11px] text-muted">queued / active</p></Card>
-              <Card className={cn('px-3 py-3 sm:px-4', waitingCount > 0 && 'border-caution-fill/40 bg-caution-soft/35')}><p className="font-mono text-lg font-medium">{waitingCount}</p><p className="text-[11px] text-muted">need you</p></Card>
-            </section>
-
-            <nav className="mb-3 grid grid-cols-3 rounded-xl border border-line bg-white p-1 lg:hidden" aria-label="Workspace sections">
-              {([
-                ['tasks', `Tasks ${projectTasks.length}`],
-                ['agents', `Agents ${projectAgents.length}`],
-                ['detail', 'Selected'],
-              ] as const).map(([section, label]) => (
-                <button key={section} type="button" onClick={() => setMobileSection(section)} className={cn('min-h-10 rounded-lg px-2 text-xs font-semibold', mobileSection === section ? 'bg-ink text-white' : 'text-muted')}>{label}</button>
-              ))}
-            </nav>
-
-            <div className="grid items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(360px,0.9fr)_minmax(380px,1.1fr)]">
-              <Card className={cn('overflow-hidden', mobileSection === 'agents' ? 'block' : 'hidden lg:block')}>
-                <div className="flex items-center justify-between border-b border-line px-4 py-3.5"><div><h2 className="text-sm font-bold">System owners</h2><p className="mt-0.5 text-[11px] text-muted">Persistent identities, idle by default</p></div><Bot size={18} className="text-teal-700" /></div>
-                <div className="space-y-2 p-2.5">
-                  {projectAgents.length > 0 ? projectAgents.map((agent) => {
-                    const ownedTasks = projectTasks.filter((task) => task.assignedAgentId === agent.id);
-                    const currentTask = ownedTasks.find((task) => task.status === 'running' || task.status === 'waiting_for_human' || task.status === 'queued') ?? ownedTasks[0];
-                    return <AgentCard key={agent.id} agent={agent} selected={agent.id === selectedTask?.assignedAgentId} currentTask={currentTask} onSelect={() => { if (currentTask) { setSelectedTaskId(currentTask.id); setMobileSection('detail'); } else { setMobileSection('tasks'); } }} />;
-                  }) : <EmptyState icon={<Bot size={19} />} title="No agents yet" body="Add one fixed role and owned system area." action={<Button size="sm" onClick={() => setDialog('agent')}>Add agent</Button>} />}
-                </div>
-              </Card>
-
-              <Card className={cn('overflow-hidden', mobileSection === 'tasks' ? 'block' : 'hidden lg:block')}>
-                <div className="flex items-center justify-between border-b border-line px-4 py-3.5 sm:px-5"><div><h2 className="text-sm font-bold">Shared todo list</h2><p className="mt-0.5 text-[11px] text-muted">Only human assignment, answer, or resume wakes an agent</p></div><ListTodo size={18} className="text-teal-700" /></div>
-                {projectTasks.length > 0 ? projectTasks.map((task) => (
-                  <TaskRow key={task.id} task={task} selected={task.id === selectedTask?.id} agent={projectAgents.find((agent) => agent.id === task.assignedAgentId)} openQuestion={openQuestionIds.has(task.id)} onSelect={() => { setSelectedTaskId(task.id); setMobileSection('detail'); }} />
-                )) : <EmptyState icon={<ListTodo size={19} />} title="Todo list is empty" body="Record a user outcome, then assign it when you want an agent to start." action={<Button size="sm" variant="primary" onClick={() => setDialog('task')}>Add task</Button>} />}
-              </Card>
-
-              <div className={cn('lg:col-span-2 xl:col-span-1', mobileSection === 'detail' ? 'block' : 'hidden lg:block')}>
-                {selectedTask ? (
-                  <TaskDetail
-                    key={selectedTask.id}
-                    task={selectedTask}
-                    childTasks={projectTasks.filter((task) => task.parentTaskId === selectedTask.id)}
-                    agents={projectAgents}
-                    messages={taskMessages}
-                    questions={taskQuestions}
-                    runs={taskRuns}
-                    busy={busy || !connected}
-                    onAssign={async (agentId, expectedAgentMinutes) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, expectedAgentMinutes, version: selectedTask.version })); }}
-                    onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }}
-                    onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }}
-                    onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }}
-                    onMessage={async (body) => { await mutate(() => client.addMessage(selectedTask.id, { body, version: selectedTask.version })); }}
-                    onPromoteProposal={async (proposal) => { await mutate(() => client.createTask(proposalChildInput(selectedTask, proposal))); }}
-                    onDecideHumanCheck={async (status, rationale) => {
-                      const result = status === 'completed'
-                        ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}`
-                        : `Changes requested by human.\n\nRationale: ${rationale}`;
-                      return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result }));
-                    }}
-                  />
-                ) : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to inspect its durable progress record and human controls." /></Card>}
-              </div>
-            </div>
-          </>
-        )}
-      </main>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} connected={connected} lastSyncedLabel={lastSyncedAt ? `Read ${formatTime(lastSyncedAt)}` : 'No durable state read'} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { setPage(next); setTaskDetailOpen(false); }} onConnection={() => openDialog('connection')}>
+      {error ? <div className="px-4 pt-4 sm:px-6 lg:px-8"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5 opacity-80">{error}. Existing durable state remains visible; no demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => openDialog('connection')}>Configure</button></div></FormError></div> : null}
+      {content}
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Create a project" description="A durable workspace for agent owners and their shared todo list."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
-      <Modal open={dialog === 'agent'} onClose={() => setDialog(null)} title="Add a system owner" description="The identity persists. The model process only exists during a run.">{project ? <AgentForm projectId={project.id} busy={busy || !connected} onSubmit={createAgent} /> : null}</Modal>
-      <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title="Add a task" description="Creating a task does not wake anyone. Assignment is a separate human action.">{project ? <TaskForm projectId={project.id} tasks={projectTasks} busy={busy || !connected} onSubmit={createTask} /> : null}</Modal>
+      <Modal open={dialog === 'agent'} onClose={() => setDialog(null)} title={contextProject ? `Add an agent to ${contextProject.name}` : 'Add a system owner'} description="The identity persists. The model process only exists during a run.">{contextProject ? <AgentForm projectId={contextProject.id} busy={busy || !connected} onSubmit={createAgent} /> : null}</Modal>
+      <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={contextProject ? `Add a task to ${contextProject.name}` : 'Add a task'} description="Creating a task does not wake anyone. Assignment is a separate human action.">{contextProject ? <TaskForm projectId={contextProject.id} tasks={contextTasks} busy={busy || !connected} onSubmit={createTask} /> : null}</Modal>
       <Modal open={dialog === 'connection'} onClose={() => setDialog(null)} title="Task board connection" description="The UI can disappear without stopping agents or losing work."><ConnectionForm settings={connection} busy={busy} onSubmit={(next) => { window.sessionStorage.setItem('cicada.taskBoardUrl', next.baseUrl); window.sessionStorage.setItem('cicada.humanToken', next.token); setConnection(next); setDialog(null); }} /></Modal>
-      {error && dialog ? (
-        <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]">
-          <div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div>
-        </div>
-      ) : null}
-    </div>
+      {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}
+    </WorkspaceFrame>
   );
 }
