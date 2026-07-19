@@ -3,6 +3,7 @@ import { ReviewServiceError, corruptStore } from "./errors.js";
 import {
   MANAGER_REVIEW_API_VERSION,
   type FixedManagerIdentity,
+  type ManagerRuntimeClaim,
   type ManagerReview,
   type PassingEngineerEvidence,
   type PassingEngineerEvidenceRequest,
@@ -57,7 +58,7 @@ function text(value: unknown, field: string, maximum = 2_000): string {
     typeof value !== "string" ||
     value.trim().length < 1 ||
     value.length > maximum ||
-    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+    /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)
   ) {
     throw new ReviewServiceError(400, "INVALID_REQUEST", `${field} is invalid`);
   }
@@ -89,6 +90,13 @@ function uuid(value: unknown, field: string): string {
   return value;
 }
 
+function positiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new ReviewServiceError(400, "INVALID_REQUEST", `${field} must be a positive safe integer`);
+  }
+  return value as number;
+}
+
 function nullableIdentifier(value: unknown, field: string): string | null {
   return value === null ? null : identifier(value, field, 256);
 }
@@ -114,6 +122,25 @@ export function parseFixedManagerIdentity(value: unknown): FixedManagerIdentity 
     agentId: identifier(item.agentId, "manager.agentId"),
     laneId: identifier(item.laneId, "manager.laneId"),
     role: "manager",
+  });
+}
+
+export function parseManagerRuntimeClaim(value: unknown): ManagerRuntimeClaim {
+  const item = exact(
+    value,
+    ["workspaceId", "agentId", "laneId", "role", "runtimeInstanceId", "runtimeEpoch"],
+    "Manager runtime claim",
+  );
+  const manager = parseFixedManagerIdentity({
+    workspaceId: item.workspaceId,
+    agentId: item.agentId,
+    laneId: item.laneId,
+    role: item.role,
+  });
+  return Object.freeze({
+    ...manager,
+    runtimeInstanceId: identifier(item.runtimeInstanceId, "manager.runtimeInstanceId"),
+    runtimeEpoch: positiveInteger(item.runtimeEpoch, "manager.runtimeEpoch"),
   });
 }
 
@@ -307,6 +334,8 @@ function parseStoredReview(value: unknown): ManagerReview {
     "engineerAgentId",
     "managerAgentId",
     "managerLaneId",
+    "managerRuntimeInstanceId",
+    "managerRuntimeEpoch",
     "decision",
     "summary",
     "remainingRisks",
@@ -326,6 +355,11 @@ function parseStoredReview(value: unknown): ManagerReview {
       engineerAgentId: identifier(item.engineerAgentId, "engineerAgentId"),
       managerAgentId: identifier(item.managerAgentId, "managerAgentId"),
       managerLaneId: identifier(item.managerLaneId, "managerLaneId"),
+      managerRuntimeInstanceId: identifier(
+        item.managerRuntimeInstanceId,
+        "managerRuntimeInstanceId",
+      ),
+      managerRuntimeEpoch: positiveInteger(item.managerRuntimeEpoch, "managerRuntimeEpoch"),
       decision,
       summary: text(item.summary, "summary"),
       remainingRisks: text(item.remainingRisks, "remainingRisks"),

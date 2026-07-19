@@ -3,9 +3,9 @@ import { canonicalJson, sha256 } from "./canonical.js";
 import { ReviewServiceError, corruptStore } from "./errors.js";
 import {
   evidenceDigest,
-  parseFixedManagerIdentity,
   parseHandoffResult,
   parseIdempotencyKey,
+  parseManagerRuntimeClaim,
   parseManagerReviewRequest,
   parsePassingEvidenceRequest,
 } from "./schema.js";
@@ -18,6 +18,8 @@ import {
   type ManagerHandoffRegistrar,
   type ManagerReview,
   type ManagerReviewRecordedEvent,
+  type ManagerRuntimeAuthorizer,
+  type ManagerRuntimeClaim,
   type PassingEngineerEvidence,
   type PassingEngineerEvidenceRequest,
   type ProductionCheck,
@@ -39,6 +41,7 @@ export interface ManagerReviewWorkflowOptions {
   readonly storePath: string;
   readonly evidenceIssuerPrincipal: string;
   readonly handoffRegistrar: ManagerHandoffRegistrar;
+  readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
   readonly now?: () => Date;
 }
 
@@ -69,11 +72,22 @@ function requestFromReview(review: ManagerReview): RecordManagerReviewRequest {
   };
 }
 
-function reviewIdentity(review: ManagerReview): FixedManagerIdentity {
+function reviewRuntimeClaim(review: ManagerReview): ManagerRuntimeClaim {
   return {
     workspaceId: review.workspaceId,
     agentId: review.managerAgentId,
     laneId: review.managerLaneId,
+    role: "manager",
+    runtimeInstanceId: review.managerRuntimeInstanceId,
+    runtimeEpoch: review.managerRuntimeEpoch,
+  };
+}
+
+function reviewRequestIdentity(manager: ManagerRuntimeClaim): FixedManagerIdentity {
+  return {
+    workspaceId: manager.workspaceId,
+    agentId: manager.agentId,
+    laneId: manager.laneId,
     role: "manager",
   };
 }
@@ -105,6 +119,7 @@ export class ManagerReviewWorkflow {
   readonly #workspaceId: string;
   readonly #issuer: string;
   readonly #registrar: ManagerHandoffRegistrar;
+  readonly #runtimeAuthorizer: ManagerRuntimeAuthorizer;
   readonly #now: () => Date;
   readonly #store: ReviewEventStore;
   readonly #evidence = new Map<string, PassingEngineerEvidence>();
@@ -120,6 +135,7 @@ export class ManagerReviewWorkflow {
     this.#workspaceId = options.workspaceId;
     this.#issuer = options.evidenceIssuerPrincipal;
     this.#registrar = options.handoffRegistrar;
+    this.#runtimeAuthorizer = options.managerRuntimeAuthorizer;
     this.#now = options.now ?? (() => new Date());
     this.#store = store;
     this.#restore(store.records);
@@ -204,9 +220,10 @@ export class ManagerReviewWorkflow {
     });
   }
 
-  listManagerQueue(managerInput: FixedManagerIdentity): readonly PassingEngineerEvidence[] {
-    const manager = parseFixedManagerIdentity(managerInput);
+  async listManagerQueue(managerInput: ManagerRuntimeClaim): Promise<readonly PassingEngineerEvidence[]> {
+    const manager = parseManagerRuntimeClaim(managerInput);
     this.#assertManagerWorkspace(manager);
+    await this.#authorize(manager);
     return Object.freeze(
       [...this.#evidence.values()]
         .filter((evidence) => !this.#reviewByEvidence.has(evidence.evidenceId))
@@ -217,14 +234,22 @@ export class ManagerReviewWorkflow {
   async recordManagerReview(
     evidenceId: string,
     request: unknown,
-    managerInput: FixedManagerIdentity,
+    managerInput: ManagerRuntimeClaim,
     idempotencyKey: string,
   ): Promise<RecordManagerReviewResult> {
-    const manager = parseFixedManagerIdentity(managerInput);
+    const manager = parseManagerRuntimeClaim(managerInput);
     this.#assertManagerWorkspace(manager);
     const parsed = parseManagerReviewRequest(request);
     const key = parseIdempotencyKey(idempotencyKey);
-    const requestHash = sha256({ action: "record_manager_review", evidenceId, manager, request: parsed });
+    // Runtime generation is authorization and audit context, not logical
+    // idempotency identity. A replacement process must be able to recover a
+    // committed lost response with the same lane, evidence, body, and key.
+    const requestHash = sha256({
+      action: "record_manager_review",
+      evidenceId,
+      manager: reviewRequestIdentity(manager),
+      request: parsed,
+    });
     const scope = `manager:${manager.agentId}:${manager.laneId}:review`;
     const result = await this.#serialize(async (): Promise<RecordManagerReviewResult> => {
       const duplicate = this.#idempotencyResult(scope, key, requestHash);
@@ -247,6 +272,10 @@ export class ManagerReviewWorkflow {
       if (this.#reviewByEvidence.has(evidenceId)) {
         throw new ReviewServiceError(409, "EVIDENCE_ALREADY_REVIEWED", "Passing evidence already has a manager review");
       }
+      // Authorize after conflict checks and immediately before timestamping and
+      // appending. Exact committed retries return above without requiring a
+      // replaced/interrupted runtime to become live again.
+      await this.#authorize(manager);
       const reviewedAt = exactNow(this.#now).toISOString();
       const review: ManagerReview = Object.freeze({
         apiVersion: MANAGER_REVIEW_API_VERSION,
@@ -258,6 +287,8 @@ export class ManagerReviewWorkflow {
         engineerAgentId: evidence.engineerAgentId,
         managerAgentId: manager.agentId,
         managerLaneId: manager.laneId,
+        managerRuntimeInstanceId: manager.runtimeInstanceId,
+        managerRuntimeEpoch: manager.runtimeEpoch,
         decision: parsed.decision,
         summary: parsed.summary,
         remainingRisks: parsed.remainingRisks,
@@ -324,6 +355,8 @@ export class ManagerReviewWorkflow {
             engineerAgentId: evidence.engineerAgentId,
             engineerLaneId: evidence.engineerLaneId,
             managerAgentId: review.managerAgentId,
+            managerRuntimeInstanceId: review.managerRuntimeInstanceId,
+            managerRuntimeEpoch: review.managerRuntimeEpoch,
             managerReviewId: review.managerReviewId,
             resultOverview: evidence.resultOverview,
             reviewSummary: review.summary,
@@ -434,6 +467,8 @@ export class ManagerReviewWorkflow {
       checkpointRef: evidence.checkpointRef,
       engineerAgentId: evidence.engineerAgentId,
       managerAgentId: review.managerAgentId,
+      managerRuntimeInstanceId: review.managerRuntimeInstanceId,
+      managerRuntimeEpoch: review.managerRuntimeEpoch,
       managerReviewId: review.managerReviewId,
       resultOverview: evidence.resultOverview,
       reviewSummary: review.summary,
@@ -471,7 +506,7 @@ export class ManagerReviewWorkflow {
       }
       if (event.eventType === "manager_review_recorded") {
         const evidence = this.#evidence.get(event.review.evidenceId);
-        const manager = reviewIdentity(event.review);
+        const manager = reviewRuntimeClaim(event.review);
         if (
           !evidence ||
           event.occurredAt !== event.review.reviewedAt ||
@@ -484,7 +519,7 @@ export class ManagerReviewWorkflow {
           event.requestHash !== sha256({
             action: "record_manager_review",
             evidenceId: evidence.evidenceId,
-            manager,
+            manager: reviewRequestIdentity(manager),
             request: requestFromReview(event.review),
           }) ||
           this.#reviewByEvidence.has(evidence.evidenceId) ||
@@ -535,5 +570,17 @@ export class ManagerReviewWorkflow {
     } finally {
       release?.();
     }
+  }
+
+  async #authorize(manager: ManagerRuntimeClaim): Promise<void> {
+    /*
+     * The current HTTP authorizer checks a fresh snapshot. An interrupt can be
+     * committed after that snapshot and before the durable append. A future
+     * atomic review permit can replace the injected authorizer without changing
+     * the workflow or its evidence/idempotency semantics. The bootstrap also
+     * cannot prove that this evidence ID belongs to a particular manager task;
+     * that needs a future task-scoped permit issued by the control plane.
+     */
+    await this.#runtimeAuthorizer.authorizeManagerRuntime(manager);
   }
 }

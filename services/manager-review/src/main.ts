@@ -1,4 +1,5 @@
 import { HttpManagerHandoffRegistrar } from "./broker-registrar.js";
+import { HttpControlPlaneManagerAuthorizer } from "./control-plane-authorizer.js";
 import { loadManagerReviewRuntimeConfig } from "./runtime-config.js";
 import { createManagerReviewService } from "./service.js";
 
@@ -8,6 +9,17 @@ const handoffRegistrar = new HttpManagerHandoffRegistrar({
   handoffIssuerToken: config.brokerHandoffIssuerToken,
   ...(config.brokerTimeoutMs === undefined ? {} : { timeoutMs: config.brokerTimeoutMs }),
 });
+const managerRuntimeAuthorizer = new HttpControlPlaneManagerAuthorizer({
+  controlPlaneOrigin: config.controlPlaneOrigin,
+  observerReadToken: config.controlPlaneObserverReadToken,
+  ...(config.controlPlaneTimeoutMs === undefined ? {} : { timeoutMs: config.controlPlaneTimeoutMs }),
+  ...(config.controlPlaneMaximumBootstrapBytes === undefined
+    ? {}
+    : { maximumBootstrapBytes: config.controlPlaneMaximumBootstrapBytes }),
+  ...(config.controlPlaneMaximumSnapshotAgeMs === undefined
+    ? {}
+    : { maximumSnapshotAgeMs: config.controlPlaneMaximumSnapshotAgeMs }),
+});
 const service = await createManagerReviewService({
   workspaceId: config.workspaceId,
   storePath: config.storePath,
@@ -15,7 +27,9 @@ const service = await createManagerReviewService({
   evidenceIssuerPrincipal: config.evidenceIssuerPrincipal,
   humanToken: config.humanToken,
   managers: config.managers,
+  corsOrigins: config.corsOrigins,
   handoffRegistrar,
+  managerRuntimeAuthorizer,
   ...(config.host === undefined ? {} : { host: config.host }),
   ...(config.port === undefined ? {} : { port: config.port }),
   ...(config.maxBodyBytes === undefined ? {} : { maxBodyBytes: config.maxBodyBytes }),

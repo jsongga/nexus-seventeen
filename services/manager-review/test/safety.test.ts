@@ -12,6 +12,7 @@ import {
 import {
   EVIDENCE_TOKEN,
   FakeHandoffRegistrar,
+  FakeManagerRuntimeAuthorizer,
   HUMAN_TOKEN,
   MANAGER_ONE,
   MANAGER_ONE_TOKEN,
@@ -28,6 +29,7 @@ function serviceOptions(storePath: string) {
     humanToken: HUMAN_TOKEN,
     managers: [{ ...MANAGER_ONE, token: MANAGER_ONE_TOKEN }],
     handoffRegistrar: new FakeHandoffRegistrar(),
+    managerRuntimeAuthorizer: new FakeManagerRuntimeAuthorizer(),
   } as const;
 }
 
@@ -35,6 +37,17 @@ test("the bearer-authenticated review service rejects non-loopback bind hosts", 
   await assert.rejects(
     createManagerReviewService({ ...serviceOptions(await temporaryStore()), host: "0.0.0.0" }),
     (error: unknown) => error instanceof ReviewServiceError && error.code === "INVALID_CONFIGURATION",
+  );
+});
+
+test("production-check browser origins must be exact HTTP(S) origins", async () => {
+  await assert.rejects(
+    createManagerReviewService({
+      ...serviceOptions(await temporaryStore()),
+      corsOrigins: ["https://app.cicada.build/path"],
+    }),
+    (error: unknown) =>
+      error instanceof ReviewServiceError && error.code === "INVALID_CONFIGURATION",
   );
 });
 

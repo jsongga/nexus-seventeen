@@ -1,12 +1,12 @@
 # Frontend-independent Steward
 
-**Status** — working alpha boundary with live HTTP/SSE transport · **Author** — Cicada · **Date** — 2026-07-18 · **Scope** — browser, control-plane, registry, and agent-runtime boundaries; excludes provider isolation and production deployment.
+**Status** — working alpha boundary with live HTTP/SSE transport · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — browser, control-plane, registry, and agent-runtime boundaries; excludes provider isolation and production deployment.
 
 ## Summary
 
 Steward's web application should be a disposable operator console. Serving, restarting, or upgrading the frontend must not start, stop, own, or mutate an agent. Independent agent runtimes register with a durable control plane, renew leases, execute development work, and record progress whether or not any browser is open. When a desktop or mobile client returns, it loads one authoritative snapshot and resumes an ordered event stream to find every registered agent automatically.
 
-This requires a backend, but not an application server that owns the agents. The static frontend depends on a separately deployed control-plane API. The control plane owns durable human commands, queues, roles, evidence, approvals, the agent registry, and the event cursor. Agent supervisors own processes, provider sessions, checkpoints, and a local write-ahead journal. The browser owns only presentation state.
+This requires backends, but not an application server that owns the agents. The control plane owns durable runtime commands, queues, roles, registry, and event cursor. The manager-review coordinator owns evidence, manager decisions, and pending human checks; the deployment broker owns human grants. Agent supervisors own processes, provider sessions, checkpoints, and a local write-ahead journal. The browser owns only presentation state.
 
 The production invariant is:
 
@@ -23,6 +23,7 @@ The production invariant is:
 - A **lease** is the supervisor's renewable proof of liveness. Lease expiry changes visibility to stale or offline; it never implies that work succeeded.
 - A **snapshot** is an authoritative workspace projection at one event sequence.
 - A **cursor** is the last contiguous event sequence applied by a frontend.
+- A **production check** is manager-accepted evidence awaiting a human decision. Showing one is neither approval nor deployment.
 - **Auto-location** means reconciling registered agent lanes from the control-plane registry. It does not mean scanning a LAN, browser, shell history, or operating-system process table.
 
 ## Boundary and topology
@@ -37,7 +38,9 @@ flowchart TB
     assets[Static hashed frontend assets]
     control[Durable control plane\ncommands · registry · policy · events]
     store[(Transactional state\nand append-only events)]
+    review[Manager-review coordinator\nevidence · read-only production checks]
     broker[Credential-isolated\ndeployment broker]
+    human[Separate authenticated human]
 
     subgraph runtimes[Independent development runtimes]
         supervisorA[Agent supervisor A\nprovider session · checkpoint · local WAL]
@@ -48,13 +51,16 @@ flowchart TB
     assets --> mobile
     desktop -->|bootstrap · commands · resumable events| control
     mobile -->|bootstrap · commands · resumable events| control
+    desktop -->|separate read token| review
+    mobile -->|separate read token| review
     control <--> store
     supervisorA -->|outbound registration · lease · progress| control
     supervisorB -->|outbound registration · lease · progress| control
-    control -->|exact human-approved grant| broker
+    review -->|accepted exact handoff| broker
+    human -->|exact grant| broker
 ```
 
-Neither the frontend host nor a browser has a network path to a provider process. Agent supervisors connect outbound, which works behind NAT and avoids exposing local agent ports to mobile clients. The frontend knows one control-plane origin, not every runtime address.
+Neither the frontend host nor a browser has a network path to a provider process. Agent supervisors connect outbound, which works behind NAT and avoids exposing local agent ports to mobile clients. The browser knows configured service origins, never runtime addresses. Manager-review access may use an exact CORS-allowlisted browser origin or a same-origin reverse proxy.
 
 ## Authoritative ownership
 
@@ -63,8 +69,9 @@ Neither the frontend host nor a browser has a network path to a provider process
 | Agent identity, role, capabilities, runtime epoch, and lease | Control plane, asserted by authenticated supervisor | Render the latest projection |
 | Current run, R → P → E → T progress, journal, checkpoint, and evidence | Agent runtime plus durable control-plane events | Inspect; never fabricate worker events |
 | Agent-task start, end, pause history, and completion forecast | Control plane from authenticated runtime events and server time | Format and display; never derive authoritative timing from the browser clock |
-| Human queue, interrupt intent, pause, product decisions, and approval | Control plane | Submit idempotent commands |
-| Production grant and one-time consumption | Control plane and deployment broker | Request or inspect only |
+| Human queue, interrupt intent, and pause | Control plane | Submit idempotent commands |
+| Manager evidence, review, and pending production checks | Manager-review coordinator | Read production checks only; no review, approval, or deploy action in `/live` |
+| Production grant and one-time consumption | Deployment broker | Absent from `/live`; handled by a separate authenticated human/executor boundary |
 | Filters, selected panel, drafts, density, and theme | Browser | May persist locally |
 | Canonical agents, queues, runs, approvals, audit, and pause state | Never the browser | Must not persist as authoritative state |
 
@@ -100,12 +107,12 @@ The frontend discovers agents through the workspace snapshot. A newly registered
 
 ## Frontend bootstrap and reconnect
 
-The frontend deployment contains only a workspace slug and one control-plane origin. A self-hosted deployment may publish those values from `/.well-known/steward.json`; they are configuration, not agent state. Bootstrap returns origin-relative API paths, which the gateway resolves only against that configured origin rather than trusting a server-supplied second host.
+The frontend deployment needs a workspace slug and control-plane origin. The optional production-check view also needs a manager-review origin and separate read token, unless a same-origin proxy supplies that route. A self-hosted deployment may publish non-secret origins from `/.well-known/steward.json`; they are configuration, not agent state. Bootstrap returns origin-relative control-plane paths, which the gateway resolves only against that configured origin rather than trusting a server-supplied second host.
 
 On every cold start or recovery:
 
 1. Authenticate the human with the control plane.
-2. Request a bootstrap containing permissions, an authoritative workspace snapshot at sequence `N`, event-retention metadata, and command/event endpoints. The alpha snapshot includes the agent registry, queues, tasks, and RPET progress; reviews, approvals, and bounded history pagination remain future work.
+2. Request a bootstrap containing permissions, an authoritative workspace snapshot at sequence `N`, event-retention metadata, and command/event endpoints. The alpha snapshot includes the agent registry, queues, tasks, and RPET progress. Manager reviews and production checks are not part of this sequenced snapshot.
 3. Validate the API version, identities, versions, leases, and snapshot timestamp.
 4. Replace the in-memory replica atomically.
 5. Open a server-sent event stream after sequence `N`.
@@ -118,9 +125,11 @@ Stream termination is typed rather than reduced to a generic error: transient ne
 
 The implemented frontend types, bootstrap validation, and fail-closed reconciliation logic live in [`../src/control-plane/contract.ts`](../src/control-plane/contract.ts) and [`../src/control-plane/reconciliation.ts`](../src/control-plane/reconciliation.ts). Their tests cover snapshots, bootstrap metadata, dynamic registration, bounded duplicate delivery, sequence gaps, conflicts, retirement, identity replacement, lease aging, and command causation in [`../src/control-plane/reconciliation.test.ts`](../src/control-plane/reconciliation.test.ts).
 
+`/live` separately polls `GET /v1/production-checks?workspaceId=…` with an isolated in-memory read token and a five-second request deadline. The response is strictly validated and the last valid list remains visible as stale after a failed refresh. This list is unpaginated and has no sequence or ETag; the browser caps it at 1,000 checks and 8 MiB and cannot detect a valid-but-older response. Direct cross-origin reads require the exact browser origin in manager review's CORS allowlist; a same-origin reverse proxy avoids that browser boundary.
+
 ## Frontend API seam
 
-The React tree should depend on one `ControlPlaneGateway` rather than importing trusted policy engines or worker identities.
+The React tree depends on one `ControlPlaneGateway` for runtime state rather than importing trusted policy engines or worker identities. The optional production-check projection uses a second, read-only gateway.
 
 | Operation | Purpose |
 |---|---|
@@ -129,6 +138,8 @@ The React tree should depend on one `ControlPlaneGateway` rather than importing 
 | `POST /v1/ui/commands` | Durable human intent with command ID and expected entity version |
 
 Runtime registration uses a separate workload-authenticated API. A browser credential cannot call it, acknowledge an interrupt, publish observer output, or consume a deployment grant.
+
+The production-check gateway is intentionally separate from `ControlPlaneGateway`. It exposes one GET operation and no manager-review, approval, grant, consume, or deploy method. The browser rejects reuse of its read token as either the control-plane or impact-observer token.
 
 Every frontend command carries a client-generated UUID that is retained across network retries, a typed compare-and-swap precondition for its exact lane, workspace, or approval resource, and a diagnostic client timestamp. The target identity appears only in that precondition, so two command fields cannot name different lanes or approvals. Agent heartbeat traffic advances a projection version but not the lane's control version, so liveness updates do not create spurious human-command conflicts. The server deduplicates the UUID, validates authorization and the target's control version, commits the intent, and assigns the authoritative sequence plus a nondecreasing workspace commit timestamp in one transaction. Reusing an ID with different content returns a non-retryable command-ID conflict.
 
@@ -152,24 +163,25 @@ Every snapshot and event carries the UI API version. A client that receives an i
 | Agent supervisor disappears | Its lease expires; no success is inferred | Lane becomes stale, then offline, with last evidence retained | Scheduler fences the runtime epoch and does not fabricate completion |
 | Supervisor restarts | Re-register the stable lane with a new instance and epoch; replay local WAL | Receive an upsert and subsequent progress events | Old instances cannot continue writing |
 | Control plane is temporarily unavailable | Finish only the current non-interruptible development action, journal it to the local outbox, then checkpoint and hold | Show the last snapshot as stale/read-only | No new assignment, authority change, human decision, replacement owner, or production grant while disconnected |
+| Manager review is unavailable | Development work is unaffected | Keep the last valid production checks visible as stale | No review, human decision, grant, or deployment is inferred |
 | Deployment broker is unavailable | Development work is unaffected | Approved release remains pending only while its grant is valid | Broker consumes only an unexpired exact grant; expiry requires a new human authorization |
 
 Frontend independence is not control-plane high availability. The control plane still needs replicated storage, backups, and an availability objective. The separation ensures a frontend upgrade cannot become a control-plane or runtime outage.
 
 ## Worked restart example
 
-At 10:00, a browser has applied event 100 and closes for a frontend deployment. An engineer continues through Execute and Test, writes journal events 101–112, and a manager agent writes review events 113–114. No browser is involved in producing them.
+At 10:00, a browser has applied control-plane event 100 and closes for a frontend deployment. An engineer continues through Execute and Test and writes events 101–112. A manager later reads its queue and records an accepted review in the separate manager-review store after its runtime instance and epoch pass a fresh control-plane snapshot check. No browser is involved in either action.
 
-At 10:08, the new frontend begins bootstrap and receives a snapshot at sequence 114. While that snapshot is being produced or delivered, the manager writes events 115–117. The frontend renders the snapshot, subscribes after 114, and applies 115–117. If event 116 is delivered twice, the second copy is ignored. If the stream starts at 117, the client detects the missing 115–116 range and replaces its replica from a new snapshot. It never guesses the missing state.
+At 10:08, the new frontend receives a control-plane snapshot at sequence 112 and resumes events after 112. Independently, it fetches the accepted production check from manager review. A failed later poll leaves that last valid check visible as stale; it does not enter the control-plane event cursor or create production authority.
 
 ## Implementation state
 
 The migration now has two explicit surfaces:
 
-1. `/live` is the authoritative runtime console. It uses the typed gateway, snapshot-plus-SSE reconciliation, stable command IDs, workload registration, leases, server-issued epochs, local supervisor outboxes, and runtime-confirmed interrupt settlement described above.
+1. `/live` is the authoritative runtime console. It uses the typed control-plane gateway, snapshot-plus-SSE reconciliation, stable command IDs, workload registration, leases, server-issued epochs, local supervisor outboxes, and runtime-confirmed interrupt settlement described above. A second read-only gateway shows manager-accepted production checks without approval or deployment controls.
 2. Routes backed by `App.tsx` remain a clearly separate local product demo for missions, review, and approval interaction design. Their browser persistence and timers are not runtime evidence.
 
-The next migration slice is reviews and approvals: project the manager-review coordinator's evidence and production checks into the authoritative control-plane stream, add the corresponding `/live` views, and then retire the equivalent browser-generated events. Until that is complete, the UI must continue to distinguish demo data from `/live` data.
+Production checks are now visible in `/live`, but they remain an independently polled manager-review projection rather than part of the authoritative control-plane stream. The next migration work is a paginated, sequenced review projection and the dedicated read-only manager/verifier runners. Human approval remains a separate broker boundary, not a `/live` action.
 
 ## Relevant reference patterns
 
@@ -185,7 +197,8 @@ Paseo is a useful execution-plane reference because a daemon owns sessions and e
 
 - A returning frontend still needs one configured control-plane origin. No secure system can discover unrelated agent processes from a mobile browser with zero bootstrap information.
 - Auto-location covers authenticated, supervised agents only. Adoption must include supervisor installers and adapters for supported Codex and Claude environments.
-- `/live` implements registry, queue, task timing, current action, RPET progress, human runtime control, and impact summaries. Evidence, manager review, and production-check projections are not yet part of that authoritative console.
+- `/live` implements registry, queue, task timing, current action, RPET progress, human runtime control, impact summaries, and a separate read-only production-check projection. The production list is not in the sequenced control-plane replica, is unpaginated, and has no sequence or ETag.
+- Manager queue reads and review writes are checked against a fresh snapshot matching the active runtime instance and epoch, and exact review replays are idempotent. That check is not atomic with review persistence and does not bind evidence to a control-plane manager task; dedicated manager and verifier runners remain incomplete.
 - Atomic-action boundaries and checkpoint deadlines require threat modeling and adapter tests. A runtime must not label a long, multi-tool plan as one non-interruptible action.
 - Local progress replay uses event IDs, accepted-prefix reconciliation, and server-issued runtime epochs. Replicated-store conflict handling and multi-instance control-plane ownership remain production work.
 - Event retention, snapshot compaction, API compatibility windows, supervisor upgrades, and workspace disaster recovery remain production work.

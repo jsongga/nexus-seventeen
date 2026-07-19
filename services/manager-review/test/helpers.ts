@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { ReviewServiceError } from "../src/index.js";
 import type {
   FixedManagerIdentity,
   ManagerHandoffRegistrar,
+  ManagerRuntimeAuthorizer,
+  ManagerRuntimeClaim,
   PassingEngineerEvidenceRequest,
   RegisterManagerHandoffRequest,
   RegisterManagerHandoffResult,
@@ -29,6 +32,30 @@ export const MANAGER_TWO: FixedManagerIdentity = Object.freeze({
   laneId: "manager-lane-two",
   role: "manager",
 });
+
+export const MANAGER_ONE_RUNTIME: ManagerRuntimeClaim = Object.freeze({
+  ...MANAGER_ONE,
+  runtimeInstanceId: "manager-runtime-one",
+  runtimeEpoch: 7,
+});
+
+export const MANAGER_TWO_RUNTIME: ManagerRuntimeClaim = Object.freeze({
+  ...MANAGER_TWO,
+  runtimeInstanceId: "manager-runtime-two",
+  runtimeEpoch: 3,
+});
+
+export class FakeManagerRuntimeAuthorizer implements ManagerRuntimeAuthorizer {
+  readonly calls: ManagerRuntimeClaim[] = [];
+  reject = false;
+
+  async authorizeManagerRuntime(claim: ManagerRuntimeClaim): Promise<void> {
+    this.calls.push(structuredClone(claim));
+    if (this.reject) {
+      throw new ReviewServiceError(409, "MANAGER_RUNTIME_FENCED", "simulated fenced manager runtime");
+    }
+  }
+}
 
 export function passingEvidence(
   override: Partial<PassingEngineerEvidenceRequest> = {},

@@ -129,3 +129,117 @@ test('the live runtime refuses to reuse the human credential for impact summarie
   await expect(page.getByText('Use a separate read-only token for the impact observer.')).toBeVisible();
   await expect(page.getByLabel('Human bearer token')).toBeVisible();
 });
+
+test('the live runtime presents manager-accepted work as a read-only human decision', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-19T20:00:00.000Z') });
+  let reviewAuthorization = '';
+  let reviewMethod = '';
+  let failReviewRefresh = false;
+  await page.route('https://control.example.test/**', async (route) => {
+    if (route.request().url().includes('/v1/ui/bootstrap')) {
+      await route.fulfill({ json: bootstrap() });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: ': keepalive\n\n',
+    });
+  });
+  await page.route('https://review.example.test/**', async (route) => {
+    reviewAuthorization = route.request().headers().authorization ?? '';
+    reviewMethod = route.request().method();
+    if (failReviewRefresh) {
+      await route.fulfill({ status: 503, body: 'detail must not surface' });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        items: [{
+          apiVersion: 1,
+          productionCheckId: 'production-check:33333333-3333-4333-8333-333333333333',
+          status: 'pending_human_review',
+          workspaceId: 'workspace-alpha',
+          taskId: 'task-checkout',
+          evidenceId: '22222222-2222-4222-8222-222222222222',
+          evidenceDigest: `sha256:${'a'.repeat(64)}`,
+          completionEventId: 'completion-checkout-001',
+          checkpointRef: 'checkpoint-checkout-001',
+          engineerAgentId: 'agent-patch',
+          managerAgentId: 'manager-moss',
+          managerRuntimeInstanceId: 'manager-runtime-moss-001',
+          managerRuntimeEpoch: 3,
+          managerReviewId: '33333333-3333-4333-8333-333333333333',
+          resultOverview: 'Customers can retry checkout without creating a duplicate order.',
+          reviewSummary: 'Passing evidence covers interruption and duplicate-submit behavior.',
+          remainingRisks: 'A human should verify the staged rollback before production.',
+          testEvidenceDigest: `sha256:${'b'.repeat(64)}`,
+          releaseArtifactDigest: `sha256:${'c'.repeat(64)}`,
+          releaseManifestDigest: `sha256:${'d'.repeat(64)}`,
+          targetEnvironment: 'production-us',
+          completedAt: '2026-07-19T19:00:00.000Z',
+          reviewedAt: '2026-07-19T19:04:00.000Z',
+          handoffId: '44444444-4444-4444-8444-444444444444',
+          handoffRegisteredAt: '2026-07-19T19:05:00.000Z',
+        }],
+      },
+    });
+  });
+
+  await page.goto('/live');
+  await page.getByLabel('Control-plane origin').fill('https://control.example.test');
+  await page.getByLabel('Workspace ID').fill('workspace-alpha');
+  await page.getByLabel('Human bearer token').fill('human-session-token-0001');
+  await page.getByLabel('Production-check origin').fill('https://review.example.test');
+  await page.getByLabel('Dedicated production-check read token').fill('production-read-token-0001');
+  await page.getByRole('button', { name: 'Connect live' }).click();
+
+  const checks = page.getByRole('region', { name: 'Human production checks' });
+  await expect(checks).toBeVisible();
+  await expect(checks.getByText('Awaiting human production decision — not deployed')).toBeVisible();
+  await expect(checks.getByRole('heading', { name: 'Recover interrupted checkout' })).toBeVisible();
+  await expect(checks.getByText('Customers can retry checkout without creating a duplicate order.')).toBeVisible();
+  await expect(checks.getByText('Passing evidence covers interruption and duplicate-submit behavior.')).toBeVisible();
+  await expect(checks.getByText('A human should verify the staged rollback before production.')).toBeVisible();
+  await expect(checks.getByText('production-us')).toBeVisible();
+  await expect(checks.getByText('Artifact sha256:cccccccc…cccccc')).toBeVisible();
+  await expect(checks.getByText('Manifest sha256:dddddddd…dddddd')).toBeVisible();
+  await expect(checks.getByText('manager-runtime-moss-001 · epoch 3')).toBeVisible();
+  await expect(checks.locator('time[datetime="2026-07-19T19:00:00.000Z"]')).toHaveCount(1);
+  await expect(checks.locator('time[datetime="2026-07-19T19:04:00.000Z"]')).toHaveCount(1);
+  await expect(checks.getByRole('button')).toHaveCount(0);
+  expect(reviewAuthorization).toBe('Bearer production-read-token-0001');
+  expect(reviewMethod).toBe('GET');
+  await expect(page.getByLabel('Dedicated production-check read token')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
+    .toBe(true);
+
+  failReviewRefresh = true;
+  await page.clock.runFor(10_001);
+  await expect(checks.getByText('The last valid production-check list remains visible and may be stale.'))
+    .toBeVisible();
+  await expect(checks.getByRole('heading', { name: 'Recover interrupted checkout' })).toBeVisible();
+  await expect(checks.getByText('detail must not surface')).toHaveCount(0);
+});
+
+test('the live runtime rejects production-check credential reuse', async ({ page }) => {
+  await page.goto('/live');
+  await page.getByLabel('Control-plane origin').fill('https://control.example.test');
+  await page.getByLabel('Workspace ID').fill('workspace-alpha');
+  await page.getByLabel('Human bearer token').fill('human-session-token-0001');
+  await page.getByLabel('Production-check origin').fill('https://review.example.test');
+  await page.getByLabel('Dedicated production-check read token').fill('human-session-token-0001');
+  await page.getByRole('button', { name: 'Connect live' }).click();
+
+  await expect(page.getByText('Use a production-check read token that is separate from the control-plane token.'))
+    .toBeVisible();
+
+  await page.getByLabel('Observer origin').fill('https://impact.example.test');
+  await page.getByLabel('Separate output token').fill('shared-read-token-0001');
+  await page.getByLabel('Dedicated production-check read token').fill('shared-read-token-0001');
+  await page.getByRole('button', { name: 'Connect live' }).click();
+
+  await expect(page.getByText('Use separate read tokens for production checks and the impact observer.'))
+    .toBeVisible();
+  await expect(page.getByLabel('Human bearer token')).toBeVisible();
+});

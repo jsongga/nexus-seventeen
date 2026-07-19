@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import {
   Activity,
   CirclePause,
+  ClipboardCheck,
   Clock3,
   LogOut,
   Plus,
@@ -52,6 +53,11 @@ import {
   type ImpactSummaryGateway,
   type LiveImpactSnapshot,
 } from './impact-client';
+import {
+  createHttpProductionCheckGateway,
+  type LiveProductionCheck,
+  type ProductionCheckGateway,
+} from './production-check-client';
 
 const exactTime = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -449,6 +455,8 @@ interface RuntimeSession {
   readonly activity: RuntimeActivityMonitor;
   readonly impactGateway?: ImpactSummaryGateway;
   readonly impactOrigin?: string;
+  readonly productionCheckGateway?: ProductionCheckGateway;
+  readonly productionCheckOrigin?: string;
 }
 
 interface ImpactOverviewState {
@@ -552,6 +560,159 @@ function ImpactOverview({
   );
 }
 
+interface ProductionCheckOverviewState {
+  readonly checks: readonly LiveProductionCheck[] | null;
+  readonly loading: boolean;
+  readonly issue: string | null;
+  readonly refreshedAt: IsoTimestamp | null;
+}
+
+function shortDigest(value: string): string {
+  return `sha256:${value.slice(7, 15)}…${value.slice(-6)}`;
+}
+
+function ProductionCheckOverview({
+  configured,
+  managerReviewOrigin,
+  runtimeSnapshot,
+  state,
+}: {
+  configured: boolean;
+  managerReviewOrigin?: string;
+  runtimeSnapshot: UiSnapshot | undefined;
+  state: ProductionCheckOverviewState;
+}) {
+  const allChecks = state.checks ?? [];
+  const checks = [...allChecks]
+    .sort((left, right) => Date.parse(right.reviewedAt) - Date.parse(left.reviewedAt))
+    .slice(0, 24);
+
+  return (
+    <section className={panelClassName('mt-6 p-5 sm:p-6')} aria-label="Human production checks">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-caution-soft p-2.5 text-caution">
+            <ClipboardCheck aria-hidden="true" className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-caution">
+              Human gate · read only
+            </p>
+            <h2 className="mt-1 text-lg font-extrabold text-ink">Production decisions waiting for a person</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
+              Managers can prepare evidence for this queue. This view cannot approve a release or deploy anything.
+            </p>
+          </div>
+        </div>
+        <span className="rounded-full border border-caution-fill/35 bg-caution-soft px-3 py-1.5 text-xs font-bold text-caution">
+          Awaiting human production decision — not deployed
+        </span>
+      </div>
+
+      {!configured ? (
+        <div className="mt-5 rounded-xl border border-dashed border-line px-4 py-4 text-sm leading-6 text-muted">
+          No manager-review queue is connected. Reconnect with its separate read-only origin and token to show production checks here.
+        </div>
+      ) : state.loading && state.checks === null ? (
+        <div className="mt-5 flex items-center gap-2 rounded-xl bg-canvas px-4 py-4 text-sm text-muted" role="status">
+          <Activity aria-hidden="true" className="h-4 w-4 animate-pulse text-caution" />
+          Loading the human production-check queue…
+        </div>
+      ) : state.checks === null ? (
+        <div className="mt-5 rounded-xl border border-dashed border-line px-4 py-4 text-sm leading-6 text-muted">
+          No verified production-check list is available.
+        </div>
+      ) : checks.length === 0 ? (
+        <div className="mt-5 rounded-xl border border-dashed border-line px-4 py-4 text-sm leading-6 text-muted">
+          No manager-accepted work is awaiting a human production decision.
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-4 xl:grid-cols-2">
+          {checks.map((check) => {
+            const task = runtimeSnapshot?.tasks.find((candidate) => String(candidate.taskId) === check.taskId);
+            return (
+              <article className="rounded-xl border border-caution-fill/30 bg-white p-4 sm:p-5" key={check.productionCheckId}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-caution">
+                      Awaiting human production decision
+                    </p>
+                    <h3 className="mt-1 text-base font-extrabold text-ink">{task?.title ?? check.taskId}</h3>
+                    <p className="mt-1 font-mono text-[11px] text-muted">{check.taskId}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] ${check.status === 'pending_human_review' ? 'bg-caution-soft text-caution' : 'bg-canvas text-muted'}`}>
+                    {check.status === 'pending_human_review' ? 'Ready for a person' : 'Handoff syncing'}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3">
+                  <div className="rounded-lg bg-teal-soft/55 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-teal-700">Result overview</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{check.resultOverview}</p>
+                  </div>
+                  <div className="rounded-lg border border-line-soft p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Manager review</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{check.reviewSummary}</p>
+                  </div>
+                  <div className="rounded-lg border border-caution-fill/30 bg-caution-soft/55 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-caution">Remaining risks</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{check.remainingRisks}</p>
+                  </div>
+                </div>
+
+                <dl className="mt-4 grid gap-3 border-t border-line-soft pt-4 text-xs sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted">Engineer completed</dt>
+                    <dd className="mt-1"><ExactTimestamp value={check.completedAt as IsoTimestamp} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Manager reviewed</dt>
+                    <dd className="mt-1"><ExactTimestamp value={check.reviewedAt as IsoTimestamp} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Target</dt>
+                    <dd className="mt-1 font-mono text-[12px] text-ink">{check.targetEnvironment}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Manager runtime</dt>
+                    <dd className="mt-1 break-all font-mono text-[11px] text-ink">
+                      {check.managerRuntimeInstanceId} · epoch {check.managerRuntimeEpoch}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Release bindings</dt>
+                    <dd className="mt-1 grid gap-1 font-mono text-[11px] text-ink">
+                      <span title={check.releaseArtifactDigest}>Artifact {shortDigest(check.releaseArtifactDigest)}</span>
+                      <span title={check.releaseManifestDigest}>Manifest {shortDigest(check.releaseManifestDigest)}</span>
+                    </dd>
+                  </div>
+                </dl>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {allChecks.length > checks.length ? (
+        <p className="mt-3 text-xs text-muted">
+          Showing the 24 most recently reviewed checks. {allChecks.length - checks.length} older checks remain in manager review.
+        </p>
+      ) : null}
+      {state.issue ? (
+        <p className="mt-4 rounded-lg border border-caution-fill/35 bg-caution-soft px-3 py-2 text-xs leading-5 text-caution" role="status">
+          {state.issue} {state.checks !== null
+            ? 'The last valid production-check list remains visible and may be stale.'
+            : 'No production checks are being shown.'}
+        </p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted">
+        {state.refreshedAt ? <span>Last valid refresh <ExactTimestamp value={state.refreshedAt} /></span> : null}
+        {managerReviewOrigin ? <span>{managerReviewOrigin}</span> : null}
+      </div>
+    </section>
+  );
+}
+
 function receiptMessage(receipt: HumanCommandReceipt): { tone: 'success' | 'error'; text: string } {
   if (receipt.state === 'rejected') {
     return { tone: 'error', text: `${receipt.code}: ${receipt.reason}` };
@@ -591,6 +752,12 @@ function ConnectedWorkspace({
     snapshot: null,
     loading: session.impactGateway !== undefined,
     issue: null,
+  });
+  const [productionChecks, setProductionChecks] = useState<ProductionCheckOverviewState>({
+    checks: null,
+    loading: session.productionCheckGateway !== undefined,
+    issue: null,
+    refreshedAt: null,
   });
   const submittingRef = useRef(false);
   const reconcilingRef = useRef(false);
@@ -649,6 +816,48 @@ function ConnectedWorkspace({
       if (refreshTimer !== undefined) clearTimeout(refreshTimer);
     };
   }, [session.impactGateway]);
+
+  useEffect(() => {
+    const gateway = session.productionCheckGateway;
+    if (!gateway) {
+      setProductionChecks({ checks: null, loading: false, issue: null, refreshedAt: null });
+      return;
+    }
+    const controller = new AbortController();
+    let stopped = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const refresh = async () => {
+      setProductionChecks((current) => ({ ...current, loading: current.checks === null }));
+      try {
+        const checks = await gateway.fetchChecks(controller.signal);
+        if (!stopped) {
+          setProductionChecks({
+            checks,
+            loading: false,
+            issue: null,
+            refreshedAt: new Date().toISOString() as IsoTimestamp,
+          });
+        }
+      } catch (error) {
+        if (!stopped && !controller.signal.aborted) {
+          setProductionChecks((current) => ({
+            ...current,
+            loading: false,
+            issue: errorMessage(error),
+          }));
+        }
+      } finally {
+        if (!stopped) refreshTimer = setTimeout(() => void refresh(), 10_000);
+      }
+    };
+    void refresh();
+    return () => {
+      stopped = true;
+      controller.abort();
+      if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+    };
+  }, [session.productionCheckGateway]);
 
   const snapshot = connection.replica;
   const agentViews = useMemo(
@@ -943,6 +1152,13 @@ function ConnectedWorkspace({
           state={impact}
         />
 
+        <ProductionCheckOverview
+          configured={session.productionCheckGateway !== undefined}
+          managerReviewOrigin={session.productionCheckOrigin}
+          runtimeSnapshot={snapshot}
+          state={productionChecks}
+        />
+
         {snapshot ? (
           <section className={panelClassName('mt-6 p-5 sm:p-6')}>
             <div className="grid gap-5 lg:grid-cols-[minmax(240px,0.7fr)_minmax(0,1.3fr)] lg:items-end">
@@ -1193,6 +1409,8 @@ export function LiveRuntimeApp() {
   const [humanToken, setHumanToken] = useState('');
   const [impactOrigin, setImpactOrigin] = useState('');
   const [impactToken, setImpactToken] = useState('');
+  const [productionCheckOrigin, setProductionCheckOrigin] = useState('');
+  const [productionCheckToken, setProductionCheckToken] = useState('');
   const [session, setSession] = useState<RuntimeSession | null>(null);
   const [error, setError] = useState('');
 
@@ -1233,6 +1451,26 @@ export function LiveRuntimeApp() {
             fetch: globalThis.fetch.bind(globalThis) as typeof fetch,
           })
         : undefined;
+      const cleanedProductionCheckOrigin = productionCheckOrigin.trim();
+      const cleanedProductionCheckToken = productionCheckToken.trim();
+      const hasProductionCheckToken = cleanedProductionCheckToken.length > 0;
+      if ((cleanedProductionCheckOrigin.length > 0) !== hasProductionCheckToken) {
+        throw new Error('Provide both the manager-review origin and its dedicated production-check read token, or leave both blank.');
+      }
+      if (hasProductionCheckToken && cleanedProductionCheckToken === cleanedHumanToken) {
+        throw new Error('Use a production-check read token that is separate from the control-plane token.');
+      }
+      if (hasProductionCheckToken && cleanedProductionCheckToken === cleanedImpactToken) {
+        throw new Error('Use separate read tokens for production checks and the impact observer.');
+      }
+      const productionCheckGateway = cleanedProductionCheckOrigin.length > 0
+        ? createHttpProductionCheckGateway({
+            origin: cleanedProductionCheckOrigin,
+            workspaceId: cleanedWorkspaceId,
+            readToken: cleanedProductionCheckToken,
+            fetch: globalThis.fetch.bind(globalThis) as typeof fetch,
+          })
+        : undefined;
       setSession({
         origin: new URL(origin.trim()).origin,
         workspaceId: cleanedWorkspaceId,
@@ -1241,11 +1479,18 @@ export function LiveRuntimeApp() {
         ...(impactGateway === undefined
           ? {}
           : { impactGateway, impactOrigin: new URL(cleanedImpactOrigin).origin }),
+        ...(productionCheckGateway === undefined
+          ? {}
+          : {
+              productionCheckGateway,
+              productionCheckOrigin: new URL(cleanedProductionCheckOrigin).origin,
+            }),
       });
       // The gateway owns the token only for this in-memory session. Remove it
       // from the form state and DOM immediately after connecting.
       setHumanToken('');
       setImpactToken('');
+      setProductionCheckToken('');
     } catch (connectError) {
       setError(errorMessage(connectError));
     }
@@ -1348,6 +1593,39 @@ export function LiveRuntimeApp() {
                   value={impactToken}
                 />
               </label>
+            </fieldset>
+
+            <fieldset className="grid gap-4 rounded-xl border border-caution-fill/30 bg-caution-soft/40 p-4">
+              <legend className="px-1 text-xs font-bold text-muted">Optional read-only human production checks</legend>
+              <label className="grid gap-1.5 text-xs font-bold text-muted">
+                Production-check origin
+                <input
+                  autoCapitalize="none"
+                  className="min-h-12 rounded-lg border border-line bg-white px-3 font-mono text-sm text-ink placeholder:text-muted/55"
+                  inputMode="url"
+                  onChange={(event) => setProductionCheckOrigin(event.target.value)}
+                  placeholder="https://review.example.com"
+                  spellCheck={false}
+                  type="url"
+                  value={productionCheckOrigin}
+                />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold text-muted">
+                Dedicated production-check read token
+                <input
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  className="min-h-12 rounded-lg border border-line bg-white px-3 font-mono text-sm text-ink placeholder:text-muted/55"
+                  onChange={(event) => setProductionCheckToken(event.target.value)}
+                  placeholder="Paste for this session only"
+                  spellCheck={false}
+                  type="password"
+                  value={productionCheckToken}
+                />
+              </label>
+              <p className="text-xs leading-5 text-muted">
+                This connection only reads manager-accepted checks. Approval and deployment are intentionally absent from this screen.
+              </p>
             </fieldset>
 
             {error ? (

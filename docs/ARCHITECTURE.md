@@ -1,6 +1,6 @@
 # Steward Architecture
 
-**Status** — working runtime alpha with explicit production limits · **Author** — Cicada · **Date** — 2026-07-18 · **Scope** — live agent control, durable execution, fixed roles, cheap-first routing, plain-language impact, manager handoff, and human production authorization; excludes the production deployer and hard multi-tenant worker isolation.
+**Status** — working runtime alpha with explicit production limits · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — live agent control, durable execution, fixed roles, cheap-first routing, plain-language impact, manager handoff, and human production authorization; excludes the production deployer and hard multi-tenant worker isolation.
 
 ## Summary
 
@@ -21,7 +21,7 @@ The design separates concepts that are easy to conflate:
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `/live` browser | In-memory human and observer tokens, local replica, command intent | Agent lifetime, canonical task state, checkpoints, provider credentials |
+| `/live` browser | In-memory control, observer-output, and production-check read tokens; local projections; command intent | Agent lifetime, canonical task state, production decision, checkpoints, provider credentials |
 | Control plane | Lane registry, role-bound workload identity, queues, leases, commands, progress, UI projection | Provider process, model credentials, production credentials |
 | Lane supervisor | One fixed-role lane, server fencing epoch, checkpoint, registration intent, outbox, provider containment | Human or deployment authority |
 | Provider host | One integrity-pinned adapter and bounded phase request | Control-plane token, supervisor state path, deployment token |
@@ -42,6 +42,7 @@ flowchart LR
     ui -->|separate output token| observer
     evidence[Trusted passing evidence] --> review[Manager-review coordinator]
     manager[Fixed manager identity] --> review
+    ui -->|separate read-only production checks| review
     review -->|accepted exact handoff| broker[Deployment broker]
     human -->|exact short-lived grant| broker
     executor[External executor] -->|claim once| broker
@@ -123,11 +124,17 @@ The frontend reaches summaries with a second read-only output token. It rejects 
 The manager-review coordinator is a narrow bridge, not an organization engine:
 
 1. A trusted issuer registers passing engineer evidence, including engineer identity, completion/checkpoint references, test digest, artifact digest, release-manifest digest, environment, result, and completion time.
-2. A fixed manager credential reads its review queue and records `accepted` or `changes_requested` while echoing the exact evidence digest.
+2. A fixed manager credential and runtime claim read the review queue and record `accepted` or `changes_requested` while echoing the exact evidence digest.
 3. The coordinator rejects self-review and conflicting second decisions, persists the review, exposes accepted items as pending production checks to a human identity, and exposes changes-requested feedback only to the trusted engineer-evidence projection.
 4. Only an accepted review enters the durable broker-handoff outbox. The coordinator authenticates to the broker with the handoff-issuer credential and has no human-grant or executor credential.
 
-This service enforces evidence binding and separation of duty. It does not yet run the manager model. Its fixed manager credential is not bound to the control plane's current runtime epoch, lease, interrupt state, or assigned review task, so it is not yet safe to treat a direct agent call as authoritative after replacement or interruption. A dedicated read-only manager runner must submit through an active-runtime-fenced integration before production use.
+Before each queue read or review write, the coordinator fetches a fresh read-only control-plane snapshot. It requires the fixed manager lane to be online with an active lease and control state, and matches the submitted workspace, agent, lane, runtime instance, and runtime epoch. Replaced, interrupted, paused, held, offline, or stale manager claims fail closed. A review write records the accepted runtime instance and epoch. The same lane, evidence, body, and idempotency key returns that committed result even from a replacement runtime; changed logical content conflicts.
+
+**Fence limit** — this is a snapshot check, not an atomic control-plane permit. A hold, interrupt, or replacement may commit after authorization but before the review append. The UI snapshot also proves lane activity, not that this evidence ID belongs to a control-plane-assigned manager task. Dedicated manager and verifier runners remain incomplete.
+
+`/live` reads accepted production checks through a separate manager-review gateway and memory-only credential. It strictly validates the response schema, workspace, lifecycle, digest formats, manager runtime audit fields, and timestamp ordering; polls independently from the sequenced control-plane replica with a five-second request deadline; and retains the last valid list as stale on failure. It offers no approval or deploy action. Direct browser access requires a configured exact CORS origin; deployments may instead use a same-origin reverse proxy.
+
+The production-check endpoint is unpaginated and exposes neither a sequence nor an ETag. The browser caps one response at 1,000 items and 8 MiB. It therefore cannot represent a larger queue or distinguish a valid-but-older response from the latest service state.
 
 ## Production authorization
 
@@ -158,7 +165,7 @@ The broker never deploys and never stores production credentials. A crash betwee
 
 ## Storage and operational limits
 
-The alpha control plane, observer, manager-review coordinator, and broker use owner-locked local files with fsync and strict startup validation. These are crash-recovery stores, not replicated databases or immutable audit systems. The manager-review and deployment-broker stores refuse an existing writer lock instead of guessing across PID namespaces; after an unclean exit, an operator must verify that no writer is alive before removing that exact lock. Multi-instance ownership, backups, retention, compaction, pagination, restore drills, and external audit anchoring remain production work.
+The alpha control plane, observer, manager-review coordinator, and broker use owner-locked local files with fsync and strict startup validation. These are crash-recovery stores, not replicated databases or immutable audit systems. The manager-review and deployment-broker stores refuse an existing writer lock instead of guessing across PID namespaces; after an unclean exit, an operator must verify that no writer is alive before removing that exact lock. Multi-instance ownership, backups, retention, compaction, pagination, restore drills, and external audit anchoring remain production work. Manager-review production checks specifically need pagination plus a monotonic sequence or ETag before the browser can prove freshness at scale.
 
 Static bearer credentials are development infrastructure. Production requires an identity provider, short-lived workload credentials, token rotation/revocation, TLS termination, rate limits, audit export, and separate service accounts. Application clients already refuse remote plaintext bearer transport.
 
@@ -172,9 +179,9 @@ No source from either project is included in Steward.
 
 ## Growth path
 
-1. **Current alpha** — authoritative engineer lanes, `/live`, durable control and recovery, real CLI edge, cheap routing, observer, manager-review coordinator, and human grant broker.
-2. **Isolated execution** — containers/dedicated UIDs, immutable adapter bundles, scoped network, CI evidence capture, and read-only verifier/manager runners whose decisions are fenced by the active control-plane runtime.
-3. **Durable service plane** — transactional database, HA ownership, identity provider, retention, backups, audit anchoring, and authoritative review/approval UI projections.
+1. **Current alpha** — authoritative engineer lanes, `/live`, durable control and recovery, real CLI edge, cheap routing, observer, snapshot-fenced manager calls, read-only production checks, and human grant broker.
+2. **Isolated execution** — containers/dedicated UIDs, immutable adapter bundles, scoped network, CI evidence capture, and dedicated read-only verifier/manager runners.
+3. **Durable service plane** — transactional database, HA ownership, identity provider, retention, backups, audit anchoring, paginated sequenced production checks, and an authoritative human-approval surface.
 4. **Production integration** — artifact registry, canonical manifest service, idempotent executor, health checks, rollback, and operational approvals.
 
 ## Alternatives considered

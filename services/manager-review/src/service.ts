@@ -2,15 +2,20 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { ReviewServiceError } from "./errors.js";
 import {
+  applyProductionCheckCors,
   readJsonBody,
   requireEvidenceIssuer,
   requireHuman,
-  requireManager,
+  requireManagerRuntimeClaim,
   sendError,
   sendJson,
 } from "./http.js";
 import { parseFixedManagerIdentity } from "./schema.js";
-import type { ManagerCredential, ManagerHandoffRegistrar } from "./types.js";
+import type {
+  ManagerCredential,
+  ManagerHandoffRegistrar,
+  ManagerRuntimeAuthorizer,
+} from "./types.js";
 import { ManagerReviewWorkflow } from "./workflow.js";
 
 export interface ManagerReviewServiceOptions {
@@ -21,6 +26,8 @@ export interface ManagerReviewServiceOptions {
   readonly humanToken: string;
   readonly managers: readonly ManagerCredential[];
   readonly handoffRegistrar: ManagerHandoffRegistrar;
+  readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly corsOrigins?: readonly string[];
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
@@ -36,6 +43,8 @@ export interface ManagerReviewServiceConfig {
   readonly humanToken: string;
   readonly managers: readonly ManagerCredential[];
   readonly handoffRegistrar: ManagerHandoffRegistrar;
+  readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly corsOrigins: ReadonlySet<string>;
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
@@ -82,6 +91,23 @@ function loopbackHost(value: string | undefined): string {
   return host;
 }
 
+function exactCorsOrigins(values: readonly string[] | undefined): ReadonlySet<string> {
+  const origins = new Set<string>();
+  for (const value of values ?? []) {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new ReviewServiceError(500, "INVALID_CONFIGURATION", `Invalid CORS origin: ${value}`);
+    }
+    if (parsed.origin !== value || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+      throw new ReviewServiceError(500, "INVALID_CONFIGURATION", `Unsafe CORS origin: ${value}`);
+    }
+    origins.add(value);
+  }
+  return origins;
+}
+
 function normalizeConfig(options: ManagerReviewServiceOptions): ManagerReviewServiceConfig {
   const evidenceIssuerToken = token(options.evidenceIssuerToken, "evidenceIssuerToken");
   const humanToken = token(options.humanToken, "humanToken");
@@ -112,6 +138,13 @@ function normalizeConfig(options: ManagerReviewServiceOptions): ManagerReviewSer
     tokens.add(managerToken);
     return Object.freeze({ ...identity, token: managerToken });
   });
+  if (
+    options.managerRuntimeAuthorizer === null ||
+    typeof options.managerRuntimeAuthorizer !== "object" ||
+    typeof options.managerRuntimeAuthorizer.authorizeManagerRuntime !== "function"
+  ) {
+    throw new ReviewServiceError(500, "INVALID_CONFIGURATION", "Manager runtime authorizer is required");
+  }
   return Object.freeze({
     workspaceId: options.workspaceId,
     storePath: options.storePath,
@@ -120,6 +153,8 @@ function normalizeConfig(options: ManagerReviewServiceOptions): ManagerReviewSer
     humanToken,
     managers: Object.freeze(managers),
     handoffRegistrar: options.handoffRegistrar,
+    managerRuntimeAuthorizer: options.managerRuntimeAuthorizer,
+    corsOrigins: exactCorsOrigins(options.corsOrigins),
     host: loopbackHost(options.host),
     port: boundedInteger(options.port, 0, 0, 65_535, "port"),
     maxBodyBytes: boundedInteger(options.maxBodyBytes, 16 * 1_024, 1_024, 256 * 1_024, "maxBodyBytes"),
@@ -173,6 +208,7 @@ export class ManagerReviewService {
       storePath: config.storePath,
       evidenceIssuerPrincipal: config.evidenceIssuerPrincipal,
       handoffRegistrar: config.handoffRegistrar,
+      managerRuntimeAuthorizer: config.managerRuntimeAuthorizer,
       ...(config.now === undefined ? {} : { now: config.now }),
     });
     return new ManagerReviewService(config, workflow);
@@ -180,6 +216,34 @@ export class ManagerReviewService {
 
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = routeUrl(request.url);
+    if (url.pathname === "/v1/production-checks") {
+      applyProductionCheckCors(request, response, this.config);
+      if (request.method === "OPTIONS") {
+        const requestedMethod = request.headers["access-control-request-method"];
+        const requestedHeaders = request.headers["access-control-request-headers"];
+        const headerNames = typeof requestedHeaders === "string"
+          ? requestedHeaders.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)
+          : [];
+        if (
+          requestedMethod !== "GET" ||
+          headerNames.length !== 1 ||
+          headerNames[0] !== "authorization"
+        ) {
+          throw new ReviewServiceError(
+            400,
+            "INVALID_CORS_PREFLIGHT",
+            "Production-check CORS permits only an authenticated GET",
+          );
+        }
+        response.statusCode = 204;
+        response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        response.setHeader("Access-Control-Allow-Headers", "Authorization");
+        response.setHeader("Access-Control-Max-Age", "600");
+        response.setHeader("Cache-Control", "no-store");
+        response.end();
+        return;
+      }
+    }
     if (url.pathname === "/health" && request.method === "GET") {
       if (url.search) throw new ReviewServiceError(400, "INVALID_REQUEST", "Health endpoint takes no query");
       sendJson(response, 200, { status: "ok" });
@@ -196,18 +260,18 @@ export class ManagerReviewService {
       return;
     }
     if (url.pathname === "/v1/manager-review-queue" && request.method === "GET") {
-      const manager = requireManager(request, this.config);
+      const manager = requireManagerRuntimeClaim(request, this.config);
       const workspaceId = oneWorkspaceQuery(url);
       if (workspaceId !== manager.workspaceId) {
         throw new ReviewServiceError(403, "MANAGER_WORKSPACE_MISMATCH", "Manager is not assigned to the requested workspace");
       }
-      sendJson(response, 200, { items: this.#workflow.listManagerQueue(manager) });
+      sendJson(response, 200, { items: await this.#workflow.listManagerQueue(manager) });
       return;
     }
     const reviewMatch = /^\/v1\/passing-evidence\/([0-9a-f-]{36})\/reviews$/u.exec(url.pathname);
     if (reviewMatch && request.method === "POST") {
       if (url.search) throw new ReviewServiceError(400, "INVALID_REQUEST", "Review endpoint takes no query");
-      const manager = requireManager(request, this.config);
+      const manager = requireManagerRuntimeClaim(request, this.config);
       const result = await this.#workflow.recordManagerReview(
         reviewMatch[1]!,
         await readJsonBody(request, this.config.maxBodyBytes),

@@ -1,8 +1,31 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tokenMatches } from "./canonical.js";
 import { ReviewServiceError } from "./errors.js";
+import { parseManagerRuntimeClaim } from "./schema.js";
 import type { ManagerReviewServiceConfig } from "./service.js";
-import type { FixedManagerIdentity } from "./types.js";
+import type { ManagerRuntimeClaim } from "./types.js";
+
+export const MANAGER_RUNTIME_INSTANCE_HEADER = "x-steward-runtime-instance-id" as const;
+export const MANAGER_RUNTIME_EPOCH_HEADER = "x-steward-runtime-epoch" as const;
+
+export function applyProductionCheckCors(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ManagerReviewServiceConfig,
+): void {
+  const origin = request.headers.origin;
+  if (origin === undefined) {
+    if (request.method === "OPTIONS") {
+      throw new ReviewServiceError(400, "INVALID_CORS_PREFLIGHT", "CORS preflight requires an Origin header");
+    }
+    return;
+  }
+  if (!config.corsOrigins.has(origin)) {
+    throw new ReviewServiceError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed");
+  }
+  response.setHeader("Access-Control-Allow-Origin", origin);
+  response.setHeader("Vary", "Origin");
+}
 
 function bearer(request: IncomingMessage): string | undefined {
   const value = request.headers.authorization;
@@ -22,21 +45,40 @@ export function requireHuman(request: IncomingMessage, config: ManagerReviewServ
   }
 }
 
-export function requireManager(
+export function requireManagerRuntimeClaim(
   request: IncomingMessage,
   config: ManagerReviewServiceConfig,
-): FixedManagerIdentity {
+): ManagerRuntimeClaim {
   const presented = bearer(request);
   let match: ManagerReviewServiceConfig["managers"][number] | undefined;
   for (const manager of config.managers) {
     if (tokenMatches(manager.token, presented)) match = manager;
   }
   if (!match) throw new ReviewServiceError(401, "UNAUTHORIZED", "Fixed manager authentication is required");
-  return Object.freeze({
+  const runtimeInstanceId = request.headers[MANAGER_RUNTIME_INSTANCE_HEADER];
+  const runtimeEpochHeader = request.headers[MANAGER_RUNTIME_EPOCH_HEADER];
+  if (
+    typeof runtimeInstanceId !== "string" ||
+    typeof runtimeEpochHeader !== "string" ||
+    !/^[1-9]\d*$/u.test(runtimeEpochHeader)
+  ) {
+    throw new ReviewServiceError(
+      400,
+      "INVALID_RUNTIME_CLAIM",
+      "Manager runtime instance and positive server epoch headers are required",
+    );
+  }
+  const runtimeEpoch = Number(runtimeEpochHeader);
+  if (!Number.isSafeInteger(runtimeEpoch)) {
+    throw new ReviewServiceError(400, "INVALID_RUNTIME_CLAIM", "Manager runtime epoch is outside the safe range");
+  }
+  return parseManagerRuntimeClaim({
     workspaceId: match.workspaceId,
     agentId: match.agentId,
     laneId: match.laneId,
     role: "manager",
+    runtimeInstanceId,
+    runtimeEpoch,
   });
 }
 

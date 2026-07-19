@@ -3,8 +3,10 @@ import { test } from "node:test";
 import { ReviewServiceError, ManagerReviewWorkflow } from "../src/index.js";
 import {
   FakeHandoffRegistrar,
+  FakeManagerRuntimeAuthorizer,
   MANAGER_ONE,
-  MANAGER_TWO,
+  MANAGER_ONE_RUNTIME,
+  MANAGER_TWO_RUNTIME,
   WORKSPACE_ID,
   managerReview,
   passingEvidence,
@@ -13,12 +15,17 @@ import {
 
 const NOW = () => new Date("2026-07-19T19:04:00.000Z");
 
-async function workflow(storePath: string, registrar: FakeHandoffRegistrar): Promise<ManagerReviewWorkflow> {
+async function workflow(
+  storePath: string,
+  registrar: FakeHandoffRegistrar,
+  authorizer: FakeManagerRuntimeAuthorizer = new FakeManagerRuntimeAuthorizer(),
+): Promise<ManagerReviewWorkflow> {
   return ManagerReviewWorkflow.open({
     workspaceId: WORKSPACE_ID,
     storePath,
     evidenceIssuerPrincipal: "service:control-plane-projection",
     handoffRegistrar: registrar,
+    managerRuntimeAuthorizer: authorizer,
     now: NOW,
   });
 }
@@ -29,13 +36,13 @@ test("a different fixed manager accepts exact passing evidence and creates only 
   try {
     const registered = await reviewWorkflow.registerEvidence(passingEvidence(), "evidence-register-0001");
     assert.equal(registered.duplicate, false);
-    assert.equal(reviewWorkflow.listManagerQueue(MANAGER_ONE).length, 1);
+    assert.equal((await reviewWorkflow.listManagerQueue(MANAGER_ONE_RUNTIME)).length, 1);
 
     await assert.rejects(
       reviewWorkflow.recordManagerReview(
         registered.evidence.evidenceId,
         managerReview(registered.evidence.evidenceDigest),
-        { ...MANAGER_ONE, agentId: registered.evidence.engineerAgentId },
+        { ...MANAGER_ONE_RUNTIME, agentId: registered.evidence.engineerAgentId },
         "self-review-0001",
       ),
       (error: unknown) => error instanceof ReviewServiceError && error.code === "SELF_REVIEW_FORBIDDEN",
@@ -44,13 +51,15 @@ test("a different fixed manager accepts exact passing evidence and creates only 
     const accepted = await reviewWorkflow.recordManagerReview(
       registered.evidence.evidenceId,
       managerReview(registered.evidence.evidenceDigest),
-      MANAGER_ONE,
+      MANAGER_ONE_RUNTIME,
       "manager-review-0001",
     );
     assert.equal(accepted.review.decision, "accepted");
+    assert.equal(accepted.review.managerRuntimeInstanceId, MANAGER_ONE_RUNTIME.runtimeInstanceId);
+    assert.equal(accepted.review.managerRuntimeEpoch, MANAGER_ONE_RUNTIME.runtimeEpoch);
     assert.equal(accepted.productionCheck?.status, "pending_human_review");
     assert.equal(accepted.productionCheck?.handoffId, registrar.calls.length === 1 ? accepted.productionCheck.handoffId : null);
-    assert.equal(reviewWorkflow.listManagerQueue(MANAGER_ONE).length, 0);
+    assert.equal((await reviewWorkflow.listManagerQueue(MANAGER_ONE_RUNTIME)).length, 0);
     assert.equal(registrar.calls.length, 1);
     assert.equal(registrar.calls[0]!.request.releaseArtifactDigest, registered.evidence.releaseArtifactDigest);
     assert.equal(registrar.calls[0]!.request.releaseManifestDigest, registered.evidence.releaseManifestDigest);
@@ -60,6 +69,8 @@ test("a different fixed manager accepts exact passing evidence and creates only 
     assert.equal(checks.length, 1);
     assert.equal(checks[0]!.managerReviewId, accepted.review.managerReviewId);
     assert.equal(checks[0]!.releaseManifestDigest, registered.evidence.releaseManifestDigest);
+    assert.equal(checks[0]!.managerRuntimeInstanceId, MANAGER_ONE_RUNTIME.runtimeInstanceId);
+    assert.equal(checks[0]!.managerRuntimeEpoch, MANAGER_ONE_RUNTIME.runtimeEpoch);
     assert.equal("createGrant" in reviewWorkflow, false);
     assert.equal("consumeGrant" in reviewWorkflow, false);
     assert.equal("deploy" in reviewWorkflow, false);
@@ -67,7 +78,7 @@ test("a different fixed manager accepts exact passing evidence and creates only 
     const replay = await reviewWorkflow.recordManagerReview(
       registered.evidence.evidenceId,
       managerReview(registered.evidence.evidenceDigest),
-      MANAGER_ONE,
+      MANAGER_ONE_RUNTIME,
       "manager-review-0001",
     );
     assert.equal(replay.duplicate, true);
@@ -77,10 +88,118 @@ test("a different fixed manager accepts exact passing evidence and creates only 
       reviewWorkflow.recordManagerReview(
         registered.evidence.evidenceId,
         managerReview(registered.evidence.evidenceDigest),
-        MANAGER_TWO,
+        MANAGER_TWO_RUNTIME,
         "manager-two-review-0001",
       ),
       (error: unknown) => error instanceof ReviewServiceError && error.code === "EVIDENCE_ALREADY_REVIEWED",
+    );
+  } finally {
+    await reviewWorkflow.close();
+  }
+});
+
+test("a committed exact replay survives fencing while new work and queue reads require live authority", async () => {
+  const registrar = new FakeHandoffRegistrar();
+  const runtimeAuthorizer = new FakeManagerRuntimeAuthorizer();
+  const reviewWorkflow = await workflow(await temporaryStore(), registrar, runtimeAuthorizer);
+  try {
+    const registered = await reviewWorkflow.registerEvidence(
+      passingEvidence(),
+      "evidence-fenced-replay-0001",
+    );
+    const request = managerReview(registered.evidence.evidenceDigest);
+    const accepted = await reviewWorkflow.recordManagerReview(
+      registered.evidence.evidenceId,
+      request,
+      MANAGER_ONE_RUNTIME,
+      "manager-fenced-replay-0001",
+    );
+    assert.equal(accepted.duplicate, false);
+    assert.equal(runtimeAuthorizer.calls.length, 1);
+
+    runtimeAuthorizer.reject = true;
+    const replacementRuntime = {
+      ...MANAGER_ONE_RUNTIME,
+      runtimeInstanceId: "manager-runtime-one-replacement",
+      runtimeEpoch: MANAGER_ONE_RUNTIME.runtimeEpoch + 1,
+    };
+    const replay = await reviewWorkflow.recordManagerReview(
+      registered.evidence.evidenceId,
+      request,
+      replacementRuntime,
+      "manager-fenced-replay-0001",
+    );
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.review.managerReviewId, accepted.review.managerReviewId);
+    assert.equal(runtimeAuthorizer.calls.length, 1);
+
+    await assert.rejects(
+      reviewWorkflow.recordManagerReview(
+        registered.evidence.evidenceId,
+        { ...request, summary: "A conflicting replay must not bypass idempotency." },
+        MANAGER_ONE_RUNTIME,
+        "manager-fenced-replay-0001",
+      ),
+      (error: unknown) => error instanceof ReviewServiceError && error.code === "IDEMPOTENCY_CONFLICT",
+    );
+    assert.equal(runtimeAuthorizer.calls.length, 1);
+
+    const pending = await reviewWorkflow.registerEvidence(
+      passingEvidence({
+        taskId: "task-fenced-new-work",
+        completionEventId: "completion-event-fenced-new-work",
+      }),
+      "evidence-fenced-new-work-0001",
+    );
+    await assert.rejects(
+      reviewWorkflow.recordManagerReview(
+        pending.evidence.evidenceId,
+        managerReview(pending.evidence.evidenceDigest),
+        MANAGER_ONE_RUNTIME,
+        "manager-fenced-new-work-0001",
+      ),
+      /simulated fenced manager runtime/u,
+    );
+    assert.equal(runtimeAuthorizer.calls.length, 2);
+    assert.equal(reviewWorkflow.listProductionChecks(WORKSPACE_ID).length, 1);
+
+    await assert.rejects(
+      reviewWorkflow.listManagerQueue(MANAGER_ONE_RUNTIME),
+      /simulated fenced manager runtime/u,
+    );
+    assert.equal(runtimeAuthorizer.calls.length, 3);
+  } finally {
+    await reviewWorkflow.close();
+  }
+});
+
+test("evidence and review text reject carriage returns at the durable boundary", async () => {
+  const registrar = new FakeHandoffRegistrar();
+  const reviewWorkflow = await workflow(await temporaryStore(), registrar);
+  try {
+    await assert.rejects(
+      reviewWorkflow.registerEvidence(
+        passingEvidence({ resultOverview: "Customer result\rInjected line" }),
+        "evidence-carriage-return-0001",
+      ),
+      (error: unknown) => error instanceof ReviewServiceError && error.code === "INVALID_REQUEST",
+    );
+
+    const registered = await reviewWorkflow.registerEvidence(
+      passingEvidence(),
+      "evidence-carriage-return-valid-0001",
+    );
+    await assert.rejects(
+      reviewWorkflow.recordManagerReview(
+        registered.evidence.evidenceId,
+        {
+          ...managerReview(registered.evidence.evidenceDigest),
+          summary: "Valid-looking review\rInjected line",
+        },
+        MANAGER_ONE_RUNTIME,
+        "review-carriage-return-0001",
+      ),
+      (error: unknown) => error instanceof ReviewServiceError && error.code === "INVALID_REQUEST",
     );
   } finally {
     await reviewWorkflow.close();
@@ -95,7 +214,7 @@ test("changes requested returns to humans no production check and never contacts
     const result = await reviewWorkflow.recordManagerReview(
       registered.evidence.evidenceId,
       managerReview(registered.evidence.evidenceDigest, "changes_requested"),
-      MANAGER_ONE,
+      MANAGER_ONE_RUNTIME,
       "manager-changes-0001",
     );
     assert.equal(result.productionCheck, null);
@@ -104,6 +223,8 @@ test("changes requested returns to humans no production check and never contacts
     assert.equal(feedback.length, 1);
     assert.equal(feedback[0]!.status, "changes_requested");
     assert.equal(feedback[0]!.engineerAgentId, registered.evidence.engineerAgentId);
+    assert.equal(feedback[0]!.managerRuntimeInstanceId, MANAGER_ONE_RUNTIME.runtimeInstanceId);
+    assert.equal(feedback[0]!.managerRuntimeEpoch, MANAGER_ONE_RUNTIME.runtimeEpoch);
     assert.equal(feedback[0]!.reviewSummary, result.review.summary);
     assert.equal(registrar.calls.length, 0);
   } finally {
@@ -113,25 +234,27 @@ test("changes requested returns to humans no production check and never contacts
 
 test("concurrent managers cannot review the same evidence twice", async () => {
   const registrar = new FakeHandoffRegistrar();
-  const reviewWorkflow = await workflow(await temporaryStore(), registrar);
+  const runtimeAuthorizer = new FakeManagerRuntimeAuthorizer();
+  const reviewWorkflow = await workflow(await temporaryStore(), registrar, runtimeAuthorizer);
   try {
     const registered = await reviewWorkflow.registerEvidence(passingEvidence(), "evidence-race-0001");
     const attempts = await Promise.allSettled([
       reviewWorkflow.recordManagerReview(
         registered.evidence.evidenceId,
         managerReview(registered.evidence.evidenceDigest),
-        MANAGER_ONE,
+        MANAGER_ONE_RUNTIME,
         "manager-race-one-0001",
       ),
       reviewWorkflow.recordManagerReview(
         registered.evidence.evidenceId,
         managerReview(registered.evidence.evidenceDigest),
-        MANAGER_TWO,
+        MANAGER_TWO_RUNTIME,
         "manager-race-two-0001",
       ),
     ]);
     assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 1);
     assert.equal(attempts.filter((attempt) => attempt.status === "rejected").length, 1);
+    assert.equal(runtimeAuthorizer.calls.length, 1);
     assert.equal(reviewWorkflow.listProductionChecks(WORKSPACE_ID).length, 1);
     assert.equal(registrar.calls.length, 1);
   } finally {
@@ -150,7 +273,7 @@ test("a lost broker response remains visible and retries the same immutable hand
     const reviewed = await first.recordManagerReview(
       registered.evidence.evidenceId,
       managerReview(registered.evidence.evidenceDigest),
-      MANAGER_ONE,
+      MANAGER_ONE_RUNTIME,
       "manager-restart-0001",
     );
     reviewId = reviewed.review.managerReviewId;
@@ -187,7 +310,7 @@ test("one poison handoff cannot starve later pending reviews", async () => {
     const firstReview = await reviewWorkflow.recordManagerReview(
       firstEvidence.evidence.evidenceId,
       managerReview(firstEvidence.evidence.evidenceDigest),
-      MANAGER_ONE,
+      MANAGER_ONE_RUNTIME,
       "manager-starvation-one-0001",
     );
     const secondEvidence = await reviewWorkflow.registerEvidence(
@@ -200,7 +323,7 @@ test("one poison handoff cannot starve later pending reviews", async () => {
     const secondReview = await reviewWorkflow.recordManagerReview(
       secondEvidence.evidence.evidenceId,
       managerReview(secondEvidence.evidence.evidenceDigest),
-      MANAGER_TWO,
+      MANAGER_TWO_RUNTIME,
       "manager-starvation-two-0001",
     );
     assert.equal(firstReview.productionCheck?.status, "handoff_registration_pending");

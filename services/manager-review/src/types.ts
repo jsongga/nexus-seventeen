@@ -11,6 +11,37 @@ export interface ManagerCredential extends FixedManagerIdentity {
   readonly token: string;
 }
 
+/**
+ * The control-plane runtime generation that is attempting manager work.
+ * Credentials identify a fixed lane; these fields fence replaced processes.
+ */
+export interface ManagerRuntimeClaim extends FixedManagerIdentity {
+  readonly runtimeInstanceId: string;
+  readonly runtimeEpoch: number;
+}
+
+/**
+ * Authorizes one current manager operation. The HTTP bootstrap implementation
+ * is intentionally replaceable by a future atomic control-plane review permit.
+ */
+export interface ManagerRuntimeAuthorizer {
+  authorizeManagerRuntime(claim: ManagerRuntimeClaim): Promise<void>;
+}
+
+/**
+ * Honest boundaries of the bootstrap-based alpha fence. They are exported so
+ * callers and architecture surfaces cannot mistake a fresh snapshot check for
+ * an atomic, task-scoped control-plane permit.
+ */
+export const MANAGER_RUNTIME_FENCE_LIMITATIONS = Object.freeze({
+  atomicWithReviewAppend: false,
+  bindsExactManagerReviewTask: false,
+  snapshotRace:
+    "A hold, interrupt, or replacement can commit after authorization and before the review append.",
+  taskBinding:
+    "The UI bootstrap proves the manager lane is active but does not bind this evidence ID to a control-plane-assigned manager task.",
+} as const);
+
 export interface PassingEngineerEvidenceRequest {
   readonly workspaceId: string;
   readonly taskId: string;
@@ -54,6 +85,8 @@ export interface ManagerReview {
   readonly engineerAgentId: string;
   readonly managerAgentId: string;
   readonly managerLaneId: string;
+  readonly managerRuntimeInstanceId: string;
+  readonly managerRuntimeEpoch: number;
   readonly decision: ManagerReviewDecision;
   readonly summary: string;
   readonly remainingRisks: string;
@@ -104,6 +137,8 @@ export interface ProductionCheck {
   readonly checkpointRef: string | null;
   readonly engineerAgentId: string;
   readonly managerAgentId: string;
+  readonly managerRuntimeInstanceId: string;
+  readonly managerRuntimeEpoch: number;
   readonly managerReviewId: string;
   readonly resultOverview: string;
   readonly reviewSummary: string;
@@ -131,6 +166,8 @@ export interface EngineerFeedback {
   readonly engineerAgentId: string;
   readonly engineerLaneId: string;
   readonly managerAgentId: string;
+  readonly managerRuntimeInstanceId: string;
+  readonly managerRuntimeEpoch: number;
   readonly managerReviewId: string;
   readonly resultOverview: string;
   readonly reviewSummary: string;
