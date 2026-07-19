@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --color-canvas: #f3f3f3;
+  --color-paper: #f3f3f3;
+  --color-surface: #ffffff;
+  --color-ink: #171c24;
+  --color-forest: #171c24;
+  --color-muted: #59636d;
+  --color-line: #e4e7ea;
+  --color-line-soft: #eef0f2;
+
+  --color-teal-300: #7fe0d6;
+  --color-teal-500: #41bbb0;
+  --color-teal-700: #237a72;
+  --color-teal-soft: #e4f4f2;
+  --color-mint: #41bbb0;
+  --color-mint-strong: #237a72;
+
+  --color-caution: #8a5d0a;
+  --color-caution-fill: #f0b429;
+  --color-caution-soft: #fff5dc;
+  --color-amber-soft: #f0b429;
+
+  --color-urgent: #a01c14;
+  --color-urgent-fill: #7d1710;
+  --color-urgent-soft: #fff0ee;
+  --color-coral-soft: #a01c14;
+}
+
+:root {
+  color-scheme: light;
+  color: #171c24;
+  background: #f3f3f3;
+  font-family: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: #f3f3f3;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #f3f3f3;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid rgba(35, 122, 114, 0.34);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: #171c24;
+  background: #7fe0d6;
+}
+
+.font-mono {
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

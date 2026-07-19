@@ -1,0 +1,10 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cicada-favicon" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#69b9b2" />
+      <stop offset="1" stop-color="#4a9c95" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8.6" fill="url(#cicada-favicon)" />
+  <rect x="11.04" y="11.04" width="9.92" height="9.92" rx="1.4" fill="#191919" transform="rotate(45 16 16)" />
+</svg>
