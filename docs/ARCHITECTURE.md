@@ -22,12 +22,12 @@ The design separates concepts that are easy to conflate:
 | Component | Owns | Does not own |
 |---|---|---|
 | `/live` browser | In-memory control, observer-output, and production-check read tokens; local projections; command intent | Agent lifetime, canonical task state, production decision, checkpoints, provider credentials |
-| Control plane | Lane registry, role-bound workload identity, queues, leases, commands, progress, UI projection | Provider process, model credentials, production credentials |
+| Control plane | Lane registry, role-bound workload identity, queues, leases, commands, progress, typed review assignments, one-use review permits, UI projection | Provider process, model credentials, production credentials |
 | Lane supervisor | One fixed-role lane, server fencing epoch, checkpoint, registration intent, outbox, provider containment | Human or deployment authority |
 | Provider host | One integrity-pinned adapter and bounded phase request | Control-plane token, supervisor state path, deployment token |
 | CLI adapter | Phase sandbox, selected model ID, bounded structured result | Role selection, command authority, production access |
 | Impact observer | Read-only event identity, redacted task facts, economy route, last safe summary | Human token, tools, workflow mutation, evidence status |
-| Manager-review coordinator | Passing-evidence registry, fixed-manager decisions, pending human checks, broker handoff outbox | Provider execution, human grant, executor credential, deployment |
+| Manager-review coordinator | Passing-evidence registry, permit-backed fixed-manager decisions, pending human checks, broker handoff outbox | Task authority, provider execution, human grant, executor credential, deployment |
 | Deployment broker | Accepted handoffs, human grants, one-use executor authorizations | Manager model, deploy code, production credentials |
 | External executor | Production credential and target-side idempotency | Human decision or release selection |
 
@@ -42,6 +42,7 @@ flowchart LR
     ui -->|separate output token| observer
     evidence[Trusted passing evidence] --> review[Manager-review coordinator]
     manager[Fixed manager identity] --> review
+    review -->|consume exact review permit| cp
     ui -->|separate read-only production checks| review
     review -->|accepted exact handoff| broker[Deployment broker]
     human -->|exact short-lived grant| broker
@@ -52,9 +53,9 @@ flowchart LR
 
 **Stable lane, replaceable process** — a lane keeps one agent ID, role, queue, and checkpoint history. A runtime instance is a process boot that may crash or be replaced.
 
-Every workload token is bound to workspace, agent, lane, and role before first registration. Registration is a compare-and-swap request: a first process expects no epoch; a replacement presents the last observed epoch; the control plane alone issues the next contiguous epoch. Lease renewal, event upload, and command polling all require the issued runtime identity and epoch, so an old process cannot keep writing after replacement.
+Every workload token is bound to workspace, agent, lane, and role before first registration. Registration is a compare-and-swap request: a first process expects no epoch; a replacement presents the last observed epoch; the control plane alone issues the next contiguous epoch. A protected replacement must also present the prior generation's private proof, so a stale process with only the static lane token and public epoch cannot leapfrog the current process. Proofless pre-capability engineer lanes retain their legacy CAS replacement path; they cannot authorize manager reviews.
 
-The supervisor writes the exact pending registration request to a private state file before sending it. If the server commits registration and the response is lost across a process crash, the next boot retries that same runtime identity. The server's idempotent response closes the lost-acknowledgement gap without guessing or skipping an epoch.
+The supervisor writes the exact pending registration request and a random 256-bit challenge to a private state file before sending it. The control plane returns an HMAC-derived generation proof in an HTTP response header while leaving the strict runtime v1 JSON body unchanged. It stores only the proof's SHA-256 verifier. After success, the supervisor retains the proof in owner-only runtime state; if the response is lost, it retries the same request and challenge. This closes both the lost-acknowledgement gap and stale-token replacement gap without placing the capability in the control-plane event log.
 
 State and workspace directories are process-locked and must be canonically disjoint. A writable project therefore cannot contain or alias the checkpoint, outbox, registration intent, or lock.
 
@@ -124,15 +125,17 @@ The frontend reaches summaries with a second read-only output token. It rejects 
 The manager-review coordinator is a narrow bridge, not an organization engine:
 
 1. A trusted issuer registers passing engineer evidence, including engineer identity, completion/checkpoint references, test digest, artifact digest, release-manifest digest, environment, result, and completion time.
-2. A fixed manager credential and runtime claim read the review queue and record `accepted` or `changes_requested` while echoing the exact evidence digest.
-3. The coordinator rejects self-review and conflicting second decisions, persists the review, exposes accepted items as pending production checks to a human identity, and exposes changes-requested feedback only to the trusted engineer-evidence projection.
-4. Only an accepted review enters the durable broker-handoff outbox. The coordinator authenticates to the broker with the handoff-issuer credential and has no human-grant or executor credential.
+2. A human queues a `manager_review` task whose typed subject binds one completed engineer task, evidence ID, and lowercase SHA-256 evidence digest to one fixed manager lane. Titles and objectives carry no authority.
+3. The manager runtime publishes that assigned task as its current action. A fixed manager credential submits `accepted` or `changes_requested`, the review task ID, and the exact evidence digest to the coordinator.
+4. While serializing that logical review, the coordinator uses a dedicated service capability plus the live manager generation proof to consume a one-use control-plane permit. The control plane accepts a new permit only for the current manager instance and epoch with a live lease, active control state, unpaused workspace, exact running task, exact typed evidence subject, and completed engineer source task.
+5. Permit consumption, interrupt, workspace hold, and runtime replacement share the control plane's exclusive mutation order. The permit event terminalizes the review task and supplies the authoritative time, workspace sequence, permit ID, and authorizing runtime audit.
+6. The coordinator persists the permit-backed decision. Accepted reviews enter its durable broker-handoff outbox; changes remain readable only to the trusted engineer-evidence projection. The coordinator has neither human-grant nor executor credentials.
 
-Before each queue read or review write, the coordinator fetches a fresh read-only control-plane snapshot. It requires the fixed manager lane to be online with an active lease and control state, and matches the submitted workspace, agent, lane, runtime instance, and runtime epoch. Replaced, interrupted, paused, held, offline, or stale manager claims fail closed. A review write records the accepted runtime instance and epoch. The same lane, evidence, body, and idempotency key returns that committed result even from a replacement runtime; changed logical content conflicts.
+Queue discovery still uses a fresh read-only snapshot and can immediately become stale. It is not review authority. For a write, the same stable lane, review task, evidence, decision body, and idempotency key derive one permit operation independent of runtime generation. Exact committed replay is checked before current runtime state and may recover the original receipt without a proof; no new authority is created. An uncommitted request requires the live proof. A replacement process therefore recovers the original authorizing runtime audit after a lost response, while changed logical reuse conflicts. An unconsumed running review task is explicitly rebound to a negotiated typed-task runtime without erasing its original start time.
 
-**Fence limit** — this is a snapshot check, not an atomic control-plane permit. A hold, interrupt, or replacement may commit after authorization but before the review append. The UI snapshot also proves lane activity, not that this evidence ID belongs to a control-plane-assigned manager task. Dedicated manager and verifier runners remain incomplete.
+**Transaction limit** — control events and permit consumption are atomic in the single control-plane log; the later manager-review JSONL append is a separate transaction. Stable recovery closes the crash gap but is not distributed ACID. Pre-permit review records fail closed pending an explicit offline migration. The dedicated manager runtime currently consumes bounded frozen review bundles rather than a production model adapter, the verifier runner remains incomplete, and multiple control-plane writers would require a serializable database or consensus boundary.
 
-`/live` reads accepted production checks through a separate manager-review gateway and memory-only credential. It strictly validates the response schema, workspace, lifecycle, digest formats, manager runtime audit fields, and timestamp ordering; polls independently from the sequenced control-plane replica with a five-second request deadline; and retains the last valid list as stale on failure. It offers no approval or deploy action. Direct browser access requires a configured exact CORS origin; deployments may instead use a same-origin reverse proxy.
+`/live` reads accepted production checks through a separate manager-review gateway and memory-only credential. It strictly validates the response schema, workspace, lifecycle, digest formats, manager runtime, review-task and permit-sequence audit fields, and timestamp ordering; polls independently from the sequenced control-plane replica with a five-second request deadline; and retains the last valid list as stale on failure. It offers no approval or deploy action. Direct browser access requires a configured exact CORS origin; deployments may instead use a same-origin reverse proxy.
 
 The production-check endpoint is unpaginated and exposes neither a sequence nor an ETag. The browser caps one response at 1,000 items and 8 MiB. It therefore cannot represent a larger queue or distinguish a valid-but-older response from the latest service state.
 
@@ -179,7 +182,7 @@ No source from either project is included in Steward.
 
 ## Growth path
 
-1. **Current alpha** — authoritative engineer lanes, `/live`, durable control and recovery, real CLI edge, cheap routing, observer, snapshot-fenced manager calls, read-only production checks, and human grant broker.
+1. **Current alpha** — authoritative engineer lanes, `/live`, durable control and recovery, real CLI edge, cheap routing, observer, evidence-bound manager assignments and permits, read-only production checks, and human grant broker.
 2. **Isolated execution** — containers/dedicated UIDs, immutable adapter bundles, scoped network, CI evidence capture, and dedicated read-only verifier/manager runners.
 3. **Durable service plane** — transactional database, HA ownership, identity provider, retention, backups, audit anchoring, paginated sequenced production checks, and an authoritative human-approval surface.
 4. **Production integration** — artifact registry, canonical manifest service, idempotent executor, health checks, rollback, and operational approvals.

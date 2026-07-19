@@ -1,5 +1,9 @@
 import {
+  STEWARD_RUNTIME_API_VERSION,
   STEWARD_UI_API_VERSION,
+  parseAgentTaskProjection,
+  parseManagerReviewPermitConsumeReceipt,
+  parseManagerReviewPermitConsumeRequest,
   type AgentConnectionState,
   type AgentRuntimeUpdate,
   type AgentTaskProjection,
@@ -9,6 +13,8 @@ import {
   type HumanCommandEnvelope,
   type IsoTimestamp,
   type LeaseId,
+  type ManagerReviewPermitConsumeReceipt,
+  type ManagerReviewPermitConsumeRequest,
   type ProgressEvent,
   type RegisteredAgentProjection,
   type RuntimeCommandEnvelope,
@@ -30,10 +36,14 @@ export const durableKinds = Object.freeze({
   taskQueued: 'human.task_queued',
   runtimeCommand: 'human.runtime_command_issued',
   workspaceControl: 'human.workspace_control_changed',
+  managerReviewPermit: 'manager.review_permit_consumed',
 });
 
 export interface LaneState {
   registration: SupervisorRegistration;
+  /** SHA-256 verifier only; the runtime capability is never persisted. */
+  runtimeGenerationProofDigest: string | null;
+  runtimeFeatures: readonly string[];
   leaseId: LeaseId;
   leaseGrantedAt: IsoTimestamp;
   leaseExpiresAt: IsoTimestamp;
@@ -71,6 +81,8 @@ interface RegisteredData extends Record<string, unknown> {
   leaseId: LeaseId;
   leaseGrantedAt: IsoTimestamp;
   leaseExpiresAt: IsoTimestamp;
+  runtimeGenerationProofDigest?: string;
+  runtimeFeatures?: readonly string[];
 }
 
 interface LeaseData extends Record<string, unknown> {
@@ -99,6 +111,11 @@ interface WorkspaceControlData extends Record<string, unknown> {
   controlVersion: number;
 }
 
+interface ManagerReviewPermitData extends Record<string, unknown> {
+  request: ManagerReviewPermitConsumeRequest;
+  permitId: string;
+}
+
 function dataAs<T extends Record<string, unknown>>(event: DurableEvent): T {
   return event.data as T;
 }
@@ -112,6 +129,9 @@ export class WorkspaceProjection {
   readonly lanes = new Map<string, LaneState>();
   readonly tasks = new Map<string, AgentTaskProjection>();
   readonly progress = new Map<string, ProgressEvent[]>();
+  readonly reviewPermitsByOperation = new Map<string, ManagerReviewPermitConsumeReceipt>();
+  readonly reviewPermitsByTask = new Map<string, ManagerReviewPermitConsumeReceipt>();
+  readonly reviewPermitsByEvidence = new Map<string, ManagerReviewPermitConsumeReceipt>();
   readonly uiEvents: UiEventEnvelope[] = [];
   workspacePaused = false;
   controlVersion = 0;
@@ -157,6 +177,12 @@ export class WorkspaceProjection {
       case durableKinds.workspaceControl:
         payload = this.#applyWorkspaceControl(dataAs<WorkspaceControlData>(event));
         break;
+      case durableKinds.managerReviewPermit:
+        payload = this.#applyManagerReviewPermit(
+          dataAs<ManagerReviewPermitData>(event),
+          event,
+        );
+        break;
       default:
         throw new Error(`PROJECTION_UNKNOWN_EVENT: ${event.kind}`);
     }
@@ -191,8 +217,23 @@ export class WorkspaceProjection {
       'PROJECTION_REGISTRATION_MISSING',
       'Registration event has no accepted runtime identity',
     );
+    invariant(
+      data.runtimeGenerationProofDigest === undefined ||
+        /^sha256:[a-f0-9]{64}$/u.test(data.runtimeGenerationProofDigest),
+      'PROJECTION_RUNTIME_PROOF_DIGEST_INVALID',
+      'Registration event has an invalid runtime proof verifier',
+    );
+    invariant(
+      data.runtimeFeatures === undefined ||
+        (Array.isArray(data.runtimeFeatures) &&
+          data.runtimeFeatures.every((feature) => typeof feature === 'string')),
+      'PROJECTION_RUNTIME_FEATURES_INVALID',
+      'Registration event has invalid runtime feature negotiation',
+    );
     const lane: LaneState = {
       registration: request,
+      runtimeGenerationProofDigest: data.runtimeGenerationProofDigest ?? null,
+      runtimeFeatures: Object.freeze([...(data.runtimeFeatures ?? [])]),
       leaseId: data.leaseId,
       leaseGrantedAt: data.leaseGrantedAt,
       leaseExpiresAt: data.leaseExpiresAt,
@@ -544,8 +585,23 @@ export class WorkspaceProjection {
       'Human control versions must advance by one',
     );
     this.controlVersion = data.controlVersion;
-    this.tasks.set(data.task.taskId, data.task);
-    return { type: 'task_upserted', task: data.task };
+    // Pre-subject alpha records can be normalized only when their fixed lane
+    // is an engineer lane. Never infer a manager-review evidence binding from
+    // title/objective prose; legacy non-engineer tasks fail replay closed.
+    const candidate = data.task as AgentTaskProjection & { subject?: AgentTaskProjection['subject'] };
+    const task = Object.hasOwn(candidate, 'subject')
+      ? parseAgentTaskProjection(candidate)
+      : (() => {
+          const lane = this.requireLane(candidate.laneId);
+          invariant(
+            lane.registration.role === 'engineer',
+            'PROJECTION_LEGACY_TASK_SUBJECT_REQUIRED',
+            'Legacy non-engineer tasks require an explicit typed subject',
+          );
+          return parseAgentTaskProjection({ ...candidate, subject: { type: 'development' } });
+        })();
+    this.tasks.set(task.taskId, task);
+    return { type: 'task_upserted', task };
   }
 
   #applyRuntimeCommand(data: RuntimeCommandData, occurredAt: string): UiEventPayload {
@@ -569,6 +625,16 @@ export class WorkspaceProjection {
     lane.runtimeCommands.push(command);
     switch (command.payload.type) {
       case 'assign_task':
+        if (!lane.queue.includes(command.payload.task.taskId)) lane.queue.push(command.payload.task.taskId);
+        taskUpdate = this.requireTask(command.payload.task.taskId);
+        break;
+      case 'recover_task':
+        invariant(
+          command.payload.task.subject.type === 'manager_review' &&
+            command.payload.task.status === 'running',
+          'PROJECTION_RECOVER_TASK_INVALID',
+          'Only a running manager-review task can be rebound for recovery',
+        );
         if (!lane.queue.includes(command.payload.task.taskId)) lane.queue.push(command.payload.task.taskId);
         taskUpdate = this.requireTask(command.payload.task.taskId);
         break;
@@ -634,6 +700,94 @@ export class WorkspaceProjection {
       type: 'workspace_control_updated',
       paused: this.workspacePaused,
       controlVersion: this.controlVersion,
+    };
+  }
+
+  #applyManagerReviewPermit(
+    data: ManagerReviewPermitData,
+    event: DurableEvent,
+  ): UiEventPayload {
+    const request = parseManagerReviewPermitConsumeRequest(data.request);
+    const lane = this.requireLane(request.managerLaneId);
+    const task = this.requireTask(request.reviewTaskId);
+    const sourceTask = this.requireTask(request.sourceTaskId);
+    invariant(
+      event.laneId === request.managerLaneId &&
+      lane.registration.role === 'manager' &&
+        lane.registration.agentId === request.managerAgentId &&
+        lane.registration.runtimeInstanceId === request.runtimeInstanceId &&
+        lane.registration.runtimeEpoch === request.runtimeEpoch,
+      'PROJECTION_REVIEW_PERMIT_IDENTITY',
+      'Manager-review permit does not match the accepted runtime generation',
+    );
+    invariant(
+      task.agentId === request.managerAgentId &&
+        task.laneId === request.managerLaneId &&
+        task.status === 'running' &&
+        lane.currentAction?.taskId === task.taskId,
+      'PROJECTION_REVIEW_PERMIT_TASK_STATE',
+      'Manager-review permit requires the assigned running task',
+    );
+    invariant(
+      task.subject.type === 'manager_review' &&
+        task.subject.sourceTaskId === request.sourceTaskId &&
+        task.subject.evidenceId === request.evidenceId &&
+        task.subject.evidenceDigest === request.evidenceDigest,
+      'PROJECTION_REVIEW_PERMIT_SUBJECT',
+      'Manager-review permit does not match its immutable task subject',
+    );
+    invariant(
+      sourceTask.status === 'completed' &&
+        sourceTask.agentId !== request.managerAgentId &&
+        Date.parse(sourceTask.endedAt ?? '') <= Date.parse(event.occurredAt) &&
+        task.startedAt !== null &&
+        Date.parse(task.startedAt) <= Date.parse(event.occurredAt),
+      'PROJECTION_REVIEW_PERMIT_TIMELINE',
+      'Manager-review permit has an invalid source or review task timeline',
+    );
+    invariant(
+      !this.reviewPermitsByOperation.has(request.operationId) &&
+        !this.reviewPermitsByTask.has(request.reviewTaskId) &&
+        !this.reviewPermitsByEvidence.has(request.evidenceId),
+      'PROJECTION_REVIEW_PERMIT_DUPLICATE',
+      'Manager-review permit was consumed more than once',
+    );
+
+    const receipt = parseManagerReviewPermitConsumeReceipt({
+      apiVersion: STEWARD_RUNTIME_API_VERSION,
+      state: 'accepted',
+      permitId: data.permitId,
+      operationId: request.operationId,
+      workspaceId: request.workspaceId,
+      reviewTaskId: request.reviewTaskId,
+      sourceTaskId: request.sourceTaskId,
+      evidenceId: request.evidenceId,
+      evidenceDigest: request.evidenceDigest,
+      managerAgentId: request.managerAgentId,
+      managerLaneId: request.managerLaneId,
+      managerRuntimeInstanceId: request.runtimeInstanceId,
+      managerRuntimeEpoch: request.runtimeEpoch,
+      reviewRequestDigest: request.reviewRequestDigest,
+      authorizedAt: event.occurredAt,
+      workspaceSequence: event.workspaceSequence,
+    });
+    this.reviewPermitsByOperation.set(receipt.operationId, receipt);
+    this.reviewPermitsByTask.set(receipt.reviewTaskId, receipt);
+    this.reviewPermitsByEvidence.set(receipt.evidenceId, receipt);
+
+    const completed: AgentTaskProjection = {
+      ...task,
+      status: 'completed',
+      endedAt: receipt.authorizedAt,
+    };
+    this.tasks.set(completed.taskId, completed);
+    lane.currentAction = null;
+    lane.queue = lane.queue.filter((taskId) => taskId !== completed.taskId);
+    lane.pausedAtByTask.delete(completed.taskId);
+    return {
+      type: 'agent_runtime_updated',
+      agent: this.runtimeUpdate(lane, new Date(event.occurredAt)),
+      task: completed,
     };
   }
 

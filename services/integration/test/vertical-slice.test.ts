@@ -203,6 +203,7 @@ function queuePayload(title: string): HumanCommandPayload {
     type: "queue_work",
     agentId: AGENT_ID,
     laneId: LANE_ID,
+    subject: { type: "development" },
     title,
     objective: "Deliver a user-visible result through the research, plan, execute, test loop.",
     expectedAgentMinutes: 15,
@@ -222,6 +223,7 @@ test(
     await daemon.tick();
     assert.equal(daemon.snapshot.state, "active");
     assert.equal(daemon.snapshot.runtimeEpoch, 1);
+    assert.match(daemon.runtimeGenerationProof ?? "", /^rgp_[A-Za-z0-9_-]{43}$/u);
     assert.equal(firstControlPlane.service.projection.lanes.size, 1);
 
     await postHumanCommand(
@@ -317,6 +319,10 @@ test(
     );
     await replacementDaemon.tick();
     assert.equal(replacementDaemon.snapshot.runtimeEpoch, 2);
+    assert.match(
+      replacementDaemon.runtimeGenerationProof ?? "",
+      /^rgp_[A-Za-z0-9_-]{43}$/u,
+    );
     assert.equal(replacementProvider.calls.length, 0, "completed work must not replay after restart");
     assert.equal(
       (await bootstrap(restartedControlPlane.url)).snapshot.agents[0]?.runtimeEpoch,

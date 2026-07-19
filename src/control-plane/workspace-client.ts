@@ -3,6 +3,7 @@ import {
   parseUiBootstrap,
   parseUiEventEnvelope,
   parseUiSnapshot,
+  type AgentTaskProjection,
   type HumanCommandEnvelope,
   type HumanCommandReceipt,
   type RegisteredAgentProjection,
@@ -126,6 +127,39 @@ function reconcileAgentRuntime(
   return Object.freeze({ ...existing, ...update });
 }
 
+function assertStableTaskProjection(
+  existing: AgentTaskProjection,
+  incoming: AgentTaskProjection,
+): void {
+  if (existing.agentId !== incoming.agentId || existing.laneId !== incoming.laneId) {
+    throw new ReplicaReconciliationError('A task event changed the task owner identity.');
+  }
+  const sameSubject = existing.subject.type === incoming.subject.type &&
+    (existing.subject.type === 'development' ||
+      (incoming.subject.type === 'manager_review' &&
+        existing.subject.sourceTaskId === incoming.subject.sourceTaskId &&
+        existing.subject.evidenceId === incoming.subject.evidenceId &&
+        existing.subject.evidenceDigest === incoming.subject.evidenceDigest));
+  if (!sameSubject) {
+    throw new ReplicaReconciliationError('A task event changed its immutable subject binding.');
+  }
+  if (existing.expectedAgentMinutes !== incoming.expectedAgentMinutes) {
+    throw new ReplicaReconciliationError('A task event changed its original agent-time estimate.');
+  }
+  if (existing.startedAt !== null && incoming.startedAt !== existing.startedAt) {
+    throw new ReplicaReconciliationError('A task event reset its authoritative start time.');
+  }
+  if (existing.endedAt !== null && incoming.endedAt !== existing.endedAt) {
+    throw new ReplicaReconciliationError('A task event reset its authoritative end time.');
+  }
+  if (
+    (existing.status === 'completed' || existing.status === 'failed') &&
+    incoming.status !== existing.status
+  ) {
+    throw new ReplicaReconciliationError('A task event regressed a terminal status.');
+  }
+}
+
 function applyUiEvent(
   snapshot: UiSnapshot,
   eventInput: UiEventEnvelope,
@@ -184,27 +218,19 @@ function applyUiEvent(
     case 'task_upserted': {
       const incoming = payload.task;
       const existing = tasks.find((task) => task.taskId === incoming.taskId);
-      if (
-        existing &&
-        (existing.agentId !== incoming.agentId || existing.laneId !== incoming.laneId)
-      ) {
-        throw new ReplicaReconciliationError('A task event changed the task owner identity.');
-      }
+      if (existing) assertStableTaskProjection(existing, incoming);
       tasks = replaceById(tasks, (task) => String(task.taskId), incoming);
       break;
     }
     case 'progress_recorded': {
       const incoming = payload.task;
       const existing = tasks.find((task) => task.taskId === incoming.taskId);
-      if (
-        !existing ||
-        existing.agentId !== incoming.agentId ||
-        existing.laneId !== incoming.laneId
-      ) {
+      if (!existing) {
         throw new ReplicaReconciliationError(
           'A progress event did not match an existing task owner identity.',
         );
       }
+      assertStableTaskProjection(existing, incoming);
       tasks = replaceById(tasks, (task) => String(task.taskId), incoming);
       progress = Object.freeze([...progress, payload.progress]);
       break;
@@ -220,15 +246,7 @@ function applyUiEvent(
       agents = Object.freeze(next);
       if (payload.task !== null) {
         const existingTask = tasks.find((task) => task.taskId === payload.task?.taskId);
-        if (
-          existingTask &&
-          (existingTask.agentId !== payload.task.agentId ||
-            existingTask.laneId !== payload.task.laneId)
-        ) {
-          throw new ReplicaReconciliationError(
-            'A runtime event changed the task owner identity.',
-          );
-        }
+        if (existingTask) assertStableTaskProjection(existingTask, payload.task);
         tasks = replaceById(tasks, (task) => String(task.taskId), payload.task);
       }
       break;

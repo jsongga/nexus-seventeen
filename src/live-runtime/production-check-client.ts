@@ -16,6 +16,7 @@ export interface LiveProductionCheck {
   readonly status: ProductionCheckStatus;
   readonly workspaceId: string;
   readonly taskId: string;
+  readonly reviewTaskId: string;
   readonly evidenceId: string;
   readonly evidenceDigest: string;
   readonly completionEventId: string;
@@ -25,6 +26,8 @@ export interface LiveProductionCheck {
   readonly managerRuntimeInstanceId: string;
   readonly managerRuntimeEpoch: number;
   readonly managerReviewId: string;
+  readonly permitId: string;
+  readonly permitWorkspaceSequence: number;
   readonly resultOverview: string;
   readonly reviewSummary: string;
   readonly remainingRisks: string;
@@ -215,6 +218,7 @@ const PRODUCTION_CHECK_KEYS = [
   'status',
   'workspaceId',
   'taskId',
+  'reviewTaskId',
   'evidenceId',
   'evidenceDigest',
   'completionEventId',
@@ -224,6 +228,8 @@ const PRODUCTION_CHECK_KEYS = [
   'managerRuntimeInstanceId',
   'managerRuntimeEpoch',
   'managerReviewId',
+  'permitId',
+  'permitWorkspaceSequence',
   'resultOverview',
   'reviewSummary',
   'remainingRisks',
@@ -261,6 +267,11 @@ function parseProductionCheck(value: unknown, expectedWorkspaceId: string): Live
   if (Date.parse(reviewedAt) < Date.parse(completedAt)) {
     throw new ProductionCheckProtocolError('Manager review cannot predate task completion.');
   }
+  const taskId = identifier(item.taskId, 'Production check taskId');
+  const reviewTaskId = identifier(item.reviewTaskId, 'Production check reviewTaskId');
+  if (reviewTaskId === taskId) {
+    throw new ProductionCheckProtocolError('The manager-review task must differ from its source task.');
+  }
   const handoffId = nullableUuid(item.handoffId, 'Production check handoffId');
   const handoffRegisteredAt = nullableTimestamp(
     item.handoffRegisteredAt,
@@ -281,7 +292,8 @@ function parseProductionCheck(value: unknown, expectedWorkspaceId: string): Live
     productionCheckId,
     status: item.status,
     workspaceId,
-    taskId: identifier(item.taskId, 'Production check taskId'),
+    taskId,
+    reviewTaskId,
     evidenceId: uuid(item.evidenceId, 'Production check evidenceId'),
     evidenceDigest: digest(item.evidenceDigest, 'Production check evidenceDigest'),
     completionEventId: identifier(item.completionEventId, 'Production check completionEventId', 256),
@@ -297,6 +309,11 @@ function parseProductionCheck(value: unknown, expectedWorkspaceId: string): Live
       'Production check managerRuntimeEpoch',
     ),
     managerReviewId,
+    permitId: identifier(item.permitId, 'Production check permitId'),
+    permitWorkspaceSequence: positiveSafeInteger(
+      item.permitWorkspaceSequence,
+      'Production check permitWorkspaceSequence',
+    ),
     resultOverview: reviewText(item.resultOverview, 'Production check resultOverview'),
     reviewSummary: reviewText(item.reviewSummary, 'Production check reviewSummary'),
     remainingRisks: reviewText(item.remainingRisks, 'Production check remainingRisks'),
@@ -323,13 +340,26 @@ export function parseProductionCheckResponse(
   const checks = response.items.map((item) => parseProductionCheck(item, expectedWorkspaceId));
   const checkIds = new Set<string>();
   const reviewIds = new Set<string>();
+  const reviewTaskIds = new Set<string>();
+  const permitIds = new Set<string>();
+  const permitSequences = new Set<number>();
   const evidenceIds = new Set<string>();
   for (const check of checks) {
-    if (checkIds.has(check.productionCheckId) || reviewIds.has(check.managerReviewId) || evidenceIds.has(check.evidenceId)) {
+    if (
+      checkIds.has(check.productionCheckId) ||
+      reviewIds.has(check.managerReviewId) ||
+      reviewTaskIds.has(check.reviewTaskId) ||
+      permitIds.has(check.permitId) ||
+      permitSequences.has(check.permitWorkspaceSequence) ||
+      evidenceIds.has(check.evidenceId)
+    ) {
       throw new ProductionCheckProtocolError('Production checks contain a duplicate identity.');
     }
     checkIds.add(check.productionCheckId);
     reviewIds.add(check.managerReviewId);
+    reviewTaskIds.add(check.reviewTaskId);
+    permitIds.add(check.permitId);
+    permitSequences.add(check.permitWorkspaceSequence);
     evidenceIds.add(check.evidenceId);
   }
   return Object.freeze(checks);

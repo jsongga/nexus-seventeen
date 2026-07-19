@@ -57,6 +57,7 @@ function task(
     workspaceId: agent.workspaceId,
     agentId: agent.agentId,
     laneId: agent.laneId,
+    subject: { type: 'development' },
     title: taskId,
     objective: `Finish ${taskId}`,
     status,
@@ -69,7 +70,7 @@ function task(
 
 function snapshot(): UiSnapshot {
   return {
-    apiVersion: 'steward.ui/v1',
+    apiVersion: 'steward.ui/v2',
     workspaceId: patch.workspaceId,
     generatedAt: '2026-07-18T20:00:00.000Z',
     sequence: 12,
@@ -146,6 +147,7 @@ describe('live-runtime command construction', () => {
     expect(queue.expectedControlVersion).toBe(7);
     expect(queue.payload).toMatchObject({
       type: 'queue_work',
+      subject: { type: 'development' },
       title: 'Repair sign in',
       objective: 'Users can sign in again.',
       expectedAgentMinutes: 30,
@@ -158,6 +160,18 @@ describe('live-runtime command construction', () => {
       laneId: vale.laneId,
       reason: 'Human review found a risky assumption.',
     });
+  });
+
+  it('does not let the human development queue create manager or verifier work', () => {
+    expect(() => buildQueueWorkCommand({
+      snapshot: snapshot(),
+      agent: vale,
+      clientCommandId: 'ui_wrong-role',
+      issuedAt: new Date('2026-07-18T20:08:00.000Z'),
+      title: 'Review the release',
+      objective: 'Decide whether it is safe.',
+      expectedAgentMinutes: 30,
+    })).toThrow(/only to an engineer lane/u);
   });
 
   it('constructs workspace and lane resume controls from authoritative state', () => {

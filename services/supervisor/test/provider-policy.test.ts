@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { parseAgentTaskProjection } from "@cicada/steward-protocol";
 import { SupervisorDaemon } from "../src/daemon.js";
 import {
   authorizeProviderPhase,
@@ -88,4 +89,41 @@ test("non-engineer task assignment is durably denied without invoking an adapter
     assert.match(records.at(-1)?.payload.error ?? "", /only engineers/i);
     await daemon.shutdown();
   }
+});
+
+test("generic supervisors hold a recovered manager review without rewriting its lifecycle", async () => {
+  const root = await temporaryDirectory();
+  const provider = new FakeProviderAdapter();
+  const client = new FakeControlPlane();
+  const daemon = await SupervisorDaemon.create({
+    config: configFixture(root, { role: "manager", runtimeInstanceId: "runtime-manager-recovery" }),
+    client,
+    provider,
+  });
+  await daemon.tick();
+  const reviewTask = parseAgentTaskProjection({
+    ...taskFixture("task-manager-review"),
+    subject: {
+      type: "manager_review",
+      sourceTaskId: "task-source",
+      evidenceId: "evidence-source",
+      evidenceDigest: `sha256:${"a".repeat(64)}`,
+    },
+    status: "running",
+    startedAt: "2026-07-18T20:00:00.000Z",
+  });
+
+  await daemon.handleCommand(client.enqueue(
+    { type: "recover_task", task: reviewTask },
+    daemon.snapshot.runtimeEpoch,
+  ));
+
+  assert.equal(provider.calls.length, 0);
+  assert.equal(daemon.snapshot.activeTask, null);
+  assert.deepEqual(daemon.snapshot.queuedTasks, []);
+  assert.equal(daemon.snapshot.state, "held");
+  assert.equal(reviewTask.status, "running");
+  assert.equal(reviewTask.startedAt, "2026-07-18T20:00:00.000Z");
+  assert.equal(daemon.snapshot.pendingOutboxEvents, 0, "recovery must not emit task_failed");
+  await daemon.shutdown();
 });

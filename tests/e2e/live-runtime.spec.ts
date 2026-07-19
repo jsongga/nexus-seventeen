@@ -4,13 +4,13 @@ const NOW = '2026-07-18T20:00:00.000Z';
 
 function bootstrap() {
   return {
-    apiVersion: 'steward.ui/v1',
+    apiVersion: 'steward.ui/v2',
     sessionId: 'session-live-e2e',
     userId: 'human-live-e2e',
     permissions: ['agents:read', 'agents:control'],
     features: ['runtime-discovery'],
     snapshot: {
-      apiVersion: 'steward.ui/v1',
+      apiVersion: 'steward.ui/v2',
       workspaceId: 'workspace-alpha',
       sequence: 8,
       controlVersion: 1,
@@ -48,6 +48,7 @@ function bootstrap() {
         laneId: 'lane-patch',
         title: 'Recover interrupted checkout',
         objective: 'Customers can safely retry after a connection interruption.',
+        subject: { type: 'development' },
         status: 'running',
         expectedAgentMinutes: 30,
         expectedCompletedAt: '2026-07-18T20:30:00.000Z',
@@ -170,6 +171,9 @@ test('the live runtime presents manager-accepted work as a read-only human decis
           managerRuntimeInstanceId: 'manager-runtime-moss-001',
           managerRuntimeEpoch: 3,
           managerReviewId: '33333333-3333-4333-8333-333333333333',
+          reviewTaskId: 'task-review-checkout',
+          permitId: 'permit-checkout-001',
+          permitWorkspaceSequence: 9,
           resultOverview: 'Customers can retry checkout without creating a duplicate order.',
           reviewSummary: 'Passing evidence covers interruption and duplicate-submit behavior.',
           remainingRisks: 'A human should verify the staged rollback before production.',

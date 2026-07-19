@@ -2,9 +2,11 @@ import { sha256 } from "./canonical.js";
 import { ReviewServiceError, corruptStore } from "./errors.js";
 import {
   MANAGER_REVIEW_API_VERSION,
+  MANAGER_REVIEW_AUTHORIZATION_VERSION,
   type FixedManagerIdentity,
   type ManagerRuntimeClaim,
   type ManagerReview,
+  type ManagerReviewIntent,
   type PassingEngineerEvidence,
   type PassingEngineerEvidenceRequest,
   type RecordManagerReviewRequest,
@@ -187,13 +189,14 @@ export function evidenceDigest(request: PassingEngineerEvidenceRequest): string 
 export function parseManagerReviewRequest(value: unknown): RecordManagerReviewRequest {
   const item = exact(
     value,
-    ["evidenceDigest", "decision", "summary", "remainingRisks"],
+    ["reviewTaskId", "evidenceDigest", "decision", "summary", "remainingRisks"],
     "Manager review",
   );
   if (item.decision !== "accepted" && item.decision !== "changes_requested") {
     throw new ReviewServiceError(400, "INVALID_REQUEST", "Manager review decision is invalid");
   }
   return Object.freeze({
+    reviewTaskId: identifier(item.reviewTaskId, "reviewTaskId"),
     evidenceDigest: digest(item.evidenceDigest, "evidenceDigest"),
     decision: item.decision,
     summary: text(item.summary, "summary"),
@@ -324,9 +327,16 @@ function parseStoredEvidence(value: unknown): PassingEngineerEvidence {
 }
 
 function parseStoredReview(value: unknown): ManagerReview {
+  if (isRecord(value) && !("authorizationVersion" in value)) {
+    throw corruptStore(
+      "stored manager review authorizationVersion is missing; pre-permit review records require an explicit offline migration",
+    );
+  }
   const item = storedExact(value, [
     "apiVersion",
+    "authorizationVersion",
     "managerReviewId",
+    "reviewTaskId",
     "evidenceId",
     "evidenceDigest",
     "workspaceId",
@@ -336,6 +346,9 @@ function parseStoredReview(value: unknown): ManagerReview {
     "managerLaneId",
     "managerRuntimeInstanceId",
     "managerRuntimeEpoch",
+    "permitId",
+    "authorizedAt",
+    "workspaceSequence",
     "decision",
     "summary",
     "remainingRisks",
@@ -343,11 +356,21 @@ function parseStoredReview(value: unknown): ManagerReview {
   ], "Stored manager review");
   try {
     if (item.apiVersion !== MANAGER_REVIEW_API_VERSION) throw new Error("review API version is invalid");
+    if (item.authorizationVersion === 1) {
+      throw new Error(
+        "permit-era review authorizationVersion 1 has no durable review intent; an explicit offline migration is required",
+      );
+    }
+    if (item.authorizationVersion !== MANAGER_REVIEW_AUTHORIZATION_VERSION) {
+      throw new Error("review authorization version is unsupported");
+    }
     const decision = item.decision;
     if (decision !== "accepted" && decision !== "changes_requested") throw new Error("review decision is invalid");
     return Object.freeze({
       apiVersion: MANAGER_REVIEW_API_VERSION,
+      authorizationVersion: MANAGER_REVIEW_AUTHORIZATION_VERSION,
       managerReviewId: uuid(item.managerReviewId, "managerReviewId"),
+      reviewTaskId: identifier(item.reviewTaskId, "reviewTaskId"),
       evidenceId: uuid(item.evidenceId, "evidenceId"),
       evidenceDigest: digest(item.evidenceDigest, "evidenceDigest"),
       workspaceId: identifier(item.workspaceId, "workspaceId"),
@@ -360,6 +383,9 @@ function parseStoredReview(value: unknown): ManagerReview {
         "managerRuntimeInstanceId",
       ),
       managerRuntimeEpoch: positiveInteger(item.managerRuntimeEpoch, "managerRuntimeEpoch"),
+      permitId: identifier(item.permitId, "permitId"),
+      authorizedAt: timestamp(item.authorizedAt, "authorizedAt"),
+      workspaceSequence: positiveInteger(item.workspaceSequence, "workspaceSequence"),
       decision,
       summary: text(item.summary, "summary"),
       remainingRisks: text(item.remainingRisks, "remainingRisks"),
@@ -367,6 +393,40 @@ function parseStoredReview(value: unknown): ManagerReview {
     });
   } catch (error) {
     throw corruptStore(error instanceof Error ? error.message : "stored review is invalid");
+  }
+}
+
+function parseStoredReviewIntent(value: unknown): ManagerReviewIntent {
+  const item = storedExact(value, [
+    "apiVersion",
+    "reviewIntentId",
+    "workspaceId",
+    "evidenceId",
+    "managerAgentId",
+    "managerLaneId",
+    "initialRuntimeInstanceId",
+    "initialRuntimeEpoch",
+    "operationId",
+    "request",
+    "createdAt",
+  ], "Stored manager review intent");
+  try {
+    if (item.apiVersion !== MANAGER_REVIEW_API_VERSION) throw new Error("review intent API version is invalid");
+    return Object.freeze({
+      apiVersion: MANAGER_REVIEW_API_VERSION,
+      reviewIntentId: uuid(item.reviewIntentId, "reviewIntentId"),
+      workspaceId: identifier(item.workspaceId, "workspaceId"),
+      evidenceId: uuid(item.evidenceId, "evidenceId"),
+      managerAgentId: identifier(item.managerAgentId, "managerAgentId"),
+      managerLaneId: identifier(item.managerLaneId, "managerLaneId"),
+      initialRuntimeInstanceId: identifier(item.initialRuntimeInstanceId, "initialRuntimeInstanceId"),
+      initialRuntimeEpoch: positiveInteger(item.initialRuntimeEpoch, "initialRuntimeEpoch"),
+      operationId: identifier(item.operationId, "operationId", 256),
+      request: parseManagerReviewRequest(item.request),
+      createdAt: timestamp(item.createdAt, "createdAt"),
+    });
+  } catch (error) {
+    throw corruptStore(error instanceof Error ? error.message : "stored review intent is invalid");
   }
 }
 
@@ -384,9 +444,11 @@ export function parseStoredEvent(value: unknown, expectedSequence: number, expec
     "contentHash",
     value && typeof value === "object" && "eventType" in value && value.eventType === "evidence_registered"
       ? "evidence"
-      : value && typeof value === "object" && "eventType" in value && value.eventType === "manager_review_recorded"
-        ? "review"
-        : "handoff",
+      : value && typeof value === "object" && "eventType" in value && value.eventType === "manager_review_intent_recorded"
+        ? "intent"
+        : value && typeof value === "object" && "eventType" in value && value.eventType === "manager_review_recorded"
+          ? "review"
+          : "handoff",
     ...(value && typeof value === "object" && "eventType" in value && value.eventType === "handoff_registered"
       ? ["managerReviewId"]
       : []),
@@ -412,6 +474,12 @@ export function parseStoredEvent(value: unknown, expectedSequence: number, expec
     let withoutHash: Record<string, unknown>;
     if (record.eventType === "evidence_registered") {
       withoutHash = { ...base, eventType: "evidence_registered", evidence: parseStoredEvidence(record.evidence) };
+    } else if (record.eventType === "manager_review_intent_recorded") {
+      withoutHash = {
+        ...base,
+        eventType: "manager_review_intent_recorded",
+        intent: parseStoredReviewIntent(record.intent),
+      };
     } else if (record.eventType === "manager_review_recorded") {
       withoutHash = { ...base, eventType: "manager_review_recorded", review: parseStoredReview(record.review) };
     } else if (record.eventType === "handoff_registered") {

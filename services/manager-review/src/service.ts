@@ -7,13 +7,16 @@ import {
   requireEvidenceIssuer,
   requireHuman,
   requireManagerRuntimeClaim,
+  requireManagerRuntimeGenerationProof,
   sendError,
   sendJson,
 } from "./http.js";
 import { parseFixedManagerIdentity } from "./schema.js";
+import { withRuntimeGenerationProof } from "./runtime-generation-proof.js";
 import type {
   ManagerCredential,
   ManagerHandoffRegistrar,
+  ManagerReviewPermitConsumer,
   ManagerRuntimeAuthorizer,
 } from "./types.js";
 import { ManagerReviewWorkflow } from "./workflow.js";
@@ -27,6 +30,7 @@ export interface ManagerReviewServiceOptions {
   readonly managers: readonly ManagerCredential[];
   readonly handoffRegistrar: ManagerHandoffRegistrar;
   readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly managerReviewPermitConsumer: ManagerReviewPermitConsumer;
   readonly corsOrigins?: readonly string[];
   readonly host?: string;
   readonly port?: number;
@@ -44,6 +48,7 @@ export interface ManagerReviewServiceConfig {
   readonly managers: readonly ManagerCredential[];
   readonly handoffRegistrar: ManagerHandoffRegistrar;
   readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly managerReviewPermitConsumer: ManagerReviewPermitConsumer;
   readonly corsOrigins: ReadonlySet<string>;
   readonly host: string;
   readonly port: number;
@@ -145,6 +150,13 @@ function normalizeConfig(options: ManagerReviewServiceOptions): ManagerReviewSer
   ) {
     throw new ReviewServiceError(500, "INVALID_CONFIGURATION", "Manager runtime authorizer is required");
   }
+  if (
+    options.managerReviewPermitConsumer === null ||
+    typeof options.managerReviewPermitConsumer !== "object" ||
+    typeof options.managerReviewPermitConsumer.consumeManagerReviewPermit !== "function"
+  ) {
+    throw new ReviewServiceError(500, "INVALID_CONFIGURATION", "Manager review permit consumer is required");
+  }
   return Object.freeze({
     workspaceId: options.workspaceId,
     storePath: options.storePath,
@@ -154,6 +166,7 @@ function normalizeConfig(options: ManagerReviewServiceOptions): ManagerReviewSer
     managers: Object.freeze(managers),
     handoffRegistrar: options.handoffRegistrar,
     managerRuntimeAuthorizer: options.managerRuntimeAuthorizer,
+    managerReviewPermitConsumer: options.managerReviewPermitConsumer,
     corsOrigins: exactCorsOrigins(options.corsOrigins),
     host: loopbackHost(options.host),
     port: boundedInteger(options.port, 0, 0, 65_535, "port"),
@@ -209,6 +222,7 @@ export class ManagerReviewService {
       evidenceIssuerPrincipal: config.evidenceIssuerPrincipal,
       handoffRegistrar: config.handoffRegistrar,
       managerRuntimeAuthorizer: config.managerRuntimeAuthorizer,
+      managerReviewPermitConsumer: config.managerReviewPermitConsumer,
       ...(config.now === undefined ? {} : { now: config.now }),
     });
     return new ManagerReviewService(config, workflow);
@@ -272,11 +286,16 @@ export class ManagerReviewService {
     if (reviewMatch && request.method === "POST") {
       if (url.search) throw new ReviewServiceError(400, "INVALID_REQUEST", "Review endpoint takes no query");
       const manager = requireManagerRuntimeClaim(request, this.config);
-      const result = await this.#workflow.recordManagerReview(
-        reviewMatch[1]!,
-        await readJsonBody(request, this.config.maxBodyBytes),
-        manager,
-        typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : "",
+      const generationProof = requireManagerRuntimeGenerationProof(request);
+      const body = await readJsonBody(request, this.config.maxBodyBytes);
+      const result = await withRuntimeGenerationProof(
+        generationProof,
+        () => this.#workflow.recordManagerReview(
+          reviewMatch[1]!,
+          body,
+          manager,
+          typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : "",
+        ),
       );
       const status = result.duplicate
         ? 200

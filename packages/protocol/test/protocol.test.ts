@@ -12,6 +12,8 @@ import {
   parseHumanCommandReceipt,
   parseLeaseRenewalRequest,
   parseLeaseRenewalResult,
+  parseManagerReviewPermitConsumeReceipt,
+  parseManagerReviewPermitConsumeRequest,
   parseProgressEvent,
   parseRegisteredAgentProjection,
   parseRuntimeCommandEnvelope,
@@ -49,6 +51,7 @@ const task = () => ({
   workspaceId: "workspace-one",
   agentId: "agent-one",
   laneId: "lane-engineer-one",
+  subject: { type: "development" },
   title: "Improve account recovery",
   objective: "Users can recover an account after losing a device.",
   status: "queued",
@@ -56,6 +59,58 @@ const task = () => ({
   expectedCompletedAt: "2026-07-18T19:45:00Z",
   startedAt: null,
   endedAt: null,
+});
+
+const EVIDENCE_DIGEST = `sha256:${"a".repeat(64)}`;
+const REVIEW_REQUEST_DIGEST = `sha256:${"b".repeat(64)}`;
+
+const managerReviewTask = () => ({
+  ...task(),
+  taskId: "task-review-one",
+  agentId: "agent-manager-one",
+  laneId: "lane-manager-one",
+  subject: {
+    type: "manager_review",
+    sourceTaskId: "task-one",
+    evidenceId: "evidence-one",
+    evidenceDigest: EVIDENCE_DIGEST,
+  },
+  title: "Review account recovery evidence",
+  objective: "Determine whether the evidence is ready for human review.",
+});
+
+const permitConsumeRequest = () => ({
+  apiVersion: STEWARD_RUNTIME_API_VERSION,
+  operationId: "review-operation-one",
+  workspaceId: "workspace-one",
+  reviewTaskId: "task-review-one",
+  sourceTaskId: "task-one",
+  evidenceId: "evidence-one",
+  evidenceDigest: EVIDENCE_DIGEST,
+  managerAgentId: "agent-manager-one",
+  managerLaneId: "lane-manager-one",
+  runtimeInstanceId: "runtime-manager-one",
+  runtimeEpoch: 4,
+  reviewRequestDigest: REVIEW_REQUEST_DIGEST,
+});
+
+const permitConsumeReceipt = () => ({
+  apiVersion: STEWARD_RUNTIME_API_VERSION,
+  state: "accepted",
+  permitId: "permit-one",
+  operationId: "review-operation-one",
+  workspaceId: "workspace-one",
+  reviewTaskId: "task-review-one",
+  sourceTaskId: "task-one",
+  evidenceId: "evidence-one",
+  evidenceDigest: EVIDENCE_DIGEST,
+  managerAgentId: "agent-manager-one",
+  managerLaneId: "lane-manager-one",
+  managerRuntimeInstanceId: "runtime-manager-one",
+  managerRuntimeEpoch: 4,
+  reviewRequestDigest: REVIEW_REQUEST_DIGEST,
+  authorizedAt: "2026-07-18T19:34:22.000Z",
+  workspaceSequence: 43,
 });
 
 const outboxEvent = (localSequence = 1) => ({
@@ -90,6 +145,25 @@ const runtimeCommand = (serverSequence = 1) => ({
   payload: {
     type: "assign_task",
     task: task(),
+  },
+});
+
+const recoveryRuntimeCommand = () => ({
+  apiVersion: STEWARD_RUNTIME_API_VERSION,
+  commandId: "command-recover-one",
+  workspaceId: "workspace-one",
+  agentId: "agent-manager-one",
+  laneId: "lane-manager-one",
+  serverSequence: 3,
+  expectedRuntimeEpoch: 4,
+  issuedAt: "2026-07-18T19:30:00Z",
+  payload: {
+    type: "recover_task",
+    task: {
+      ...managerReviewTask(),
+      status: "running",
+      startedAt: "2026-07-18T19:15:00Z",
+    },
   },
 });
 
@@ -239,7 +313,9 @@ describe("supervisor identity and leases", () => {
 
 describe("tasks and progress", () => {
   test("task timing accepts quarter-hour estimates and exact lifecycle times", () => {
-    assert.deepEqual(parseAgentTaskProjection(clone(task())), task());
+    const parsed = parseAgentTaskProjection(clone(task()));
+    assert.deepEqual(parsed, task());
+    assert.equal(Object.isFrozen(parsed.subject), true);
     const completed = {
       ...task(),
       status: "completed",
@@ -247,6 +323,43 @@ describe("tasks and progress", () => {
       endedAt: "2026-07-18T19:34:22Z",
     };
     assert.deepEqual(parseAgentTaskProjection(clone(completed)), completed);
+  });
+
+  test("tasks explicitly bind development or immutable manager-review evidence", () => {
+    const parsed = parseAgentTaskProjection(clone(managerReviewTask()));
+    assert.deepEqual(parsed, managerReviewTask());
+    assert.equal(Object.isFrozen(parsed.subject), true);
+
+    const withoutSubject = clone(task()) as Record<string, unknown>;
+    delete withoutSubject.subject;
+    assertValidationError(() => parseAgentTaskProjection(withoutSubject));
+    assertValidationError(() =>
+      parseAgentTaskProjection({
+        ...task(),
+        subject: { type: "development", evidenceId: "evidence-one" },
+      }),
+    );
+    assertValidationError(() =>
+      parseAgentTaskProjection({
+        ...managerReviewTask(),
+        subject: {
+          ...managerReviewTask().subject,
+          evidenceDigest: `sha256:${"A".repeat(64)}`,
+        },
+      }),
+    );
+    assertValidationError(() =>
+      parseAgentTaskProjection({
+        ...managerReviewTask(),
+        subject: {
+          ...managerReviewTask().subject,
+          evidenceId: "evidence with spaces",
+        },
+      }),
+    );
+    assertValidationError(() =>
+      parseAgentTaskProjection({ ...task(), subject: { type: "deployment" } }),
+    );
   });
 
   test("task timing rejects non-quarter deadlines, non-interval durations, and incoherent status", () => {
@@ -452,6 +565,170 @@ describe("durable runtime transport", () => {
       }),
     );
   });
+
+  test("replacement runtimes only recover already-running manager-review tasks", () => {
+    const input = recoveryRuntimeCommand();
+    const parsed = parseRuntimeCommandEnvelope(clone(input));
+    assert.deepEqual(parsed, input);
+    assert.equal(Object.isFrozen(parsed.payload), true);
+    assert.equal(
+      parsed.payload.type === "recover_task" &&
+        Object.isFrozen(parsed.payload.task),
+      true,
+    );
+
+    assertValidationError(() =>
+      parseRuntimeCommandEnvelope({
+        ...input,
+        payload: {
+          ...input.payload,
+          task: {
+            ...input.payload.task,
+            subject: { type: "development" },
+          },
+        },
+      }),
+    );
+
+    for (const taskState of [
+      { status: "queued", startedAt: null, endedAt: null },
+      {
+        status: "paused",
+        startedAt: "2026-07-18T19:15:00Z",
+        endedAt: null,
+      },
+      {
+        status: "completed",
+        startedAt: "2026-07-18T19:15:00Z",
+        endedAt: "2026-07-18T19:29:00Z",
+      },
+      {
+        status: "failed",
+        startedAt: "2026-07-18T19:15:00Z",
+        endedAt: "2026-07-18T19:29:00Z",
+      },
+    ]) {
+      assertValidationError(() =>
+        parseRuntimeCommandEnvelope({
+          ...input,
+          payload: {
+            ...input.payload,
+            task: { ...input.payload.task, ...taskState },
+          },
+        }),
+      );
+    }
+
+    assertValidationError(() =>
+      parseRuntimeCommandEnvelope({
+        ...input,
+        payload: { ...input.payload, unexpected: true },
+      }),
+    );
+    assertValidationError(() =>
+      parseRuntimeCommandEnvelope({
+        ...input,
+        agentId: "other-manager",
+      }),
+    );
+  });
+});
+
+describe("manager-review permit consumption", () => {
+  test("requests bind one review task, evidence artifact, manager runtime, and review payload", () => {
+    const input = permitConsumeRequest();
+    const parsed = parseManagerReviewPermitConsumeRequest(clone(input));
+    assert.deepEqual(parsed, input);
+    assert.equal(Object.isFrozen(parsed), true);
+
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({ ...input, extra: true }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        apiVersion: STEWARD_UI_API_VERSION,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        operationId: " unsafe operation ",
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        runtimeEpoch: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        runtimeEpoch: 0,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        evidenceDigest: `sha256:${"A".repeat(64)}`,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeRequest({
+        ...input,
+        reviewRequestDigest: `sha256:${"b".repeat(63)}`,
+      }),
+    );
+  });
+
+  test("receipts preserve the authoritative atomic decision and canonical ordering point", () => {
+    const input = permitConsumeReceipt();
+    const parsed = parseManagerReviewPermitConsumeReceipt(clone(input));
+    assert.deepEqual(parsed, input);
+    assert.equal(Object.isFrozen(parsed), true);
+    assert.deepEqual(
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        state: "duplicate",
+      }),
+      { ...input, state: "duplicate" },
+    );
+
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({ ...input, state: "rejected" }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        permitId: "permit with spaces",
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        managerRuntimeEpoch: 0,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        workspaceSequence: 0,
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        authorizedAt: "2026-07-18T19:34:22Z",
+      }),
+    );
+    assertValidationError(() =>
+      parseManagerReviewPermitConsumeReceipt({
+        ...input,
+        reviewRequestDigest: `sha256:${"B".repeat(64)}`,
+      }),
+    );
+  });
 });
 
 describe("authoritative UI transport", () => {
@@ -557,11 +834,49 @@ describe("human control commands", () => {
         expectedCompletedAt: "2026-07-18T19:45:00Z",
       },
     };
-    assert.deepEqual(parseHumanCommandEnvelope(clone(input)), input);
+    const parsed = parseHumanCommandEnvelope(clone(input));
+    assert.deepEqual(parsed, {
+      ...input,
+      payload: { ...input.payload, subject: { type: "development" } },
+    });
+    assert.equal(Object.isFrozen(parsed.payload), true);
     assertValidationError(() =>
       parseHumanCommandEnvelope({
         ...input,
         expectedControlVersion: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    );
+  });
+
+  test("queue commands accept explicit manager-review bindings", () => {
+    const input = {
+      apiVersion: STEWARD_UI_API_VERSION,
+      clientCommandId: "client-command-review",
+      workspaceId: "workspace-one",
+      expectedControlVersion: 8,
+      issuedAt: "2026-07-18T19:02:00Z",
+      payload: {
+        type: "queue_work",
+        agentId: "agent-manager-one",
+        laneId: "lane-manager-one",
+        subject: managerReviewTask().subject,
+        title: "Review account recovery evidence",
+        objective: "Determine whether the evidence is ready for human review.",
+        expectedAgentMinutes: 15,
+        expectedCompletedAt: "2026-07-18T19:15:00Z",
+      },
+    };
+    assert.deepEqual(parseHumanCommandEnvelope(clone(input)), input);
+    assertValidationError(() =>
+      parseHumanCommandEnvelope({
+        ...input,
+        payload: {
+          ...input.payload,
+          subject: {
+            ...input.payload.subject,
+            evidenceDigest: `sha256:${"a".repeat(65)}`,
+          },
+        },
       }),
     );
   });

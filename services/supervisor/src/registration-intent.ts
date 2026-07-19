@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -12,9 +13,16 @@ const REGISTRATION_INTENT_FILENAME = "registration-intent.json";
 const MAX_REGISTRATION_INTENT_BYTES = 32 * 1024;
 
 type RegistrationIntentFile = Readonly<{
-  version: 1;
+  version: 1 | 2;
   request: SupervisorRegistrationRequest;
+  proofChallenge: string | null;
 }>;
+
+const PROOF_CHALLENGE_PATTERN = /^rgc_[A-Za-z0-9_-]{43}$/u;
+
+function proofChallenge(): string {
+  return `rgc_${randomBytes(32).toString("base64url")}`;
+}
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((entry) => canonical(entry)).join(",")}]`;
@@ -33,12 +41,26 @@ function parseIntent(value: unknown): RegistrationIntentFile {
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
-  if (keys.length !== 2 || keys[0] !== "request" || keys[1] !== "version" || record.version !== 1) {
+  const legacy =
+    record.version === 1 &&
+    keys.length === 2 &&
+    keys[0] === "request" &&
+    keys[1] === "version";
+  const current =
+    record.version === 2 &&
+    keys.length === 3 &&
+    keys[0] === "proofChallenge" &&
+    keys[1] === "request" &&
+    keys[2] === "version" &&
+    typeof record.proofChallenge === "string" &&
+    PROOF_CHALLENGE_PATTERN.test(record.proofChallenge);
+  if (!legacy && !current) {
     throw new Error("Registration intent has invalid fields or version");
   }
   return Object.freeze({
-    version: 1,
+    version: legacy ? 1 : 2,
     request: parseSupervisorRegistrationRequest(record.request),
+    proofChallenge: legacy ? null : record.proofChallenge as string,
   });
 }
 
@@ -71,9 +93,14 @@ async function fsyncDirectory(pathname: string): Promise<void> {
 
 export class RegistrationIntentStore {
   readonly #path: string;
+  #proofChallenge: string | null = null;
 
   constructor(stateDirectory: string) {
     this.#path = join(stateDirectory, REGISTRATION_INTENT_FILENAME);
+  }
+
+  get proofChallenge(): string | null {
+    return this.#proofChallenge;
   }
 
   async load(
@@ -111,6 +138,7 @@ export class RegistrationIntentStore {
       if (!expectedOrIssuedEpoch(intent.request, observedRuntimeEpoch)) {
         throw new Error("Pending registration intent is inconsistent with the durably observed runtime epoch");
       }
+      this.#proofChallenge = intent.proofChallenge;
       return intent.request;
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -124,11 +152,13 @@ export class RegistrationIntentStore {
 
   async write(request: SupervisorRegistrationRequest): Promise<void> {
     const parsed = parseSupervisorRegistrationRequest(request);
+    const challenge = proofChallenge();
     await atomicWriteFile(
       this.#path,
-      `${JSON.stringify({ version: 1, request: parsed })}\n`,
+      `${JSON.stringify({ version: 2, request: parsed, proofChallenge: challenge })}\n`,
       0o600,
     );
+    this.#proofChallenge = challenge;
   }
 
   async clear(expectedRequest: SupervisorRegistrationRequest): Promise<void> {
@@ -161,5 +191,6 @@ export class RegistrationIntentStore {
     }
     await unlink(this.#path);
     await fsyncDirectory(dirname(this.#path));
+    this.#proofChallenge = null;
   }
 }

@@ -1,14 +1,20 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   ProtocolValidationError,
   STEWARD_RUNTIME_API_VERSION,
+  STEWARD_RUNTIME_FEATURES_HEADER,
+  STEWARD_RUNTIME_GENERATION_PROOF_HEADER,
+  STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER,
+  STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
   parseAgentTaskProjection,
   parseHumanCommandEnvelope,
   parseHumanCommandReceipt,
   parseLeaseRenewalRequest,
   parseLeaseRenewalResult,
+  parseManagerReviewPermitConsumeReceipt,
+  parseManagerReviewPermitConsumeRequest,
   parseRuntimeCommandEnvelope,
   parseRuntimeCommandPollRequest,
   parseRuntimeCommandPollResult,
@@ -29,9 +35,10 @@ import {
   type LeaseId,
   type LeaseRenewalRequest,
   type LeaseRenewalResult,
+  type ManagerReviewPermitConsumeReceipt,
+  type ManagerReviewPermitConsumeRequest,
   type RuntimeCommandEnvelope,
   type RuntimeCommandPayload,
-  type RuntimeCommandPollResult,
   type RuntimeEventBatchReceipt,
   type SessionId,
   type SupervisorRegistration,
@@ -56,6 +63,7 @@ import {
   parseCursor,
   readJsonBody,
   requireHuman,
+  requireManagerReviewPermitConsumer,
   requireUiRead,
   requireWorkload,
   sendError,
@@ -77,6 +85,61 @@ function asIso(date: Date): IsoTimestamp {
 
 const MAX_RUNTIME_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 const MAX_OFFLINE_EVENT_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
+const RUNTIME_PROOF_CHALLENGE_PATTERN = /^rgc_[A-Za-z0-9_-]{43}$/u;
+const RUNTIME_GENERATION_PROOF_PATTERN = /^rgp_[A-Za-z0-9_-]{43}$/u;
+
+function runtimeProofChallenge(request: IncomingMessage): string | null {
+  const value = request.headers[STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER];
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !RUNTIME_PROOF_CHALLENGE_PATTERN.test(value)) {
+    throw new ServiceError(
+      400,
+      'INVALID_RUNTIME_PROOF_CHALLENGE',
+      'Runtime proof challenge must contain 256 bits of base64url entropy',
+    );
+  }
+  return value;
+}
+
+function optionalRuntimeGenerationProof(request: IncomingMessage): string | null {
+  const value = request.headers[STEWARD_RUNTIME_GENERATION_PROOF_HEADER];
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !RUNTIME_GENERATION_PROOF_PATTERN.test(value)) {
+    throw new ServiceError(
+      400,
+      'INVALID_RUNTIME_GENERATION_PROOF',
+      'Runtime generation proof is malformed',
+    );
+  }
+  return value;
+}
+
+function runtimeFeatures(request: IncomingMessage): readonly string[] {
+  const value = request.headers[STEWARD_RUNTIME_FEATURES_HEADER];
+  if (value === undefined) return Object.freeze([]);
+  if (typeof value !== 'string') {
+    throw new ServiceError(400, 'INVALID_RUNTIME_FEATURES', 'Runtime feature header is invalid');
+  }
+  const presented = value.split(',').map((feature) => feature.trim()).filter(Boolean);
+  if (new Set(presented).size !== presented.length) {
+    throw new ServiceError(400, 'INVALID_RUNTIME_FEATURES', 'Runtime features must not repeat');
+  }
+  return Object.freeze(
+    presented.includes(STEWARD_RUNTIME_TYPED_TASKS_FEATURE)
+      ? [STEWARD_RUNTIME_TYPED_TASKS_FEATURE]
+      : [],
+  );
+}
+
+function capabilityDigest(value: string): string {
+  return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
+
+function exactDigestMatch(expected: string, value: string): boolean {
+  const actual = Buffer.from(capabilityDigest(value), 'utf8');
+  const wanted = Buffer.from(expected, 'utf8');
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted);
+}
 
 function recordData(value: object): Record<string, unknown> {
   return value as unknown as Record<string, unknown>;
@@ -115,6 +178,11 @@ function assertBoundedText(value: unknown, maximum: number): void {
 interface SseSubscriber {
   response: ServerResponse;
   keepalive: NodeJS.Timeout;
+}
+
+interface RegisteredRuntimeSession {
+  result: SupervisorRegistrationResult;
+  runtimeGenerationProof: string | null;
 }
 
 export class ControlPlaneService {
@@ -241,12 +309,27 @@ export class ControlPlaneService {
 
     if (request.method === 'POST' && url.pathname === '/v1/runtime/register') {
       const workload = requireWorkload(request, this.config);
+      const proofChallenge = runtimeProofChallenge(request);
+      const replacementProof = optionalRuntimeGenerationProof(request);
+      const features = runtimeFeatures(request);
       const body = await readJsonBody(request, this.config.maxBodyBytes);
       const registration = parseProtocol(parseSupervisorRegistrationRequest, body);
       assertWorkloadBinding(workload, registration);
       assertWorkloadRegistrationRole(workload, registration);
       assertBoundedText(registration, this.config.maxTextLength);
-      sendJson(response, 200, await this.#register(registration));
+      const session = await this.#register(
+        registration,
+        proofChallenge,
+        replacementProof,
+        features,
+      );
+      if (session.runtimeGenerationProof !== null) {
+        response.setHeader(
+          STEWARD_RUNTIME_GENERATION_PROOF_HEADER,
+          session.runtimeGenerationProof,
+        );
+      }
+      sendJson(response, 200, session.result);
       return;
     }
     if (request.method === 'POST' && url.pathname === '/v1/runtime/lease') {
@@ -264,9 +347,36 @@ export class ControlPlaneService {
       sendJson(response, 200, await this.#ingestRuntimeEvents(body, workload));
       return;
     }
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/v1/internal/manager-review-permits/consume'
+    ) {
+      if (request.headers.origin !== undefined) {
+        throw new ServiceError(
+          403,
+          'INTERNAL_ROUTE_BROWSER_FORBIDDEN',
+          'Manager-review permit consumption is service-to-service only',
+        );
+      }
+      requireManagerReviewPermitConsumer(request, this.config);
+      const generationProof = optionalRuntimeGenerationProof(request);
+      const body = await readJsonBody(request, this.config.maxBodyBytes);
+      const permit = parseProtocol(parseManagerReviewPermitConsumeRequest, body);
+      assertBoundedText(permit, this.config.maxTextLength);
+      sendJson(
+        response,
+        200,
+        await this.#consumeManagerReviewPermit(permit, generationProof),
+      );
+      return;
+    }
     if (request.method === 'GET' && url.pathname === '/v1/runtime/commands') {
       const workload = requireWorkload(request, this.config);
-      sendJson(response, 200, await this.#pollRuntimeCommands(url, workload));
+      sendJson(
+        response,
+        200,
+        await this.#pollRuntimeCommands(url, workload, runtimeFeatures(request)),
+      );
       return;
     }
     if (request.method === 'GET' && url.pathname === '/v1/ui/bootstrap') {
@@ -349,6 +459,7 @@ export class ControlPlaneService {
       leaseId?: string;
     },
     requireLive = true,
+    observedAt: Date = this.config.now(),
   ): void {
     this.#assertWorkspace(identity.workspaceId);
     const registration = lane.registration;
@@ -361,9 +472,62 @@ export class ControlPlaneService {
     ) {
       throw new ServiceError(409, 'RUNTIME_FENCED', 'Runtime epoch or lease is stale');
     }
-    if (requireLive && this.config.now().getTime() > Date.parse(lane.leaseExpiresAt)) {
+    if (requireLive && observedAt.getTime() > Date.parse(lane.leaseExpiresAt)) {
       throw new ServiceError(409, 'LEASE_EXPIRED', 'Runtime lease has expired; claim a new epoch');
     }
+  }
+
+  #deriveRuntimeGenerationProof(
+    registration: SupervisorRegistration,
+    challenge: string,
+  ): string {
+    const binding = canonicalJson({
+      version: 1,
+      workspaceId: registration.workspaceId,
+      agentId: registration.agentId,
+      laneId: registration.laneId,
+      runtimeInstanceId: registration.runtimeInstanceId,
+      runtimeEpoch: registration.runtimeEpoch,
+      challenge,
+    });
+    return `rgp_${createHmac('sha256', this.config.runtimeGenerationProofKey)
+      .update(binding, 'utf8')
+      .digest('base64url')}`;
+  }
+
+  #assertRuntimeGenerationProof(lane: LaneState, proof: string): void {
+    if (
+      lane.runtimeGenerationProofDigest === null ||
+      !exactDigestMatch(lane.runtimeGenerationProofDigest, proof)
+    ) {
+      throw new ServiceError(
+        409,
+        'RUNTIME_GENERATION_PROOF_REJECTED',
+        'Runtime generation proof is stale or does not match the registered process',
+      );
+    }
+  }
+
+  #registrationSession(
+    event: DurableEvent,
+    challenge: string | null,
+  ): RegisteredRuntimeSession {
+    const data = event.data as {
+      registration: SupervisorRegistration;
+      runtimeGenerationProofDigest?: string;
+    };
+    if (challenge === null || data.runtimeGenerationProofDigest === undefined) {
+      return { result: this.#registrationResult(event), runtimeGenerationProof: null };
+    }
+    const proof = this.#deriveRuntimeGenerationProof(data.registration, challenge);
+    if (!exactDigestMatch(data.runtimeGenerationProofDigest, proof)) {
+      throw new ServiceError(
+        409,
+        'RUNTIME_PROOF_CHALLENGE_CONFLICT',
+        'Runtime instance registration proof challenge changed across retry',
+      );
+    }
+    return { result: this.#registrationResult(event), runtimeGenerationProof: proof };
   }
 
   #registrationResult(event: DurableEvent): SupervisorRegistrationResult {
@@ -390,7 +554,12 @@ export class ControlPlaneService {
     });
   }
 
-  #register(request: SupervisorRegistrationRequest): Promise<SupervisorRegistrationResult> {
+  #register(
+    request: SupervisorRegistrationRequest,
+    proofChallenge: string | null,
+    replacementProof: string | null,
+    features: readonly string[],
+  ): Promise<RegisteredRuntimeSession> {
     return this.#exclusive(async () => {
       this.#assertWorkspace(request.workspaceId);
       const existingLane = this.projection.lanes.get(request.laneId);
@@ -409,7 +578,9 @@ export class ControlPlaneService {
           const existing = this.store.getByEventId(eventId);
           if (
             existing === undefined ||
-            canonicalJson((existing.data as { request?: unknown }).request) !== canonicalJson(request)
+            canonicalJson((existing.data as { request?: unknown }).request) !== canonicalJson(request) ||
+            canonicalJson((existing.data as { runtimeFeatures?: unknown }).runtimeFeatures ?? []) !==
+              canonicalJson(features)
           ) {
             throw new ServiceError(
               409,
@@ -424,7 +595,22 @@ export class ControlPlaneService {
               'Expired runtime leases must be reclaimed by a replacement runtime',
             );
           }
-          return this.#registrationResult(existing);
+          return this.#registrationSession(existing, proofChallenge);
+        }
+        const protectedReplacement = existingLane.runtimeGenerationProofDigest !== null;
+        const legacyEngineerReplacement =
+          !protectedReplacement && existingLane.registration.role === 'engineer';
+        if (
+          !legacyEngineerReplacement &&
+          (!protectedReplacement ||
+            replacementProof === null ||
+            !exactDigestMatch(existingLane.runtimeGenerationProofDigest as string, replacementProof))
+        ) {
+          throw new ServiceError(
+            409,
+            'RUNTIME_REPLACEMENT_PROOF_REQUIRED',
+            'Replacement must prove possession of the current runtime generation capability',
+          );
         }
         if (request.expectedRuntimeEpoch !== existingLane.registration.runtimeEpoch) {
           throw new ServiceError(
@@ -469,6 +655,10 @@ export class ControlPlaneService {
         new Date(Date.parse(leaseGrantedAt) + this.config.leaseMs),
       );
       const leaseId = `lease_${randomUUID()}` as LeaseId;
+      const runtimeProof =
+        proofChallenge === null
+          ? null
+          : this.#deriveRuntimeGenerationProof(registration, proofChallenge);
       const drafts: EventDraft[] = [
         {
           eventId,
@@ -476,7 +666,17 @@ export class ControlPlaneService {
           kind: durableKinds.registered,
           laneId: registration.laneId,
           actor: 'supervisor',
-          data: recordData({ request, registration, leaseId, leaseGrantedAt, leaseExpiresAt }),
+          data: recordData({
+            request,
+            registration,
+            leaseId,
+            leaseGrantedAt,
+            leaseExpiresAt,
+            ...(runtimeProof === null
+              ? {}
+              : { runtimeGenerationProofDigest: capabilityDigest(runtimeProof) }),
+            runtimeFeatures: features,
+          }),
         },
       ];
 
@@ -518,8 +718,15 @@ export class ControlPlaneService {
 
         for (const taskId of existingLane.queue) {
           const task = this.projection.tasks.get(taskId);
+          const recoverableRunningReview =
+            existingLane.registration.role === 'manager' &&
+            task?.status === 'running' &&
+            task.subject.type === 'manager_review' &&
+            !this.projection.reviewPermitsByTask.has(task.taskId);
           if (task?.status === 'queued') {
             rebind({ type: 'assign_task', task }, `assign-${taskId}`);
+          } else if (recoverableRunningReview) {
+            rebind({ type: 'recover_task', task }, `recover-${taskId}`);
           }
         }
 
@@ -597,7 +804,7 @@ export class ControlPlaneService {
 
       const [entry] = await this.#commit(drafts);
       if (entry === undefined) throw new Error('REGISTRATION_COMMIT_EMPTY');
-      return this.#registrationResult(entry.event);
+      return this.#registrationSession(entry.event, proofChallenge);
     });
   }
 
@@ -1214,10 +1421,204 @@ export class ControlPlaneService {
     }
   }
 
+  #consumeManagerReviewPermit(
+    request: ManagerReviewPermitConsumeRequest,
+    generationProof: string | null,
+  ): Promise<ManagerReviewPermitConsumeReceipt> {
+    return this.#exclusive(async () => {
+      this.#assertWorkspace(request.workspaceId);
+      const eventId = `manager-review-permit:${request.operationId}`;
+      const existing = this.store.getByEventId(eventId);
+      if (existing !== undefined) {
+        const storedRequest = parseProtocol(
+          parseManagerReviewPermitConsumeRequest,
+          (existing.data as { request?: unknown }).request,
+        );
+        if (
+          canonicalJson(this.#logicalReviewPermitRequest(storedRequest)) !==
+          canonicalJson(this.#logicalReviewPermitRequest(request))
+        ) {
+          throw new ServiceError(
+            409,
+            'REVIEW_PERMIT_IDEMPOTENCY_CONFLICT',
+            'Review permit operation id was already used with different logical content',
+          );
+        }
+        return this.#reviewPermitReceipt(existing, 'duplicate');
+      }
+
+      if (generationProof === null) {
+        throw new ServiceError(
+          401,
+          'RUNTIME_GENERATION_PROOF_REQUIRED',
+          'A new manager-review permit requires the registered runtime generation proof',
+        );
+      }
+      const authorizationTime = this.config.now();
+      if (Number.isNaN(authorizationTime.valueOf())) {
+        throw new Error('CONTROL_PLANE_CLOCK_INVALID');
+      }
+      const lane = this.projection.requireLane(request.managerLaneId);
+      this.#assertLeaseIdentity(
+        lane,
+        {
+          workspaceId: request.workspaceId,
+          agentId: request.managerAgentId,
+          laneId: request.managerLaneId,
+          runtimeInstanceId: request.runtimeInstanceId,
+          runtimeEpoch: request.runtimeEpoch,
+        },
+        true,
+        authorizationTime,
+      );
+      this.#assertRuntimeGenerationProof(lane, generationProof);
+
+      if (this.projection.workspacePaused) {
+        throw new ServiceError(409, 'WORKSPACE_PAUSED', 'Workspace is paused by human control');
+      }
+      if (lane.registration.role !== 'manager') {
+        throw new ServiceError(403, 'REVIEW_ROLE_REQUIRED', 'Only the fixed manager role can consume a review permit');
+      }
+      if (
+        lane.controlState !== 'active' ||
+        lane.pendingInterrupt !== null ||
+        lane.pendingHold !== null ||
+        lane.pendingResume !== null
+      ) {
+        throw new ServiceError(
+          409,
+          'MANAGER_RUNTIME_NOT_ACTIVE',
+          'Manager runtime is interrupted, held, paused, or changing control state',
+        );
+      }
+      if (this.projection.reviewPermitsByTask.has(request.reviewTaskId)) {
+        throw new ServiceError(409, 'REVIEW_TASK_ALREADY_PERMITTED', 'Review task already consumed a permit');
+      }
+      if (this.projection.reviewPermitsByEvidence.has(request.evidenceId)) {
+        throw new ServiceError(409, 'EVIDENCE_ALREADY_PERMITTED', 'Evidence already consumed a review permit');
+      }
+
+      const reviewTask = this.projection.tasks.get(request.reviewTaskId);
+      if (reviewTask === undefined) {
+        throw new ServiceError(409, 'REVIEW_TASK_NOT_FOUND', 'Assigned manager-review task was not found');
+      }
+      if (
+        reviewTask.workspaceId !== request.workspaceId ||
+        reviewTask.agentId !== request.managerAgentId ||
+        reviewTask.laneId !== request.managerLaneId
+      ) {
+        throw new ServiceError(409, 'REVIEW_TASK_OWNERSHIP_CONFLICT', 'Review task belongs to another manager lane');
+      }
+      if (
+        reviewTask.status !== 'running' ||
+        reviewTask.startedAt === null ||
+        lane.currentAction?.taskId !== reviewTask.taskId
+      ) {
+        throw new ServiceError(
+          409,
+          'REVIEW_TASK_NOT_RUNNING',
+          'Manager review permit requires the assigned task to be the current running action',
+        );
+      }
+      if (
+        reviewTask.subject.type !== 'manager_review' ||
+        reviewTask.subject.sourceTaskId !== request.sourceTaskId ||
+        reviewTask.subject.evidenceId !== request.evidenceId ||
+        reviewTask.subject.evidenceDigest !== request.evidenceDigest
+      ) {
+        throw new ServiceError(
+          409,
+          'REVIEW_TASK_SUBJECT_CONFLICT',
+          'Review request does not match the task\'s immutable evidence binding',
+        );
+      }
+
+      const sourceTask = this.projection.tasks.get(request.sourceTaskId);
+      if (
+        sourceTask === undefined ||
+        sourceTask.workspaceId !== request.workspaceId ||
+        sourceTask.status !== 'completed' ||
+        sourceTask.endedAt === null
+      ) {
+        throw new ServiceError(
+          409,
+          'REVIEW_SOURCE_NOT_COMPLETE',
+          'Manager review requires a completed source task',
+        );
+      }
+      const sourceLane = this.projection.lanes.get(sourceTask.laneId);
+      if (sourceLane?.registration.role !== 'engineer') {
+        throw new ServiceError(409, 'REVIEW_SOURCE_ROLE_CONFLICT', 'Review source must be an engineer task');
+      }
+      if (sourceTask.agentId === request.managerAgentId) {
+        throw new ServiceError(403, 'SELF_REVIEW_FORBIDDEN', 'A manager cannot review their own source task');
+      }
+
+      if (
+        authorizationTime.getTime() < Date.parse(reviewTask.startedAt) ||
+        authorizationTime.getTime() < Date.parse(sourceTask.endedAt)
+      ) {
+        throw new ServiceError(
+          409,
+          'REVIEW_TASK_TIME_INVALID',
+          'Control-plane time cannot precede the source completion or review task start',
+        );
+      }
+
+      const [entry] = await this.#commit([
+        {
+          eventId,
+          idempotencyKey: eventId,
+          kind: durableKinds.managerReviewPermit,
+          laneId: request.managerLaneId,
+          actor: 'system',
+          data: recordData({ request, permitId: `permit_${randomUUID()}` }),
+          occurredAt: authorizationTime.toISOString(),
+        },
+      ]);
+      if (entry === undefined) throw new Error('REVIEW_PERMIT_COMMIT_EMPTY');
+      return this.#reviewPermitReceipt(entry.event, entry.duplicate ? 'duplicate' : 'accepted');
+    });
+  }
+
+  #logicalReviewPermitRequest(
+    request: ManagerReviewPermitConsumeRequest,
+  ): Omit<ManagerReviewPermitConsumeRequest, 'runtimeInstanceId' | 'runtimeEpoch'> {
+    const { runtimeInstanceId: _runtimeInstanceId, runtimeEpoch: _runtimeEpoch, ...logical } = request;
+    return logical;
+  }
+
+  #reviewPermitReceipt(
+    event: DurableEvent,
+    state: ManagerReviewPermitConsumeReceipt['state'],
+  ): ManagerReviewPermitConsumeReceipt {
+    const data = event.data as { request?: unknown; permitId?: unknown };
+    const request = parseProtocol(parseManagerReviewPermitConsumeRequest, data.request);
+    return parseProtocol(parseManagerReviewPermitConsumeReceipt, {
+      apiVersion: STEWARD_RUNTIME_API_VERSION,
+      state,
+      permitId: data.permitId,
+      operationId: request.operationId,
+      workspaceId: request.workspaceId,
+      reviewTaskId: request.reviewTaskId,
+      sourceTaskId: request.sourceTaskId,
+      evidenceId: request.evidenceId,
+      evidenceDigest: request.evidenceDigest,
+      managerAgentId: request.managerAgentId,
+      managerLaneId: request.managerLaneId,
+      managerRuntimeInstanceId: request.runtimeInstanceId,
+      managerRuntimeEpoch: request.runtimeEpoch,
+      reviewRequestDigest: request.reviewRequestDigest,
+      authorizedAt: event.occurredAt,
+      workspaceSequence: event.workspaceSequence,
+    });
+  }
+
   async #pollRuntimeCommands(
     url: URL,
     workload: AuthenticatedWorkload,
-  ): Promise<RuntimeCommandPollResult> {
+    presentedFeatures: readonly string[],
+  ): Promise<unknown> {
     const required = [
       'workspaceId',
       'agentId',
@@ -1243,17 +1644,26 @@ export class ControlPlaneService {
     assertWorkloadBinding(workload, poll);
     const lane = this.projection.requireLane(poll.laneId);
     this.#assertLeaseIdentity(lane, poll);
+    if (canonicalJson(lane.runtimeFeatures) !== canonicalJson(presentedFeatures)) {
+      throw new ServiceError(
+        409,
+        'RUNTIME_FEATURE_NEGOTIATION_CONFLICT',
+        'Command poll features differ from the durable runtime registration',
+      );
+    }
+    const typedTasks = lane.runtimeFeatures.includes(STEWARD_RUNTIME_TYPED_TASKS_FEATURE);
     const eligible = lane.runtimeCommands.filter(
       (command) =>
         command.serverSequence > poll.afterServerSequence &&
-        command.expectedRuntimeEpoch === poll.runtimeEpoch,
+        command.expectedRuntimeEpoch === poll.runtimeEpoch &&
+        (typedTasks || command.payload.type !== 'recover_task'),
     );
     const commands = eligible.slice(0, 100);
     const latestServerSequence =
       eligible.length > commands.length
         ? (commands.at(-1)?.serverSequence ?? poll.afterServerSequence)
         : this.projection.lastSequence;
-    return parseProtocol(parseRuntimeCommandPollResult, {
+    const typedResult = parseProtocol(parseRuntimeCommandPollResult, {
       apiVersion: STEWARD_RUNTIME_API_VERSION,
       workspaceId: poll.workspaceId,
       agentId: poll.agentId,
@@ -1263,6 +1673,18 @@ export class ControlPlaneService {
       latestServerSequence,
       commands,
     });
+    if (typedTasks) return typedResult;
+    return {
+      ...typedResult,
+      commands: typedResult.commands.map((command) => {
+        if (command.payload.type !== 'assign_task') return command;
+        const { subject: _subject, ...legacyTask } = command.payload.task;
+        return {
+          ...command,
+          payload: { type: 'assign_task', task: legacyTask },
+        };
+      }),
+    };
   }
 
   #humanEventId(commandId: ClientCommandId, suffix: string): string {
@@ -1351,14 +1773,69 @@ export class ControlPlaneService {
       switch (command.payload.type) {
         case 'queue_work': {
           const lane = this.#laneForHuman(command);
+          const subject = command.payload.subject;
           if (lane.queue.length >= this.config.maxQueueSize) {
             throw new ServiceError(409, 'QUEUE_FULL', 'Agent queue reached its configured limit');
+          }
+          if (subject.type === 'development') {
+            if (lane.registration.role !== 'engineer') {
+              throw new ServiceError(
+                409,
+                'TASK_ROLE_CONFLICT',
+                'Development tasks may be assigned only to engineer lanes',
+              );
+            }
+          } else {
+            if (lane.registration.role !== 'manager') {
+              throw new ServiceError(
+                409,
+                'REVIEW_TASK_ROLE_CONFLICT',
+                'Manager-review tasks may be assigned only to manager lanes',
+              );
+            }
+            const sourceTask = this.projection.tasks.get(subject.sourceTaskId);
+            if (sourceTask === undefined || sourceTask.status !== 'completed') {
+              throw new ServiceError(
+                409,
+                'REVIEW_SOURCE_NOT_COMPLETE',
+                'Manager-review tasks require a completed source task',
+              );
+            }
+            const sourceLane = this.projection.lanes.get(sourceTask.laneId);
+            if (sourceLane?.registration.role !== 'engineer') {
+              throw new ServiceError(
+                409,
+                'REVIEW_SOURCE_ROLE_CONFLICT',
+                'Manager-review source must belong to an engineer lane',
+              );
+            }
+            if (sourceTask.agentId === lane.registration.agentId) {
+              throw new ServiceError(
+                403,
+                'SELF_REVIEW_FORBIDDEN',
+                'A manager cannot be assigned their own source task',
+              );
+            }
+            const existingAssignment = [...this.projection.tasks.values()].find(
+              (task) =>
+                task.subject.type === 'manager_review' &&
+                task.subject.evidenceId === subject.evidenceId &&
+                task.status !== 'failed',
+            );
+            if (existingAssignment !== undefined) {
+              throw new ServiceError(
+                409,
+                'REVIEW_ASSIGNMENT_EXISTS',
+                'Evidence already has a non-failed manager-review assignment',
+              );
+            }
           }
           const task = parseProtocol(parseAgentTaskProjection, {
             taskId: `task_${command.clientCommandId}` as TaskId,
             workspaceId: command.workspaceId,
             agentId: command.payload.agentId,
             laneId: command.payload.laneId,
+            subject,
             title: command.payload.title,
             objective: command.payload.objective,
             status: 'queued',

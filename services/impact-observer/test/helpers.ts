@@ -75,6 +75,7 @@ export function task(taskId = "task-one", status: TaskStatus = "running"): Agent
     workspaceId: WORKSPACE_ID,
     agentId: "agent-one",
     laneId: "lane-one",
+    subject: { type: "development" },
     title: "Make checkout clearer",
     objective: "Help people understand what happens next and finish their purchase with confidence.",
     status,

@@ -112,6 +112,30 @@ export function requireHuman(request: IncomingMessage, config: ControlPlaneConfi
   }
 }
 
+/**
+ * This capability can consume one narrowly bound review permit. It cannot
+ * read UI state, impersonate a runtime, issue human controls, or deploy.
+ */
+export function requireManagerReviewPermitConsumer(
+  request: IncomingMessage,
+  config: ControlPlaneConfig,
+): void {
+  if (config.managerReviewPermitToken === undefined) {
+    throw new ServiceError(
+      503,
+      'MANAGER_REVIEW_PERMITS_DISABLED',
+      'Manager-review permit consumption is not configured',
+    );
+  }
+  if (!tokenMatches(config.managerReviewPermitToken, bearerToken(request))) {
+    throw new ServiceError(
+      401,
+      'UNAUTHORIZED',
+      'Manager-review permit authentication is required',
+    );
+  }
+}
+
 export type UiReadPrincipal = 'human' | 'observer';
 
 export function requireUiRead(

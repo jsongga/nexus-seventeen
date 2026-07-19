@@ -16,6 +16,8 @@ export interface EventDraft {
   laneId?: string;
   actor: EventActor;
   data: Record<string, unknown>;
+  /** Optional authoritative decision time captured by the caller. */
+  occurredAt?: string;
 }
 
 export interface DurableEvent extends EventDraft {
@@ -533,12 +535,18 @@ export class JsonlEventStore {
         continue;
       }
 
+      const occurredAt = draft.occurredAt ?? this.#now().toISOString();
+      const parsedOccurredAt = new Date(occurredAt);
+      if (Number.isNaN(parsedOccurredAt.valueOf()) || parsedOccurredAt.toISOString() !== occurredAt) {
+        throw new Error('EVENT_OCCURRENCE_INVALID');
+      }
+      const { occurredAt: _requestedOccurredAt, ...durableDraft } = draft;
       const event: DurableEvent = {
         schemaVersion: 1,
         workspaceId: this.#workspaceId,
         workspaceSequence: this.records.length + newEvents.length + 1,
-        occurredAt: this.#now().toISOString(),
-        ...draft,
+        occurredAt,
+        ...durableDraft,
         contentHash: hash,
       };
       const entry = { event, hash };

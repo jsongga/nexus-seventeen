@@ -13,7 +13,7 @@ function snapshot(input?: {
   leaseExpiresAt?: string;
 }): UiSnapshot {
   return {
-    apiVersion: 'steward.ui/v1',
+    apiVersion: 'steward.ui/v2',
     workspaceId: 'workspace-alpha',
     generatedAt: '2026-07-18T20:00:00.000Z',
     sequence: 1,

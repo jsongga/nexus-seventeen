@@ -14,6 +14,7 @@ export interface ManagerReviewRuntimeConfig {
   readonly brokerHandoffIssuerToken: string;
   readonly controlPlaneOrigin: string;
   readonly controlPlaneObserverReadToken: string;
+  readonly controlPlanePermitConsumeToken: string;
   readonly corsOrigins: readonly string[];
   readonly host?: string;
   readonly port?: number;
@@ -23,6 +24,8 @@ export interface ManagerReviewRuntimeConfig {
   readonly controlPlaneTimeoutMs?: number;
   readonly controlPlaneMaximumBootstrapBytes?: number;
   readonly controlPlaneMaximumSnapshotAgeMs?: number;
+  readonly controlPlanePermitTimeoutMs?: number;
+  readonly controlPlanePermitMaximumResponseBytes?: number;
 }
 
 function invalid(message: string): never {
@@ -100,6 +103,10 @@ export function loadManagerReviewRuntimeConfig(
     environment,
     "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_OBSERVER_READ_TOKEN",
   );
+  const controlPlanePermitConsumeToken = required(
+    environment,
+    "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_PERMIT_CONSUME_TOKEN",
+  );
   const managers = parseManagers(required(environment, "STEWARD_MANAGER_REVIEW_MANAGERS_JSON"));
   const corsOrigins = Object.freeze(
     (environment.STEWARD_MANAGER_REVIEW_CORS_ORIGINS ?? "")
@@ -112,10 +119,11 @@ export function loadManagerReviewRuntimeConfig(
     humanToken,
     brokerHandoffIssuerToken,
     controlPlaneObserverReadToken,
+    controlPlanePermitConsumeToken,
     ...managers.map((manager) => manager.token),
   ];
   if (new Set(capabilities).size !== capabilities.length) {
-    invalid("Evidence, human, manager, broker, and observer capabilities must all be distinct");
+    invalid("Evidence, human, manager, broker, observer, and permit capabilities must all be distinct");
   }
 
   const host = environment.STEWARD_MANAGER_REVIEW_HOST;
@@ -135,6 +143,14 @@ export function loadManagerReviewRuntimeConfig(
     environment,
     "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_MAX_SNAPSHOT_AGE_MS",
   );
+  const controlPlanePermitTimeoutMs = optionalInteger(
+    environment,
+    "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_PERMIT_TIMEOUT_MS",
+  );
+  const controlPlanePermitMaximumResponseBytes = optionalInteger(
+    environment,
+    "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_PERMIT_MAX_RESPONSE_BYTES",
+  );
   return Object.freeze({
     workspaceId: required(environment, "STEWARD_MANAGER_REVIEW_WORKSPACE_ID"),
     storePath: required(environment, "STEWARD_MANAGER_REVIEW_STORE_PATH"),
@@ -146,6 +162,7 @@ export function loadManagerReviewRuntimeConfig(
     brokerHandoffIssuerToken,
     controlPlaneOrigin: required(environment, "STEWARD_MANAGER_REVIEW_CONTROL_PLANE_ORIGIN"),
     controlPlaneObserverReadToken,
+    controlPlanePermitConsumeToken,
     corsOrigins,
     ...(host === undefined ? {} : { host }),
     ...(port === undefined ? {} : { port }),
@@ -159,5 +176,11 @@ export function loadManagerReviewRuntimeConfig(
     ...(controlPlaneMaximumSnapshotAgeMs === undefined
       ? {}
       : { controlPlaneMaximumSnapshotAgeMs }),
+    ...(controlPlanePermitTimeoutMs === undefined
+      ? {}
+      : { controlPlanePermitTimeoutMs }),
+    ...(controlPlanePermitMaximumResponseBytes === undefined
+      ? {}
+      : { controlPlanePermitMaximumResponseBytes }),
   });
 }

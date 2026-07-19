@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { chmod, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,9 +10,12 @@ import {
   HttpManagerHandoffRegistrar,
   ReviewServiceError,
 } from "../src/index.js";
+import { sha256 } from "../src/canonical.js";
+import { GENESIS_HASH, parseStoredEvent } from "../src/schema.js";
 import {
   EVIDENCE_TOKEN,
   FakeHandoffRegistrar,
+  FakeManagerReviewPermitConsumer,
   FakeManagerRuntimeAuthorizer,
   HUMAN_TOKEN,
   MANAGER_ONE,
@@ -30,6 +34,7 @@ function serviceOptions(storePath: string) {
     managers: [{ ...MANAGER_ONE, token: MANAGER_ONE_TOKEN }],
     handoffRegistrar: new FakeHandoffRegistrar(),
     managerRuntimeAuthorizer: new FakeManagerRuntimeAuthorizer(),
+    managerReviewPermitConsumer: new FakeManagerReviewPermitConsumer(),
   } as const;
 }
 
@@ -59,6 +64,99 @@ test("an existing review-store directory must already be owner-only", async () =
   await assert.rejects(
     createManagerReviewService(serviceOptions(join(directory, "events.jsonl"))),
     (error: unknown) => error instanceof ReviewServiceError && error.code === "INVALID_CONFIGURATION",
+  );
+});
+
+test("pre-permit review records fail closed with an explicit migration condition", () => {
+  const withoutHash = {
+    storeVersion: 1,
+    sequence: 1,
+    eventId: randomUUID(),
+    eventType: "manager_review_recorded",
+    occurredAt: "2026-07-19T19:04:00.000Z",
+    idempotencyScope: "manager:manager-one:manager-lane-one:review",
+    idempotencyKey: "legacy-review-0001",
+    requestHash: "a".repeat(64),
+    previousHash: GENESIS_HASH,
+    review: {
+      apiVersion: 1,
+      managerReviewId: randomUUID(),
+      evidenceId: randomUUID(),
+      evidenceDigest: `sha256:${"b".repeat(64)}`,
+      workspaceId: WORKSPACE_ID,
+      taskId: "source-task-0001",
+      engineerAgentId: "engineer-one",
+      managerAgentId: MANAGER_ONE.agentId,
+      managerLaneId: MANAGER_ONE.laneId,
+      managerRuntimeInstanceId: "manager-runtime-one",
+      managerRuntimeEpoch: 1,
+      decision: "accepted",
+      summary: "Legacy summary",
+      remainingRisks: "Legacy risks",
+      reviewedAt: "2026-07-19T19:04:00.000Z",
+    },
+  };
+  assert.throws(
+    () => parseStoredEvent(
+      { ...withoutHash, contentHash: sha256(withoutHash) },
+      1,
+      GENESIS_HASH,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ReviewServiceError);
+      assert.equal(error.code, "REVIEW_STORE_CORRUPT");
+      assert.match(error.message, /pre-permit review records require an explicit offline migration/u);
+      return true;
+    },
+  );
+});
+
+test("permit-era reviews without a durable intent require an explicit offline migration", () => {
+  const withoutHash = {
+    storeVersion: 1,
+    sequence: 1,
+    eventId: randomUUID(),
+    eventType: "manager_review_recorded",
+    occurredAt: "2026-07-19T19:04:30.000Z",
+    idempotencyScope: "manager:manager-one:manager-lane-one:review",
+    idempotencyKey: "permit-era-review-0001",
+    requestHash: "a".repeat(64),
+    previousHash: GENESIS_HASH,
+    review: {
+      apiVersion: 1,
+      authorizationVersion: 1,
+      managerReviewId: randomUUID(),
+      reviewTaskId: "manager-review-task-0001",
+      evidenceId: randomUUID(),
+      evidenceDigest: `sha256:${"b".repeat(64)}`,
+      workspaceId: WORKSPACE_ID,
+      taskId: "source-task-0001",
+      engineerAgentId: "engineer-one",
+      managerAgentId: MANAGER_ONE.agentId,
+      managerLaneId: MANAGER_ONE.laneId,
+      managerRuntimeInstanceId: "manager-runtime-one",
+      managerRuntimeEpoch: 1,
+      permitId: randomUUID(),
+      authorizedAt: "2026-07-19T19:04:30.000Z",
+      workspaceSequence: 10,
+      decision: "accepted",
+      summary: "Permit-era summary",
+      remainingRisks: "Permit-era risks",
+      reviewedAt: "2026-07-19T19:04:30.000Z",
+    },
+  };
+  assert.throws(
+    () => parseStoredEvent(
+      { ...withoutHash, contentHash: sha256(withoutHash) },
+      1,
+      GENESIS_HASH,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ReviewServiceError);
+      assert.equal(error.code, "REVIEW_STORE_CORRUPT");
+      assert.match(error.message, /authorizationVersion 1.*durable review intent.*offline migration/u);
+      return true;
+    },
   );
 });
 

@@ -80,6 +80,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && keys.every((key) => expected.includes(key));
+}
+
+function validTaskSubject(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+  if (value.type === 'development') return hasExactKeys(value, ['type']);
+  if (value.type !== 'manager_review') return false;
+  return (
+    hasExactKeys(value, ['type', 'sourceTaskId', 'evidenceId', 'evidenceDigest']) &&
+    typeof value.sourceTaskId === 'string' &&
+    value.sourceTaskId.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(value.sourceTaskId) &&
+    typeof value.evidenceId === 'string' &&
+    value.evidenceId.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(value.evidenceId) &&
+    typeof value.evidenceDigest === 'string' &&
+    /^sha256:[a-f0-9]{64}$/u.test(value.evidenceDigest)
+  );
+}
+
+function sameTaskSubject(
+  left: DiscoveredAgent['task'] extends infer Task
+    ? Task extends { subject: infer Subject } ? Subject : never
+    : never,
+  right: DiscoveredAgent['task'] extends infer Task
+    ? Task extends { subject: infer Subject } ? Subject : never
+    : never,
+): boolean {
+  if (left.type !== right.type) return false;
+  if (left.type === 'development') return true;
+  if (right.type !== 'manager_review') return false;
+  return (
+    left.sourceTaskId === right.sourceTaskId &&
+    left.evidenceId === right.evidenceId &&
+    left.evidenceDigest === right.evidenceDigest
+  );
+}
+
 function validTimestamp(value: unknown): value is ISODateTime {
   return typeof value === 'string' && value.trim().length > 0 && !Number.isNaN(Date.parse(value));
 }
@@ -130,7 +170,12 @@ function immutableAgent(agent: DiscoveredAgent): DiscoveredAgent {
       : { activeRun: Object.freeze({ ...agent.activeRun }) }),
     ...(agent.task === undefined
       ? {}
-      : { task: Object.freeze({ ...agent.task }) }),
+      : {
+          task: Object.freeze({
+            ...agent.task,
+            subject: Object.freeze({ ...agent.task.subject }),
+          }),
+        }),
   });
 }
 
@@ -166,6 +211,7 @@ function validateAgent(value: unknown): value is DiscoveredAgent {
         task.id.trim().length === 0 ||
         typeof task.workItemId !== 'string' ||
         task.workItemId.trim().length === 0 ||
+        !validTaskSubject(task.subject) ||
         !validTimestamp(task.startedAt) ||
         !validTimestamp(task.expectedCompletedAt) ||
         typeof task.expectedAgentMinutes !== 'number' ||
@@ -485,6 +531,24 @@ export function applyAgentRegistryEvent(
       agent.runtimeInstanceId !== existing.runtimeInstanceId
     ) {
       return deny('ENTITY_VERSION_CONFLICT', 'A runtime instance changed without advancing its fencing epoch.');
+    }
+    if (
+      existing?.task !== undefined &&
+      agent.task !== undefined &&
+      existing.task.id === agent.task.id &&
+      !sameTaskSubject(existing.task.subject, agent.task.subject)
+    ) {
+      return deny('ENTITY_VERSION_CONFLICT', 'An agent update changed an existing task subject binding.');
+    }
+    if (
+      existing?.task !== undefined &&
+      agent.task !== undefined &&
+      existing.task.id === agent.task.id &&
+      (existing.task.startedAt !== agent.task.startedAt ||
+        existing.task.expectedAgentMinutes !== agent.task.expectedAgentMinutes ||
+        (existing.task.status === 'completed' && agent.task.status !== 'completed'))
+    ) {
+      return deny('ENTITY_VERSION_CONFLICT', 'An agent update reset an existing task lifecycle.');
     }
     if (
       existing &&

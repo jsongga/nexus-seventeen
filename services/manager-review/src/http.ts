@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { STEWARD_RUNTIME_GENERATION_PROOF_HEADER } from "@cicada/steward-protocol";
 import { tokenMatches } from "./canonical.js";
 import { ReviewServiceError } from "./errors.js";
 import { parseManagerRuntimeClaim } from "./schema.js";
@@ -7,6 +8,8 @@ import type { ManagerRuntimeClaim } from "./types.js";
 
 export const MANAGER_RUNTIME_INSTANCE_HEADER = "x-steward-runtime-instance-id" as const;
 export const MANAGER_RUNTIME_EPOCH_HEADER = "x-steward-runtime-epoch" as const;
+export const MANAGER_RUNTIME_GENERATION_PROOF_HEADER =
+  STEWARD_RUNTIME_GENERATION_PROOF_HEADER;
 
 export function applyProductionCheckCors(
   request: IncomingMessage,
@@ -80,6 +83,27 @@ export function requireManagerRuntimeClaim(
     runtimeInstanceId,
     runtimeEpoch,
   });
+}
+
+export function requireManagerRuntimeGenerationProof(
+  request: IncomingMessage,
+): string {
+  const proof = request.headers[MANAGER_RUNTIME_GENERATION_PROOF_HEADER];
+  if (proof === undefined) {
+    throw new ReviewServiceError(
+      401,
+      "RUNTIME_GENERATION_PROOF_REQUIRED",
+      "The control-plane-issued runtime generation proof is required",
+    );
+  }
+  if (typeof proof !== "string" || !/^rgp_[A-Za-z0-9_-]{43}$/u.test(proof)) {
+    throw new ReviewServiceError(
+      400,
+      "INVALID_RUNTIME_GENERATION_PROOF",
+      "Runtime generation proof is malformed",
+    );
+  }
+  return proof;
 }
 
 export async function readJsonBody(request: IncomingMessage, maximumBytes: number): Promise<unknown> {

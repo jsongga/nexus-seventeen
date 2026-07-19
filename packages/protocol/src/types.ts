@@ -1,5 +1,19 @@
 export const STEWARD_RUNTIME_API_VERSION = "steward.runtime/v1" as const;
-export const STEWARD_UI_API_VERSION = "steward.ui/v1" as const;
+export const STEWARD_UI_API_VERSION = "steward.ui/v2" as const;
+
+/**
+ * Optional registration challenge and response proof headers. Keeping the
+ * capability out of the v1 JSON body lets older strict v1 clients continue to
+ * parse the unchanged registration result.
+ */
+export const STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER =
+  "x-steward-runtime-proof-challenge" as const;
+export const STEWARD_RUNTIME_GENERATION_PROOF_HEADER =
+  "x-steward-runtime-generation-proof" as const;
+export const STEWARD_RUNTIME_FEATURES_HEADER =
+  "x-steward-runtime-features" as const;
+export const STEWARD_RUNTIME_TYPED_TASKS_FEATURE =
+  "typed-task-subjects+manager-review-recovery" as const;
 
 declare const opaqueId: unique symbol;
 type OpaqueId<Name extends string> = string & {
@@ -20,6 +34,7 @@ export type ClientCommandId = OpaqueId<"ClientCommandId">;
 export type CheckpointRef = OpaqueId<"CheckpointRef">;
 export type SessionId = OpaqueId<"SessionId">;
 export type UserId = OpaqueId<"UserId">;
+export type Sha256Digest = `sha256:${string}`;
 
 export type AgentRole = "engineer" | "verifier" | "manager";
 export type AgentCapability =
@@ -128,11 +143,21 @@ export type TaskStatus =
   | "completed"
   | "failed";
 
+export type AgentTaskSubject =
+  | Readonly<{ type: "development" }>
+  | Readonly<{
+      type: "manager_review";
+      sourceTaskId: TaskId;
+      evidenceId: string;
+      evidenceDigest: Sha256Digest;
+    }>;
+
 export type AgentTaskProjection = Readonly<{
   taskId: TaskId;
   workspaceId: WorkspaceId;
   agentId: AgentId;
   laneId: LaneId;
+  subject: AgentTaskSubject;
   title: string;
   objective: string;
   status: TaskStatus;
@@ -259,8 +284,43 @@ export type RuntimeEventBatchReceipt = Readonly<{
   controlVersion: number;
 }>;
 
+export type ManagerReviewPermitConsumeRequest = Readonly<{
+  apiVersion: typeof STEWARD_RUNTIME_API_VERSION;
+  operationId: string;
+  workspaceId: WorkspaceId;
+  reviewTaskId: TaskId;
+  sourceTaskId: TaskId;
+  evidenceId: string;
+  evidenceDigest: Sha256Digest;
+  managerAgentId: AgentId;
+  managerLaneId: LaneId;
+  runtimeInstanceId: RuntimeInstanceId;
+  runtimeEpoch: number;
+  reviewRequestDigest: Sha256Digest;
+}>;
+
+export type ManagerReviewPermitConsumeReceipt = Readonly<{
+  apiVersion: typeof STEWARD_RUNTIME_API_VERSION;
+  state: "accepted" | "duplicate";
+  permitId: string;
+  operationId: string;
+  workspaceId: WorkspaceId;
+  reviewTaskId: TaskId;
+  sourceTaskId: TaskId;
+  evidenceId: string;
+  evidenceDigest: Sha256Digest;
+  managerAgentId: AgentId;
+  managerLaneId: LaneId;
+  managerRuntimeInstanceId: RuntimeInstanceId;
+  managerRuntimeEpoch: number;
+  reviewRequestDigest: Sha256Digest;
+  authorizedAt: IsoTimestamp;
+  workspaceSequence: number;
+}>;
+
 export type RuntimeCommandPayload =
   | Readonly<{ type: "assign_task"; task: AgentTaskProjection }>
+  | Readonly<{ type: "recover_task"; task: AgentTaskProjection }>
   | Readonly<{ type: "request_interrupt"; reason: string }>
   | Readonly<{
       type: "resume";
@@ -411,6 +471,7 @@ export type HumanCommandPayload =
       type: "queue_work";
       agentId: AgentId;
       laneId: LaneId;
+      subject: AgentTaskSubject;
       title: string;
       objective: string;
       expectedAgentMinutes: number;

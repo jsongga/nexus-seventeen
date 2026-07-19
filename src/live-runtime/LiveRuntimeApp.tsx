@@ -201,6 +201,18 @@ function TaskCard({ task }: { task: AgentTaskProjection }) {
           {task.status}
         </span>
       </div>
+      {task.subject.type === 'manager_review' ? (
+        <div className="mt-3 rounded-lg border border-caution-fill/30 bg-caution-soft/45 p-3 text-xs">
+          <p className="font-bold uppercase tracking-[0.1em] text-caution">
+            Manager review assignment · read only
+          </p>
+          <dl className="mt-2 grid gap-1 font-mono text-[11px] text-ink">
+            <div><dt className="inline text-muted">Source task </dt><dd className="inline break-all">{task.subject.sourceTaskId}</dd></div>
+            <div><dt className="inline text-muted">Evidence </dt><dd className="inline break-all">{task.subject.evidenceId}</dd></div>
+            <div><dt className="inline text-muted">Digest </dt><dd className="inline break-all">{task.subject.evidenceDigest}</dd></div>
+          </dl>
+        </div>
+      ) : null}
       <dl className="mt-4 grid gap-2 border-t border-line-soft pt-3 text-xs sm:grid-cols-2">
         <div>
           <dt className="text-muted">Started</dt>
@@ -306,15 +318,17 @@ function AgentCard({
                 Resume
               </button>
             ) : null}
-            <button
-              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-bold text-ink transition hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={!controlsAvailable}
-              onClick={() => onQueue(agent)}
-              type="button"
-            >
-              <Plus aria-hidden="true" className="h-4 w-4" />
-              Queue
-            </button>
+            {agent.role === 'engineer' ? (
+              <button
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-bold text-ink transition hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!controlsAvailable}
+                onClick={() => onQueue(agent)}
+                type="button"
+              >
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                Queue
+              </button>
+            ) : null}
             <button
               className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-urgent/20 bg-urgent-soft px-3 text-sm font-bold text-urgent transition hover:border-urgent/45 disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!controlsAvailable}
@@ -571,6 +585,10 @@ function shortDigest(value: string): string {
   return `sha256:${value.slice(7, 15)}…${value.slice(-6)}`;
 }
 
+function shortIdentifier(value: string): string {
+  return value.length <= 20 ? value : `${value.slice(0, 10)}…${value.slice(-7)}`;
+}
+
 function ProductionCheckOverview({
   configured,
   managerReviewOrigin,
@@ -677,6 +695,15 @@ function ProductionCheckOverview({
                     <dt className="text-muted">Manager runtime</dt>
                     <dd className="mt-1 break-all font-mono text-[11px] text-ink">
                       {check.managerRuntimeInstanceId} · epoch {check.managerRuntimeEpoch}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Review authority · read only</dt>
+                    <dd className="mt-1 grid gap-1 break-all font-mono text-[11px] text-ink">
+                      <span title={check.reviewTaskId}>Task {check.reviewTaskId}</span>
+                      <span title={check.permitId}>
+                        Permit {shortIdentifier(check.permitId)} · sequence #{check.permitWorkspaceSequence}
+                      </span>
                     </dd>
                   </div>
                   <div>
@@ -901,12 +928,13 @@ function ConnectedWorkspace({
   }, [client, connection.mode, connection.replica, session.activity]);
 
   useEffect(() => {
-    if (!snapshot || snapshot.agents.length === 0) {
+    const engineers = snapshot?.agents.filter((agent) => agent.role === 'engineer') ?? [];
+    if (engineers.length === 0) {
       setQueueAgentId('');
       return;
     }
-    if (!snapshot.agents.some((agent) => agent.agentId === queueAgentId)) {
-      setQueueAgentId(String(snapshot.agents[0]?.agentId ?? ''));
+    if (!engineers.some((agent) => agent.agentId === queueAgentId)) {
+      setQueueAgentId(String(engineers[0]?.agentId ?? ''));
     }
   }, [queueAgentId, snapshot]);
 
@@ -937,9 +965,11 @@ function ConnectedWorkspace({
   function queueWork(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!snapshot || !controlsAvailable) return;
-    const agent = snapshot.agents.find((candidate) => candidate.agentId === queueAgentId);
+    const agent = snapshot.agents.find(
+      (candidate) => candidate.agentId === queueAgentId && candidate.role === 'engineer',
+    );
     if (!agent) {
-      setNotice({ tone: 'error', text: 'Choose a registered agent.' });
+      setNotice({ tone: 'error', text: 'Choose a registered engineer.' });
       return;
     }
     try {
@@ -1021,11 +1051,13 @@ function ConnectedWorkspace({
   }
 
   function openQueue(agent: RegisteredAgentProjection): void {
+    if (agent.role !== 'engineer') return;
     setQueueAgentId(String(agent.agentId));
     queuePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  const selectedAgent = snapshot?.agents.find((agent) => agent.agentId === queueAgentId);
+  const developmentAgents = snapshot?.agents.filter((agent) => agent.role === 'engineer') ?? [];
+  const selectedAgent = developmentAgents.find((agent) => agent.agentId === queueAgentId);
   const estimatedDeadline = selectedAgent
     ? expectedCompletionForAgentTime(new Date(), minutes)
     : null;
@@ -1231,11 +1263,11 @@ function ConnectedWorkspace({
                 Agent
                 <select
                   className="min-h-11 rounded-lg border border-line bg-white px-3 text-sm text-ink disabled:opacity-50"
-                  disabled={!snapshot || snapshot.agents.length === 0}
+                  disabled={developmentAgents.length === 0}
                   onChange={(event) => setQueueAgentId(event.target.value)}
                   value={queueAgentId}
                 >
-                  {snapshot?.agents.map((agent) => (
+                  {developmentAgents.map((agent) => (
                     <option key={agent.agentId} value={agent.agentId}>
                       {agent.displayName} · {agent.role} · {agent.connectionState}
                     </option>

@@ -110,6 +110,9 @@ export interface QueueWorkCommandInput extends CommandContext {
 }
 
 export function buildQueueWorkCommand(input: QueueWorkCommandInput): HumanCommandEnvelope {
+  if (input.agent.role !== 'engineer') {
+    throw new TypeError('Development work can be queued only to an engineer lane.');
+  }
   const issuedAt = input.issuedAt.toISOString() as IsoTimestamp;
   return parseHumanCommandEnvelope({
     apiVersion: STEWARD_UI_API_VERSION,
@@ -121,6 +124,7 @@ export function buildQueueWorkCommand(input: QueueWorkCommandInput): HumanComman
       type: 'queue_work',
       agentId: input.agent.agentId,
       laneId: input.agent.laneId,
+      subject: { type: 'development' },
       title: input.title.trim(),
       objective: input.objective.trim(),
       expectedAgentMinutes: input.expectedAgentMinutes,

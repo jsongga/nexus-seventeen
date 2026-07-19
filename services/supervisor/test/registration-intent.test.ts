@@ -24,8 +24,13 @@ test("registration intent survives both pre-commit and issued-epoch crash bounda
   const { config, store } = await fixture();
   const request = registrationIdentity(null);
   await store.write(request);
+  const challenge = store.proofChallenge;
+  assert.match(challenge ?? "", /^rgc_[A-Za-z0-9_-]{43}$/u);
 
   assert.deepEqual(await store.load(config, 0, null), request, "intent survives before the registration POST");
+  const restartedStore = new RegistrationIntentStore(config.stateDirectory);
+  assert.deepEqual(await restartedStore.load(config, 0, null), request);
+  assert.equal(restartedStore.proofChallenge, challenge);
   assert.deepEqual(await store.load(config, 1, null), request, "intent survives after issued epoch persistence");
   await assert.rejects(
     store.load(config, 2, null),

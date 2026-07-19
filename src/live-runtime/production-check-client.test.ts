@@ -16,6 +16,7 @@ function validCheck() {
     status: 'pending_human_review',
     workspaceId: 'workspace-alpha',
     taskId: 'task-checkout',
+    reviewTaskId: 'task-review-checkout',
     evidenceId: EVIDENCE_ID,
     evidenceDigest: `sha256:${'a'.repeat(64)}`,
     completionEventId: 'completion-checkout-001',
@@ -25,6 +26,8 @@ function validCheck() {
     managerRuntimeInstanceId: 'manager-runtime-moss-001',
     managerRuntimeEpoch: 3,
     managerReviewId: REVIEW_ID,
+    permitId: 'permit_55555555-5555-4555-8555-555555555555',
+    permitWorkspaceSequence: 27,
     resultOverview: 'Customers can retry checkout without a duplicate charge.',
     reviewSummary: 'Passing evidence covers interruption and duplicate-submit behavior.',
     remainingRisks: 'A human should verify the staged rollback before production.',
@@ -44,6 +47,10 @@ describe('production-check protocol boundary', () => {
     const checks = parseProductionCheckResponse({ items: [validCheck()] }, 'workspace-alpha');
 
     expect(checks[0]?.resultOverview).toContain('Customers');
+    expect(checks[0]).toMatchObject({
+      reviewTaskId: 'task-review-checkout',
+      permitWorkspaceSequence: 27,
+    });
     expect(Object.isFrozen(checks)).toBe(true);
     expect(Object.isFrozen(checks[0])).toBe(true);
   });
@@ -59,6 +66,17 @@ describe('production-check protocol boundary', () => {
     }] }, 'workspace-alpha')).toThrow(/unexpected or missing fields/u);
     expect(() => parseProductionCheckResponse({ items: [validCheck(), validCheck()] }, 'workspace-alpha'))
       .toThrow(/duplicate identity/u);
+    expect(() => parseProductionCheckResponse({ items: [
+      validCheck(),
+      {
+        ...validCheck(),
+        productionCheckId: 'production-check:66666666-6666-4666-8666-666666666666',
+        managerReviewId: '66666666-6666-4666-8666-666666666666',
+        reviewTaskId: 'task-review-checkout-two',
+        evidenceId: '77777777-7777-4777-8777-777777777777',
+        permitId: 'permit_88888888-8888-4888-8888-888888888888',
+      },
+    ] }, 'workspace-alpha')).toThrow(/duplicate identity/u);
     expect(() => parseProductionCheckResponse({ items: [{
       ...validCheck(),
       productionCheckId: 'production-check:44444444-4444-4444-8444-444444444444',
@@ -67,6 +85,10 @@ describe('production-check protocol boundary', () => {
       ...validCheck(),
       status: 'handoff_registration_pending',
     }] }, 'workspace-alpha')).toThrow(/pending handoff/u);
+    expect(() => parseProductionCheckResponse({ items: [{
+      ...validCheck(),
+      reviewTaskId: 'task-checkout',
+    }] }, 'workspace-alpha')).toThrow(/must differ/u);
   });
 
   it('rejects noncanonical times, oversized text, and impossible lifecycle order', () => {
@@ -85,6 +107,10 @@ describe('production-check protocol boundary', () => {
     expect(() => parseProductionCheckResponse({ items: [{
       ...validCheck(),
       managerRuntimeEpoch: 0,
+    }] }, 'workspace-alpha')).toThrow(/positive safe integer/u);
+    expect(() => parseProductionCheckResponse({ items: [{
+      ...validCheck(),
+      permitWorkspaceSequence: 0,
     }] }, 'workspace-alpha')).toThrow(/positive safe integer/u);
   });
 });

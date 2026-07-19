@@ -59,6 +59,9 @@ export class DeploymentGrantBroker {
   readonly #config: DeploymentBrokerConfig;
   readonly #store: DeploymentGrantStore;
   readonly #handoffs = new Map<string, ManagerHandoff>();
+  // The authenticated manager-review coordinator derives managerReviewId
+  // deterministically from the consumed control-plane permit. Persisting this
+  // uniqueness fence makes cloned coordinator stores converge on one handoff.
   readonly #managerReviewIds = new Set<string>();
   readonly #handoffGrants = new Map<string, string>();
   readonly #grants = new Map<string, DeploymentGrant>();

@@ -46,6 +46,7 @@ export function taskFixture(taskId = "task-one"): AgentTaskProjection {
     workspaceId: "workspace-test",
     agentId: "agent-test",
     laneId: "lane-test",
+    subject: { type: "development" },
     title: `Deliver ${taskId}`,
     objective: "Produce a user-visible result and verify it.",
     status: "queued",

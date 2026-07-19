@@ -26,6 +26,7 @@ import {
 } from "./checkpoint.js";
 import {
   type SupervisorControlPlaneClient,
+  type SupervisorRegistrationSession,
 } from "./client.js";
 import type { SupervisorConfig } from "./config.js";
 import { SerialExecutor } from "./fs-utils.js";
@@ -173,6 +174,7 @@ export class SupervisorDaemon {
   #processLocks: SupervisorProcessLocks | null = null;
   #outbox!: DurableOutbox;
   #registrationRequest!: SupervisorRegistrationRequest;
+  #registrationProofChallenge = "";
   #runtimeEpoch = 0;
   #state: SupervisorDaemonState = "starting";
   #desiredState: "active" | "held" | "paused" = "active";
@@ -231,6 +233,11 @@ export class SupervisorDaemon {
       pendingOutboxEvents: this.#outbox.pendingCount,
       lastServerSequence: this.#runtimeStateStore.lastServerSequence,
     };
+  }
+
+  /** Non-snapshot access for the dedicated manager runner; persisted owner-only across restarts. */
+  get runtimeGenerationProof(): string | null {
+    return this.#runtimeStateStore.runtimeGenerationProof;
   }
 
   tick(): Promise<void> {
@@ -370,6 +377,14 @@ export class SupervisorDaemon {
       });
     if (!pendingRegistration) {
       await this.#registrationIntentStore.write(this.#registrationRequest);
+    } else if (this.#registrationIntentStore.proofChallenge === null) {
+      // Upgrade a private pre-proof intent before it is transmitted again.
+      await this.#registrationIntentStore.write(this.#registrationRequest);
+    }
+    this.#registrationProofChallenge =
+      this.#registrationIntentStore.proofChallenge ?? "";
+    if (this.#registrationProofChallenge.length === 0) {
+      throw new Error("Registration intent did not retain its runtime proof challenge");
     }
     const identity: OutboxIdentity = {
       apiVersion: this.#registrationRequest.apiVersion,
@@ -454,10 +469,19 @@ export class SupervisorDaemon {
 
   async #reconcile(): Promise<boolean> {
     try {
-      const result = await this.#client.register(this.#registrationRequest);
+      const result: SupervisorRegistrationSession = await this.#client.register(
+        this.#registrationRequest,
+        {
+          proofChallenge: this.#registrationProofChallenge,
+          replacementProof: this.#runtimeStateStore.runtimeGenerationProof,
+        },
+      );
       assertIssuedRegistrationEpoch(this.#registrationRequest, result);
       this.#runtimeEpoch = result.runtimeEpoch;
-      await this.#runtimeStateStore.recordRuntimeEpoch(result.runtimeEpoch);
+      await this.#runtimeStateStore.recordRuntimeRegistration(
+        result.runtimeEpoch,
+        result.runtimeGenerationProof ?? null,
+      );
       // Registration reconciles a possible lost acknowledgement first. Only the
       // remaining unsent suffix may be rebased without changing an eventId the
       // server might already have stored under an older fencing epoch.
@@ -579,6 +603,15 @@ export class SupervisorDaemon {
         } else if (this.#queueTask(command.payload.task)) {
           await this.#writeCheckpoint(null);
         }
+        break;
+      case "recover_task":
+        // The generic supervisor has no read-only manager-review runner yet.
+        // A recovered review is already running in the control plane, so fail
+        // closed without re-queueing it or changing its status/timestamps.
+        this.#desiredState = "held";
+        this.#state = "held";
+        this.#currentAction = null;
+        await this.#writeCheckpoint(null);
         break;
       case "request_interrupt":
         await this.#settleInterrupt(command, command.payload.reason);

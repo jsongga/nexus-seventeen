@@ -1,4 +1,11 @@
 import { randomUUID } from "node:crypto";
+import {
+  parseManagerReviewPermitConsumeReceipt,
+  parseManagerReviewPermitConsumeRequest,
+  STEWARD_RUNTIME_API_VERSION,
+  type ManagerReviewPermitConsumeReceipt,
+  type ManagerReviewPermitConsumeRequest,
+} from "@cicada/steward-protocol";
 import { canonicalJson, sha256 } from "./canonical.js";
 import { ReviewServiceError, corruptStore } from "./errors.js";
 import {
@@ -12,11 +19,15 @@ import {
 import { ReviewEventStore } from "./store.js";
 import {
   MANAGER_REVIEW_API_VERSION,
+  MANAGER_REVIEW_AUTHORIZATION_VERSION,
   type EngineerFeedback,
   type EvidenceRegisteredEvent,
   type FixedManagerIdentity,
   type ManagerHandoffRegistrar,
   type ManagerReview,
+  type ManagerReviewIntent,
+  type ManagerReviewIntentRecordedEvent,
+  type ManagerReviewPermitConsumer,
   type ManagerReviewRecordedEvent,
   type ManagerRuntimeAuthorizer,
   type ManagerRuntimeClaim,
@@ -36,12 +47,18 @@ interface IdempotencyRecord {
   readonly event: EvidenceRegisteredEvent | ManagerReviewRecordedEvent;
 }
 
+interface ReviewIntentRecord {
+  readonly event: ManagerReviewIntentRecordedEvent;
+  readonly reviewScope: string;
+}
+
 export interface ManagerReviewWorkflowOptions {
   readonly workspaceId: string;
   readonly storePath: string;
   readonly evidenceIssuerPrincipal: string;
   readonly handoffRegistrar: ManagerHandoffRegistrar;
   readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly managerReviewPermitConsumer: ManagerReviewPermitConsumer;
   readonly now?: () => Date;
 }
 
@@ -65,6 +82,7 @@ function requestFromEvidence(evidence: PassingEngineerEvidence): PassingEngineer
 
 function requestFromReview(review: ManagerReview): RecordManagerReviewRequest {
   return {
+    reviewTaskId: review.reviewTaskId,
     evidenceDigest: review.evidenceDigest,
     decision: review.decision,
     summary: review.summary,
@@ -92,10 +110,129 @@ function reviewRequestIdentity(manager: ManagerRuntimeClaim): FixedManagerIdenti
   };
 }
 
+function managerReviewScope(manager: FixedManagerIdentity): string {
+  return `manager:${manager.agentId}:${manager.laneId}:review`;
+}
+
+function managerReviewIntentScope(manager: FixedManagerIdentity): string {
+  return `${managerReviewScope(manager)}-intent`;
+}
+
+function logicalReviewRequest(
+  evidenceId: string,
+  manager: ManagerRuntimeClaim,
+  request: RecordManagerReviewRequest,
+): Record<string, unknown> {
+  return {
+    action: "record_manager_review",
+    evidenceId,
+    manager: reviewRequestIdentity(manager),
+    request,
+  };
+}
+
+function permitRequest(
+  evidence: PassingEngineerEvidence,
+  manager: ManagerRuntimeClaim,
+  request: RecordManagerReviewRequest,
+  scope: string,
+  idempotencyKey: string,
+  requestHash: string,
+): ManagerReviewPermitConsumeRequest {
+  return parseManagerReviewPermitConsumeRequest({
+    apiVersion: STEWARD_RUNTIME_API_VERSION,
+    operationId: `manager-review:${sha256({ scope, idempotencyKey, requestHash })}`,
+    workspaceId: evidence.workspaceId,
+    reviewTaskId: request.reviewTaskId,
+    sourceTaskId: evidence.taskId,
+    evidenceId: evidence.evidenceId,
+    evidenceDigest: evidence.evidenceDigest,
+    managerAgentId: manager.agentId,
+    managerLaneId: manager.laneId,
+    runtimeInstanceId: manager.runtimeInstanceId,
+    runtimeEpoch: manager.runtimeEpoch,
+    reviewRequestDigest: `sha256:${requestHash}`,
+  });
+}
+
+function checkedPermitReceipt(
+  value: unknown,
+  request: ManagerReviewPermitConsumeRequest,
+): ManagerReviewPermitConsumeReceipt {
+  let receipt: ManagerReviewPermitConsumeReceipt;
+  try {
+    receipt = parseManagerReviewPermitConsumeReceipt(value);
+  } catch (error) {
+    throw new ReviewServiceError(
+      502,
+      "INVALID_CONTROL_PLANE_PERMIT_RESPONSE",
+      "Control-plane permit consumer returned an invalid receipt",
+      { cause: error },
+    );
+  }
+  const stableRequest = {
+    operationId: request.operationId,
+    workspaceId: request.workspaceId,
+    reviewTaskId: request.reviewTaskId,
+    sourceTaskId: request.sourceTaskId,
+    evidenceId: request.evidenceId,
+    evidenceDigest: request.evidenceDigest,
+    managerAgentId: request.managerAgentId,
+    managerLaneId: request.managerLaneId,
+    reviewRequestDigest: request.reviewRequestDigest,
+  };
+  const stableReceipt = {
+    operationId: receipt.operationId,
+    workspaceId: receipt.workspaceId,
+    reviewTaskId: receipt.reviewTaskId,
+    sourceTaskId: receipt.sourceTaskId,
+    evidenceId: receipt.evidenceId,
+    evidenceDigest: receipt.evidenceDigest,
+    managerAgentId: receipt.managerAgentId,
+    managerLaneId: receipt.managerLaneId,
+    reviewRequestDigest: receipt.reviewRequestDigest,
+  };
+  if (canonicalJson(stableReceipt) !== canonicalJson(stableRequest)) {
+    throw new ReviewServiceError(
+      502,
+      "INVALID_CONTROL_PLANE_PERMIT_RESPONSE",
+      "Control-plane permit receipt changed its stable review binding",
+    );
+  }
+  if (
+    receipt.state === "accepted" &&
+    (receipt.managerRuntimeInstanceId !== request.runtimeInstanceId ||
+      receipt.managerRuntimeEpoch !== request.runtimeEpoch)
+  ) {
+    throw new ReviewServiceError(
+      502,
+      "INVALID_CONTROL_PLANE_PERMIT_RESPONSE",
+      "New control-plane permit receipt changed its authorizing runtime",
+    );
+  }
+  return receipt;
+}
+
 function exactNow(now: () => Date): Date {
   const value = now();
   if (!(value instanceof Date) || Number.isNaN(value.valueOf())) throw new Error("MANAGER_REVIEW_CLOCK_INVALID");
   return value;
+}
+
+function deterministicUuid(namespace: string, identity: string): string {
+  const characters = sha256({ namespace, identity }).slice(0, 32).split("");
+  characters[12] = "4";
+  characters[16] = ((Number.parseInt(characters[16]!, 16) & 0x3) | 0x8).toString(16);
+  const value = characters.join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
+function reviewIntentId(operationId: string): string {
+  return deterministicUuid("steward-manager-review-intent", operationId);
+}
+
+function managerReviewId(permitId: string): string {
+  return deterministicUuid("steward-manager-review", permitId);
 }
 
 function handoffRequest(evidence: PassingEngineerEvidence, review: ManagerReview): RegisterManagerHandoffRequest {
@@ -120,12 +257,20 @@ export class ManagerReviewWorkflow {
   readonly #issuer: string;
   readonly #registrar: ManagerHandoffRegistrar;
   readonly #runtimeAuthorizer: ManagerRuntimeAuthorizer;
+  readonly #permitConsumer: ManagerReviewPermitConsumer;
   readonly #now: () => Date;
   readonly #store: ReviewEventStore;
   readonly #evidence = new Map<string, PassingEngineerEvidence>();
   readonly #completionEvents = new Map<string, string>();
   readonly #reviews = new Map<string, ManagerReview>();
   readonly #reviewByEvidence = new Map<string, string>();
+  readonly #reviewByPermit = new Map<string, string>();
+  readonly #reviewByPermitSequence = new Map<number, string>();
+  readonly #reviewByReviewTask = new Map<string, string>();
+  readonly #reviewIntents = new Map<string, ReviewIntentRecord>();
+  readonly #intentByEvidence = new Map<string, string>();
+  readonly #intentByReviewTask = new Map<string, string>();
+  readonly #intentByOperation = new Map<string, string>();
   readonly #handoffs = new Map<string, RegisteredManagerHandoff>();
   readonly #idempotency = new Map<string, IdempotencyRecord>();
   readonly #deliveries = new Map<string, Promise<void>>();
@@ -136,6 +281,7 @@ export class ManagerReviewWorkflow {
     this.#issuer = options.evidenceIssuerPrincipal;
     this.#registrar = options.handoffRegistrar;
     this.#runtimeAuthorizer = options.managerRuntimeAuthorizer;
+    this.#permitConsumer = options.managerReviewPermitConsumer;
     this.#now = options.now ?? (() => new Date());
     this.#store = store;
     this.#restore(store.records);
@@ -166,7 +312,9 @@ export class ManagerReviewWorkflow {
     }
     const store = await ReviewEventStore.open(options.storePath);
     try {
-      return new ManagerReviewWorkflow({ ...options, workspaceId: workspace }, store);
+      const workflow = new ManagerReviewWorkflow({ ...options, workspaceId: workspace }, store);
+      await workflow.reconcilePendingReviewIntents();
+      return workflow;
     } catch (error) {
       await store.close();
       throw error;
@@ -226,7 +374,14 @@ export class ManagerReviewWorkflow {
     await this.#authorize(manager);
     return Object.freeze(
       [...this.#evidence.values()]
-        .filter((evidence) => !this.#reviewByEvidence.has(evidence.evidenceId))
+        .filter((evidence) => {
+          if (this.#reviewByEvidence.has(evidence.evidenceId)) return false;
+          const intentKey = this.#intentByEvidence.get(evidence.evidenceId);
+          if (!intentKey) return true;
+          const intent = this.#reviewIntents.get(intentKey)?.event.intent;
+          if (!intent) throw corruptStore("pending manager review intent cannot be resolved");
+          return intent.managerAgentId === manager.agentId && intent.managerLaneId === manager.laneId;
+        })
         .sort((left, right) => left.registeredAt.localeCompare(right.registeredAt)),
     );
   }
@@ -244,13 +399,8 @@ export class ManagerReviewWorkflow {
     // Runtime generation is authorization and audit context, not logical
     // idempotency identity. A replacement process must be able to recover a
     // committed lost response with the same lane, evidence, body, and key.
-    const requestHash = sha256({
-      action: "record_manager_review",
-      evidenceId,
-      manager: reviewRequestIdentity(manager),
-      request: parsed,
-    });
-    const scope = `manager:${manager.agentId}:${manager.laneId}:review`;
+    const requestHash = sha256(logicalReviewRequest(evidenceId, manager, parsed));
+    const scope = managerReviewScope(manager);
     const result = await this.#serialize(async (): Promise<RecordManagerReviewResult> => {
       const duplicate = this.#idempotencyResult(scope, key, requestHash);
       if (duplicate !== undefined) {
@@ -261,57 +411,58 @@ export class ManagerReviewWorkflow {
           duplicate: true,
         };
       }
-      const evidence = this.#evidence.get(evidenceId);
-      if (!evidence) throw new ReviewServiceError(404, "EVIDENCE_NOT_FOUND", "Passing evidence was not found");
-      if (parsed.evidenceDigest !== evidence.evidenceDigest) {
-        throw new ReviewServiceError(409, "EVIDENCE_DIGEST_MISMATCH", "Review does not bind the current immutable evidence");
+      const scopedKey = `${scope}\u0000${key}`;
+      let intentRecord = this.#reviewIntents.get(scopedKey);
+      if (intentRecord) {
+        if (intentRecord.event.requestHash !== requestHash) {
+          throw new ReviewServiceError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for another request");
+        }
+      } else {
+        const evidence = this.#evidence.get(evidenceId);
+        if (!evidence) throw new ReviewServiceError(404, "EVIDENCE_NOT_FOUND", "Passing evidence was not found");
+        if (parsed.evidenceDigest !== evidence.evidenceDigest) {
+          throw new ReviewServiceError(409, "EVIDENCE_DIGEST_MISMATCH", "Review does not bind the current immutable evidence");
+        }
+        if (manager.agentId === evidence.engineerAgentId) {
+          throw new ReviewServiceError(403, "SELF_REVIEW_FORBIDDEN", "The engineer cannot review their own passing evidence");
+        }
+        if (this.#reviewByEvidence.has(evidenceId) || this.#intentByEvidence.has(evidenceId)) {
+          throw new ReviewServiceError(409, "EVIDENCE_ALREADY_REVIEWED", "Passing evidence already has a manager review or durable review intent");
+        }
+        if (this.#reviewByReviewTask.has(parsed.reviewTaskId) || this.#intentByReviewTask.has(parsed.reviewTaskId)) {
+          throw new ReviewServiceError(409, "REVIEW_TASK_ALREADY_USED", "Manager review task already authorized another review or durable review intent");
+        }
+        const consumeRequest = permitRequest(evidence, manager, parsed, scope, key, requestHash);
+        const createdAt = exactNow(this.#now).toISOString();
+        const intent: ManagerReviewIntent = Object.freeze({
+          apiVersion: MANAGER_REVIEW_API_VERSION,
+          reviewIntentId: reviewIntentId(consumeRequest.operationId),
+          workspaceId: evidence.workspaceId,
+          evidenceId: evidence.evidenceId,
+          managerAgentId: manager.agentId,
+          managerLaneId: manager.laneId,
+          initialRuntimeInstanceId: manager.runtimeInstanceId,
+          initialRuntimeEpoch: manager.runtimeEpoch,
+          operationId: consumeRequest.operationId,
+          request: parsed,
+          createdAt,
+        });
+        const event = await this.#store.append({
+          eventId: randomUUID(),
+          eventType: "manager_review_intent_recorded",
+          occurredAt: createdAt,
+          idempotencyScope: managerReviewIntentScope(manager),
+          idempotencyKey: key,
+          requestHash,
+          intent,
+        });
+        if (event.eventType !== "manager_review_intent_recorded") {
+          throw new Error("Unexpected stored event type");
+        }
+        intentRecord = { event, reviewScope: scope };
+        this.#indexReviewIntent(intentRecord);
       }
-      if (manager.agentId === evidence.engineerAgentId) {
-        throw new ReviewServiceError(403, "SELF_REVIEW_FORBIDDEN", "The engineer cannot review their own passing evidence");
-      }
-      if (this.#reviewByEvidence.has(evidenceId)) {
-        throw new ReviewServiceError(409, "EVIDENCE_ALREADY_REVIEWED", "Passing evidence already has a manager review");
-      }
-      // Authorize after conflict checks and immediately before timestamping and
-      // appending. Exact committed retries return above without requiring a
-      // replaced/interrupted runtime to become live again.
-      await this.#authorize(manager);
-      const reviewedAt = exactNow(this.#now).toISOString();
-      const review: ManagerReview = Object.freeze({
-        apiVersion: MANAGER_REVIEW_API_VERSION,
-        managerReviewId: randomUUID(),
-        evidenceId,
-        evidenceDigest: evidence.evidenceDigest,
-        workspaceId: evidence.workspaceId,
-        taskId: evidence.taskId,
-        engineerAgentId: evidence.engineerAgentId,
-        managerAgentId: manager.agentId,
-        managerLaneId: manager.laneId,
-        managerRuntimeInstanceId: manager.runtimeInstanceId,
-        managerRuntimeEpoch: manager.runtimeEpoch,
-        decision: parsed.decision,
-        summary: parsed.summary,
-        remainingRisks: parsed.remainingRisks,
-        reviewedAt,
-      });
-      const event = await this.#store.append({
-        eventId: randomUUID(),
-        eventType: "manager_review_recorded",
-        occurredAt: reviewedAt,
-        idempotencyScope: scope,
-        idempotencyKey: key,
-        requestHash,
-        review,
-      });
-      if (event.eventType !== "manager_review_recorded") throw new Error("Unexpected stored event type");
-      this.#reviews.set(review.managerReviewId, review);
-      this.#reviewByEvidence.set(evidenceId, review.managerReviewId);
-      this.#idempotency.set(`${scope}\u0000${key}`, { requestHash, event });
-      return {
-        review,
-        productionCheck: review.decision === "accepted" ? this.#productionCheck(review) : null,
-        duplicate: false,
-      };
+      return this.#consumeAndMaterializeReviewIntent(intentRecord, manager);
     });
     if (result.review.decision === "accepted") {
       await this.#deliverReview(result.review.managerReviewId).catch(() => undefined);
@@ -348,6 +499,7 @@ export class ManagerReviewWorkflow {
             status: "changes_requested" as const,
             workspaceId: evidence.workspaceId,
             taskId: evidence.taskId,
+            reviewTaskId: review.reviewTaskId,
             evidenceId: evidence.evidenceId,
             evidenceDigest: evidence.evidenceDigest,
             completionEventId: evidence.completionEventId,
@@ -358,6 +510,8 @@ export class ManagerReviewWorkflow {
             managerRuntimeInstanceId: review.managerRuntimeInstanceId,
             managerRuntimeEpoch: review.managerRuntimeEpoch,
             managerReviewId: review.managerReviewId,
+            permitId: review.permitId,
+            permitWorkspaceSequence: review.workspaceSequence,
             resultOverview: evidence.resultOverview,
             reviewSummary: review.summary,
             remainingRisks: review.remainingRisks,
@@ -370,8 +524,43 @@ export class ManagerReviewWorkflow {
   }
 
   async deliverPendingHandoffs(): Promise<void> {
+    await this.reconcilePendingReviewIntents();
     for (const review of this.#reviews.values()) {
       if (review.decision === "accepted" && !this.#handoffs.has(review.managerReviewId)) {
+        await this.#deliverReview(review.managerReviewId).catch(() => undefined);
+      }
+    }
+  }
+
+  async reconcilePendingReviewIntents(): Promise<void> {
+    for (const intentRecord of [...this.#reviewIntents.values()]) {
+      const scopedKey = `${intentRecord.reviewScope}\u0000${intentRecord.event.idempotencyKey}`;
+      if (this.#idempotency.has(scopedKey)) continue;
+      let review: ManagerReview | undefined;
+      try {
+        const result = await this.#serialize(async () => {
+          const completed = this.#idempotency.get(scopedKey);
+          if (completed) {
+            if (completed.event.eventType !== "manager_review_recorded") {
+              throw corruptStore("review intent completion resolved incorrectly");
+            }
+            return completed.event.review;
+          }
+          const intent = intentRecord.event.intent;
+          return (await this.#consumeAndMaterializeReviewIntent(intentRecord, {
+            workspaceId: intent.workspaceId,
+            agentId: intent.managerAgentId,
+            laneId: intent.managerLaneId,
+            role: "manager",
+            runtimeInstanceId: intent.initialRuntimeInstanceId,
+            runtimeEpoch: intent.initialRuntimeEpoch,
+          })).review;
+        });
+        review = result;
+      } catch (error) {
+        if (error instanceof ReviewServiceError && error.code === "REVIEW_STORE_CORRUPT") throw error;
+      }
+      if (review?.decision === "accepted") {
         await this.#deliverReview(review.managerReviewId).catch(() => undefined);
       }
     }
@@ -397,6 +586,118 @@ export class ManagerReviewWorkflow {
     return existing.event;
   }
 
+  #indexReviewIntent(record: ReviewIntentRecord): void {
+    const { event } = record;
+    const intent = event.intent;
+    const scopedKey = `${record.reviewScope}\u0000${event.idempotencyKey}`;
+    if (
+      this.#reviewIntents.has(scopedKey) ||
+      this.#intentByEvidence.has(intent.evidenceId) ||
+      this.#intentByReviewTask.has(intent.request.reviewTaskId) ||
+      this.#intentByOperation.has(intent.operationId)
+    ) {
+      throw corruptStore("manager review intent identity is duplicated");
+    }
+    this.#reviewIntents.set(scopedKey, record);
+    this.#intentByEvidence.set(intent.evidenceId, scopedKey);
+    this.#intentByReviewTask.set(intent.request.reviewTaskId, scopedKey);
+    this.#intentByOperation.set(intent.operationId, scopedKey);
+  }
+
+  async #consumeAndMaterializeReviewIntent(
+    intentRecord: ReviewIntentRecord,
+    manager: ManagerRuntimeClaim,
+  ): Promise<RecordManagerReviewResult> {
+    const { event } = intentRecord;
+    const intent = event.intent;
+    const evidence = this.#evidence.get(intent.evidenceId);
+    if (!evidence) throw corruptStore("manager review intent has no passing evidence");
+    if (
+      manager.workspaceId !== intent.workspaceId ||
+      manager.agentId !== intent.managerAgentId ||
+      manager.laneId !== intent.managerLaneId ||
+      manager.role !== "manager"
+    ) {
+      throw corruptStore("manager review intent runtime identity changed");
+    }
+    const consumeRequest = permitRequest(
+      evidence,
+      manager,
+      intent.request,
+      intentRecord.reviewScope,
+      event.idempotencyKey,
+      event.requestHash,
+    );
+    if (consumeRequest.operationId !== intent.operationId) {
+      throw corruptStore("manager review intent operation identity changed");
+    }
+    // The intent above is already fsynced. A crash or lost response after the
+    // control-plane commit therefore retries this same operation and receives
+    // the original permit audit rather than creating new authority.
+    const permit = checkedPermitReceipt(
+      await this.#permitConsumer.consumeManagerReviewPermit(consumeRequest),
+      consumeRequest,
+    );
+    if (
+      this.#reviewByPermit.has(permit.permitId) ||
+      this.#reviewByPermitSequence.has(permit.workspaceSequence)
+    ) {
+      throw corruptStore("control-plane permit was already materialized by another review");
+    }
+    const reviewedAt = permit.authorizedAt;
+    const review: ManagerReview = Object.freeze({
+      apiVersion: MANAGER_REVIEW_API_VERSION,
+      authorizationVersion: MANAGER_REVIEW_AUTHORIZATION_VERSION,
+      managerReviewId: managerReviewId(permit.permitId),
+      reviewTaskId: permit.reviewTaskId,
+      evidenceId: intent.evidenceId,
+      evidenceDigest: evidence.evidenceDigest,
+      workspaceId: evidence.workspaceId,
+      taskId: evidence.taskId,
+      engineerAgentId: evidence.engineerAgentId,
+      managerAgentId: intent.managerAgentId,
+      managerLaneId: intent.managerLaneId,
+      managerRuntimeInstanceId: permit.managerRuntimeInstanceId,
+      managerRuntimeEpoch: permit.managerRuntimeEpoch,
+      permitId: permit.permitId,
+      authorizedAt: permit.authorizedAt,
+      workspaceSequence: permit.workspaceSequence,
+      decision: intent.request.decision,
+      summary: intent.request.summary,
+      remainingRisks: intent.request.remainingRisks,
+      reviewedAt,
+    });
+    if (this.#reviews.has(review.managerReviewId)) {
+      throw corruptStore("deterministic manager review identity collided");
+    }
+    const reviewEvent = await this.#store.append({
+      eventId: randomUUID(),
+      eventType: "manager_review_recorded",
+      occurredAt: reviewedAt,
+      idempotencyScope: intentRecord.reviewScope,
+      idempotencyKey: event.idempotencyKey,
+      requestHash: event.requestHash,
+      review,
+    });
+    if (reviewEvent.eventType !== "manager_review_recorded") {
+      throw new Error("Unexpected stored event type");
+    }
+    this.#reviews.set(review.managerReviewId, review);
+    this.#reviewByEvidence.set(intent.evidenceId, review.managerReviewId);
+    this.#reviewByPermit.set(review.permitId, review.managerReviewId);
+    this.#reviewByPermitSequence.set(review.workspaceSequence, review.managerReviewId);
+    this.#reviewByReviewTask.set(review.reviewTaskId, review.managerReviewId);
+    this.#idempotency.set(
+      `${intentRecord.reviewScope}\u0000${event.idempotencyKey}`,
+      { requestHash: event.requestHash, event: reviewEvent },
+    );
+    return {
+      review,
+      productionCheck: review.decision === "accepted" ? this.#productionCheck(review) : null,
+      duplicate: false,
+    };
+  }
+
   #deliverReview(managerReviewId: string): Promise<void> {
     if (this.#handoffs.has(managerReviewId)) return Promise.resolve();
     const existing = this.#deliveries.get(managerReviewId);
@@ -414,8 +715,9 @@ export class ManagerReviewWorkflow {
     const evidence = this.#evidence.get(review.evidenceId);
     if (!evidence) throw corruptStore("accepted review has no evidence");
     const request = handoffRequest(evidence, review);
+    const idempotencyKey = `handoff:permit:${review.permitId}`;
     const result = parseHandoffResult(
-      await this.#registrar.registerManagerHandoff(request, `handoff:${managerReviewId}`),
+      await this.#registrar.registerManagerHandoff(request, idempotencyKey),
     );
     if (!same(request, handoffRequest(evidence, {
       ...review,
@@ -441,7 +743,7 @@ export class ManagerReviewWorkflow {
         eventType: "handoff_registered",
         occurredAt: result.handoff.acceptedAt,
         idempotencyScope: "broker:handoff",
-        idempotencyKey: `handoff:${managerReviewId}`,
+        idempotencyKey,
         requestHash: sha256({ action: "register_manager_handoff", request }),
         managerReviewId,
         handoff: result.handoff,
@@ -461,6 +763,7 @@ export class ManagerReviewWorkflow {
       status: handoff ? "pending_human_review" : "handoff_registration_pending",
       workspaceId: evidence.workspaceId,
       taskId: evidence.taskId,
+      reviewTaskId: review.reviewTaskId,
       evidenceId: evidence.evidenceId,
       evidenceDigest: evidence.evidenceDigest,
       completionEventId: evidence.completionEventId,
@@ -470,6 +773,8 @@ export class ManagerReviewWorkflow {
       managerRuntimeInstanceId: review.managerRuntimeInstanceId,
       managerRuntimeEpoch: review.managerRuntimeEpoch,
       managerReviewId: review.managerReviewId,
+      permitId: review.permitId,
+      permitWorkspaceSequence: review.workspaceSequence,
       resultOverview: evidence.resultOverview,
       reviewSummary: review.summary,
       remainingRisks: review.remainingRisks,
@@ -504,31 +809,91 @@ export class ManagerReviewWorkflow {
         this.#idempotency.set(scopedKey, { requestHash: event.requestHash, event });
         continue;
       }
+      if (event.eventType === "manager_review_intent_recorded") {
+        const intent = event.intent;
+        const evidence = this.#evidence.get(intent.evidenceId);
+        const manager: ManagerRuntimeClaim = {
+          workspaceId: intent.workspaceId,
+          agentId: intent.managerAgentId,
+          laneId: intent.managerLaneId,
+          role: "manager",
+          runtimeInstanceId: intent.initialRuntimeInstanceId,
+          runtimeEpoch: intent.initialRuntimeEpoch,
+        };
+        const reviewScope = managerReviewScope(manager);
+        const expectedPermitRequest = evidence
+          ? permitRequest(
+              evidence,
+              manager,
+              intent.request,
+              reviewScope,
+              event.idempotencyKey,
+              event.requestHash,
+            )
+          : undefined;
+        if (
+          !evidence ||
+          event.idempotencyScope !== managerReviewIntentScope(manager) ||
+          event.occurredAt !== intent.createdAt ||
+          intent.workspaceId !== this.#workspaceId ||
+          intent.request.evidenceDigest !== evidence.evidenceDigest ||
+          intent.managerAgentId === evidence.engineerAgentId ||
+          event.requestHash !== sha256(logicalReviewRequest(
+            evidence.evidenceId,
+            manager,
+            intent.request,
+          )) ||
+          expectedPermitRequest?.operationId !== intent.operationId ||
+          intent.reviewIntentId !== reviewIntentId(intent.operationId)
+        ) {
+          throw corruptStore("manager review intent semantics are inconsistent");
+        }
+        this.#indexReviewIntent({ event, reviewScope });
+        continue;
+      }
       if (event.eventType === "manager_review_recorded") {
         const evidence = this.#evidence.get(event.review.evidenceId);
         const manager = reviewRuntimeClaim(event.review);
+        const intentRecord = this.#reviewIntents.get(
+          `${event.idempotencyScope}\u0000${event.idempotencyKey}`,
+        );
+        const intent = intentRecord?.event.intent;
         if (
           !evidence ||
+          !intentRecord ||
+          !intent ||
           event.occurredAt !== event.review.reviewedAt ||
           event.idempotencyScope !== `manager:${manager.agentId}:${manager.laneId}:review` ||
+          intentRecord.reviewScope !== event.idempotencyScope ||
+          intent.evidenceId !== evidence.evidenceId ||
+          intent.managerAgentId !== event.review.managerAgentId ||
+          intent.managerLaneId !== event.review.managerLaneId ||
+          !same(intent.request, requestFromReview(event.review)) ||
           event.review.workspaceId !== evidence.workspaceId ||
           event.review.taskId !== evidence.taskId ||
           event.review.evidenceDigest !== evidence.evidenceDigest ||
           event.review.engineerAgentId !== evidence.engineerAgentId ||
           event.review.managerAgentId === evidence.engineerAgentId ||
-          event.requestHash !== sha256({
-            action: "record_manager_review",
-            evidenceId: evidence.evidenceId,
-            manager: reviewRequestIdentity(manager),
-            request: requestFromReview(event.review),
-          }) ||
+          event.review.authorizedAt !== event.review.reviewedAt ||
+          event.review.managerReviewId !== managerReviewId(event.review.permitId) ||
+          event.requestHash !== sha256(logicalReviewRequest(
+            evidence.evidenceId,
+            manager,
+            requestFromReview(event.review),
+          )) ||
           this.#reviewByEvidence.has(evidence.evidenceId) ||
+          this.#reviewByPermit.has(event.review.permitId) ||
+          this.#reviewByPermitSequence.has(event.review.workspaceSequence) ||
+          this.#reviewByReviewTask.has(event.review.reviewTaskId) ||
           this.#reviews.has(event.review.managerReviewId)
         ) {
           throw corruptStore("manager review semantics are inconsistent");
         }
         this.#reviews.set(event.review.managerReviewId, event.review);
         this.#reviewByEvidence.set(evidence.evidenceId, event.review.managerReviewId);
+        this.#reviewByPermit.set(event.review.permitId, event.review.managerReviewId);
+        this.#reviewByPermitSequence.set(event.review.workspaceSequence, event.review.managerReviewId);
+        this.#reviewByReviewTask.set(event.review.reviewTaskId, event.review.managerReviewId);
         this.#idempotency.set(scopedKey, { requestHash: event.requestHash, event });
         continue;
       }
@@ -540,7 +905,7 @@ export class ManagerReviewWorkflow {
       const request = handoffRequest(evidence, review);
       if (
         event.idempotencyScope !== "broker:handoff" ||
-        event.idempotencyKey !== `handoff:${review.managerReviewId}` ||
+        event.idempotencyKey !== `handoff:permit:${review.permitId}` ||
         event.requestHash !== sha256({ action: "register_manager_handoff", request }) ||
         !same(request, {
           workspaceId: event.handoff.workspaceId,
@@ -573,14 +938,8 @@ export class ManagerReviewWorkflow {
   }
 
   async #authorize(manager: ManagerRuntimeClaim): Promise<void> {
-    /*
-     * The current HTTP authorizer checks a fresh snapshot. An interrupt can be
-     * committed after that snapshot and before the durable append. A future
-     * atomic review permit can replace the injected authorizer without changing
-     * the workflow or its evidence/idempotency semantics. The bootstrap also
-     * cannot prove that this evidence ID belongs to a particular manager task;
-     * that needs a future task-scoped permit issued by the control plane.
-     */
+    // Queue discovery is advisory and remains protected by a fresh read-only
+    // snapshot. Every write separately consumes an atomic task-scoped permit.
     await this.#runtimeAuthorizer.authorizeManagerRuntime(manager);
   }
 }

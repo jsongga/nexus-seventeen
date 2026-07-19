@@ -4,8 +4,10 @@ import {
   parseHumanCommandReceipt,
   parseUiBootstrap,
   parseUiEventEnvelope,
+  type AgentTaskSubject,
   type HumanCommandEnvelope,
   type HumanCommandReceipt,
+  type TaskId,
   type UiBootstrap,
   type UiEventEnvelope,
   type WorkspaceId,
@@ -21,12 +23,16 @@ import { WorkspaceClient, type WorkspaceConnectionState } from './workspace-clie
 const WORKSPACE = 'workspace-one' as WorkspaceId;
 const NOW = '2026-07-19T01:00:00.000Z';
 
-function task(status: 'queued' | 'running' = 'queued') {
+function task(
+  status: 'queued' | 'running' = 'queued',
+  subject: AgentTaskSubject = { type: 'development' },
+) {
   return {
     taskId: 'task-one',
     workspaceId: WORKSPACE,
     agentId: 'agent-one',
     laneId: 'lane-one',
+    subject,
     title: 'Implement transport',
     objective: 'Connect the disposable frontend to authoritative state.',
     status,
@@ -40,7 +46,11 @@ function task(status: 'queued' | 'running' = 'queued') {
 function bootstrap(
   sequence = 1,
   paused = false,
-  options: Readonly<{ withTask?: boolean }> = {},
+  options: Readonly<{
+    withTask?: boolean;
+    taskStatus?: 'queued' | 'running';
+    taskSubject?: AgentTaskSubject;
+  }> = {},
 ): UiBootstrap {
   return parseUiBootstrap({
     apiVersion: STEWARD_UI_API_VERSION,
@@ -78,7 +88,9 @@ function bootstrap(
           queue: options.withTask ? ['task-one'] : [],
         },
       ],
-      tasks: options.withTask ? [task()] : [],
+      tasks: options.withTask
+        ? [task(options.taskStatus ?? 'queued', options.taskSubject)]
+        : [],
       progress: [],
     },
     eventStream: {
@@ -211,6 +223,81 @@ describe('WorkspaceClient', () => {
     expect(client.state.replica?.tasks[0]?.status).toBe('running');
     expect(client.state.replica?.progress).toHaveLength(1);
     expect(client.state.replica?.progress[0]?.phase).toBe('research');
+    client.stop();
+  });
+
+  it('reconciles recovered review work without resetting lifecycle data or accepting a new binding', async () => {
+    const reviewSubject = {
+      type: 'manager_review',
+      sourceTaskId: 'task-source' as TaskId,
+      evidenceId: 'evidence-source',
+      evidenceDigest: `sha256:${'a'.repeat(64)}`,
+    } satisfies AgentTaskSubject;
+    const gateway = new FakeGateway(bootstrap(1, false, {
+      withTask: true,
+      taskStatus: 'running',
+      taskSubject: reviewSubject,
+    }));
+    const client = new WorkspaceClient({ gateway, onChange: () => undefined });
+    client.start();
+    await nextTurn();
+
+    const runtimeUpdate = {
+      agentId: 'agent-one',
+      laneId: 'lane-one',
+      runtimeInstanceId: 'runtime-replacement',
+      runtimeEpoch: 2,
+      leaseExpiresAt: '2026-07-19T01:02:00.000Z',
+      lastSeenAt: '2026-07-19T01:00:02.000Z',
+      checkpointRef: null,
+      currentAction: {
+        taskId: 'task-one',
+        summary: 'Recovering the exact assigned manager review.',
+        startedAt: '2026-07-19T01:00:02.000Z',
+      },
+      connectionState: 'online',
+      controlState: 'active',
+      controlVersion: 0,
+      queue: ['task-one'],
+    } as const;
+    gateway.eventHandler?.(parseUiEventEnvelope({
+      apiVersion: STEWARD_UI_API_VERSION,
+      eventId: 'recover-review-event',
+      workspaceId: WORKSPACE,
+      sequence: 2,
+      occurredAt: '2026-07-19T01:00:02.000Z',
+      payload: {
+        type: 'agent_runtime_updated',
+        agent: runtimeUpdate,
+        task: task('running', reviewSubject),
+      },
+    }));
+
+    expect(client.state.mode).toBe('live');
+    expect(client.state.replica?.tasks[0]).toMatchObject({
+      status: 'running',
+      startedAt: NOW,
+      subject: reviewSubject,
+    });
+
+    gateway.eventHandler?.(parseUiEventEnvelope({
+      apiVersion: STEWARD_UI_API_VERSION,
+      eventId: 'mutate-review-binding-event',
+      workspaceId: WORKSPACE,
+      sequence: 3,
+      occurredAt: '2026-07-19T01:00:03.000Z',
+      payload: {
+        type: 'agent_runtime_updated',
+        agent: {
+          ...runtimeUpdate,
+          lastSeenAt: '2026-07-19T01:00:03.000Z',
+        },
+        task: task('running', { ...reviewSubject, evidenceId: 'evidence-forged' }),
+      },
+    }));
+
+    expect(client.state.mode).toBe('stale');
+    expect(client.state.reason).toMatch(/immutable subject binding/u);
     client.stop();
   });
 

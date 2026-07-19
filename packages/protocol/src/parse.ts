@@ -10,6 +10,7 @@ import type {
   AgentProvider,
   AgentRole,
   AgentRuntimeUpdate,
+  AgentTaskSubject,
   AgentTaskProjection,
   CheckpointRef,
   ClientCommandId,
@@ -26,6 +27,8 @@ import type {
   LeaseId,
   LeaseRenewalRequest,
   LeaseRenewalResult,
+  ManagerReviewPermitConsumeReceipt,
+  ManagerReviewPermitConsumeRequest,
   ProgressEvent,
   RegisteredAgentProjection,
   RuntimeCommandEnvelope,
@@ -36,6 +39,7 @@ import type {
   RuntimeEventBatchReceipt,
   RuntimeInstanceId,
   SessionId,
+  Sha256Digest,
   SupervisorRegistration,
   SupervisorRegistrationRequest,
   SupervisorRegistrationResult,
@@ -95,6 +99,29 @@ const nonEmptyString = (input: unknown, path: string): string => {
     return fail(path, "expected a nonempty string");
   }
   return input;
+};
+
+const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u;
+
+const safeIdentifier = (input: unknown, path: string): string => {
+  if (
+    typeof input !== "string" ||
+    input.length > 128 ||
+    input.trim() !== input ||
+    !SAFE_IDENTIFIER_PATTERN.test(input)
+  ) {
+    return fail(path, "expected a safe identifier");
+  }
+  return input;
+};
+
+const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+
+const sha256Digest = (input: unknown, path: string): Sha256Digest => {
+  if (typeof input !== "string" || !SHA256_DIGEST_PATTERN.test(input)) {
+    return fail(path, "expected a lowercase SHA-256 digest");
+  }
+  return input as Sha256Digest;
 };
 
 const identifier = <T extends string>(input: unknown, path: string): T =>
@@ -190,6 +217,17 @@ const timestamp = (input: unknown, path: string): IsoTimestamp => {
 
   if (!Number.isFinite(Date.parse(input))) {
     return fail(path, "expected a valid ISO timestamp");
+  }
+  return input as IsoTimestamp;
+};
+
+const canonicalTimestamp = (input: unknown, path: string): IsoTimestamp => {
+  if (typeof input !== "string") {
+    return fail(path, "expected a canonical ISO timestamp");
+  }
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== input) {
+    return fail(path, "expected a canonical ISO timestamp");
   }
   return input as IsoTimestamp;
 };
@@ -299,6 +337,40 @@ const taskStatus = (input: unknown, path: string): TaskStatus =>
     ["queued", "running", "paused", "completed", "failed"],
     path,
   );
+
+const agentTaskSubject = (
+  input: unknown,
+  path: string,
+): AgentTaskSubject => {
+  const value = exactObjectForDiscriminator(input, path);
+  switch (value.type) {
+    case "development": {
+      exactObject(input, ["type"], path);
+      return Object.freeze({ type: "development" });
+    }
+    case "manager_review": {
+      const item = exactObject(
+        input,
+        ["type", "sourceTaskId", "evidenceId", "evidenceDigest"],
+        path,
+      );
+      return Object.freeze({
+        type: "manager_review",
+        sourceTaskId: identifier<TaskId>(
+          item.sourceTaskId,
+          `${path}.sourceTaskId`,
+        ),
+        evidenceId: safeIdentifier(item.evidenceId, `${path}.evidenceId`),
+        evidenceDigest: sha256Digest(
+          item.evidenceDigest,
+          `${path}.evidenceDigest`,
+        ),
+      });
+    }
+    default:
+      return fail(`${path}.type`, "unknown task subject type");
+  }
+};
 
 export const parseSupervisorRegistrationRequest = (
   input: unknown,
@@ -597,11 +669,170 @@ export const parseLeaseRenewalResult = (
   });
 };
 
+export const parseManagerReviewPermitConsumeRequest = (
+  input: unknown,
+): ManagerReviewPermitConsumeRequest => {
+  const path = "managerReviewPermitConsumeRequest";
+  const value = exactObject(
+    input,
+    [
+      "apiVersion",
+      "operationId",
+      "workspaceId",
+      "reviewTaskId",
+      "sourceTaskId",
+      "evidenceId",
+      "evidenceDigest",
+      "managerAgentId",
+      "managerLaneId",
+      "runtimeInstanceId",
+      "runtimeEpoch",
+      "reviewRequestDigest",
+    ],
+    path,
+  );
+  return Object.freeze({
+    apiVersion: apiVersion(
+      value.apiVersion,
+      STEWARD_RUNTIME_API_VERSION,
+      `${path}.apiVersion`,
+    ),
+    operationId: safeIdentifier(value.operationId, `${path}.operationId`),
+    workspaceId: identifier<WorkspaceId>(
+      value.workspaceId,
+      `${path}.workspaceId`,
+    ),
+    reviewTaskId: identifier<TaskId>(
+      value.reviewTaskId,
+      `${path}.reviewTaskId`,
+    ),
+    sourceTaskId: identifier<TaskId>(
+      value.sourceTaskId,
+      `${path}.sourceTaskId`,
+    ),
+    evidenceId: safeIdentifier(value.evidenceId, `${path}.evidenceId`),
+    evidenceDigest: sha256Digest(
+      value.evidenceDigest,
+      `${path}.evidenceDigest`,
+    ),
+    managerAgentId: identifier<AgentId>(
+      value.managerAgentId,
+      `${path}.managerAgentId`,
+    ),
+    managerLaneId: identifier<LaneId>(
+      value.managerLaneId,
+      `${path}.managerLaneId`,
+    ),
+    runtimeInstanceId: identifier<RuntimeInstanceId>(
+      value.runtimeInstanceId,
+      `${path}.runtimeInstanceId`,
+    ),
+    runtimeEpoch: integer(value.runtimeEpoch, `${path}.runtimeEpoch`, 1),
+    reviewRequestDigest: sha256Digest(
+      value.reviewRequestDigest,
+      `${path}.reviewRequestDigest`,
+    ),
+  });
+};
+
+export const parseManagerReviewPermitConsumeReceipt = (
+  input: unknown,
+): ManagerReviewPermitConsumeReceipt => {
+  const path = "managerReviewPermitConsumeReceipt";
+  const value = exactObject(
+    input,
+    [
+      "apiVersion",
+      "state",
+      "permitId",
+      "operationId",
+      "workspaceId",
+      "reviewTaskId",
+      "sourceTaskId",
+      "evidenceId",
+      "evidenceDigest",
+      "managerAgentId",
+      "managerLaneId",
+      "managerRuntimeInstanceId",
+      "managerRuntimeEpoch",
+      "reviewRequestDigest",
+      "authorizedAt",
+      "workspaceSequence",
+    ],
+    path,
+  );
+  return Object.freeze({
+    apiVersion: apiVersion(
+      value.apiVersion,
+      STEWARD_RUNTIME_API_VERSION,
+      `${path}.apiVersion`,
+    ),
+    state: oneOf(
+      value.state,
+      ["accepted", "duplicate"] as const,
+      `${path}.state`,
+    ),
+    permitId: safeIdentifier(value.permitId, `${path}.permitId`),
+    operationId: safeIdentifier(value.operationId, `${path}.operationId`),
+    workspaceId: identifier<WorkspaceId>(
+      value.workspaceId,
+      `${path}.workspaceId`,
+    ),
+    reviewTaskId: identifier<TaskId>(
+      value.reviewTaskId,
+      `${path}.reviewTaskId`,
+    ),
+    sourceTaskId: identifier<TaskId>(
+      value.sourceTaskId,
+      `${path}.sourceTaskId`,
+    ),
+    evidenceId: safeIdentifier(value.evidenceId, `${path}.evidenceId`),
+    evidenceDigest: sha256Digest(
+      value.evidenceDigest,
+      `${path}.evidenceDigest`,
+    ),
+    managerAgentId: identifier<AgentId>(
+      value.managerAgentId,
+      `${path}.managerAgentId`,
+    ),
+    managerLaneId: identifier<LaneId>(
+      value.managerLaneId,
+      `${path}.managerLaneId`,
+    ),
+    managerRuntimeInstanceId: identifier<RuntimeInstanceId>(
+      value.managerRuntimeInstanceId,
+      `${path}.managerRuntimeInstanceId`,
+    ),
+    managerRuntimeEpoch: integer(
+      value.managerRuntimeEpoch,
+      `${path}.managerRuntimeEpoch`,
+      1,
+    ),
+    reviewRequestDigest: sha256Digest(
+      value.reviewRequestDigest,
+      `${path}.reviewRequestDigest`,
+    ),
+    authorizedAt: canonicalTimestamp(
+      value.authorizedAt,
+      `${path}.authorizedAt`,
+    ),
+    workspaceSequence: integer(
+      value.workspaceSequence,
+      `${path}.workspaceSequence`,
+      1,
+    ),
+  });
+};
+
 export const parseAgentTaskProjection = (
   input: unknown,
 ): AgentTaskProjection => parseTask(input, "task");
 
-const parseTask = (input: unknown, path: string): AgentTaskProjection => {
+const parseTask = (
+  input: unknown,
+  path: string,
+  allowLegacyDevelopmentSubject = false,
+): AgentTaskProjection => {
   const value = exactObject(
     input,
     [
@@ -609,6 +840,7 @@ const parseTask = (input: unknown, path: string): AgentTaskProjection => {
       "workspaceId",
       "agentId",
       "laneId",
+      "subject",
       "title",
       "objective",
       "status",
@@ -654,6 +886,11 @@ const parseTask = (input: unknown, path: string): AgentTaskProjection => {
     ),
     agentId: identifier<AgentId>(value.agentId, `${path}.agentId`),
     laneId: identifier<LaneId>(value.laneId, `${path}.laneId`),
+    subject: Object.hasOwn(value, "subject")
+      ? agentTaskSubject(value.subject, `${path}.subject`)
+      : allowLegacyDevelopmentSubject
+        ? Object.freeze({ type: "development" as const })
+        : fail(`${path}.subject`, "is required by the UI v2 task contract"),
     title: nonEmptyString(value.title, `${path}.title`),
     objective: nonEmptyString(value.objective, `${path}.objective`),
     status,
@@ -1109,11 +1346,25 @@ const runtimeCommandPayload = (
   switch (value.type) {
     case "assign_task": {
       const item = exactObject(input, ["type", "task"], path);
-      const task = parseTask(item.task, `${path}.task`);
+      const task = parseTask(item.task, `${path}.task`, true);
       if (task.status !== "queued") {
         fail(`${path}.task.status`, "an assigned task must be queued");
       }
       return Object.freeze({ type: "assign_task", task });
+    }
+    case "recover_task": {
+      const item = exactObject(input, ["type", "task"], path);
+      const task = parseTask(item.task, `${path}.task`, true);
+      if (task.subject.type !== "manager_review") {
+        fail(
+          `${path}.task.subject.type`,
+          "only a manager-review task can be recovered",
+        );
+      }
+      if (task.status !== "running") {
+        fail(`${path}.task.status`, "a recovered task must already be running");
+      }
+      return Object.freeze({ type: "recover_task", task });
     }
     case "request_interrupt": {
       const item = exactObject(input, ["type", "reason"], path);
@@ -1175,7 +1426,7 @@ export const parseRuntimeCommandEnvelope = (
   const agentId = identifier<AgentId>(value.agentId, `${path}.agentId`);
   const laneId = identifier<LaneId>(value.laneId, `${path}.laneId`);
   const payload = runtimeCommandPayload(value.payload, `${path}.payload`);
-  if (payload.type === "assign_task") {
+  if (payload.type === "assign_task" || payload.type === "recover_task") {
     if (
       payload.task.workspaceId !== workspaceId ||
       payload.task.agentId !== agentId ||
@@ -1852,6 +2103,7 @@ const humanCommandPayload = (
           "type",
           "agentId",
           "laneId",
+          "subject",
           "title",
           "objective",
           "expectedAgentMinutes",
@@ -1863,6 +2115,9 @@ const humanCommandPayload = (
         type: "queue_work",
         agentId: identifier<AgentId>(item.agentId, `${path}.agentId`),
         laneId: identifier<LaneId>(item.laneId, `${path}.laneId`),
+        subject: Object.hasOwn(item, "subject")
+          ? agentTaskSubject(item.subject, `${path}.subject`)
+          : Object.freeze({ type: "development" }),
         title: nonEmptyString(item.title, `${path}.title`),
         objective: nonEmptyString(item.objective, `${path}.objective`),
         expectedAgentMinutes: expectedAgentMinutes(

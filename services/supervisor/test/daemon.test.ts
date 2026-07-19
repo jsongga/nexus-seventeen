@@ -39,6 +39,20 @@ async function waitFor(assertion: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
+test("runtime generation proof survives a private supervisor state restart", async () => {
+  const root = await temporaryDirectory();
+  const stateDirectory = configFixture(root).stateDirectory;
+  const proof = `rgp_${"q".repeat(43)}`;
+  const first = new RuntimeStateStore(stateDirectory);
+  await first.load();
+  await first.recordRuntimeRegistration(4, proof);
+
+  const restarted = new RuntimeStateStore(stateDirectory);
+  await restarted.load();
+  assert.equal(restarted.runtimeEpoch, 4);
+  assert.equal(restarted.runtimeGenerationProof, proof);
+});
+
 async function seedRpetCrashGap(
   root: string,
   phase: RpetPhase,

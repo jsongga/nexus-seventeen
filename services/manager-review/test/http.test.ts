@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   createManagerReviewService,
   MANAGER_RUNTIME_EPOCH_HEADER,
+  MANAGER_RUNTIME_GENERATION_PROOF_HEADER,
   MANAGER_RUNTIME_INSTANCE_HEADER,
   type ManagerHandoffRegistrar,
   type ManagerRuntimeClaim,
@@ -13,6 +14,7 @@ import {
 import {
   EVIDENCE_TOKEN,
   FakeHandoffRegistrar,
+  FakeManagerReviewPermitConsumer,
   FakeManagerRuntimeAuthorizer,
   HUMAN_TOKEN,
   MANAGER_ONE,
@@ -25,6 +27,8 @@ import {
   passingEvidence,
   temporaryStore,
 } from "./helpers.js";
+
+const RUNTIME_GENERATION_PROOF = `rgp_${"a".repeat(43)}`;
 
 async function request(
   url: string,
@@ -45,6 +49,7 @@ async function request(
         : {
             [MANAGER_RUNTIME_INSTANCE_HEADER]: runtime.runtimeInstanceId,
             [MANAGER_RUNTIME_EPOCH_HEADER]: String(runtime.runtimeEpoch),
+            [MANAGER_RUNTIME_GENERATION_PROOF_HEADER]: RUNTIME_GENERATION_PROOF,
           }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -54,6 +59,7 @@ async function request(
 test("HTTP authority is disjoint across evidence, fixed-manager review, and human queue", async () => {
   const registrar = new FakeHandoffRegistrar();
   const runtimeAuthorizer = new FakeManagerRuntimeAuthorizer();
+  const permitConsumer = new FakeManagerReviewPermitConsumer();
   const service = await createManagerReviewService({
     workspaceId: WORKSPACE_ID,
     storePath: await temporaryStore(),
@@ -66,6 +72,7 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
     ],
     handoffRegistrar: registrar,
     managerRuntimeAuthorizer: runtimeAuthorizer,
+    managerReviewPermitConsumer: permitConsumer,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-19T19:04:00.000Z"),
   });
@@ -143,6 +150,25 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
       managerReview(evidence.evidenceDigest),
       "http-review-wrong-0001",
     )).status, 401);
+    const proofless = await fetch(
+      `${address.url}/v1/passing-evidence/${evidence.evidenceId}/reviews`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${MANAGER_ONE_TOKEN}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": "http-review-proofless-0001",
+          [MANAGER_RUNTIME_INSTANCE_HEADER]: MANAGER_ONE_RUNTIME.runtimeInstanceId,
+          [MANAGER_RUNTIME_EPOCH_HEADER]: String(MANAGER_ONE_RUNTIME.runtimeEpoch),
+        },
+        body: JSON.stringify(managerReview(evidence.evidenceDigest)),
+      },
+    );
+    assert.equal(proofless.status, 401);
+    assert.equal(
+      ((await proofless.json()) as { error: { code: string } }).error.code,
+      "RUNTIME_GENERATION_PROOF_REQUIRED",
+    );
     const reviewed = await request(
       `${address.url}/v1/passing-evidence/${evidence.evidenceId}/reviews`,
       "POST",
@@ -157,7 +183,8 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
     };
     assert.equal(reviewedBody.review.managerRuntimeInstanceId, MANAGER_ONE_RUNTIME.runtimeInstanceId);
     assert.equal(reviewedBody.review.managerRuntimeEpoch, MANAGER_ONE_RUNTIME.runtimeEpoch);
-    assert.equal(runtimeAuthorizer.calls.length, 2);
+    assert.equal(runtimeAuthorizer.calls.length, 1);
+    assert.equal(permitConsumer.calls.length, 1);
 
     assert.equal((await request(
       `${address.url}/v1/production-checks?workspaceId=${WORKSPACE_ID}`,
@@ -176,6 +203,9 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
         releaseManifestDigest: string;
         managerRuntimeInstanceId: string;
         managerRuntimeEpoch: number;
+        reviewTaskId: string;
+        permitId: string;
+        permitWorkspaceSequence: number;
       }>;
     }).items;
     assert.equal(items.length, 1);
@@ -183,6 +213,9 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
     assert.equal(items[0]!.releaseManifestDigest, passingEvidence().releaseManifestDigest);
     assert.equal(items[0]!.managerRuntimeInstanceId, MANAGER_ONE_RUNTIME.runtimeInstanceId);
     assert.equal(items[0]!.managerRuntimeEpoch, MANAGER_ONE_RUNTIME.runtimeEpoch);
+    assert.equal(items[0]!.reviewTaskId, "manager-review-task-0001");
+    assert.ok(items[0]!.permitId);
+    assert.equal(items[0]!.permitWorkspaceSequence, 100);
 
     const browserChecks = await fetch(
       `${address.url}/v1/production-checks?workspaceId=${WORKSPACE_ID}`,
@@ -250,7 +283,8 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
     );
     assert.equal(replay.status, 200);
     assert.equal((await replay.json() as { duplicate: boolean }).duplicate, true);
-    assert.equal(runtimeAuthorizer.calls.length, 2);
+    assert.equal(runtimeAuthorizer.calls.length, 1);
+    assert.equal(permitConsumer.calls.length, 1);
 
     assert.equal((await request(
       `${address.url}/v1/manager-review-queue?workspaceId=${WORKSPACE_ID}`,
@@ -260,7 +294,7 @@ test("HTTP authority is disjoint across evidence, fixed-manager review, and huma
       undefined,
       MANAGER_ONE_RUNTIME,
     )).status, 409);
-    assert.equal(runtimeAuthorizer.calls.length, 3);
+    assert.equal(runtimeAuthorizer.calls.length, 2);
   } finally {
     await service.close();
   }
@@ -303,6 +337,7 @@ test("graceful shutdown waits for an in-flight durable handoff retry", async () 
     managers: [{ ...MANAGER_ONE, token: MANAGER_ONE_TOKEN }],
     handoffRegistrar: registrar,
     managerRuntimeAuthorizer: new FakeManagerRuntimeAuthorizer(),
+    managerReviewPermitConsumer: new FakeManagerReviewPermitConsumer(),
     handoffRetryMs: 100,
     now: () => new Date("2026-07-19T19:04:00.000Z"),
   });

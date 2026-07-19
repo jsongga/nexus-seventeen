@@ -149,7 +149,7 @@ test('the observer credential is rejected by every runtime route', async () => {
   assert.equal(fixture.service.store.records.length, 0);
 });
 
-test('observer, human, workload, and legacy bearer tokens must be distinct', async () => {
+test('observer, human, workload, review-permit, and legacy bearer tokens must be distinct', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'steward-service-token-realms-'));
   cleanup.push({ directory, service: undefined });
   const laneIdentity = {
@@ -167,6 +167,17 @@ test('observer, human, workload, and legacy bearer tokens must be distinct', asy
       workloadIdentities: [laneIdentity],
       humanToken,
       observerReadToken: humanToken,
+    }),
+    /Bearer tokens must be distinct/u,
+  );
+  await assert.rejects(
+    createControlPlane({
+      workspaceId: 'workspace-alpha',
+      storePath: join(directory, 'review-permit-collision.jsonl'),
+      workloadIdentities: [laneIdentity],
+      humanToken,
+      observerReadToken,
+      managerReviewPermitToken: supervisorToken,
     }),
     /Bearer tokens must be distinct/u,
   );

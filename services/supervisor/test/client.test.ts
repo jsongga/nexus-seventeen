@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import {
   STEWARD_RUNTIME_API_VERSION,
+  STEWARD_RUNTIME_FEATURES_HEADER,
+  STEWARD_RUNTIME_GENERATION_PROOF_HEADER,
+  STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER,
+  STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
   parseRuntimeCommandPollRequest,
   parseSupervisorRegistrationResult,
 } from "@cicada/steward-protocol";
@@ -26,17 +30,30 @@ test("HTTP client uses bearer auth, bounded retry, and protocol-valid responses"
     lastAcceptedLocalSequence: 0,
     controlVersion: 1,
   });
-  const calls: { url: string; authorization: string | null }[] = [];
+  const calls: {
+    url: string;
+    authorization: string | null;
+    challenge: string | null;
+    features: string | null;
+    body: unknown;
+  }[] = [];
   const sleeps: number[] = [];
   const fetchImplementation = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
     calls.push({
       url: String(input),
-      authorization: new Headers(init?.headers).get("authorization"),
+      authorization: headers.get("authorization"),
+      challenge: headers.get(STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER),
+      features: headers.get(STEWARD_RUNTIME_FEATURES_HEADER),
+      body: JSON.parse(String(init?.body)) as unknown,
     });
     if (calls.length === 1) return new Response(null, { status: 503 });
     return new Response(JSON.stringify(response), {
       status: 200,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        [STEWARD_RUNTIME_GENERATION_PROOF_HEADER]: `rgp_${"p".repeat(43)}`,
+      },
     });
   }) as typeof globalThis.fetch;
   const client = new HttpSupervisorControlPlaneClient({
@@ -52,7 +69,10 @@ test("HTTP client uses bearer auth, bounded retry, and protocol-valid responses"
     },
   });
 
-  assert.deepEqual(await client.register(request), response);
+  const session = await client.register(request);
+  assert.equal(session.runtimeGenerationProof, `rgp_${"p".repeat(43)}`);
+  const { runtimeGenerationProof: _proof, ...wireResult } = session;
+  assert.deepEqual(wireResult, response);
   assert.deepEqual(calls.map((call) => call.url), [
     "https://control.example.test/base/v1/runtime/register",
     "https://control.example.test/base/v1/runtime/register",
@@ -61,6 +81,13 @@ test("HTTP client uses bearer auth, bounded retry, and protocol-valid responses"
     "Bearer secret-supervisor-token",
     "Bearer secret-supervisor-token",
   ]);
+  assert.equal(calls[0]!.challenge, calls[1]!.challenge);
+  assert.match(calls[0]!.challenge ?? "", /^rgc_[A-Za-z0-9_-]{43}$/u);
+  assert.deepEqual(calls.map((call) => call.features), [
+    STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
+    STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
+  ]);
+  assert.deepEqual(calls.map((call) => call.body), [request, request]);
   assert.deepEqual(sleeps, [20]);
 });
 

@@ -83,6 +83,14 @@ export function controlPlaneOptionsFromEnvironment(
     ...legacyDevelopmentCredential(environment),
     humanToken: required(environment, 'STEWARD_HUMAN_TOKEN'),
     observerReadToken: required(environment, 'STEWARD_OBSERVER_READ_TOKEN'),
+    managerReviewPermitToken: required(
+      environment,
+      'STEWARD_MANAGER_REVIEW_PERMIT_TOKEN',
+    ),
+    runtimeGenerationProofKey: required(
+      environment,
+      'STEWARD_RUNTIME_GENERATION_PROOF_KEY',
+    ),
     host: environment.STEWARD_HOST ?? '127.0.0.1',
     port: Number(environment.STEWARD_PORT ?? '4317'),
     corsOrigins: (environment.STEWARD_CORS_ORIGINS ?? '')

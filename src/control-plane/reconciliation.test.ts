@@ -57,6 +57,7 @@ function discoveredAgent(input: Partial<DiscoveredAgent> = {}): DiscoveredAgent 
     task: {
       id: agentTaskId('task-stw-471'),
       workItemId: workItemId('STW-471'),
+      subject: { type: 'development' },
       status: 'running',
       startedAt: isoDateTime('2026-07-18T20:01:17.000Z'),
       expectedAgentMinutes: agentExpectedMinutes(45),
@@ -178,6 +179,69 @@ describe('frontend control-plane discovery contract', () => {
         ]),
       ),
     ).toMatchObject({ ok: false, code: 'INVALID_SNAPSHOT' });
+  });
+
+  it('accepts exact manager-review subjects as frozen display data and rejects forged bindings', () => {
+    const managerReview = createFrontendAgentReplica(snapshot([discoveredAgent({
+      task: {
+        ...discoveredAgent().task!,
+        subject: {
+          type: 'manager_review',
+          sourceTaskId: agentTaskId('task-stw-470'),
+          evidenceId: 'evidence-stw-470',
+          evidenceDigest: `sha256:${'a'.repeat(64)}`,
+        },
+      },
+    })]));
+    expect(managerReview.ok).toBe(true);
+    if (managerReview.ok) {
+      const subject = managerReview.value.agentsByLane['lane-patch']?.task?.subject;
+      expect(subject).toMatchObject({ type: 'manager_review', sourceTaskId: 'task-stw-470' });
+      expect(Object.isFrozen(subject)).toBe(true);
+    }
+
+    expect(createFrontendAgentReplica(snapshot([discoveredAgent({
+      task: {
+        ...discoveredAgent().task!,
+        subject: {
+          type: 'manager_review',
+          sourceTaskId: agentTaskId('task-stw-470'),
+          evidenceId: 'evidence-stw-470',
+          evidenceDigest: 'sha256:not-a-digest',
+        } as unknown as NonNullable<DiscoveredAgent['task']>['subject'],
+      },
+    })]))).toMatchObject({ ok: false, code: 'INVALID_SNAPSHOT' });
+
+    expect(createFrontendAgentReplica(snapshot([discoveredAgent({
+      task: {
+        ...discoveredAgent().task!,
+        subject: { type: 'development', deployNow: true } as unknown as { type: 'development' },
+      },
+    })]))).toMatchObject({ ok: false, code: 'INVALID_SNAPSHOT' });
+  });
+
+  it('rejects a live update that rewrites an existing task subject binding', () => {
+    const result = applyAgentRegistryEvent(initialReplica(), event(41, {
+      type: 'agent_upserted',
+      agent: discoveredAgent({
+        projectionVersion: 4,
+        task: {
+          ...discoveredAgent().task!,
+          subject: {
+            type: 'manager_review',
+            sourceTaskId: agentTaskId('task-stw-470'),
+            evidenceId: 'evidence-stw-470',
+            evidenceDigest: `sha256:${'a'.repeat(64)}`,
+          },
+        },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'ENTITY_VERSION_CONFLICT',
+      reason: expect.stringMatching(/subject binding/u),
+    });
   });
 
   it('adds newly registered agents in strict event sequence', () => {
@@ -541,7 +605,7 @@ describe('frontend control-plane discovery contract', () => {
       { ...bootstrap, commandEndpoint: 'javascript:alert(1)' },
       { ...bootstrap, commandEndpoint: 'https://different-control-plane.example/v1/commands' },
       { ...bootstrap, commandEndpoint: '//different-control-plane.example/v1/commands' },
-      { ...bootstrap, apiVersion: 'steward.ui/v2' },
+      { ...bootstrap, apiVersion: 'steward.ui/v1' },
       { ...bootstrap, features: null },
     ];
     for (const invalid of invalidBootstraps) {

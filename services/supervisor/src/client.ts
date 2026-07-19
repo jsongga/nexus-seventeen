@@ -1,4 +1,9 @@
+import { randomBytes } from "node:crypto";
 import {
+  STEWARD_RUNTIME_GENERATION_PROOF_HEADER,
+  STEWARD_RUNTIME_FEATURES_HEADER,
+  STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER,
+  STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
   parseLeaseRenewalRequest,
   parseLeaseRenewalResult,
   parseRuntimeCommandPollRequest,
@@ -17,8 +22,26 @@ import {
   type SupervisorRegistrationResult,
 } from "@cicada/steward-protocol";
 
+const RUNTIME_PROOF_CHALLENGE_PATTERN = /^rgc_[A-Za-z0-9_-]{43}$/u;
+const RUNTIME_GENERATION_PROOF_PATTERN = /^rgp_[A-Za-z0-9_-]{43}$/u;
+
+export type SupervisorRegistrationSession = SupervisorRegistrationResult &
+  Readonly<{ runtimeGenerationProof?: string }>;
+
+export interface SupervisorRegistrationContext {
+  readonly proofChallenge: string;
+  readonly replacementProof: string | null;
+}
+
+export function createRuntimeProofChallenge(): string {
+  return `rgc_${randomBytes(32).toString("base64url")}`;
+}
+
 export interface SupervisorControlPlaneClient {
-  register(request: SupervisorRegistrationRequest): Promise<SupervisorRegistrationResult>;
+  register(
+    request: SupervisorRegistrationRequest,
+    context?: SupervisorRegistrationContext,
+  ): Promise<SupervisorRegistrationSession>;
   renewLease(request: LeaseRenewalRequest, signal?: AbortSignal): Promise<LeaseRenewalResult>;
   uploadEvents(request: RuntimeEventBatch): Promise<RuntimeEventBatchReceipt>;
   pollCommands(request: RuntimeCommandPollRequest, signal?: AbortSignal): Promise<RuntimeCommandPollResult>;
@@ -37,7 +60,7 @@ export interface HttpSupervisorControlPlaneClientOptions {
   random?: () => number;
 }
 
-type ResponseParser<T> = (value: unknown) => T;
+type ResponseParser<T> = (value: unknown, response: Response) => T;
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -160,6 +183,7 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
   readonly #fetch: typeof globalThis.fetch;
   readonly #sleep: (milliseconds: number) => Promise<void>;
   readonly #random: () => number;
+  readonly #registrationChallenges = new Map<string, string>();
 
   constructor(options: HttpSupervisorControlPlaneClientOptions) {
     const url = new URL(options.controlPlaneUrl);
@@ -194,11 +218,47 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
     this.#random = options.random ?? Math.random;
   }
 
-  register(request: SupervisorRegistrationRequest): Promise<SupervisorRegistrationResult> {
+  register(
+    request: SupervisorRegistrationRequest,
+    context?: SupervisorRegistrationContext,
+  ): Promise<SupervisorRegistrationSession> {
+    const parsed = parseSupervisorRegistrationRequest(request);
+    const serialized = JSON.stringify(parsed);
+    const cachedChallenge = this.#registrationChallenges.get(serialized);
+    const proofChallenge = context?.proofChallenge ?? cachedChallenge ?? createRuntimeProofChallenge();
+    const replacementProof = context?.replacementProof ?? null;
+    if (!RUNTIME_PROOF_CHALLENGE_PATTERN.test(proofChallenge)) {
+      throw new Error("proofChallenge must contain 256 bits of base64url entropy");
+    }
+    if (
+      replacementProof !== null &&
+      !RUNTIME_GENERATION_PROOF_PATTERN.test(replacementProof)
+    ) {
+      throw new Error("replacementProof is malformed");
+    }
+    this.#registrationChallenges.set(serialized, proofChallenge);
     return this.#post(
       "/v1/runtime/register",
-      parseSupervisorRegistrationRequest(request),
-      parseSupervisorRegistrationResult,
+      parsed,
+      (value, response) => {
+        const result = parseSupervisorRegistrationResult(value);
+        const runtimeGenerationProof = response.headers.get(
+          STEWARD_RUNTIME_GENERATION_PROOF_HEADER,
+        );
+        if (runtimeGenerationProof === null) return result;
+        if (!RUNTIME_GENERATION_PROOF_PATTERN.test(runtimeGenerationProof)) {
+          throw new Error("Control plane returned a malformed runtime generation proof");
+        }
+        return Object.freeze({ ...result, runtimeGenerationProof });
+      },
+      undefined,
+      {
+        [STEWARD_RUNTIME_PROOF_CHALLENGE_HEADER]: proofChallenge,
+        [STEWARD_RUNTIME_FEATURES_HEADER]: STEWARD_RUNTIME_TYPED_TASKS_FEATURE,
+        ...(replacementProof === null
+          ? {}
+          : { [STEWARD_RUNTIME_GENERATION_PROOF_HEADER]: replacementProof }),
+      },
     );
   }
 
@@ -219,11 +279,31 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
     url.searchParams.set("runtimeInstanceId", parsed.runtimeInstanceId);
     url.searchParams.set("runtimeEpoch", String(parsed.runtimeEpoch));
     url.searchParams.set("after", String(parsed.afterServerSequence));
-    return this.#request("GET", url, null, parseRuntimeCommandPollResult, signal);
+    return this.#request(
+      "GET",
+      url,
+      null,
+      parseRuntimeCommandPollResult,
+      signal,
+      { [STEWARD_RUNTIME_FEATURES_HEADER]: STEWARD_RUNTIME_TYPED_TASKS_FEATURE },
+    );
   }
 
-  #post<T>(pathname: string, body: unknown, parser: ResponseParser<T>, signal?: AbortSignal): Promise<T> {
-    return this.#request("POST", endpoint(this.#baseUrl, pathname), body, parser, signal);
+  #post<T>(
+    pathname: string,
+    body: unknown,
+    parser: ResponseParser<T>,
+    signal?: AbortSignal,
+    extraHeaders: Readonly<Record<string, string>> = {},
+  ): Promise<T> {
+    return this.#request(
+      "POST",
+      endpoint(this.#baseUrl, pathname),
+      body,
+      parser,
+      signal,
+      extraHeaders,
+    );
   }
 
   async #request<T>(
@@ -232,6 +312,7 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
     body: unknown | null,
     parser: ResponseParser<T>,
     signal?: AbortSignal,
+    extraHeaders: Readonly<Record<string, string>> = {},
   ): Promise<T> {
     let lastError: ControlPlaneUnavailableError | null = null;
     for (let attempt = 0; attempt < this.#maxAttempts; attempt += 1) {
@@ -251,6 +332,7 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
             accept: "application/json",
             authorization: `Bearer ${this.#token}`,
             ...(body === null ? {} : { "content-type": "application/json" }),
+            ...extraHeaders,
           },
           signal: controller.signal,
           ...(body === null ? {} : { body: JSON.stringify(body) }),
@@ -272,7 +354,7 @@ export class HttpSupervisorControlPlaneClient implements SupervisorControlPlaneC
         }
         const value = await readBoundedJson(response, this.#maxResponseBytes);
         try {
-          return parser(value);
+          return parser(value, response);
         } catch (error) {
           throw new ControlPlaneUnavailableError("Control-plane response failed Steward protocol validation", {
             retryable: false,

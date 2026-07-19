@@ -6,7 +6,7 @@
 
 Steward's web application should be a disposable operator console. Serving, restarting, or upgrading the frontend must not start, stop, own, or mutate an agent. Independent agent runtimes register with a durable control plane, renew leases, execute development work, and record progress whether or not any browser is open. When a desktop or mobile client returns, it loads one authoritative snapshot and resumes an ordered event stream to find every registered agent automatically.
 
-This requires backends, but not an application server that owns the agents. The control plane owns durable runtime commands, queues, roles, registry, and event cursor. The manager-review coordinator owns evidence, manager decisions, and pending human checks; the deployment broker owns human grants. Agent supervisors own processes, provider sessions, checkpoints, and a local write-ahead journal. The browser owns only presentation state.
+This requires backends, but not an application server that owns the agents. The control plane owns durable runtime commands, queues, roles, registry, typed review assignments, one-use review permits, and the event cursor. The manager-review coordinator owns evidence, permit-backed manager decisions, and pending human checks; the deployment broker owns human grants. Agent supervisors own processes, provider sessions, checkpoints, and a local write-ahead journal. The browser owns only presentation state.
 
 The production invariant is:
 
@@ -53,6 +53,7 @@ flowchart TB
     mobile -->|bootstrap · commands · resumable events| control
     desktop -->|separate read token| review
     mobile -->|separate read token| review
+    review -->|dedicated task-scoped permit| cp
     control <--> store
     supervisorA -->|outbound registration · lease · progress| control
     supervisorB -->|outbound registration · lease · progress| control
@@ -70,7 +71,8 @@ Neither the frontend host nor a browser has a network path to a provider process
 | Current run, R → P → E → T progress, journal, checkpoint, and evidence | Agent runtime plus durable control-plane events | Inspect; never fabricate worker events |
 | Agent-task start, end, pause history, and completion forecast | Control plane from authenticated runtime events and server time | Format and display; never derive authoritative timing from the browser clock |
 | Human queue, interrupt intent, and pause | Control plane | Submit idempotent commands |
-| Manager evidence, review, and pending production checks | Manager-review coordinator | Read production checks only; no review, approval, or deploy action in `/live` |
+| Manager task assignment and one-use review permit | Control plane | View task/current action/end state; human queue API may create the typed assignment |
+| Manager evidence, decision, and pending production checks | Manager-review coordinator | Read production checks only; no review, approval, or deploy action in `/live` |
 | Production grant and one-time consumption | Deployment broker | Absent from `/live`; handled by a separate authenticated human/executor boundary |
 | Filters, selected panel, drafts, density, and theme | Browser | May persist locally |
 | Canonical agents, queues, runs, approvals, audit, and pause state | Never the browser | Must not persist as authoritative state |
@@ -101,7 +103,7 @@ An installed supervisor receives a workload identity and workspace assignment. I
 - software version and compatibility range; and
 - renewable lease timestamps.
 
-Registration is an authenticated compare-and-swap operation. The control plane atomically advances the epoch when it grants a new runtime instance ownership; every later lease and event carries that fencing token. Events from an older instance are rejected. Restarting a supervisor therefore reconnects the same lane instead of producing a duplicate agent. An offline lane remains in the registry and retains its queue and history until an authorized retirement command removes it.
+Registration is an authenticated compare-and-swap operation. The control plane atomically advances the epoch when it grants a new runtime instance ownership; every later lease and event carries that fencing token. Protected replacement also requires the previous generation's private proof, retained in owner-only supervisor state, so the static lane token and visible epoch are insufficient to seize the next generation. The proof travels in HTTP headers and only its digest is stored by the control plane. Events from an older instance are rejected. Restarting a supervisor therefore reconnects the same lane instead of producing a duplicate agent. An offline lane remains in the registry and retains its queue and history until an authorized retirement command removes it.
 
 The frontend discovers agents through the workspace snapshot. A newly registered agent arrives as a complete `agent_upserted` event. A returning client receives it in the next snapshot even if it was created while the frontend was unavailable. Arbitrary unmanaged Claude, Codex, or shell processes cannot be identified safely; they need a Steward supervisor or provider adapter before they can be auto-located.
 
@@ -109,10 +111,12 @@ The frontend discovers agents through the workspace snapshot. A newly registered
 
 The frontend deployment needs a workspace slug and control-plane origin. The optional production-check view also needs a manager-review origin and separate read token, unless a same-origin proxy supplies that route. A self-hosted deployment may publish non-secret origins from `/.well-known/steward.json`; they are configuration, not agent state. Bootstrap returns origin-relative control-plane paths, which the gateway resolves only against that configured origin rather than trusting a server-supplied second host.
 
+Typed task subjects are part of `steward.ui/v2`. Runtime JSON remains `steward.runtime/v1`: new supervisors durably negotiate typed task subjects and manager-review recovery during registration and repeat that feature on command polls. A legacy v1 runtime receives only older command variants, with task subjects removed from its wire body.
+
 On every cold start or recovery:
 
 1. Authenticate the human with the control plane.
-2. Request a bootstrap containing permissions, an authoritative workspace snapshot at sequence `N`, event-retention metadata, and command/event endpoints. The alpha snapshot includes the agent registry, queues, tasks, and RPET progress. Manager reviews and production checks are not part of this sequenced snapshot.
+2. Request a bootstrap containing permissions, an authoritative workspace snapshot at sequence `N`, event-retention metadata, and command/event endpoints. The alpha snapshot includes the agent registry, queues, typed task subjects, RPET progress, and the terminal manager-task update caused by permit consumption. Decision text and production checks are not part of this sequenced snapshot.
 3. Validate the API version, identities, versions, leases, and snapshot timestamp.
 4. Replace the in-memory replica atomically.
 5. Open a server-sent event stream after sequence `N`.
@@ -125,7 +129,7 @@ Stream termination is typed rather than reduced to a generic error: transient ne
 
 The implemented frontend types, bootstrap validation, and fail-closed reconciliation logic live in [`../src/control-plane/contract.ts`](../src/control-plane/contract.ts) and [`../src/control-plane/reconciliation.ts`](../src/control-plane/reconciliation.ts). Their tests cover snapshots, bootstrap metadata, dynamic registration, bounded duplicate delivery, sequence gaps, conflicts, retirement, identity replacement, lease aging, and command causation in [`../src/control-plane/reconciliation.test.ts`](../src/control-plane/reconciliation.test.ts).
 
-`/live` separately polls `GET /v1/production-checks?workspaceId=…` with an isolated in-memory read token and a five-second request deadline. The response is strictly validated and the last valid list remains visible as stale after a failed refresh. This list is unpaginated and has no sequence or ETag; the browser caps it at 1,000 checks and 8 MiB and cannot detect a valid-but-older response. Direct cross-origin reads require the exact browser origin in manager review's CORS allowlist; a same-origin reverse proxy avoids that browser boundary.
+`/live` separately polls `GET /v1/production-checks?workspaceId=…` with an isolated in-memory read token and a five-second request deadline. The response is strictly validated, including review task ID, permit ID, and permit workspace sequence, and the last valid list remains visible as stale after a failed refresh. This list is unpaginated and has no list sequence or ETag; the browser caps it at 1,000 checks and 8 MiB and cannot detect a valid-but-older response. The per-item permit sequence is audit context, not a freshness cursor. Direct cross-origin reads require the exact browser origin in manager review's CORS allowlist; a same-origin reverse proxy avoids that browser boundary.
 
 ## Frontend API seam
 
@@ -137,13 +141,13 @@ The React tree depends on one `ControlPlaneGateway` for runtime state rather tha
 | `GET /v1/ui/events?after=N` | Resumable, sequenced server-sent events; returns a re-bootstrap signal when `N` is outside retention |
 | `POST /v1/ui/commands` | Durable human intent with command ID and expected entity version |
 
-Runtime registration uses a separate workload-authenticated API. A browser credential cannot call it, acknowledge an interrupt, publish observer output, or consume a deployment grant.
+Runtime registration uses a separate workload-authenticated API. Manager-review permit consumption is an internal service route with another dedicated bearer and rejects browser-origin requests. A browser credential cannot call either route, acknowledge an interrupt, publish observer output, or consume a deployment grant.
 
 The production-check gateway is intentionally separate from `ControlPlaneGateway`. It exposes one GET operation and no manager-review, approval, grant, consume, or deploy method. The browser rejects reuse of its read token as either the control-plane or impact-observer token.
 
 Every frontend command carries a client-generated UUID that is retained across network retries, a typed compare-and-swap precondition for its exact lane, workspace, or approval resource, and a diagnostic client timestamp. The target identity appears only in that precondition, so two command fields cannot name different lanes or approvals. Agent heartbeat traffic advances a projection version but not the lane's control version, so liveness updates do not create spurious human-command conflicts. The server deduplicates the UUID, validates authorization and the target's control version, commits the intent, and assigns the authoritative sequence plus a nondecreasing workspace commit timestamp in one transaction. Reusing an ID with different content returns a non-retryable command-ID conflict.
 
-A `queue_work` command includes the result-oriented outcome and `expectedAgentMinutes`. The estimate is part of the idempotent command content: retrying the same command ID with a different duration is a conflict, not a silent revision.
+A `queue_work` command includes a typed subject, the result-oriented outcome, and `expectedAgentMinutes`. The ordinary `/live` composer emits only `{type: "development"}`. A manager assignment must be an explicit human command whose `manager_review` subject binds a completed source task, evidence ID, and evidence digest; prose cannot create that authority. The estimate is part of the idempotent command content: retrying the same command ID with a different duration is a conflict, not a silent revision.
 
 An `accepted` or `duplicate` receipt returns the original committed intent-event sequence. If a new snapshot has already passed that sequence, the UI knows the intent is included even though its live event will not be replayed. The receipt does not prove that an agent stopped, resumed, changed work, or deployed anything; those later runtime outcomes require their own events. This distinction is especially important when a browser closes immediately after requesting an interrupt.
 
@@ -170,9 +174,9 @@ Frontend independence is not control-plane high availability. The control plane 
 
 ## Worked restart example
 
-At 10:00, a browser has applied control-plane event 100 and closes for a frontend deployment. An engineer continues through Execute and Test and writes events 101–112. A manager later reads its queue and records an accepted review in the separate manager-review store after its runtime instance and epoch pass a fresh control-plane snapshot check. No browser is involved in either action.
+At 10:00, a browser has applied control-plane event 100 and closes for a frontend deployment. An engineer continues through Execute and Test and writes events 101–112. A manager works a human-queued task bound to that passing evidence. The coordinator consumes permit event 113 while the exact task is current; this terminalizes the manager task before the accepted decision is materialized in the separate manager-review store. No browser is involved in either action.
 
-At 10:08, the new frontend receives a control-plane snapshot at sequence 112 and resumes events after 112. Independently, it fetches the accepted production check from manager review. A failed later poll leaves that last valid check visible as stale; it does not enter the control-plane event cursor or create production authority.
+At 10:08, the new frontend receives a control-plane snapshot at sequence 113 and resumes events after 113. It sees the manager task's authoritative end state from the control plane and independently fetches the accepted production check with its matching permit audit. A failed later poll leaves that last valid check visible as stale; decision text does not enter the control-plane event cursor or create production authority.
 
 ## Implementation state
 
@@ -198,7 +202,7 @@ Paseo is a useful execution-plane reference because a daemon owns sessions and e
 - A returning frontend still needs one configured control-plane origin. No secure system can discover unrelated agent processes from a mobile browser with zero bootstrap information.
 - Auto-location covers authenticated, supervised agents only. Adoption must include supervisor installers and adapters for supported Codex and Claude environments.
 - `/live` implements registry, queue, task timing, current action, RPET progress, human runtime control, impact summaries, and a separate read-only production-check projection. The production list is not in the sequenced control-plane replica, is unpaginated, and has no sequence or ETag.
-- Manager queue reads and review writes are checked against a fresh snapshot matching the active runtime instance and epoch, and exact review replays are idempotent. That check is not atomic with review persistence and does not bind evidence to a control-plane manager task; dedicated manager and verifier runners remain incomplete.
+- Manager queue discovery is a read-only snapshot and can become stale. Review writes instead consume one evidence-bound task permit in the control plane's serialized order with interrupt, hold, and replacement. The later decision-store append is recoverable but not a distributed transaction; dedicated manager and verifier runners remain incomplete.
 - Atomic-action boundaries and checkpoint deadlines require threat modeling and adapter tests. A runtime must not label a long, multi-tool plan as one non-interruptible action.
 - Local progress replay uses event IDs, accepted-prefix reconciliation, and server-issued runtime epochs. Replicated-store conflict handling and multi-instance control-plane ownership remain production work.
 - Event retention, snapshot compaction, API compatibility windows, supervisor upgrades, and workspace disaster recovery remain production work.

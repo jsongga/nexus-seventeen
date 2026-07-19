@@ -1,6 +1,6 @@
 # Cicada Steward
 
-**Status** — working security-focused alpha · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — independently authored human-led agent control plane, durable supervisor, responsive operator console, cheap-first routing, impact observer, and human deployment-authorization boundary; excludes production deployment and a complete manager/verifier runtime.
+**Status** — working security-focused alpha · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — independently authored human-led agent control plane, durable engineer and manager runtimes, responsive operator console, cheap-first routing, impact observer, and human deployment-authorization boundary; excludes production deployment, a verifier runtime, and a production-grade model-backed manager inspector.
 
 ## Summary
 
@@ -31,6 +31,7 @@ flowchart LR
     UI -->|separate output token| OBS
     EVID[Passing engineer evidence] --> REVIEW[Manager-review coordinator]
     MANAGER[Fixed manager reviewer] --> REVIEW
+    REVIEW -->|one-use task-scoped permit| CP
     UI -->|separate production-check read token| REVIEW
     REVIEW -->|accepted handoff| BROKER[Deployment broker]
     HUMAN[Authenticated human] --> BROKER
@@ -46,17 +47,18 @@ The topology is intentionally smaller than a company simulator: one durable cont
 | Live oversight | `/live` discovers registered lanes, shows exact current action, queue, lease, task start/end, 15-minute agent-only forecast, RPET journal, plain-language impact, and separately authenticated read-only production checks. |
 | Human control | Queue, interrupt, workspace hold, and resume are authenticated, idempotent, versioned commands. Interrupt/hold remain pending until the runtime acknowledges and settles. |
 | Frontend independence | Supervisors never run in the browser. Snapshot plus ordered SSE reconstructs state after a frontend outage. |
-| Workload identity | Every runtime token is bound to one workspace, lane, agent, and immutable role. The server issues contiguous compare-and-swap fencing epochs. |
-| Restart safety | The exact registration request is persisted before POST, so a process crash after a committed but lost response retries the same identity. Checkpoints and unsent evidence survive restart. |
+| Workload identity | Every runtime token is bound to one workspace, lane, agent, and immutable role. The server issues a private per-generation proof with each contiguous fencing epoch; the token and public epoch alone cannot replace a protected runtime. |
+| Restart safety | The exact registration request and random proof challenge are persisted before POST. The successful proof remains in owner-only runtime state, so a crash can retry a lost response or authorize the next process without exposing that capability in the control-plane log. |
 | Engineer execution | Only an engineer enters RPET. Research and Plan are read-only, Execute may modify the development workspace, and Test is source-read-only. A failed Test opens the next Research iteration. |
 | Provider edge | Real adapters run in a bounded framed child host. The entrypoint is outside work/state roots, owner-safe, and SHA-256 pinned before every launch and import. Output and process I/O are bounded and credential-shaped output is rejected before persistence. |
 | Process settlement | On POSIX, the provider host owns a process group. Interrupt, timeout, failure, and shutdown perform TERM → KILL and verify group absence before claiming settlement. The real-provider path fails closed on Windows. |
 | Cheap-first routing | Model IDs, capacities, and optional rate cards come from a strict caller catalog. Engineer retries can escalate from Codex economy only after observed failed tests; the impact observer is fixed to Claude economy and zero tools. |
 | Impact projection | The observer accepts only a dedicated read-only control-plane identity, strips secrets and implementation detail, bounds context/output, stores the last safe summary, and exposes authenticated routing audit data. |
-| Manager-review coordination | Passing engineer evidence is immutable and digest-bound. Queue reads and review writes require a fresh control-plane snapshot matching the manager's active runtime instance and epoch. The same lane, evidence, body, and idempotency key recover a committed result after runtime replacement; accepted reviews retry an exact broker v3 handoff, while changes remain durably readable by the trusted engineer-evidence projection. |
+| Manager execution | A dedicated runtime claims only typed manager-review tasks, exposes its exact current action, performs a bounded read-only inspection loop, honors human interrupt/hold/resume commands, and submits through the one-use permit path. Its generation proof and exact pending registration request remain in private durable state across crashes. |
+| Manager-review coordination | A human queues a typed manager-review task bound to one completed engineer task, evidence ID, and digest. Review writes consume one durable control-plane permit ordered with interrupt, hold, and runtime replacement; exact retries recover the original permit and runtime audit. Accepted reviews retry an exact broker v3 handoff, while changes remain durably readable by the trusted engineer-evidence projection. |
 | Production authorization | A service-authenticated accepted manager handoff is required before a human can mint a grant. The handoff and grant are single-use; a separately authenticated executor can claim only the exact bound release. The broker has no deployment credentials or deploy method. |
 
-The fixed verifier and manager policies exist, but their dedicated read-only runners are not complete. Those lanes fail closed instead of inheriting the modifying engineer workflow. The coordinator now snapshot-fences manager queue and review calls to the active runtime instance and epoch; that check is neither atomic with the review append nor proof that the evidence was assigned as a manager task. `/live` separately polls accepted production checks and exposes no approval or deploy action. Routes other than `/live` remain a local visual demo, not authoritative runtime state.
+The fixed verifier policy exists, but its dedicated runner is not complete and the generic supervisor fails closed instead of giving that lane the modifying engineer workflow. The dedicated manager runtime is implemented with a bounded frozen-evidence inspector; a production-grade model-backed read-only inspector is still external work. Queue discovery remains a read-only snapshot, but a review write requires the exact assigned task to be the manager runtime's current action and atomically consumes its control-plane permit. `/live` separately polls accepted production checks and exposes the review task and permit audit without any approval or deploy action. Routes other than `/live` remain a local visual demo, not authoritative runtime state.
 
 ## How an engineer agent works
 
@@ -86,7 +88,7 @@ Queueing never interrupts current work. An interrupt is a separate causal barrie
 
 - **Engineer** — may research, plan, modify a development workspace, and run tests. It cannot review itself, approve production, claim a grant, or deploy.
 - **Verifier** — policy permits independent read/test evidence but no workspace modification or production authority. Its dedicated runtime is pending.
-- **Manager** — policy permits review and coordination, not engineering modification or production authority. The coordinator accepts only snapshot-fenced active runtime claims, but the dedicated read-only manager runner is pending.
+- **Manager** — policy permits review and coordination, not engineering modification or production authority. Its dedicated runtime accepts only evidence-bound review tasks and needs a one-use control-plane permit for every new decision.
 - **Impact observer** — may summarize bounded read-only evidence with the economy tier and no tools.
 - **Human owner** — may control lanes and make the production decision for an exact accepted handoff.
 
@@ -120,6 +122,8 @@ STEWARD_STORE_PATH=./data/control-plane.jsonl \
 STEWARD_WORKLOAD_IDENTITIES_JSON='[{"workspaceId":"workspace-alpha","agentId":"agent-patch","laneId":"lane-patch","role":"engineer","token":"lane-token-change-me-0001"}]' \
 STEWARD_HUMAN_TOKEN=human-token-change-me-0002 \
 STEWARD_OBSERVER_READ_TOKEN=observer-token-change-me-0003 \
+STEWARD_MANAGER_REVIEW_PERMIT_TOKEN=review-permit-token-change-me-0004 \
+STEWARD_RUNTIME_GENERATION_PROOF_KEY=runtime-proof-key-change-me-0005 \
 STEWARD_CORS_ORIGINS=http://localhost:4173 \
 npm run dev:control-plane
 ```
@@ -174,7 +178,9 @@ Impact-observer configuration is defined in [`services/impact-observer/src/confi
 
 The deployment broker's three credentials are intentionally separate: `STEWARD_DEPLOYMENT_HANDOFF_ISSUER_TOKEN`, `STEWARD_DEPLOYMENT_HUMAN_TOKEN`, and `STEWARD_DEPLOYMENT_EXECUTOR_TOKEN`. Its built-in HTTP listener also accepts only literal loopback binds; terminate remote TLS and authentication at a gateway. See [`services/deployment-broker/src/main.ts`](services/deployment-broker/src/main.ts) for the complete environment contract.
 
-The manager-review coordinator runs separately with `npm run dev:manager-review`. Its strict environment contract is defined in [`services/manager-review/src/runtime-config.ts`](services/manager-review/src/runtime-config.ts): evidence issuer, production-check reader, every fixed manager, control-plane observer, and broker handoff issuer use distinct capabilities. A direct `/live` browser connection requires its exact origin in `STEWARD_MANAGER_REVIEW_CORS_ORIGINS`; a same-origin reverse proxy is the alternative. The service itself binds only to literal loopback, so remote access still terminates TLS at a gateway.
+The manager-review coordinator runs separately with `npm run dev:manager-review`. Its strict environment contract is defined in [`services/manager-review/src/runtime-config.ts`](services/manager-review/src/runtime-config.ts): evidence issuer, production-check reader, every fixed manager, control-plane observer, permit consumer, and broker handoff issuer use distinct capabilities. `STEWARD_MANAGER_REVIEW_CONTROL_PLANE_PERMIT_CONSUME_TOKEN` must equal the control plane's `STEWARD_MANAGER_REVIEW_PERMIT_TOKEN` and must not be exposed to a browser or manager process. A direct `/live` browser connection requires its exact origin in `STEWARD_MANAGER_REVIEW_CORS_ORIGINS`; a same-origin reverse proxy is the alternative. The service itself binds only to literal loopback, so remote access still terminates TLS at a gateway.
+
+The dedicated manager process runs with `npm run dev:manager-runtime`. Its environment contract is defined in [`services/manager-runtime/src/main.ts`](services/manager-runtime/src/main.ts): it needs one lane-bound control-plane token, its separate fixed-manager review token, a private state-file path, and a read-only evidence directory. Each ordinary process boot creates a fresh runtime instance ID; only an exact durable registration intent is reused after a lost response. The included inspector reads bounded, no-follow `<evidenceId>.review.json` bundles and exposes no command execution or workspace-write method.
 
 ## Verification
 
@@ -192,10 +198,11 @@ This alpha is not production-ready.
 
 - **Hard provider isolation** — same-user subprocesses and process groups are not containers, cgroups, job objects, or dedicated UIDs. A provider that creates a new session can escape process-group containment, and Codex read-only still permits broad host reads. Production must add an externally owned filesystem, network, credential, and process boundary.
 - **Trusted adapter install** — the adapter entrypoint is pinned; its transitive dependency tree relies on an immutable, trusted install outside the agent workspace.
-- **Manager/verifier execution** — fixed policies and the durable manager-review → broker-handoff coordinator exist, but dedicated read-only runners are incomplete. Manager calls check a fresh snapshot for the exact active instance, epoch, lease, and control state. The check can race a later hold, interrupt, or replacement before persistence, and it does not bind the evidence to an assigned manager task.
+- **Manager/verifier execution** — the dedicated manager runtime is bounded and read-only, but its included frozen-bundle inspector is not a production model adapter. The verifier runner is still incomplete, and the generic supervisor fails closed for either specialized workflow. Queue discovery is only a snapshot; review authority comes from the separately consumed task-scoped permit.
 - **Production-check projection** — `/live` reads accepted checks from manager review with a separate credential and cannot approve or deploy. The service list is unpaginated and has no sequence or ETag; the browser rejects more than 1,000 items or 8 MiB and cannot detect a valid-but-older response.
 - **Deployment execution** — the broker issues a one-use authorization but does not deploy. The external executor and target must durably deduplicate `authorizationId`; cross-system exactly-once behavior is not implemented here.
 - **Storage and HA** — control, observer, manager-review, and broker stores are owner-locked single-node files, not replicated transactional databases. The manager-review and deployment-broker stores fail closed on a leftover lock; an operator must verify that no writer is alive before removing it. History compaction, pagination, multi-instance leases, backup, and disaster recovery remain.
+- **Permit materialization** — permit consumption and human control are atomic in the single control-plane log, but the later manager-review JSONL append is a separate transaction. A stable operation ID recovers a committed permit after a crash; it is not distributed ACID. Pre-permit manager-review records require an explicit offline migration and are never upgraded into production authority by inference.
 - **Identity and transport** — static development tokens remain in use. Production needs an identity provider, rotation, revocation, TLS termination, rate limiting, and audit export. Application clients already reject remote plaintext bearer transport.
 - **Routing evidence** — engineer retries use observed failed tests, but task risk and complexity are not yet authoritative protocol fields. The impact adapter seam receives the selected model; this repository does not include a provider API implementation for it.
 - **Release coordination** — the broker verifies an exact manifest digest, not the manifest contents. A trusted release service must create and preserve that canonical manifest.

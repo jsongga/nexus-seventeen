@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { AgentRole } from '@cicada/steward-protocol';
 import { ServiceError } from './errors.js';
 
@@ -15,6 +16,14 @@ interface ControlPlaneBaseOptions {
   workloadIdentities?: readonly WorkloadIdentityCredential[];
   humanToken: string;
   observerReadToken: string;
+  /**
+   * Dedicated capability for the manager-review coordinator to consume a
+   * one-use review authorization. It is optional for embedded/test control
+   * planes that do not expose the review workflow.
+   */
+  managerReviewPermitToken?: string;
+  /** Server-only HMAC key used to issue per-runtime-generation proofs. */
+  runtimeGenerationProofKey?: string;
   host?: string;
   port?: number;
   corsOrigins?: readonly string[];
@@ -50,6 +59,8 @@ export interface ControlPlaneConfig {
   legacyDevSupervisorToken: string | undefined;
   humanToken: string;
   observerReadToken: string;
+  managerReviewPermitToken: string | undefined;
+  runtimeGenerationProofKey: string;
   host: string;
   port: number;
   corsOrigins: ReadonlySet<string>;
@@ -96,6 +107,14 @@ export function normalizeConfig(options: ControlPlaneOptions): ControlPlaneConfi
   const workspaceId = requiredText(options.workspaceId, 'workspaceId', 128);
   const humanToken = requiredText(options.humanToken, 'humanToken');
   const observerReadToken = requiredText(options.observerReadToken, 'observerReadToken');
+  const managerReviewPermitToken =
+    options.managerReviewPermitToken === undefined
+      ? undefined
+      : requiredText(options.managerReviewPermitToken, 'managerReviewPermitToken');
+  const runtimeGenerationProofKey = requiredText(
+    options.runtimeGenerationProofKey ?? randomBytes(32).toString('base64url'),
+    'runtimeGenerationProofKey',
+  );
   const host = requiredText(options.host ?? '127.0.0.1', 'host', 255).toLowerCase();
   if (
     options.developmentMode !== undefined &&
@@ -141,6 +160,8 @@ export function normalizeConfig(options: ControlPlaneOptions): ControlPlaneConfi
   if (
     humanToken.length < 16 ||
     observerReadToken.length < 16 ||
+    (managerReviewPermitToken !== undefined && managerReviewPermitToken.length < 16) ||
+    runtimeGenerationProofKey.length < 32 ||
     (legacyDevSupervisorToken !== undefined && legacyDevSupervisorToken.length < 16) ||
     workloadIdentities.some((identity) => identity.token.length < 16)
   ) {
@@ -155,6 +176,12 @@ export function normalizeConfig(options: ControlPlaneOptions): ControlPlaneConfi
     throw new ServiceError(500, 'INVALID_CONFIGURATION', 'Bearer tokens must be distinct');
   }
   const tokens = new Set<string>([humanToken, observerReadToken]);
+  if (managerReviewPermitToken !== undefined) {
+    if (tokens.has(managerReviewPermitToken)) {
+      throw new ServiceError(500, 'INVALID_CONFIGURATION', 'Bearer tokens must be distinct');
+    }
+    tokens.add(managerReviewPermitToken);
+  }
   if (legacyDevSupervisorToken !== undefined) {
     if (tokens.has(legacyDevSupervisorToken)) {
       throw new ServiceError(500, 'INVALID_CONFIGURATION', 'Bearer tokens must be distinct');
@@ -179,6 +206,13 @@ export function normalizeConfig(options: ControlPlaneOptions): ControlPlaneConfi
     laneBindings.add(binding);
     tokens.add(identity.token);
   }
+  if (tokens.has(runtimeGenerationProofKey)) {
+    throw new ServiceError(
+      500,
+      'INVALID_CONFIGURATION',
+      'Runtime proof key and bearer tokens must be distinct',
+    );
+  }
 
   const origins = new Set<string>();
   for (const origin of options.corsOrigins ?? []) {
@@ -201,6 +235,8 @@ export function normalizeConfig(options: ControlPlaneOptions): ControlPlaneConfi
     legacyDevSupervisorToken,
     humanToken,
     observerReadToken,
+    managerReviewPermitToken,
+    runtimeGenerationProofKey,
     host,
     port: boundedInteger(options.port, 0, 0, 65_535, 'port'),
     corsOrigins: origins,

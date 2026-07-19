@@ -67,6 +67,7 @@ function input(
       workspaceId: "workspace-test",
       agentId: "agent-test",
       laneId: "lane-test",
+      subject: { type: "development" },
       title: "Recover checkout",
       objective: "Customers can retry without creating a duplicate order.",
       status: "running",

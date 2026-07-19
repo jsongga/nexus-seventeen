@@ -1,4 +1,10 @@
+import type {
+  ManagerReviewPermitConsumeReceipt,
+  ManagerReviewPermitConsumeRequest,
+} from "@cicada/steward-protocol";
+
 export const MANAGER_REVIEW_API_VERSION = 1 as const;
+export const MANAGER_REVIEW_AUTHORIZATION_VERSION = 2 as const;
 
 export interface FixedManagerIdentity {
   readonly workspaceId: string;
@@ -20,26 +26,31 @@ export interface ManagerRuntimeClaim extends FixedManagerIdentity {
   readonly runtimeEpoch: number;
 }
 
-/**
- * Authorizes one current manager operation. The HTTP bootstrap implementation
- * is intentionally replaceable by a future atomic control-plane review permit.
- */
+/** Authorizes read-only queue discovery against the current manager runtime. */
 export interface ManagerRuntimeAuthorizer {
   authorizeManagerRuntime(claim: ManagerRuntimeClaim): Promise<void>;
 }
 
+/** Atomically consumes control-plane authority for one manager review write. */
+export interface ManagerReviewPermitConsumer {
+  consumeManagerReviewPermit(
+    request: ManagerReviewPermitConsumeRequest,
+  ): Promise<ManagerReviewPermitConsumeReceipt>;
+}
+
 /**
- * Honest boundaries of the bootstrap-based alpha fence. They are exported so
- * callers and architecture surfaces cannot mistake a fresh snapshot check for
- * an atomic, task-scoped control-plane permit.
+ * Honest boundaries of queue discovery. Review writes do not rely on this
+ * snapshot: they consume a task-scoped permit in the control plane.
  */
 export const MANAGER_RUNTIME_FENCE_LIMITATIONS = Object.freeze({
-  atomicWithReviewAppend: false,
-  bindsExactManagerReviewTask: false,
-  snapshotRace:
-    "A hold, interrupt, or replacement can commit after authorization and before the review append.",
-  taskBinding:
-    "The UI bootstrap proves the manager lane is active but does not bind this evidence ID to a control-plane-assigned manager task.",
+  queueDiscoveryAtomicWithWrite: false,
+  queueDiscoveryBindsTask: false,
+  reviewWriteOrderedWithControls: true,
+  reviewWriteBindsExactTask: true,
+  queueDiscovery:
+    "Queue membership and runtime state can change immediately after the read-only snapshot.",
+  reviewWriteAuthority:
+    "Each review write consumes a task-scoped permit ordered with control-plane hold, interrupt, and replacement.",
 } as const);
 
 export interface PassingEngineerEvidenceRequest {
@@ -69,6 +80,7 @@ export interface PassingEngineerEvidence extends PassingEngineerEvidenceRequest 
 export type ManagerReviewDecision = "accepted" | "changes_requested";
 
 export interface RecordManagerReviewRequest {
+  readonly reviewTaskId: string;
   readonly evidenceDigest: string;
   readonly decision: ManagerReviewDecision;
   readonly summary: string;
@@ -77,7 +89,9 @@ export interface RecordManagerReviewRequest {
 
 export interface ManagerReview {
   readonly apiVersion: typeof MANAGER_REVIEW_API_VERSION;
+  readonly authorizationVersion: typeof MANAGER_REVIEW_AUTHORIZATION_VERSION;
   readonly managerReviewId: string;
+  readonly reviewTaskId: string;
   readonly evidenceId: string;
   readonly evidenceDigest: string;
   readonly workspaceId: string;
@@ -87,10 +101,32 @@ export interface ManagerReview {
   readonly managerLaneId: string;
   readonly managerRuntimeInstanceId: string;
   readonly managerRuntimeEpoch: number;
+  readonly permitId: string;
+  readonly authorizedAt: string;
+  readonly workspaceSequence: number;
   readonly decision: ManagerReviewDecision;
   readonly summary: string;
   readonly remainingRisks: string;
   readonly reviewedAt: string;
+}
+
+/**
+ * The local write-ahead record for a review permit operation. It is durable
+ * before the control plane is contacted so a lost response or process crash
+ * can resume the same operation without inventing new authority.
+ */
+export interface ManagerReviewIntent {
+  readonly apiVersion: typeof MANAGER_REVIEW_API_VERSION;
+  readonly reviewIntentId: string;
+  readonly workspaceId: string;
+  readonly evidenceId: string;
+  readonly managerAgentId: string;
+  readonly managerLaneId: string;
+  readonly initialRuntimeInstanceId: string;
+  readonly initialRuntimeEpoch: number;
+  readonly operationId: string;
+  readonly request: RecordManagerReviewRequest;
+  readonly createdAt: string;
 }
 
 /** The exact public contract accepted by the credential-isolated broker. */
@@ -131,6 +167,7 @@ export interface ProductionCheck {
   readonly status: "handoff_registration_pending" | "pending_human_review";
   readonly workspaceId: string;
   readonly taskId: string;
+  readonly reviewTaskId: string;
   readonly evidenceId: string;
   readonly evidenceDigest: string;
   readonly completionEventId: string;
@@ -140,6 +177,8 @@ export interface ProductionCheck {
   readonly managerRuntimeInstanceId: string;
   readonly managerRuntimeEpoch: number;
   readonly managerReviewId: string;
+  readonly permitId: string;
+  readonly permitWorkspaceSequence: number;
   readonly resultOverview: string;
   readonly reviewSummary: string;
   readonly remainingRisks: string;
@@ -159,6 +198,7 @@ export interface EngineerFeedback {
   readonly status: "changes_requested";
   readonly workspaceId: string;
   readonly taskId: string;
+  readonly reviewTaskId: string;
   readonly evidenceId: string;
   readonly evidenceDigest: string;
   readonly completionEventId: string;
@@ -169,6 +209,8 @@ export interface EngineerFeedback {
   readonly managerRuntimeInstanceId: string;
   readonly managerRuntimeEpoch: number;
   readonly managerReviewId: string;
+  readonly permitId: string;
+  readonly permitWorkspaceSequence: number;
   readonly resultOverview: string;
   readonly reviewSummary: string;
   readonly remainingRisks: string;
@@ -209,6 +251,11 @@ export interface ManagerReviewRecordedEvent extends StoredEventBase {
   readonly review: ManagerReview;
 }
 
+export interface ManagerReviewIntentRecordedEvent extends StoredEventBase {
+  readonly eventType: "manager_review_intent_recorded";
+  readonly intent: ManagerReviewIntent;
+}
+
 export interface HandoffRegisteredEvent extends StoredEventBase {
   readonly eventType: "handoff_registered";
   readonly managerReviewId: string;
@@ -217,10 +264,12 @@ export interface HandoffRegisteredEvent extends StoredEventBase {
 
 export type StoredEvent =
   | EvidenceRegisteredEvent
+  | ManagerReviewIntentRecordedEvent
   | ManagerReviewRecordedEvent
   | HandoffRegisteredEvent;
 
 export type EventDraft =
   | Omit<EvidenceRegisteredEvent, "storeVersion" | "sequence" | "previousHash" | "contentHash">
+  | Omit<ManagerReviewIntentRecordedEvent, "storeVersion" | "sequence" | "previousHash" | "contentHash">
   | Omit<ManagerReviewRecordedEvent, "storeVersion" | "sequence" | "previousHash" | "contentHash">
   | Omit<HandoffRegisteredEvent, "storeVersion" | "sequence" | "previousHash" | "contentHash">;

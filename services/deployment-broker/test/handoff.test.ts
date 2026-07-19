@@ -122,3 +122,27 @@ test("handoff registration itself is exactly idempotent", async () => {
     await broker.close();
   }
 });
+
+test("cloned coordinators converge on one permit-derived manager-review handoff", async () => {
+  const root = await tempRoot();
+  const broker = await DeploymentGrantBroker.open(normalizeConfig(options(root)));
+  try {
+    const permitId = "11111111-2222-4333-8444-555555555555";
+    const request = handoffRequest({
+      managerReviewId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    });
+    const permitKey = `handoff:permit:${permitId}`;
+    const coordinatorA = await broker.registerManagerHandoff(request, permitKey);
+    const coordinatorB = await broker.registerManagerHandoff(request, permitKey);
+    assert.equal(coordinatorA.duplicate, false);
+    assert.equal(coordinatorB.duplicate, true);
+    assert.equal(coordinatorB.handoff.handoffId, coordinatorA.handoff.handoffId);
+
+    await assert.rejects(
+      broker.registerManagerHandoff(request, "second-coordinator-key-0001"),
+      hasCode("MANAGER_REVIEW_ALREADY_REGISTERED"),
+    );
+  } finally {
+    await broker.close();
+  }
+});

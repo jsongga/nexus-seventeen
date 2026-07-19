@@ -4,6 +4,8 @@ import { controlPlaneOptionsFromEnvironment } from '../src/main-config.js';
 
 const humanToken = 'human-alpha-token-456789';
 const observerReadToken = 'observer-read-token-789012';
+const managerReviewPermitToken = 'manager-review-permit-token-345678';
+const runtimeGenerationProofKey = 'runtime-generation-proof-key-0123456789abcdef';
 const legacyToken = 'legacy-supervisor-token-123';
 
 test('main rejects the legacy token by default and in production even with its opt-in flag', () => {
@@ -14,6 +16,7 @@ test('main rejects the legacy token by default and in production even with its o
           NODE_ENV: nodeEnvironment,
           STEWARD_HUMAN_TOKEN: humanToken,
           STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+          STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
           STEWARD_ENABLE_LEGACY_DEV_SUPERVISOR_TOKEN: 'true',
           STEWARD_LEGACY_DEV_SUPERVISOR_TOKEN: legacyToken,
         }),
@@ -30,6 +33,7 @@ test('main rejects a legacy token unless the separate opt-in is exactly true', (
           NODE_ENV: 'development',
           STEWARD_HUMAN_TOKEN: humanToken,
           STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+          STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
           STEWARD_ENABLE_LEGACY_DEV_SUPERVISOR_TOKEN: enabled,
           STEWARD_LEGACY_DEV_SUPERVISOR_TOKEN: legacyToken,
         }),
@@ -45,6 +49,7 @@ test('main rejects enabling the legacy credential without supplying its token', 
         NODE_ENV: 'development',
         STEWARD_HUMAN_TOKEN: humanToken,
         STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+        STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
         STEWARD_ENABLE_LEGACY_DEV_SUPERVISOR_TOKEN: 'true',
       }),
     /is required when the legacy credential is enabled/u,
@@ -57,6 +62,8 @@ test('main enables the legacy credential only for an explicit development config
       NODE_ENV: 'development',
       STEWARD_HUMAN_TOKEN: humanToken,
       STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+      STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
+      STEWARD_RUNTIME_GENERATION_PROOF_KEY: runtimeGenerationProofKey,
       STEWARD_ENABLE_LEGACY_DEV_SUPERVISOR_TOKEN: 'true',
       STEWARD_LEGACY_DEV_SUPERVISOR_TOKEN: legacyToken,
     },
@@ -73,6 +80,8 @@ test('main permits the explicit legacy fixture in test mode', () => {
     NODE_ENV: 'test',
     STEWARD_HUMAN_TOKEN: humanToken,
     STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+    STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
+    STEWARD_RUNTIME_GENERATION_PROOF_KEY: runtimeGenerationProofKey,
     STEWARD_ENABLE_LEGACY_DEV_SUPERVISOR_TOKEN: 'true',
     STEWARD_LEGACY_DEV_SUPERVISOR_TOKEN: legacyToken,
   });
@@ -87,6 +96,8 @@ test('main defaults to lane-bound identities without a development escape hatch'
       NODE_ENV: 'production',
       STEWARD_HUMAN_TOKEN: humanToken,
       STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+      STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
+      STEWARD_RUNTIME_GENERATION_PROOF_KEY: runtimeGenerationProofKey,
       STEWARD_WORKLOAD_IDENTITIES_JSON: JSON.stringify([
         {
           workspaceId: 'workspace-alpha',
@@ -112,6 +123,7 @@ test('main requires a dedicated observer read token', () => {
       controlPlaneOptionsFromEnvironment({
         NODE_ENV: 'production',
         STEWARD_HUMAN_TOKEN: humanToken,
+        STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
         STEWARD_WORKLOAD_IDENTITIES_JSON: JSON.stringify([
           {
             workspaceId: 'workspace-alpha',
@@ -123,5 +135,48 @@ test('main requires a dedicated observer read token', () => {
         ]),
       }),
     /STEWARD_OBSERVER_READ_TOKEN is required/u,
+  );
+});
+
+test('main requires the dedicated manager-review permit capability', () => {
+  assert.throws(
+    () =>
+      controlPlaneOptionsFromEnvironment({
+        NODE_ENV: 'production',
+        STEWARD_HUMAN_TOKEN: humanToken,
+        STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+        STEWARD_WORKLOAD_IDENTITIES_JSON: JSON.stringify([
+          {
+            workspaceId: 'workspace-alpha',
+            agentId: 'agent-alpha',
+            laneId: 'lane-alpha',
+            role: 'engineer',
+            token: 'lane-alpha-token-123456',
+          },
+        ]),
+      }),
+    /STEWARD_MANAGER_REVIEW_PERMIT_TOKEN is required/u,
+  );
+});
+
+test('main requires an independent runtime-generation proof key', () => {
+  assert.throws(
+    () =>
+      controlPlaneOptionsFromEnvironment({
+        NODE_ENV: 'production',
+        STEWARD_HUMAN_TOKEN: humanToken,
+        STEWARD_OBSERVER_READ_TOKEN: observerReadToken,
+        STEWARD_MANAGER_REVIEW_PERMIT_TOKEN: managerReviewPermitToken,
+        STEWARD_WORKLOAD_IDENTITIES_JSON: JSON.stringify([
+          {
+            workspaceId: 'workspace-alpha',
+            agentId: 'agent-alpha',
+            laneId: 'lane-alpha',
+            role: 'engineer',
+            token: 'lane-alpha-token-123456',
+          },
+        ]),
+      }),
+    /STEWARD_RUNTIME_GENERATION_PROOF_KEY is required/u,
   );
 });

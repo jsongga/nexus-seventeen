@@ -33,7 +33,7 @@ export const frontendCommandId = (value: string): FrontendCommandId =>
 export const frontendSessionId = (value: string): FrontendSessionId =>
   value as FrontendSessionId;
 
-export const STEWARD_UI_API_VERSION = 'steward.ui/v1' as const;
+export const STEWARD_UI_API_VERSION = 'steward.ui/v2' as const;
 
 export type AgentConnectivity = 'online' | 'stale' | 'offline';
 
@@ -59,6 +59,15 @@ export interface ActiveRunProjection {
   readonly startedAt: ISODateTime;
 }
 
+export type AgentTaskSubject =
+  | { readonly type: 'development' }
+  | {
+      readonly type: 'manager_review';
+      readonly sourceTaskId: AgentTaskId;
+      readonly evidenceId: string;
+      readonly evidenceDigest: `sha256:${string}`;
+    };
+
 /**
  * Durable task state is independent of an expendable provider run. This is
  * what lets a reloaded frontend rediscover original task timing after a run
@@ -67,6 +76,7 @@ export interface ActiveRunProjection {
 export interface AgentTaskProjection {
   readonly id: AgentTaskId;
   readonly workItemId: WorkItemId;
+  readonly subject: AgentTaskSubject;
   readonly status: 'running' | 'paused' | 'completed';
   readonly startedAt: ISODateTime;
   readonly expectedAgentMinutes: AgentExpectedMinutes;
@@ -156,6 +166,8 @@ export interface AgentRegistryEvent {
 export type FrontendCommandPayload =
   | {
       readonly type: 'queue_work';
+      /** The human queue surface creates development work; review assignments are system-bound. */
+      readonly subject: { readonly type: 'development' };
       readonly title: string;
       readonly desiredOutcome: string;
       readonly priority: 'next' | 'backlog';

@@ -1,5 +1,6 @@
 import { HttpManagerHandoffRegistrar } from "./broker-registrar.js";
 import { HttpControlPlaneManagerAuthorizer } from "./control-plane-authorizer.js";
+import { HttpControlPlaneManagerReviewPermitConsumer } from "./control-plane-permit-consumer.js";
 import { loadManagerReviewRuntimeConfig } from "./runtime-config.js";
 import { createManagerReviewService } from "./service.js";
 
@@ -20,6 +21,16 @@ const managerRuntimeAuthorizer = new HttpControlPlaneManagerAuthorizer({
     ? {}
     : { maximumSnapshotAgeMs: config.controlPlaneMaximumSnapshotAgeMs }),
 });
+const managerReviewPermitConsumer = new HttpControlPlaneManagerReviewPermitConsumer({
+  controlPlaneOrigin: config.controlPlaneOrigin,
+  permitConsumeToken: config.controlPlanePermitConsumeToken,
+  ...(config.controlPlanePermitTimeoutMs === undefined
+    ? {}
+    : { timeoutMs: config.controlPlanePermitTimeoutMs }),
+  ...(config.controlPlanePermitMaximumResponseBytes === undefined
+    ? {}
+    : { maximumResponseBytes: config.controlPlanePermitMaximumResponseBytes }),
+});
 const service = await createManagerReviewService({
   workspaceId: config.workspaceId,
   storePath: config.storePath,
@@ -30,6 +41,7 @@ const service = await createManagerReviewService({
   corsOrigins: config.corsOrigins,
   handoffRegistrar,
   managerRuntimeAuthorizer,
+  managerReviewPermitConsumer,
   ...(config.host === undefined ? {} : { host: config.host }),
   ...(config.port === undefined ? {} : { port: config.port }),
   ...(config.maxBodyBytes === undefined ? {} : { maxBodyBytes: config.maxBodyBytes }),

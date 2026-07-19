@@ -2,10 +2,17 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  parseManagerReviewPermitConsumeReceipt,
+  STEWARD_RUNTIME_API_VERSION,
+  type ManagerReviewPermitConsumeReceipt,
+  type ManagerReviewPermitConsumeRequest,
+} from "@cicada/steward-protocol";
 import { ReviewServiceError } from "../src/index.js";
 import type {
   FixedManagerIdentity,
   ManagerHandoffRegistrar,
+  ManagerReviewPermitConsumer,
   ManagerRuntimeAuthorizer,
   ManagerRuntimeClaim,
   PassingEngineerEvidenceRequest,
@@ -18,6 +25,7 @@ export const EVIDENCE_TOKEN = "trusted-evidence-issuer-token-0123456789";
 export const HUMAN_TOKEN = "human-production-check-token-0123456789";
 export const MANAGER_ONE_TOKEN = "manager-one-fixed-lane-token-0123456789";
 export const MANAGER_TWO_TOKEN = "manager-two-fixed-lane-token-0123456789";
+export const PERMIT_CONSUME_TOKEN = "manager-review-permit-consume-token-0123456789";
 
 export const MANAGER_ONE: FixedManagerIdentity = Object.freeze({
   workspaceId: WORKSPACE_ID,
@@ -57,6 +65,58 @@ export class FakeManagerRuntimeAuthorizer implements ManagerRuntimeAuthorizer {
   }
 }
 
+function stablePermitRequest(request: ManagerReviewPermitConsumeRequest): Record<string, unknown> {
+  const { runtimeInstanceId: _instance, runtimeEpoch: _epoch, ...stable } = request;
+  return stable;
+}
+
+export class FakeManagerReviewPermitConsumer implements ManagerReviewPermitConsumer {
+  readonly calls: ManagerReviewPermitConsumeRequest[] = [];
+  readonly #receipts = new Map<string, {
+    readonly stableRequest: Record<string, unknown>;
+    readonly receipt: ManagerReviewPermitConsumeReceipt;
+  }>();
+  reject = false;
+  nextWorkspaceSequence = 100;
+
+  async consumeManagerReviewPermit(
+    request: ManagerReviewPermitConsumeRequest,
+  ): Promise<ManagerReviewPermitConsumeReceipt> {
+    this.calls.push(structuredClone(request));
+    if (this.reject) {
+      throw new ReviewServiceError(409, "CONTROL_PLANE_PERMIT_REJECTED", "simulated rejected review permit");
+    }
+    const stableRequest = stablePermitRequest(request);
+    const prior = this.#receipts.get(request.operationId);
+    if (prior) {
+      if (JSON.stringify(prior.stableRequest) !== JSON.stringify(stableRequest)) {
+        throw new ReviewServiceError(409, "PERMIT_OPERATION_CONFLICT", "simulated permit operation conflict");
+      }
+      return parseManagerReviewPermitConsumeReceipt({ ...prior.receipt, state: "duplicate" });
+    }
+    const receipt = parseManagerReviewPermitConsumeReceipt({
+      apiVersion: STEWARD_RUNTIME_API_VERSION,
+      state: "accepted",
+      permitId: randomUUID(),
+      operationId: request.operationId,
+      workspaceId: request.workspaceId,
+      reviewTaskId: request.reviewTaskId,
+      sourceTaskId: request.sourceTaskId,
+      evidenceId: request.evidenceId,
+      evidenceDigest: request.evidenceDigest,
+      managerAgentId: request.managerAgentId,
+      managerLaneId: request.managerLaneId,
+      managerRuntimeInstanceId: request.runtimeInstanceId,
+      managerRuntimeEpoch: request.runtimeEpoch,
+      reviewRequestDigest: request.reviewRequestDigest,
+      authorizedAt: "2026-07-19T19:04:30.000Z",
+      workspaceSequence: this.nextWorkspaceSequence++,
+    });
+    this.#receipts.set(request.operationId, { stableRequest, receipt });
+    return receipt;
+  }
+}
+
 export function passingEvidence(
   override: Partial<PassingEngineerEvidenceRequest> = {},
 ): PassingEngineerEvidenceRequest {
@@ -78,8 +138,13 @@ export function passingEvidence(
   };
 }
 
-export function managerReview(evidenceDigest: string, decision: "accepted" | "changes_requested" = "accepted") {
+export function managerReview(
+  evidenceDigest: string,
+  decision: "accepted" | "changes_requested" = "accepted",
+  reviewTaskId = "manager-review-task-0001",
+) {
   return {
+    reviewTaskId,
     evidenceDigest,
     decision,
     summary: decision === "accepted"
