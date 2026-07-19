@@ -170,14 +170,28 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     const boardResponse = await request(address.url, `/v1/projects/${project.projectId}/board`, "GET", HUMAN_TOKEN);
     assert.equal(boardResponse.status, 200);
     const board = await boardResponse.json() as {
-      tasks: Array<{ status: string; result: string | null; endedAt: string | null }>;
+      tasks: Array<{
+        taskId: string;
+        parentTaskId: string | null;
+        kind: string;
+        requiredRole: string | null;
+        status: string;
+        result: string | null;
+        endedAt: string | null;
+      }>;
       recentRuns: unknown[];
       recentQuestions: unknown[];
     };
-    assert.equal(board.tasks.length, 1);
-    assert.equal(board.tasks[0]?.status, "completed");
-    assert.equal(board.tasks[0]?.result, "Follow-up verification finished without deployment.");
-    assert.ok(board.tasks[0]?.endedAt);
+    assert.equal(board.tasks.length, 2);
+    const completedWork = board.tasks.find((item) => item.taskId === task.taskId);
+    const managerReview = board.tasks.find((item) => item.kind === "manager_review");
+    assert.equal(completedWork?.kind, "work");
+    assert.equal(completedWork?.status, "completed");
+    assert.equal(completedWork?.result, "Follow-up verification finished without deployment.");
+    assert.ok(completedWork?.endedAt);
+    assert.equal(managerReview?.parentTaskId, task.taskId);
+    assert.equal(managerReview?.requiredRole, "manager");
+    assert.equal(managerReview?.status, "backlog");
     assert.equal(board.recentRuns.length, 2);
     assert.equal(board.recentQuestions.length, 0);
 

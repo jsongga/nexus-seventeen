@@ -3,6 +3,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   createTaskBoardService,
+  type AgentRole,
   type BoardSnapshot,
   type BoardTask,
   type HumanQuestion,
@@ -18,6 +19,12 @@ import { FakeLauncher, completedOutcome, tempRoot, until } from "./helpers.js";
 const HUMAN_TOKEN = "worker-integration-human-token-0123456789";
 const AGENT_TOKEN = "worker-integration-agent-token-0123456789";
 const AGENT_ID = "integration-engineer";
+const MANAGER_TOKEN = "worker-integration-manager-token-0123456789";
+const MANAGER_ID = "integration-manager";
+const OTHER_AGENT_TOKEN = "worker-integration-other-agent-token-0123456789";
+const OTHER_AGENT_ID = "integration-other-engineer";
+const OTHER_PROJECT_TOKEN = "worker-integration-other-project-token-012345";
+const OTHER_PROJECT_AGENT_ID = "integration-other-project-engineer";
 
 interface Fixture {
   readonly root: string;
@@ -51,7 +58,7 @@ async function request<T>(
   return JSON.parse(text) as T;
 }
 
-async function fixture(longPollMs = 0): Promise<Fixture> {
+async function fixture(longPollMs = 1): Promise<Fixture> {
   const root = await tempRoot();
   const service = await createTaskBoardService({
     dbPath: join(root, "board", "task-board.sqlite"),
@@ -120,6 +127,33 @@ async function createTask(item: Fixture, title: string): Promise<BoardTask> {
   return response.task;
 }
 
+async function createAssignedTask(
+  origin: string,
+  projectId: string,
+  agentId: string,
+  assignedRole: AgentRole,
+  title: string,
+): Promise<BoardTask> {
+  const response = await request<{ task: BoardTask }>(
+    origin,
+    "/v1/projects/" + encodeURIComponent(projectId) + "/tasks",
+    "POST",
+    HUMAN_TOKEN,
+    201,
+    {
+      parentTaskId: null,
+      title,
+      objective: "Record a completed result for deterministic area memory.",
+      acceptanceCriteria: "The assigned agent completes the task with a concrete result.",
+      workspaceRefs: ["repo:memory-test"],
+      assignedAgentId: agentId,
+      assignedRole,
+      expectedAgentMinutes: 15,
+    },
+  );
+  return response.task;
+}
+
 async function snapshot(item: Fixture): Promise<BoardSnapshot> {
   return request<BoardSnapshot>(
     item.origin,
@@ -142,7 +176,10 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     assert.equal(item.launcher.requests.length, 0);
 
     const task = await createTask(item, "Make checkout retries idempotent");
-    item.launcher.outcomes.push(completedOutcome("Customers can retry without being charged twice."));
+    item.launcher.outcomes.push({
+      ...completedOutcome("Customers can retry without being charged twice."),
+      detail: "Implementation and focused tests completed successfully.",
+    });
     assert.equal(await item.worker.dispatchOnce(), true);
 
     assert.equal(item.launcher.requests.length, 1);
@@ -170,6 +207,223 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     assert.deepEqual(messages.map((message) => message.kind), ["progress", "proposal", "result"]);
     assert.ok(messages.every((message) => message.runId === run?.runId));
   } finally {
+    await close(item);
+  }
+});
+
+test("worker receives persistent area memory without crossing agent or project boundaries", async () => {
+  const item = await fixture();
+  let originalWorkerClosed = false;
+  let originalServiceClosed = false;
+  let otherWorker: TaskWorker | null = null;
+  let otherProjectWorker: TaskWorker | null = null;
+  let restartedService: TaskBoardService | null = null;
+  let restartedWorker: TaskWorker | null = null;
+  try {
+    const remembered = await createTask(item, "Remember checkout retry impact");
+    item.launcher.outcomes.push(completedOutcome("Customers can retry without a duplicate charge."));
+    assert.equal(await item.worker.dispatchOnce(), true);
+    assert.deepEqual(item.launcher.requests[0]?.context.areaMemory, []);
+
+    await request(
+      item.origin,
+      "/v1/projects/" + encodeURIComponent(item.project.projectId) + "/agents",
+      "POST",
+      HUMAN_TOKEN,
+      201,
+      {
+        agentId: OTHER_AGENT_ID,
+        role: "engineer",
+        area: "checkout",
+        mission: "Own separate checkout work without sharing another agent's memory.",
+        model: "codex-mini",
+        token: OTHER_AGENT_TOKEN,
+      },
+    );
+    const otherAgentTask = await createAssignedTask(
+      item.origin,
+      item.project.projectId,
+      OTHER_AGENT_ID,
+      "engineer",
+      "Other agent result",
+    );
+    const otherLauncher = new FakeLauncher();
+    otherLauncher.outcomes.push(completedOutcome("This result belongs only to the other agent."));
+    otherWorker = await TaskWorker.create({
+      identity: { workerId: "integration-other-worker", agentId: OTHER_AGENT_ID },
+      statePath: join(item.root, "other-worker", "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: item.origin, token: OTHER_AGENT_TOKEN }),
+      launcher: otherLauncher,
+      longPollMs: 1,
+    });
+    assert.equal(await otherWorker.dispatchOnce(), true);
+    assert.deepEqual(otherLauncher.requests[0]?.context.areaMemory, []);
+    await otherWorker.close();
+    otherWorker = null;
+
+    const { project: otherProject } = await request<{ project: Project }>(
+      item.origin,
+      "/v1/projects",
+      "POST",
+      HUMAN_TOKEN,
+      201,
+      {
+        name: "Account recovery",
+        description: "Keep recovery work isolated from checkout.",
+      },
+    );
+    await request(
+      item.origin,
+      "/v1/projects/" + encodeURIComponent(otherProject.projectId) + "/agents",
+      "POST",
+      HUMAN_TOKEN,
+      201,
+      {
+        agentId: OTHER_PROJECT_AGENT_ID,
+        role: "engineer",
+        area: "checkout",
+        mission: "Own recovery work in a separate project.",
+        model: "codex-mini",
+        token: OTHER_PROJECT_TOKEN,
+      },
+    );
+    const otherProjectTask = await createAssignedTask(
+      item.origin,
+      otherProject.projectId,
+      OTHER_PROJECT_AGENT_ID,
+      "engineer",
+      "Other project result",
+    );
+    const otherProjectLauncher = new FakeLauncher();
+    otherProjectLauncher.outcomes.push(completedOutcome("This result belongs only to the other project."));
+    otherProjectWorker = await TaskWorker.create({
+      identity: { workerId: "integration-other-project-worker", agentId: OTHER_PROJECT_AGENT_ID },
+      statePath: join(item.root, "other-project-worker", "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: item.origin, token: OTHER_PROJECT_TOKEN }),
+      launcher: otherProjectLauncher,
+      longPollMs: 1,
+    });
+    assert.equal(await otherProjectWorker.dispatchOnce(), true);
+    assert.deepEqual(otherProjectLauncher.requests[0]?.context.areaMemory, []);
+    await otherProjectWorker.close();
+    otherProjectWorker = null;
+
+    await item.worker.close();
+    originalWorkerClosed = true;
+    await item.service.close();
+    originalServiceClosed = true;
+
+    restartedService = await createTaskBoardService({
+      dbPath: join(item.root, "board", "task-board.sqlite"),
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:integration-reviewer",
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const restartedAddress = await restartedService.start();
+    const current = await createAssignedTask(
+      restartedAddress.url,
+      item.project.projectId,
+      AGENT_ID,
+      "engineer",
+      "Use persistent checkout memory",
+    );
+    const restartedLauncher = new FakeLauncher();
+    restartedLauncher.outcomes.push(completedOutcome("The prior retry result informed this task."));
+    restartedWorker = await TaskWorker.create({
+      identity: { workerId: "integration-restarted-worker", agentId: AGENT_ID },
+      statePath: join(item.root, "restarted-worker", "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: restartedAddress.url, token: AGENT_TOKEN }),
+      launcher: restartedLauncher,
+      longPollMs: 1,
+    });
+    assert.equal(await restartedWorker.dispatchOnce(), true);
+
+    const memory = restartedLauncher.requests[0]?.context.areaMemory;
+    assert.deepEqual(memory?.map((entry) => entry.taskId), [remembered.taskId]);
+    assert.equal(memory?.[0]?.title, remembered.title);
+    assert.equal(memory?.[0]?.result, "Customers can retry without a duplicate charge.");
+    assert.ok(memory?.[0]?.endedAt);
+    assert.deepEqual(Object.keys(memory?.[0] ?? {}).sort(), ["endedAt", "result", "taskId", "title"]);
+    assert.ok(memory?.every((entry) => (
+      entry.taskId !== current.taskId &&
+      entry.taskId !== otherAgentTask.taskId &&
+      entry.taskId !== otherProjectTask.taskId
+    )));
+  } finally {
+    await restartedWorker?.close();
+    await restartedService?.close();
+    await otherProjectWorker?.close();
+    await otherWorker?.close();
+    if (!originalWorkerClosed) await item.worker.close();
+    if (!originalServiceClosed) await item.service.close();
+  }
+});
+
+test("a review child receives bounded evidence from its completed engineer parent", async () => {
+  const item = await fixture();
+  let managerWorker: TaskWorker | null = null;
+  try {
+    const parent = await createTask(item, "Make checkout retries idempotent");
+    item.launcher.outcomes.push({
+      ...completedOutcome("Customers can retry without being charged twice."),
+      detail: "The engineer completed implementation and focused verification.",
+    });
+    assert.equal(await item.worker.dispatchOnce(), true);
+
+    await request(
+      item.origin,
+      `/v1/projects/${item.project.projectId}/agents`,
+      "POST",
+      HUMAN_TOKEN,
+      201,
+      {
+        agentId: MANAGER_ID,
+        role: "manager",
+        area: "checkout review",
+        mission: "Review completed checkout work and report whether it is ready for human approval.",
+        model: "codex-mini",
+        token: MANAGER_TOKEN,
+      },
+    );
+    const { task: review } = await request<{ task: BoardTask }>(
+      item.origin,
+      `/v1/projects/${item.project.projectId}/tasks`,
+      "POST",
+      HUMAN_TOKEN,
+      201,
+      {
+        parentTaskId: parent.taskId,
+        title: "Review checkout retry evidence",
+        objective: "Independently assess the completed engineer result.",
+        acceptanceCriteria: "The decision cites the supplied result and progress evidence.",
+        workspaceRefs: parent.workspaceRefs,
+        assignedAgentId: MANAGER_ID,
+        assignedRole: "manager",
+        expectedAgentMinutes: 15,
+      },
+    );
+    const managerLauncher = new FakeLauncher();
+    managerLauncher.outcomes.push(completedOutcome("The evidence is ready for human approval."));
+    managerWorker = await TaskWorker.create({
+      identity: { workerId: "integration-manager-worker", agentId: MANAGER_ID },
+      statePath: join(item.root, "manager-worker", "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: item.origin, token: MANAGER_TOKEN }),
+      launcher: managerLauncher,
+      longPollMs: 1,
+    });
+    assert.equal(await managerWorker.dispatchOnce(), true);
+
+    const evidence = managerLauncher.requests[0]?.context.parentEvidence;
+    assert.equal(managerLauncher.requests[0]?.context.taskId, review.taskId);
+    assert.equal(evidence?.taskId, parent.taskId);
+    assert.equal(evidence?.status, "completed");
+    assert.equal(evidence?.result, "Customers can retry without being charged twice.");
+    assert.deepEqual(evidence?.workspaceRefs, parent.workspaceRefs);
+    assert.deepEqual(evidence?.messages.map((message) => message.kind), ["progress", "proposal", "result"]);
+    assert.ok(evidence?.messages.every((message) => message.body.length <= 2_000));
+  } finally {
+    await managerWorker?.close();
     await close(item);
   }
 });

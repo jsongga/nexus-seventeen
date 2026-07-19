@@ -41,6 +41,34 @@ export interface TaskContextMessage {
   readonly createdAt: string;
 }
 
+/** Deterministic recent task results; never a separately synthesized memory summary. */
+export interface AreaMemoryEntry {
+  readonly taskId: string;
+  readonly title: string;
+  readonly result: string;
+  readonly endedAt: string;
+}
+
+export interface ParentTaskEvidence {
+  readonly taskId: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly acceptanceCriteria: string;
+  readonly status: string;
+  readonly assignedAgentId: string | null;
+  readonly workspaceRefs: readonly string[];
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly result: string | null;
+  readonly messages: readonly Readonly<{
+    messageId: string;
+    author: "human" | "agent";
+    kind: "note" | "progress" | "proposal" | "result";
+    body: string;
+    createdAt: string;
+  }>[];
+}
+
 /** The only context allowed to cross the model-process boundary. */
 export interface BoundedAgentContext {
   readonly apiVersion: 1;
@@ -50,7 +78,8 @@ export interface BoundedAgentContext {
   readonly mission: AgentMission;
   readonly projectMemory: string;
   readonly task: AgentTaskContext;
-  readonly parentSummary: string | null;
+  readonly areaMemory: readonly AreaMemoryEntry[];
+  readonly parentEvidence: ParentTaskEvidence | null;
   readonly messagesSinceCursor: number | null;
   readonly nextMessageCursor: number;
   readonly messages: readonly TaskContextMessage[];
@@ -94,6 +123,12 @@ export interface AgentLaunchRequest {
 /** `interrupt` must return only after the OS process and descendants are confirmed absent. */
 export interface AgentRunHandle {
   readonly completion: Promise<AgentRunOutcome>;
+  /**
+   * Sanitized, bounded lifecycle labels only; raw provider payloads never cross
+   * this boundary. The stream closes when provider output ends, including after
+   * interruption.
+   */
+  readonly activity: AsyncIterable<string>;
   interrupt(reason: string): Promise<void>;
 }
 
@@ -105,7 +140,7 @@ export interface AgentLauncher {
 export interface ClaimNextWakeRequest {
   readonly agentId: string;
   readonly claimId: string;
-  readonly messageCursor: number | null;
+  readonly messageCursors: Readonly<Record<string, number>>;
   readonly longPollMs: number;
 }
 
@@ -124,7 +159,7 @@ export interface AppendRunOutputRequest {
 export interface SettleAgentRunRequest {
   readonly claim: TaskWakeClaim;
   readonly outcome: AgentRunTerminalStatus;
-  readonly detail: string;
+  readonly result: string;
   readonly idempotencyKey: string;
 }
 
@@ -183,10 +218,10 @@ export interface ActiveRunJournalEntry {
 }
 
 export interface TaskWorkerJournal {
-  readonly version: 1;
+  readonly version: 2;
   readonly identity: TaskWorkerIdentity;
-  readonly messageCursor: number | null;
-  readonly pendingClaim: Readonly<{ claimId: string; messageCursor: number | null }> | null;
+  readonly messageCursors: Readonly<Record<string, number>>;
+  readonly pendingClaim: Readonly<{ claimId: string; messageCursors: Readonly<Record<string, number>> }> | null;
   readonly active: ActiveRunJournalEntry | null;
   readonly completed: readonly CompletedRunJournalEntry[];
 }

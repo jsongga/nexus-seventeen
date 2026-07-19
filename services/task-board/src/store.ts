@@ -3,13 +3,24 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "./errors.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const MIGRATE_VERSION_1_TO_2 = `
 ALTER TABLE runs ADD COLUMN task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT;
 UPDATE runs
 SET task_id = (SELECT wakeups.task_id FROM wakeups WHERE wakeups.wakeup_id = runs.wakeup_id);
 PRAGMA user_version = 2;
+`;
+
+const MIGRATE_VERSION_2_TO_3 = `
+ALTER TABLE tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'work'
+  CHECK (task_kind IN ('work', 'manager_review', 'human_check'));
+ALTER TABLE tasks ADD COLUMN required_role TEXT
+  CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier'));
+CREATE UNIQUE INDEX tasks_one_review_stage
+  ON tasks(parent_task_id, task_kind)
+  WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
+PRAGMA user_version = 3;
 `;
 
 const SCHEMA = `
@@ -38,6 +49,8 @@ CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   parent_task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  task_kind TEXT NOT NULL CHECK (task_kind IN ('work', 'manager_review', 'human_check')),
+  required_role TEXT CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier')),
   title TEXT NOT NULL,
   objective TEXT NOT NULL,
   acceptance_criteria TEXT NOT NULL,
@@ -53,10 +66,17 @@ CREATE TABLE tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   CHECK ((assigned_agent_id IS NULL) = (assigned_role IS NULL)),
+  CHECK ((task_kind = 'manager_review' AND required_role = 'manager') OR
+         (task_kind IN ('work', 'human_check') AND required_role IS NULL)),
+  CHECK (required_role IS NULL OR assigned_role IS NULL OR required_role = assigned_role),
+  CHECK (task_kind <> 'human_check' OR assigned_agent_id IS NULL),
   CHECK (ended_at IS NULL OR started_at IS NOT NULL)
 ) STRICT;
 CREATE INDEX tasks_project ON tasks(project_id, created_at, task_id);
 CREATE INDEX tasks_agent ON tasks(assigned_agent_id, status, updated_at);
+CREATE UNIQUE INDEX tasks_one_review_stage
+  ON tasks(parent_task_id, task_kind)
+  WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
 
 CREATE TABLE task_messages (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,7 +255,9 @@ export class TaskBoardStore {
       if (version === 0) {
         db.exec(`BEGIN IMMEDIATE; ${SCHEMA} PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
       } else if (version === 1) {
-        db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_1_TO_2} COMMIT;`);
+        db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_1_TO_2} ${MIGRATE_VERSION_2_TO_3} COMMIT;`);
+      } else if (version === 2) {
+        db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_2_TO_3} COMMIT;`);
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,

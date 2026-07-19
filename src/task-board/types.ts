@@ -6,6 +6,9 @@ export type AgentStatus =
   | 'waiting_for_human'
   | 'failed';
 
+export type AgentRole = 'engineer' | 'manager' | 'verifier';
+export type TaskKind = 'work' | 'manager_review' | 'human_check';
+
 export type TaskStatus =
   | 'proposed'
   | 'backlog'
@@ -41,7 +44,7 @@ export interface BoardAgent {
   id: string;
   projectId: string;
   name: string;
-  role: string;
+  role: AgentRole;
   area: string;
   mission: string;
   model: string | null;
@@ -56,12 +59,14 @@ export interface BoardTask {
   id: string;
   projectId: string;
   parentTaskId: string | null;
+  kind: TaskKind;
+  requiredRole: AgentRole | null;
   title: string;
   objective: string;
   acceptanceCriteria: string | null;
   workspaceRefs: string[];
   assignedAgentId: string | null;
-  assignedRole: string | null;
+  assignedRole: AgentRole | null;
   status: TaskStatus;
   expectedAgentMinutes: number;
   expectedCompletedAt: string | null;
@@ -129,7 +134,7 @@ export interface CreateProjectInput {
 export interface CreateAgentInput {
   projectId: string;
   agentId: string;
-  role: 'engineer' | 'manager' | 'verifier';
+  role: AgentRole;
   area: string;
   mission: string;
   model: string;

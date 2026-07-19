@@ -287,15 +287,33 @@ export function parseInterrupt(value: unknown): InterruptAgentRequest {
 }
 
 export function parseClaim(value: unknown): ClaimRunRequest {
-  const item = exact(value, ["claimId", "messageCursor"], "Run claim");
-  const cursor = item.messageCursor;
-  if (cursor !== null && (!Number.isSafeInteger(cursor) || Number(cursor) < 0)) {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "messageCursor must be null or a non-negative safe integer");
+  if (!isRecord(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "Run claim must be an object");
+  const keys = Object.keys(value).sort();
+  const legacy = keys.length === 2 && keys[0] === "claimId" && keys[1] === "messageCursor";
+  const perTask = keys.length === 2 && keys[0] === "claimId" && keys[1] === "messageCursors";
+  if (!legacy && !perTask) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Run claim has unexpected or missing fields");
   }
-  return Object.freeze({
-    claimId: parseIdentifier(item.claimId, "claimId", 256),
-    messageCursor: cursor === null ? null : Number(cursor),
-  });
+  const claimId = parseIdentifier(value.claimId, "claimId", 256);
+  if (legacy) {
+    const cursor = value.messageCursor;
+    if (cursor !== null && (!Number.isSafeInteger(cursor) || Number(cursor) < 0)) {
+      throw new TaskBoardError(400, "INVALID_REQUEST", "messageCursor must be null or a non-negative safe integer");
+    }
+    return Object.freeze({ claimId, messageCursor: cursor === null ? null : Number(cursor) });
+  }
+  if (!isRecord(value.messageCursors) || Object.keys(value.messageCursors).length > 256) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "messageCursors must be an object with at most 256 task entries");
+  }
+  const messageCursors: Record<string, number> = Object.create(null) as Record<string, number>;
+  for (const [taskId, cursor] of Object.entries(value.messageCursors)) {
+    parseIdentifier(taskId, "messageCursors taskId");
+    if (!Number.isSafeInteger(cursor) || Number(cursor) < 0) {
+      throw new TaskBoardError(400, "INVALID_REQUEST", "messageCursors values must be non-negative safe integers");
+    }
+    messageCursors[taskId] = Number(cursor);
+  }
+  return Object.freeze({ claimId, messageCursors: Object.freeze(messageCursors) });
 }
 
 export function parseSettle(value: unknown): SettleRunRequest {

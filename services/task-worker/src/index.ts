@@ -23,6 +23,7 @@ export type {
   AgentRunOutput,
   AgentRunTerminalStatus,
   AgentTaskContext,
+  AreaMemoryEntry,
   AppendRunOutputRequest,
   BoundedAgentContext,
   ClaimedAgentRun,

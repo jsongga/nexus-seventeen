@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { TaskWorkerJournalStore } from "./journal.js";
+import { sanitizeActivity } from "./provider-activity.js";
 import {
   parseAgentRunOutcome,
   parseBoundedAgentContext,
@@ -37,6 +38,7 @@ class SerialExecutor {
 
 const ALLOWED_WAKE_REASONS = new Set<string>(TASK_WAKE_REASONS);
 const MAX_HISTORY = 256;
+const MAX_MESSAGE_CURSORS = 256;
 
 function exactNow(now: () => Date): string {
   const value = now();
@@ -70,16 +72,50 @@ function outputIdempotency(claim: TaskWakeClaim, index: number, output: AgentRun
   return `twe_${digest}`;
 }
 
-function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome): string {
+function activityIdempotency(claim: TaskWakeClaim, sequence: number, body: string): string {
+  const digest = createHash("sha256").update(JSON.stringify({
+    action: "append_task_worker_activity",
+    runId: claim.runId,
+    wakeupId: claim.wakeupId,
+    taskId: claim.taskId,
+    sequence,
+    body,
+  })).digest("hex");
+  return `twa_${digest}`;
+}
+
+function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome, result: string): string {
   const digest = createHash("sha256").update(JSON.stringify({
     action: "settle_task_worker_run",
     runId: claim.runId,
     wakeupId: claim.wakeupId,
     taskId: claim.taskId,
     outcome: outcome.status,
-    detail: outcome.detail,
+    result,
   })).digest("hex");
   return `tws_${digest}`;
+}
+
+function requestedCursor(messageCursors: Readonly<Record<string, number>>, taskId: string | null): number | null {
+  return taskId === null ? null : messageCursors[taskId] ?? null;
+}
+
+function withTaskCursor(
+  messageCursors: Readonly<Record<string, number>>,
+  taskId: string,
+  cursor: number,
+): Readonly<Record<string, number>> {
+  const entries = new Map(Object.entries(messageCursors));
+  entries.delete(taskId);
+  entries.set(taskId, cursor);
+  return Object.freeze(Object.fromEntries([...entries.entries()].slice(-MAX_MESSAGE_CURSORS)));
+}
+
+function settlementResult(outcome: AgentRunOutcome): string {
+  if (outcome.status !== "completed") return outcome.detail;
+  const result = outcome.outputs.find((output) => output.type === "result");
+  if (result?.type !== "result") throw new Error("Completed agent outcome is missing its result output");
+  return result.body;
 }
 
 function interruptedOutcome(reason: string): AgentRunOutcome {
@@ -98,9 +134,15 @@ function failedOutcome(error: unknown, fallback: string): AgentRunOutcome {
   });
 }
 
-function assertClaimBinding(claimed: ClaimedAgentRun, agentId: string, expectedClaimId: string, cursor: number | null): ClaimedAgentRun {
+function assertClaimBinding(
+  claimed: ClaimedAgentRun,
+  agentId: string,
+  expectedClaimId: string,
+  messageCursors: Readonly<Record<string, number>>,
+): ClaimedAgentRun {
   const claim = parseTaskWakeClaim(claimed.claim);
   const context = claimed.context === null ? null : parseBoundedAgentContext(claimed.context);
+  const cursor = requestedCursor(messageCursors, claim.taskId);
   if (
     claim.agentId !== agentId ||
     claim.claimId !== expectedClaimId ||
@@ -124,7 +166,7 @@ export interface TaskWorkerSnapshot {
   readonly activeRunId: string | null;
   readonly activePhase: TaskWorkerJournal["active"] extends infer _ ? import("./types.js").ActiveRunPhase | null : never;
   readonly interruptReason: string | null;
-  readonly messageCursor: number | null;
+  readonly messageCursors: Readonly<Record<string, number>>;
   readonly completedRuns: number;
 }
 
@@ -141,8 +183,8 @@ export class TaskWorker {
 
   private constructor(options: TaskWorkerOptions, store: TaskWorkerJournalStore) {
     const longPollMs = options.longPollMs ?? 30_000;
-    if (!Number.isSafeInteger(longPollMs) || longPollMs < 0 || longPollMs > 30_000) {
-      throw new Error("longPollMs must be an integer between 0 and 30000");
+    if (!Number.isSafeInteger(longPollMs) || longPollMs < 1 || longPollMs > 30_000) {
+      throw new Error("longPollMs must be an integer between 1 and 30000");
     }
     this.#options = { ...options, longPollMs, now: options.now ?? (() => new Date()) };
     this.#store = store;
@@ -161,7 +203,7 @@ export class TaskWorker {
       activeRunId: this.#state.active?.claim.runId ?? null,
       activePhase: this.#state.active?.phase ?? null,
       interruptReason: this.#state.active?.interruptReason ?? null,
-      messageCursor: this.#state.messageCursor,
+      messageCursors: structuredClone(this.#state.messageCursors),
       completedRuns: this.#state.completed.length,
     };
   }
@@ -184,7 +226,7 @@ export class TaskWorker {
       const claimed = await this.#options.board.claimNextWake({
         agentId: this.#options.identity.agentId,
         claimId: pending.claimId,
-        messageCursor: pending.messageCursor,
+        messageCursors: pending.messageCursors,
         longPollMs: this.#options.longPollMs,
       }, signal);
       if (claimed === null) {
@@ -196,7 +238,7 @@ export class TaskWorker {
         });
         return false;
       }
-      const parsed = assertClaimBinding(claimed, this.#options.identity.agentId, pending.claimId, pending.messageCursor);
+      const parsed = assertClaimBinding(claimed, this.#options.identity.agentId, pending.claimId, pending.messageCursors);
       await this.#recordClaim(parsed);
       if (parsed.context === null) {
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
@@ -226,7 +268,10 @@ export class TaskWorker {
   async #ensurePendingClaim(): Promise<NonNullable<TaskWorkerJournal["pendingClaim"]>> {
     return this.#serial.run(async () => {
       if (this.#state.pendingClaim !== null) return this.#state.pendingClaim;
-      const pendingClaim = Object.freeze({ claimId: `claim-${randomUUID()}`, messageCursor: this.#state.messageCursor });
+      const pendingClaim = Object.freeze({
+        claimId: `claim-${randomUUID()}`,
+        messageCursors: Object.freeze({ ...this.#state.messageCursors }),
+      });
       const next = { ...this.#state, pendingClaim };
       this.#state = next;
       await this.#store.save(next);
@@ -249,7 +294,9 @@ export class TaskWorker {
       });
       const next: TaskWorkerJournal = {
         ...this.#state,
-        messageCursor: claimed.context?.nextMessageCursor ?? this.#state.messageCursor,
+        messageCursors: claimed.context === null
+          ? this.#state.messageCursors
+          : withTaskCursor(this.#state.messageCursors, claimed.context.taskId, claimed.context.nextMessageCursor),
         pendingClaim: null,
         active,
       };
@@ -269,7 +316,9 @@ export class TaskWorker {
       const replay = await this.#options.board.claimNextWake({
         agentId: this.#options.identity.agentId,
         claimId: active.claim.claimId,
-        messageCursor: active.claim.requestedMessageCursor,
+        messageCursors: active.claim.taskId === null || active.claim.requestedMessageCursor === null
+          ? Object.freeze({})
+          : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
         longPollMs: 0,
       }, signal);
       if (replay === null) throw new Error("Task board did not replay the active durable claim");
@@ -277,7 +326,9 @@ export class TaskWorker {
         replay,
         this.#options.identity.agentId,
         active.claim.claimId,
-        active.claim.requestedMessageCursor,
+        active.claim.taskId === null || active.claim.requestedMessageCursor === null
+          ? Object.freeze({})
+          : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
       );
       if (parsed.claim.runId !== active.claim.runId || parsed.claim.wakeupId !== active.claim.wakeupId) {
         throw new Error("Task board replayed another run for the active claim");
@@ -368,6 +419,11 @@ export class TaskWorker {
           await this.#store.save(next);
         });
 
+        const activityForwarding = this.#forwardActivity(active.claim, handle.activity).then(
+          () => null,
+          (error: unknown) => error,
+        );
+
         let resolveInterrupted!: () => void;
         const interrupted = new Promise<void>((resolve) => { resolveInterrupted = resolve; });
         this.#interruptTerminalResolve = resolveInterrupted;
@@ -380,6 +436,9 @@ export class TaskWorker {
           completion,
           interrupted.then(() => ({ type: "interrupted" as const })),
         ]);
+        // The launcher closes activity with the provider stream. Drain all safe
+        // updates before any terminal output or settlement can make the run inactive.
+        await activityForwarding;
         control.abort();
         await watch;
         if (this.#state.active?.interruptReason !== null || terminal.type === "interrupted") {
@@ -407,6 +466,31 @@ export class TaskWorker {
     }
   }
 
+  async #forwardActivity(claim: TaskWakeClaim, activity: AsyncIterable<string>): Promise<void> {
+    if (claim.taskId === null) return;
+    let sequence = 0;
+    for await (const observed of activity) {
+      const body = sanitizeActivity(observed);
+      if (body === null) continue;
+      const current = this.#state.active;
+      if (current === null || current.claim.runId !== claim.runId || current.phase === "outputs_pending") return;
+      sequence += 1;
+      const request = {
+        claim,
+        output: Object.freeze({ type: "progress" as const, body }),
+        localSequence: sequence,
+        idempotencyKey: activityIdempotency(claim, sequence, body),
+      };
+      try {
+        await this.#options.board.appendRunOutput(request);
+      } catch {
+        // A lost response is safe to retry because the key binds the run,
+        // sequence, and sanitized body. Activity remains secondary to the run result.
+        await this.#options.board.appendRunOutput(request);
+      }
+    }
+  }
+
   async #recordOutcome(outcomeInput: AgentRunOutcome): Promise<void> {
     const outcome = parseAgentRunOutcome(outcomeInput);
     await this.#serial.run(async () => {
@@ -427,6 +511,7 @@ export class TaskWorker {
       throw new Error("Task worker has no terminal output to flush");
     }
     const outcome = active.outcome;
+    const result = settlementResult(outcome);
     while (active.nextOutputIndex < outcome.outputs.length) {
       const index = active.nextOutputIndex;
       const output = outcome.outputs[index];
@@ -456,8 +541,8 @@ export class TaskWorker {
       await this.#options.board.settleAgentRun({
         claim: active.claim,
         outcome: outcome.status,
-        detail: outcome.detail,
-        idempotencyKey: settlementIdempotency(active.claim, outcome),
+        result,
+        idempotencyKey: settlementIdempotency(active.claim, outcome, result),
       });
     }
     await this.#serial.run(async () => {

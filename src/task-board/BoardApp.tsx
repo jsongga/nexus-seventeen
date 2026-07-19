@@ -21,6 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Avatar, Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
 import { createTaskBoardClient, type TaskBoardClient } from './client';
+import { parseTaskProposal, proposalChildInput, proposalIsOnBoard, type TaskProposal } from './proposals';
 import type {
   AgentStatus,
   BoardAgent,
@@ -32,6 +33,7 @@ import type {
   CreateAgentInput,
   CreateProjectInput,
   CreateTaskInput,
+  TaskKind,
   TaskStatus,
 } from './types';
 
@@ -101,6 +103,12 @@ function prettyStatus(value: string): string {
   return value.replaceAll('_', ' ');
 }
 
+const taskKindLabel: Record<TaskKind, string> = {
+  work: 'work',
+  manager_review: 'manager review',
+  human_check: 'human check',
+};
+
 function formatTime(value: string | null): string {
   if (value === null) return 'Not recorded';
   const parsed = new Date(value);
@@ -113,8 +121,21 @@ function fullTime(value: string | null): string | undefined {
   return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString();
 }
 
-function StatusPill({ status }: { status: TaskStatus }) {
-  return <Pill tone={statusTone[status]} dot>{prettyStatus(status)}</Pill>;
+function taskStatusLabel(task: BoardTask): string {
+  if (task.kind !== 'human_check') return prettyStatus(task.status);
+  if (task.status === 'completed') return 'approved';
+  if (task.status === 'failed') return 'changes requested';
+  if (task.endedAt === null) return 'awaiting human';
+  return prettyStatus(task.status);
+}
+
+function StatusPill({ task }: { task: BoardTask }) {
+  return <Pill tone={statusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
+}
+
+function TaskKindPill({ kind }: { kind: TaskKind }) {
+  const tone = kind === 'human_check' ? 'purple' : kind === 'manager_review' ? 'amber' : 'neutral';
+  return <Pill tone={tone}>{taskKindLabel[kind]}</Pill>;
 }
 
 function EmptyState({
@@ -216,18 +237,25 @@ function TaskRow({
           task.status === 'completed' ? 'bg-teal-soft text-teal-700' :
             openQuestion ? 'bg-caution-soft text-caution' : 'bg-line-soft text-muted',
         )}>
-          {task.status === 'completed' ? <CheckCircle2 size={16} /> : openQuestion ? <HelpCircle size={16} /> : <ListTodo size={16} />}
+          {task.status === 'completed' ? <CheckCircle2 size={16} /> : task.kind === 'human_check' ? <UserRoundCheck size={16} /> : openQuestion ? <HelpCircle size={16} /> : <ListTodo size={16} />}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-display text-[14px] font-semibold leading-5 text-ink">{task.title}</span>
-            <StatusPill status={task.status} />
+            <StatusPill task={task} />
+            <TaskKindPill kind={task.kind} />
           </span>
           <span className="mt-1.5 block line-clamp-2 text-xs leading-5 text-muted">{task.objective}</span>
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-            <span>{agent ? `${agent.name} · ${agent.area}` : 'Unassigned'}</span>
-            <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {task.expectedAgentMinutes} agent min</span>
-            {task.expectedCompletedAt ? <span>Due {formatTime(task.expectedCompletedAt)}</span> : null}
+            {task.kind === 'human_check' ? (
+              <span>Human decision · external release gate</span>
+            ) : (
+              <>
+                <span>{agent ? `${agent.name} · ${agent.area}` : task.requiredRole ? `Needs ${task.requiredRole}` : 'Unassigned'}</span>
+                <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {task.expectedAgentMinutes} agent min</span>
+                {task.expectedCompletedAt ? <span>Due {formatTime(task.expectedCompletedAt)}</span> : null}
+              </>
+            )}
           </span>
         </span>
         <ChevronRight size={17} className="mt-1 shrink-0 text-muted" />
@@ -260,8 +288,62 @@ function TimelineItem({
   );
 }
 
+function ProposalCard({
+  message,
+  parent,
+  tasks,
+  busy,
+  onPromote,
+}: {
+  message: BoardMessage;
+  parent: BoardTask;
+  tasks: BoardTask[];
+  busy: boolean;
+  onPromote: (proposal: TaskProposal) => Promise<void>;
+}) {
+  const proposal = message.authorType === 'agent' ? parseTaskProposal(message.body) : null;
+  const promoted = proposal ? proposalIsOnBoard(parent, proposal, tasks) : false;
+  if (proposal === null) {
+    return (
+      <li className="rounded-xl border border-caution-fill/35 bg-caution-soft/35 p-4">
+        <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="font-bold text-ink">Agent proposal unavailable</span><Pill tone="amber">not actionable</Pill><time className="text-muted" dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div>
+        <p className="mt-2 text-sm leading-6 text-muted">This proposal was malformed and was not added to the todo list.</p>
+      </li>
+    );
+  }
+  return (
+    <li className="rounded-xl border border-teal-500/25 bg-teal-soft/35 p-4">
+      <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="font-bold text-ink">Agent proposal</span><Pill tone="purple">human decision</Pill><time className="text-muted" dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div>
+      <h4 className="mt-3 font-display text-[15px] font-semibold text-ink">{proposal.title}</h4>
+      <p className="mt-1.5 text-sm leading-6 text-muted">{proposal.objective}</p>
+      <div className="mt-3 rounded-lg border border-line/70 bg-white/70 px-3 py-2.5"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Done means</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-ink">{proposal.acceptanceCriteria}</p></div>
+      {promoted ? (
+        <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-teal-700"><CheckCircle2 size={15} /> Already on the todo list</div>
+      ) : (
+        <>
+          <Button
+            className="mt-3 w-full"
+            size="sm"
+            variant="mint"
+            icon={<Plus size={15} />}
+            disabled={busy}
+            onClick={() => {
+              const confirmed = window.confirm(`Add “${proposal.title}” as an unassigned child todo? This will not wake an agent.`);
+              if (confirmed) void onPromote(proposal);
+            }}
+          >
+            Add unassigned child todo
+          </Button>
+          <p className="mt-2 text-[11px] leading-4 text-muted">Inherits this task's workspace scope and starts with a 30-minute agent estimate. Assignment is separate.</p>
+        </>
+      )}
+    </li>
+  );
+}
+
 function TaskDetail({
   task,
+  childTasks,
   agents,
   messages,
   questions,
@@ -272,8 +354,11 @@ function TaskDetail({
   onResume,
   onInterrupt,
   onMessage,
+  onPromoteProposal,
+  onDecideHumanCheck,
 }: {
   task: BoardTask;
+  childTasks: BoardTask[];
   agents: BoardAgent[];
   messages: BoardMessage[];
   questions: BoardQuestion[];
@@ -284,34 +369,44 @@ function TaskDetail({
   onResume: () => Promise<void>;
   onInterrupt: (runId: string) => Promise<void>;
   onMessage: (body: string) => Promise<void>;
+  onPromoteProposal: (proposal: TaskProposal) => Promise<void>;
+  onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<boolean>;
 }) {
-  const [agentId, setAgentId] = useState(task.assignedAgentId ?? agents[0]?.id ?? '');
+  const eligibleAgents = useMemo(
+    () => task.requiredRole === null ? agents : agents.filter((agent) => agent.role === task.requiredRole),
+    [agents, task.requiredRole],
+  );
+  const defaultAgentId = task.assignedAgentId ?? eligibleAgents[0]?.id ?? '';
+  const [agentId, setAgentId] = useState(defaultAgentId);
   const [minutes, setMinutes] = useState(task.expectedAgentMinutes);
   const [answer, setAnswer] = useState('');
   const [note, setNote] = useState('');
+  const [decisionRationale, setDecisionRationale] = useState('');
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
   const assignedAgent = agents.find((agent) => agent.id === task.assignedAgentId);
 
   useEffect(() => {
-    setAgentId(task.assignedAgentId ?? agents[0]?.id ?? '');
+    setAgentId(defaultAgentId);
     setMinutes(task.expectedAgentMinutes);
     setAnswer('');
     setNote('');
-  }, [agents, task.assignedAgentId, task.expectedAgentMinutes, task.id]);
+    setDecisionRationale('');
+  }, [defaultAgentId, task.expectedAgentMinutes, task.id]);
 
   return (
     <Card className="overflow-hidden xl:sticky xl:top-5 xl:max-h-[calc(100dvh-40px)] xl:overflow-y-auto">
       <header className="border-b border-line px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status={task.status} />
+          <StatusPill task={task} />
+          <TaskKindPill kind={task.kind} />
           <span className="font-mono text-[10px] text-muted">v{task.version}</span>
         </div>
         <h2 className="mt-3 font-display text-xl font-semibold tracking-[-0.025em] text-ink">{task.title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted">{task.objective}</p>
       </header>
 
-      {openQuestion ? (
+      {task.kind !== 'human_check' && openQuestion ? (
         <section className="border-b border-caution-fill/30 bg-caution-soft/55 px-5 py-5">
           <div className="flex items-center gap-2 text-caution">
             <HelpCircle size={17} />
@@ -339,14 +434,24 @@ function TaskDetail({
 
       <section className="border-b border-line px-5 py-5">
         <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Ownership & timing</h3>
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-          <div><dt className="text-muted">Agent</dt><dd className="mt-1 font-semibold text-ink">{assignedAgent?.name ?? 'Unassigned'}</dd></div>
-          <div><dt className="text-muted">Area</dt><dd className="mt-1 font-semibold text-ink">{assignedAgent?.area ?? '—'}</dd></div>
-          <div><dt className="text-muted">Started</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.startedAt)}>{formatTime(task.startedAt)}</dd></div>
-          <div><dt className="text-muted">Ended</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.endedAt)}>{formatTime(task.endedAt)}</dd></div>
-          <div><dt className="text-muted">Agent estimate</dt><dd className="mt-1 font-mono text-[11px] text-ink">{task.expectedAgentMinutes} minutes</dd></div>
-          <div><dt className="text-muted">Expected by</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.expectedCompletedAt)}>{formatTime(task.expectedCompletedAt)}</dd></div>
-        </dl>
+        {task.kind === 'human_check' ? (
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+            <div><dt className="text-muted">Owner</dt><dd className="mt-1 font-semibold text-ink">Human</dd></div>
+            <div><dt className="text-muted">Release action</dt><dd className="mt-1 font-semibold text-ink">External and human-controlled</dd></div>
+            <div><dt className="text-muted">Opened</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.createdAt)}>{formatTime(task.createdAt)}</dd></div>
+            <div><dt className="text-muted">Decided</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.endedAt)}>{formatTime(task.endedAt)}</dd></div>
+          </dl>
+        ) : (
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+            <div><dt className="text-muted">Agent</dt><dd className="mt-1 font-semibold text-ink">{assignedAgent?.name ?? 'Unassigned'}</dd></div>
+            <div><dt className="text-muted">Area</dt><dd className="mt-1 font-semibold text-ink">{assignedAgent?.area ?? '—'}</dd></div>
+            <div><dt className="text-muted">Started</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.startedAt)}>{formatTime(task.startedAt)}</dd></div>
+            <div><dt className="text-muted">Ended</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.endedAt)}>{formatTime(task.endedAt)}</dd></div>
+            <div><dt className="text-muted">Agent estimate</dt><dd className="mt-1 font-mono text-[11px] text-ink">{task.expectedAgentMinutes} minutes</dd></div>
+            <div><dt className="text-muted">Expected by</dt><dd className="mt-1 font-mono text-[11px] text-ink" title={fullTime(task.expectedCompletedAt)}>{formatTime(task.expectedCompletedAt)}</dd></div>
+            {task.requiredRole ? <div><dt className="text-muted">Required role</dt><dd className="mt-1 font-semibold text-ink">{task.requiredRole}</dd></div> : null}
+          </dl>
+        )}
       </section>
 
       {task.acceptanceCriteria ? (
@@ -367,12 +472,46 @@ function TaskDetail({
 
       {task.result ? (
         <section className="border-b border-teal-500/25 bg-teal-soft/45 px-5 py-5">
-          <div className="flex items-center gap-2 text-teal-700"><Sparkles size={17} /><h3 className="text-[11px] font-bold uppercase tracking-[0.14em]">Result for users</h3></div>
+          <div className="flex items-center gap-2 text-teal-700"><Sparkles size={17} /><h3 className="text-[11px] font-bold uppercase tracking-[0.14em]">{task.kind === 'human_check' ? 'Recorded human decision' : 'Result for users'}</h3></div>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{task.result}</p>
         </section>
       ) : null}
 
-      {(task.status === 'backlog' || task.status === 'proposed' || task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed') && !openQuestion ? (
+      {task.kind === 'human_check' && task.endedAt === null ? (
+        <section className="border-b border-caution-fill/30 bg-caution-soft/45 px-5 py-5">
+          <div className="flex items-center gap-2 text-caution"><UserRoundCheck size={17} /><h3 className="text-[11px] font-bold uppercase tracking-[0.14em]">Human release decision</h3></div>
+          <p className="mt-3 text-sm leading-6 text-ink">Review the completed work and manager assessment, then record your decision.</p>
+          <p className="mt-2 text-xs font-semibold leading-5 text-caution">Approval does not deploy to production. It only marks this check complete for a separate, external human-controlled release step.</p>
+          <FieldLabel htmlFor={`human-decision-${task.id}`}>Decision rationale</FieldLabel>
+          <textarea
+            id={`human-decision-${task.id}`}
+            className={cn(inputClass, 'min-h-24 resize-y py-3')}
+            placeholder="Why is this ready, or what must change?"
+            value={decisionRationale}
+            onChange={(event) => setDecisionRationale(event.target.value)}
+          />
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <Button
+              variant="mint"
+              icon={<CheckCircle2 size={16} />}
+              disabled={busy || decisionRationale.trim().length === 0}
+              onClick={() => void onDecideHumanCheck('completed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+            >
+              Approve for external release step
+            </Button>
+            <Button
+              variant="danger"
+              icon={<CircleAlert size={16} />}
+              disabled={busy || decisionRationale.trim().length === 0}
+              onClick={() => void onDecideHumanCheck('failed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+            >
+              Request changes
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed') && !openQuestion ? (
         <section className="border-b border-line px-5 py-5">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Human control</h3>
           {task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed' ? (
@@ -381,21 +520,24 @@ function TaskDetail({
             </Button>
           ) : (
             <div className="mt-3 space-y-3">
-              <select className={inputClass} aria-label="Assign agent" value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
-              </select>
+              {task.kind === 'manager_review' ? <p className="text-xs leading-5 text-muted">This review stays asleep until a human assigns a manager. Assignment creates one durable human wake-up.</p> : null}
+              {eligibleAgents.length > 0 ? (
+                <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                  {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
+                </select>
+              ) : <p className="rounded-lg bg-line-soft px-3 py-2.5 text-xs text-muted">No {task.requiredRole ?? 'eligible'} agent is available. Add one before assigning this task.</p>}
               <select className={inputClass} aria-label="Expected agent time" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>
                 {agentMinuteOptions.map((value) => <option key={value} value={value}>{value} agent minutes</option>)}
               </select>
               <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0} onClick={() => void onAssign(agentId, minutes)}>
-                Assign and wake agent
+                {task.kind === 'manager_review' ? 'Assign manager and wake' : 'Assign and wake agent'}
               </Button>
             </div>
           )}
         </section>
       ) : null}
 
-      {activeRun ? (
+      {task.kind !== 'human_check' && activeRun ? (
         <section className="border-b border-line px-5 py-5">
           <div className="flex items-center justify-between gap-3">
             <div><h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Current run</h3><p className="mt-1 text-xs text-muted">Started {formatTime(activeRun.startedAt)}</p></div>
@@ -408,7 +550,9 @@ function TaskDetail({
         <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Progress record</h3>
         {messages.length > 0 ? (
           <ol className="mt-4 space-y-5">
-            {messages.map((message) => <TimelineItem key={message.id} message={message} author={agents.find((agent) => agent.id === message.authorId)} />)}
+            {messages.map((message) => message.kind === 'proposal'
+              ? <ProposalCard key={message.id} message={message} parent={task} tasks={childTasks} busy={busy} onPromote={onPromoteProposal} />
+              : <TimelineItem key={message.id} message={message} author={agents.find((agent) => agent.id === message.authorId)} />)}
           </ol>
         ) : <p className="mt-3 text-sm text-muted">No progress has been recorded yet.</p>}
       </section>
@@ -477,7 +621,7 @@ function TaskForm({ projectId, tasks, busy, onSubmit }: { projectId: string; tas
       <div><FieldLabel htmlFor="task-criteria">Done means</FieldLabel><textarea id="task-criteria" className={cn(inputClass, 'min-h-20 resize-y py-3')} required value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="Observable checks the engineer and manager can verify." /></div>
       <div><FieldLabel htmlFor="task-workspaces">Workspace paths or repository refs</FieldLabel><textarea id="task-workspaces" className={cn(inputClass, 'min-h-20 resize-y py-3 font-mono text-xs')} required value={workspaceRefs} onChange={(event) => setWorkspaceRefs(event.target.value)} placeholder={'/absolute/path/to/repository\npackages/billing'} /><p className="mt-1.5 text-[11px] leading-4 text-muted">One per line. These are the only system areas the worker should place in this task's context.</p></div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div><FieldLabel htmlFor="task-parent">Parent task</FieldLabel><select id="task-parent" className={inputClass} value={parentTaskId} onChange={(event) => setParentTaskId(event.target.value)}><option value="">None</option>{tasks.filter((task) => task.status !== 'completed').map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></div>
+        <div><FieldLabel htmlFor="task-parent">Parent task</FieldLabel><select id="task-parent" className={inputClass} value={parentTaskId} onChange={(event) => setParentTaskId(event.target.value)}><option value="">None</option>{tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></div>
         <div><FieldLabel htmlFor="task-minutes">Expected agent time</FieldLabel><select id="task-minutes" className={inputClass} value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>{agentMinuteOptions.map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></div>
       </div>
       <Button className="w-full" type="submit" variant="primary" disabled={busy || !title.trim() || !objective.trim() || !criteria.trim() || !workspaceRefs.trim()}>Add to todo list</Button>
@@ -591,7 +735,7 @@ export function BoardApp() {
   const taskRuns = snapshot?.runs.filter((run) => run.taskId === selectedTask?.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt)) ?? [];
   const openQuestionIds = new Set(snapshot?.questions.filter((question) => question.status === 'open').map((question) => question.taskId));
   const activeCount = projectTasks.filter((task) => task.status === 'running' || task.status === 'queued').length;
-  const waitingCount = projectTasks.filter((task) => task.status === 'waiting_for_human').length;
+  const waitingCount = projectTasks.filter((task) => task.status === 'waiting_for_human' || (task.kind === 'human_check' && task.endedAt === null)).length;
 
   async function createProject(input: CreateProjectInput): Promise<void> {
     await mutate(() => client.createProject(input));
@@ -692,6 +836,7 @@ export function BoardApp() {
                   <TaskDetail
                     key={selectedTask.id}
                     task={selectedTask}
+                    childTasks={projectTasks.filter((task) => task.parentTaskId === selectedTask.id)}
                     agents={projectAgents}
                     messages={taskMessages}
                     questions={taskQuestions}
@@ -702,6 +847,13 @@ export function BoardApp() {
                     onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }}
                     onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }}
                     onMessage={async (body) => { await mutate(() => client.addMessage(selectedTask.id, { body, version: selectedTask.version })); }}
+                    onPromoteProposal={async (proposal) => { await mutate(() => client.createTask(proposalChildInput(selectedTask, proposal))); }}
+                    onDecideHumanCheck={async (status, rationale) => {
+                      const result = status === 'completed'
+                        ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}`
+                        : `Changes requested by human.\n\nRationale: ${rationale}`;
+                      return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result }));
+                    }}
                   />
                 ) : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to inspect its durable progress record and human controls." /></Card>}
               </div>

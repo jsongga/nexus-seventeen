@@ -44,7 +44,31 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
       objective: "Make repeated submission safe for customers.",
       acceptanceCriteria: "A repeated request creates one charge and the focused tests pass.",
     },
-    parentSummary: "The parent task identified retries as the highest-impact customer risk.",
+    areaMemory: [{
+      taskId: "task-prior",
+      title: "Trace the retry boundary",
+      result: "The prior task located the customer-visible retry failure.",
+      endedAt: NOW,
+    }],
+    parentEvidence: {
+      taskId: "task-parent",
+      title: "Identify the highest-impact checkout risk",
+      objective: "Find the checkout failure that harms customers most.",
+      acceptanceCriteria: "The risk and supporting evidence are recorded.",
+      status: "completed",
+      assignedAgentId: AGENT,
+      workspaceRefs: ["repo:checkout"],
+      startedAt: NOW,
+      endedAt: NOW,
+      result: "Retries are the highest-impact customer risk.",
+      messages: [{
+        messageId: "parent-progress-one",
+        author: "agent",
+        kind: "progress",
+        body: "Retry evidence was confirmed by the focused tests.",
+        createdAt: NOW,
+      }],
+    },
     messagesSinceCursor: null,
     nextMessageCursor: 2,
     messages: [
@@ -81,10 +105,11 @@ export function claimed(
   }> = {},
 ): ClaimedAgentRun {
   const taskId = options.taskId === undefined ? TASK : options.taskId;
+  const messageCursor = taskId === null ? null : request.messageCursors[taskId] ?? null;
   const boundedContext = options.context === undefined
-    ? (taskId === null ? null : context(request.messageCursor === null
+    ? (taskId === null ? null : context(messageCursor === null
         ? { messagesSinceCursor: null }
-        : { messagesSinceCursor: request.messageCursor, nextMessageCursor: request.messageCursor, messages: [] }))
+        : { messagesSinceCursor: messageCursor, nextMessageCursor: messageCursor, messages: [] }))
     : options.context;
   return {
     claim: {
@@ -96,7 +121,7 @@ export function claimed(
       agentId: AGENT,
       taskId,
       reason: options.reason ?? "human_assignment",
-      requestedMessageCursor: request.messageCursor,
+      requestedMessageCursor: messageCursor,
       claimedAt: NOW,
     },
     context: boundedContext,
@@ -195,7 +220,11 @@ export class FakeBoard implements TaskBoardClient {
 
 export class DeferredRunHandle implements AgentRunHandle {
   readonly completion: Promise<AgentRunOutcome>;
+  readonly activity: AsyncIterable<string>;
   interruptReasons: string[] = [];
+  readonly #activityQueued: string[] = [];
+  readonly #activityWaiters: Array<(result: IteratorResult<string>) => void> = [];
+  #activityClosed = false;
   #resolve!: (value: AgentRunOutcome) => void;
   #reject!: (error: unknown) => void;
 
@@ -204,15 +233,43 @@ export class DeferredRunHandle implements AgentRunHandle {
       this.#resolve = resolve;
       this.#reject = reject;
     });
+    this.activity = {
+      [Symbol.asyncIterator]: () => ({ next: () => this.#nextActivity() }),
+    };
   }
 
-  resolve(value: AgentRunOutcome): void { this.#resolve(value); }
-  reject(error: unknown): void { this.#reject(error); }
+  emitActivity(value: string): void {
+    if (this.#activityClosed) throw new Error("Activity stream is closed");
+    const waiter = this.#activityWaiters.shift();
+    if (waiter === undefined) this.#activityQueued.push(value);
+    else waiter({ done: false, value });
+  }
+
+  closeActivity(): void {
+    if (this.#activityClosed) return;
+    this.#activityClosed = true;
+    for (const waiter of this.#activityWaiters.splice(0)) waiter({ done: true, value: undefined });
+  }
+
+  resolve(value: AgentRunOutcome): void { this.closeActivity(); this.#resolve(value); }
+  reject(error: unknown): void { this.closeActivity(); this.#reject(error); }
 
   interrupt(reason: string): Promise<void> {
     this.interruptReasons.push(reason);
+    this.closeActivity();
     return Promise.resolve();
   }
+
+  #nextActivity(): Promise<IteratorResult<string>> {
+    const value = this.#activityQueued.shift();
+    if (value !== undefined) return Promise.resolve({ done: false, value });
+    if (this.#activityClosed) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve) => this.#activityWaiters.push(resolve));
+  }
+}
+
+async function* noActivity(): AsyncGenerator<string> {
+  return;
 }
 
 export class FakeLauncher implements AgentLauncher {
@@ -224,7 +281,11 @@ export class FakeLauncher implements AgentLauncher {
     this.requests.push(structuredClone(request));
     const queued = this.outcomes.shift();
     if (queued !== undefined) {
-      return Promise.resolve({ completion: Promise.resolve(structuredClone(queued)), interrupt: () => Promise.resolve() });
+      return Promise.resolve({
+        completion: Promise.resolve(structuredClone(queued)),
+        activity: noActivity(),
+        interrupt: () => Promise.resolve(),
+      });
     }
     const handle = new DeferredRunHandle();
     this.handles.push(handle);

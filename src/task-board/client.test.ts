@@ -22,11 +22,21 @@ const agent = {
   status: 'running',
   createdAt: '2026-07-19T10:01:00.000Z',
 };
+const manager = {
+  ...agent,
+  agentId: 'release-manager',
+  role: 'manager',
+  area: 'Release review',
+  mission: 'Review work before it reaches the human release gate.',
+  status: 'idle',
+};
 const task = {
   apiVersion,
   taskId: 'task-one',
   projectId: 'project-one',
   parentTaskId: null,
+  kind: 'work',
+  requiredRole: null,
   title: 'Improve invoice recovery',
   objective: 'Customers can recover a failed invoice without support.',
   acceptanceCriteria: 'The recovery path passes its focused tests.',
@@ -42,6 +52,29 @@ const task = {
   version: 2,
   createdAt: '2026-07-19T10:10:00.000Z',
   updatedAt: '2026-07-19T10:15:00.000Z',
+};
+const managerReview = {
+  ...task,
+  taskId: 'task-manager-review',
+  parentTaskId: task.taskId,
+  kind: 'manager_review',
+  requiredRole: 'manager',
+  title: 'Manager review: Improve invoice recovery',
+  status: 'backlog',
+  assignedAgentId: null,
+  assignedRole: null,
+  expectedAgentMinutes: 15,
+  startedAt: null,
+  expectedCompletedAt: null,
+  version: 1,
+};
+const humanCheck = {
+  ...managerReview,
+  taskId: 'task-human-check',
+  parentTaskId: managerReview.taskId,
+  kind: 'human_check',
+  requiredRole: null,
+  title: 'Human check: Improve invoice recovery',
 };
 const question = {
   apiVersion,
@@ -116,6 +149,14 @@ describe('task-board protocol projection', () => {
       ...boardSnapshot(),
       tasks: [{ ...task, expectedAgentMinutes: 17 }],
     })).toThrow(/15-minute/u);
+    expect(() => parseBoardSnapshot({
+      ...boardSnapshot(),
+      tasks: [{ ...task, kind: 'review' }],
+    })).toThrow(/kind/u);
+    expect(() => parseBoardSnapshot({
+      ...boardSnapshot(),
+      tasks: [{ ...task, kind: 'manager_review', requiredRole: 'engineer' }],
+    })).toThrow(/requiredRole/u);
   });
 });
 
@@ -179,5 +220,65 @@ describe('task-board HTTP client', () => {
     expect(() => createTaskBoardClient({ baseUrl: 'http://board.example.test', token: 'secret' })).toThrow(/HTTPS/u);
     expect(() => createTaskBoardClient({ baseUrl: '//board.example.test', token: 'secret' })).toThrow(/invalid/u);
     expect(() => createTaskBoardClient({ baseUrl: 'http://127.0.0.1:4318', token: 'secret' })).not.toThrow();
+  });
+
+  it('enforces manager review assignment and records a human check without waking an agent', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      calls.push([path, init]);
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith('/v1/projects/project-one/board')) {
+        return new Response(JSON.stringify({
+          ...boardSnapshot(),
+          agents: [agent, manager],
+          tasks: [managerReview, humanCheck],
+          openQuestions: [],
+          recentQuestions: [],
+          recentRuns: [],
+          recentEvents: [],
+        }));
+      }
+      if (path.includes('/messages?after=0')) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      return new Response('{}');
+    });
+    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+
+    const snapshot = await client.getSnapshot();
+    expect(snapshot.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: managerReview.taskId, kind: 'manager_review', requiredRole: 'manager' }),
+      expect.objectContaining({ id: humanCheck.taskId, kind: 'human_check', requiredRole: null }),
+    ]));
+    await expect(client.assignTask(managerReview.taskId, { agentId: agent.agentId, expectedAgentMinutes: 15, version: 1 })).rejects.toThrow(/requires a manager/u);
+    await expect(client.assignTask(humanCheck.taskId, { agentId: manager.agentId, expectedAgentMinutes: 15, version: 1 })).rejects.toThrow(/cannot be assigned/u);
+    await expect(client.resumeTask(humanCheck.taskId, { version: 1 })).rejects.toThrow(/cannot wake/u);
+    await expect(client.decideHumanCheck(managerReview.taskId, { version: 1, status: 'completed', result: 'Ready.' })).rejects.toThrow(/Only human checks/u);
+    await expect(client.decideHumanCheck(humanCheck.taskId, { version: 1, status: 'completed', result: '  ' })).rejects.toThrow(/rationale/u);
+
+    await client.assignTask(managerReview.taskId, { agentId: manager.agentId, expectedAgentMinutes: 15, version: 1 });
+    await client.decideHumanCheck(humanCheck.taskId, {
+      version: 1,
+      status: 'completed',
+      result: 'Approved for an external human-controlled release step. Rationale: focused checks passed.',
+    });
+
+    const patches = calls
+      .filter(([, init]) => init?.method === 'PATCH')
+      .map(([url, init]) => [url, JSON.parse(String(init?.body))] as const);
+    expect(patches).toEqual([
+      ['https://board.example.test/v1/tasks/task-manager-review', {
+        version: 1,
+        assignedAgentId: manager.agentId,
+        assignedRole: 'manager',
+        expectedAgentMinutes: 15,
+        status: 'queued',
+      }],
+      ['https://board.example.test/v1/tasks/task-human-check', {
+        version: 1,
+        status: 'completed',
+        result: 'Approved for an external human-controlled release step. Rationale: focused checks passed.',
+      }],
+    ]);
+    expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
   });
 });

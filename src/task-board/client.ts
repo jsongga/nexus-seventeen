@@ -1,4 +1,5 @@
 import type {
+  AgentRole,
   AgentStatus,
   BoardAgent,
   BoardMessage,
@@ -12,6 +13,7 @@ import type {
   CreateTaskInput,
   RunStatus,
   TaskStatus,
+  TaskKind,
   WakeReason,
 } from './types';
 
@@ -22,6 +24,7 @@ const rawAgentStatuses = new Set(['idle', 'ready', 'running', 'interrupting', 'w
 const rawTaskStatuses = new Set(['backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled'] as const);
 const rawRunStatuses = new Set(['active', 'waiting_for_human', 'completed', 'failed', 'interrupted'] as const);
 const roles = new Set(['engineer', 'manager', 'verifier'] as const);
+const taskKinds = new Set(['work', 'manager_review', 'human_check'] as const);
 const actorTypes = new Set(['human', 'agent'] as const);
 const messageKinds = new Set(['note', 'progress', 'proposal', 'result'] as const);
 const questionStatuses = new Set(['open', 'answered'] as const);
@@ -51,6 +54,8 @@ interface RawTask {
   taskId: string;
   projectId: string;
   parentTaskId: string | null;
+  kind: TaskKind;
+  requiredRole: AgentRole | null;
   title: string;
   objective: string;
   acceptanceCriteria: string;
@@ -212,17 +217,31 @@ function parseTask(value: unknown, path: string): RawTask {
   const item = apiEntity(value, path);
   const expectedAgentMinutes = integer(item.expectedAgentMinutes, `${path}.expectedAgentMinutes`, 15);
   if (expectedAgentMinutes % 15 !== 0) throw new Error(`${path}.expectedAgentMinutes must use a 15-minute interval`);
+  const kind = member(item.kind, taskKinds, `${path}.kind`);
+  const requiredRole = item.requiredRole === null ? null : member(item.requiredRole, roles, `${path}.requiredRole`);
+  const assignedAgentId = nullableString(item.assignedAgentId, `${path}.assignedAgentId`);
+  const assignedRole = item.assignedRole === null ? null : member(item.assignedRole, roles, `${path}.assignedRole`);
+  if (kind === 'manager_review' ? requiredRole !== 'manager' : requiredRole !== null) {
+    throw new Error(`${path}.requiredRole does not match its task kind`);
+  }
+  if ((assignedAgentId === null) !== (assignedRole === null)) throw new Error(`${path} has an incomplete assignment`);
+  if (requiredRole !== null && assignedRole !== null && assignedRole !== requiredRole) {
+    throw new Error(`${path}.assignedRole does not satisfy requiredRole`);
+  }
+  if (kind === 'human_check' && assignedAgentId !== null) throw new Error(`${path} human check cannot be assigned`);
   return {
     taskId: string(item.taskId, `${path}.taskId`),
     projectId: string(item.projectId, `${path}.projectId`),
     parentTaskId: nullableString(item.parentTaskId, `${path}.parentTaskId`),
+    kind,
+    requiredRole,
     title: string(item.title, `${path}.title`),
     objective: string(item.objective, `${path}.objective`),
     acceptanceCriteria: string(item.acceptanceCriteria, `${path}.acceptanceCriteria`),
     workspaceRefs: array(item.workspaceRefs, `${path}.workspaceRefs`, string),
     status: member(item.status, rawTaskStatuses, `${path}.status`),
-    assignedAgentId: nullableString(item.assignedAgentId, `${path}.assignedAgentId`),
-    assignedRole: item.assignedRole === null ? null : member(item.assignedRole, roles, `${path}.assignedRole`),
+    assignedAgentId,
+    assignedRole,
     expectedAgentMinutes,
     startedAt: nullableTimestamp(item.startedAt, `${path}.startedAt`),
     expectedCompletedAt: nullableTimestamp(item.expectedCompletedAt, `${path}.expectedCompletedAt`),
@@ -385,6 +404,8 @@ function normalize(boards: RawBoard[], listedProjects: RawProject[], rawMessages
       id: raw.taskId,
       projectId: raw.projectId,
       parentTaskId: raw.parentTaskId,
+      kind: raw.kind,
+      requiredRole: raw.requiredRole,
       title: raw.title,
       objective: raw.objective,
       acceptanceCriteria: raw.acceptanceCriteria,
@@ -510,6 +531,7 @@ export interface TaskBoardClient {
   addMessage(taskId: string, input: { body: string; version: number }): Promise<void>;
   answerQuestion(questionId: string, input: { answer: string }): Promise<void>;
   resumeTask(taskId: string, input: { version: number }): Promise<void>;
+  decideHumanCheck(taskId: string, input: { version: number; status: 'completed' | 'failed'; result: string }): Promise<void>;
   interruptRun(runId: string): Promise<void>;
 }
 
@@ -573,6 +595,7 @@ export function createTaskBoardClient(options: {
   const agentRoles = new Map<string, CreateAgentInput['role']>();
   const questionVersions = new Map<string, number>();
   const taskAgents = new Map<string, string>();
+  const taskPolicies = new Map<string, Readonly<{ kind: TaskKind; requiredRole: AgentRole | null }>>();
   const runAgents = new Map<string, string>();
 
   async function request(path: string, init?: RequestInit): Promise<Response> {
@@ -620,11 +643,13 @@ export function createTaskBoardClient(options: {
       agentRoles.clear();
       questionVersions.clear();
       taskAgents.clear();
+      taskPolicies.clear();
       runAgents.clear();
       for (const board of boards) {
         for (const agent of board.agents) agentRoles.set(agent.agentId, agent.role);
         for (const question of board.questions) questionVersions.set(question.questionId, question.version);
         for (const task of board.tasks) {
+          taskPolicies.set(task.taskId, { kind: task.kind, requiredRole: task.requiredRole });
           if (task.assignedAgentId) taskAgents.set(task.taskId, task.assignedAgentId);
         }
         for (const run of board.runs) runAgents.set(run.runId, run.agentId);
@@ -649,6 +674,12 @@ export function createTaskBoardClient(options: {
     async assignTask(taskId, input) {
       const role = agentRoles.get(input.agentId);
       if (!role) throw new Error('Refresh the board before assigning this agent');
+      const policy = taskPolicies.get(taskId);
+      if (!policy) throw new Error('Refresh the board before assigning this task');
+      if (policy.kind === 'human_check') throw new Error('Human checks cannot be assigned to agents');
+      if (policy.requiredRole !== null && role !== policy.requiredRole) {
+        throw new Error(`This task requires a ${policy.requiredRole} agent`);
+      }
       await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -674,6 +705,7 @@ export function createTaskBoardClient(options: {
       await post(`/v1/questions/${encodeURIComponent(questionId)}/answer`, { answer: input.answer, version });
     },
     async resumeTask(taskId, input) {
+      if (taskPolicies.get(taskId)?.kind === 'human_check') throw new Error('Human checks cannot wake an agent');
       const agentId = taskAgents.get(taskId);
       if (!agentId) throw new Error('This task has no assigned agent to resume');
       await post(
@@ -681,6 +713,15 @@ export function createTaskBoardClient(options: {
         { reason: 'Human explicitly resumed this task', taskId },
         `resume:${taskId}:${input.version}`,
       );
+    },
+    async decideHumanCheck(taskId, input) {
+      if (taskPolicies.get(taskId)?.kind !== 'human_check') throw new Error('Only human checks accept a human release decision');
+      const result = input.result.trim();
+      if (result.length === 0) throw new Error('A human decision rationale is required');
+      await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ version: input.version, status: input.status, result }),
+      });
     },
     async interruptRun(runId) {
       const agentId = runAgents.get(runId);

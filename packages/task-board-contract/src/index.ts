@@ -2,6 +2,7 @@ export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
 
 export type AgentRole = "engineer" | "manager" | "verifier";
 export type AgentStatus = "idle" | "ready" | "running" | "interrupting" | "waiting_for_human";
+export type TaskKind = "work" | "manager_review" | "human_check";
 export type TaskStatus =
   | "backlog"
   | "queued"
@@ -43,6 +44,8 @@ export interface BoardTask {
   readonly taskId: string;
   readonly projectId: string;
   readonly parentTaskId: string | null;
+  readonly kind: TaskKind;
+  readonly requiredRole: AgentRole | null;
   readonly title: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
@@ -173,7 +176,14 @@ export interface ClaimRunResult {
       name: string;
       description: string;
     }>;
+    areaMemory: readonly Readonly<{
+      taskId: string;
+      title: string;
+      result: string;
+      endedAt: string;
+    }>[];
     parentTask: BoardTask | null;
+    parentMessages: readonly TaskMessage[];
     acceptanceCriteria: string | null;
     workspaceRefs: readonly string[];
     messageCursor: number;
@@ -240,10 +250,19 @@ export interface CreateHumanQuestionRequest {
   readonly runId: string;
 }
 
-export interface ClaimRunRequest {
-  readonly claimId: string;
-  readonly messageCursor: number | null;
-}
+export type ClaimRunRequest =
+  | Readonly<{
+      claimId: string;
+      /** Legacy single-task cursor. New workers send `messageCursors` instead. */
+      messageCursor: number | null;
+      messageCursors?: never;
+    }>
+  | Readonly<{
+      claimId: string;
+      /** Per-task cursors prevent activity on one task from hiding older messages on another. */
+      messageCursors: Readonly<Record<string, number>>;
+      messageCursor?: never;
+    }>;
 
 export interface AnswerHumanQuestionRequest {
   readonly answer: string;

@@ -11,6 +11,8 @@ import type {
   TaskWakeClaim,
 } from "./types.js";
 
+const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+
 export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
     super(message);
@@ -218,8 +220,8 @@ function asClaimResult(value: unknown): ClaimRunResult {
     "createdAt", "claimedAt", "runId",
   ], "Claim wakeup");
   const context = exact(result.context, [
-    "agent", "projectMemory", "parentTask", "acceptanceCriteria", "workspaceRefs", "messageCursor", "messages",
-    "triggerQuestion", "openQuestions",
+    "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+    "messageCursor", "messages", "triggerQuestion", "openQuestions",
   ], "Claim context");
   if (
     run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
@@ -249,7 +251,10 @@ function asClaimResult(value: unknown): ClaimRunResult {
   ) {
     throw new Error("Claim run and wakeup binding is invalid");
   }
-  if (!Array.isArray(context.workspaceRefs) || !Array.isArray(context.messages) || !Array.isArray(context.openQuestions)) {
+  if (
+    !Array.isArray(context.workspaceRefs) || !Array.isArray(context.areaMemory) || !Array.isArray(context.messages) ||
+    !Array.isArray(context.parentMessages) || !Array.isArray(context.openQuestions)
+  ) {
     throw new Error("Claim context collections are invalid");
   }
   nonNegative(context.messageCursor, "context.messageCursor");
@@ -290,13 +295,53 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     body: bounded(message.body, "message.body", 2_000),
     createdAt: timestamp(message.createdAt, "message.createdAt"),
   }));
-  const parentSummary = context.parentTask === null
+  const areaMemory = context.areaMemory.map((memory, index) => ({
+    taskId: id(memory.taskId, "areaMemory[" + index + "].taskId"),
+    title: bounded(memory.title, "areaMemory[" + index + "].title", 512),
+    result: bounded(memory.result, "areaMemory[" + index + "].result", MAX_AREA_MEMORY_RESULT_CHARACTERS),
+    endedAt: timestamp(memory.endedAt, "areaMemory[" + index + "].endedAt"),
+  }));
+  if (areaMemory.some((memory) => memory.taskId === task.taskId)) {
+    throw new Error("Claim area memory includes the current task");
+  }
+  const parentEvidence = context.parentTask === null
     ? null
-    : bounded(
-        context.parentTask.result ?? `${context.parentTask.title}: ${context.parentTask.objective}`,
-        "parentSummary",
-        4_000,
-      );
+    : {
+        taskId: id(context.parentTask.taskId, "parent.taskId"),
+        title: bounded(context.parentTask.title, "parent.title", 512),
+        objective: bounded(context.parentTask.objective, "parent.objective", 4_000),
+        acceptanceCriteria: bounded(context.parentTask.acceptanceCriteria, "parent.acceptanceCriteria", 4_000),
+        status: bounded(context.parentTask.status, "parent.status", 64),
+        assignedAgentId: context.parentTask.assignedAgentId === null
+          ? null
+          : id(context.parentTask.assignedAgentId, "parent.assignedAgentId"),
+        workspaceRefs: context.parentTask.workspaceRefs.map((reference, index) =>
+          bounded(reference, `parent.workspaceRefs[${index}]`, 512)),
+        startedAt: context.parentTask.startedAt === null ? null : timestamp(context.parentTask.startedAt, "parent.startedAt"),
+        endedAt: context.parentTask.endedAt === null ? null : timestamp(context.parentTask.endedAt, "parent.endedAt"),
+        result: context.parentTask.result === null ? null : bounded(context.parentTask.result, "parent.result", 4_000),
+        messages: context.parentMessages.slice(-12).map((message, index) => {
+          if (
+            message.taskId !== context.parentTask?.taskId || message.projectId !== run.projectId ||
+            message.actorType !== "human" && message.actorType !== "agent"
+          ) {
+            throw new Error(`Parent message ${index} is not bound to the parent task`);
+          }
+          return {
+            messageId: id(message.messageId, `parent.messages[${index}].messageId`),
+            author: message.actorType,
+            kind: message.kind,
+            body: bounded(message.body, `parent.messages[${index}].body`, 2_000),
+            createdAt: timestamp(message.createdAt, `parent.messages[${index}].createdAt`),
+          };
+        }),
+      };
+  if (context.parentTask === null && context.parentMessages.length !== 0) {
+    throw new Error("Claim context included parent messages without a parent task");
+  }
+  if (context.parentTask !== null && context.parentTask.taskId !== task.parentTaskId) {
+    throw new Error("Claim context parent does not match the task parent");
+  }
   const internal = {
     apiVersion: 1 as const,
     projectId: run.projectId,
@@ -313,7 +358,8 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
       objective: bounded(task.objective, "task.objective", 4_000),
       acceptanceCriteria: bounded(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
     },
-    parentSummary,
+    areaMemory,
+    parentEvidence,
     messagesSinceCursor: requestedCursor,
     nextMessageCursor: nonNegative(context.messageCursor, "context.messageCursor"),
     messages,
@@ -338,12 +384,15 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const result = await this.#http.request(
       "POST",
       `/v1/agents/${encodeURIComponent(request.agentId)}/runs/claim?waitMs=${request.longPollMs}`,
-      { claimId: request.claimId, messageCursor: request.messageCursor },
+      { claimId: request.claimId, messageCursors: request.messageCursors },
       signal,
       request.longPollMs > 0,
     );
     if (result.status === 204) return null;
     const claimed = asClaimResult(result.body);
+    const requestedMessageCursor = claimed.wakeup.taskId === null
+      ? null
+      : request.messageCursors[claimed.wakeup.taskId] ?? null;
     const claim = parseTaskWakeClaim({
       apiVersion: 1,
       claimId: claimed.run.claimId,
@@ -353,10 +402,10 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       agentId: claimed.run.agentId,
       taskId: claimed.wakeup.taskId,
       reason: claimed.wakeup.reason,
-      requestedMessageCursor: request.messageCursor,
+      requestedMessageCursor,
       claimedAt: claimed.run.startedAt,
     });
-    return Object.freeze({ claim, context: mapContext(claimed, request.messageCursor) });
+    return Object.freeze({ claim, context: mapContext(claimed, requestedMessageCursor) });
   }
 
   async waitForRunInterrupt(claim: TaskWakeClaim, signal?: AbortSignal): Promise<AgentRunInterrupt | null> {
@@ -425,14 +474,14 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const result = await this.#http.request(
       "POST",
       `/v1/runs/${encodeURIComponent(request.claim.runId)}/settle`,
-      { outcome: request.outcome, result: request.detail },
+      { outcome: request.outcome, result: request.result },
       signal,
     );
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
     const run = object(envelope.run, "Settled run");
     if (
       typeof envelope.duplicate !== "boolean" || run.runId !== request.claim.runId || run.agentId !== request.claim.agentId ||
-      run.status !== request.outcome || run.result !== request.detail
+      run.status !== request.outcome || run.result !== request.result
     ) {
       throw new Error("Task-board settlement response does not match the run outcome");
     }

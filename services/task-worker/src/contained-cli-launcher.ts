@@ -2,7 +2,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import { ActivityBuffer, activityFromProviderLine } from "./provider-activity.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentLauncher, AgentRunHandle, AgentRunOutcome } from "./types.js";
 
@@ -10,6 +12,7 @@ const RESULT_SCHEMA_PATH = fileURLToPath(new URL("../../agent-result.schema.json
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 512 * 1024;
 const GROUP_POLL_MS = 20;
+const MAX_QUEUED_ACTIVITY = 64;
 
 const RESULT_SCHEMA = Object.freeze({
   type: "object",
@@ -65,6 +68,43 @@ export class AgentProcessError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "AgentProcessError";
+  }
+}
+
+class ActivityChannel implements AsyncIterable<string> {
+  readonly #queued: string[] = [];
+  readonly #waiters: Array<(result: IteratorResult<string>) => void> = [];
+  #closed = false;
+  #iteratorCreated = false;
+
+  publish(value: string): void {
+    if (this.#closed) return;
+    const waiter = this.#waiters.shift();
+    if (waiter !== undefined) {
+      waiter({ done: false, value });
+      return;
+    }
+    if (this.#queued.length === MAX_QUEUED_ACTIVITY) this.#queued.shift();
+    this.#queued.push(value);
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const waiter of this.#waiters.splice(0)) waiter({ done: true, value: undefined });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<string> {
+    if (this.#iteratorCreated) throw new Error("Agent activity stream can only be consumed once");
+    this.#iteratorCreated = true;
+    return { next: () => this.#next() };
+  }
+
+  #next(): Promise<IteratorResult<string>> {
+    const value = this.#queued.shift();
+    if (value !== undefined) return Promise.resolve({ done: false, value });
+    if (this.#closed) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve) => this.#waiters.push(resolve));
   }
 }
 
@@ -158,6 +198,7 @@ function prompt(request: AgentLaunchRequest): string {
         ]
       : [
           "Perform read-only oversight of the supplied task, evidence, progress, and risks.",
+          "Return a clear READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED recommendation supported by the supplied evidence.",
           "Do not edit the workspace, approve production, or deploy.",
         ];
   return [
@@ -241,7 +282,8 @@ function claudeArgs(options: ContainedCliAgentLauncherOptions, request: AgentLau
   };
   const args = [
     "--print",
-    "--bare",
+    // Bare mode deliberately skips OAuth/keychain reads, so enable it only when explicit API-key auth is available.
+    ...(typeof options.environment?.ANTHROPIC_API_KEY === "string" ? ["--bare"] : []),
     "--safe-mode",
     "--disable-slash-commands",
     "--exclude-dynamic-system-prompt-sections",
@@ -256,7 +298,8 @@ function claudeArgs(options: ContainedCliAgentLauncherOptions, request: AgentLau
     "--settings",
     JSON.stringify(settings),
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--json-schema",
     JSON.stringify(RESULT_SCHEMA),
     "--permission-mode",
@@ -283,8 +326,20 @@ function outputObject(value: unknown, label: string): Record<string, unknown> {
 
 function providerResult(provider: "codex" | "claude", stdout: string): unknown {
   if (provider === "claude") {
-    const envelope = outputObject(decodeJson(stdout, "Claude response"), "Claude response");
-    if (envelope.is_error === true || envelope.subtype === "error") throw new AgentProcessError("Claude reported a failed run");
+    let envelope: Record<string, unknown> | null = null;
+    for (const line of stdout.split(/\r?\n/u)) {
+      if (line.trim().length === 0) continue;
+      if (line.length > 1024 * 1024) throw new AgentProcessError("Claude emitted an oversized stream event");
+      const event = outputObject(decodeJson(line, "Claude stream event"), "Claude stream event");
+      if (event.type === "result") envelope = event;
+    }
+    if (envelope === null) throw new AgentProcessError("Claude ended without a terminal result event");
+    if (
+      envelope.is_error === true ||
+      typeof envelope.subtype === "string" && envelope.subtype.toLowerCase().includes("error")
+    ) {
+      throw new AgentProcessError("Claude reported a failed run");
+    }
     if (envelope.structured_output !== undefined) return envelope.structured_output;
     return typeof envelope.result === "string" ? decodeJson(envelope.result, "Claude result") : envelope.result;
   }
@@ -386,6 +441,30 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let failure: Error | null = null;
+    const activity = new ActivityChannel();
+    const activityBuffer = new ActivityBuffer();
+    const decoder = new StringDecoder("utf8");
+    let pendingLine = "";
+    let activityFinished = false;
+    const observeLine = (line: string): void => {
+      const ready = activityBuffer.push(activityFromProviderLine(this.#options.provider, line));
+      if (ready !== null) activity.publish(ready);
+    };
+    const observeChunk = (chunk: Buffer): void => {
+      pendingLine += decoder.write(chunk);
+      const lines = pendingLine.split(/\r?\n/u);
+      pendingLine = lines.pop() ?? "";
+      for (const line of lines) observeLine(line);
+    };
+    const finishActivity = (): void => {
+      if (activityFinished) return;
+      activityFinished = true;
+      pendingLine += decoder.end();
+      if (pendingLine.length > 0) observeLine(pendingLine);
+      const final = activityBuffer.drain();
+      if (final !== null) activity.publish(final);
+      activity.close();
+    };
     let termination: Promise<void> | null = null;
     const terminate = (): Promise<void> => {
       termination ??= terminateGroup(groupId, this.#options.terminationGraceMs, this.#options.groupAbsenceTimeoutMs);
@@ -405,6 +484,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       stdoutBytes += chunk.length;
       if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
       stdout.push(Buffer.from(chunk));
+      observeChunk(chunk);
     });
     child.stderr?.on("data", (chunkValue: Buffer | string) => {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
@@ -425,6 +505,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       child.once("close", (code, signal) => {
         void (async () => {
           clearTimeout(timeout);
+          finishActivity();
           if (termination !== null) {
             try { await termination; } catch (error) { failure ??= error as Error; }
           } else if (groupPresent(groupId)) {
@@ -450,6 +531,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     });
     return Object.freeze({
       completion,
+      activity,
       interrupt: async (reason: string): Promise<void> => {
         assertCredentialSafe(reason, "Interrupt reason");
         failure ??= new AgentProcessError("Agent process was interrupted directly");

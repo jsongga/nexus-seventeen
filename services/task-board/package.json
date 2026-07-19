@@ -11,7 +11,7 @@
     }
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0 <23 || >=24.0.0"
   },
   "scripts": {
     "build": "npm run build -w @cicada/steward-task-board-contract && tsc -p tsconfig.json",

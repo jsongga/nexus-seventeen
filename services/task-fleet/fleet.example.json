@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "boardUrl": "http://127.0.0.1:4318",
+  "retry": {
+    "initialDelayMs": 250,
+    "maximumDelayMs": 10000
+  },
+  "agents": [
+    {
+      "workerId": "worker-platform-engineer",
+      "agentId": "platform-engineer",
+      "token": "replace-with-the-one-time-agent-token-0000000001",
+      "provider": "codex",
+      "model": "replace-with-a-codex-model-id",
+      "workingDirectory": "/absolute/path/to/repository",
+      "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer.json"
+    }
+  ]
+}
