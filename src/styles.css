@@ -1,41 +1,193 @@
 @import "tailwindcss";
 
-@theme {
+/* Dark mode is a class flip on <html>; tokens below resolve per-mode. */
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Cicada brand tokens — canonical source: cicada-website/src/app/globals.css
+  + docs/DESIGN-SYSTEM.md. Raw values live in :root (light) and .dark; the
+  @theme inline block maps them to Tailwind utilities so every color/border
+  flips with the mode. Legacy utility names (canvas, ink, muted, line,
+  teal-soft, caution*, urgent*, mint, forest, paper, surface) are preserved
+  as aliases so existing markup keeps working.
+*/
+@theme inline {
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "DM Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
 
-  --color-canvas: #f3f3f3;
-  --color-paper: #f3f3f3;
-  --color-surface: #ffffff;
-  --color-ink: #171c24;
-  --color-forest: #171c24;
-  --color-muted: #59636d;
-  --color-line: #e4e7ea;
-  --color-line-soft: #eef0f2;
+  --radius: 0.7rem;
+  --radius-sm: 0.45rem;
+  --radius-md: 0.55rem;
+  --radius-lg: 0.7rem;
+  --radius-xl: 0.95rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
 
-  --color-teal-300: #7fe0d6;
-  --color-teal-500: #41bbb0;
-  --color-teal-700: #237a72;
-  --color-teal-soft: #e4f4f2;
-  --color-mint: #41bbb0;
-  --color-mint-strong: #237a72;
+  /* Surfaces */
+  --color-canvas: var(--canvas);
+  --color-paper: var(--canvas);
+  --color-background: var(--canvas);
+  --color-card: var(--card);
+  --color-surface: var(--popover);
+  --color-popover: var(--popover);
+  --color-secondary: var(--secondary);
 
-  --color-caution: #8a5d0a;
-  --color-caution-fill: #f0b429;
-  --color-caution-soft: #fff5dc;
-  --color-amber-soft: #f0b429;
+  /* Ink / text */
+  --color-ink: var(--foreground);
+  --color-forest: var(--foreground);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted-foreground);
+  --color-muted-foreground: var(--muted-foreground);
 
-  --color-urgent: #a01c14;
-  --color-urgent-fill: #7d1710;
-  --color-urgent-soft: #fff0ee;
-  --color-coral-soft: #a01c14;
+  /* Lines / borders / fields */
+  --color-line: var(--border);
+  --color-border: var(--border);
+  --color-line-soft: var(--border-soft);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Teal — reserved for "measured & normal" status */
+  --color-teal-300: var(--teal-300);
+  --color-teal-500: var(--teal-500);
+  --color-teal-600: var(--teal-600);
+  --color-teal-700: var(--teal-700);
+  --color-teal-soft: var(--teal-soft);
+  --color-mint: var(--teal-500);
+  --color-mint-strong: var(--teal-700);
+  --color-primary: var(--teal-500);
+  --color-primary-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--teal-700);
+
+  /* Caution / amber */
+  --color-caution: var(--caution-text);
+  --color-caution-fill: var(--caution-fill);
+  --color-caution-soft: var(--caution-soft);
+  --color-amber-soft: var(--caution-fill);
+
+  /* Urgent / destructive */
+  --color-urgent: var(--urgent-text);
+  --color-urgent-fill: var(--urgent-fill);
+  --color-urgent-soft: var(--urgent-soft);
+  --color-coral-soft: var(--urgent-text);
+  --color-destructive: var(--urgent-text);
+
+  /* Data-viz ramp */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 :root {
   color-scheme: light;
-  color: #171c24;
-  background: #f3f3f3;
+
+  --canvas: #eae9e4;          /* warm paper */
+  --card: #f6f5f1;            /* warm off-white card */
+  --popover: #ffffff;         /* popovers, modals, inputs */
+  --secondary: #e6e5df;
+
+  --foreground: #171c24;      /* ink */
+  --muted-foreground: #57595f;
+
+  --border: #d9d8d1;
+  --border-soft: #e4e2db;
+  --input: #e4e7ea;
+  --ring: #1b655d;
+
+  --teal-300: #7fe0d6;        /* text/icon on dark */
+  --teal-500: #41bbb0;        /* fills & marks (logo teal) */
+  --teal-600: #36a99f;        /* fill hover */
+  --teal-700: #1b655d;        /* teal text on light (AA on warm paper) */
+  --teal-soft: rgba(65, 187, 176, 0.12);
+  --accent: rgba(65, 187, 176, 0.12);
+
+  --caution-text: #8a5d0a;
+  --caution-fill: #f0b429;
+  --caution-soft: #fff5dc;
+
+  --urgent-text: #a01c14;
+  --urgent-fill: #7d1710;
+  --urgent-soft: #fff0ee;
+
+  --chart-1: #41bbb0;
+  --chart-2: #237a72;
+  --chart-3: #7fe0d6;
+  --chart-4: #f0b429;
+  --chart-5: #8a5d0a;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #171c24;
+  --sidebar-primary: #41bbb0;
+  --sidebar-primary-foreground: #171c24;
+  --sidebar-accent: rgba(65, 187, 176, 0.12);
+  --sidebar-accent-foreground: #237a72;
+  --sidebar-border: #e4e7ea;
+  --sidebar-ring: #237a72;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --canvas: #171c24;
+  --card: #1b212b;
+  --popover: #1b212b;
+  --secondary: #232b36;
+
+  --foreground: #f3f3f3;
+  --muted-foreground: #9aa4b2;
+
+  --border: #28323f;
+  --border-soft: #232b36;
+  --input: #28323f;
+  --ring: #7fe0d6;
+
+  --teal-300: #7fe0d6;
+  --teal-500: #41bbb0;
+  --teal-600: #4fc9be;
+  --teal-700: #7fe0d6;        /* teal text on dark = teal-300 */
+  --teal-soft: rgba(65, 187, 176, 0.16);
+  --accent: rgba(65, 187, 176, 0.16);
+
+  --caution-text: #e8b04b;
+  --caution-fill: #f0b429;
+  --caution-soft: rgba(240, 180, 41, 0.14);
+
+  --urgent-text: #ff8a7a;
+  --urgent-fill: #7d1710;
+  --urgent-soft: rgba(160, 28, 20, 0.18);
+
+  --chart-1: #41bbb0;
+  --chart-2: #7fe0d6;
+  --chart-3: #237a72;
+  --chart-4: #f0b429;
+  --chart-5: #f3f3f3;
+
+  --sidebar: #1b212b;
+  --sidebar-foreground: #f3f3f3;
+  --sidebar-primary: #41bbb0;
+  --sidebar-primary-foreground: #171c24;
+  --sidebar-accent: rgba(65, 187, 176, 0.16);
+  --sidebar-accent-foreground: #7fe0d6;
+  --sidebar-border: #28323f;
+  --sidebar-ring: #7fe0d6;
+}
+
+:root {
+  color: var(--foreground);
+  background: var(--canvas);
   font-family: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -48,14 +200,14 @@
 html {
   min-width: 320px;
   min-height: 100%;
-  background: #f3f3f3;
+  background: var(--canvas);
 }
 
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background: #f3f3f3;
+  background: var(--canvas);
 }
 
 button,
@@ -75,7 +227,7 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 3px solid rgba(35, 122, 114, 0.34);
+  outline: 3px solid color-mix(in srgb, var(--ring) 34%, transparent);
   outline-offset: 2px;
 }
 
