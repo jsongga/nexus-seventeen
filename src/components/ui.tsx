@@ -16,12 +16,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary:
-    'border-teal-500 bg-teal-500 text-ink shadow-[0_1px_0_rgba(255,255,255,.3)_inset] hover:border-[#36a99f] hover:bg-[#36a99f]',
+    'border-teal-500 bg-teal-500 text-ink shadow-[0_1px_0_rgba(255,255,255,.3)_inset] hover:border-teal-600 hover:bg-teal-600',
   secondary:
-    'border-line bg-white text-ink shadow-[0_1px_2px_rgba(23,28,36,.05)] hover:border-[#c9cfd4] hover:bg-[#fafafa]',
-  quiet: 'border-transparent bg-transparent text-teal-700 hover:bg-teal-soft hover:text-[#195f59]',
-  danger: 'border-[#d5a19d] bg-white text-urgent hover:border-[#bd726c] hover:bg-urgent-soft',
-  mint: 'border-[#b9ddd9] bg-teal-soft text-teal-700 hover:border-[#94cac4] hover:bg-[#d5eeeb]',
+    'border-line bg-white text-ink shadow-[0_1px_2px_rgba(23,28,36,.05)] hover:border-line-strong hover:bg-card',
+  quiet: 'border-transparent bg-transparent text-teal-700 hover:bg-teal-soft hover:text-teal-700',
+  danger: 'border-urgent-border bg-white text-urgent hover:border-urgent-border hover:bg-urgent-soft',
+  mint: 'border-teal-border bg-teal-soft text-teal-700 hover:border-teal-border hover:bg-teal-soft',
 };
 
 const buttonSizes = {
@@ -68,7 +68,7 @@ export function Card({
   return (
     <Component
       className={cn(
-        'rounded-[14px] border border-line bg-white shadow-[0_1px_2px_rgba(23,28,36,.05),0_10px_26px_rgba(23,28,36,.06)]',
+        'rounded-[14px] border border-line bg-card shadow-[0_1px_2px_rgba(23,28,36,.05),0_10px_26px_rgba(23,28,36,.06)]',
         className,
       )}
     >
@@ -78,12 +78,12 @@ export function Card({
 }
 
 const pillTones = {
-  neutral: 'border-line bg-[#f4f5f6] text-[#59636e]',
-  green: 'border-[#b9ddd9] bg-teal-soft text-teal-700',
-  amber: 'border-[#ead09b] bg-caution-soft text-caution',
-  red: 'border-[#e5b7b3] bg-urgent-soft text-urgent',
-  blue: 'border-[#ccd9e2] bg-[#eef3f6] text-[#3f6073]',
-  purple: 'border-[#d5d3e3] bg-[#f2f1f7] text-[#55547a]',
+  neutral: 'border-line bg-muted-surface text-muted',
+  green: 'border-teal-border bg-teal-soft text-teal-700',
+  amber: 'border-caution-border bg-caution-soft text-caution',
+  red: 'border-urgent-border bg-urgent-soft text-urgent',
+  blue: 'border-info-border bg-info-soft text-info',
+  purple: 'border-alt-border bg-alt-soft text-alt',
   dark: 'border-white/15 bg-white/10 text-white/85',
 };
 
@@ -162,8 +162,8 @@ export function ProgressBar({
   const tones = {
     green: 'bg-teal-500',
     amber: 'bg-caution-fill',
-    blue: 'bg-[#52758b]',
-    purple: 'bg-[#6a688f]',
+    blue: 'bg-info',
+    purple: 'bg-alt',
   };
 
   return (
@@ -269,11 +269,11 @@ export function Modal({
 
 export function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor: string }) {
   return (
-    <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold text-[#4f5964]">
+    <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold text-muted">
       {children}
     </label>
   );
 }
 
 export const inputClass =
-  'min-h-11 w-full rounded-[10px] border border-line bg-white px-3.5 text-sm text-ink shadow-[0_1px_1px_rgba(23,28,36,.03)] placeholder:text-muted hover:border-[#c8cdd2] focus:border-teal-700 focus:outline-none';
+  'min-h-11 w-full rounded-[10px] border border-line bg-white px-3.5 text-sm text-ink shadow-[0_1px_1px_rgba(23,28,36,.03)] placeholder:text-muted hover:border-line-strong focus:border-teal-700 focus:outline-none';

@@ -174,7 +174,7 @@ function TaskRow({
       type="button"
       onClick={onSelect}
       className={cn(
-        'w-full border-b border-line-soft px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[#fafbfb] sm:px-5',
+        'w-full border-b border-line-soft px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-card sm:px-5',
         selected && 'bg-teal-soft/45 hover:bg-teal-soft/60',
       )}
     >
@@ -232,7 +232,7 @@ function TimelineItem({
         <Pill tone={message.kind === 'question' ? 'amber' : message.kind === 'result' ? 'green' : 'neutral'}>{message.kind}</Pill>
         <time className="text-muted" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{formatTime(message.createdAt)}</time>
       </div>
-      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-[#3f4852]">{message.body}</p>
+      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-muted">{message.body}</p>
     </li>
   );
 }

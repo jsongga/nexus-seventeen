@@ -37,7 +37,7 @@ function AgentStatusMark({ agent }: { agent: BoardAgent }) {
     <span
       className={cn(
         'size-2 shrink-0 rounded-full border border-white',
-        active ? 'bg-teal-500' : 'bg-[#aab1b8]',
+        active ? 'bg-teal-500' : 'bg-line-strong',
       )}
       title={agent.status.replaceAll('_', ' ')}
     >
@@ -81,12 +81,12 @@ function RailContent({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <nav aria-label="Company navigation" className="space-y-1">
-          <button type="button" className={cn(navRow, pageIs(page, 'tasks') ? activeRow : 'text-[#46515b] hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'tasks' })}>
+          <button type="button" className={cn(navRow, pageIs(page, 'tasks') ? activeRow : 'text-muted hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'tasks' })}>
             <ListTodo size={17} />
             <span className="min-w-0 flex-1">Task List</span>
             {attentionCount > 0 ? <Pill tone="amber" className="min-h-5 px-1.5">{attentionCount}</Pill> : null}
           </button>
-          <button type="button" className={cn(navRow, pageIs(page, 'documents') ? activeRow : 'text-[#46515b] hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'documents' })}>
+          <button type="button" className={cn(navRow, pageIs(page, 'documents') ? activeRow : 'text-muted hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'documents' })}>
             <FileText size={17} />
             <span>Documents</span>
           </button>
@@ -127,7 +127,7 @@ function RailContent({
                 <div key={project.id}>
                   <button
                     type="button"
-                    className={cn(navRow, pageIs(page, 'project', project.id) ? activeRow : 'text-[#39434d] hover:bg-line-soft')}
+                    className={cn(navRow, pageIs(page, 'project', project.id) ? activeRow : 'text-muted hover:bg-line-soft')}
                     onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
                   >
                     <FolderKanban size={16} />
