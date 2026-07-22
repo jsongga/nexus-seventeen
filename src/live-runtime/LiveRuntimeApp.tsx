@@ -177,7 +177,7 @@ function taskClassName(status: AgentTaskProjection['status']): string {
     case 'running':
       return 'bg-teal-soft text-teal-700';
     case 'completed':
-      return 'bg-ink text-white';
+      return 'bg-ink-panel text-white';
     case 'paused':
       return 'bg-caution-soft text-caution';
     case 'failed':
@@ -391,7 +391,7 @@ function AgentCard({
 function phaseClassName(event: ProgressEvent): string {
   if (event.phase === 'test' && event.outcome === 'failed') return 'bg-urgent-soft text-urgent';
   if (event.phase === 'test' && event.outcome === 'passed') return 'bg-teal-soft text-teal-700';
-  if (event.phase === 'execute') return 'bg-ink text-white';
+  if (event.phase === 'execute') return 'bg-ink-panel text-white';
   return 'bg-canvas text-muted';
 }
 
@@ -1080,7 +1080,7 @@ function ConnectedWorkspace({
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div aria-hidden="true" className="grid h-10 w-10 grid-cols-2 gap-1 rounded-xl bg-ink p-2">
+            <div aria-hidden="true" className="grid h-10 w-10 grid-cols-2 gap-1 rounded-xl bg-ink-panel p-2">
               <span className="rounded-full bg-teal-300" />
               <span className="rounded-full bg-teal-500" />
               <span className="rounded-full bg-teal-500" />
@@ -1317,7 +1317,7 @@ function ConnectedWorkspace({
                 </div>
               </div>
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-ink-panel px-4 text-sm font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40"
                 disabled={!controlsAvailable || !selectedAgent}
                 type="submit"
               >
@@ -1536,7 +1536,7 @@ export function LiveRuntimeApp() {
     <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-10 text-ink sm:px-6">
       <div className="w-full max-w-xl">
         <div className="mb-6 flex items-center gap-3">
-          <div aria-hidden="true" className="grid h-12 w-12 grid-cols-2 gap-1 rounded-2xl bg-ink p-2.5">
+          <div aria-hidden="true" className="grid h-12 w-12 grid-cols-2 gap-1 rounded-2xl bg-ink-panel p-2.5">
             <span className="rounded-full bg-teal-300" />
             <span className="rounded-full bg-teal-500" />
             <span className="rounded-full bg-teal-500" />
@@ -1666,7 +1666,7 @@ export function LiveRuntimeApp() {
               </p>
             ) : null}
 
-            <button className="mt-1 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-bold text-white hover:bg-teal-700" type="submit">
+            <button className="mt-1 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-ink-panel px-4 text-sm font-bold text-white hover:bg-teal-700" type="submit">
               <Radio aria-hidden="true" className="h-4 w-4" />
               Connect live
             </button>

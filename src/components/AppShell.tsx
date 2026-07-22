@@ -92,8 +92,8 @@ function NavButton({
       className={cn(
         'relative flex min-h-10 w-full items-center gap-3 rounded-[10px] px-3 text-left text-[13px] font-medium transition-colors',
         active
-          ? 'bg-teal-soft text-teal-700 shadow-[inset_2px_0_0_#41bbb0]'
-          : 'text-[#59636e] hover:bg-white hover:text-ink',
+          ? 'bg-teal-soft text-teal-700 shadow-[inset_2px_0_0_var(--color-teal-500)]'
+          : 'text-muted hover:bg-white hover:text-ink',
       )}
     >
       <Icon size={17} strokeWidth={active ? 2.3 : 1.9} />
@@ -102,7 +102,7 @@ function NavButton({
         <span
           className={cn(
             'grid min-w-5 place-items-center rounded-md px-1.5 py-0.5 font-mono text-[10px] font-medium',
-            active ? 'bg-teal-500 text-ink' : 'bg-[#e8eaec] text-[#4f5964]',
+            active ? 'bg-teal-500 text-ink' : 'bg-muted-surface text-muted',
           )}
         >
           {attentionCount}
@@ -191,9 +191,9 @@ export function AppShell({
         </nav>
 
         <div className="mt-auto space-y-3">
-          <div className="rounded-[14px] border border-white/10 bg-ink p-3.5 shadow-[0_8px_24px_rgba(23,28,36,.12)]">
+          <div className="rounded-[14px] border border-white/10 bg-ink-panel p-3.5 shadow-[0_8px_24px_rgba(23,28,36,.12)]">
             <div className="flex items-center gap-2 text-white">
-              <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-[#e8b04b]">
+              <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-caution">
                 <LockKeyhole size={15} />
               </span>
               <span className="text-xs font-semibold">Release simulation</span>
@@ -240,8 +240,8 @@ export function AppShell({
               className={cn(
                 'grid size-10 place-items-center rounded-[10px] border',
                 paused
-                  ? 'border-[#b9ddd9] bg-teal-soft text-teal-700'
-                  : 'border-line bg-white text-[#59636e]',
+                  ? 'border-teal-border bg-teal-soft text-teal-700'
+                  : 'border-line bg-white text-muted',
               )}
               aria-label={paused ? 'Resume all agents' : 'Pause all agents'}
             >
@@ -274,7 +274,7 @@ export function AppShell({
 
       {mobileSystemOpen ? (
         <div
-          className="fixed inset-0 z-40 bg-ink/35 lg:hidden"
+          className="fixed inset-0 z-40 bg-scrim/35 lg:hidden"
           role="presentation"
           aria-hidden={isMobileSystemTopmost ? undefined : true}
           onMouseDown={(event) => {

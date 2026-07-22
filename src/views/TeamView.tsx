@@ -101,8 +101,8 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                   className={cn(
                     'min-w-0 flex-1 rounded-xl border p-3',
                     kind === 'human'
-                      ? 'border-[#e8c675] bg-[#fff6df]'
-                      : 'border-line bg-[#f7f8f8]',
+                      ? 'border-caution-border bg-caution-soft'
+                      : 'border-line bg-card',
                   )}
                 >
                   <div className="flex items-center gap-2.5">
@@ -112,14 +112,14 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                         kind === 'human'
                           ? 'bg-caution-fill text-ink'
                           : kind === 'broker'
-                            ? 'bg-[#d9f3f0] text-teal-700'
-                            : 'bg-[#e9ecef] text-muted',
+                            ? 'bg-teal-soft text-teal-700'
+                            : 'bg-muted-surface text-muted',
                       )}
                     >
                       {kind === 'human' ? <UserCheck size={14} /> : kind === 'broker' ? <LockKeyhole size={13} /> : index + 1}
                     </span>
                     <div className="min-w-0">
-                      <p className={cn('truncate text-xs font-bold text-[#37424a]', kind === 'human' && 'text-[#6c4908]')}>{label}</p>
+                      <p className={cn('truncate text-xs font-bold text-muted', kind === 'human' && 'text-caution')}>{label}</p>
                       <p className={cn('mt-0.5 text-[9px] font-bold uppercase tracking-[0.07em]', kind === 'human' ? 'text-caution' : 'text-muted')}>
                         {detail}
                       </p>
@@ -191,7 +191,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                 <p className="mt-4 min-h-10 text-[13px] leading-5 text-muted">{agent.responsibility}</p>
                 <div className="mt-4 flex items-center justify-between gap-3 rounded-xl bg-paper px-3 py-2.5">
                   <div className="min-w-0">
-                    <p className="truncate text-[11px] font-bold text-[#37424a]">{agent.model}</p>
+                    <p className="truncate text-[11px] font-bold text-muted">{agent.model}</p>
                     <p className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.09em] text-muted">{agent.provider}</p>
                   </div>
                   <div className="text-right">
@@ -202,7 +202,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                 {run ? (
                   <div className={cn(
                     'mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5',
-                    controlAttention ? 'border-[#efb9b2] bg-[#fff1ef]' : 'border-[#b8ded9] bg-[#edf8f7]',
+                    controlAttention ? 'border-urgent-border bg-urgent-soft' : 'border-teal-border bg-teal-soft',
                   )}>
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted">Human control</p>
@@ -223,7 +223,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                 ) : null}
               </div>
 
-              <div className="grid gap-px bg-[#e4e7ea] sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+              <div className="grid gap-px bg-muted-surface sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <div className="bg-white p-4">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-teal-700">
                     <Check size={13} /> Can
@@ -237,14 +237,14 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                     ))}
                   </ul>
                 </div>
-                <div className="bg-[#fff9f8] p-4">
+                <div className="bg-urgent-soft p-4">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-urgent">
                     <X size={13} /> Cannot
                   </p>
                   <ul className="mt-3 space-y-2">
                     {agent.cannot.map((restriction) => (
-                      <li key={restriction} className="flex items-start gap-2 text-[11px] font-semibold leading-4 text-[#655e5d]">
-                        <span className="mt-1 size-1.5 shrink-0 rotate-45 bg-[#ff8a7a]" />
+                      <li key={restriction} className="flex items-start gap-2 text-[11px] font-semibold leading-4 text-muted">
+                        <span className="mt-1 size-1.5 shrink-0 rotate-45 bg-urgent-fill" />
                         {restriction}
                       </li>
                     ))}
@@ -257,7 +257,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
         </div>
       </section>
 
-      <Card as="section" className="overflow-hidden border-[#e8c675] bg-white">
+      <Card as="section" className="overflow-hidden border-caution-border bg-white">
         <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
           <div className="p-5 sm:p-7">
             <div className="flex items-start gap-4">
@@ -274,7 +274,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
             </div>
           </div>
 
-          <div className="border-t border-line bg-[#f7f8f8] p-5 lg:border-l lg:border-t-0 sm:p-6">
+          <div className="border-t border-line bg-card p-5 lg:border-l lg:border-t-0 sm:p-6">
             <div className="space-y-2">
               {[
                 ['1', 'Engineering manager', 'Checks work and posts the task'],
@@ -282,11 +282,11 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
                 ['3', 'Simulated broker', 'Records consumption once'],
               ].map(([step, actor, action], index) => (
                 <div key={step} className="relative flex items-center gap-3 rounded-xl border border-line bg-white p-3">
-                  <span className={cn('grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[10px] font-semibold', index === 1 ? 'bg-caution-fill text-ink' : 'bg-[#e9ecef] text-muted')}>
+                  <span className={cn('grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[10px] font-semibold', index === 1 ? 'bg-caution-fill text-ink' : 'bg-muted-surface text-muted')}>
                     {step}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-bold text-[#37424a]">{actor}</p>
+                    <p className="text-[11px] font-bold text-muted">{actor}</p>
                     <p className="mt-0.5 text-[10px] text-muted">{action}</p>
                   </div>
                   {index === 1 ? <LockKeyhole size={14} className="text-caution" /> : null}

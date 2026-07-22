@@ -92,7 +92,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                 {formatTokens(usedTokens)} <span className="text-sm font-medium text-muted">/ {formatTokens(tokenLimit)}</span>
               </p>
             </div>
-            <div className="grid size-11 place-items-center rounded-xl bg-[#e7f7f5] text-teal-700">
+            <div className="grid size-11 place-items-center rounded-xl bg-teal-soft text-teal-700">
               <CircleDollarSign size={21} />
             </div>
           </div>
@@ -161,7 +161,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                           className={cn(
                             'absolute -bottom-1 -right-1 size-3.5 rounded-full border-[3px] border-white bg-teal-500',
                             run.status === 'waiting' && 'bg-caution-fill',
-                            run.status === 'checking' && 'bg-[#237a72]',
+                            run.status === 'checking' && 'bg-teal-500',
                           )}
                         />
                       </div>
@@ -194,7 +194,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                   <div
                     className={cn(
                       'mt-4 rounded-xl border p-3.5',
-                      managerReview ? 'border-[#d7dce0] bg-paper' : 'border-[#b8ded9] bg-[#edf8f7]',
+                      managerReview ? 'border-line bg-paper' : 'border-teal-border bg-teal-soft',
                     )}
                   >
                     <div className="flex flex-wrap items-center gap-2">
@@ -204,14 +204,14 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                       )}>
                         Doing now
                       </p>
-                      <span className="rounded-md border border-[#d7dce0] bg-white px-2 py-0.5 text-[9px] font-bold text-muted">
+                      <span className="rounded-md border border-line bg-white px-2 py-0.5 text-[9px] font-bold text-muted">
                         {actionKindLabels[run.currentAction.kind]}
                       </span>
                       <span className="ml-auto flex items-center gap-1 font-mono text-[9px] font-medium text-muted">
                         <Clock3 size={11} /> {run.currentAction.elapsed}
                       </span>
                     </div>
-                    <p className="mt-2 break-words text-[13px] font-bold leading-5 text-[#273139]">
+                    <p className="mt-2 break-words text-[13px] font-bold leading-5 text-ink">
                       {run.currentAction.label}
                     </p>
                     <p className="mt-1 break-words text-[11px] leading-4 text-muted">{run.currentAction.detail}</p>
@@ -226,11 +226,11 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                   </div>
 
                   {run.agentTask ? (
-                    <div className="mt-4 rounded-xl border border-line bg-[#f7f8f8] p-3" data-testid="agent-task-timing">
+                    <div className="mt-4 rounded-xl border border-line bg-card p-3" data-testid="agent-task-timing">
                       <div className="grid grid-cols-3 gap-2">
                         <div className="min-w-0">
                           <p className="text-[9px] font-bold uppercase tracking-[0.09em] text-muted">Actual start</p>
-                          <p className="mt-1 truncate font-mono text-[10px] font-medium text-[#37424a]" title={String(run.agentTask.startedAt)}>
+                          <p className="mt-1 truncate font-mono text-[10px] font-medium text-muted" title={String(run.agentTask.startedAt)}>
                             {formatTaskTimestamp(run.agentTask.startedAt)}
                           </p>
                         </div>
@@ -244,7 +244,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                         </div>
                         <div className="min-w-0 border-l border-line pl-2">
                           <p className="text-[9px] font-bold uppercase tracking-[0.09em] text-muted">Actual end</p>
-                          <p className="mt-1 truncate font-mono text-[10px] font-medium text-[#37424a]" title={run.agentTask.endedAt ? String(run.agentTask.endedAt) : undefined}>
+                          <p className="mt-1 truncate font-mono text-[10px] font-medium text-muted" title={run.agentTask.endedAt ? String(run.agentTask.endedAt) : undefined}>
                             {run.agentTask.endedAt ? formatTaskTimestamp(run.agentTask.endedAt) : 'In progress'}
                           </p>
                         </div>
@@ -254,7 +254,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                       </p>
                     </div>
                   ) : (
-                    <div className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-[#cdd3d8] bg-[#fafafa] p-3 text-[10px] font-semibold text-muted">
+                    <div className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-line bg-card p-3 text-[10px] font-semibold text-muted">
                       <Clock3 size={13} /> No agent task active · no agent ETA
                     </div>
                   )}
@@ -273,12 +273,12 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                   <ProgressBar value={run.progress} tone={controlAttention ? 'amber' : 'green'} className="mt-2" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-px border-b border-line bg-[#e4e7ea]">
+                <div className="grid grid-cols-2 gap-px border-b border-line bg-muted-surface">
                   <div className="bg-white p-4">
                     <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
                       <Cpu size={13} /> Model route
                     </div>
-                    <p className="mt-2 truncate text-xs font-bold text-[#37424a]" title={run.model}>{run.model}</p>
+                    <p className="mt-2 truncate text-xs font-bold text-muted" title={run.model}>{run.model}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <Pill tone={tier.tone}>{run.tier}</Pill>
                       <span className="text-[9px] font-bold text-muted">{tier.note}</span>
@@ -288,7 +288,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                     <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
                       <CircleDollarSign size={13} /> Token cap
                     </div>
-                    <p className="mt-2 font-mono text-xs font-semibold text-[#37424a]">
+                    <p className="mt-2 font-mono text-xs font-semibold text-muted">
                       {formatTokens(run.tokens)} <span className="font-medium text-muted">/ {formatTokens(run.tokenLimit)}</span>
                     </p>
                     <ProgressBar value={tokenPercent} tone={tokenPercent > 80 ? 'amber' : 'green'} className="mt-2.5" />
@@ -296,24 +296,24 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                   </div>
                 </div>
 
-                <div className="mt-auto bg-[#f7f8f8] p-4">
+                <div className="mt-auto bg-card p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="grid size-8 place-items-center rounded-lg border border-line bg-white text-teal-700">
                         <TerminalSquare size={15} />
                       </span>
                       <div>
-                        <p className="text-[11px] font-bold text-[#37424a]">Workspace context · demo</p>
+                        <p className="text-[11px] font-bold text-muted">Workspace context · demo</p>
                         <p className="mt-0.5 font-mono text-[9px] text-muted">dev/{run.workItemId.toLowerCase()}</p>
                       </div>
                     </div>
                     <Pill tone="green">Illustrative</Pill>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-bold">
-                    <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-[#b8ded9] bg-white px-2.5 py-2 text-teal-700">
+                    <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-teal-border bg-white px-2.5 py-2 text-teal-700">
                       <Box size={12} /> Intended: repo + tools
                     </div>
-                    <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-[#efb9b2] bg-[#fff1ef] px-2.5 py-2 text-urgent">
+                    <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-urgent-border bg-urgent-soft px-2.5 py-2 text-urgent">
                       <KeyRound size={12} /> Credentials not checked
                     </div>
                   </div>
@@ -343,7 +343,7 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
         ) : null}
       </section>
 
-      <Card as="section" className="overflow-hidden border-[#b8ded9] bg-white">
+      <Card as="section" className="overflow-hidden border-teal-border bg-white">
         <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[1.15fr_1fr] lg:items-center">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-500 text-ink">
@@ -357,15 +357,15 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-xl border border-line bg-[#f7f8f8] p-3 text-center">
+            <div className="rounded-xl border border-line bg-card p-3 text-center">
               <Network size={15} className="mx-auto text-teal-700" />
               <p className="mt-2 text-[10px] font-bold text-muted">Network policy target</p>
             </div>
-            <div className="rounded-xl border border-line bg-[#f7f8f8] p-3 text-center">
+            <div className="rounded-xl border border-line bg-card p-3 text-center">
               <CheckCircle2 size={15} className="mx-auto text-teal-700" />
               <p className="mt-2 text-[10px] font-bold text-muted">Sample test evidence</p>
             </div>
-            <div className="rounded-xl border border-[#e8c675] bg-[#fff6df] p-3 text-center">
+            <div className="rounded-xl border border-caution-border bg-caution-soft p-3 text-center">
               <KeyRound size={15} className="mx-auto text-caution" />
               <p className="mt-2 text-[10px] font-bold text-caution">Human authorization target</p>
             </div>

@@ -97,7 +97,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
   return (
     <div
       className={cn(
-        'fixed inset-x-0 bottom-0 z-[80] flex items-end justify-center bg-ink/60 backdrop-blur-[3px] sm:items-center sm:p-5',
+        'fixed inset-x-0 bottom-0 z-[80] flex items-end justify-center bg-scrim/60 backdrop-blur-[3px] sm:items-center sm:p-5',
         !isTopmost && 'pointer-events-none',
       )}
       style={{ top: visualViewportTop }}
@@ -136,7 +136,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
           <button
             type="button"
             onClick={onClose}
-            className="grid size-11 shrink-0 place-items-center rounded-xl text-muted transition-colors hover:bg-[#eef0f2] hover:text-ink"
+            className="grid size-11 shrink-0 place-items-center rounded-xl text-muted transition-colors hover:bg-muted-surface hover:text-ink"
             aria-label="Close queue work dialog"
           >
             <X size={19} />
@@ -147,8 +147,8 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-3">
-                <label htmlFor={titleInputId} className="text-xs font-bold text-[#404a54]">Short title</label>
-                <span className="font-mono text-[10px] font-medium tabular-nums text-[#66707a]">{title.length}/80</span>
+                <label htmlFor={titleInputId} className="text-xs font-bold text-muted">Short title</label>
+                <span className="font-mono text-[10px] font-medium tabular-nums text-muted">{title.length}/80</span>
               </div>
               <input
                 ref={titleInputRef}
@@ -156,7 +156,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
                 id={titleInputId}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                className={cn(inputClass, titleMissing && 'border-[#a01c14] focus:border-[#a01c14]')}
+                className={cn(inputClass, titleMissing && 'border-urgent-border focus:border-urgent-border')}
                 placeholder="For example, check keyboard navigation"
                 maxLength={80}
                 aria-invalid={titleMissing}
@@ -169,14 +169,14 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
 
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-3">
-                <label htmlFor={outcomeInputId} className="text-xs font-bold text-[#404a54]">Desired user outcome</label>
-                <span className="font-mono text-[10px] font-medium tabular-nums text-[#66707a]">{desiredOutcome.length}/320</span>
+                <label htmlFor={outcomeInputId} className="text-xs font-bold text-muted">Desired user outcome</label>
+                <span className="font-mono text-[10px] font-medium tabular-nums text-muted">{desiredOutcome.length}/320</span>
               </div>
               <textarea
                 id={outcomeInputId}
                 value={desiredOutcome}
                 onChange={(event) => setDesiredOutcome(event.target.value)}
-                className={cn(inputClass, 'min-h-28 resize-y py-3 leading-5', outcomeMissing && 'border-[#a01c14] focus:border-[#a01c14]')}
+                className={cn(inputClass, 'min-h-28 resize-y py-3 leading-5', outcomeMissing && 'border-urgent-border focus:border-urgent-border')}
                 placeholder="Describe what should be better for users when this is finished."
                 maxLength={320}
                 aria-invalid={outcomeMissing}
@@ -192,7 +192,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
             </div>
 
             <div>
-              <label htmlFor={estimateInputId} className="text-xs font-bold text-[#404a54]">
+              <label htmlFor={estimateInputId} className="text-xs font-bold text-muted">
                 Expected agent work time
               </label>
               <div className="relative mt-2">
@@ -220,13 +220,13 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
             </div>
 
             <fieldset aria-labelledby={positionLegendId}>
-              <legend id={positionLegendId} className="text-xs font-bold text-[#404a54]">When should the agent take this on?</legend>
+              <legend id={positionLegendId} className="text-xs font-bold text-muted">When should the agent take this on?</legend>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <label className={cn(
                   'flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition-colors',
                   position === 'next'
-                    ? 'border-[#237a72] bg-[#e8f5f3]'
-                    : 'border-line bg-white hover:border-[#237a72]/45',
+                    ? 'border-teal-border bg-teal-soft'
+                    : 'border-line bg-white hover:border-teal-border/45',
                 )}>
                   <input
                     type="radio"
@@ -234,7 +234,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
                     value="next"
                     checked={position === 'next'}
                     onChange={() => setPosition('next')}
-                    className="mt-0.5 size-4 accent-[#237a72]"
+                    className="mt-0.5 size-4 accent-teal-700"
                   />
                   <span className="min-w-0">
                     <span className="flex items-center gap-1.5 text-xs font-bold text-ink"><ArrowDownToLine size={14} /> Next-up queue</span>
@@ -248,8 +248,8 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
                 <label className={cn(
                   'flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition-colors',
                   position === 'backlog'
-                    ? 'border-[#237a72] bg-[#e8f5f3]'
-                    : 'border-line bg-white hover:border-[#237a72]/45',
+                    ? 'border-teal-border bg-teal-soft'
+                    : 'border-line bg-white hover:border-teal-border/45',
                 )}>
                   <input
                     type="radio"
@@ -257,7 +257,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
                     value="backlog"
                     checked={position === 'backlog'}
                     onChange={() => setPosition('backlog')}
-                    className="mt-0.5 size-4 accent-[#237a72]"
+                    className="mt-0.5 size-4 accent-teal-700"
                   />
                   <span className="min-w-0">
                     <span className="flex items-center gap-1.5 text-xs font-bold text-ink"><ListEnd size={14} /> Add to backlog</span>
@@ -267,7 +267,7 @@ export function AgentQueueModal({ run, open, onClose, onSubmit }: AgentQueueModa
               </div>
             </fieldset>
 
-            <div className="flex items-center gap-2 rounded-xl border border-[#b9ddd9] bg-[#e8f5f3] px-3 py-2.5 text-[10px] leading-4 text-[#365f5b]">
+            <div className="flex items-center gap-2 rounded-xl border border-teal-border bg-teal-soft px-3 py-2.5 text-[10px] leading-4 text-teal-700">
               <Pill tone="green"><span className="font-mono tabular-nums">{run.queue.length}</span> queued</Pill>
               <span>
                 {position === 'next'

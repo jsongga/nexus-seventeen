@@ -40,8 +40,8 @@ function Metric({
   const tones = {
     green: 'bg-teal-soft text-teal-700',
     amber: 'bg-caution-soft text-caution',
-    blue: 'bg-[#eef3f6] text-[#3f6073]',
-    purple: 'bg-[#f2f1f7] text-[#55547a]',
+    blue: 'bg-info-soft text-info',
+    purple: 'bg-alt-soft text-alt',
   };
 
   return (
@@ -91,7 +91,7 @@ function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="w-full rounded-[14px] border border-line bg-white p-4 text-left shadow-[0_1px_2px_rgba(23,28,36,.04)] transition-colors hover:border-[#c7cdd2] hover:bg-[#fdfdfd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700/35"
+      className="w-full rounded-[14px] border border-line bg-white p-4 text-left shadow-[0_1px_2px_rgba(23,28,36,.04)] transition-colors hover:border-line-strong hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700/35"
       aria-label={`Inspect live run ${run.id} for ${run.agent}`}
     >
       <div className="flex items-start gap-3">
@@ -121,7 +121,7 @@ function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
               {run.lastHeartbeat}
             </span>
           </div>
-          <p className="mt-2 truncate text-[13px] font-semibold text-[#3f4953]">{run.currentAction.label}</p>
+          <p className="mt-2 truncate text-[13px] font-semibold text-muted">{run.currentAction.label}</p>
           <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted">{run.currentAction.detail}</p>
           <div className="mt-3 flex items-center gap-3">
             <ProgressBar value={run.progress} tone={run.tier === 'Balanced' ? 'purple' : 'green'} className="flex-1" />
@@ -205,7 +205,7 @@ export function OverviewView({
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted">
-            <span className="font-medium text-[#5d6771]">Good morning, Jordan.</span>
+            <span className="font-medium text-muted">Good morning, Jordan.</span>
             <span className="font-mono">Saturday · July 18</span>
           </div>
           <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
@@ -226,7 +226,7 @@ export function OverviewView({
         </Button>
       </header>
 
-      <Card className="overflow-hidden border-ink !bg-ink px-5 py-4 text-white sm:px-6 sm:py-5">
+      <Card className="overflow-hidden border-ink-panel !bg-ink-panel px-5 py-4 text-white sm:px-6 sm:py-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <span className="grid size-11 shrink-0 place-items-center rounded-[10px] border border-white/10 bg-white/[0.07] text-teal-300">
             <LockKeyhole size={21} />

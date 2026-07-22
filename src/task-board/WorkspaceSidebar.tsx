@@ -259,7 +259,7 @@ export function WorkspaceFrame({
 
       {drawerOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button type="button" className="absolute inset-0 bg-ink/45" aria-label="Close navigation" onClick={closeDrawer} />
+          <button type="button" className="absolute inset-0 bg-scrim/45" aria-label="Close navigation" onClick={closeDrawer} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="absolute inset-y-0 left-0 w-[min(88vw,320px)] border-r border-line bg-white shadow-[12px_0_40px_rgba(23,28,36,.18)]">
             <button type="button" className="absolute right-3 top-3 z-10 flex size-10 items-center justify-center rounded-[9px] text-muted hover:bg-line-soft hover:text-ink" aria-label="Close navigation" onClick={closeDrawer}><X size={19} /></button>
             <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} connected={connected} lastSyncedLabel={lastSyncedLabel} onNavigate={navigate} onConnection={() => { onDrawerChange(false); onConnection(); }} />

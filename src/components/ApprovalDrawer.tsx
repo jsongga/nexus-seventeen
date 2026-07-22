@@ -126,7 +126,7 @@ export function ApprovalDrawer({
   return (
     <div
       className={cn(
-        'fixed inset-x-0 bottom-0 z-40 bg-ink/45 backdrop-blur-[2px]',
+        'fixed inset-x-0 bottom-0 z-40 bg-scrim/45 backdrop-blur-[2px]',
         !isTopmost && 'pointer-events-none',
       )}
       style={{ top: visualViewportTop }}
@@ -153,7 +153,7 @@ export function ApprovalDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="grid size-10 place-items-center rounded-xl text-muted hover:bg-[#eef0f2] hover:text-ink lg:hidden"
+            className="grid size-10 place-items-center rounded-xl text-muted hover:bg-muted-surface hover:text-ink lg:hidden"
             aria-label="Back"
           >
             <ArrowLeft size={19} />
@@ -167,7 +167,7 @@ export function ApprovalDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="hidden size-10 place-items-center rounded-xl text-muted hover:bg-[#eef0f2] hover:text-ink lg:grid"
+            className="hidden size-10 place-items-center rounded-xl text-muted hover:bg-muted-surface hover:text-ink lg:grid"
             aria-label="Close"
           >
             <X size={19} />
@@ -207,16 +207,16 @@ export function ApprovalDrawer({
           </div>
 
           <section className="mt-3 overflow-hidden rounded-[14px] border border-line bg-white" aria-label="Human task timing">
-            <div className="grid grid-cols-3 gap-px bg-[#e4e7ea]">
+            <div className="grid grid-cols-3 gap-px bg-muted-surface">
               <div className="min-w-0 bg-white p-3">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-muted">Opened</p>
-                <p className="mt-1 truncate font-mono text-[10px] font-medium tabular-nums text-[#404a54]" title={String(approval.startedAt)}>
+                <p className="mt-1 truncate font-mono text-[10px] font-medium tabular-nums text-muted" title={String(approval.startedAt)}>
                   {formatTaskTimestamp(approval.startedAt)}
                 </p>
               </div>
               <div className="min-w-0 bg-white p-3">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-muted">Resolved</p>
-                <p className="mt-1 truncate font-mono text-[10px] font-medium tabular-nums text-[#404a54]" title={approval.endedAt ? String(approval.endedAt) : undefined}>
+                <p className="mt-1 truncate font-mono text-[10px] font-medium tabular-nums text-muted" title={approval.endedAt ? String(approval.endedAt) : undefined}>
                   {approval.endedAt ? formatTaskTimestamp(approval.endedAt) : 'Awaiting human'}
                 </p>
               </div>
@@ -250,8 +250,8 @@ export function ApprovalDrawer({
               </div>
 
               {approval.managerReview ? (
-                <div className="mt-3 overflow-hidden rounded-[14px] border border-[#b9ddd9] bg-white">
-                  <div className="bg-[#e8f5f3] p-4">
+                <div className="mt-3 overflow-hidden rounded-[14px] border border-teal-border bg-white">
+                  <div className="bg-teal-soft p-4">
                     <div className="flex items-start gap-3">
                       <Avatar
                         name={approval.managerReview.manager}
@@ -266,11 +266,11 @@ export function ApprovalDrawer({
                       </div>
                       <LockKeyhole size={16} className="mt-0.5 shrink-0 text-teal-700" />
                     </div>
-                    <p className="mt-3 text-[12px] leading-5 text-[#365f5b]">{approval.managerReview.summary}</p>
+                    <p className="mt-3 text-[12px] leading-5 text-teal-700">{approval.managerReview.summary}</p>
                   </div>
 
-                  <div className="grid grid-cols-2 border-y border-[#eef0f2] bg-white">
-                    <div className="border-r border-[#eef0f2] px-4 py-3">
+                  <div className="grid grid-cols-2 border-y border-line-soft bg-white">
+                    <div className="border-r border-line-soft px-4 py-3">
                       <p className="font-mono text-xl font-medium tabular-nums text-ink">
                         {approval.managerReview.engineerLoops}
                       </p>
@@ -321,7 +321,7 @@ export function ApprovalDrawer({
                           {approval.managerReview.openRisks.map((risk, index) => (
                             <li
                               key={`${index}-${risk}`}
-                              className="flex gap-2 text-[11px] leading-4 text-[#665a42]"
+                              className="flex gap-2 text-[11px] leading-4 text-caution"
                             >
                               <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-caution-fill" />
                               <span>{risk}</span>
@@ -335,7 +335,7 @@ export function ApprovalDrawer({
                   </div>
                 </div>
               ) : (
-                <div className="mt-3 rounded-[14px] border border-[#f0d391] bg-[#fff6df] p-4 text-[11px] leading-5 text-caution">
+                <div className="mt-3 rounded-[14px] border border-caution-border bg-caution-soft p-4 text-[11px] leading-5 text-caution">
                   No manager assessment is attached. Request one before making the human-only production decision.
                 </div>
               )}
@@ -352,17 +352,17 @@ export function ApprovalDrawer({
               </div>
               <div className="mt-3 rounded-[14px] border border-line bg-white px-4 py-1">
                 <DataRow label="Target" value={approval.target ?? 'Production'} />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Commit" value={release.commit} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Build" value={release.buildDigest} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Artifact" value={release.artifactDigest} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Tests" value={release.testsDigest} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Config" value={release.configDigest} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Migrations" value={release.migrationsDigest} mono />
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
@@ -388,11 +388,11 @@ export function ApprovalDrawer({
               <h2 className="font-display text-[15px] font-bold text-ink">Authorized development envelope</h2>
               <div className="mt-3 rounded-[14px] border border-line bg-white px-4 py-1">
                 <DataRow label="Mission" value={approval.workItemId} mono />
-                <div className="border-t border-[#eef0f2]" />
+                <div className="border-t border-line-soft" />
                 <DataRow label="Branch" value={approval.branch ?? 'Created after approval'} mono />
                 {approval.budget ? (
                   <>
-                    <div className="border-t border-[#eef0f2]" />
+                    <div className="border-t border-line-soft" />
                     <DataRow label="Budget" value={approval.budget} />
                   </>
                 ) : null}
@@ -427,17 +427,17 @@ export function ApprovalDrawer({
                         checked={selected}
                         onChange={() => setDecisionOptionId(check.id)}
                         disabled={closed}
-                        className="size-4 shrink-0 accent-[#237a72]"
+                        className="size-4 shrink-0 accent-teal-700"
                       />
                     ) : null}
                     <span
                       className={cn(
                         'grid size-8 shrink-0 place-items-center rounded-lg',
                         check.status === 'passed'
-                          ? 'bg-[#e8f5f3] text-teal-700'
+                          ? 'bg-teal-soft text-teal-700'
                           : selected
-                            ? 'bg-[#e8f5f3] text-teal-700'
-                            : 'bg-[#fff6df] text-caution',
+                            ? 'bg-teal-soft text-teal-700'
+                            : 'bg-caution-soft text-caution',
                       )}
                     >
                       <Icon size={15} />
@@ -463,9 +463,9 @@ export function ApprovalDrawer({
                     key={check.id}
                     className={cn(
                       'flex min-h-16 items-center gap-3 px-4 py-3.5 transition-colors',
-                      index > 0 && 'border-t border-[#eef0f2]',
+                      index > 0 && 'border-t border-line-soft',
                       !closed && 'cursor-pointer hover:bg-paper',
-                      selected && 'bg-[#e8f5f3]',
+                      selected && 'bg-teal-soft',
                     )}
                   >
                     {content}
@@ -475,7 +475,7 @@ export function ApprovalDrawer({
                     key={check.id}
                     className={cn(
                       'flex items-center gap-3 px-4 py-3.5',
-                      index > 0 && 'border-t border-[#eef0f2]',
+                      index > 0 && 'border-t border-line-soft',
                     )}
                   >
                     {content}
@@ -492,14 +492,14 @@ export function ApprovalDrawer({
 
           {release ? (
             <>
-              <section className="mt-7 rounded-[14px] border border-[#b9ddd9] bg-[#e8f5f3] p-4">
+              <section className="mt-7 rounded-[14px] border border-teal-border bg-teal-soft p-4">
                 <div className="flex items-start gap-3">
                   <TrendingCost release={release} />
                 </div>
               </section>
               <section className="mt-4 rounded-[14px] border border-line bg-white p-4">
                 <div className="flex items-start gap-3">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#eef0f2] text-muted">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted-surface text-muted">
                     <RotateCcw size={15} />
                   </span>
                   <div>
@@ -511,7 +511,7 @@ export function ApprovalDrawer({
             </>
           ) : null}
 
-          <section className="mt-5 flex items-start gap-3 rounded-[14px] border border-[#f0d391] bg-[#fff6df] p-4">
+          <section className="mt-5 flex items-start gap-3 rounded-[14px] border border-caution-border bg-caution-soft p-4">
             {approval.kind === 'production' ? (
               <Fingerprint size={18} className="mt-0.5 shrink-0 text-caution" />
             ) : (
@@ -566,7 +566,7 @@ function TrendingCost({ release }: { release: NonNullable<ApprovalItem['release'
           <p className="text-xs font-bold text-teal-700">Cheap-first route saved <span className="font-mono tabular-nums">{savings}%</span></p>
           <Pill tone="green"><span className="font-mono tabular-nums">${release.cost.toFixed(2)}</span> routed</Pill>
         </div>
-        <p className="mt-1 text-[11px] leading-5 text-[#365f5b]">
+        <p className="mt-1 text-[11px] leading-5 text-teal-700">
           Frontier-only estimate: <span className="font-mono tabular-nums">${release.baselineCost.toFixed(2)}</span>. Verification passed without a Fable or Sol escalation.
         </p>
       </div>

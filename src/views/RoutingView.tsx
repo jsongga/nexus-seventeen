@@ -123,32 +123,32 @@ export function RoutingView() {
         <Card className="p-4 sm:p-5">
           <TrendingDown size={17} className="text-teal-700" />
           <p className="mt-3 font-mono text-[27px] font-semibold tracking-[-0.045em] text-ink">68%</p>
-          <p className="mt-1 text-[11px] font-bold text-[#4f5c64]">Projected cost reduction</p>
+          <p className="mt-1 text-[11px] font-bold text-muted">Projected cost reduction</p>
           <p className="mt-1 text-[10px] text-muted">vs. frontier-only estimate</p>
         </Card>
         <Card className="p-4 sm:p-5">
           <DatabaseZap size={17} className="text-teal-700" />
           <p className="mt-3 font-mono text-[27px] font-semibold tracking-[-0.045em] text-ink">61%</p>
-          <p className="mt-1 text-[11px] font-bold text-[#4f5c64]">Cached input share</p>
+          <p className="mt-1 text-[11px] font-bold text-muted">Cached input share</p>
           <p className="mt-1 text-[10px] text-muted">stable instructions reused</p>
         </Card>
         <Card className="p-4 sm:p-5">
           <Layers3 size={17} className="text-teal-700" />
           <p className="mt-3 font-mono text-[27px] font-semibold tracking-[-0.045em] text-ink">−73%</p>
-          <p className="mt-1 text-[11px] font-bold text-[#4f5c64]">Context carried forward</p>
+          <p className="mt-1 text-[11px] font-bold text-muted">Context carried forward</p>
           <p className="mt-1 text-[10px] text-muted">delta packets, not transcripts</p>
         </Card>
         <Card className="p-4 sm:p-5">
           <CircleGauge size={17} className="text-caution" />
           <p className="mt-3 font-mono text-[27px] font-semibold tracking-[-0.045em] text-ink">0 / 12</p>
-          <p className="mt-1 text-[11px] font-bold text-[#4f5c64]">Frontier calls this week</p>
+          <p className="mt-1 text-[11px] font-bold text-muted">Frontier calls this week</p>
           <p className="mt-1 text-[10px] text-muted">no quality gate required one</p>
         </Card>
       </section>
 
-      <Card className="overflow-hidden border-[#b8ded9] bg-white">
+      <Card className="overflow-hidden border-teal-border bg-white">
         <div className="grid lg:grid-cols-[minmax(240px,.72fr)_minmax(0,1.28fr)]">
-          <div className="border-b border-[#b8ded9] bg-[#edf8f7] p-5 sm:p-6 lg:border-b-0 lg:border-r">
+          <div className="border-b border-teal-border bg-teal-soft p-5 sm:p-6 lg:border-b-0 lg:border-r">
             <div className="flex flex-wrap items-center gap-2">
               <span className="grid size-10 place-items-center rounded-xl bg-teal-500 text-ink">
                 <Eye size={18} />
@@ -186,19 +186,19 @@ export function RoutingView() {
                 },
               ].map(({ icon: Icon, label, detail }) => (
                 <div key={label} className="flex items-start gap-3 rounded-xl border border-line bg-white p-3.5">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#e7f7f5] text-teal-700">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-teal-soft text-teal-700">
                     <Icon size={14} />
                   </span>
                   <div>
-                    <p className="text-[11px] font-bold text-[#37424a]">{label}</p>
+                    <p className="text-[11px] font-bold text-muted">{label}</p>
                     <p className="mt-1 text-[10px] leading-4 text-muted">{detail}</p>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="mt-3 flex items-start gap-2 rounded-xl border border-[#e8c675] bg-[#fff6df] px-3.5 py-3">
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-caution-border bg-caution-soft px-3.5 py-3">
               <ShieldCheck size={14} className="mt-0.5 shrink-0 text-caution" />
-              <p className="text-[10px] leading-4 text-[#6c4908]">
+              <p className="text-[10px] leading-4 text-caution">
                 Interpretation only. The observer is never used as quality, review, approval, or release evidence.
               </p>
             </div>
@@ -216,9 +216,9 @@ export function RoutingView() {
             {tiers.map((tier, index) => {
               const Icon = tier.icon;
               const toneClasses = {
-                green: 'bg-[#e7f7f5] text-teal-700',
-                neutral: 'bg-[#e9ecef] text-muted',
-                amber: 'bg-[#fff6df] text-caution',
+                green: 'bg-teal-soft text-teal-700',
+                neutral: 'bg-muted-surface text-muted',
+                amber: 'bg-caution-soft text-caution',
               };
               return (
                 <div key={tier.name} className="relative">
@@ -237,7 +237,7 @@ export function RoutingView() {
                           {tier.models.map((model) => (
                             <span
                               key={model}
-                              className="rounded-lg border border-line bg-[#f7f8f8] px-2.5 py-1 text-[10px] font-bold text-[#4f5c64]"
+                              className="rounded-lg border border-line bg-card px-2.5 py-1 text-[10px] font-bold text-muted"
                             >
                               {model}
                             </span>
@@ -258,13 +258,13 @@ export function RoutingView() {
         </section>
 
         <Card className="self-start overflow-hidden">
-          <div className="border-b border-line bg-[#f7f8f8] px-5 py-4 sm:px-6">
+          <div className="border-b border-line bg-card px-5 py-4 sm:px-6">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-display text-[17px] font-semibold tracking-[-0.02em] text-ink">Route simulator</h2>
                 <p className="mt-0.5 text-[11px] text-muted">Preview policy before a run spends tokens.</p>
               </div>
-              <span className="grid size-10 place-items-center rounded-xl bg-[#e7f7f5] text-teal-700">
+              <span className="grid size-10 place-items-center rounded-xl bg-teal-soft text-teal-700">
                 <Route size={18} />
               </span>
             </div>
@@ -303,7 +303,7 @@ export function RoutingView() {
 
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label htmlFor="sim-failures" className="text-xs font-bold text-[#4f5c64]">
+                <label htmlFor="sim-failures" className="text-xs font-bold text-muted">
                   Failed verification attempts
                 </label>
                 <Pill tone={failures >= 2 ? 'red' : failures === 1 ? 'amber' : 'green'}>{failures}</Pill>
@@ -315,26 +315,26 @@ export function RoutingView() {
                 max="3"
                 value={failures}
                 onChange={(event) => setFailures(Number(event.target.value))}
-                className="w-full accent-[#237a72]"
+                className="w-full accent-teal-700"
               />
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2">
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-line bg-[#fafafa] px-3 text-[11px] font-bold text-[#4f5c64]">
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-line bg-card px-3 text-[11px] font-bold text-muted">
                 <input
                   type="checkbox"
                   checked={securitySensitive}
                   onChange={(event) => setSecuritySensitive(event.target.checked)}
-                  className="size-4 accent-[#237a72]"
+                  className="size-4 accent-teal-700"
                 />
                 Security-sensitive
               </label>
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-line bg-[#fafafa] px-3 text-[11px] font-bold text-[#4f5c64]">
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-line bg-card px-3 text-[11px] font-bold text-muted">
                 <input
                   type="checkbox"
                   checked={largeDiff}
                   onChange={(event) => setLargeDiff(event.target.checked)}
-                  className="size-4 accent-[#237a72]"
+                  className="size-4 accent-teal-700"
                 />
                 Large cross-file diff
               </label>
@@ -344,10 +344,10 @@ export function RoutingView() {
               className={cn(
                 'rounded-2xl border p-4',
                 decision.color === 'teal'
-                  ? 'border-[#b8ded9] bg-[#edf8f7]'
+                  ? 'border-teal-border bg-teal-soft'
                   : decision.color === 'neutral'
-                    ? 'border-[#d7dce0] bg-paper'
-                    : 'border-[#e8c675] bg-[#fff6df]',
+                    ? 'border-line bg-paper'
+                    : 'border-caution-border bg-caution-soft',
               )}
             >
               <div className="flex items-center justify-between gap-3">
@@ -358,7 +358,7 @@ export function RoutingView() {
                       decision.color === 'teal'
                         ? 'bg-teal-500 text-ink'
                         : decision.color === 'neutral'
-                          ? 'bg-[#e1e5e8] text-[#4f5c64]'
+                          ? 'bg-muted-surface text-muted'
                           : 'bg-caution-fill text-ink',
                     )}
                   >
@@ -374,7 +374,7 @@ export function RoutingView() {
                 <Pill tone={decision.color === 'teal' ? 'green' : decision.color}>{decision.provider}</Pill>
               </div>
               <p className="mt-3 text-[11px] leading-5 text-muted">{decision.reason}</p>
-              <div className="mt-3 flex items-center justify-between border-t border-[#d7dce0] pt-3 text-[10px] font-bold text-muted">
+              <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-[10px] font-bold text-muted">
                 <span>Estimated run cost</span>
                 <span className="font-mono">{decision.estimate}</span>
               </div>
@@ -410,14 +410,14 @@ export function RoutingView() {
           </div>
           <div className="mt-5 space-y-4">
             <div>
-              <div className="mb-2 flex justify-between text-[11px] font-bold text-[#4f5c64]">
+              <div className="mb-2 flex justify-between text-[11px] font-bold text-muted">
                 <span>Routed spend</span>
                 <span className="font-mono">$11.77</span>
               </div>
               <ProgressBar value={32} tone="green" className="h-2.5" />
             </div>
             <div>
-              <div className="mb-2 flex justify-between text-[11px] font-bold text-[#4f5c64]">
+              <div className="mb-2 flex justify-between text-[11px] font-bold text-muted">
                 <span>Frontier-only estimate</span>
                 <span className="font-mono">$36.78</span>
               </div>
@@ -446,13 +446,13 @@ export function RoutingView() {
             ].map(([label, Icon]) => (
               <div key={label as string} className="flex items-center gap-2 rounded-xl bg-paper px-3 py-2.5">
                 <Icon size={14} className="text-teal-700" />
-                <span className="text-[10px] font-bold text-[#4f5c64]">{label as string}</span>
+                <span className="text-[10px] font-bold text-muted">{label as string}</span>
               </div>
             ))}
           </div>
-          <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#e8c675] bg-[#fff6df] p-3.5">
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-caution-border bg-caution-soft p-3.5">
             <ArrowRight size={15} className="mt-0.5 shrink-0 text-caution" />
-            <p className="text-[10px] leading-4 text-[#6c4908]">
+            <p className="text-[10px] leading-4 text-caution">
               Target: stay within two quality points of the always-Fable/Sol benchmark at 40% lower normalized cost. This MVP defines the gate; a representative eval suite must prove it.
             </p>
           </div>

@@ -38,27 +38,27 @@ const eventToneStyles: Record<
   { ring: string; icon: string; line: string; Icon: typeof CheckCircle2 }
 > = {
   neutral: {
-    ring: 'border-[#d9dde1] bg-[#eef0f2]',
+    ring: 'border-line-soft bg-muted-surface',
     icon: 'text-muted',
-    line: 'bg-[#e4e7ea]',
+    line: 'bg-muted-surface',
     Icon: FileClock,
   },
   green: {
-    ring: 'border-[#b9ddd9] bg-[#e8f5f3]',
+    ring: 'border-teal-border bg-teal-soft',
     icon: 'text-teal-700',
-    line: 'bg-[#b9ddd9]',
+    line: 'bg-teal-border',
     Icon: CheckCircle2,
   },
   amber: {
-    ring: 'border-[#f0d391] bg-[#fff6df]',
+    ring: 'border-caution-border bg-caution-soft',
     icon: 'text-caution',
-    line: 'bg-[#f0d391]',
+    line: 'bg-caution-border',
     Icon: FileClock,
   },
   red: {
-    ring: 'border-[#e8b5af] bg-[#fff0ee]',
+    ring: 'border-urgent-border bg-urgent-soft',
     icon: 'text-urgent',
-    line: 'bg-[#e8b5af]',
+    line: 'bg-urgent-border',
     Icon: ShieldAlert,
   },
 };
@@ -88,26 +88,26 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
           </p>
         </div>
 
-        <Card className="grid grid-cols-3 divide-x divide-[#e4e7ea] overflow-hidden sm:min-w-[410px]">
+        <Card className="grid grid-cols-3 divide-x divide-line overflow-hidden sm:min-w-[410px]">
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Events</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-ink">{items.length}</p>
-            <p className="text-[9px] font-semibold text-[#66707a]">in view</p>
+            <p className="text-[9px] font-semibold text-muted">in view</p>
           </div>
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Human</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-ink">{humanEvents}</p>
-            <p className="text-[9px] font-semibold text-[#66707a]">human actions</p>
+            <p className="text-[9px] font-semibold text-muted">human actions</p>
           </div>
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Blocked</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-urgent">{blockedEvents}</p>
-            <p className="text-[9px] font-semibold text-[#66707a]">demo stops</p>
+            <p className="text-[9px] font-semibold text-muted">demo stops</p>
           </div>
         </Card>
       </header>
 
-      <Card as="section" className="overflow-hidden border-[#b9ddd9] !bg-white">
+      <Card as="section" className="overflow-hidden border-teal-border !bg-white">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-500 text-ink">
@@ -123,7 +123,7 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-[#b9ddd9] bg-[#e8f5f3] px-3 py-2.5">
+          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-teal-border bg-teal-soft px-3 py-2.5">
             <Fingerprint size={16} className="text-teal-700" />
             <div>
               <p className="text-[10px] font-bold text-teal-700">Evidence-linked</p>
@@ -155,7 +155,7 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
                   aria-pressed={active}
                 >
                   {filter.label}
-                  <span className={cn('ml-0.5 font-mono text-[10px] tabular-nums', active ? 'text-ink/65' : 'text-[#66707a]')}>
+                  <span className={cn('ml-0.5 font-mono text-[10px] tabular-nums', active ? 'text-ink/65' : 'text-muted')}>
                     {actorCount(items, filter.value)}
                   </span>
                 </Button>
@@ -183,24 +183,24 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
                       </span>
                     </div>
 
-                    <div className={cn('min-w-0 py-5 sm:py-6', !isLast && 'border-b border-[#eef0f2]')}>
+                    <div className={cn('min-w-0 py-5 sm:py-6', !isLast && 'border-b border-line-soft')}>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-display text-[15px] font-bold tracking-[-0.015em] text-ink">{item.actor}</span>
                         <Pill tone={actor.tone}>
                           <ActorIcon size={11} /> {actor.label}
                         </Pill>
-                        <span className="text-[13px] font-semibold text-[#404a54]">{item.action}</span>
+                        <span className="text-[13px] font-semibold text-muted">{item.action}</span>
                       </div>
-                      <div className="mt-2 inline-flex max-w-full items-center rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-medium text-[#404a54]">
+                      <div className="mt-2 inline-flex max-w-full items-center rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-medium text-muted">
                         <span className="truncate">{item.target}</span>
                       </div>
                       <p className="mt-2 max-w-3xl text-[12px] leading-5 text-muted">{item.detail}</p>
-                      <p className="mt-2 font-mono text-[10px] font-medium tabular-nums text-[#66707a] sm:hidden">{item.time}</p>
+                      <p className="mt-2 font-mono text-[10px] font-medium tabular-nums text-muted sm:hidden">{item.time}</p>
                     </div>
 
-                    <div className={cn('hidden py-6 text-right sm:block', !isLast && 'border-b border-[#eef0f2]')}>
+                    <div className={cn('hidden py-6 text-right sm:block', !isLast && 'border-b border-line-soft')}>
                       <p className="font-mono text-[11px] font-medium tabular-nums text-muted">{item.time}</p>
-                      <p className="mt-1 font-mono text-[9px] text-[#66707a]">{item.id}</p>
+                      <p className="mt-1 font-mono text-[9px] text-muted">{item.id}</p>
                     </div>
                   </li>
                 );

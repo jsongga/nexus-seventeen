@@ -36,14 +36,14 @@ export function ProductionApprovalModal({
       description="This browser-local demo records a final human decision for one exact release candidate. It does not deploy."
     >
       <div className="space-y-5 px-5 py-5 sm:px-6">
-        <div className="rounded-[14px] border border-ink bg-ink p-4">
+        <div className="rounded-[14px] border border-ink-panel bg-ink-panel p-4">
           <div className="flex items-start gap-3">
             <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-500 text-ink">
               <LockKeyhole size={17} />
             </span>
             <div>
               <p className="text-sm font-bold text-white">No deployment occurs in this demo</p>
-              <p className="mt-1 text-[12px] leading-5 text-[#d7dce1]">
+              <p className="mt-1 text-[12px] leading-5 text-muted">
                 The simulated approval is bound to the release digests below and can be consumed only once in this browser.
               </p>
             </div>
@@ -51,7 +51,7 @@ export function ProductionApprovalModal({
         </div>
 
         <div className="overflow-hidden rounded-[14px] border border-line bg-white">
-          <div className="flex items-center gap-3 border-b border-[#eef0f2] p-4">
+          <div className="flex items-center gap-3 border-b border-line-soft p-4">
             <GitCommitHorizontal size={17} className="text-teal-700" />
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Commit</p>
@@ -59,7 +59,7 @@ export function ProductionApprovalModal({
             </div>
             <Pill tone="green">Demo evidence</Pill>
           </div>
-          <div className="flex items-center gap-3 border-b border-[#eef0f2] p-4">
+          <div className="flex items-center gap-3 border-b border-line-soft p-4">
             <Fingerprint size={17} className="text-teal-700" />
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Build digest</p>
@@ -132,7 +132,7 @@ export function RequestChangesModal({
   return (
     <Modal open onClose={onClose} title="Send back with direction" description={approval.title}>
       <div className="space-y-5 px-5 py-5 sm:px-6">
-        <div className="flex items-start gap-3 rounded-[14px] border border-[#e8b5af] bg-[#fff0ee] p-4">
+        <div className="flex items-start gap-3 rounded-[14px] border border-urgent-border bg-urgent-soft p-4">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-urgent" />
           <p className="text-[12px] leading-5 text-urgent">
             Agents will stop this handoff, preserve its evidence, and create a new revision from your direction.
@@ -262,10 +262,10 @@ export function NewMissionModal({
             />
           </div>
         </div>
-        <div className="rounded-[14px] border border-[#b9ddd9] bg-[#e8f5f3] p-4">
+        <div className="rounded-[14px] border border-teal-border bg-teal-soft p-4">
           <div className="flex items-start gap-3">
             <ClipboardList size={17} className="mt-0.5 shrink-0 text-teal-700" />
-            <p className="text-[11px] leading-5 text-[#365f5b]">
+            <p className="text-[11px] leading-5 text-teal-700">
               Creating this mission does not start code changes. Mira first drafts scope, acceptance criteria, risks, and a route for you to approve.
             </p>
           </div>

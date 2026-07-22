@@ -225,7 +225,7 @@ export function Modal({
   return (
     <div
       className={cn(
-        'fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
+        'fixed inset-0 z-50 flex items-end justify-center bg-scrim/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
         !isTopmost && 'pointer-events-none',
       )}
       role="presentation"

@@ -145,27 +145,27 @@ export function MissionsView({
               return (
                 <div
                   key={stage.key}
-                  className="relative flex items-center gap-3 rounded-[10px] border border-line-soft bg-[#fafbfb] px-3 py-2.5 text-left md:block md:rounded-none md:border-0 md:bg-transparent md:px-1 md:py-0 md:text-center"
+                  className="relative flex items-center gap-3 rounded-[10px] border border-line-soft bg-card px-3 py-2.5 text-left md:block md:rounded-none md:border-0 md:bg-transparent md:px-1 md:py-0 md:text-center"
                 >
                   {index < pipelineStages.length - 1 ? (
-                    <div className="absolute left-[56%] right-[-44%] top-4 hidden h-px bg-[#e4e7ea] md:block" />
+                    <div className="absolute left-[56%] right-[-44%] top-4 hidden h-px bg-muted-surface md:block" />
                   ) : null}
                   <div
                     className={cn(
                       'relative grid size-8 shrink-0 place-items-center rounded-full border font-mono text-xs font-semibold md:mx-auto',
                       stage.human
-                        ? 'border-[#e8c675] bg-[#fff6df] text-caution'
+                        ? 'border-caution-border bg-caution-soft text-caution'
                         : stage.key === 'manager_review'
-                          ? 'border-[#cdd3d8] bg-paper text-[#47535c]'
+                          ? 'border-line bg-paper text-muted'
                         : count > 0
-                          ? 'border-[#8bcfc8] bg-[#e7f7f5] text-teal-700'
+                          ? 'border-teal-border bg-teal-soft text-teal-700'
                           : 'border-line bg-paper text-muted',
                     )}
                   >
                     {count}
                   </div>
                   <div className="min-w-0 md:contents">
-                    <p className="text-xs font-bold text-[#37424a] md:mt-2">{stage.label}</p>
+                    <p className="text-xs font-bold text-muted md:mt-2">{stage.label}</p>
                     <p className={cn('mt-0.5 text-[9px] font-bold uppercase tracking-[0.09em]', stage.human ? 'text-caution' : 'text-muted')}>
                       {stage.caption}
                     </p>
@@ -210,7 +210,7 @@ export function MissionsView({
               <select
                 value={riskFilter}
                 onChange={(event) => onRiskFilterChange?.(event.target.value as RiskTone | 'all')}
-                className="min-h-11 w-full appearance-none rounded-[10px] border border-[#d7dce0] bg-white py-2 pl-9 pr-8 text-xs font-bold text-[#37424a] outline-none hover:border-[#aeb6bc] focus:border-[#237a72] sm:w-auto"
+                className="min-h-11 w-full appearance-none rounded-[10px] border border-line bg-white py-2 pl-9 pr-8 text-xs font-bold text-muted outline-none hover:border-line-strong focus:border-teal-700 sm:w-auto"
               >
                 <option value="all">All risk levels</option>
                 <option value="low">Low risk</option>
@@ -271,7 +271,7 @@ export function MissionsView({
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-line bg-[#fafafa] p-3.5">
+                  <div className="rounded-xl border border-line bg-card p-3.5">
                     <div className="flex items-center justify-between gap-3">
                       <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
                         <CircleDollarSign size={13} /> Token budget

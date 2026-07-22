@@ -1553,7 +1553,7 @@ export function App() {
         <div
           className={cn(
             'fixed left-4 right-4 top-20 z-[70] mx-auto flex max-w-md items-start gap-3 rounded-[14px] border bg-white p-4 text-ink shadow-[0_1px_2px_rgba(23,28,36,.05),0_10px_30px_rgba(23,28,36,.14)] sm:left-auto sm:right-5 sm:top-5 sm:mx-0',
-            toast.tone === 'success' ? 'border-[#b9ddd9]' : 'border-[#e5b7b3]',
+            toast.tone === 'success' ? 'border-teal-border' : 'border-urgent-border',
           )}
           role="status"
         >
