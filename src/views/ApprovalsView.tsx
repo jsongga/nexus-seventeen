@@ -43,11 +43,11 @@ export function ApprovalsView({
           <Pill tone="green">Manager → human</Pill>
           <span className="text-[11px] font-semibold text-muted">Human-only decision queue</span>
         </div>
-        <h1 className="mt-3 font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
+        <h1 className="mt-3 font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
           Decisions, with the proof attached.
         </h1>
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-muted sm:text-[15px]">
-          Managers review completed engineering loops to the best of their ability, then post a decision-ready task here. Only a human can approve production deployment.
+          Managers review completed engineering loops to the best of their ability, then post a decision-ready task here. Only a human can record release authorization.
         </p>
       </header>
 
@@ -70,7 +70,7 @@ export function ApprovalsView({
             </span>
             <div>
               <p className="font-mono text-2xl font-medium tabular-nums text-ink">{completed}</p>
-              <p className="text-[11px] font-semibold text-muted">Human-approved or deployed</p>
+              <p className="text-[11px] font-semibold text-muted">Human decisions recorded</p>
             </div>
           </div>
         </Card>
@@ -93,14 +93,14 @@ export function ApprovalsView({
             <LockKeyhole size={21} />
           </span>
           <div>
-            <h2 className="font-display text-sm font-bold">Managers prepare. Humans authorize production.</h2>
+            <h2 className="font-display text-sm font-bold">Managers prepare. Humans authorize release.</h2>
             <p className="mt-1 text-[11px] leading-5 text-[#c8ced4]">
-              A manager can assess the work and post a task, but cannot approve or deploy it. The broker accepts only a recent human approval for the matching release digest.
+              This demo checks that a recent human approval matches the release digest, then records simulated consumption. No deployment occurs.
             </p>
           </div>
           <div className="flex items-center gap-2 text-[10px] font-bold text-[#d7dce1]">
             <ShieldCheck size={15} className="text-[#7fe0d6]" />
-            Server policy required
+            Demo policy check
           </div>
         </div>
       </Card>
@@ -155,7 +155,7 @@ export function ApprovalsView({
             </span>
             <h3 className="mt-3 font-display text-base font-bold text-ink">Nothing in this queue</h3>
             <p className="mt-1 max-w-sm text-[12px] leading-5 text-muted">
-              Completed decisions stay in the audit trail even when this inbox is empty.
+              Completed decisions stay in this browser-local event history even when the inbox is empty.
             </p>
           </Card>
         ) : null}

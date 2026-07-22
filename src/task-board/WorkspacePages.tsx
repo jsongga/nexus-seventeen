@@ -31,7 +31,7 @@ function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string;
     <header className="flex flex-col gap-4 border-b border-line bg-white px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
       <div className="min-w-0">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-700">{eyebrow}</p>
-        <h1 className="mt-1 font-display text-2xl font-semibold tracking-[-0.035em] text-ink sm:text-[28px]">{title}</h1>
+        <h1 className="mt-1 font-display text-[22px] font-semibold tracking-[-0.025em] text-ink sm:text-[26px]">{title}</h1>
         {description ? <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}

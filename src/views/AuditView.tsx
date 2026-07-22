@@ -78,13 +78,13 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
         <div className="max-w-3xl">
           <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-muted">
             <FileClock size={14} className="text-teal-700" />
-            Immutable history
+            Demo event history
           </div>
-          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
+          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
             Reconstruct every decision, handoff, and blocked action.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
-            The audit ledger is append-only, so oversight survives beyond a chat transcript and production decisions stay attributable.
+            This browser-local prototype keeps an attributed event timeline so you can evaluate the oversight model.
           </p>
         </div>
 
@@ -97,12 +97,12 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Human</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-ink">{humanEvents}</p>
-            <p className="text-[9px] font-semibold text-[#66707a]">signed actions</p>
+            <p className="text-[9px] font-semibold text-[#66707a]">human actions</p>
           </div>
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Blocked</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-urgent">{blockedEvents}</p>
-            <p className="text-[9px] font-semibold text-[#66707a]">policy stops</p>
+            <p className="text-[9px] font-semibold text-[#66707a]">demo stops</p>
           </div>
         </Card>
       </header>
@@ -115,11 +115,11 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
             </span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-base font-bold tracking-[-0.02em] text-ink">Append-only event ledger</h2>
-                <Pill tone="green">Retention on</Pill>
+                <h2 className="font-display text-base font-bold tracking-[-0.02em] text-ink">Browser-local event timeline</h2>
+                <Pill tone="green">Demo data</Pill>
               </div>
               <p className="mt-1 max-w-2xl text-[12px] leading-5 text-muted">
-                Entries may be added, never edited in place. Release actions retain the actor, target, policy result, and evidence reference.
+                New actions append in this browser and persist in local storage. This is not a tamper-resistant audit ledger.
               </p>
             </div>
           </div>

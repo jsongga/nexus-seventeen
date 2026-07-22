@@ -10,6 +10,7 @@ export {
   parseAgentRunOutput,
   parseBoundedAgentContext,
   parseTaskWakeClaim,
+  parseTaskWorkerIdentity,
   parseTaskWorkerJournal,
 } from "./schema.js";
 export { TASK_WAKE_REASONS } from "./types.js";

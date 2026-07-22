@@ -1,39 +1,24 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { boardProxySecurityPlugin, createBoardProxy } from './tooling/vite-security';
 
 export default defineConfig(() => {
   const humanToken = process.env.STEWARD_TASK_BOARD_HUMAN_TOKEN?.trim();
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [boardProxySecurityPlugin(), react(), tailwindcss()],
     server: {
-      host: '0.0.0.0',
+      host: '127.0.0.1',
       port: 4173,
       proxy: {
-        '/board-api': {
-          target: 'http://127.0.0.1:4318',
-          changeOrigin: false,
-          headers: humanToken ? { authorization: `Bearer ${humanToken}` } : undefined,
-          rewrite: (path: string) => path.replace(/^\/board-api/, ''),
-          configure(proxy) {
-            proxy.on('proxyReq', (request) => request.removeHeader('origin'));
-          },
-        },
+        '/board-api': createBoardProxy(humanToken),
       },
     },
     preview: {
-      host: '0.0.0.0',
+      host: '127.0.0.1',
       port: 4173,
       proxy: {
-        '/board-api': {
-          target: 'http://127.0.0.1:4318',
-          changeOrigin: false,
-          headers: humanToken ? { authorization: `Bearer ${humanToken}` } : undefined,
-          rewrite: (path: string) => path.replace(/^\/board-api/, ''),
-          configure(proxy) {
-            proxy.on('proxyReq', (request) => request.removeHeader('origin'));
-          },
-        },
+        '/board-api': createBoardProxy(humanToken),
       },
     },
   };

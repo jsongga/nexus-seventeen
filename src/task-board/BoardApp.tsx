@@ -23,7 +23,7 @@ import { createTaskBoardClient, type TaskBoardClient } from './client';
 import { parseTaskProposal, proposalChildInput, proposalIsOnBoard, type TaskProposal } from './proposals';
 import { AgentPage, DocumentsPage, ProjectPage } from './WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './WorkspaceSidebar';
-import { isExplicitPointOfContact, selectPointOfContact } from './workspace-model';
+import { compareTasksByAttention, isExplicitPointOfContact, selectPointOfContact, taskIsResumable, taskNeedsHumanAction } from './workspace-model';
 import type {
   BoardAgent,
   BoardMessage,
@@ -44,18 +44,6 @@ const dateTime = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 });
-
-const taskStatusOrder: Record<TaskStatus, number> = {
-  waiting_for_human: 0,
-  running: 1,
-  queued: 2,
-  proposed: 3,
-  backlog: 4,
-  blocked: 5,
-  failed: 6,
-  interrupted: 7,
-  completed: 8,
-};
 
 const statusTone: Record<TaskStatus, 'neutral' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
   proposed: 'purple',
@@ -114,15 +102,19 @@ function fullTime(value: string | null): string | undefined {
 }
 
 function taskStatusLabel(task: BoardTask): string {
+  if (task.status === 'waiting_for_human' && task.endedAt === null) return 'waiting for your answer';
+  if (task.kind === 'manager_review' && task.assignedAgentId === null && task.endedAt === null) return 'needs manager assignment';
   if (task.kind !== 'human_check') return prettyStatus(task.status);
   if (task.status === 'completed') return 'approved';
   if (task.status === 'failed') return 'changes requested';
-  if (task.endedAt === null) return 'awaiting human';
+  if (task.endedAt === null) return 'needs your decision';
   return prettyStatus(task.status);
 }
 
 function StatusPill({ task }: { task: BoardTask }) {
-  return <Pill tone={statusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
+  const needsAssignmentOrDecision = task.endedAt === null
+    && (task.kind === 'human_check' || (task.kind === 'manager_review' && task.assignedAgentId === null));
+  return <Pill tone={needsAssignmentOrDecision ? 'amber' : statusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
 }
 
 function TaskKindPill({ kind }: { kind: TaskKind }) {
@@ -176,6 +168,7 @@ function TaskRow({
   openQuestion: boolean;
   onSelect: () => void;
 }) {
+  const actionNeeded = taskNeedsHumanAction(task);
   return (
     <button
       type="button"
@@ -189,9 +182,10 @@ function TaskRow({
         <span className={cn(
           'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg',
           task.status === 'completed' ? 'bg-teal-soft text-teal-700' :
-            openQuestion ? 'bg-caution-soft text-caution' : 'bg-line-soft text-muted',
+            task.status === 'failed' || task.status === 'interrupted' ? 'bg-urgent-soft text-urgent' :
+              actionNeeded ? 'bg-caution-soft text-caution' : 'bg-line-soft text-muted',
         )}>
-          {task.status === 'completed' ? <CheckCircle2 size={16} /> : task.kind === 'human_check' ? <UserRoundCheck size={16} /> : openQuestion ? <HelpCircle size={16} /> : <ListTodo size={16} />}
+          {task.status === 'completed' ? <CheckCircle2 size={16} /> : task.kind === 'human_check' ? <UserRoundCheck size={16} /> : openQuestion ? <HelpCircle size={16} /> : actionNeeded || task.status === 'failed' || task.status === 'interrupted' ? <CircleAlert size={16} /> : <ListTodo size={16} />}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
@@ -289,7 +283,7 @@ function ProposalCard({
           >
             Add unassigned child todo
           </Button>
-          <p className="mt-2 text-[11px] leading-4 text-muted">Inherits this task's workspace scope and starts with a 30-minute agent estimate. Assignment is separate.</p>
+          <p className="mt-2 text-[11px] leading-4 text-muted">Inherits this task's workspace references as context and starts with a 30-minute agent estimate. Assignment is separate.</p>
         </>
       )}
     </li>
@@ -304,6 +298,7 @@ function TaskDetail({
   questions,
   runs,
   busy,
+  saving,
   onAssign,
   onAnswer,
   onResume,
@@ -319,11 +314,12 @@ function TaskDetail({
   questions: BoardQuestion[];
   runs: BoardRun[];
   busy: boolean;
+  saving: boolean;
   onAssign: (agentId: string, minutes: number) => Promise<void>;
-  onAnswer: (questionId: string, answer: string) => Promise<void>;
+  onAnswer: (questionId: string, answer: string) => Promise<boolean>;
   onResume: () => Promise<void>;
   onInterrupt: (runId: string) => Promise<void>;
-  onMessage: (body: string) => Promise<void>;
+  onMessage: (body: string) => Promise<boolean>;
   onPromoteProposal: (proposal: TaskProposal) => Promise<void>;
   onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<boolean>;
 }) {
@@ -344,13 +340,47 @@ function TaskDetail({
   useEffect(() => {
     setAgentId(defaultAgentId);
     setMinutes(task.expectedAgentMinutes);
+  }, [defaultAgentId, task.expectedAgentMinutes, task.id]);
+
+  useEffect(() => {
     setAnswer('');
+  }, [openQuestion?.id, task.id]);
+
+  useEffect(() => {
     setNote('');
     setDecisionRationale('');
-  }, [defaultAgentId, task.expectedAgentMinutes, task.id]);
+  }, [task.id]);
+
+  async function submitAnswer(): Promise<void> {
+    const draft = answer;
+    const value = draft.trim();
+    if (!openQuestion || value.length === 0) return;
+    if (await onAnswer(openQuestion.id, value)) {
+      setAnswer((current) => current === draft ? '' : current);
+    }
+  }
+
+  async function submitNote(): Promise<void> {
+    const draft = note;
+    const value = draft.trim();
+    if (value.length === 0) return;
+    if (await onMessage(value)) {
+      setNote((current) => current === draft ? '' : current);
+    }
+  }
+
+  async function submitHumanDecision(status: 'completed' | 'failed'): Promise<void> {
+    const draft = decisionRationale;
+    const value = draft.trim();
+    if (value.length === 0) return;
+    if (await onDecideHumanCheck(status, value)) {
+      setDecisionRationale((current) => current === draft ? '' : current);
+    }
+  }
 
   return (
     <Card className="overflow-hidden xl:sticky xl:top-5 xl:max-h-[calc(100dvh-40px)] xl:overflow-y-auto">
+      <div aria-busy={saving}>
       <header className="border-b border-line px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill task={task} />
@@ -367,23 +397,28 @@ function TaskDetail({
             <HelpCircle size={17} />
             <h3 className="text-xs font-bold uppercase tracking-[0.12em]">Waiting for your answer</h3>
           </div>
-          <p className="mt-3 text-sm font-semibold leading-6 text-ink">{openQuestion.prompt}</p>
-          <textarea
-            className={cn(inputClass, 'mt-3 min-h-24 resize-y py-3')}
-            placeholder="Give the decision or missing context…"
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-          />
+          <p id={`human-question-${openQuestion.id}`} className="mt-3 text-sm font-semibold leading-6 text-ink">{openQuestion.prompt}</p>
+          <div className="mt-3">
+            <FieldLabel htmlFor={`human-answer-${openQuestion.id}`}>Your answer</FieldLabel>
+            <textarea
+              id={`human-answer-${openQuestion.id}`}
+              className={cn(inputClass, 'min-h-24 resize-y py-3')}
+              placeholder="Give the decision or missing context…"
+              value={answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              aria-describedby={`human-question-${openQuestion.id} human-answer-consequence-${openQuestion.id}`}
+            />
+          </div>
           <Button
             className="mt-3 w-full"
             variant="primary"
             icon={<Send size={16} />}
             disabled={busy || answer.trim().length === 0}
-            onClick={() => void onAnswer(openQuestion.id, answer.trim()).then(() => setAnswer(''))}
+            onClick={() => void submitAnswer()}
           >
             Answer and wake agent
           </Button>
-          <p className="mt-2 text-[11px] leading-4 text-caution">This answer creates a single durable wake-up. The agent is not running while it waits.</p>
+          <p id={`human-answer-consequence-${openQuestion.id}`} className="mt-2 text-[11px] leading-4 text-caution">This answer creates a single durable wake-up. The agent is not running while it waits.</p>
         </section>
       ) : null}
 
@@ -418,7 +453,8 @@ function TaskDetail({
 
       {task.workspaceRefs.length > 0 ? (
         <section className="border-b border-line px-5 py-5">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Allowed workspace scope</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Workspace references · context only</h3>
+          <p className="mt-2 text-xs leading-5 text-muted">Bounded context and audit data for this task. These references do not create filesystem permissions.</p>
           <ul className="mt-2 space-y-1.5">
             {task.workspaceRefs.map((reference) => <li key={reference} className="break-all rounded-md bg-line-soft px-2.5 py-1.5 font-mono text-[11px] text-ink">{reference}</li>)}
           </ul>
@@ -450,7 +486,7 @@ function TaskDetail({
               variant="mint"
               icon={<CheckCircle2 size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void onDecideHumanCheck('completed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void submitHumanDecision('completed')}
             >
               Approve for external release step
             </Button>
@@ -458,7 +494,7 @@ function TaskDetail({
               variant="danger"
               icon={<CircleAlert size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void onDecideHumanCheck('failed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void submitHumanDecision('failed')}
             >
               Request changes
             </Button>
@@ -466,10 +502,10 @@ function TaskDetail({
         </section>
       ) : null}
 
-      {task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed') && !openQuestion ? (
+      {task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || taskIsResumable(task)) && !openQuestion ? (
         <section className="border-b border-line px-5 py-5">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Human control</h3>
-          {task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed' ? (
+          {taskIsResumable(task) ? (
             <Button className="mt-3 w-full" variant="mint" icon={<Activity size={16} />} disabled={busy || !task.assignedAgentId} onClick={() => void onResume()}>
               Resume assigned agent
             </Button>
@@ -496,8 +532,22 @@ function TaskDetail({
         <section className="border-b border-line px-5 py-5">
           <div className="flex items-center justify-between gap-3">
             <div><h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Current run</h3><p className="mt-1 text-xs text-muted">Started {formatTime(activeRun.startedAt)}</p></div>
-            <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void onInterrupt(activeRun.id)}>Interrupt</Button>
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<Square size={14} />}
+              disabled={busy}
+              aria-describedby={`interrupt-consequence-${activeRun.id}`}
+              onClick={() => {
+                const agentName = assignedAgent?.name ?? 'this agent';
+                const confirmed = window.confirm(`Interrupt the current run for ${agentName}? This stops the model process. Unreported in-progress output may be lost, and the task will stay blocked until you explicitly resume it.`);
+                if (confirmed) void onInterrupt(activeRun.id);
+              }}
+            >
+              Interrupt run
+            </Button>
           </div>
+          <p id={`interrupt-consequence-${activeRun.id}`} className="mt-3 text-[11px] leading-4 text-urgent">Stops the current model process. Unreported output may be lost; the task stays blocked until you explicitly resume it.</p>
         </section>
       ) : null}
 
@@ -516,14 +566,15 @@ function TaskDetail({
         className="px-5 py-5"
         onSubmit={(event) => {
           event.preventDefault();
-          if (note.trim().length === 0) return;
-          void onMessage(note.trim()).then(() => setNote(''));
+          void submitNote();
         }}
+        aria-busy={saving}
       >
         <FieldLabel htmlFor="human-note">Add context without waking the agent</FieldLabel>
         <textarea id="human-note" className={cn(inputClass, 'min-h-20 resize-y py-3')} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Decision, constraint, or observation…" />
         <Button className="mt-3 w-full" type="submit" icon={<MessageSquareText size={16} />} disabled={busy || note.trim().length === 0}>Record note</Button>
       </form>
+      </div>
     </Card>
   );
 }
@@ -540,24 +591,57 @@ function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: Crea
   );
 }
 
-function AgentForm({ projectId, busy, onSubmit }: { projectId: string; busy: boolean; onSubmit: (input: CreateAgentInput) => Promise<void> }) {
+function AgentForm({ projectId, busy, saving, onSubmit }: { projectId: string; busy: boolean; saving: boolean; onSubmit: (input: CreateAgentInput) => Promise<void> }) {
   const [agentId, setAgentId] = useState('');
   const [role, setRole] = useState<CreateAgentInput['role']>('engineer');
   const [area, setArea] = useState('');
   const [mission, setMission] = useState('');
   const [model, setModel] = useState('');
   const [token, setToken] = useState(() => `${crypto.randomUUID()}${crypto.randomUUID()}`);
+  const [credentialSaved, setCredentialSaved] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  async function copyCredential(): Promise<void> {
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard access is unavailable');
+      await navigator.clipboard.writeText(token);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
+  }
+
+  function updateToken(value: string): void {
+    setToken(value);
+    setCredentialSaved(false);
+    setCopyStatus('idle');
+  }
+
   return (
-    <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); void onSubmit({ projectId, agentId: agentId.trim(), role, area: area.trim(), mission: mission.trim(), model: model.trim(), token }); }}>
+    <form className="space-y-4 p-5 sm:p-6" aria-busy={saving} onSubmit={(event) => { event.preventDefault(); void onSubmit({ projectId, agentId: agentId.trim(), role, area: area.trim(), mission: mission.trim(), model: model.trim(), token }); }}>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div><FieldLabel htmlFor="agent-name">Agent ID</FieldLabel><input id="agent-name" className={inputClass} required pattern="[A-Za-z0-9][A-Za-z0-9._:@/-]*" value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="billing-engineer" /></div>
+        <div><FieldLabel htmlFor="agent-name">Agent ID</FieldLabel><input id="agent-name" className={inputClass} required maxLength={128} pattern={'[A-Za-z0-9][A-Za-z0-9._\\-]*'} aria-describedby="agent-id-help" title="Use up to 128 letters, numbers, dots, underscores, or hyphens only." value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="billing-engineer" /><p id="agent-id-help" className="mt-1.5 text-[11px] leading-4 text-muted">Up to 128 letters, numbers, dots, underscores, and hyphens. Slashes, colons, and @ are not allowed.</p></div>
         <div><FieldLabel htmlFor="agent-role">Fixed role</FieldLabel><select id="agent-role" className={inputClass} value={role} onChange={(event) => setRole(event.target.value as CreateAgentInput['role'])}><option value="engineer">Engineer</option><option value="manager">Manager</option><option value="verifier">Verifier</option></select></div>
       </div>
       <div><FieldLabel htmlFor="agent-area">Owned part of the system</FieldLabel><input id="agent-area" className={inputClass} required value={area} onChange={(event) => setArea(event.target.value)} placeholder="Billing and subscriptions" /></div>
       <div><FieldLabel htmlFor="agent-mission">Standing mission</FieldLabel><textarea id="agent-mission" className={cn(inputClass, 'min-h-24 resize-y py-3')} required value={mission} onChange={(event) => setMission(event.target.value)} placeholder="Keep billing reliable, understandable, and easier for customers to manage." /></div>
       <div><FieldLabel htmlFor="agent-model">Provider model or routing profile</FieldLabel><input id="agent-model" className={inputClass} required value={model} onChange={(event) => setModel(event.target.value)} placeholder="Configured model ID" /></div>
-      <div><FieldLabel htmlFor="agent-token">One-time worker credential</FieldLabel><div className="flex gap-2"><input id="agent-token" className={cn(inputClass, 'font-mono text-xs')} required minLength={32} value={token} onChange={(event) => setToken(event.target.value)} /><Button size="sm" onClick={() => void navigator.clipboard.writeText(token)}>Copy</Button></div><p className="mt-1.5 text-[11px] leading-4 text-muted">Copy this into the worker configuration now. The board stores only its hash and cannot show it again.</p></div>
-      <Button className="w-full" type="submit" variant="primary" disabled={busy || !agentId.trim() || !area.trim() || !mission.trim() || !model.trim() || token.length < 32}>Add sleeping agent</Button>
+      <div>
+        <FieldLabel htmlFor="agent-token">One-time worker credential</FieldLabel>
+        <div className="flex gap-2">
+          <input id="agent-token" className={cn(inputClass, 'font-mono text-xs')} required minLength={32} spellCheck={false} aria-describedby="agent-token-help agent-token-copy-status" value={token} onChange={(event) => updateToken(event.target.value)} />
+          <Button size="sm" onClick={() => void copyCredential()}>Copy</Button>
+        </div>
+        <p id="agent-token-help" className="mt-1.5 text-[11px] leading-4 text-muted">Save this in the worker configuration now. The board stores only its hash and cannot show the credential again.</p>
+        <p id="agent-token-copy-status" role="status" aria-live="polite" aria-atomic="true" className={cn('mt-1.5 min-h-4 text-[11px] leading-4', copyStatus === 'copied' ? 'text-teal-700' : copyStatus === 'failed' ? 'text-urgent' : 'text-muted')}>
+          {copyStatus === 'copied' ? 'Credential copied. Save it in the worker configuration before continuing.' : copyStatus === 'failed' ? 'Copy failed. Select the credential and copy it manually.' : ''}
+        </p>
+      </div>
+      <label htmlFor="agent-token-saved" className="flex items-start gap-2.5 rounded-[10px] border border-line bg-line-soft/55 px-3.5 py-3 text-xs font-semibold leading-5 text-ink">
+        <input id="agent-token-saved" type="checkbox" className="mt-0.5 size-4 accent-teal-700" checked={credentialSaved} onChange={(event) => setCredentialSaved(event.target.checked)} />
+        <span>I saved this credential in the worker configuration. It cannot be recovered from the board.</span>
+      </label>
+      <Button className="w-full" type="submit" variant="primary" disabled={busy || !credentialSaved || !agentId.trim() || !area.trim() || !mission.trim() || !model.trim() || token.length < 32}>Add sleeping agent</Button>
     </form>
   );
 }
@@ -574,7 +658,7 @@ function TaskForm({ projectId, tasks, busy, onSubmit }: { projectId: string; tas
       <div><FieldLabel htmlFor="task-title">Task</FieldLabel><input id="task-title" className={inputClass} autoFocus required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Make invoice failures easier to recover from" /></div>
       <div><FieldLabel htmlFor="task-objective">User outcome</FieldLabel><textarea id="task-objective" className={cn(inputClass, 'min-h-24 resize-y py-3')} required value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="Describe the impact, not the implementation." /></div>
       <div><FieldLabel htmlFor="task-criteria">Done means</FieldLabel><textarea id="task-criteria" className={cn(inputClass, 'min-h-20 resize-y py-3')} required value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="Observable checks the engineer and manager can verify." /></div>
-      <div><FieldLabel htmlFor="task-workspaces">Workspace paths or repository refs</FieldLabel><textarea id="task-workspaces" className={cn(inputClass, 'min-h-20 resize-y py-3 font-mono text-xs')} required value={workspaceRefs} onChange={(event) => setWorkspaceRefs(event.target.value)} placeholder={'/absolute/path/to/repository\npackages/billing'} /><p className="mt-1.5 text-[11px] leading-4 text-muted">One per line. These are the only system areas the worker should place in this task's context.</p></div>
+      <div><FieldLabel htmlFor="task-workspaces">Workspace references · context only</FieldLabel><textarea id="task-workspaces" className={cn(inputClass, 'min-h-20 resize-y py-3 font-mono text-xs')} required value={workspaceRefs} onChange={(event) => setWorkspaceRefs(event.target.value)} placeholder={'/absolute/path/to/repository\npackages/billing'} /><p className="mt-1.5 text-[11px] leading-4 text-muted">One per line. These are bounded context and audit data; they do not create filesystem permissions.</p></div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div><FieldLabel htmlFor="task-parent">Parent task</FieldLabel><select id="task-parent" className={inputClass} value={parentTaskId} onChange={(event) => setParentTaskId(event.target.value)}><option value="">None</option>{tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></div>
         <div><FieldLabel htmlFor="task-minutes">Expected agent time</FieldLabel><select id="task-minutes" className={inputClass} value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>{agentMinuteOptions.map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></div>
@@ -615,7 +699,8 @@ export function BoardApp() {
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
 
-  const refresh = useCallback(async (quiet = false) => {
+  const refresh = useCallback(async (quiet = false, replaceInFlight = true) => {
+    if (!replaceInFlight && refreshController.current !== null) return;
     const sequence = ++refreshSequence.current;
     refreshController.current?.abort();
     const controller = new AbortController();
@@ -639,12 +724,14 @@ export function BoardApp() {
       setConnected(false);
       setError(caught instanceof Error ? caught.message : 'Could not connect to the task board');
     } finally {
+      if (refreshController.current === controller) refreshController.current = null;
       if (sequence === refreshSequence.current) setLoading(false);
     }
   }, [client]);
 
   useEffect(() => {
     refreshController.current?.abort();
+    refreshController.current = null;
     setSnapshot(null);
     setPage({ kind: 'tasks' });
     setSelectedTaskId(null);
@@ -654,16 +741,17 @@ export function BoardApp() {
     setError(null);
     void refresh();
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh(true);
+      if (document.visibilityState === 'visible') void refresh(true, false);
     }, 5_000);
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') void refresh(true);
+      if (document.visibilityState === 'visible') void refresh(true, false);
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
       refreshController.current?.abort();
+      refreshController.current = null;
       refreshSequence.current += 1;
     };
   }, [refresh]);
@@ -688,7 +776,7 @@ export function BoardApp() {
     }
   }, [connected, refresh]);
 
-  const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => taskStatusOrder[left.status] - taskStatusOrder[right.status] || right.updatedAt.localeCompare(left.updatedAt)), [snapshot]);
+  const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort(compareTasksByAttention), [snapshot]);
   const selectedTask = allTasks.find((task) => task.id === selectedTaskId) ?? allTasks[0];
   const selectedTaskAgents = snapshot?.agents.filter((agent) => agent.projectId === selectedTask?.projectId) ?? [];
   const taskMessages = snapshot?.messages.filter((message) => message.taskId === selectedTask?.id).sort((left, right) => left.createdAt.localeCompare(right.createdAt)) ?? [];
@@ -742,7 +830,7 @@ export function BoardApp() {
     content = (
       <>
         <header className="flex flex-col gap-4 border-b border-line bg-white px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
-          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-700">Company work</p><h1 className="mt-1 font-display text-2xl font-semibold tracking-[-0.035em] sm:text-[28px]">Task List</h1><p className="mt-1 text-sm text-muted">One durable queue across every project. Only a human assignment, answer, resume, or direct request wakes an agent.</p></div>
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-700">Company work</p><h1 className="mt-1 font-display text-[22px] font-semibold tracking-[-0.025em] sm:text-[26px]">Task List</h1><p className="mt-1 text-sm text-muted">One durable queue across every project. Only a human assignment, answer, resume, or direct request wakes an agent.</p></div>
           <div className="flex flex-wrap gap-2"><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button><Button size="sm" icon={<Plus size={15} />} disabled={!connected} onClick={() => openDialog('project')}>Project</Button><Button size="sm" variant="primary" icon={<Plus size={15} />} disabled={!connected || !contextProject} onClick={() => openDialog('task', contextProject?.id)}>Add task</Button></div>
         </header>
         <main className="mx-auto max-w-[1500px] p-4 sm:p-6 lg:p-8">
@@ -753,7 +841,31 @@ export function BoardApp() {
             </Card>
             <div className={cn(taskDetailOpen ? 'block' : 'hidden xl:block')}>
               {taskDetailOpen ? <Button className="mb-3 xl:hidden" size="sm" icon={<ArrowLeft size={15} />} onClick={() => setTaskDetailOpen(false)}>Back to task list</Button> : null}
-              {selectedTask ? <TaskDetail key={selectedTask.id} task={selectedTask} childTasks={allTasks.filter((task) => task.parentTaskId === selectedTask.id)} agents={selectedTaskAgents} messages={taskMessages} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={async (agentId, expectedAgentMinutes) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, expectedAgentMinutes, version: selectedTask.version })); }} onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }} onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }} onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }} onMessage={async (body) => { await mutate(() => client.addMessage(selectedTask.id, { body, version: selectedTask.version })); }} onPromoteProposal={async (proposal) => { await mutate(() => client.createTask(proposalChildInput(selectedTask, proposal))); }} onDecideHumanCheck={async (status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to inspect its durable progress record and human controls." /></Card>}
+              {selectedTask ? (
+                <TaskDetail
+                  key={selectedTask.id}
+                  task={selectedTask}
+                  childTasks={allTasks.filter((task) => task.parentTaskId === selectedTask.id)}
+                  agents={selectedTaskAgents}
+                  messages={taskMessages}
+                  questions={taskQuestions}
+                  runs={taskRuns}
+                  busy={busy || !connected}
+                  saving={busy}
+                  onAssign={async (agentId, expectedAgentMinutes) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, expectedAgentMinutes, version: selectedTask.version })); }}
+                  onAnswer={(questionId, answer) => mutate(() => client.answerQuestion(questionId, { answer }))}
+                  onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }}
+                  onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }}
+                  onMessage={(body) => mutate(() => client.addMessage(selectedTask.id, { body, version: selectedTask.version }))}
+                  onPromoteProposal={async (proposal) => { await mutate(() => client.createTask(proposalChildInput(selectedTask, proposal))); }}
+                  onDecideHumanCheck={async (status, rationale) => {
+                    const result = status === 'completed'
+                      ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}`
+                      : `Changes requested by human.\n\nRationale: ${rationale}`;
+                    return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result }));
+                  }}
+                />
+              ) : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to inspect its durable progress record and human controls." /></Card>}
             </div>
           </div>
         </main>
@@ -767,7 +879,7 @@ export function BoardApp() {
       {content}
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Create a project" description="A durable workspace for agent owners and their shared todo list."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
-      <Modal open={dialog === 'agent'} onClose={() => setDialog(null)} title={contextProject ? `Add an agent to ${contextProject.name}` : 'Add a system owner'} description="The identity persists. The model process only exists during a run.">{contextProject ? <AgentForm projectId={contextProject.id} busy={busy || !connected} onSubmit={createAgent} /> : null}</Modal>
+      <Modal open={dialog === 'agent'} onClose={() => setDialog(null)} title={contextProject ? `Add an agent to ${contextProject.name}` : 'Add a system owner'} description="The identity persists. The model process only exists during a run.">{contextProject ? <AgentForm projectId={contextProject.id} busy={busy || !connected} saving={busy} onSubmit={createAgent} /> : null}</Modal>
       <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={contextProject ? `Add a task to ${contextProject.name}` : 'Add a task'} description="Creating a task does not wake anyone. Assignment is a separate human action.">{contextProject ? <TaskForm projectId={contextProject.id} tasks={contextTasks} busy={busy || !connected} onSubmit={createTask} /> : null}</Modal>
       <Modal open={dialog === 'connection'} onClose={() => setDialog(null)} title="Task board connection" description="The UI can disappear without stopping agents or losing work."><ConnectionForm settings={connection} busy={busy} onSubmit={(next) => { window.sessionStorage.setItem('cicada.taskBoardUrl', next.baseUrl); window.sessionStorage.setItem('cicada.humanToken', next.token); setConnection(next); setDialog(null); }} /></Modal>
       {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}

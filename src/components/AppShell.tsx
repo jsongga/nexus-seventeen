@@ -44,7 +44,7 @@ const primaryNav: NavItem[] = [
 const systemNav: NavItem[] = [
   { id: 'team', label: 'Role team', icon: Users },
   { id: 'routing', label: 'Model policy', icon: BrainCircuit },
-  { id: 'audit', label: 'Audit trail', icon: FileClock },
+  { id: 'audit', label: 'Event history', icon: FileClock },
 ];
 
 const mobileNav: NavItem[] = [
@@ -196,10 +196,10 @@ export function AppShell({
               <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-[#e8b04b]">
                 <LockKeyhole size={15} />
               </span>
-              <span className="text-xs font-semibold">Production locked</span>
+              <span className="text-xs font-semibold">Release simulation</span>
             </div>
             <p className="mt-2 text-[11px] leading-4 text-white/58">
-              Only your signed release approval can unlock a deployment.
+              Records browser-local authorization; it cannot deploy.
             </p>
           </div>
 

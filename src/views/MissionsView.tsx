@@ -26,7 +26,7 @@ const missionStates: Record<
   engineering: { label: 'Engineer loop', shortLabel: 'Loop', tone: 'green' },
   manager_review: { label: 'Manager review', shortLabel: 'Review', tone: 'neutral' },
   human_review: { label: 'Human production check', shortLabel: 'Human', tone: 'amber' },
-  deployed: { label: 'Deployed', shortLabel: 'Live', tone: 'green' },
+  deployed: { label: 'Demo authorized', shortLabel: 'Authorized', tone: 'green' },
   blocked: { label: 'Blocked', shortLabel: 'Blocked', tone: 'red' },
 };
 
@@ -47,7 +47,7 @@ const pipelineStages: Array<{
   { key: 'engineering', label: 'Engineer loop', caption: 'Research → test' },
   { key: 'manager_review', label: 'Manager review', caption: 'Independent check' },
   { key: 'human_review', label: 'Production check', caption: 'Human gate', human: true },
-  { key: 'deployed', label: 'Live', caption: 'Broker release' },
+  { key: 'deployed', label: 'Authorized', caption: 'Browser-local' },
 ];
 
 const filters: Array<{ value: MissionFilter; label: string }> = [
@@ -96,7 +96,7 @@ export function MissionsView({
             <ShieldCheck size={16} />
             Controlled delivery
           </div>
-          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
+          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
             Deliver the outcome with every gate, dollar, and owner visible.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">

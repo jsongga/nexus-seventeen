@@ -139,6 +139,34 @@ describe('task-board protocol projection', () => {
     expect(snapshot.runs[0]).toMatchObject({ id: 'run-one', taskId: 'task-one', wakeReason: 'human_assignment' });
   });
 
+  it('keeps every authoritative open question when the recent-question window is capped', () => {
+    const olderOpen = {
+      ...question,
+      questionId: 'question-older-open',
+      askedAt: '2026-07-19T09:20:00.000Z',
+    };
+    const recentQuestions = Array.from({ length: 100 }, (_, index) => ({
+      ...question,
+      questionId: index === 0 ? question.questionId : `question-recent-${index}`,
+      question: `Recent answered question ${index}`,
+      status: 'answered',
+      answer: 'A recent-window answer.',
+      askedAt: new Date(Date.parse('2026-07-19T10:20:00.000Z') - index * 1_000).toISOString(),
+      answeredAt: '2026-07-19T10:21:00.000Z',
+    }));
+    const snapshot = parseBoardSnapshot({
+      ...boardSnapshot(),
+      openQuestions: [olderOpen, question],
+      recentQuestions,
+    });
+
+    expect(snapshot.questions).toHaveLength(101);
+    expect(snapshot.questions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'question-older-open', status: 'open' }),
+      expect.objectContaining({ id: 'question-one', status: 'open', answer: null }),
+    ]));
+  });
+
   it('rejects invalid versions, model status values, and non-15-minute estimates', () => {
     expect(() => parseBoardSnapshot({ ...boardSnapshot(), apiVersion: 'old' })).toThrow(/apiVersion/u);
     expect(() => parseBoardSnapshot({
@@ -225,7 +253,7 @@ describe('task-board HTTP client', () => {
       if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
       if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
       if (path.includes('/v1/tasks/task-one/messages?after=0')) {
-        return new Response(JSON.stringify({ messages: [{
+        return new Response(JSON.stringify({ apiVersion, messages: [{
           apiVersion,
           messageId: 'message-one',
           sequence: 1,
@@ -237,7 +265,7 @@ describe('task-board HTTP client', () => {
           kind: 'progress',
           body: 'Research complete; planning the smallest safe change.',
           createdAt: '2026-07-19T10:18:00.000Z',
-        }], cursor: 1 }));
+        }], cursor: 1, hasMore: false }));
       }
       return new Response('{}');
     });
@@ -268,6 +296,11 @@ describe('task-board HTTP client', () => {
     expect(calls.some(([url]) => url.endsWith('/v1/questions/question-one/answer'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/resume'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/interrupt'))).toBe(true);
+    const interrupt = calls.find(([url]) => url.endsWith('/v1/agents/billing-engineer/interrupt'));
+    expect(JSON.parse(String(interrupt?.[1]?.body))).toEqual({
+      runId: 'run-one',
+      reason: 'Human interrupted this agent from the task board',
+    });
     expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === 'Bearer human-token-value')).toBe(true);
     expect(calls.every(([, init]) => init?.credentials === 'omit' && init.redirect === 'error')).toBe(true);
   });
@@ -295,7 +328,9 @@ describe('task-board HTTP client', () => {
           recentEvents: [],
         }));
       }
-      if (path.includes('/messages?after=0')) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      if (path.includes('/messages?after=0')) {
+        return new Response(JSON.stringify({ apiVersion, messages: [], cursor: 0, hasMore: false }));
+      }
       return new Response('{}');
     });
     const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
@@ -336,5 +371,177 @@ describe('task-board HTTP client', () => {
       }],
     ]);
     expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
+  });
+
+  it('walks every message page, then refreshes from each task cursor', async () => {
+    const requestedAfters: number[] = [];
+    let refresh = 0;
+    const rawMessage = (sequence: number) => ({
+      apiVersion,
+      messageId: `message-${sequence}`,
+      sequence,
+      projectId: project.projectId,
+      taskId: task.taskId,
+      runId: run.runId,
+      actorType: 'agent',
+      actorId: agent.agentId,
+      kind: 'progress',
+      body: `Progress ${sequence}`,
+      createdAt: new Date(Date.parse('2026-07-19T10:15:00.000Z') + sequence * 1_000).toISOString(),
+    });
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects')) {
+        refresh += 1;
+        return new Response(JSON.stringify({ projects: [project] }));
+      }
+      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
+      const after = Number(new URL(path).searchParams.get('after'));
+      requestedAfters.push(after);
+      if (after === 0) {
+        return new Response(JSON.stringify({
+          apiVersion,
+          messages: Array.from({ length: 200 }, (_, index) => rawMessage(index + 1)),
+          cursor: 200,
+          // Legacy alpha boards omitted hasMore and capped pages at 200.
+        }));
+      }
+      if (after === 200) {
+        return new Response(JSON.stringify({ apiVersion, messages: [rawMessage(201)], cursor: 201, hasMore: false }));
+      }
+      expect(after).toBe(201);
+      return new Response(JSON.stringify({
+        apiVersion,
+        messages: refresh === 2 ? [rawMessage(202)] : [],
+        cursor: refresh === 2 ? 202 : 201,
+        hasMore: false,
+      }));
+    });
+    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+
+    expect((await client.getSnapshot()).messages).toHaveLength(201);
+    expect((await client.getSnapshot()).messages).toHaveLength(202);
+    expect(requestedAfters).toEqual([0, 200, 201]);
+  });
+
+  it('rejects message pages whose cursor cannot be trusted', async () => {
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
+      return new Response(JSON.stringify({
+        apiVersion,
+        messages: [{
+          apiVersion,
+          messageId: 'message-two',
+          sequence: 2,
+          projectId: project.projectId,
+          taskId: task.taskId,
+          runId: run.runId,
+          actorType: 'agent',
+          actorId: agent.agentId,
+          kind: 'progress',
+          body: 'This page advertises the wrong cursor.',
+          createdAt: '2026-07-19T10:18:00.000Z',
+        }],
+        cursor: 1,
+        hasMore: false,
+      }));
+    });
+    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+
+    await expect(client.getSnapshot()).rejects.toThrow(/cursor does not match/u);
+  });
+
+  it('rejects message pages that are not strictly ordered after the requested cursor', async () => {
+    const message = (sequence: number) => ({
+      apiVersion,
+      messageId: `message-${sequence}`,
+      sequence,
+      projectId: project.projectId,
+      taskId: task.taskId,
+      runId: run.runId,
+      actorType: 'agent',
+      actorId: agent.agentId,
+      kind: 'progress',
+      body: `Out-of-order message ${sequence}`,
+      createdAt: new Date(Date.parse('2026-07-19T10:18:00.000Z') + sequence * 1_000).toISOString(),
+    });
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
+      return new Response(JSON.stringify({
+        apiVersion,
+        messages: [message(2), message(1)],
+        cursor: 1,
+        hasMore: false,
+      }));
+    });
+    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+
+    await expect(client.getSnapshot()).rejects.toThrow(/strictly ordered/u);
+  });
+
+  it('drops message cursors for tasks that leave the authoritative board', async () => {
+    const requestedAfters: number[] = [];
+    let boardRequest = 0;
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith('/v1/projects/project-one/board')) {
+        boardRequest += 1;
+        return new Response(JSON.stringify({
+          ...boardSnapshot(),
+          tasks: boardRequest === 2 ? [] : [task],
+          openQuestions: [],
+          recentQuestions: [],
+          recentRuns: [],
+          recentEvents: [],
+        }));
+      }
+      const after = Number(new URL(path).searchParams.get('after'));
+      requestedAfters.push(after);
+      return new Response(JSON.stringify({
+        apiVersion,
+        messages: [{
+          apiVersion,
+          messageId: 'message-one',
+          sequence: 1,
+          projectId: project.projectId,
+          taskId: task.taskId,
+          runId: run.runId,
+          actorType: 'agent',
+          actorId: agent.agentId,
+          kind: 'progress',
+          body: 'A durable message for a task that temporarily leaves the board.',
+          createdAt: '2026-07-19T10:18:00.000Z',
+        }],
+        cursor: 1,
+        hasMore: false,
+      }));
+    });
+    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+
+    expect((await client.getSnapshot()).messages).toHaveLength(1);
+    expect((await client.getSnapshot()).messages).toHaveLength(0);
+    expect((await client.getSnapshot()).messages).toHaveLength(1);
+    expect(requestedAfters).toEqual([0, 0]);
+  });
+
+  it('rejects agent IDs that cannot be used as URL path segments before sending them', async () => {
+    const request = vi.fn();
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.createAgent({
+      projectId: project.projectId,
+      agentId: 'billing/engineer',
+      role: 'engineer',
+      area: 'Billing',
+      mission: 'Keep billing dependable.',
+      model: 'codex-model',
+      token: 'agent-token-0123456789-abcdefghijklmnopqrstuvwxyz',
+    })).rejects.toThrow(/URL-safe path-segment/u);
+    expect(request).not.toHaveBeenCalled();
   });
 });

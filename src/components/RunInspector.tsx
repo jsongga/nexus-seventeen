@@ -695,17 +695,17 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                     <ShieldCheck size={15} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold">Development sandbox</p>
+                    <p className="text-xs font-semibold">Illustrative workspace context</p>
                     <p className="mt-0.5 break-all font-mono text-[9px] text-muted">dev/{run.workItemId.toLowerCase()}</p>
                   </div>
-                  <Pill tone="green">Isolated</Pill>
+                  <Pill tone="green">Demo</Pill>
                 </div>
                 <div className="mt-3 grid gap-2 text-[10px] font-semibold sm:grid-cols-2">
                   <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-[#cfe2df] bg-[#f5faf9] px-3 text-teal-700">
-                    <TerminalSquare size={13} className="shrink-0" /> Repo, tools & tests allowed
+                    <TerminalSquare size={13} className="shrink-0" /> Intended: repo, tools & tests
                   </div>
                   <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-[#e5b7b3] bg-urgent-soft px-3 text-urgent">
-                    <LockKeyhole size={13} className="shrink-0" /> Prod keys & deployment denied
+                    <LockKeyhole size={13} className="shrink-0" /> Not verified by this browser demo
                   </div>
                 </div>
               </div>
@@ -715,9 +715,9 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
           <section className="mb-[max(0.5rem,env(safe-area-inset-bottom))] mt-4 flex items-start gap-3 rounded-[14px] border border-[#ead09b] bg-caution-soft p-4">
             <LockKeyhole size={17} className="mt-0.5 shrink-0 text-caution" />
             <div>
-              <p className="text-xs font-semibold text-[#684908]">A person is the production gate</p>
+              <p className="text-xs font-semibold text-[#684908]">Intended production gate</p>
               <p className="mt-1 text-[11px] leading-5 text-caution">
-                Managers can submit completed work for human review. No agent can approve or deploy it to production.
+                The product model requires a human release decision. This prototype does not enforce credentials or deploy to production.
               </p>
             </div>
           </section>

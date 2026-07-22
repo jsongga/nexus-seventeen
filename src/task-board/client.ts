@@ -29,6 +29,7 @@ const actorTypes = new Set(['human', 'agent'] as const);
 const messageKinds = new Set(['note', 'progress', 'proposal', 'result'] as const);
 const questionStatuses = new Set(['open', 'answered'] as const);
 const wakeReasons = new Set<WakeReason>(['human_assignment', 'human_answer', 'human_resume']);
+const routeSafeAgentId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 interface RawProject {
   projectId: string;
@@ -126,6 +127,19 @@ interface RawMessage {
   createdAt: string;
 }
 
+interface RawMessagePage {
+  messages: RawMessage[];
+  cursor: number;
+  hasMore: boolean;
+}
+
+interface MessageCacheEntry {
+  projectId: string;
+  taskCreatedAt: string;
+  cursor: number;
+  messages: RawMessage[];
+}
+
 interface RawBoard {
   project: RawProject;
   agents: RawAgent[];
@@ -146,6 +160,19 @@ function record(value: unknown, path: string): JsonRecord {
 function string(value: unknown, path: string): string {
   if (typeof value !== 'string') throw new Error(`${path} must be a string`);
   return value;
+}
+
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${path} must be a boolean`);
+  return value;
+}
+
+function agentIdentifier(value: unknown, path: string): string {
+  const parsed = string(value, path);
+  if (parsed.length > 128 || !routeSafeAgentId.test(parsed)) {
+    throw new Error(`${path} must be a URL-safe path-segment identifier`);
+  }
+  return parsed;
 }
 
 function nullableString(value: unknown, path: string): string | null {
@@ -202,7 +229,7 @@ function parseProject(value: unknown, path: string): RawProject {
 function parseAgent(value: unknown, path: string): RawAgent {
   const item = apiEntity(value, path);
   return {
-    agentId: string(item.agentId, `${path}.agentId`),
+    agentId: agentIdentifier(item.agentId, `${path}.agentId`),
     projectId: string(item.projectId, `${path}.projectId`),
     role: member(item.role, roles, `${path}.role`),
     area: string(item.area, `${path}.area`),
@@ -219,7 +246,9 @@ function parseTask(value: unknown, path: string): RawTask {
   if (expectedAgentMinutes % 15 !== 0) throw new Error(`${path}.expectedAgentMinutes must use a 15-minute interval`);
   const kind = member(item.kind, taskKinds, `${path}.kind`);
   const requiredRole = item.requiredRole === null ? null : member(item.requiredRole, roles, `${path}.requiredRole`);
-  const assignedAgentId = nullableString(item.assignedAgentId, `${path}.assignedAgentId`);
+  const assignedAgentId = item.assignedAgentId === null
+    ? null
+    : agentIdentifier(item.assignedAgentId, `${path}.assignedAgentId`);
   const assignedRole = item.assignedRole === null ? null : member(item.assignedRole, roles, `${path}.assignedRole`);
   if (kind === 'manager_review' ? requiredRole !== 'manager' : requiredRole !== null) {
     throw new Error(`${path}.requiredRole does not match its task kind`);
@@ -259,7 +288,7 @@ function parseQuestion(value: unknown, path: string): RawQuestion {
     questionId: string(item.questionId, `${path}.questionId`),
     projectId: string(item.projectId, `${path}.projectId`),
     taskId: string(item.taskId, `${path}.taskId`),
-    agentId: string(item.agentId, `${path}.agentId`),
+    agentId: agentIdentifier(item.agentId, `${path}.agentId`),
     question: string(item.question, `${path}.question`),
     status: member(item.status, questionStatuses, `${path}.status`),
     answer: nullableString(item.answer, `${path}.answer`),
@@ -274,7 +303,7 @@ function parseRun(value: unknown, path: string): RawRun {
   return {
     runId: string(item.runId, `${path}.runId`),
     projectId: string(item.projectId, `${path}.projectId`),
-    agentId: string(item.agentId, `${path}.agentId`),
+    agentId: agentIdentifier(item.agentId, `${path}.agentId`),
     taskId: nullableString(item.taskId, `${path}.taskId`),
     status: member(item.status, rawRunStatuses, `${path}.status`),
     startedAt: timestamp(item.startedAt, `${path}.startedAt`),
@@ -286,7 +315,7 @@ function parseInterrupt(value: unknown, path: string): RawInterrupt {
   const item = apiEntity(value, path);
   return {
     sequence: integer(item.sequence, `${path}.sequence`, 1),
-    agentId: string(item.agentId, `${path}.agentId`),
+    agentId: agentIdentifier(item.agentId, `${path}.agentId`),
     runId: nullableString(item.runId, `${path}.runId`),
     requestedAt: timestamp(item.requestedAt, `${path}.requestedAt`),
   };
@@ -325,17 +354,38 @@ function parseMessage(value: unknown, path: string): RawMessage {
   };
 }
 
+function parseMessagePage(value: unknown, path: string): RawMessagePage {
+  const item = record(value, path);
+  const messages = array(item.messages, `${path}.messages`, parseMessage);
+  return {
+    messages,
+    cursor: integer(item.cursor, `${path}.cursor`),
+    // Alpha v1 boards omitted hasMore. A full legacy page may have been
+    // truncated, so keep advancing until a short/empty page proves the end.
+    hasMore: item.hasMore === undefined ? messages.length === 200 : boolean(item.hasMore, `${path}.hasMore`),
+  };
+}
+
 function parseRawBoard(value: unknown): RawBoard {
   const item = apiEntity(value, 'board');
   const open = array(item.openQuestions, 'board.openQuestions', parseQuestion);
+  if (open.some((question) => question.status !== 'open')) {
+    throw new Error('board.openQuestions must contain only open questions');
+  }
   const recent = item.recentQuestions === undefined
     ? open
     : array(item.recentQuestions, 'board.recentQuestions', parseQuestion);
+  const questionsById = new Map(recent.map((question) => [question.questionId, question]));
+  for (const question of open) questionsById.set(question.questionId, question);
+  const questions = [...questionsById.values()].sort((left, right) => {
+    const time = right.askedAt.localeCompare(left.askedAt);
+    return time === 0 ? right.questionId.localeCompare(left.questionId) : time;
+  });
   return {
     project: parseProject(item.project, 'board.project'),
     agents: array(item.agents, 'board.agents', parseAgent),
     tasks: array(item.tasks, 'board.tasks', parseTask),
-    questions: recent,
+    questions,
     runs: array(item.recentRuns, 'board.recentRuns', parseRun),
     interrupts: array(item.recentInterrupts, 'board.recentInterrupts', parseInterrupt),
     events: array(item.recentEvents, 'board.recentEvents', parseEvent),
@@ -592,6 +642,18 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
+function sameRawMessage(left: RawMessage, right: RawMessage): boolean {
+  return left.messageId === right.messageId
+    && left.sequence === right.sequence
+    && left.projectId === right.projectId
+    && left.taskId === right.taskId
+    && left.actorType === right.actorType
+    && left.actorId === right.actorId
+    && left.kind === right.kind
+    && left.body === right.body
+    && left.createdAt === right.createdAt;
+}
+
 export function createTaskBoardClient(options: {
   baseUrl?: string;
   token?: string;
@@ -605,6 +667,7 @@ export function createTaskBoardClient(options: {
   const taskAgents = new Map<string, string>();
   const taskPolicies = new Map<string, Readonly<{ kind: TaskKind; requiredRole: AgentRole | null }>>();
   const runAgents = new Map<string, string>();
+  const messageCache = new Map<string, MessageCacheEntry>();
 
   async function request(path: string, init?: RequestInit): Promise<Response> {
     const response = await requestFetch(`${baseUrl}${path}`, {
@@ -635,6 +698,78 @@ export function createTaskBoardClient(options: {
     });
   }
 
+  function cacheMatchesTask(entry: MessageCacheEntry, task: RawTask): boolean {
+    return entry.projectId === task.projectId && entry.taskCreatedAt === task.createdAt;
+  }
+
+  function commitMessageCache(task: RawTask, candidate: MessageCacheEntry): MessageCacheEntry {
+    const current = messageCache.get(task.taskId);
+    if (current && cacheMatchesTask(current, task)) {
+      const commonLength = Math.min(current.messages.length, candidate.messages.length);
+      for (let index = 0; index < commonLength; index += 1) {
+        if (!sameRawMessage(current.messages[index]!, candidate.messages[index]!)) {
+          throw new Error(`Message history changed while refreshing task ${task.taskId}`);
+        }
+      }
+      if (current.cursor > candidate.cursor) return current;
+      if (current.cursor === candidate.cursor) {
+        if (current.messages.length !== candidate.messages.length) {
+          throw new Error(`Message cursor is ambiguous for task ${task.taskId}`);
+        }
+        return current;
+      }
+    }
+    messageCache.set(task.taskId, candidate);
+    return candidate;
+  }
+
+  async function syncTaskMessages(task: RawTask, signal?: AbortSignal): Promise<RawMessage[]> {
+    const prior = messageCache.get(task.taskId);
+    const cached = prior && cacheMatchesTask(prior, task) ? prior : undefined;
+    const messages = cached ? [...cached.messages] : [];
+    let after = cached?.cursor ?? 0;
+    const messageIds = new Set(messages.map((message) => message.messageId));
+    const sequences = new Set(messages.map((message) => message.sequence));
+
+    while (true) {
+      const responsePath = `messages response for task ${task.taskId}`;
+      const page = parseMessagePage(
+        await json(`/v1/tasks/${encodeURIComponent(task.taskId)}/messages?after=${after}`, { signal }),
+        responsePath,
+      );
+      if (page.messages.length > 200) throw new Error(`${responsePath}.messages exceeds the page limit`);
+      let previousSequence = after;
+      for (const message of page.messages) {
+        if (message.projectId !== task.projectId || message.taskId !== task.taskId) {
+          throw new Error(`${responsePath}.messages contains a message for another task`);
+        }
+        if (message.sequence <= previousSequence) {
+          throw new Error(`${responsePath}.messages must be strictly ordered after its cursor`);
+        }
+        if (messageIds.has(message.messageId) || sequences.has(message.sequence)) {
+          throw new Error(`${responsePath}.messages contains a duplicate message`);
+        }
+        previousSequence = message.sequence;
+        messageIds.add(message.messageId);
+        sequences.add(message.sequence);
+      }
+      const expectedCursor = page.messages.at(-1)?.sequence ?? after;
+      if (page.cursor !== expectedCursor) throw new Error(`${responsePath}.cursor does not match its messages`);
+      if (page.hasMore && page.messages.length === 0) throw new Error(`${responsePath} cannot continue without advancing its cursor`);
+      messages.push(...page.messages);
+      after = page.cursor;
+      if (!page.hasMore) break;
+      if (after === Number.MAX_SAFE_INTEGER) throw new Error(`${responsePath}.cursor cannot advance`);
+    }
+
+    return commitMessageCache(task, {
+      projectId: task.projectId,
+      taskCreatedAt: task.createdAt,
+      cursor: after,
+      messages,
+    }).messages;
+  }
+
   return {
     async getSnapshot(signal) {
       const projectsEnvelope = record(await json('/v1/projects', { signal }), 'projects response');
@@ -643,11 +778,16 @@ export function createTaskBoardClient(options: {
         return parseRawBoard(await json(`/v1/projects/${encodeURIComponent(project.projectId)}/board`, { signal }));
       });
       const tasks = boards.flatMap((board) => board.tasks);
-      const messageGroups = await mapWithConcurrency(tasks, 6, async (task) => {
-        const envelope = record(await json(`/v1/tasks/${encodeURIComponent(task.taskId)}/messages?after=0`, { signal }), 'messages response');
-        return array(envelope.messages, 'messages response.messages', parseMessage);
-      });
+      const taskIds = new Set<string>();
+      for (const task of tasks) {
+        if (taskIds.has(task.taskId)) throw new Error(`Task ${task.taskId} appears more than once in the board projection`);
+        taskIds.add(task.taskId);
+      }
+      const messageGroups = await mapWithConcurrency(tasks, 6, (task) => syncTaskMessages(task, signal));
       const rawMessages = messageGroups.flat();
+      for (const taskId of messageCache.keys()) {
+        if (!taskIds.has(taskId)) messageCache.delete(taskId);
+      }
       agentRoles.clear();
       questionVersions.clear();
       taskAgents.clear();
@@ -669,6 +809,7 @@ export function createTaskBoardClient(options: {
     },
     async createAgent(input) {
       const { projectId, ...body } = input;
+      agentIdentifier(body.agentId, 'agentId');
       await post(`/v1/projects/${encodeURIComponent(projectId)}/agents`, body);
     },
     async createTask(input) {
@@ -680,6 +821,7 @@ export function createTaskBoardClient(options: {
       });
     },
     async createAgentQuery(input) {
+      agentIdentifier(input.agentId, 'agentId');
       const prompt = input.prompt.trim();
       if (prompt.length === 0) throw new Error('Enter a question or request for this agent');
       if (prompt.length > 8_000) throw new Error('Agent questions and requests cannot exceed 8,000 characters');
@@ -701,6 +843,7 @@ export function createTaskBoardClient(options: {
       });
     },
     async assignTask(taskId, input) {
+      agentIdentifier(input.agentId, 'agentId');
       const role = agentRoles.get(input.agentId);
       if (!role) throw new Error('Refresh the board before assigning this agent');
       const policy = taskPolicies.get(taskId);
@@ -737,6 +880,7 @@ export function createTaskBoardClient(options: {
       if (taskPolicies.get(taskId)?.kind === 'human_check') throw new Error('Human checks cannot wake an agent');
       const agentId = taskAgents.get(taskId);
       if (!agentId) throw new Error('This task has no assigned agent to resume');
+      agentIdentifier(agentId, 'agentId');
       await post(
         `/v1/agents/${encodeURIComponent(agentId)}/resume`,
         { reason: 'Human explicitly resumed this task', taskId },
@@ -755,9 +899,10 @@ export function createTaskBoardClient(options: {
     async interruptRun(runId) {
       const agentId = runAgents.get(runId);
       if (!agentId) throw new Error('Refresh the board before interrupting this run');
+      agentIdentifier(agentId, 'agentId');
       await post(
         `/v1/agents/${encodeURIComponent(agentId)}/interrupt`,
-        { reason: 'Human interrupted this agent from the task board' },
+        { runId, reason: 'Human interrupted this agent from the task board' },
         `interrupt:${runId}`,
       );
     },

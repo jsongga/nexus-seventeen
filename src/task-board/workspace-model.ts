@@ -36,10 +36,36 @@ export function isExplicitPointOfContact(agent: BoardAgent): boolean {
   return agent.id === 'steward-poc' || pointOfContactTerms.test(`${agent.name} ${agent.area} ${agent.mission}`);
 }
 
+export function taskIsResumable(task: BoardTask): boolean {
+  return task.kind !== 'human_check'
+    && task.assignedAgentId !== null
+    && task.endedAt === null
+    && (task.status === 'blocked' || task.status === 'failed' || task.status === 'interrupted');
+}
+
 export function taskNeedsHumanAction(task: BoardTask): boolean {
-  return task.status === 'waiting_for_human'
+  return (task.status === 'waiting_for_human' && task.endedAt === null)
     || (task.kind === 'manager_review' && task.assignedAgentId === null && task.endedAt === null)
-    || (task.kind === 'human_check' && task.endedAt === null);
+    || (task.kind === 'human_check' && task.endedAt === null)
+    || taskIsResumable(task);
+}
+
+function taskAttentionRank(task: BoardTask): number {
+  if (task.status === 'waiting_for_human' && task.endedAt === null) return 0;
+  if (task.kind === 'human_check' && task.endedAt === null) return 1;
+  if (task.kind === 'manager_review' && task.assignedAgentId === null && task.endedAt === null) return 2;
+  if (taskIsResumable(task)) return 3;
+  if (task.status === 'running') return 4;
+  if (task.status === 'queued') return 5;
+  if (task.status === 'proposed' || task.status === 'backlog') return 6;
+  if (task.status === 'blocked' || task.status === 'failed' || task.status === 'interrupted') return 7;
+  return 8;
+}
+
+export function compareTasksByAttention(left: BoardTask, right: BoardTask): number {
+  return taskAttentionRank(left) - taskAttentionRank(right)
+    || right.updatedAt.localeCompare(left.updatedAt)
+    || left.id.localeCompare(right.id);
 }
 
 export function isWebLink(value: string): boolean {

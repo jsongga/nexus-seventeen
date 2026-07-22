@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+const ROUTE_SEGMENT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MAX_CONTEXT_BYTES = 64 * 1024;
 const MAX_OUTCOME_BYTES = 64 * 1024;
 const MAX_AREA_MEMORY_ITEMS = 8;
@@ -32,6 +33,21 @@ function exact(value: unknown, keys: readonly string[], label: string): Record<s
 function identifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) throw new Error(`${label} is invalid`);
   return value;
+}
+
+function routeSegmentIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !ROUTE_SEGMENT_IDENTIFIER.test(value)) {
+    throw new Error(`${label} must be a URL-safe path-segment identifier`);
+  }
+  return value;
+}
+
+export function parseTaskWorkerIdentity(value: unknown): TaskWorkerIdentity {
+  const item = exact(value, ["workerId", "agentId"], "Task worker identity");
+  return Object.freeze({
+    workerId: identifier(item.workerId, "workerId"),
+    agentId: routeSegmentIdentifier(item.agentId, "agentId"),
+  });
 }
 
 function prose(value: unknown, label: string, maximum: number): string {

@@ -27,6 +27,7 @@ import {
   type TaskEvent,
   type TaskKind,
   type TaskMessage,
+  type TaskMessagePage,
   type TaskStatus,
   type UpdateTaskRequest,
   type Wakeup,
@@ -34,6 +35,7 @@ import {
 import { canonicalJson, sha256, tokenMatches } from "./canonical.js";
 import type { TaskBoardConfig } from "./config.js";
 import { conflict, TaskBoardError } from "./errors.js";
+import { isRouteSafeAgentIdentifier, parseAgentIdentifier } from "./schema.js";
 import { TaskBoardStore } from "./store.js";
 
 type Row = Record<string, SQLOutputValue>;
@@ -265,7 +267,32 @@ export class TaskBoard {
   }
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {
-    return new TaskBoard(config, await TaskBoardStore.open(config.dbPath));
+    const store = await TaskBoardStore.open(config.dbPath);
+    try {
+      const hasAgentTable = store.db.prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'agents'",
+      ).get();
+      let unsafeAgent = false;
+      if (hasAgentTable) {
+        for (const row of store.db.prepare("SELECT agent_id FROM agents").iterate()) {
+          if (!isRouteSafeAgentIdentifier(row.agent_id)) {
+            unsafeAgent = true;
+            break;
+          }
+        }
+      }
+      if (unsafeAgent) {
+        throw new TaskBoardError(
+          500,
+          "AGENT_ID_MIGRATION_REQUIRED",
+          "Task board contains legacy agent IDs that cannot be routed. Back up this database, configure a fresh database path, and recreate the board with URL-safe agent IDs.",
+        );
+      }
+      return new TaskBoard(config, store);
+    } catch (error) {
+      store.close();
+      throw error;
+    }
   }
 
   authenticateAgent(token: string | undefined, expectedAgentId?: string): AgentProfile {
@@ -298,6 +325,7 @@ export class TaskBoard {
   }
 
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {
+    const agentId = parseAgentIdentifier(request.agentId);
     this.#requireProject(projectId);
     const tokenHash = sha256(request.token);
     if (tokenHash === sha256(this.#config.humanToken)) {
@@ -310,7 +338,7 @@ export class TaskBoard {
           INSERT INTO agents(agent_id, project_id, role, area, mission, model, token_hash, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          request.agentId,
+          agentId,
           projectId,
           request.role,
           request.area,
@@ -320,7 +348,7 @@ export class TaskBoard {
           now,
         );
         this.#insertEvent(projectId, null, { type: "human", id: this.#config.humanPrincipal }, "agent_profile_created", {
-          agentId: request.agentId,
+          agentId,
           role: request.role,
           area: request.area,
           model: request.model,
@@ -332,7 +360,7 @@ export class TaskBoard {
       }
       throw error;
     }
-    return this.#requireAgent(request.agentId);
+    return this.#requireAgent(agentId);
   }
 
   createTask(projectId: string, request: CreateTaskRequest): BoardTask {
@@ -654,25 +682,29 @@ export class TaskBoard {
       if (stringValue(prior, "request_hash") !== hash) throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another interrupt");
       return { interrupt: interruptFromRow(prior), duplicate: true };
     }
-    const active = this.#store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
-    const runId = active ? stringValue(active, "run_id") : null;
     const now = exactNow(this.#config.now);
     const interruptId = randomUUID();
     this.#store.transaction(() => {
+      const active = this.#store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+      if (!active) throw conflict("RUN_NOT_ACTIVE", "The requested run is no longer active");
+      const activeRunId = stringValue(active, "run_id");
+      if (activeRunId !== request.runId) {
+        throw conflict("RUN_MISMATCH", "The agent is now running a different run");
+      }
       this.#store.db.prepare(`
         INSERT INTO interrupts(
           interrupt_id, project_id, agent_id, run_id, idempotency_key, request_hash, reason, requested_by, requested_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(interruptId, agent.projectId, agentId, runId, idempotencyKey, hash, request.reason, this.#config.humanPrincipal, now);
+      `).run(interruptId, agent.projectId, agentId, request.runId, idempotencyKey, hash, request.reason, this.#config.humanPrincipal, now);
       this.#insertEvent(agent.projectId, null, { type: "human", id: this.#config.humanPrincipal }, "agent_interrupt_requested", {
         interruptId,
         agentId,
-        runId,
+        runId: request.runId,
         reason: request.reason,
       }, now);
     });
     const interrupt = interruptFromRow(this.#store.db.prepare("SELECT * FROM interrupts WHERE interrupt_id = ?").get(interruptId)!);
-    if (runId !== null) this.#interruptEvents.emit(runId);
+    this.#interruptEvents.emit(request.runId);
     return { interrupt, duplicate: false };
   }
 
@@ -882,6 +914,23 @@ export class TaskBoard {
 
   snapshot(projectId: string): BoardSnapshot {
     const project = this.#requireProject(projectId);
+    const activeRuns = this.#store.db.prepare(`
+      SELECT * FROM runs
+      WHERE project_id = ? AND status = 'active'
+      ORDER BY started_at DESC, run_id DESC
+    `).all(projectId).map(runFromRow);
+    const recentTerminalRuns = this.#store.db.prepare(`
+      SELECT * FROM runs
+      WHERE project_id = ? AND status <> 'active'
+      ORDER BY started_at DESC, run_id DESC
+      LIMIT 100
+    `).all(projectId).map(runFromRow);
+    const recentRunsById = new Map(recentTerminalRuns.map((run) => [run.runId, run]));
+    for (const run of activeRuns) recentRunsById.set(run.runId, run);
+    const recentRuns = [...recentRunsById.values()].sort((left, right) => {
+      const startedAt = right.startedAt.localeCompare(left.startedAt);
+      return startedAt === 0 ? right.runId.localeCompare(left.runId) : startedAt;
+    });
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       project,
@@ -889,17 +938,28 @@ export class TaskBoard {
       tasks: Object.freeze(this.#store.db.prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, task_id").all(projectId).map(taskFromRow)),
       openQuestions: Object.freeze(this.#store.db.prepare("SELECT * FROM questions WHERE project_id = ? AND status = 'open' ORDER BY asked_at, question_id").all(projectId).map(questionFromRow)),
       recentQuestions: Object.freeze(this.#store.db.prepare("SELECT * FROM questions WHERE project_id = ? ORDER BY asked_at DESC, question_id DESC LIMIT 100").all(projectId).map(questionFromRow)),
-      recentRuns: Object.freeze(this.#store.db.prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 100").all(projectId).map(runFromRow)),
+      recentRuns: Object.freeze(recentRuns),
       recentInterrupts: Object.freeze(this.#store.db.prepare("SELECT * FROM interrupts WHERE project_id = ? ORDER BY sequence DESC LIMIT 100").all(projectId).map(interruptFromRow)),
       recentEvents: Object.freeze(this.#store.db.prepare("SELECT * FROM task_events WHERE project_id = ? ORDER BY sequence DESC LIMIT 200").all(projectId).map(eventFromRow)),
     });
   }
 
   listMessages(taskId: string, after = 0): readonly TaskMessage[] {
+    return this.listMessagePage(taskId, after).messages;
+  }
+
+  listMessagePage(taskId: string, after = 0): TaskMessagePage {
     this.#requireTask(taskId);
-    return Object.freeze(this.#store.db.prepare(`
-      SELECT * FROM task_messages WHERE task_id = ? AND sequence > ? ORDER BY sequence LIMIT 200
-    `).all(taskId, after).map(messageFromRow));
+    const rows = this.#store.db.prepare(`
+      SELECT * FROM task_messages WHERE task_id = ? AND sequence > ? ORDER BY sequence LIMIT 201
+    `).all(taskId, after);
+    const hasMore = rows.length > 200;
+    const messages = rows.slice(0, 200).map(messageFromRow);
+    return Object.freeze({
+      messages: Object.freeze(messages),
+      cursor: messages.at(-1)?.sequence ?? after,
+      hasMore,
+    });
   }
 
   requireTask(taskId: string): BoardTask {

@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkerJournalStore } from "../src/journal.js";
-import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "../src/schema.js";
+import { emptyTaskWorkerJournal, parseBoundedAgentContext, parseTaskWorkerIdentity } from "../src/schema.js";
 import { TaskWorker } from "../src/worker.js";
 import type { AgentRunOutcome, TaskWorkerJournal } from "../src/types.js";
 import {
@@ -29,6 +29,17 @@ async function worker(root: string, board: FakeBoard, launcher: FakeLauncher): P
     now: () => new Date(NOW),
   });
 }
+
+test("worker identities require a route-safe agent ID", () => {
+  assert.deepEqual(parseTaskWorkerIdentity({ workerId: "worker/one", agentId: "engineer-one" }), {
+    workerId: "worker/one",
+    agentId: "engineer-one",
+  });
+  assert.throws(
+    () => parseTaskWorkerIdentity({ workerId: "worker-one", agentId: "engineering/platform" }),
+    /URL-safe path-segment/u,
+  );
+});
 
 test("idle dispatch long-polls the board without starting a model process", async () => {
   const root = await tempRoot();

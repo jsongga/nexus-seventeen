@@ -14,6 +14,7 @@ import {
   sendJson,
 } from "./http.js";
 import {
+  parseAgentIdentifier,
   parseAgentMessage,
   parseAnswer,
   parseClaim,
@@ -176,8 +177,7 @@ export class TaskBoardService {
           throw new TaskBoardError(403, "TASK_NOT_ASSIGNED", "Task is not assigned to this agent");
         }
       }
-      const messages = this.#board.listMessages(taskId, after);
-      sendJson(response, 200, { messages, cursor: messages.at(-1)?.sequence ?? after });
+      sendJson(response, 200, this.#board.listMessagePage(taskId, after));
       return;
     }
     const questionMatch = /^\/v1\/tasks\/([^/]+)\/questions$/u.exec(url.pathname);
@@ -205,7 +205,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.resumeAgent(
-        parseIdentifier(resumeMatch[1], "agentId"),
+        parseAgentIdentifier(resumeMatch[1]),
         parseResume(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -217,7 +217,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.interruptAgent(
-        parseIdentifier(interruptMatch[1], "agentId"),
+        parseAgentIdentifier(interruptMatch[1]),
         parseInterrupt(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -226,7 +226,7 @@ export class TaskBoardService {
     }
     const claimMatch = /^\/v1\/agents\/([^/]+)\/runs\/claim$/u.exec(url.pathname);
     if (claimMatch && request.method === "POST") {
-      const agentId = parseIdentifier(claimMatch[1], "agentId");
+      const agentId = parseAgentIdentifier(claimMatch[1]);
       this.#board.authenticateAgent(bearerToken(request), agentId);
       const waitMs = exactIntegerQuery(url, ["waitMs"], "waitMs", 0, 30_000);
       const claim = parseClaim(await readJsonBody(request, this.config.maxBodyBytes));

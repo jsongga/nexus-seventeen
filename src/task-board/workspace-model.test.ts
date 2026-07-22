@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isExplicitPointOfContact, recentUpdatesForProject, resourcesForProject, selectPointOfContact, taskNeedsHumanAction } from './workspace-model';
+import { compareTasksByAttention, isExplicitPointOfContact, recentUpdatesForProject, resourcesForProject, selectPointOfContact, taskIsResumable, taskNeedsHumanAction } from './workspace-model';
 import type { BoardAgent, BoardProject, BoardSnapshot, BoardTask } from './types';
 
 const project: BoardProject = {
@@ -63,10 +63,38 @@ describe('workspace view model', () => {
     expect(selectPointOfContact(agents.filter((item) => item.id !== 'steward-poc'))?.id).toBe('first');
   });
 
-  it('surfaces unassigned manager review and human release work as human attention', () => {
+  it('counts every unfinished action that needs a human and excludes terminal lookalikes', () => {
     expect(taskNeedsHumanAction(task({ kind: 'manager_review', requiredRole: 'manager', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }))).toBe(true);
     expect(taskNeedsHumanAction(task({ kind: 'human_check', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }))).toBe(true);
+    expect(taskNeedsHumanAction(task({ status: 'waiting_for_human', endedAt: null }))).toBe(true);
+    for (const status of ['blocked', 'failed', 'interrupted'] as const) {
+      expect(taskIsResumable(task({ status, endedAt: null }))).toBe(true);
+      expect(taskNeedsHumanAction(task({ status, endedAt: null }))).toBe(true);
+      expect(taskNeedsHumanAction(task({ status, endedAt: '2026-07-19T10:12:00.000Z' }))).toBe(false);
+    }
     expect(taskNeedsHumanAction(task({ kind: 'work', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }))).toBe(false);
+  });
+
+  it('orders human decisions and resumable work ahead of active and backlog work', () => {
+    const tasks = [
+      task({ id: 'completed', status: 'completed' }),
+      task({ id: 'backlog', status: 'backlog', endedAt: null }),
+      task({ id: 'running', status: 'running', endedAt: null }),
+      task({ id: 'resumable', status: 'blocked', endedAt: null }),
+      task({ id: 'manager', kind: 'manager_review', requiredRole: 'manager', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }),
+      task({ id: 'human-check', kind: 'human_check', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }),
+      task({ id: 'question', status: 'waiting_for_human', endedAt: null }),
+    ];
+
+    expect(tasks.sort(compareTasksByAttention).map((item) => item.id)).toEqual([
+      'question',
+      'human-check',
+      'manager',
+      'resumable',
+      'running',
+      'backlog',
+      'completed',
+    ]);
   });
 
   it('derives honest project documents, links, setup references, and outcomes', () => {

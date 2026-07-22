@@ -1,5 +1,5 @@
 import {
-  ArrowRight,
+  ChevronRight,
   CircleAlert,
   Clock3,
   FileText,
@@ -55,9 +55,9 @@ export function ImpactSummaryCard({
           </span>
           <div>
             <p className="text-[12px] font-semibold text-teal-700">
-              Low-cost impact observer
+              Plain-language summary
             </p>
-            <p className="mt-0.5 text-[10px] text-[#62716f]">Read-only, revisioned, and event-driven</p>
+            <p className="mt-0.5 text-[10px] text-[#62716f]">Updates automatically as the work progresses</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -104,8 +104,8 @@ export function ImpactSummaryCard({
             </p>
             <p
               className={cn(
-                'mt-1.5 font-display font-semibold leading-snug tracking-[-0.02em] text-ink',
-                compact ? 'text-[15px]' : 'text-lg sm:text-xl',
+                'mt-1.5 font-display font-medium leading-snug tracking-[-0.02em] text-ink',
+                compact ? 'text-[14px]' : 'text-[15px] sm:text-[16px]',
               )}
             >
               {summary.userImpact}
@@ -116,20 +116,20 @@ export function ImpactSummaryCard({
           </div>
         </div>
 
-        <div className={cn('grid gap-3', compact ? 'mt-4' : 'mt-5 md:grid-cols-2')}>
-          <div className="rounded-[10px] border border-line bg-[#fafbfb] p-3.5">
+        <div className={cn('grid gap-x-6 gap-y-3', compact ? 'mt-3.5' : 'mt-4 md:grid-cols-2')}>
+          <div>
             <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
               <FileText size={13} className="text-teal-700" />
               Where things stand
             </div>
-            <p className="mt-2 text-[11px] leading-5 text-[#4f5964]">{summary.plainStatus}</p>
+            <p className="mt-1.5 text-[11px] leading-5 text-[#4f5964]">{summary.plainStatus}</p>
           </div>
-          <div className="rounded-[10px] border border-line bg-[#fafbfb] p-3.5">
+          <div>
             <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
               <Target size={13} className="text-teal-700" />
               Next user-visible outcome
             </div>
-            <p className="mt-2 text-[11px] leading-5 text-[#4f5964]">{summary.nextMilestone}</p>
+            <p className="mt-1.5 text-[11px] leading-5 text-[#4f5964]">{summary.nextMilestone}</p>
           </div>
         </div>
 
@@ -140,22 +140,28 @@ export function ImpactSummaryCard({
       </div>
 
       <footer className={cn('border-t border-line bg-[#fafbfb]', compact ? 'px-4 py-3' : 'px-5 py-3.5 sm:px-6')}>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-muted">
-          <span className="inline-flex items-center gap-1.5">
-            <Clock3 size={12} className="text-teal-700" /> Refreshed {summary.refreshedAt}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+          <span className="inline-flex items-center gap-1.5 font-medium text-[#4f5964]">
+            <Clock3 size={12} className="text-teal-700" /> Updated {summary.refreshedAt}
           </span>
-          <span>Revision {summary.revision}</span>
-          <span>{summary.model}</span>
-          <span>Through event {summary.sourceThroughSequence}</span>
-          <span>{summary.sourceUpdates} source {summary.sourceUpdates === 1 ? 'update' : 'updates'}</span>
+          <span className="text-[#9aa2ab]">·</span>
+          <span>A plain-language summary — not a test result or release evidence.</span>
         </div>
-        <p className="mt-2 break-words font-mono text-[9px] text-muted">
-          Sources: {summary.sourceRefs.join(' · ')} · Written by {summary.generatedBy}
-        </p>
-        <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-caution">
-          <ArrowRight size={11} className="mt-0.5 shrink-0" />
-          Concise interpretation only—not test, review, approval, or release evidence.
-        </p>
+        <details className="group mt-2">
+          <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-[11px] font-semibold text-teal-700 [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+            Details
+          </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-muted">
+            <span>Revision {summary.revision}</span>
+            <span>{summary.model}</span>
+            <span>Through event {summary.sourceThroughSequence}</span>
+            <span>{summary.sourceUpdates} source {summary.sourceUpdates === 1 ? 'update' : 'updates'}</span>
+          </div>
+          <p className="mt-2 break-words font-mono text-[9px] text-muted">
+            Sources: {summary.sourceRefs.join(' · ')} · Written by {summary.generatedBy}
+          </p>
+        </details>
       </footer>
     </Card>
   );

@@ -77,6 +77,12 @@ export interface TaskMessage {
   readonly createdAt: string;
 }
 
+export interface TaskMessagePage {
+  readonly messages: readonly TaskMessage[];
+  readonly cursor: number;
+  readonly hasMore: boolean;
+}
+
 export interface TaskEvent {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly eventId: string;
@@ -275,6 +281,7 @@ export interface ResumeAgentRequest {
 }
 
 export interface InterruptAgentRequest {
+  readonly runId: string;
   readonly reason: string;
 }
 

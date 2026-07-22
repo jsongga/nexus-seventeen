@@ -1114,7 +1114,7 @@ function ConnectedWorkspace({
             <p className="text-xs font-bold uppercase tracking-[0.15em] text-teal-700">
               {session.workspaceId}
             </p>
-            <h1 className="mt-2 text-3xl font-extrabold tracking-[-0.04em] text-ink sm:text-4xl">
+            <h1 className="mt-2 text-2xl font-bold tracking-[-0.03em] text-ink sm:text-3xl">
               Agent operations
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted sm:text-base">
@@ -1395,7 +1395,7 @@ function ConnectedWorkspace({
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-700">Autodiscovery</p>
-              <h2 className="mt-1 text-2xl font-extrabold tracking-[-0.03em] text-ink">Registered agents</h2>
+              <h2 className="mt-1 text-xl font-bold tracking-[-0.02em] text-ink">Registered agents</h2>
             </div>
             <p className="text-sm text-muted">Every lane comes from the current control-plane snapshot.</p>
           </div>
@@ -1550,7 +1550,7 @@ export function LiveRuntimeApp() {
 
         <section className={panelClassName('p-6 sm:p-8')}>
           <p className="text-xs font-bold uppercase tracking-[0.15em] text-teal-700">Live operator access</p>
-          <h1 className="mt-2 text-3xl font-extrabold tracking-[-0.04em]">Find every working agent.</h1>
+          <h1 className="mt-2 text-2xl font-bold tracking-[-0.03em] sm:text-3xl">Find every working agent.</h1>
           <p className="mt-3 text-sm leading-6 text-muted">
             The browser is a disposable view over the control plane. Closing this page never stops the supervisors or their agents.
           </p>
@@ -1679,7 +1679,7 @@ export function LiveRuntimeApp() {
         </section>
 
         <p className="mt-5 text-center text-xs text-muted">
-          Looking for the visual prototype? <a className="font-bold text-teal-700 underline underline-offset-2" href="/">Open the demo</a>
+          Looking for the visual prototype? <a className="font-bold text-teal-700 underline underline-offset-2" href="/demo">Open the demo</a>
         </p>
       </div>
     </main>

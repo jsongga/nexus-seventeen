@@ -485,6 +485,9 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
     const task = await createTask(item, "Interrupt unsafe retry work");
     const dispatch = item.worker.dispatchOnce();
     await until(() => item.launcher.handles.length === 1, "real HTTP board agent launch");
+    const active = await snapshot(item);
+    const activeRun = active.recentRuns.find((candidate) => candidate.taskId === task.taskId && candidate.status === "active");
+    assert.ok(activeRun);
 
     const reason = "Stop now; a human is revising the task scope.";
     await request(
@@ -493,7 +496,7 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
       "POST",
       HUMAN_TOKEN,
       201,
-      { reason },
+      { runId: activeRun.runId, reason },
       "worker-interrupt-0001",
     );
     assert.equal(await dispatch, true);

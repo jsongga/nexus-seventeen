@@ -5,6 +5,7 @@ import {
   parseAgentRunOutcome,
   parseBoundedAgentContext,
   parseTaskWakeClaim,
+  parseTaskWorkerIdentity,
 } from "./schema.js";
 import {
   TASK_WAKE_REASONS,
@@ -192,8 +193,10 @@ export class TaskWorker {
   }
 
   static async create(options: TaskWorkerOptions): Promise<TaskWorker> {
-    const store = await TaskWorkerJournalStore.open(options.statePath, options.identity);
-    return new TaskWorker(options, store);
+    const identity = parseTaskWorkerIdentity(options.identity);
+    const normalized = { ...options, identity };
+    const store = await TaskWorkerJournalStore.open(options.statePath, identity);
+    return new TaskWorker(normalized, store);
   }
 
   get snapshot(): TaskWorkerSnapshot {

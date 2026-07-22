@@ -32,8 +32,8 @@ export function ProductionApprovalModal({
     <Modal
       open
       onClose={onClose}
-      title="Authorize production"
-      description="A final human checkpoint for one exact release candidate."
+      title="Simulate release authorization"
+      description="This browser-local demo records a final human decision for one exact release candidate. It does not deploy."
     >
       <div className="space-y-5 px-5 py-5 sm:px-6">
         <div className="rounded-[14px] border border-ink bg-ink p-4">
@@ -42,9 +42,9 @@ export function ProductionApprovalModal({
               <LockKeyhole size={17} />
             </span>
             <div>
-              <p className="text-sm font-bold text-white">Agents cannot cross this boundary</p>
+              <p className="text-sm font-bold text-white">No deployment occurs in this demo</p>
               <p className="mt-1 text-[12px] leading-5 text-[#d7dce1]">
-                Your approval is bound to the verified release digests below and can be consumed only once.
+                The simulated approval is bound to the release digests below and can be consumed only once in this browser.
               </p>
             </div>
           </div>
@@ -57,7 +57,7 @@ export function ProductionApprovalModal({
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Commit</p>
               <p className="mt-0.5 break-all font-mono text-[11px] font-medium text-ink">{approval.release.commit}</p>
             </div>
-            <Pill tone="green">Verified</Pill>
+            <Pill tone="green">Demo evidence</Pill>
           </div>
           <div className="flex items-center gap-3 border-b border-[#eef0f2] p-4">
             <Fingerprint size={17} className="text-teal-700" />
@@ -93,7 +93,7 @@ export function ProductionApprovalModal({
 
         <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
           <Check size={14} className="text-teal-700" />
-          Approval will be attributed to Jordan Lee and expire after one deployment.
+          The demo attributes this decision to Jordan Lee and consumes it once in this browser.
         </div>
 
         <div className="grid grid-cols-2 gap-3 pt-1">
@@ -107,7 +107,7 @@ export function ProductionApprovalModal({
             onClick={() => onConfirm(approval)}
             icon={<Fingerprint size={16} />}
           >
-            Approve & deploy
+            Record authorization
           </Button>
         </div>
       </div>

@@ -89,7 +89,7 @@ test('the default app reads real board state and assignment is an explicit human
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}` && route.request().method() === 'PATCH') {
@@ -109,7 +109,16 @@ test('the default app reads real board state and assignment is an explicit human
   await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toBeVisible();
   await companyRail.getByRole('button', { name: 'Task List' }).click();
+
+  await page.getByRole('button', { name: 'Add task' }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task to Cicada platform' });
+  await expect(taskDialog.getByLabel('Workspace references · context only')).toBeVisible();
+  await expect(taskDialog.getByText(/bounded context and audit data.*do not create filesystem permissions/iu)).toBeVisible();
+  await taskDialog.getByRole('button', { name: 'Close dialog' }).click();
+
   await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
+  await expect(page.getByRole('heading', { name: 'Workspace references · context only' })).toBeVisible();
+  await expect(page.getByText('These references do not create filesystem permissions.', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Assign and wake agent' }).click();
 
   expect(assignment).toEqual({
@@ -146,7 +155,7 @@ test('the Cicada sidebar navigates company work and an agent message is one atom
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${projectTask.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/tasks` && request.method() === 'POST') {
@@ -217,6 +226,300 @@ test('the Cicada sidebar navigates company work and an agent message is one atom
   }]);
 });
 
+test('failed answers and notes preserve their drafts until the board saves them', async ({ page }) => {
+  const waitingTask = {
+    ...task,
+    status: 'blocked',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    startedAt: '2026-07-19T18:10:00.000Z',
+    expectedCompletedAt: '2026-07-19T18:40:00.000Z',
+    version: 2,
+  };
+  const question = {
+    apiVersion,
+    questionId: 'question-recovery-method',
+    projectId: project.projectId,
+    taskId: waitingTask.taskId,
+    agentId: agent.agentId,
+    runId: 'run-waiting-for-human',
+    question: 'Should recovery preserve the previous payment method?',
+    status: 'open',
+    answer: null,
+    askedAt: '2026-07-19T18:20:00.000Z',
+    answeredAt: null,
+    answeredBy: null,
+    version: 1,
+  };
+  let failAnswer = true;
+  let failNote = true;
+  let expectedAgentMinutes = waitingTask.expectedAgentMinutes;
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: { ...board(), tasks: [{ ...waitingTask, expectedAgentMinutes }], openQuestions: [question], recentQuestions: [question] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${waitingTask.taskId}/messages` && request.method() === 'GET') {
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/questions/${question.questionId}/answer`) {
+      if (failAnswer) {
+        await route.fulfill({ status: 503, json: { error: { code: 'UNAVAILABLE', message: 'Question service unavailable' } } });
+      } else {
+        await route.fulfill({ status: 201, json: {} });
+      }
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${waitingTask.taskId}/messages` && request.method() === 'POST') {
+      if (failNote) {
+        await route.fulfill({ status: 503, json: { error: { code: 'UNAVAILABLE', message: 'Note service unavailable' } } });
+      } else {
+        await route.fulfill({ status: 201, json: {} });
+      }
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
+  const answer = page.getByLabel('Your answer');
+  const note = page.getByLabel('Add context without waking the agent');
+  await expect(answer).toHaveAttribute('aria-describedby', /human-question-question-recovery-method/u);
+  await expect(page.locator('[aria-busy="false"]').filter({ has: answer })).toHaveCount(1);
+  await answer.fill('Yes, preserve it.');
+  await note.fill('Keep the current audit trail.');
+  expectedAgentMinutes = 45;
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(answer).toHaveValue('Yes, preserve it.');
+  await expect(note).toHaveValue('Keep the current audit trail.');
+
+  await page.getByRole('button', { name: 'Answer and wake agent' }).click();
+  await expect(page.getByText('Question service unavailable', { exact: false })).toBeVisible();
+  await expect(answer).toHaveValue('Yes, preserve it.');
+
+  failAnswer = false;
+  await page.getByRole('button', { name: 'Answer and wake agent' }).click();
+  await expect(answer).toHaveValue('');
+
+  await page.getByRole('button', { name: 'Record note' }).click();
+  await expect(page.getByText('Note service unavailable', { exact: false })).toBeVisible();
+  await expect(note).toHaveValue('Keep the current audit trail.');
+
+  failNote = false;
+  await page.getByRole('button', { name: 'Record note' }).click();
+  await expect(note).toHaveValue('');
+});
+
+test('agent creation requires a saved one-time credential and reports clipboard outcomes', async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = globalThis as typeof globalThis & { __failCredentialCopy?: boolean };
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          if (state.__failCredentialCopy) throw new Error('Clipboard unavailable');
+        },
+      },
+    });
+  });
+
+  let createdAgent: Record<string, unknown> | null = null;
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/agents` && request.method() === 'POST') {
+      createdAgent = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ status: 201, json: {} });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /Cicada platform/u }).click();
+  await page.getByRole('button', { name: 'Add agent' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add an agent to Cicada platform' });
+  const id = dialog.getByLabel('Agent ID');
+  await expect(id).toHaveAttribute('maxlength', '128');
+  for (const invalidId of ['billing/worker', 'billing:worker', 'billing@worker']) {
+    await id.fill(invalidId);
+    expect(await id.evaluate((input: HTMLInputElement) => input.validity.patternMismatch)).toBe(true);
+  }
+  await expect(dialog.getByText('Slashes, colons, and @ are not allowed.', { exact: false })).toBeVisible();
+  await id.fill('billing-worker-two');
+  await dialog.getByLabel('Owned part of the system').fill('Billing recovery');
+  await dialog.getByLabel('Standing mission').fill('Keep invoice recovery understandable and dependable.');
+  await dialog.getByLabel('Provider model or routing profile').fill('configured-coding-model');
+
+  const credential = dialog.getByLabel('One-time worker credential');
+  const originalCredential = await credential.inputValue();
+  const submit = dialog.getByRole('button', { name: 'Add sleeping agent' });
+  await expect(submit).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Copy' }).click();
+  await expect(dialog.getByRole('status')).toHaveText(/Credential copied/u);
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __failCredentialCopy?: boolean }).__failCredentialCopy = true;
+  });
+  await dialog.getByRole('button', { name: 'Copy' }).click();
+  await expect(dialog.getByRole('status')).toHaveText(/Copy failed.*copy it manually/iu);
+
+  const saved = dialog.getByLabel(/I saved this credential in the worker configuration/iu);
+  await saved.check();
+  await expect(submit).toBeEnabled();
+  await credential.fill(`${originalCredential}x`);
+  await expect(saved).not.toBeChecked();
+  await expect(submit).toBeDisabled();
+  await saved.check();
+  await submit.click();
+  await expect.poll(() => createdAgent).not.toBeNull();
+
+  expect(createdAgent).toMatchObject({
+    agentId: 'billing-worker-two',
+    role: 'engineer',
+    area: 'Billing recovery',
+    mission: 'Keep invoice recovery understandable and dependable.',
+    model: 'configured-coding-model',
+    token: `${originalCredential}x`,
+  });
+  await expect(dialog).toHaveCount(0);
+});
+
+test('interrupting a run discloses the consequence and requires confirmation', async ({ page }) => {
+  const runningTask = {
+    ...task,
+    status: 'in_progress',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    startedAt: '2026-07-19T18:10:00.000Z',
+    expectedCompletedAt: '2026-07-19T18:40:00.000Z',
+    version: 2,
+  };
+  const runningAgent = { ...agent, status: 'running' };
+  const activeRun = {
+    apiVersion,
+    runId: 'run-active-recovery',
+    claimId: 'claim-active-recovery',
+    projectId: project.projectId,
+    agentId: agent.agentId,
+    wakeupId: 'wakeup-active-recovery',
+    taskId: runningTask.taskId,
+    status: 'active',
+    startedAt: '2026-07-19T18:10:00.000Z',
+    endedAt: null,
+    result: null,
+  };
+  const interrupts: Array<{ path: string; body: Record<string, unknown> }> = [];
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: { ...board(), agents: [runningAgent], tasks: [runningTask], recentRuns: [activeRun] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${runningTask.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/agents/${agent.agentId}/interrupt` && request.method() === 'POST') {
+      interrupts.push({ path: url.pathname, body: request.postDataJSON() as Record<string, unknown> });
+      await route.fulfill({ status: 201, json: {} });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
+  const interrupt = page.getByRole('button', { name: 'Interrupt run' });
+  await expect(page.getByText(/Unreported output may be lost.*stays blocked until you explicitly resume/iu)).toBeVisible();
+  await expect(interrupt).toHaveAttribute('aria-describedby', 'interrupt-consequence-run-active-recovery');
+
+  let confirmation = '';
+  page.once('dialog', async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.dismiss();
+  });
+  await interrupt.click();
+  expect(confirmation).toContain('stops the model process');
+  expect(confirmation).toContain('stay blocked until you explicitly resume');
+  expect(interrupts).toHaveLength(0);
+
+  page.once('dialog', async (dialog) => dialog.accept());
+  await interrupt.click();
+  await expect.poll(() => interrupts).toHaveLength(1);
+  expect(interrupts[0]).toEqual({
+    path: `/board-api/v1/agents/${agent.agentId}/interrupt`,
+    body: { runId: activeRun.runId, reason: 'Human interrupted this agent from the task board' },
+  });
+});
+
+test('a quiet poll does not replace a snapshot that is still loading', async ({ page }) => {
+  await page.clock.install();
+  let projectReads = 0;
+  let boardReads = 0;
+  let releaseBoard!: () => void;
+  const boardGate = new Promise<void>((resolve) => {
+    releaseBoard = resolve;
+  });
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/board-api/v1/projects') {
+      projectReads += 1;
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      boardReads += 1;
+      if (boardReads === 1) await boardGate;
+      await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await expect.poll(() => boardReads).toBe(1);
+  const initialProjectReads = projectReads;
+  await page.clock.runFor(5_100);
+  expect(projectReads).toBe(initialProjectReads);
+  expect(boardReads).toBe(1);
+
+  releaseBoard();
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+});
+
 test('a failed authoritative read never falls back to demo agents', async ({ page }) => {
   await page.route('**/board-api/v1/projects', (route) => route.fulfill({
     status: 503,
@@ -273,7 +576,7 @@ test('a human can promote an agent proposal from a completed task without waking
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${completedParent.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [proposal], cursor: 1 } });
+      await route.fulfill({ json: { messages: [proposal], cursor: 1, hasMore: false } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/tasks` && request.method() === 'POST') {
@@ -336,7 +639,7 @@ test('a malformed agent proposal is shown safely and cannot be promoted', async 
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [malformed], cursor: 1 } });
+      await route.fulfill({ json: { messages: [malformed], cursor: 1, hasMore: false } });
       return;
     }
     await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
@@ -387,7 +690,7 @@ test('an automatic manager review can only be assigned to a manager by a human',
       return;
     }
     if (url.pathname.endsWith('/messages')) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${reviewTask.taskId}` && request.method() === 'PATCH') {
@@ -399,8 +702,12 @@ test('an automatic manager review can only be assigned to a manager by a human',
   });
 
   await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await expect(companyRail.getByRole('button', { name: /Task List/u })).toContainText('1');
+  await companyRail.getByRole('button', { name: /Task List/u }).click();
   await page.getByRole('button', { name: /Manager review: Improve invoice recovery/u }).click();
   await expect(page.getByText('manager review', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('needs manager assignment', { exact: true }).last()).toBeVisible();
   await expect(page.getByText('This review stays asleep until a human assigns a manager. Assignment creates one durable human wake-up.')).toBeVisible();
   const managerSelect = page.getByLabel('Assign manager');
   await expect(managerSelect.locator('option')).toHaveCount(1);
@@ -456,6 +763,11 @@ test('a human check records approval without exposing any agent wake or deployme
     updatedAt: '2026-07-19T18:30:00.000Z',
   };
   let decision: Record<string, unknown> | null = null;
+  let expectedHumanCheckMinutes = humanCheck.expectedAgentMinutes;
+  let releaseDecision!: () => void;
+  const decisionGate = new Promise<void>((resolve) => {
+    releaseDecision = resolve;
+  });
   const agentWakeRequests: string[] = [];
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
@@ -465,15 +777,16 @@ test('a human check records approval without exposing any agent wake or deployme
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: { ...board(), agents: [agent, manager], tasks: [completedWork, completedReview, humanCheck] } });
+      await route.fulfill({ json: { ...board(), agents: [agent, manager], tasks: [completedWork, completedReview, { ...humanCheck, expectedAgentMinutes: expectedHumanCheckMinutes }] } });
       return;
     }
     if (url.pathname.endsWith('/messages')) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      await route.fulfill({ json: { messages: [], cursor: 0, hasMore: false } });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${humanCheck.taskId}` && request.method() === 'PATCH') {
       decision = request.postDataJSON() as Record<string, unknown>;
+      await decisionGate;
       await route.fulfill({ json: { task: { ...humanCheck, ...decision, endedAt: '2026-07-19T18:35:00.000Z', version: 2 } } });
       return;
     }
@@ -486,7 +799,7 @@ test('a human check records approval without exposing any agent wake or deployme
   await page.goto('/');
   await page.getByRole('button', { name: /Human check: Improve invoice recovery/u }).click();
   await expect(page.getByText('human check', { exact: true }).last()).toBeVisible();
-  await expect(page.getByText('awaiting human', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('needs your decision', { exact: true }).last()).toBeVisible();
   await expect(page.getByText(/Approval does not deploy to production/u)).toBeVisible();
   await expect(page.getByLabel('Assign agent')).toHaveCount(0);
   await expect(page.getByLabel('Assign manager')).toHaveCount(0);
@@ -498,11 +811,17 @@ test('a human check records approval without exposing any agent wake or deployme
   const rationale = 'The focused recovery checks passed and the customer impact is clear.';
   const rationaleInput = page.getByLabel('Decision rationale');
   await rationaleInput.fill(rationale);
+  expectedHumanCheckMinutes = 30;
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(rationaleInput).toHaveValue(rationale);
   await expect(approve).toBeEnabled();
   await approve.click();
   await expect.poll(() => decision).not.toBeNull();
+  const revisedRationale = `${rationale} Preserve the staged rollout note.`;
+  await rationaleInput.fill(revisedRationale);
+  releaseDecision();
+  await expect(approve).toBeEnabled();
+  await expect(rationaleInput).toHaveValue(revisedRationale);
 
   expect(decision).toEqual({
     version: 1,

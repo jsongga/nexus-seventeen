@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   CircleHelp,
   ClipboardCheck,
-  GitCommitHorizontal,
   Rocket,
   ShieldAlert,
 } from 'lucide-react';
@@ -12,19 +11,22 @@ import { Avatar, cn, Pill } from './ui';
 
 const kindMeta = {
   production: {
-    label: 'Human-only production task',
+    label: 'Release authorization',
+    consequence: 'This demo records your decision; it does not deploy anything.',
     icon: Rocket,
     tone: 'neutral' as const,
     iconClass: 'bg-ink text-[#7fe0d6]',
   },
   scope: {
-    label: 'Scope approval',
+    label: 'Start this work?',
+    consequence: 'This only lets the team build and test — nothing goes live yet.',
     icon: ClipboardCheck,
     tone: 'green' as const,
     iconClass: 'bg-[#e8f5f3] text-teal-700',
   },
   decision: {
     label: 'Your decision',
+    consequence: 'The team is waiting on your choice before continuing.',
     icon: CircleHelp,
     tone: 'amber' as const,
     iconClass: 'bg-[#fff6df] text-caution',
@@ -63,7 +65,7 @@ export function ApprovalCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Pill tone={meta.tone}>{meta.label}</Pill>
-            {approval.managerReview ? <Pill tone="green">Manager handoff</Pill> : null}
+            {approval.managerReview ? <Pill tone="green">Second reviewer ✓</Pill> : null}
             {approval.risk === 'high' || approval.risk === 'critical' ? (
               <Pill tone="red" dot>
                 {approval.risk} risk
@@ -74,6 +76,14 @@ export function ApprovalCard({
           <h3 className="mt-2.5 font-display text-[15px] font-bold leading-5 tracking-[-0.02em] text-ink sm:text-base">
             {approval.title}
           </h3>
+          <p
+            className={cn(
+              'mt-1.5 text-[12px] font-semibold leading-4',
+              approval.kind === 'production' ? 'text-urgent' : 'text-teal-700',
+            )}
+          >
+            {meta.consequence}
+          </p>
           {!compact ? (
             <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted">{approval.summary}</p>
           ) : null}
@@ -83,7 +93,7 @@ export function ApprovalCard({
               <span className="font-bold text-teal-700">
                 {approval.managerReview.manager} completed the manager review.
               </span>{' '}
-              Reviewed to the best of their ability; only a human can approve or deploy this release.
+              Reviewed to the best of their ability; only a human can record release authorization in this demo.
             </div>
           ) : null}
 
@@ -96,22 +106,16 @@ export function ApprovalCard({
               </span>
             </span>
             {approval.release ? (
-              <>
-                <span className="flex items-center gap-1 font-mono tabular-nums">
-                  <GitCommitHorizontal size={13} />
-                  {approval.release.commit.slice(0, 7)}
-                </span>
-                <span className="flex items-center gap-1 font-mono tabular-nums text-teal-700">
-                  <CheckCircle2 size={13} />
-                  {passedChecks}/{approval.checks.length} gates
-                </span>
-              </>
+              <span className="flex items-center gap-1.5 text-teal-700">
+                <CheckCircle2 size={13} />
+                {passedChecks} of {approval.checks.length} safety checks passed
+              </span>
             ) : approval.budget ? (
-              <span className="font-mono tabular-nums">{approval.budget}</span>
+              <span className="tabular-nums">Est. cost {approval.budget.replace(' token cap', '')}</span>
             ) : (
-              <span className="flex items-center gap-1 text-caution">
+              <span className="flex items-center gap-1.5 text-caution">
                 <ShieldAlert size={13} />
-                Agents paused here
+                Agents are waiting for your choice
               </span>
             )}
             <ArrowRight

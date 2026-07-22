@@ -82,6 +82,129 @@ test("projects, fixed agents, tasks, messages, and events survive a database res
   }
 });
 
+test("direct agent creation rejects IDs that cannot be routed", async () => {
+  const fixture = await boardFixture();
+  try {
+    assert.throws(
+      () => fixture.board.createAgent(fixture.project.projectId, {
+        agentId: "engineering/platform",
+        role: "engineer",
+        area: "platform",
+        mission: "Keep the platform dependable.",
+        model: "codex-mini",
+        token: "unsafe-direct-agent-token-0123456789abcdef",
+      }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 400
+        && error.code === "INVALID_REQUEST"
+        && /URL-safe path-segment/u.test(error.message),
+    );
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.length, 2);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("opening a legacy database with an unsafe agent ID requires an explicit fresh-board migration", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const legacyAgentId = fixture.engineer.agentId;
+  fixture.board.close();
+
+  const { DatabaseSync } = await import("node:sqlite");
+  const legacy = new DatabaseSync(path);
+  try {
+    legacy.prepare("UPDATE agents SET agent_id = ? WHERE agent_id = ?").run("engineering/platform", legacyAgentId);
+  } finally {
+    legacy.close();
+  }
+
+  await assert.rejects(
+    TaskBoard.open(config(path)),
+    (error: unknown) => error instanceof TaskBoardError
+      && error.status === 500
+      && error.code === "AGENT_ID_MIGRATION_REQUIRED"
+      && /Back up this database.*fresh database path.*recreate/iu.test(error.message),
+  );
+});
+
+test("task message pages expose an exact advancing cursor through more than 200 messages", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      assignedAgentId: null,
+      assignedRole: null,
+    }));
+    for (let index = 1; index <= 201; index += 1) {
+      fixture.board.appendHumanMessage(task.taskId, {
+        clientEventId: `message-page-${index}`,
+        kind: "note",
+        body: `Durable message ${index}`,
+      });
+    }
+
+    const first = fixture.board.listMessagePage(task.taskId, 0);
+    assert.equal(first.messages.length, 200);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.cursor, first.messages.at(-1)?.sequence);
+    const second = fixture.board.listMessagePage(task.taskId, first.cursor);
+    assert.equal(second.messages.length, 1);
+    assert.equal(second.hasMore, false);
+    assert.ok(second.messages[0]!.sequence > first.cursor);
+    assert.equal(second.cursor, second.messages[0]!.sequence);
+    const exhausted = fixture.board.listMessagePage(task.taskId, second.cursor);
+    assert.deepEqual(exhausted.messages, []);
+    assert.equal(exhausted.cursor, second.cursor);
+    assert.equal(exhausted.hasMore, false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("project snapshots keep every active run alongside the 100 most recent terminal runs", async () => {
+  let nowMilliseconds = Date.parse("2026-07-19T20:00:00.000Z");
+  const fixture = await boardFixture(undefined, () => new Date(nowMilliseconds));
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Long-running checkout investigation" }));
+    const olderActive = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-older-active-0001",
+      messageCursor: null,
+    });
+    assert.ok(olderActive);
+
+    const terminalRunIds: string[] = [];
+    for (let index = 0; index < 101; index += 1) {
+      nowMilliseconds += 1_000;
+      fixture.board.createTask(fixture.project.projectId, taskRequest({
+        title: `Completed manager task ${index}`,
+        assignedAgentId: fixture.manager.agentId,
+        assignedRole: fixture.manager.role,
+      }));
+      const claimed = fixture.board.claimRun(fixture.manager.agentId, {
+        claimId: `claim-terminal-${String(index).padStart(4, "0")}`,
+        messageCursor: null,
+      });
+      assert.ok(claimed);
+      fixture.board.settleRun(claimed.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: `Completed manager task ${index}.`,
+      });
+      terminalRunIds.push(claimed.run.runId);
+    }
+
+    const snapshot = fixture.board.snapshot(fixture.project.projectId);
+    const projectedIds = snapshot.recentRuns.map((run) => run.runId);
+    assert.equal(snapshot.recentRuns.length, 101);
+    assert.equal(new Set(projectedIds).size, projectedIds.length);
+    assert.equal(snapshot.recentRuns.filter((run) => run.status !== "active").length, 100);
+    assert.equal(snapshot.recentRuns.find((run) => run.runId === olderActive.run.runId)?.status, "active");
+    assert.equal(projectedIds.includes(terminalRunIds[0]!), false);
+    assert.equal(projectedIds.includes(terminalRunIds.at(-1)!), true);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("only a new human assignment creates its durable task wakeup", async () => {
   const fixture = await boardFixture();
   try {
@@ -602,11 +725,9 @@ test("human interrupt is durable, idempotent, visible immediately, and only an e
     fixture.board.createTask(fixture.project.projectId, taskRequest());
     const claim = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-interrupt-0001", messageCursor: 0 });
     assert.ok(claim);
-    const first = fixture.board.interruptAgent(fixture.engineer.agentId, { reason: "Human changed deployment scope." }, "interrupt-key-0001");
-    const replay = fixture.board.interruptAgent(fixture.engineer.agentId, { reason: "Human changed deployment scope." }, "interrupt-key-0001");
+    const interruptRequest = { runId: claim.run.runId, reason: "Human changed deployment scope." };
+    const first = fixture.board.interruptAgent(fixture.engineer.agentId, interruptRequest, "interrupt-key-0001");
     assert.equal(first.duplicate, false);
-    assert.equal(replay.duplicate, true);
-    assert.equal(replay.interrupt.interruptId, first.interrupt.interruptId);
     assert.equal(fixture.board.snapshot(fixture.project.projectId).agents[0]!.status, "interrupting");
     const batch = await fixture.board.waitForRunInterrupts(claim.run.runId, fixture.engineer.agentId, 0, 0, new AbortController().signal);
     assert.equal(batch?.items[0]?.reason, "Human changed deployment scope.");
@@ -614,6 +735,9 @@ test("human interrupt is durable, idempotent, visible immediately, and only an e
       outcome: "interrupted",
       result: "Stopped after the durable human interrupt.",
     });
+    const replay = fixture.board.interruptAgent(fixture.engineer.agentId, interruptRequest, "interrupt-key-0001");
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.interrupt.interruptId, first.interrupt.interruptId);
     const blocked = fixture.board.requireTask(claim.task!.taskId);
     assert.equal(blocked.status, "blocked");
     assert.equal(blocked.endedAt, null);
@@ -633,6 +757,57 @@ test("human interrupt is durable, idempotent, visible immediately, and only an e
     assert.ok(resumed);
     assert.equal(resumed.task?.status, "in_progress");
     assert.equal(resumed.task?.startedAt, blocked.startedAt);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("interrupt rejects a stale or inactive run without recording an interrupt", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "First interrupt target" }));
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Second interrupt target" }));
+    const first = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-stale-interrupt-first-0001",
+      messageCursor: 0,
+    });
+    assert.ok(first);
+    fixture.board.settleRun(first.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "Move to the next queued task.",
+    });
+    const second = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-stale-interrupt-second-0001",
+      messageCursor: 0,
+    });
+    assert.ok(second);
+
+    assert.throws(
+      () => fixture.board.interruptAgent(fixture.engineer.agentId, {
+        runId: first.run.runId,
+        reason: "This click was based on a stale board refresh.",
+      }, "interrupt-stale-run-0001"),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "RUN_MISMATCH",
+    );
+    let snapshot = fixture.board.snapshot(fixture.project.projectId);
+    assert.equal(snapshot.recentInterrupts.length, 0);
+    assert.equal(snapshot.recentEvents.some((event) => event.eventType === "agent_interrupt_requested"), false);
+    assert.equal(snapshot.agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.status, "running");
+
+    fixture.board.settleRun(second.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The second run ended before the interrupt arrived.",
+    });
+    assert.throws(
+      () => fixture.board.interruptAgent(fixture.engineer.agentId, {
+        runId: second.run.runId,
+        reason: "This click arrived after the run ended.",
+      }, "interrupt-inactive-run-0001"),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "RUN_NOT_ACTIVE",
+    );
+    snapshot = fixture.board.snapshot(fixture.project.projectId);
+    assert.equal(snapshot.recentInterrupts.length, 0);
+    assert.equal(snapshot.recentEvents.some((event) => event.eventType === "agent_interrupt_requested"), false);
   } finally {
     fixture.board.close();
   }

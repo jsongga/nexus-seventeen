@@ -118,14 +118,20 @@ STEWARD_TASK_BOARD_HUMAN_PRINCIPAL='human:operator' \
 npm run dev:task-board
 ```
 
-In a second terminal, run the frontend through its same-origin board proxy and open `http://127.0.0.1:4173/`:
+In a second terminal, run the frontend through its same-origin board proxy and open `http://127.0.0.1:4173/`. Development and preview servers bind to `127.0.0.1` by default:
 
 ```bash
 STEWARD_TASK_BOARD_HUMAN_TOKEN="$STEWARD_TASK_BOARD_HUMAN_TOKEN" \
-npm run dev -- --host 127.0.0.1
+npm run dev
 ```
 
+For an intentional visual preview on another device, pass `--host 0.0.0.0` explicitly. The remote UI remains available, but `/board-api` rejects non-loopback clients and never adds the human token for them. Use a separately authenticated gateway rather than the development proxy when remote board access is required.
+
 Use the UI to create a project and its agents. Copy each generated one-time agent token before submitting; the board stores only its SHA-256 hash. Keep each displayed model label aligned with the model configured for that agent's fleet lane.
+
+Agent IDs are URL path-segment identifiers: use letters, numbers, `.`, `_`, and `-`, starting with a letter or number. Earlier local-alpha builds accepted `:`, `@`, and `/` even though those IDs could not reach agent routes. Steward has no supported agent rename, delete, or data-import path: before upgrading such a board, back up its database, configure `STEWARD_TASK_BOARD_DB_PATH` to a fresh private database, recreate its projects, agents, and tasks with safe IDs, and update worker/fleet configuration. Startup fails with `AGENT_ID_MIGRATION_REQUIRED` while an unsafe legacy ID remains in the configured database.
+
+Treat this alpha API update as an atomic deployment: update the frontend, task-board service, task worker, and task fleet together. Interrupt requests now identify the exact `runId`; mixed frontend and board versions are not write-compatible. The current frontend can read older message pages that omit `hasMore`, but that read fallback does not make interrupt writes safe across versions.
 
 Copy the fleet template to the ignored local data directory, restrict it to the current user, and add one entry per agent. Each entry binds the existing board agent and token to a provider, model, working directory, and private journal:
 

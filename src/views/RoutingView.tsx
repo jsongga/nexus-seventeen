@@ -111,7 +111,7 @@ export function RoutingView() {
           <span>Cheap-first policy active</span>
           <span className="font-mono text-[11px] font-medium text-muted">Policy v3.2</span>
         </div>
-        <h1 className="mt-3 font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
+        <h1 className="mt-3 font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
           Spend less by proving more.
         </h1>
         <p className="mt-2 max-w-3xl text-[14px] leading-6 text-muted sm:text-[15px]">

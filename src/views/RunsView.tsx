@@ -76,11 +76,11 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
             <Activity size={16} />
             Live execution
           </div>
-          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
+          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
             Know exactly what every agent is doing—and what it can spend.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
-            Each run is isolated to development, hard-capped by tokens, and routed to the least expensive model that fits the job.
+            These seeded run cards illustrate intended routing and token budgets. The browser demo does not create isolation or enforce spend.
           </p>
         </div>
 
@@ -303,18 +303,18 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
                         <TerminalSquare size={15} />
                       </span>
                       <div>
-                        <p className="text-[11px] font-bold text-[#37424a]">Development sandbox</p>
+                        <p className="text-[11px] font-bold text-[#37424a]">Workspace context · demo</p>
                         <p className="mt-0.5 font-mono text-[9px] text-muted">dev/{run.workItemId.toLowerCase()}</p>
                       </div>
                     </div>
-                    <Pill tone="green">Isolated</Pill>
+                    <Pill tone="green">Illustrative</Pill>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-bold">
                     <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-[#b8ded9] bg-white px-2.5 py-2 text-teal-700">
-                      <Box size={12} /> Repo + tools allowed
+                      <Box size={12} /> Intended: repo + tools
                     </div>
                     <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-[#efb9b2] bg-[#fff1ef] px-2.5 py-2 text-urgent">
-                      <KeyRound size={12} /> Prod keys denied
+                      <KeyRound size={12} /> Credentials not checked
                     </div>
                   </div>
                   <Button
@@ -350,24 +350,24 @@ export function RunsView({ runs, onOpenRun }: RunsViewProps) {
               <ShieldCheck size={19} />
             </span>
             <div>
-              <h2 className="font-display text-base font-semibold tracking-[-0.02em] text-ink">Freedom inside a hard boundary</h2>
+              <h2 className="font-display text-base font-semibold tracking-[-0.02em] text-ink">Prototype boundary model</h2>
               <p className="mt-1 text-[13px] leading-5 text-muted">
-                Agents can edit, install, test, and launch previews in development. The boundary excludes production credentials and deployment authority.
+                This screen illustrates intended permissions. The browser demo does not create a sandbox or inspect production credentials.
               </p>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-xl border border-line bg-[#f7f8f8] p-3 text-center">
               <Network size={15} className="mx-auto text-teal-700" />
-              <p className="mt-2 text-[10px] font-bold text-muted">Policy-checked network</p>
+              <p className="mt-2 text-[10px] font-bold text-muted">Network policy target</p>
             </div>
             <div className="rounded-xl border border-line bg-[#f7f8f8] p-3 text-center">
               <CheckCircle2 size={15} className="mx-auto text-teal-700" />
-              <p className="mt-2 text-[10px] font-bold text-muted">Tests preserved</p>
+              <p className="mt-2 text-[10px] font-bold text-muted">Sample test evidence</p>
             </div>
             <div className="rounded-xl border border-[#e8c675] bg-[#fff6df] p-3 text-center">
               <KeyRound size={15} className="mx-auto text-caution" />
-              <p className="mt-2 text-[10px] font-bold text-caution">Human release key</p>
+              <p className="mt-2 text-[10px] font-bold text-caution">Human authorization target</p>
             </div>
           </div>
         </div>

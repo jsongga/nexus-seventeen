@@ -57,6 +57,15 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     });
     assert.equal(agentResponse.status, 201);
     assert.equal(JSON.stringify(await agentResponse.json()).includes(AGENT_ONE_TOKEN), false);
+    const unroutableAgent = await request(address.url, `/v1/projects/${project.projectId}/agents`, "POST", HUMAN_TOKEN, {
+      agentId: "engineering/platform",
+      role: "engineer",
+      area: "checkout",
+      mission: "This ID must be rejected before it can become unreachable.",
+      model: "codex-mini",
+      token: AGENT_ONE_TOKEN,
+    });
+    assert.equal(unroutableAgent.status, 400);
 
     const invalidTask = await request(address.url, `/v1/projects/${project.projectId}/tasks`, "POST", HUMAN_TOKEN, {
       ...taskRequest({ assignedAgentId: null, assignedRole: null }),
@@ -126,6 +135,16 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       (await messageOne.json() as { message: { messageId: string } }).message.messageId,
       (await messageReplay.json() as { message: { messageId: string } }).message.messageId,
     );
+    const messagePage = await request(address.url, `/v1/tasks/${task.taskId}/messages?after=0`, "GET", HUMAN_TOKEN);
+    assert.equal(messagePage.status, 200);
+    const messagePageBody = await messagePage.json() as {
+      messages: Array<{ sequence: number }>;
+      cursor: number;
+      hasMore: boolean;
+    };
+    assert.equal(messagePageBody.messages.length, 1);
+    assert.equal(messagePageBody.cursor, messagePageBody.messages[0]?.sequence);
+    assert.equal(messagePageBody.hasMore, false);
 
     const settle = await request(address.url, `/v1/runs/${claim.run.runId}/settle`, "POST", AGENT_ONE_TOKEN, {
       outcome: "failed",
@@ -157,6 +176,16 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     };
     assert.equal(heldClaimBody.wakeup.reason, "human_resume");
     assert.equal(heldClaimBody.run.taskId, task.taskId);
+    const staleInterrupt = await request(
+      address.url,
+      "/v1/agents/engineer-one/interrupt",
+      "POST",
+      HUMAN_TOKEN,
+      { runId: claim.run.runId, reason: "This command came from a stale board refresh." },
+      "http-stale-interrupt-0001",
+    );
+    assert.equal(staleInterrupt.status, 409);
+    assert.equal((await staleInterrupt.json() as { error: { code: string } }).error.code, "RUN_MISMATCH");
     assert.equal((await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=30001", "POST", AGENT_ONE_TOKEN, {
       claimId: "http-invalid-wait-0001",
       messageCursor: null,
@@ -165,6 +194,16 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       outcome: "completed",
       result: "Follow-up verification finished without deployment.",
     })).status, 200);
+    const inactiveInterrupt = await request(
+      address.url,
+      "/v1/agents/engineer-one/interrupt",
+      "POST",
+      HUMAN_TOKEN,
+      { runId: heldClaimBody.run.runId, reason: "This command arrived after the run ended." },
+      "http-inactive-interrupt-0001",
+    );
+    assert.equal(inactiveInterrupt.status, 409);
+    assert.equal((await inactiveInterrupt.json() as { error: { code: string } }).error.code, "RUN_NOT_ACTIVE");
     assert.equal((await request(address.url, "/v1/heartbeat", "POST", AGENT_ONE_TOKEN, {})).status, 404);
 
     const boardResponse = await request(address.url, `/v1/projects/${project.projectId}/board`, "GET", HUMAN_TOKEN);
@@ -181,6 +220,8 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       }>;
       recentRuns: unknown[];
       recentQuestions: unknown[];
+      recentInterrupts: unknown[];
+      recentEvents: Array<{ eventType: string }>;
     };
     assert.equal(board.tasks.length, 2);
     const completedWork = board.tasks.find((item) => item.taskId === task.taskId);
@@ -194,6 +235,8 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     assert.equal(managerReview?.status, "backlog");
     assert.equal(board.recentRuns.length, 2);
     assert.equal(board.recentQuestions.length, 0);
+    assert.equal(board.recentInterrupts.length, 0);
+    assert.equal(board.recentEvents.some((item) => item.eventType === "agent_interrupt_requested"), false);
 
     const browser = await fetch(`${address.url}/v1/projects/${project.projectId}/board`, {
       headers: { Authorization: `Bearer ${HUMAN_TOKEN}`, Origin: "https://app.cicada.build" },

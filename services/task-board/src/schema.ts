@@ -55,6 +55,21 @@ export function parseIdentifier(value: unknown, field: string, maximum = 128): s
   return value;
 }
 
+export function isRouteSafeAgentIdentifier(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length >= 1
+    && value.length <= 128
+    && value.trim() === value
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value);
+}
+
+export function parseAgentIdentifier(value: unknown, field = "agentId"): string {
+  if (!isRouteSafeAgentIdentifier(value)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${field} must be a URL-safe path-segment identifier`);
+  }
+  return value;
+}
+
 function text(value: unknown, field: string, maximum = 8_000): string {
   if (
     typeof value !== "string" ||
@@ -93,6 +108,10 @@ function nullableRole(value: unknown, field: string): AgentRole | null {
 
 function nullableIdentifier(value: unknown, field: string): string | null {
   return value === null ? null : parseIdentifier(value, field);
+}
+
+function nullableAgentIdentifier(value: unknown, field: string): string | null {
+  return value === null ? null : parseAgentIdentifier(value, field);
 }
 
 function positiveVersion(value: unknown): number {
@@ -147,7 +166,7 @@ export function parseCreateProject(value: unknown): CreateProjectRequest {
 export function parseCreateAgent(value: unknown): CreateAgentRequest {
   const item = exact(value, ["agentId", "role", "area", "mission", "model", "token"], "Agent profile");
   return Object.freeze({
-    agentId: parseIdentifier(item.agentId, "agentId"),
+    agentId: parseAgentIdentifier(item.agentId),
     role: role(item.role),
     area: text(item.area, "area", 256),
     mission: text(item.mission, "mission", 4_000),
@@ -167,7 +186,7 @@ export function parseCreateTask(value: unknown): CreateTaskRequest {
     "assignedRole",
     "expectedAgentMinutes",
   ], "Task");
-  const assignedAgentId = nullableIdentifier(item.assignedAgentId, "assignedAgentId");
+  const assignedAgentId = nullableAgentIdentifier(item.assignedAgentId, "assignedAgentId");
   const assignedRole = nullableRole(item.assignedRole, "assignedRole");
   if ((assignedAgentId === null) !== (assignedRole === null)) {
     throw new TaskBoardError(400, "INVALID_ASSIGNMENT", "assignedAgentId and assignedRole must both be set or both be null");
@@ -220,7 +239,7 @@ export function parseUpdateTask(value: unknown): UpdateTaskRequest {
   if ("acceptanceCriteria" in item) result.acceptanceCriteria = text(item.acceptanceCriteria, "acceptanceCriteria", 8_000);
   if ("workspaceRefs" in item) result.workspaceRefs = refs(item.workspaceRefs);
   if ("assignedAgentId" in item) {
-    result.assignedAgentId = nullableIdentifier(item.assignedAgentId, "assignedAgentId");
+    result.assignedAgentId = nullableAgentIdentifier(item.assignedAgentId, "assignedAgentId");
     result.assignedRole = nullableRole(item.assignedRole, "assignedRole");
     if ((result.assignedAgentId === null) !== (result.assignedRole === null)) {
       throw new TaskBoardError(400, "INVALID_ASSIGNMENT", "Assignment fields must both be set or both be null");
@@ -282,8 +301,11 @@ export function parseResume(value: unknown): ResumeAgentRequest {
 }
 
 export function parseInterrupt(value: unknown): InterruptAgentRequest {
-  const item = exact(value, ["reason"], "Agent interrupt");
-  return Object.freeze({ reason: text(item.reason, "reason", 2_000) });
+  const item = exact(value, ["runId", "reason"], "Agent interrupt");
+  return Object.freeze({
+    runId: parseIdentifier(item.runId, "runId"),
+    reason: text(item.reason, "reason", 2_000),
+  });
 }
 
 export function parseClaim(value: unknown): ClaimRunRequest {

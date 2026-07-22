@@ -5,6 +5,7 @@ import type { TaskFleetAgentConfig, TaskFleetConfig, TaskFleetRetryConfig } from
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+const ROUTE_SEGMENT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DEFAULT_LONG_POLL_MS = 30_000;
 const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 250, maximumDelayMs: 10_000 });
 
@@ -36,6 +37,12 @@ function text(value: unknown, label: string, maximum: number): string {
 function identifier(value: unknown, label: string): string {
   const parsed = text(value, label, 128);
   if (!IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`);
+  return parsed;
+}
+
+function routeSegmentIdentifier(value: unknown, label: string): string {
+  const parsed = text(value, label, 128);
+  if (!ROUTE_SEGMENT_IDENTIFIER.test(parsed)) throw new Error(`${label} must be a URL-safe path-segment identifier`);
   return parsed;
 }
 
@@ -96,7 +103,7 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
   if (token.length < 32) throw new Error(`${label}.token must contain at least 32 characters`);
   return Object.freeze({
     workerId: identifier(item.workerId, `${label}.workerId`),
-    agentId: identifier(item.agentId, `${label}.agentId`),
+    agentId: routeSegmentIdentifier(item.agentId, `${label}.agentId`),
     token,
     provider,
     model: text(item.model, `${label}.model`, 256),
