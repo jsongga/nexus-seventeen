@@ -73,6 +73,19 @@
   --color-coral-soft: var(--urgent-text);
   --color-destructive: var(--urgent-text);
 
+  /* Extended roles — borders, sunken surface, off-brand category chips */
+  --color-teal-border: var(--teal-border);
+  --color-line-strong: var(--border-strong);
+  --color-muted-surface: var(--muted-surface);
+  --color-caution-border: var(--caution-border);
+  --color-urgent-border: var(--urgent-border);
+  --color-info: var(--info-text);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+  --color-alt: var(--alt-text);
+  --color-alt-soft: var(--alt-soft);
+  --color-alt-border: var(--alt-border);
+
   /* Data-viz ramp */
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -122,6 +135,18 @@
   --urgent-fill: #7d1710;
   --urgent-soft: #fff0ee;
 
+  --teal-border: #b9ddd9;
+  --border-strong: #c7c5bc;
+  --muted-surface: #eae7e0;
+  --caution-border: #ead09b;
+  --urgent-border: #e5b7b3;
+  --info-text: #3f6073;
+  --info-soft: #eef3f6;
+  --info-border: #ccd9e2;
+  --alt-text: #55547a;
+  --alt-soft: #f2f1f7;
+  --alt-border: #d5d3e3;
+
   --chart-1: #41bbb0;
   --chart-2: #237a72;
   --chart-3: #7fe0d6;
@@ -168,6 +193,18 @@
   --urgent-text: #ff8a7a;
   --urgent-fill: #7d1710;
   --urgent-soft: rgba(160, 28, 20, 0.18);
+
+  --teal-border: #2f5c56;
+  --border-strong: #3a4552;
+  --muted-surface: #232b36;
+  --caution-border: #5a4a24;
+  --urgent-border: #5a2a26;
+  --info-text: #9fbccd;
+  --info-soft: rgba(63, 96, 115, 0.16);
+  --info-border: #33414d;
+  --alt-text: #b8b6d4;
+  --alt-soft: rgba(85, 84, 122, 0.20);
+  --alt-border: #3b3a4d;
 
   --chart-1: #41bbb0;
   --chart-2: #7fe0d6;
