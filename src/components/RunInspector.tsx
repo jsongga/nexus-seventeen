@@ -553,7 +553,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
 
             {isManagerReview ? (
               <div className="mt-3 flex items-start gap-3 rounded-[14px] border border-alt-border bg-alt-soft p-3.5">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-alt-soft text-alt">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-alt-border text-alt">
                   <ClipboardCheck size={15} />
                 </span>
                 <div>

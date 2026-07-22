@@ -193,7 +193,7 @@ export function AppShell({
         <div className="mt-auto space-y-3">
           <div className="rounded-[14px] border border-white/10 bg-ink-panel p-3.5 shadow-[0_8px_24px_rgba(23,28,36,.12)]">
             <div className="flex items-center gap-2 text-white">
-              <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-caution">
+              <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-caution-fill">
                 <LockKeyhole size={15} />
               </span>
               <span className="text-xs font-semibold">Release simulation</span>

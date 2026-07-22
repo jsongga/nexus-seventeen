@@ -43,7 +43,7 @@ export function ProductionApprovalModal({
             </span>
             <div>
               <p className="text-sm font-bold text-white">No deployment occurs in this demo</p>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
+              <p className="mt-1 text-[12px] leading-5 text-white/70">
                 The simulated approval is bound to the release digests below and can be consumed only once in this browser.
               </p>
             </div>

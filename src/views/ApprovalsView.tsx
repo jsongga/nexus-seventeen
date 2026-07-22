@@ -94,11 +94,11 @@ export function ApprovalsView({
           </span>
           <div>
             <h2 className="font-display text-sm font-bold">Managers prepare. Humans authorize release.</h2>
-            <p className="mt-1 text-[11px] leading-5 text-muted">
+            <p className="mt-1 text-[11px] leading-5 text-white/70">
               This demo checks that a recent human approval matches the release digest, then records simulated consumption. No deployment occurs.
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[10px] font-bold text-muted">
+          <div className="flex items-center gap-2 text-[10px] font-bold text-white/70">
             <ShieldCheck size={15} className="text-teal-300" />
             Demo policy check
           </div>
