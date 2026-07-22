@@ -32,6 +32,8 @@
   --color-surface: var(--popover);
   --color-popover: var(--popover);
   --color-secondary: var(--secondary);
+  --color-ink-panel: var(--ink-panel);
+  --color-scrim: var(--scrim);
 
   /* Ink / text */
   --color-ink: var(--foreground);
@@ -111,6 +113,8 @@
   --card: #f6f5f1;            /* warm off-white card */
   --popover: #ffffff;         /* popovers, modals, inputs */
   --secondary: #e6e5df;
+  --ink-panel: #171c24;
+  --scrim: #10151c;
 
   --foreground: #171c24;      /* ink */
   --muted-foreground: #57595f;
@@ -170,6 +174,8 @@
   --card: #1b212b;
   --popover: #1b212b;
   --secondary: #232b36;
+  --ink-panel: #232b36;
+  --scrim: #05070a;
 
   --foreground: #f3f3f3;
   --muted-foreground: #9aa4b2;
