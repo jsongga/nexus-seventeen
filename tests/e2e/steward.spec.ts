@@ -554,6 +554,7 @@ test('persisted task forecasts reject non-quarter-hour estimates', async ({ page
   }, storageKey);
 
   await page.reload();
+  await expect(page.getByRole('heading', { name: /decisions need you\./ })).toBeVisible();
   const restored = await page.evaluate((key) => {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
