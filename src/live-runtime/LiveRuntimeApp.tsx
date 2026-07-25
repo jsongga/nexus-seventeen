@@ -1087,7 +1087,7 @@ function ConnectedWorkspace({
               <span className="rounded-full bg-teal-300" />
             </div>
             <div>
-              <p className="text-base font-extrabold tracking-[-0.02em]">Cicada Steward</p>
+              <p className="text-base font-extrabold tracking-[-0.02em]">Nexus Seventeen</p>
               <p className="text-xs text-muted">Authoritative runtime</p>
             </div>
           </div>
@@ -1543,7 +1543,7 @@ export function LiveRuntimeApp() {
             <span className="rounded-full bg-teal-300" />
           </div>
           <div>
-            <p className="text-lg font-extrabold tracking-[-0.03em]">Cicada Steward</p>
+            <p className="text-lg font-extrabold tracking-[-0.03em]">Nexus Seventeen</p>
             <p className="text-sm text-muted">Connect to an authoritative runtime</p>
           </div>
         </div>

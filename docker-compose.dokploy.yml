@@ -1,0 +1,36 @@
+# Dokploy deployment for the Nexus Seventeen operator UI and durable task board.
+# Dokploy configures the public domain and Traefik labels separately.
+
+services:
+  steward:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      NODE_ENV: production
+      STEWARD_TASK_BOARD_DB_PATH: /var/lib/steward/private/board.sqlite
+      STEWARD_TASK_BOARD_HUMAN_TOKEN: ${STEWARD_TASK_BOARD_HUMAN_TOKEN:?set in Dokploy environment}
+      STEWARD_TASK_BOARD_HUMAN_PRINCIPAL: ${STEWARD_TASK_BOARD_HUMAN_PRINCIPAL:-human:operator}
+      STEWARD_TASK_BOARD_HOST: 127.0.0.1
+      STEWARD_TASK_BOARD_PORT: "4318"
+    expose:
+      - "3000"
+    volumes:
+      - steward-data:/var/lib/steward
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  steward-data:

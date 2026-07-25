@@ -104,7 +104,7 @@ test('the default app reads real board state and assignment is an explicit human
   await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
   await expect(page.getByText('Improve invoice recovery', { exact: true }).first()).toBeVisible();
   const companyRail = await openCompanyRail(page);
-  await expect(companyRail.getByText('Cicada', { exact: true })).toBeVisible();
+  await expect(companyRail.getByText('Nexus', { exact: true })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: 'Task List' })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toBeVisible();
@@ -130,7 +130,7 @@ test('the default app reads real board state and assignment is an explicit human
   });
 });
 
-test('the Cicada sidebar navigates company work and an agent message is one atomic 15-minute wake', async ({ page }) => {
+test('the Nexus sidebar navigates company work and an agent message is one atomic 15-minute wake', async ({ page }) => {
   const projectTask = {
     ...task,
     workspaceRefs: ['/workspace/billing', 'https://docs.example.com/invoice-recovery'],
@@ -178,7 +178,7 @@ test('the Cicada sidebar navigates company work and an agent message is one atom
 
   await page.goto('/');
   let companyRail = await openCompanyRail(page);
-  await expect(companyRail.getByText('Cicada', { exact: true })).toBeVisible();
+  await expect(companyRail.getByText('Nexus', { exact: true })).toBeVisible();
   await expect(companyRail.getByText('Point of contact', { exact: true })).toBeVisible();
   await expect(companyRail.getByText('Acting POC · ask or route work', { exact: true })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toBeVisible();

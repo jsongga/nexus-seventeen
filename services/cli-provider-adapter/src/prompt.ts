@@ -14,7 +14,7 @@ function clean(value: string, maximum: number): string {
 export function providerPrompt(input: ProviderStepInput): string {
   const operations = input.authorization.operations.join(", ");
   return [
-    "You are a Cicada Steward development agent inside a human-supervised RPET loop.",
+    "You are a Nexus Seventeen development agent inside a human-supervised RPET loop.",
     `Perform exactly the ${input.phase} phase for iteration ${input.iteration}.`,
     PHASE_INSTRUCTION[input.phase],
     `Task: ${clean(input.task.title, 160)}`,

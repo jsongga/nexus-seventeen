@@ -73,8 +73,8 @@ function RailContent({
         <div className="flex items-center gap-3">
           <img src="/cicada-mark.svg" alt="" className="size-9 shrink-0 rounded-[10px] bg-teal-500 p-1.5" />
           <div className="min-w-0">
-            <p className="truncate font-display text-[15px] font-bold tracking-[-0.02em] text-ink">Cicada</p>
-            <p className="text-[11px] font-medium text-muted">Steward</p>
+            <p className="truncate font-display text-[15px] font-bold tracking-[-0.02em] text-ink">Nexus</p>
+            <p className="text-[11px] font-medium text-muted">Seventeen</p>
           </div>
         </div>
       </div>
@@ -249,7 +249,7 @@ export function WorkspaceFrame({
   return (
     <div className="min-h-dvh bg-canvas text-ink">
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white px-4 lg:hidden">
-        <div className="flex items-center gap-2.5"><img src="/cicada-mark.svg" alt="" className="size-8 rounded-[9px] bg-teal-500 p-1.5" /><div><p className="text-sm font-bold leading-none">Cicada</p><p className="mt-1 text-[10px] leading-none text-muted">Steward</p></div></div>
+        <div className="flex items-center gap-2.5"><img src="/cicada-mark.svg" alt="" className="size-8 rounded-[9px] bg-teal-500 p-1.5" /><div><p className="text-sm font-bold leading-none">Nexus</p><p className="mt-1 text-[10px] leading-none text-muted">Seventeen</p></div></div>
         <button ref={openerRef} type="button" className="flex size-10 items-center justify-center rounded-[9px] text-muted hover:bg-line-soft hover:text-ink" aria-label="Open navigation" aria-expanded={drawerOpen} onClick={() => onDrawerChange(true)}><Menu size={20} /></button>
       </header>
 

@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deliberately fake credential strings used by credential-filter tests"
+regexTarget = "match"
+regexes = [
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''token: aB9fQ2rT7wX4zK8mN6pL3vC5sD1jH0uE''',
+  '''executor-mint-0001''',
+  '''executor-second-claim-0001''',
+]

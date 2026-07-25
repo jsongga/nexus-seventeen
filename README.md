@@ -1,10 +1,10 @@
-# Cicada Steward
+# Nexus Seventeen
 
-**Status** — working alpha · **Author** — Cicada · **Date** — 2026-07-19 · **Scope** — durable human-triggered task board, fixed agent ownership, one-shot Codex/Claude workers, responsive operator UI, and human-only production authority; excludes automatic deployment and hard multi-tenant isolation.
+**Status** — working alpha · **Author** — John Song · **Date** — 2026-07-25 · **Scope** — durable human-triggered task board, fixed agent ownership, one-shot Codex/Claude workers, responsive operator UI, and human-only production authority; excludes automatic deployment and hard multi-tenant isolation.
 
 ## Summary
 
-Cicada Steward is a shared todo list for people and software agents. Each agent has a permanent identity, a fixed role, and one owned part of a software system. The model process is temporary: it starts for one human-triggered run, records its result, and exits.
+Nexus Seventeen is a shared todo list for people and software agents. Each agent has a permanent identity, a fixed role, and one owned part of a software system. The model process is temporary: it starts for one human-triggered run, records its result, and exits.
 
 Only three actions wake an agent:
 
@@ -99,7 +99,7 @@ The core has no deployment endpoint or credentials. It automates only inert reco
 Use Node 22.13+ or Node 24+ so the built-in SQLite module runs without an experimental flag.
 
 ```bash
-cd steward
+cd nexus-seventeen
 npm ci
 npm run build:task-board
 npm run build:task-worker

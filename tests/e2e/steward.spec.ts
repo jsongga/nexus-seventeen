@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('the current browser-local data source is disclosed', async ({ page, isMobile }) => {
-  await expect(page).toHaveTitle('Cicada Steward — Agent oversight');
+  await expect(page).toHaveTitle('Nexus Seventeen — Agent oversight');
   const visibleShell = isMobile ? page.locator('header').first() : page.locator('aside').first();
   await expect(visibleShell.getByText('cicada', { exact: true })).toBeVisible();
   await expect(visibleShell.getByText('Steward', { exact: true })).toBeVisible();

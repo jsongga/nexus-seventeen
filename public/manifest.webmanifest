@@ -1,6 +1,6 @@
 {
-  "name": "Cicada Steward Agent Control Plane",
-  "short_name": "Steward",
+  "name": "Nexus Seventeen Agent Control Plane",
+  "short_name": "Nexus 17",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#eae9e4",
