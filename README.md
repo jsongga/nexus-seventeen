@@ -1,26 +1,29 @@
 # Nexus Seventeen
 
-**Status** — working alpha · **Author** — John Song · **Date** — 2026-07-25 · **Scope** — durable human-triggered task board, fixed agent ownership, one-shot Codex/Claude workers, responsive operator UI, and human-only production authority; excludes automatic deployment and hard multi-tenant isolation.
+**Status** — working alpha · **Author** — John Song · **Date** — 2026-07-25 · **Scope** — durable event-driven task board, fixed agent ownership, ephemeral Codex/Claude runs, responsive operator UI, and human-only production authority; excludes automatic deployment and hard multi-tenant isolation.
 
 ## Summary
 
-Nexus Seventeen is a shared todo list for people and software agents. Each agent has a permanent identity, a fixed role, and one owned part of a software system. The model process is temporary: it starts for one human-triggered run, records its result, and exits.
+Nexus Seventeen is a shared todo list for people and software agents. Each durable agent profile has a fixed role and one owned part of a software system. The model process is ephemeral: it starts for one event-triggered run, records its result, and exits with no retained provider session.
 
-Only three actions wake an agent:
+Three human actions can wake an agent:
 
 - a human assigns a task;
 - a human answers the agent's open question;
 - a human explicitly resumes the agent.
 
-Creating tasks, adding notes, proposing child work, finishing another task, and timers do not wake agents. There is no agent heartbeat or online lease in the default runtime.
+There is one narrow automatic wake: completing engineer work creates and wakes a manager review only when that project has exactly one manager. With zero or multiple managers, the review stays unassigned for a human choice. Creating tasks, adding notes, proposing child work, other task transitions, and timers do not wake agents. There is no agent heartbeat or online lease in the default runtime.
 
-The browser is a disposable frontend. Projects, tasks, messages, questions, runs, interrupts, and wakeups live in the SQLite task board. Closing or updating the UI does not stop an active worker. Reopening it reconstructs every agent from durable records.
+The browser is a disposable frontend. Global work-item intake, automation configuration, projects, tasks, messages, questions, runs, interrupts, and wakeups live in the SQLite task board. Closing or updating the UI does not stop an active worker. Reopening it reconstructs every agent from durable records.
 
-Six terms define the core:
+Nine terms define the core:
 
+- A **work item** is one immutable human submission with priority and an automatic or explicit project target. It is the future user-visible root for automated workflow attempts.
+- An **agent type** is a reusable specialist template with a fixed authority role, bounded supplemental instructions, skill references, and an evaluation profile. It does not create a worker or grant tools.
+- A **workflow template** is the company-level mapping from canonical work-item stages to enabled agent types. It is stored configuration only until a coordinator snapshots and executes it.
 - An **agent profile** is the persistent role, owned area, mission, model label, and credential hash.
-- A **task** is a result-oriented todo with workspace references, acceptance criteria, a parent, an assignee, and an agent-time estimate in 15-minute increments.
-- A **wakeup** is one durable human assignment, answer, or resume event.
+- A **task** is a result-oriented todo with durable queue order and optional work phases. Its assigned agent adds the estimate, in 15-minute increments, after inspecting the work.
+- A **wakeup** is one durable human assignment, answer, resume, or validated engineer-to-manager workflow handoff.
 - A **run** is one claimed wakeup and one temporary model process.
 - A **worker** is the lightweight process that waits for one agent's wakeups. Waiting uses a server-held request and no model tokens.
 - A **task fleet** is one local service that hosts a worker lane for every configured agent. It retries transient board failures, but it never creates tasks or wakes models itself.
@@ -32,7 +35,7 @@ flowchart LR
     HUMAN[Human] -->|create · assign · answer · resume · interrupt| UI[Desktop / mobile UI]
     UI -->|authoritative reads and commands| BOARD[SQLite task board]
     FLEET[Task fleet · one worker lane per agent] -->|held wakeup claims| BOARD
-    BOARD -->|assignment · answer · resume only| FLEET
+    BOARD -->|assignment · answer · resume · sole-manager handoff| FLEET
     FLEET -->|one contained run| MODEL[Codex or Claude CLI]
     MODEL -->|progress · result · proposal · question| FLEET
     FLEET --> BOARD
@@ -45,45 +48,51 @@ The frontend does not own the board, worker, or model process. A human note is d
 
 | Boundary | Current behavior |
 |---|---|
-| Durable board | Projects, fixed agents, tasks, append-only messages/events, questions, wakeups, runs, and interrupts survive restarts in owner-only SQLite. Schema v1 and v2 upgrade in place to v3. |
-| Human-only wakes | Assignment, answer, and explicit resume are the only database paths that emit a wakeup. Agent proposals and messages cannot start other agents. |
-| Task lifecycle | Assignment queues work. Claim records the exact start and expected completion. A question blocks the task and ends the process. Success records result/end time; failure or interrupt leaves the task blocked and resumable. |
+| Durable board | Global work-item intake, automation configuration, projects, fixed agent profiles, ordered tasks and phases, append-only messages/events, questions, wakeups, runs, and interrupts survive restarts in owner-only SQLite. Earlier schemas upgrade in place to v10 with a foreign-key check. |
+| Work-item intake | Human-only global intake stores the original request immutably, accepts priority plus automatic or explicit project targeting, and uses an idempotency key to prevent duplicate submissions. The operator follows bounded 200-row cursor pages and fails explicitly at its 10,000-row safety ceiling instead of displaying a partial queue. A submitted work item does not yet create a task or wake an agent; coordinator wiring is a later slice. |
+| Automation configuration | A human-only, compare-and-swap company configuration stores reusable specialist templates and the canonical stage-to-template mapping atomically. Fixed roles remain the authority ceiling, human review is locked to the owner, deployment is disabled, and saving configuration does not create agents, install skills, wake workers, or alter running work. This table stores the latest editable configuration, not historical executable revisions. |
+| Event-gated wakes | Human assignment, answer, and explicit resume emit wakeups. The only automatic wake is an atomic engineer-to-sole-manager review handoff; the worker validates its role, task kind, and completed parent evidence before launching. Agent proposals and messages cannot start other agents. |
+| Task lifecycle | Assignment queues work. Claim records the exact start. After inspection, the assigned agent records its estimate and the board derives an expected completion on a 15-minute boundary. A question blocks the task and ends the process. Success records result/end time; failure or interrupt leaves the task blocked and resumable. |
 | Concurrency | SQLite permits one active run per agent. Claims, answers, assignment, lifecycle changes, and interruption use atomic transactions or compare-and-swap versions. |
 | Idle cost | The worker waits on a bounded server-held claim. No model process exists while the agent is idle or waiting for a human. |
 | Multi-agent startup | One task-fleet process loads a bounded local JSON roster, starts one held-claim lane per agent, retries transient board failures with bounded backoff, and stops all lanes cleanly. Backoff never creates work. |
 | Real providers | A run launches the installed Codex or Claude CLI in its own POSIX process group with bounded context/output, a strict result schema, a fixed environment allowlist, timeout, TERM → KILL settlement, and confirmed group absence. |
 | Fixed roles | Engineer runs may write in the configured development directory. Manager and verifier runs are read-only and receive different role instructions. No role can deploy. |
 | Task context | Message cursors are tracked per task, so work on one task cannot hide earlier notes on another. A child task receives bounded parent metadata, the actual parent result, and up to 12 recent parent messages. Each agent also receives its own eight newest completed results as compact area memory. |
-| Results and proposals | Successful settlement stores the provider's concrete result on the task. An agent proposal remains inert until a human promotes it in the UI to an unassigned child todo; promotion does not wake an agent. |
-| Live activity | Codex JSONL and Claude stream events become fixed, sanitized activity labels while a run is active. Prompts, reasoning, commands, paths, tool output, and provider payload text are never copied into the board activity stream. |
-| Review workflow | Completed engineer work creates one unassigned manager review. A human assigns a manager; completion creates one human-only check. Generated stages never wake an agent, and the human decision cannot deploy. |
-| Operator UI | `/` is the authoritative Cicada task board. It supports desktop and mobile, project/agent/task creation, role-filtered assignment, exact timing, live activity and progress history, question answers, resume, proposal promotion, human review decisions, notes, and interrupt. It has no fake-data fallback. |
-| Frontend independence | The UI reads the board on return and periodically refreshes durable state while visible. These reads are read-only and never wake a model. |
+| Results and proposals | Successful settlement stores the provider's concrete result on the task. Agent proposals remain inert task messages; the simplified UI does not include proposal-promotion controls. |
+| Live activity | Codex JSONL and Claude stream events become fixed, sanitized activity labels and durable research/planning/execution/testing/review phases while a run is active. Completed rows retain their semantic stage; repeated loops append new rows, and independent rows may share a parallel group. The agent can publish a remaining-work estimate after planning without another model call. Prompts, reasoning, commands, paths, tool output, and provider payload text are never copied into the board activity stream. |
+| Review workflow | Completed implementation work assigns and wakes a manager review when exactly one same-project manager exists; otherwise it creates an unassigned manual fallback. POC and agent chat requests are durable executable tasks but explicitly skip this workflow. Manager completion creates one unassigned human-only check. That human production check remains the gate, records no deployment itself, and never wakes an agent. |
+| Operator UI | `/` is the authoritative Cicada task board. It supports desktop and mobile, global intake with Normal/Auto defaults, a dormant Automation configuration page, project-scoped intake, projects imported from disk, durable POC chat, concise task/phase status, role-filtered assignment, question answers, resume, human review decisions, and interrupt. Submitted work items appear separately from legacy board tasks, and the UI does not claim that refinement has started or that a saved template is running. It has no fake-data fallback. |
+| Frontend independence | The UI reads the board on return and periodically refreshes durable state while visible. Work-item pagination is a live keyset traversal rather than a database snapshot, so the next refresh converges an item reordered during a multi-page read. These reads are read-only and never wake a model. |
 
 The earlier lease-based control plane remains available at `/live` for compatibility and its separate manager-review, impact-observer, and deployment-authorization experiments. The local visual prototype remains at `/demo`. Neither is the default runtime.
 
+The task-board backend must be upgraded before this frontend because the current `v1` client expects the work-item and automation-configuration endpoints. There is not yet endpoint capability negotiation for mixed-version rollout.
+
 ## How one agent run works
 
+Global work-item submission, automation configuration, and agent execution are deliberately separate in the current slice. Intake records the request durably but emits no wake. Automation settings record desired specialist and stage templates but do not change prompts, worker tools, or routing. The existing task path below remains the only executable path until the board-owned coordinator snapshots the complete canonical configuration plus resolved skill digests and creates validated stage attempts. A version number by itself is not historical execution state.
+
 1. A human creates a backlog task. This does not wake an agent.
-2. A human assigns an agent and confirms the agent-only estimate. The board records one `human_assignment` wakeup.
-3. The worker's held claim returns. Claiming moves the task to `in_progress`, records `startedAt`, and computes `expectedCompletedAt` from the 15-minute estimate.
+2. A human assigns an agent. The board records one `human_assignment` wakeup; the human does not enter a duration.
+3. The worker's held claim returns. Claiming moves the task to `in_progress` and records `startedAt`. After inspecting and planning the task, the agent publishes its remaining-work estimate; the board then computes `expectedCompletedAt` on the next 15-minute boundary.
 4. The worker starts one contained provider process with only the role, owned area, mission, compact project memory, the agent's eight newest completed results, task, acceptance criteria, per-task new messages, question context, workspace references, and bounded parent evidence when the task has a parent.
 5. An engineer is instructed to follow Research → Plan → Execute → Test inside that run and repeat after a failed test. Manager and verifier roles remain read-only.
-6. While the provider runs, the worker writes fixed, sanitized activity labels. It then records bounded result-oriented progress, child-task proposals, or a plain-language result. A human may promote a proposal to an unassigned child todo without waking anyone.
+6. While the provider runs, the worker writes fixed, sanitized activity labels and advances durable phases. Independent phases can share a parallel group. It then records bounded result-oriented progress, child-task proposals, or a plain-language result.
 7. If human judgment is required, the worker writes one question, the board blocks the task, and the process exits. Answering creates one `human_answer` wakeup with the answer in the next bounded context.
-8. Engineer completion records the provider's actual result and exact end time, then creates one unassigned manager-review todo. Creating it wakes nobody.
-9. A human may assign that review to a fixed manager. Manager completion creates one human-only check; the human records approve or changes requested. Approval is evidence for a separate release step, not deployment authority.
+8. Engineer completion records the provider's actual result and exact end time. If the project has one manager, the same transaction queues the manager-review todo and records a `workflow_handoff` wake. With zero or multiple managers, it creates an unassigned review instead.
+9. The reviewer worker launches only when the handoff context proves it is a manager-role review with completed parent evidence. Manager completion creates one human-only check; the human records approve or changes requested. Approval is evidence for a separate release step, not deployment authority.
 
-Detailed RPET summaries still arrive with the terminal structured result. During execution, the board shows the current safe lifecycle activity and supports direct interruption without exposing raw provider transcripts.
+Detailed RPET summaries still arrive with the terminal structured result. During execution, the board shows the current safe lifecycle phase and supports direct interruption without exposing raw provider transcripts.
 
 ## Roles and production oversight
 
 - **Engineer** — may research, plan, modify one configured development working directory, and run tests. It cannot deploy or approve its own work.
-- **Manager** — may inspect assigned work and record a read-only recommendation. Engineer completion creates the review todo, but a human must assign it before the manager wakes.
+- **Manager** — may inspect assigned work and record a read-only recommendation. A sole same-project manager receives the engineer's review automatically; an ambiguous or missing manager roster requires human assignment.
 - **Verifier** — may independently inspect and run non-modifying checks. A human must assign it explicitly.
-- **Human owner** — chooses tasks, assigns every run, answers authority questions, interrupts work, and controls production outside the core board.
+- **Human owner** — chooses tasks, assigns ordinary work, resolves ambiguous reviewer assignment, answers authority questions, interrupts work, decides every production check, and controls production outside the core board.
 
-The core has no deployment endpoint or credentials. It automates only inert records: engineer completion creates an unassigned review, and manager completion creates a human check. The human must still assign the manager and record the final decision. The compatibility manager-review and deployment-broker services contain a stricter evidence/grant experiment, but they are not connected to the default task board.
+The core has no deployment endpoint or credentials. It automates the read-only review handoff only when the reviewer choice is unambiguous, then stops at a human check. A human still records the final production decision. The compatibility manager-review and deployment-broker services contain a stricter evidence/grant experiment, but they are not connected to the default task board.
 
 ## Outage behavior
 
@@ -118,20 +127,14 @@ STEWARD_TASK_BOARD_HUMAN_PRINCIPAL='human:operator' \
 npm run dev:task-board
 ```
 
-In a second terminal, run the frontend through its same-origin board proxy and open `http://127.0.0.1:4173/`. Development and preview servers bind to `127.0.0.1` by default:
+In a second terminal, run the frontend through its same-origin board proxy and open `http://127.0.0.1:4173/`:
 
 ```bash
 STEWARD_TASK_BOARD_HUMAN_TOKEN="$STEWARD_TASK_BOARD_HUMAN_TOKEN" \
-npm run dev
+npm run dev -- --host 127.0.0.1
 ```
 
-For an intentional visual preview on another device, pass `--host 0.0.0.0` explicitly. The remote UI remains available, but `/board-api` rejects non-loopback clients and never adds the human token for them. Use a separately authenticated gateway rather than the development proxy when remote board access is required.
-
-Use the UI to create a project and its agents. Copy each generated one-time agent token before submitting; the board stores only its SHA-256 hash. Keep each displayed model label aligned with the model configured for that agent's fleet lane.
-
-Agent IDs are URL path-segment identifiers: use letters, numbers, `.`, `_`, and `-`, starting with a letter or number. Earlier local-alpha builds accepted `:`, `@`, and `/` even though those IDs could not reach agent routes. Steward has no supported agent rename, delete, or data-import path: before upgrading such a board, back up its database, configure `STEWARD_TASK_BOARD_DB_PATH` to a fresh private database, recreate its projects, agents, and tasks with safe IDs, and update worker/fleet configuration. Startup fails with `AGENT_ID_MIGRATION_REQUIRED` while an unsafe legacy ID remains in the configured database.
-
-Treat this alpha API update as an atomic deployment: update the frontend, task-board service, task worker, and task fleet together. Interrupt requests now identify the exact `runId`; mixed frontend and board versions are not write-compatible. The current frontend can read older message pages that omit `hasMore`, but that read fallback does not make interrupt writes safe across versions.
+Use the UI to add a project by its absolute folder path. Steward derives the project name and workspace scope, creates its default engineer profile, and keeps that profile's one-time credential in the current tab as `cicada.pendingAgentToken.<agent-id>`; the board stores only its SHA-256 hash. The profile appears automatically, while a worker supervisor still needs to adopt that credential into a fleet lane before it can claim work. Keep each displayed model label aligned with the model configured for that lane.
 
 Copy the fleet template to the ignored local data directory, restrict it to the current user, and add one entry per agent. Each entry binds the existing board agent and token to a provider, model, working directory, and private journal:
 
@@ -146,7 +149,7 @@ Start every configured agent from a third terminal:
 npm run dev:task-fleet -- "$PWD/.steward-data/fleet.json"
 ```
 
-The fleet holds one claim request per idle agent. A 30-second held request may reconnect, and transient failures may schedule transport backoff, but neither action runs a model or changes task state. Only assignment, answer, or explicit resume releases real work.
+The fleet holds one claim request per idle agent. A 30-second held request may reconnect, and transient failures may schedule transport backoff, but neither action runs a model or changes task state. Assignment, answer, explicit resume, or the validated sole-manager review handoff releases real work.
 
 Claude lanes use minimal bare mode when `ANTHROPIC_API_KEY` is explicitly available. Without that variable, they retain safe-mode OAuth/keychain authentication while still disabling project customizations, session persistence, MCP servers, and slash commands.
 
@@ -169,6 +172,32 @@ npm run dev:task-worker
 Set `STEWARD_TASK_WORKER_PROVIDER=claude` and provide a caller-selected Claude model ID to use Claude instead. Provider credentials come from the installed CLI's supported environment. Steward does not hard-code model IDs or pricing.
 
 Creating a task leaves it in backlog. Click **Assign and wake agent** only when the worker is running and the task scope is ready. Adding a human note never wakes it.
+
+## Deploy the operator board with Dokploy
+
+Create a Dokploy Compose service from `docker-compose.dokploy.yml`, set a private `STEWARD_TASK_BOARD_HUMAN_TOKEN` of at least 32 characters, and route the domain to service `steward` on port `3000`. The container serves the built UI and the loopback-only task-board API; its named volume persists the owner-only SQLite database.
+
+## Reconcile the company project and agent catalog
+
+The versioned catalog in `catalog/company-bootstrap.json` defines the durable projects, three authority profiles per project, reusable agent types, and linear stage ownership. Validate it without network access:
+
+```bash
+npm run bootstrap:validate
+npm run test:bootstrap
+```
+
+Applying it is an explicit, human-authenticated operation. Agent credentials are generated once and stored in macOS Keychain under service `cicada-steward-agent-token`; there is no plaintext fallback:
+
+```bash
+STEWARD_OPERATOR_TOKEN="$(security find-generic-password -a "$(id -un)" -s cicada-steward-dokploy -w)" \
+  npm run bootstrap:apply
+```
+
+The reconciler refuses duplicate project names, immutable profile drift, missing external credentials, and project-description drift. It retains unknown automation types and updates the registry with compare-and-swap. See `docs/AGENT_SYSTEM.md` for the record model, handoff contract, reflection loop, and current dormant-runtime limits.
+
+The production gateway does not inject the human token. On first load, open **Connection settings**, keep the board URL at `/board-api`, and enter the same token. The public `/health` route checks the board through the gateway without granting board authority.
+
+This Compose service runs the operator board only. Agent fleets remain separate, workspace-local processes because they need provider credentials and controlled access to development repositories.
 
 ## Verification
 
@@ -200,7 +229,7 @@ This alpha is usable for local development orchestration, not a production multi
 - **Impact summary** — the main agent must return a plain-language user result, but the separate economy-model impact observer is not connected to the default task board yet.
 - **Release integration** — the human-check queue is connected, but it records only approval or changes requested. It does not call an external release system.
 - **Deployment** — the core deliberately has no deploy method. The older broker can issue one-use authorization, but an external trusted release system must still perform and deduplicate deployment.
-- **Storage and HA** — SQLite is owner-locked and single-node. Backup, replication, pagination beyond bounded recent projections, and multi-instance failover remain operator responsibilities.
+- **Storage and HA** — SQLite is owner-locked and single-node. Work-item intake is cursor-paged, but backup, replication, pagination of the other bounded recent projections, and multi-instance failover remain operator responsibilities.
 - **Identity and transport** — local static bearer tokens remain in use. Production needs an identity provider, secure same-origin gateway, TLS, rotation, revocation, rate limiting, CSRF protection, and audit export.
 - **Model routing** — each event-driven worker currently uses one caller-configured provider/model for its one-shot run. The older RPET runtime contains cheap-first phase routing, but that router is not yet connected to the new worker.
 

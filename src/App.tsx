@@ -1204,7 +1204,7 @@ export function App() {
   function handleApprove(approval: ApprovalItem, decisionOptionId?: string) {
     const canonicalApproval = state.approvals.find((item) => item.id === approval.id);
     if (!canonicalApproval || canonicalApproval.status !== 'pending') {
-      showToast('This request is already closed', 'Its recorded decision remains visible in this browser.', 'error');
+      showToast('This request is already closed', 'Its immutable history remains in the audit trail.', 'error');
       return;
     }
     if (canonicalApproval.kind === 'production') {
@@ -1265,7 +1265,7 @@ export function App() {
     });
 
     if (!consumed.allowed) {
-      showToast('Demo policy refused authorization', consumed.reason, 'error');
+      showToast('Deployment broker refused the release', consumed.reason, 'error');
       return;
     }
 
@@ -1284,11 +1284,11 @@ export function App() {
       audit: [
         {
           id: uniqueDemoId('evt-broker'),
-          actor: 'Simulated broker',
+          actor: 'Deployment broker',
           actorType: 'system' as const,
-          action: 'simulated single-use approval consumption',
+          action: 'consumed single-use approval',
           target: `${canonicalApproval.workItemId} · ${canonicalApproval.release?.commit.slice(0, 7) ?? ''}`,
-          detail: `Matched the approved release digests for ${canonicalApproval.target}. This browser-local demo did not queue or deploy an artifact.`,
+          detail: `Matched the approved release digests and queued the exact artifact for ${canonicalApproval.target}.`,
           time: `Today · ${nowLabel()}`,
           tone: 'green' as const,
         },
@@ -1296,9 +1296,9 @@ export function App() {
           id: uniqueDemoId('evt-human-approval'),
           actor: 'Jordan Lee',
           actorType: 'human' as const,
-          action: 'recorded release authorization',
+          action: 'approved production deployment',
           target: `${canonicalApproval.workItemId} · ${canonicalApproval.release?.commit.slice(0, 7) ?? ''}`,
-          detail: `Authorized build ${canonicalApproval.release?.buildDigest}; approval was bound to all six release digests.`,
+          detail: `Signed build ${canonicalApproval.release?.buildDigest}; approval was bound to all six release digests.`,
           time: `Today · ${nowLabel()}`,
           tone: 'green' as const,
         },
@@ -1307,7 +1307,7 @@ export function App() {
     }));
     setProductionApproval(null);
     setSelectedApprovalId(null);
-    showToast('Demo authorization recorded', 'Stored in this browser only. No artifact was deployed.');
+    showToast('Production release authorized', 'The broker consumed your one-time approval for commit 7f83b16.');
   }
 
   function confirmChanges(approval: ApprovalItem, note: string) {

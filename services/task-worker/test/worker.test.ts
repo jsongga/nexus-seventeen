@@ -3,7 +3,8 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkerJournalStore } from "../src/journal.js";
-import { emptyTaskWorkerJournal, parseBoundedAgentContext, parseTaskWorkerIdentity } from "../src/schema.js";
+import { estimateActivity, phaseActivity } from "../src/provider-activity.js";
+import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "../src/schema.js";
 import { TaskWorker } from "../src/worker.js";
 import type { AgentRunOutcome, TaskWorkerJournal } from "../src/types.js";
 import {
@@ -29,17 +30,6 @@ async function worker(root: string, board: FakeBoard, launcher: FakeLauncher): P
     now: () => new Date(NOW),
   });
 }
-
-test("worker identities require a route-safe agent ID", () => {
-  assert.deepEqual(parseTaskWorkerIdentity({ workerId: "worker/one", agentId: "engineer-one" }), {
-    workerId: "worker/one",
-    agentId: "engineer-one",
-  });
-  assert.throws(
-    () => parseTaskWorkerIdentity({ workerId: "worker-one", agentId: "engineering/platform" }),
-    /URL-safe path-segment/u,
-  );
-});
 
 test("idle dispatch long-polls the board without starting a model process", async () => {
   const root = await tempRoot();
@@ -132,6 +122,87 @@ for (const reason of ["human_assignment", "human_answer", "human_resume"] as con
   });
 }
 
+test("launches a workflow handoff only for a manager review with completed parent evidence", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request, {
+    reason: "workflow_handoff",
+    context: context({
+      mission: {
+        role: "manager",
+        area: "Checkout review",
+        mission: "Review completed engineer work before the human production check.",
+      },
+      task: {
+        ...context().task,
+        kind: "manager_review",
+        requiredRole: "manager",
+      },
+    }),
+  }));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome("The engineer evidence is ready for a human decision."));
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(launcher.requests.length, 1);
+    assert.equal(launcher.requests[0]?.wakeReason, "workflow_handoff");
+    assert.equal(board.settlements[0]?.outcome, "completed");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+for (const malformed of [
+  {
+    label: "work task",
+    overrides: { task: { ...context().task, kind: "work" as const, requiredRole: null } },
+  },
+  {
+    label: "non-manager mission",
+    overrides: { mission: { ...context().mission, role: "engineer" } },
+  },
+  {
+    label: "missing manager requirement",
+    overrides: { task: { ...context().task, kind: "manager_review" as const, requiredRole: null } },
+  },
+  {
+    label: "missing completed parent evidence",
+    overrides: { parentEvidence: null },
+  },
+] as const) {
+  test(`rejects a workflow handoff with ${malformed.label} without launching`, async () => {
+    const root = await tempRoot();
+    const board = new FakeBoard();
+    const base = context({
+      mission: {
+        role: "manager",
+        area: "Checkout review",
+        mission: "Review completed engineer work before the human production check.",
+      },
+      task: {
+        ...context().task,
+        kind: "manager_review",
+        requiredRole: "manager",
+      },
+    });
+    board.queued.push((request) => claimed(request, {
+      reason: "workflow_handoff",
+      context: context({ ...base, ...malformed.overrides }),
+    }));
+    const launcher = new FakeLauncher();
+    const taskWorker = await worker(root, board, launcher);
+    try {
+      assert.equal(await taskWorker.dispatchOnce(), true);
+      assert.equal(launcher.requests.length, 0);
+      assert.equal(board.settlements[0]?.outcome, "failed");
+      assert.match(board.settlements[0]?.result ?? "", /Workflow handoff/u);
+    } finally {
+      await taskWorker.close();
+    }
+  });
+}
+
 test("records idempotent live activity before terminal output and settlement", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -168,6 +239,207 @@ test("records idempotent live activity before terminal output and settlement", a
   }
 });
 
+test("structured phase markers replace inference without creating an interleaved phase stream", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+
+    await until(() => board.phaseCreates.length === 1 && board.phaseUpdates.length === 1, "initial live phase");
+    assert.deepEqual(
+      { title: board.phaseCreates[0]?.title, stage: board.phaseCreates[0]?.stage },
+      { title: "Review task", stage: "research" },
+    );
+    assert.equal(board.phaseUpdates[0]?.status, "in_progress");
+
+    handle.emitActivity("Preparing the implementation plan.");
+    await until(() => board.phaseCreates.length === 2, "planning phase");
+    assert.equal(board.phaseCreates[1]?.stage, "planning");
+    assert.ok(board.phaseUpdates.some((update) => (
+      update.phase.stage === "research" && update.stage === undefined && update.status === "completed"
+    )));
+
+    handle.emitActivity(estimateActivity(60));
+    await until(() => board.estimateUpdates.length === 1, "live estimate");
+    assert.equal(board.estimateUpdates[0]?.expectedAgentMinutes, 60);
+    assert.equal(board.settlements.length, 0, "live state is visible before terminal settlement");
+
+    handle.emitActivity("Running a development check.");
+    await until(() => board.phaseCreates.length === 3, "inferred testing phase");
+    assert.equal(board.phaseCreates[2]?.stage, "testing");
+
+    handle.emitActivity(phaseActivity({
+      key: "api",
+      title: "Implement retry API",
+      stage: "execution",
+      status: "in_progress",
+      parallelGroup: "delivery",
+    }));
+    handle.emitActivity(phaseActivity({
+      key: "tests",
+      title: "Verify retry API",
+      stage: "testing",
+      status: "in_progress",
+      parallelGroup: "delivery",
+    }));
+    await until(() => board.phaseCreates.length === 4, "parallel live phases");
+    assert.ok(board.phaseUpdates.some((update) => (
+      update.phase.phaseId === "phase-3" && update.title === "Implement retry API" &&
+      update.stage === "execution" && update.parallelGroup === "delivery"
+    )), "the marker replaces the transport-inferred testing phase");
+    assert.equal(board.phaseCreates[3]?.parallelGroup, "delivery");
+    assert.equal(board.settlements.length, 0, "parallel phases are visible before terminal settlement");
+
+    const activityCount = board.outputs.length;
+    handle.emitActivity("Updating the implementation.");
+    await until(() => board.outputs.length === activityCount + 1, "post-marker provider activity");
+    assert.equal(board.phaseCreates.length, 4, "inference stays disabled after structured telemetry begins");
+    const outcome = completedOutcome("Customers can retry without duplicate work.");
+    handle.resolve({
+      ...outcome,
+      expectedAgentMinutes: 60,
+      phases: [
+        {
+          phaseId: null,
+          title: "Implement retry guard",
+          stage: "execution",
+          status: "completed",
+          parallelGroup: "terminal-delivery",
+          orderKey: 100,
+        },
+        {
+          phaseId: null,
+          title: "Verify retry behavior",
+          stage: "testing",
+          status: "completed",
+          parallelGroup: "terminal-delivery",
+          orderKey: 200,
+        },
+      ],
+    });
+    await dispatch;
+
+    assert.equal(board.estimateUpdates.length, 1, "terminal output does not repeat the live estimate");
+    assert.deepEqual(board.phaseCreates.slice(-2).map((phase) => phase.parallelGroup), ["terminal-delivery", "terminal-delivery"]);
+    assert.ok(board.phaseUpdates.some((update) => update.orderKey === 100 && update.status === "completed"));
+    assert.ok(board.phaseUpdates.some((update) => update.orderKey === 200 && update.status === "completed"));
+    assert.equal(board.settlements[0]?.outcome, "completed");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("repeated and parallel live phases append history without rewriting a completed cycle", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+
+    handle.emitActivity(phaseActivity({
+      key: "cycle-1-execution",
+      title: "First implementation cycle",
+      stage: "execution",
+      status: "in_progress",
+      parallelGroup: null,
+    }));
+    await until(() => board.phaseUpdates.some((update) => (
+      update.phase.phaseId === "phase-1" && update.stage === "execution"
+    )), "first cycle phase");
+    assert.equal(board.phaseCreates.length, 1, "the first marker adopts the inferred phase");
+    const firstCycleId = "phase-1";
+    handle.emitActivity(phaseActivity({
+      key: "cycle-1-execution",
+      title: "First implementation cycle",
+      stage: "execution",
+      status: "completed",
+      parallelGroup: null,
+    }));
+    await until(() => board.phaseUpdates.some((update) => (
+      update.phase.phaseId === firstCycleId && update.status === "completed"
+    )), "first cycle completion");
+    const firstCycleMutationCount = board.phaseUpdates.filter((update) => (
+      update.phase.phaseId === firstCycleId
+    )).length;
+
+    handle.emitActivity(phaseActivity({
+      key: "cycle-1-execution",
+      title: "An invalid attempt to reuse completed history",
+      stage: "planning",
+      status: "in_progress",
+      parallelGroup: null,
+    }));
+    handle.emitActivity(phaseActivity({
+      key: "cycle-2-planning",
+      title: "Second planning cycle",
+      stage: "planning",
+      status: "in_progress",
+      parallelGroup: null,
+    }));
+    await until(() => board.phaseCreates.length === 2, "second cycle phase");
+    assert.equal(board.phaseCreates[1]?.title, "Second planning cycle");
+    assert.equal(board.phaseCreates[1]?.stage, "planning");
+
+    handle.emitActivity(phaseActivity({
+      key: "cycle-2-api",
+      title: "Parallel API pass",
+      stage: "execution",
+      status: "in_progress",
+      parallelGroup: "cycle-2-delivery",
+    }));
+    handle.emitActivity(phaseActivity({
+      key: "cycle-2-tests",
+      title: "Parallel test pass",
+      stage: "testing",
+      status: "in_progress",
+      parallelGroup: "cycle-2-delivery",
+    }));
+    await until(() => board.phaseCreates.length === 4, "parallel cycle phases");
+    assert.deepEqual(
+      board.phaseCreates.slice(-2).map((phase) => phase.parallelGroup),
+      ["cycle-2-delivery", "cycle-2-delivery"],
+    );
+
+    handle.resolve(completedOutcome("The second loop passed its parallel implementation and test work."));
+    await dispatch;
+    const firstCycleMutations = board.phaseUpdates.filter((update) => update.phase.phaseId === firstCycleId);
+    assert.equal(firstCycleMutations.length, firstCycleMutationCount, "the completed first cycle was not rewritten");
+    assert.ok(board.phaseUpdates.every((update) => update.stage !== "done"));
+    assert.equal(board.settlements[0]?.outcome, "completed");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a stale estimate CAS does not turn completed work into a failed task", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.estimateFailures = 1;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({ ...completedOutcome(), expectedAgentMinutes: 45 });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.equal(board.estimateUpdates.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "completed");
+    assert.equal(board.settlements[0]?.result, "Customers can retry checkout safely.");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("never launches for a non-human wake reason", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -195,6 +467,8 @@ test("a human question is the last output and atomically ends the run without ge
       { type: "progress", body: "The implementation is blocked on product policy." },
       { type: "human_question", question: "Should retries remain enabled after a fraud rejection?" },
     ],
+    expectedAgentMinutes: 45,
+    phases: [],
     detail: "Waiting for the product owner to choose retry policy.",
   });
   const taskWorker = await worker(root, board, launcher);
@@ -253,6 +527,31 @@ test("durable board interrupt reaches the process directly and settles interrupt
     assert.equal(board.settlements[0]?.outcome, "interrupted");
     assert.equal(taskWorker.snapshot.activeRunId, null);
   } finally {
+    await taskWorker.close();
+  }
+});
+
+test("an interrupt during prelaunch phase persistence prevents the model from starting", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  let releasePhase!: () => void;
+  board.phaseCreateBarrier = new Promise<void>((resolve) => { releasePhase = resolve; });
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => board.phaseCreates.length === 1, "prelaunch phase request");
+    const claimRequest = board.claimRequests[0];
+    assert.ok(claimRequest);
+    board.requestInterrupt(claimed(claimRequest).claim, "Human revised the task before launch");
+    await until(() => taskWorker.snapshot.interruptReason !== null, "durable prelaunch interrupt");
+    releasePhase();
+    await dispatch;
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(board.settlements[0]?.outcome, "interrupted");
+  } finally {
+    releasePhase();
     await taskWorker.close();
   }
 });
@@ -502,6 +801,8 @@ test("rejects invalid terminal output before appending it to the board", async (
   launcher.outcomes.push({
     status: "completed",
     outputs: [{ type: "human_question", question: "This conflicts with completed." }],
+    expectedAgentMinutes: null,
+    phases: [],
     detail: "Invalid provider output.",
   } as AgentRunOutcome);
   const taskWorker = await worker(root, board, launcher);

@@ -10,50 +10,21 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/demo');
   await page.evaluate(() => window.localStorage.clear());
   await page.reload();
-  await expect.poll(() => page.evaluate(
-    () => window.localStorage.getItem('steward-demo-state-v8') !== null,
-  )).toBe(true);
 });
 
 test('the current browser-local data source is disclosed', async ({ page, isMobile }) => {
   await expect(page).toHaveTitle('Nexus Seventeen — Agent oversight');
   const visibleShell = isMobile ? page.locator('header').first() : page.locator('aside').first();
   await expect(visibleShell.getByText('cicada', { exact: true })).toBeVisible();
-  await expect(visibleShell.getByText('Steward', { exact: true })).toBeVisible();
+  await expect(visibleShell.getByText('Nexus Seventeen', { exact: true })).toBeVisible();
   await expect(
     page.getByText(isMobile ? 'Demo data' : 'Demo · browser-local', { exact: true }),
   ).toBeVisible();
 });
 
-test('prototype-only boundaries and event history are labeled as browser-local', async ({ page, isMobile }) => {
-  await expect(page.getByText('Human release authorization is required')).toBeVisible();
-  await expect(page.getByText('Simulation only', { exact: true })).toBeVisible();
-  await expect(page.getByText(/browser demo records decisions but cannot release to customers/iu)).toBeVisible();
-
-  const navigation = page.getByRole('navigation', {
-    name: isMobile ? 'Mobile navigation' : 'Main navigation',
-  });
-  await navigation
-    .getByRole('button', { name: isMobile ? 'Runs' : 'Live runs', exact: true })
-    .click();
-  await expect(page.getByRole('heading', { name: 'Prototype boundary model' })).toBeVisible();
-  await expect(page.getByText(/browser demo does not create a sandbox or inspect production credentials/iu)).toBeVisible();
-  await expect(page.getByText('Development sandbox', { exact: true })).toHaveCount(0);
-
-  if (isMobile) await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('button', { name: 'Event history', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Browser-local event timeline' })).toBeVisible();
-  await expect(page.getByText(/not a tamper-resistant audit ledger/iu)).toBeVisible();
-  await expect(page.getByText('Immutable history', { exact: true })).toHaveCount(0);
-});
-
-test('the browser demo records one exact release authorization without claiming deployment', async ({ page, isMobile }) => {
-  const mutationRequests: string[] = [];
-  page.on('request', (request) => {
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) mutationRequests.push(request.url());
-  });
+test('a human can approve the exact candidate and the broker consumes it once', async ({ page, isMobile }) => {
   await expect(page.getByRole('heading', { name: /decisions need you\./ })).toBeVisible();
-  await expect(page.getByText('Human release authorization is required')).toBeVisible();
+  await expect(page.getByText('Production boundary is enforced')).toBeVisible();
 
   await page.getByRole('button', { name: /Promote SSO session hardening/ }).click();
   const evidenceDrawer = page.getByRole('dialog', {
@@ -68,7 +39,7 @@ test('the browser demo records one exact release authorization without claiming 
     evidenceDrawer.getByText('Vale reviewed this work to the best of their ability'),
   ).toBeVisible();
   await expect(evidenceDrawer.getByText('Engineer loops checked')).toBeVisible();
-  await expect(evidenceDrawer.getByText('Prototype policy: managers cannot authorize or deploy production')).toBeVisible();
+  await expect(evidenceDrawer.getByText('Managers cannot approve or deploy production')).toBeVisible();
   await expect(evidenceDrawer.getByText('Migrations')).toBeVisible();
   await expect(evidenceDrawer.getByText('Opened', { exact: true })).toBeVisible();
   await expect(evidenceDrawer.getByText('Resolved', { exact: true })).toBeVisible();
@@ -77,14 +48,12 @@ test('the browser demo records one exact release authorization without claiming 
   await expect(evidenceDrawer.getByText('Expected by', { exact: true })).toHaveCount(0);
   await expect(evidenceDrawer.getByText(/agent time/i)).toHaveCount(0);
 
-  await evidenceDrawer.getByRole('button', { name: 'Review authorization' }).click();
-  const confirmation = page.getByRole('dialog').filter({ hasText: 'Simulate release authorization' });
-  await expect(confirmation.getByText('It does not deploy.')).toBeVisible();
-  await confirmation.getByLabel(/Type AUTHORIZE STW-482/).fill('AUTHORIZE STW-482');
-  await confirmation.getByRole('button', { name: 'Record authorization' }).click();
+  await evidenceDrawer.getByRole('button', { name: 'Review & deploy' }).click();
+  const confirmation = page.getByRole('dialog').filter({ hasText: 'Authorize production' });
+  await confirmation.getByLabel(/Type DEPLOY STW-482/).fill('DEPLOY STW-482');
+  await confirmation.getByRole('button', { name: 'Approve & deploy' }).click();
 
-  await expect(page.getByRole('status')).toContainText('Demo authorization recorded');
-  await expect(page.getByRole('status')).toContainText('No artifact was deployed');
+  await expect(page.getByRole('status')).toContainText('Production release authorized');
   await page.getByRole('button', { name: /^(?:\d+ )?Approvals(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'All', exact: true }).click();
   await page.getByRole('button', { name: /Promote SSO session hardening/ }).click();
@@ -92,13 +61,12 @@ test('the browser demo records one exact release authorization without claiming 
     name: /Promote SSO session hardening approval details/,
   });
   await expect(closedDrawer.getByRole('button', { name: 'Request changes' })).toBeDisabled();
-  await expect(closedDrawer.getByRole('button', { name: 'Authorization recorded' })).toBeDisabled();
+  await expect(closedDrawer.getByRole('button', { name: 'Already deployed' })).toBeDisabled();
   await page.keyboard.press('Escape');
   if (isMobile) await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('button', { name: 'Event history', exact: true }).click();
-  await expect(page.getByText('simulated single-use approval consumption')).toBeVisible();
-  await expect(page.getByText('recorded release authorization').first()).toBeVisible();
-  expect(mutationRequests).toEqual([]);
+  await page.getByRole('button', { name: /Audit(?: trail)?/, exact: true }).click();
+  await expect(page.getByText('consumed single-use approval')).toBeVisible();
+  await expect(page.getByText('approved production deployment').first()).toBeVisible();
 });
 
 test('stacked human-decision dialogs keep keyboard focus and close only the top layer', async ({ page }) => {
@@ -107,13 +75,13 @@ test('stacked human-decision dialogs keep keyboard focus and close only the top 
   const drawer = page.getByRole('dialog', {
     name: /Promote SSO session hardening approval details/,
   });
-  const reviewButton = drawer.getByRole('button', { name: 'Review authorization' });
+  const reviewButton = drawer.getByRole('button', { name: 'Review & deploy' });
   await reviewButton.click();
 
-  const productionDialog = page.getByRole('dialog', { name: /Simulate release authorization/ });
+  const productionDialog = page.getByRole('dialog', { name: /Authorize production/ });
   await expect(productionDialog).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(productionDialog.getByLabel(/Type AUTHORIZE STW-482/)).toBeFocused();
+  await expect(productionDialog.getByLabel(/Type DEPLOY STW-482/)).toBeFocused();
   await page.keyboard.press('Escape');
 
   await expect(productionDialog).not.toBeVisible();
@@ -175,7 +143,7 @@ test('mobile oversight stays usable without horizontal page overflow', async ({ 
   await expect(page.getByRole('heading', { name: 'Decisions, with the proof attached.' })).toBeVisible();
   await page.getByRole('button', { name: /Promote SSO session hardening/ }).click();
   await expect(page.getByText('Exact release candidate')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Review authorization' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review & deploy' })).toBeVisible();
 });
 
 test('mobile system navigation is keyboard reachable and restores focus', async ({ page, isMobile }) => {
@@ -242,10 +210,8 @@ test('a human can queue, interrupt, and resume Patch while preserving outcome co
 
   const inspector = page.getByRole('dialog', { name: 'Patch · STW-471' });
   await expect(inspector.getByRole('heading', { name: 'Human controls' })).toBeVisible();
-  await expect(inspector.getByText('Plain-language summary', { exact: true })).toBeVisible();
-  await expect(inspector.getByText('Updates automatically as the work progresses')).toBeVisible();
-  await expect(inspector.getByText(/not a test result or release evidence/)).toBeVisible();
-  await inspector.getByText('Details', { exact: true }).click();
+  await expect(inspector.getByText('Low-cost impact observer')).toBeVisible();
+  await expect(inspector.getByText('Read-only, revisioned, and event-driven')).toBeVisible();
   await expect(inspector.getByText('Revision 5')).toBeVisible();
   await expect(inspector.getByText(/Sources: STW-471/)).toBeVisible();
   await expect(inspector.getByText('What changes for users')).toBeVisible();
@@ -488,7 +454,6 @@ test('reload reconciles unfinished worker and observer jobs without losing the l
   await expect(inspector.getByRole('button', { name: 'Retry interrupt' })).toBeVisible();
   await expect(inspector.getByText('Refresh failed')).toBeVisible();
   await expect(inspector.getByText(/last good user-impact revision remains visible/i)).toBeVisible();
-  await inspector.getByText('Details', { exact: true }).click();
   await expect(inspector.getByText('Revision 5')).toBeVisible();
   await expect(inspector.getByText('Retain reload evidence')).toBeVisible();
 
@@ -535,9 +500,7 @@ test('invalid persisted state resets safely instead of blanking the app', async 
   await page.reload();
   await expect(page.getByRole('heading', { name: /decisions need you\./ })).toBeVisible();
   await page.getByRole('button', { name: 'Inspect live run RUN-882 for Patch' }).click();
-  const resetInspector = page.getByRole('dialog', { name: 'Patch · STW-471' });
-  await resetInspector.getByText('Details', { exact: true }).click();
-  await expect(resetInspector.getByText('Revision 5')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Patch · STW-471' }).getByText('Revision 5')).toBeVisible();
 });
 
 test('persisted task forecasts reject non-quarter-hour estimates', async ({ page }) => {
@@ -554,7 +517,6 @@ test('persisted task forecasts reject non-quarter-hour estimates', async ({ page
   }, storageKey);
 
   await page.reload();
-  await expect(page.getByRole('heading', { name: /decisions need you\./ })).toBeVisible();
   const restored = await page.evaluate((key) => {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;

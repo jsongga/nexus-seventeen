@@ -105,7 +105,11 @@ async function fixture(longPollMs = 1): Promise<Fixture> {
   return { root, service, origin: address.url, project, launcher, worker };
 }
 
-async function createTask(item: Fixture, title: string): Promise<BoardTask> {
+async function createTask(
+  item: Fixture,
+  title: string,
+  objective = "Customers can retry checkout without a duplicate charge.",
+): Promise<BoardTask> {
   const response = await request<{ task: BoardTask }>(
     item.origin,
     `/v1/projects/${item.project.projectId}/tasks`,
@@ -115,7 +119,7 @@ async function createTask(item: Fixture, title: string): Promise<BoardTask> {
     {
       parentTaskId: null,
       title,
-      objective: "Customers can retry checkout without a duplicate charge.",
+      objective,
       acceptanceCriteria: "Focused retry tests pass and the result explains customer impact.",
       workspaceRefs: ["repo:checkout", "path:services/checkout"],
       assignedAgentId: AGENT_ID,
@@ -124,6 +128,7 @@ async function createTask(item: Fixture, title: string): Promise<BoardTask> {
     },
   );
   assert.equal(response.task.status, "queued");
+  assert.equal(response.task.expectedAgentMinutes, null, "human task input does not set the agent's estimate");
   return response.task;
 }
 
@@ -178,6 +183,25 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     const task = await createTask(item, "Make checkout retries idempotent");
     item.launcher.outcomes.push({
       ...completedOutcome("Customers can retry without being charged twice."),
+      expectedAgentMinutes: 60,
+      phases: [
+        {
+          phaseId: null,
+          title: "Implement retry guard",
+          stage: "execution",
+          status: "completed",
+          parallelGroup: "delivery",
+          orderKey: 100,
+        },
+        {
+          phaseId: null,
+          title: "Verify retry behavior",
+          stage: "testing",
+          status: "completed",
+          parallelGroup: "delivery",
+          orderKey: 200,
+        },
+      ],
       detail: "Implementation and focused tests completed successfully.",
     });
     assert.equal(await item.worker.dispatchOnce(), true);
@@ -191,6 +215,20 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     const completed = board.tasks.find((candidate) => candidate.taskId === task.taskId);
     assert.equal(completed?.status, "completed");
     assert.equal(completed?.result, "Customers can retry without being charged twice.");
+    assert.equal(completed?.expectedAgentMinutes, 60);
+    assert.ok(completed?.estimateRecordedAt);
+    assert.deepEqual(
+      completed?.phases.filter((phase) => phase.parallelGroup === "delivery").map((phase) => ({
+        title: phase.title,
+        stage: phase.stage,
+        status: phase.status,
+      })),
+      [
+        { title: "Implement retry guard", stage: "execution", status: "completed" },
+        { title: "Verify retry behavior", stage: "testing", status: "completed" },
+      ],
+    );
+    assert.ok(completed?.phases.some((phase) => phase.title === "Review task" && phase.status === "completed"));
     assert.ok(completed?.startedAt);
     assert.ok(completed?.endedAt);
     const run = board.recentRuns.find((candidate) => candidate.taskId === task.taskId);
@@ -206,6 +244,20 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     );
     assert.deepEqual(messages.map((message) => message.kind), ["progress", "proposal", "result"]);
     assert.ok(messages.every((message) => message.runId === run?.runId));
+  } finally {
+    await close(item);
+  }
+});
+
+test("a board-accepted long task description remains runnable in bounded worker context", async () => {
+  const item = await fixture();
+  try {
+    const objective = "x".repeat(8_000);
+    const task = await createTask(item, "Handle a detailed migration", objective);
+    item.launcher.outcomes.push(completedOutcome("The detailed migration task is complete."));
+    assert.equal(await item.worker.dispatchOnce(), true);
+    assert.equal(item.launcher.requests[0]?.context.taskId, task.taskId);
+    assert.equal(item.launcher.requests[0]?.context.task.objective, objective);
   } finally {
     await close(item);
   }
@@ -364,13 +416,6 @@ test("a review child receives bounded evidence from its completed engineer paren
   const item = await fixture();
   let managerWorker: TaskWorker | null = null;
   try {
-    const parent = await createTask(item, "Make checkout retries idempotent");
-    item.launcher.outcomes.push({
-      ...completedOutcome("Customers can retry without being charged twice."),
-      detail: "The engineer completed implementation and focused verification.",
-    });
-    assert.equal(await item.worker.dispatchOnce(), true);
-
     await request(
       item.origin,
       `/v1/projects/${item.project.projectId}/agents`,
@@ -386,23 +431,18 @@ test("a review child receives bounded evidence from its completed engineer paren
         token: MANAGER_TOKEN,
       },
     );
-    const { task: review } = await request<{ task: BoardTask }>(
-      item.origin,
-      `/v1/projects/${item.project.projectId}/tasks`,
-      "POST",
-      HUMAN_TOKEN,
-      201,
-      {
-        parentTaskId: parent.taskId,
-        title: "Review checkout retry evidence",
-        objective: "Independently assess the completed engineer result.",
-        acceptanceCriteria: "The decision cites the supplied result and progress evidence.",
-        workspaceRefs: parent.workspaceRefs,
-        assignedAgentId: MANAGER_ID,
-        assignedRole: "manager",
-        expectedAgentMinutes: 15,
-      },
-    );
+    const parent = await createTask(item, "Make checkout retries idempotent");
+    item.launcher.outcomes.push({
+      ...completedOutcome("Customers can retry without being charged twice."),
+      detail: "The engineer completed implementation and focused verification.",
+    });
+    assert.equal(await item.worker.dispatchOnce(), true);
+    const review = (await snapshot(item)).tasks.find((candidate) => (
+      candidate.parentTaskId === parent.taskId && candidate.kind === "manager_review"
+    ));
+    assert.ok(review);
+    assert.equal(review.assignedAgentId, MANAGER_ID);
+    assert.equal(review.status, "queued");
     const managerLauncher = new FakeLauncher();
     managerLauncher.outcomes.push(completedOutcome("The evidence is ready for human approval."));
     managerWorker = await TaskWorker.create({
@@ -415,7 +455,10 @@ test("a review child receives bounded evidence from its completed engineer paren
     assert.equal(await managerWorker.dispatchOnce(), true);
 
     const evidence = managerLauncher.requests[0]?.context.parentEvidence;
+    assert.equal(managerLauncher.requests[0]?.wakeReason, "workflow_handoff");
     assert.equal(managerLauncher.requests[0]?.context.taskId, review.taskId);
+    assert.equal(managerLauncher.requests[0]?.context.task.kind, "manager_review");
+    assert.equal(managerLauncher.requests[0]?.context.task.requiredRole, "manager");
     assert.equal(evidence?.taskId, parent.taskId);
     assert.equal(evidence?.status, "completed");
     assert.equal(evidence?.result, "Customers can retry without being charged twice.");
@@ -438,6 +481,8 @@ test("a question atomically pauses the real run and its human answer is the next
         { type: "progress", body: "Research found an unresolved fraud-policy decision." },
         { type: "human_question", question: "Should a fraud rejection disable later retries?" },
       ],
+      expectedAgentMinutes: 30,
+      phases: [],
       detail: "Waiting for a human policy decision.",
     };
     item.launcher.outcomes.push(waiting);
@@ -485,9 +530,6 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
     const task = await createTask(item, "Interrupt unsafe retry work");
     const dispatch = item.worker.dispatchOnce();
     await until(() => item.launcher.handles.length === 1, "real HTTP board agent launch");
-    const active = await snapshot(item);
-    const activeRun = active.recentRuns.find((candidate) => candidate.taskId === task.taskId && candidate.status === "active");
-    assert.ok(activeRun);
 
     const reason = "Stop now; a human is revising the task scope.";
     await request(
@@ -496,7 +538,7 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
       "POST",
       HUMAN_TOKEN,
       201,
-      { runId: activeRun.runId, reason },
+      { reason },
       "worker-interrupt-0001",
     );
     assert.equal(await dispatch, true);

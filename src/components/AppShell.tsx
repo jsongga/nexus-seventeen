@@ -44,7 +44,7 @@ const primaryNav: NavItem[] = [
 const systemNav: NavItem[] = [
   { id: 'team', label: 'Role team', icon: Users },
   { id: 'routing', label: 'Model policy', icon: BrainCircuit },
-  { id: 'audit', label: 'Event history', icon: FileClock },
+  { id: 'audit', label: 'Audit trail', icon: FileClock },
 ];
 
 const mobileNav: NavItem[] = [
@@ -67,7 +67,7 @@ function CicadaMark({ compact = false }: { compact?: boolean }) {
         <div className="font-display text-[15px] font-semibold leading-none tracking-[-0.02em] text-ink">
           cicada
         </div>
-        <div className="mt-1 text-[11px] font-medium leading-none text-muted">Steward</div>
+        <div className="mt-1 text-[11px] font-medium leading-none text-muted">Nexus Seventeen</div>
       </div>
     </div>
   );
@@ -196,10 +196,10 @@ export function AppShell({
               <span className="grid size-7 place-items-center rounded-lg bg-white/10 text-caution-fill">
                 <LockKeyhole size={15} />
               </span>
-              <span className="text-xs font-semibold">Release simulation</span>
+              <span className="text-xs font-semibold">Production locked</span>
             </div>
             <p className="mt-2 text-[11px] leading-4 text-white/58">
-              Records browser-local authorization; it cannot deploy.
+              Only your signed release approval can unlock a deployment.
             </p>
           </div>
 

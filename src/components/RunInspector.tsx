@@ -82,14 +82,14 @@ const loopStatus = {
   done: {
     label: 'Done',
     icon: Check,
-    card: 'border-teal-border bg-teal-soft',
+    card: 'border-[#cfe2df] bg-[#f5faf9]',
     iconClass: 'bg-teal-soft text-teal-700',
     labelClass: 'text-teal-700',
   },
   active: {
     label: 'Active',
     icon: Activity,
-    card: 'border-teal-border bg-teal-soft',
+    card: 'border-[#8fc8c2] bg-teal-soft',
     iconClass: 'bg-teal-500 text-ink',
     labelClass: 'text-teal-700',
   },
@@ -97,14 +97,14 @@ const loopStatus = {
     label: 'Queued',
     icon: Hourglass,
     card: 'border-line bg-white',
-    iconClass: 'bg-line-soft text-muted',
+    iconClass: 'bg-line-soft text-[#65707b]',
     labelClass: 'text-muted',
   },
   failed: {
     label: 'Needs work',
     icon: CircleX,
-    card: 'border-urgent-border bg-urgent-soft',
-    iconClass: 'bg-urgent-soft text-urgent',
+    card: 'border-[#e5b7b3] bg-urgent-soft',
+    iconClass: 'bg-[#f8d8d5] text-urgent',
     labelClass: 'text-urgent',
   },
 } satisfies Record<DemoRun['loopSteps'][number]['status'], {
@@ -118,18 +118,18 @@ const loopStatus = {
 const journalTones = {
   note: {
     icon: NotebookPen,
-    marker: 'border-info-border bg-info-soft text-info',
-    evidence: 'border-info-border bg-card text-info',
+    marker: 'border-[#ccd9e2] bg-[#eef3f6] text-[#3f6073]',
+    evidence: 'border-[#d9e1e7] bg-[#f5f7f9] text-[#4c6472]',
   },
   success: {
     icon: CheckCircle2,
-    marker: 'border-teal-border bg-teal-soft text-teal-700',
-    evidence: 'border-teal-border bg-teal-soft text-teal-700',
+    marker: 'border-[#b9ddd9] bg-teal-soft text-teal-700',
+    evidence: 'border-[#cfe2df] bg-[#f5faf9] text-[#416b66]',
   },
   warning: {
     icon: TimerReset,
-    marker: 'border-caution-border bg-caution-soft text-caution',
-    evidence: 'border-caution-border bg-caution-soft text-caution',
+    marker: 'border-[#ead09b] bg-caution-soft text-caution',
+    evidence: 'border-[#eadcb9] bg-[#fff9ea] text-caution',
   },
 } satisfies Record<DemoRun['journal'][number]['tone'], {
   icon: typeof Activity;
@@ -205,7 +205,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
   return (
     <div
       className={cn(
-        'fixed inset-x-0 bottom-0 z-[60] bg-scrim/45 backdrop-blur-[2px]',
+        'fixed inset-x-0 bottom-0 z-[60] bg-ink/45 backdrop-blur-[2px]',
         !isTopmost && 'pointer-events-none',
       )}
       style={{ top: visualViewportTop }}
@@ -256,7 +256,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
           </div>
           <div className="hidden text-right sm:block">
             <p className="text-[10px] font-medium text-muted">Heartbeat</p>
-            <p className="mt-0.5 font-mono text-xs text-muted">{run.lastHeartbeat}</p>
+            <p className="mt-0.5 font-mono text-xs text-[#4f5964]">{run.lastHeartbeat}</p>
           </div>
         </header>
 
@@ -293,10 +293,10 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
               aria-labelledby="task-timing-heading"
               data-testid="agent-task-timing"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-card px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-[#fafbfb] px-4 py-3">
                 <div>
                   <p className="text-[10px] font-medium text-muted">Durable agent task</p>
-                  <h2 id="task-timing-heading" className="mt-0.5 text-xs font-semibold text-muted">Actual timing and agent forecast</h2>
+                  <h2 id="task-timing-heading" className="mt-0.5 text-xs font-semibold text-[#3f4953]">Actual timing and agent forecast</h2>
                 </div>
                 <Pill tone={taskForecastPaused ? 'amber' : run.agentTask.status === 'completed' ? 'green' : 'blue'}>
                   {taskForecastPaused ? 'Forecast paused' : formatAgentMinutes(run.agentTask.expectedAgentMinutes)}
@@ -305,7 +305,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
               <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
                 <div className="bg-white p-4">
                   <p className="text-[10px] font-medium text-muted">Actual start</p>
-                  <p className="mt-1.5 font-mono text-xs font-medium text-muted" title={String(run.agentTask.startedAt)}>
+                  <p className="mt-1.5 font-mono text-xs font-medium text-[#3f4953]" title={String(run.agentTask.startedAt)}>
                     {formatTaskTimestamp(run.agentTask.startedAt)}
                   </p>
                 </div>
@@ -319,7 +319,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                 </div>
                 <div className="bg-white p-4">
                   <p className="text-[10px] font-medium text-muted">Actual end</p>
-                  <p className="mt-1.5 font-mono text-xs font-medium text-muted" title={run.agentTask.endedAt ? String(run.agentTask.endedAt) : undefined}>
+                  <p className="mt-1.5 font-mono text-xs font-medium text-[#3f4953]" title={run.agentTask.endedAt ? String(run.agentTask.endedAt) : undefined}>
                     {run.agentTask.endedAt ? formatTaskTimestamp(run.agentTask.endedAt) : 'In progress'}
                   </p>
                 </div>
@@ -330,7 +330,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
             </section>
           ) : (
             <section className="mt-4 rounded-[14px] border border-dashed border-line bg-white/60 p-4" aria-label="Agent task timing">
-              <p className="text-xs font-semibold text-muted">No agent task active</p>
+              <p className="text-xs font-semibold text-[#4f5964]">No agent task active</p>
               <p className="mt-1 text-[10px] leading-4 text-muted">Start and expected completion appear only after an agent accepts work. No estimate is assigned to a person.</p>
             </section>
           )}
@@ -338,7 +338,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
           <section
             className={cn(
               'mt-4 overflow-hidden rounded-[14px] border shadow-[0_1px_2px_rgba(23,28,36,.04)]',
-              controlRestricted || interruptRefused ? 'border-urgent-border bg-urgent-soft' : 'border-teal-border bg-teal-soft',
+              controlRestricted || interruptRefused ? 'border-[#e5b7b3] bg-urgent-soft' : 'border-[#cfe2df] bg-[#f5faf9]',
             )}
             aria-labelledby="human-controls-heading"
           >
@@ -348,7 +348,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={cn(
                       'grid size-8 shrink-0 place-items-center rounded-lg',
-                      controlRestricted || interruptRefused ? 'bg-urgent-soft text-urgent' : 'bg-teal-soft text-teal-700',
+                      controlRestricted || interruptRefused ? 'bg-[#f8d8d5] text-urgent' : 'bg-teal-soft text-teal-700',
                     )}>
                       {controlRestricted || interruptRefused ? <Octagon size={15} /> : <ListTodo size={15} />}
                     </span>
@@ -359,7 +359,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                       </h2>
                     </div>
                   </div>
-                  <p className="mt-2.5 max-w-md text-[11px] leading-5 text-muted">
+                  <p className="mt-2.5 max-w-md text-[11px] leading-5 text-[#5f6a74]">
                     {isInterrupted
                       ? 'The worker confirmed the process stopped. Workspace, checkpoint, progress journal, and stable agent queue are preserved; this task is not marked done.'
                       : interruptPending
@@ -453,12 +453,12 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                   <ol className="mt-2.5 space-y-2">
                     {orderedQueue.map((item, index) => (
                       <li key={item.id} className="flex min-w-0 items-start gap-2.5 rounded-[10px] border border-line bg-white/85 p-3">
-                        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-line-soft font-mono text-[10px] font-medium text-muted">
+                        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-line-soft font-mono text-[10px] font-medium text-[#5f6973]">
                           {index + 1}
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <p className="break-words text-[11px] font-semibold text-muted">{item.title}</p>
+                            <p className="break-words text-[11px] font-semibold text-[#3f4953]">{item.title}</p>
                             <Pill tone={item.position === 'next' ? 'green' : 'neutral'} className="min-h-5 px-1.5 text-[9px]">
                               {item.position === 'next' ? 'Next up' : 'Backlog'}
                             </Pill>
@@ -484,7 +484,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
 
           <ImpactSummaryCard summary={run.impactSummary} compact paused={workspacePaused} className="mt-4" />
 
-          <section className="mt-4 overflow-hidden rounded-[14px] border border-white/[0.08] bg-ink-panel text-white shadow-[0_10px_28px_rgba(23,28,36,.14)]" aria-live="polite">
+          <section className="mt-4 overflow-hidden rounded-[14px] border border-white/[0.08] bg-ink text-white shadow-[0_10px_28px_rgba(23,28,36,.14)]" aria-live="polite">
             <div className="flex items-start gap-3 p-4 sm:p-5">
               <span className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-teal-500 text-ink">
                 <ActionIcon size={19} />
@@ -552,13 +552,13 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
             </div>
 
             {isManagerReview ? (
-              <div className="mt-3 flex items-start gap-3 rounded-[14px] border border-alt-border bg-alt-soft p-3.5">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-alt-border text-alt">
+              <div className="mt-3 flex items-start gap-3 rounded-[14px] border border-[#d5d3e3] bg-[#f2f1f7] p-3.5">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#e5d9f1] text-[#6b5082]">
                   <ClipboardCheck size={15} />
                 </span>
                 <div>
-                  <p className="text-xs font-semibold text-alt">Engineering loop complete</p>
-                  <p className="mt-1 text-[11px] leading-5 text-alt">
+                  <p className="text-xs font-semibold text-[#55547a]">Engineering loop complete</p>
+                  <p className="mt-1 text-[11px] leading-5 text-[#776486]">
                     The manager is checking the work and evidence before creating a human production review task.
                   </p>
                 </div>
@@ -578,7 +578,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                         <PhaseIcon size={15} />
                       </span>
                       <div className="min-w-0 flex-1 sm:mt-2.5">
-                        <p className="text-xs font-semibold text-muted">{step.phase}</p>
+                        <p className="text-xs font-semibold text-[#3f4953]">{step.phase}</p>
                         <p className={cn('mt-0.5 flex items-center gap-1 text-[9px] font-semibold', status.labelClass)}>
                           <StatusIcon size={10} />
                           {step.status === 'active' && isInterrupted
@@ -626,11 +626,11 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                       </span>
                       <div className="min-w-0 flex-1 rounded-[14px] border border-line bg-white p-3.5">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="text-[10px] font-semibold text-muted">{entry.phase}</span>
+                          <span className="text-[10px] font-semibold text-[#5f6973]">{entry.phase}</span>
                           <span className="text-[9px] text-muted">·</span>
                           <time className="font-mono text-[10px] text-muted">{entry.time}</time>
                         </div>
-                        <h3 className="mt-1 text-[12px] font-semibold text-muted">{entry.title}</h3>
+                        <h3 className="mt-1 text-[12px] font-semibold text-[#3f4953]">{entry.title}</h3>
                         <p className="mt-1 break-words text-[11px] leading-5 text-muted">{entry.note}</p>
                         {entry.evidence ? (
                           <div className={cn('mt-2.5 flex min-w-0 items-start gap-2 rounded-lg border px-2.5 py-2', tone.evidence)}>
@@ -650,7 +650,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
             )}
           </section>
 
-          <section className="mt-7 rounded-[14px] bg-ink-panel p-4 text-white sm:p-5">
+          <section className="mt-7 rounded-[14px] bg-ink p-4 text-white sm:p-5">
             <div className="flex items-start gap-3">
               <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-caution-fill text-ink">
                 <ArrowRight size={17} />
@@ -672,7 +672,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                 <div className="flex items-center gap-2 text-[11px] font-medium text-muted">
                   <Cpu size={14} /> Model route
                 </div>
-                <p className="mt-2 break-words text-[13px] font-semibold text-muted">{run.model}</p>
+                <p className="mt-2 break-words text-[13px] font-semibold text-[#3f4953]">{run.model}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Pill tone={run.tier === 'Economy' ? 'green' : run.tier === 'Balanced' ? 'purple' : 'amber'}>{run.tier}</Pill>
                   <span className="self-center text-[10px] font-medium text-muted">Cheap-first routing</span>
@@ -683,7 +683,7 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                   <span className="flex items-center gap-2"><CircleDollarSign size={14} /> Token budget</span>
                   <span className="font-mono">{Math.round(tokenPercent)}%</span>
                 </div>
-                <p className="mt-2 font-mono text-[13px] font-medium text-muted">
+                <p className="mt-2 font-mono text-[13px] font-medium text-[#3f4953]">
                   {formatTokens(run.tokens)} <span className="text-muted">/ {formatTokens(run.tokenLimit)}</span>
                 </p>
                 <ProgressBar value={tokenPercent} tone={tokenPercent > 80 ? 'amber' : 'purple'} className="mt-2.5" />
@@ -695,29 +695,29 @@ export function RunInspector({ run, open, onClose, onQueue, onInterrupt, onResum
                     <ShieldCheck size={15} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold">Illustrative workspace context</p>
+                    <p className="text-xs font-semibold">Development sandbox</p>
                     <p className="mt-0.5 break-all font-mono text-[9px] text-muted">dev/{run.workItemId.toLowerCase()}</p>
                   </div>
-                  <Pill tone="green">Demo</Pill>
+                  <Pill tone="green">Isolated</Pill>
                 </div>
                 <div className="mt-3 grid gap-2 text-[10px] font-semibold sm:grid-cols-2">
-                  <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-teal-border bg-teal-soft px-3 text-teal-700">
-                    <TerminalSquare size={13} className="shrink-0" /> Intended: repo, tools & tests
+                  <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-[#cfe2df] bg-[#f5faf9] px-3 text-teal-700">
+                    <TerminalSquare size={13} className="shrink-0" /> Repo, tools & tests allowed
                   </div>
-                  <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-urgent-border bg-urgent-soft px-3 text-urgent">
-                    <LockKeyhole size={13} className="shrink-0" /> Not verified by this browser demo
+                  <div className="flex min-h-11 items-center gap-2 rounded-[10px] border border-[#e5b7b3] bg-urgent-soft px-3 text-urgent">
+                    <LockKeyhole size={13} className="shrink-0" /> Prod keys & deployment denied
                   </div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className="mb-[max(0.5rem,env(safe-area-inset-bottom))] mt-4 flex items-start gap-3 rounded-[14px] border border-caution-border bg-caution-soft p-4">
+          <section className="mb-[max(0.5rem,env(safe-area-inset-bottom))] mt-4 flex items-start gap-3 rounded-[14px] border border-[#ead09b] bg-caution-soft p-4">
             <LockKeyhole size={17} className="mt-0.5 shrink-0 text-caution" />
             <div>
-              <p className="text-xs font-semibold text-caution">Intended production gate</p>
+              <p className="text-xs font-semibold text-[#684908]">A person is the production gate</p>
               <p className="mt-1 text-[11px] leading-5 text-caution">
-                The product model requires a human release decision. This prototype does not enforce credentials or deploy to production.
+                Managers can submit completed work for human review. No agent can approve or deploy it to production.
               </p>
             </div>
           </section>

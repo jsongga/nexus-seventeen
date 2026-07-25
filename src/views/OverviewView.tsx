@@ -62,14 +62,7 @@ function Metric({
 
 function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
   const tierTone = run.tier === 'Economy' ? 'green' : run.tier === 'Balanced' ? 'purple' : 'red';
-  const phaseWords: Record<string, string> = {
-    research: 'Researching',
-    plan: 'Planning',
-    execute: 'Coding',
-    test: 'Testing',
-    manager_review: 'Being reviewed',
-  };
-  const phaseLabel = phaseWords[run.loopPhase] ?? run.loopPhase;
+  const phaseLabel = run.loopPhase === 'manager_review' ? 'Manager review' : run.loopPhase[0].toUpperCase() + run.loopPhase.slice(1);
   const interrupted = isInterruptSettled(run.controlState);
   const settling = isInterruptPending(run.controlState);
   const uncertain = isRunStateUncertain(run.controlState);
@@ -114,7 +107,7 @@ function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Pill tone={interrupted ? 'red' : controlAttention ? 'amber' : run.loopPhase === 'manager_review' ? 'purple' : 'blue'}>
-              {controlStatus} · attempt {run.iteration}
+              {controlStatus} · loop {run.iteration}
             </Pill>
             <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold', controlAttention ? 'text-urgent' : 'text-teal-700')}>
               <span className={cn('size-1.5 rounded-full', controlAttention ? 'bg-urgent' : 'bg-teal-500')} />
@@ -127,9 +120,13 @@ function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
             <ProgressBar value={run.progress} tone={run.tier === 'Balanced' ? 'purple' : 'green'} className="flex-1" />
             <span className="font-mono text-[10px] font-medium text-muted">{run.progress}%</span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-[10px] text-muted">
-            <span className="font-mono">${run.cost.toFixed(2)} spent so far</span>
-            <span className="ml-auto inline-flex items-center gap-1 font-semibold text-teal-700">
+          <div className="mt-2 flex items-center gap-2 font-mono text-[10px] text-muted">
+            <span>{run.model}</span>
+            <span>·</span>
+            <span>${run.cost.toFixed(2)}</span>
+            <span>·</span>
+            <span>{run.workItemId}</span>
+            <span className="ml-auto inline-flex items-center gap-1 font-sans font-semibold text-teal-700">
               Inspect <ArrowUpRight size={10} />
             </span>
           </div>
@@ -141,11 +138,11 @@ function LiveRunCard({ run, onOpen }: { run: DemoRun; onOpen: () => void }) {
 
 function PipelineMini({ mission }: { mission: DemoMission }) {
   const stateLabels = {
-    scope_review: 'Needs your OK',
-    engineering: 'Building',
-    manager_review: 'In review',
-    human_review: 'Needs your approval',
-    deployed: 'Demo authorized',
+    scope_review: 'Scope review',
+    engineering: 'Engineer loop',
+    manager_review: 'Manager review',
+    human_review: 'Human check',
+    deployed: 'Deployed',
     blocked: 'Blocked',
   };
   const stateTone =
@@ -164,8 +161,10 @@ function PipelineMini({ mission }: { mission: DemoMission }) {
       <Avatar name={mission.owner} color={mission.ownerColor} size="sm" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-semibold">{mission.title}</p>
-        <div className="mt-1 font-mono text-[10px] text-muted">
-          Updated {mission.updated}
+        <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-muted">
+          <span>{mission.id}</span>
+          <span>·</span>
+          <span>{mission.updated}</span>
         </div>
       </div>
       <Pill tone={stateTone}>{stateLabels[mission.state]}</Pill>
@@ -208,11 +207,11 @@ export function OverviewView({
             <span className="font-medium text-muted">Good morning, Jordan.</span>
             <span className="font-mono">Saturday · July 18</span>
           </div>
-          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
+          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
             {pending.length} decisions need you.
           </h1>
           <p className="mt-2 max-w-xl text-[14px] leading-6 text-muted sm:text-[15px]">
-            See what every agent is working on right now. Any real release still requires an external deployment integration.
+            Every active agent reports its current action and progress loop. Nothing can reach production without your signed approval.
           </p>
         </div>
         <Button
@@ -233,16 +232,16 @@ export function OverviewView({
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-display text-[15px] font-semibold">Human release authorization is required</h2>
-              <Pill tone="dark">Simulation only</Pill>
+              <h2 className="font-display text-[15px] font-semibold">Production boundary is enforced</h2>
+              <Pill tone="dark">Human key required</Pill>
             </div>
             <p className="mt-1 text-[12px] leading-5 text-white/58">
-              Agents can build, test, and preview their work. This browser demo records decisions but cannot release to customers.
+              Agents can edit, install, test, and preview in development. None hold production credentials or deployment authority.
             </p>
           </div>
           <div className="flex items-center gap-2 font-mono text-[11px] text-white/60">
             <ShieldCheck size={16} className="text-teal-300" />
-            Browser-local
+            Policy v3.2
           </div>
         </div>
       </Card>
@@ -250,8 +249,8 @@ export function OverviewView({
       {primaryRun ? (
         <section className="space-y-3" aria-label="Main agent user impact overview">
           <SectionHeading
-            title="What this work means for customers"
-            description="A plain-language summary that updates on its own as the work progresses."
+            title="What the main agent's work means"
+            description="A low-cost observer keeps this outcome-focused overview current as progress is written."
             action={
               <Button
                 size="sm"
@@ -297,7 +296,7 @@ export function OverviewView({
         <section className="min-w-0 space-y-3">
           <SectionHeading
             title="Needs your attention"
-            description="The decisions waiting on you, with the facts to decide."
+            description="Decision-ready evidence, not raw agent transcripts."
             action={
               <Button size="sm" variant="quiet" onClick={onViewApprovals} icon={<ArrowUpRight size={14} />}>
                 Open inbox
@@ -312,8 +311,8 @@ export function OverviewView({
         <aside className="min-w-0 space-y-6">
           <section className="space-y-3">
             <SectionHeading
-              title="Live work"
-              description={paused ? 'Everything is safely paused.' : 'See exactly what each agent is doing now.'}
+              title="Live development"
+              description={paused ? 'Runs are safely paused.' : 'See exactly what each agent is doing now.'}
               action={
                 <Button size="sm" variant="quiet" onClick={onViewRuns} icon={<Activity size={14} />}>
                   All runs
@@ -330,8 +329,8 @@ export function OverviewView({
           <Card className="p-4 sm:p-5">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="font-display text-[15px] font-semibold">Work in progress</h2>
-                <p className="mt-0.5 text-[11px] text-muted">From request to authorization</p>
+                <h2 className="font-display text-[15px] font-semibold">Mission flow</h2>
+                <p className="mt-0.5 text-[11px] text-muted">Goal to verified release</p>
               </div>
               <span className="grid size-9 place-items-center rounded-[10px] bg-teal-soft text-teal-700">
                 <Route size={18} />
@@ -345,15 +344,15 @@ export function OverviewView({
             <div className="mt-2 grid grid-cols-3 gap-2 border-t border-line-soft pt-4 text-center">
               <div>
                 <GitBranch size={14} className="mx-auto text-muted" />
-                <p className="mt-1 text-[10px] font-medium text-muted">Sandboxed</p>
+                <p className="mt-1 text-[10px] font-medium text-muted">Isolated</p>
               </div>
               <div>
                 <TimerReset size={14} className="mx-auto text-muted" />
-                <p className="mt-1 text-[10px] font-medium text-muted">Cost-capped</p>
+                <p className="mt-1 text-[10px] font-medium text-muted">Bounded</p>
               </div>
               <div>
                 <Check size={14} className="mx-auto text-teal-700" />
-                <p className="mt-1 text-[10px] font-medium text-teal-700">You approve</p>
+                <p className="mt-1 text-[10px] font-medium text-teal-700">Verified</p>
               </div>
             </div>
           </Card>

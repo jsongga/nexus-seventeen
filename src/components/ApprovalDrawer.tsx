@@ -111,13 +111,13 @@ export function ApprovalDrawer({
   const decisionReady = approval.kind !== 'decision' || decisionOptionId.length > 0;
   const actionLabel = closed
     ? approval.status === 'deployed'
-      ? 'Authorization recorded'
+      ? 'Already deployed'
       : approval.status === 'approved'
         ? 'Already approved'
         : 'Changes requested'
     : approval.kind === 'production'
       ? managerReady
-        ? 'Review authorization'
+        ? 'Review & deploy'
         : 'Manager review required'
       : approval.kind === 'scope'
         ? 'Approve scope'
@@ -185,7 +185,7 @@ export function ApprovalDrawer({
             <span className="ml-auto font-mono text-[11px] font-medium tabular-nums text-muted">{approval.requestedAt}</span>
           </div>
 
-          <h1 className="mt-4 font-display text-[20px] font-bold leading-[1.2] tracking-[-0.025em] text-ink sm:text-[24px]">
+          <h1 className="mt-4 font-display text-[25px] font-bold leading-[1.15] tracking-[-0.035em] text-ink sm:text-[30px]">
             {approval.title}
           </h1>
           <p className="mt-3 text-[14px] leading-6 text-muted">{approval.summary}</p>
@@ -199,7 +199,7 @@ export function ApprovalDrawer({
               <p className="mt-0.5 truncate text-[11px] text-muted">
                 {approval.requestedByRole} ·{' '}
                 {approval.kind === 'production'
-                  ? 'intended role cannot authorize production'
+                  ? 'cannot approve or deploy production'
                   : 'waiting for human intent'}
               </p>
             </div>
@@ -261,7 +261,7 @@ export function ApprovalDrawer({
                           {approval.managerReview.manager} reviewed this work to the best of their ability
                         </p>
                         <p className="mt-0.5 text-[10px] font-semibold text-muted">
-                          Completed <span className="font-mono tabular-nums">{approval.managerReview.completedAt}</span> · Prototype policy: managers cannot authorize or deploy production
+                          Completed <span className="font-mono tabular-nums">{approval.managerReview.completedAt}</span> · Managers cannot approve or deploy production
                         </p>
                       </div>
                       <LockKeyhole size={16} className="mt-0.5 shrink-0 text-teal-700" />
@@ -347,7 +347,7 @@ export function ApprovalDrawer({
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-[15px] font-bold text-ink">Exact release candidate</h2>
                 <Pill tone="green" dot>
-                  Demo evidence
+                  Immutable
                 </Pill>
               </div>
               <div className="mt-3 rounded-[14px] border border-line bg-white px-4 py-1">
@@ -485,7 +485,7 @@ export function ApprovalDrawer({
             </div>
             {approval.kind === 'decision' && !closed ? (
               <p className="mt-2 text-[10px] font-semibold text-muted">
-                Choose one behavior before recording the decision. Steward will persist the exact choice in this browser's event history.
+                Choose one behavior before recording the decision. Steward will persist the exact choice and include it in the audit trail.
               </p>
             ) : null}
           </section>
@@ -519,11 +519,11 @@ export function ApprovalDrawer({
             )}
             <div>
               <p className="text-xs font-bold text-caution">
-                {approval.kind === 'production' ? 'Browser-local release authorization' : 'Agents are waiting for your intent'}
+                {approval.kind === 'production' ? 'Your identity is the release key' : 'Agents are waiting for your intent'}
               </p>
               <p className="mt-1 text-[11px] leading-5 text-caution">
                 {approval.kind === 'production'
-                  ? 'The demo records one use for this exact manifest. Resetting browser data resets this simulated policy state.'
+                  ? 'Approval applies once to this exact manifest. Any code, test, configuration, or policy change makes it stale.'
                   : 'After approval, the role team can work without per-command interruptions inside development.'}
               </p>
             </div>
@@ -546,7 +546,7 @@ export function ApprovalDrawer({
             </Button>
           </div>
           <p className="mt-2.5 text-center text-[10px] font-semibold text-muted">
-            Decision is attributed to Jordan Lee in this browser-local event history.
+            Decision is attributed to Jordan Lee and written to the audit trail.
           </p>
         </footer>
       </aside>

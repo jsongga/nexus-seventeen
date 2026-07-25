@@ -7,13 +7,17 @@ import type {
   AgentRunHandle,
   AgentRunInterrupt,
   AgentRunOutcome,
+  AgentTaskPhase,
   AppendRunOutputRequest,
   BoundedAgentContext,
   ClaimedAgentRun,
   ClaimNextWakeRequest,
+  CreateAgentTaskPhaseRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
   TaskWakeClaim,
+  UpdateAgentTaskPhaseRequest,
+  UpdateTaskEstimateRequest,
 } from "../src/types.js";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
@@ -40,9 +44,14 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
     },
     projectMemory: "The checkout service uses idempotency keys and has a focused test suite.",
     task: {
+      kind: "work",
+      requiredRole: null,
       title: "Prevent duplicate checkout submission",
       objective: "Make repeated submission safe for customers.",
       acceptanceCriteria: "A repeated request creates one charge and the focused tests pass.",
+      version: 1,
+      expectedAgentMinutes: null,
+      phases: [],
     },
     areaMemory: [{
       taskId: "task-prior",
@@ -141,6 +150,8 @@ export function completedOutcome(label = "Customers can retry checkout safely.")
       },
       { type: "result", body: label },
     ],
+    expectedAgentMinutes: null,
+    phases: [],
     detail: label,
   };
 }
@@ -150,11 +161,17 @@ export class FakeBoard implements TaskBoardClient {
   readonly appendAttempts: AppendRunOutputRequest[] = [];
   readonly outputs: AppendRunOutputRequest[] = [];
   readonly settlements: SettleAgentRunRequest[] = [];
+  readonly estimateUpdates: UpdateTaskEstimateRequest[] = [];
+  readonly phaseCreates: CreateAgentTaskPhaseRequest[] = [];
+  readonly phaseUpdates: UpdateAgentTaskPhaseRequest[] = [];
   readonly #claimed = new Map<string, ClaimedAgentRun>();
   readonly #waiters = new Map<string, (value: AgentRunInterrupt | null) => void>();
   readonly queued: Array<(request: ClaimNextWakeRequest) => ClaimedAgentRun> = [];
   claimFailures = 0;
   appendFailures = 0;
+  estimateFailures = 0;
+  phaseCreateBarrier: Promise<void> | null = null;
+  #phaseSequence = 0;
 
   claimNextWake(request: ClaimNextWakeRequest): Promise<ClaimedAgentRun | null> {
     this.claimRequests.push(structuredClone(request));
@@ -195,6 +212,43 @@ export class FakeBoard implements TaskBoardClient {
       runId: claim.runId,
       reason,
       requestedAt: NOW,
+    });
+  }
+
+  updateTaskEstimate(request: UpdateTaskEstimateRequest): Promise<number> {
+    this.estimateUpdates.push(structuredClone(request));
+    if (this.estimateFailures > 0) {
+      this.estimateFailures -= 1;
+      return Promise.reject(new Error("Simulated task version conflict"));
+    }
+    return Promise.resolve(request.version + 1);
+  }
+
+  async createTaskPhase(request: CreateAgentTaskPhaseRequest): Promise<AgentTaskPhase> {
+    this.phaseCreates.push(structuredClone(request));
+    await this.phaseCreateBarrier;
+    this.#phaseSequence += 1;
+    return {
+      phaseId: `phase-${this.#phaseSequence}`,
+      title: request.title,
+      stage: request.stage,
+      status: "pending",
+      parallelGroup: request.parallelGroup,
+      orderKey: this.#phaseSequence * 1_024,
+      version: 1,
+    };
+  }
+
+  updateTaskPhase(request: UpdateAgentTaskPhaseRequest): Promise<AgentTaskPhase> {
+    this.phaseUpdates.push(structuredClone(request));
+    return Promise.resolve({
+      ...request.phase,
+      ...(request.title === undefined ? {} : { title: request.title }),
+      ...(request.stage === undefined ? {} : { stage: request.stage }),
+      ...(request.status === undefined ? {} : { status: request.status }),
+      ...("parallelGroup" in request ? { parallelGroup: request.parallelGroup ?? null } : {}),
+      ...(request.orderKey === undefined ? {} : { orderKey: request.orderKey }),
+      version: request.phase.version + 1,
     });
   }
 

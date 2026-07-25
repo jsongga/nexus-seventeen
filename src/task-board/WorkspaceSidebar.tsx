@@ -1,23 +1,18 @@
 import {
   CircleAlert,
   CircleX,
-  ChevronRight,
-  FileText,
-  FolderKanban,
-  ListTodo,
   Menu,
-  MessageSquareText,
-  Settings2,
   X,
 } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
-import { Avatar, Pill, cn } from '../components/ui';
+import { cn } from '../components/ui';
 import type { BoardAgent, BoardSnapshot } from './types';
-import { isExplicitPointOfContact, taskNeedsHumanAction } from './workspace-model';
+import { agentWorkLabel, taskNeedsHumanAction } from './workspace-model';
 
 export type BoardPage =
   | { kind: 'tasks' }
-  | { kind: 'documents' }
+  | { kind: 'automation' }
+  | { kind: 'documents'; documentId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'agent'; agentId: string };
 
@@ -31,17 +26,18 @@ function pageIs(page: BoardPage, kind: BoardPage['kind'], id?: string): boolean 
 function AgentStatusMark({ agent }: { agent: BoardAgent }) {
   const active = agent.status === 'running' || agent.status === 'queued';
   const waiting = agent.status === 'waiting_for_human' || agent.status === 'interrupting';
-  if (agent.status === 'failed') return <CircleX size={12} className="shrink-0 text-urgent" aria-label="failed" />;
-  if (waiting) return <CircleAlert size={12} className="shrink-0 text-caution" aria-label={agent.status.replaceAll('_', ' ')} />;
+  const label = `Work: ${agentWorkLabel(agent.status)}`;
+  if (agent.status === 'failed') return <CircleX size={12} className="shrink-0 text-urgent" aria-label={label} />;
+  if (waiting) return <CircleAlert size={12} className="shrink-0 text-caution" aria-label={label} />;
   return (
     <span
       className={cn(
-        'size-2 shrink-0 rounded-full border border-white',
-        active ? 'bg-teal-500' : 'bg-line-strong',
+        'size-1.5 shrink-0 rounded-full',
+        active ? 'bg-success-fill' : 'bg-taupe',
       )}
-      title={agent.status.replaceAll('_', ' ')}
+      title={label}
     >
-      <span className="sr-only">{agent.status.replaceAll('_', ' ')}</span>
+      <span className="sr-only">{label}</span>
     </span>
   );
 }
@@ -50,105 +46,103 @@ function RailContent({
   snapshot,
   page,
   pointOfContact,
-  connected,
-  lastSyncedLabel,
   onNavigate,
-  onConnection,
 }: {
   snapshot: BoardSnapshot | null;
   page: BoardPage;
   pointOfContact: BoardAgent | null;
-  connected: boolean;
-  lastSyncedLabel: string;
   onNavigate: (page: BoardPage) => void;
-  onConnection: () => void;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
-  const navRow = 'group relative flex min-h-10 w-full items-center gap-2.5 rounded-[9px] px-3 text-left text-[13px] font-semibold transition-colors';
-  const activeRow = 'bg-teal-soft text-teal-700 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-teal-700';
+  const navRow = 'group flex min-h-11 w-full items-center rounded-full px-4 text-left text-sm font-normal transition-[background-color,color,transform] duration-150 ease-out motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-10';
+  const activeRow = 'bg-taupe text-white';
+  const inactiveRow = 'text-ink hover:bg-surface';
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
-      <div className="border-b border-line px-4 py-4">
-        <div className="flex items-center gap-3">
-          <img src="/cicada-mark.svg" alt="" className="size-9 shrink-0 rounded-[10px] bg-teal-500 p-1.5" />
-          <div className="min-w-0">
-            <p className="truncate font-display text-[15px] font-bold tracking-[-0.02em] text-ink">Nexus</p>
-            <p className="text-[11px] font-medium text-muted">Seventeen</p>
-          </div>
-        </div>
+    <div className="flex h-full min-h-0 flex-col bg-canvas text-ink">
+      <div className="px-6 pb-10 pt-8 pr-14 lg:pr-6">
+        <p className="whitespace-nowrap font-display text-[17px] font-light leading-[1.25] tracking-[0.01em] text-ink">Cicada Tech Systems LLC.</p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-6 pb-8">
         <nav aria-label="Company navigation" className="space-y-1">
-          <button type="button" className={cn(navRow, pageIs(page, 'tasks') ? activeRow : 'text-muted hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'tasks' })}>
-            <ListTodo size={17} />
+          <button
+            type="button"
+            aria-current={pageIs(page, 'tasks') ? 'page' : undefined}
+            className={cn(navRow, pageIs(page, 'tasks') ? activeRow : inactiveRow)}
+            onClick={() => onNavigate({ kind: 'tasks' })}
+          >
             <span className="min-w-0 flex-1">Task List</span>
-            {attentionCount > 0 ? <Pill tone="amber" className="min-h-5 px-1.5">{attentionCount}</Pill> : null}
+            {attentionCount > 0 ? (
+              <span className={cn(
+                'ml-2 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] leading-4',
+                pageIs(page, 'tasks') ? 'bg-white/25 text-white' : 'bg-surface text-muted',
+              )}>{attentionCount}</span>
+            ) : null}
           </button>
-          <button type="button" className={cn(navRow, pageIs(page, 'documents') ? activeRow : 'text-muted hover:bg-line-soft')} onClick={() => onNavigate({ kind: 'documents' })}>
-            <FileText size={17} />
+          <button
+            type="button"
+            aria-current={pageIs(page, 'automation') ? 'page' : undefined}
+            className={cn(navRow, pageIs(page, 'automation') ? activeRow : inactiveRow)}
+            onClick={() => onNavigate({ kind: 'automation' })}
+          >
+            <span>Automation</span>
+          </button>
+          <button
+            type="button"
+            aria-current={pageIs(page, 'documents') ? 'page' : undefined}
+            className={cn(navRow, pageIs(page, 'documents') ? activeRow : inactiveRow)}
+            onClick={() => onNavigate({ kind: 'documents' })}
+          >
             <span>Documents</span>
           </button>
-        </nav>
-
-        <div className="mt-5">
-          <p className="px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Point of contact</p>
           {pointOfContact ? (
             <button
               type="button"
-              className={cn(
-                'relative mt-2 flex min-h-14 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left transition-colors',
-                pageIs(page, 'agent', pointOfContact.id) ? activeRow : 'hover:bg-line-soft',
-              )}
+              aria-current={pageIs(page, 'agent', pointOfContact.id) ? 'page' : undefined}
+              className={cn(navRow, pageIs(page, 'agent', pointOfContact.id) ? activeRow : inactiveRow)}
               onClick={() => onNavigate({ kind: 'agent', agentId: pointOfContact.id })}
             >
-              <span className="relative"><Avatar name={pointOfContact.name} size="sm" color="#d5eeeb" /><span className="absolute -bottom-0.5 -right-0.5"><AgentStatusMark agent={pointOfContact} /></span></span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-bold text-ink">{pointOfContact.name}</span>
-                <span className="mt-0.5 block truncate text-[10px] text-muted">{isExplicitPointOfContact(pointOfContact) ? 'Ask or route anything' : 'Acting POC · ask or route work'}</span>
-              </span>
-              <MessageSquareText size={15} className="shrink-0 text-teal-700" />
+              <span className="min-w-0 flex-1 truncate">{pointOfContact.name}</span>
+              <span className={cn(
+                'ml-2 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em]',
+                pageIs(page, 'agent', pointOfContact.id) ? 'bg-white/25 text-white' : 'bg-surface text-muted',
+              )}>POC</span>
+              <span className="ml-2"><AgentStatusMark agent={pointOfContact} /></span>
             </button>
-          ) : (
-            <div className="mt-2 rounded-[10px] border border-dashed border-line px-3 py-3 text-[11px] leading-4 text-muted">Add an agent to establish the company POC.</div>
-          )}
-        </div>
+          ) : null}
+        </nav>
 
-        <div className="mt-5">
-          <div className="flex items-center justify-between px-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Projects</p>
-            <span className="font-mono text-[10px] text-muted">{snapshot?.projects.length ?? 0}</span>
-          </div>
-          <nav aria-label="Projects and agents" className="mt-2 space-y-2">
+        <section className="mt-8" aria-labelledby="sidebar-projects-heading">
+          <h2 id="sidebar-projects-heading" className="px-4 text-[11px] font-normal uppercase tracking-[0.1em] text-muted">Projects</h2>
+          <nav aria-label="Projects and agents" className="mt-3 space-y-3">
             {snapshot?.projects.map((project) => {
-              const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
+              const agents = snapshot.agents.filter((agent) => agent.projectId === project.id && agent.id !== pointOfContact?.id);
               return (
                 <div key={project.id}>
                   <button
                     type="button"
-                    className={cn(navRow, pageIs(page, 'project', project.id) ? activeRow : 'text-muted hover:bg-line-soft')}
+                    aria-current={pageIs(page, 'project', project.id) ? 'page' : undefined}
+                    className={cn(navRow, pageIs(page, 'project', project.id) ? activeRow : inactiveRow)}
                     onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
                   >
-                    <FolderKanban size={16} />
                     <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                    <ChevronRight size={14} className="text-muted" />
                   </button>
                   {agents.length > 0 ? (
-                    <div className="ml-[19px] mt-0.5 border-l border-line pl-2">
+                    <div className="mt-0.5 space-y-0.5">
                       {agents.map((agent) => (
                         <button
                           key={agent.id}
                           type="button"
+                          aria-current={pageIs(page, 'agent', agent.id) ? 'page' : undefined}
                           className={cn(
-                            'relative flex min-h-10 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs transition-colors',
-                            pageIs(page, 'agent', agent.id) ? activeRow : 'text-muted hover:bg-line-soft hover:text-ink',
+                            'flex min-h-11 w-full items-center gap-2 rounded-full py-2 pl-10 pr-3 text-left text-[13px] font-normal transition-[background-color,color,transform] duration-150 ease-out motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9',
+                            pageIs(page, 'agent', agent.id) ? activeRow : 'text-muted hover:bg-surface hover:text-ink',
                           )}
                           onClick={() => onNavigate({ kind: 'agent', agentId: agent.id })}
                         >
-                          <AgentStatusMark agent={agent} />
                           <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-                          {pointOfContact?.id === agent.id ? <span className="rounded bg-teal-soft px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal-700">POC</span> : null}
+                          <AgentStatusMark agent={agent} />
                         </button>
                       ))}
                     </div>
@@ -156,16 +150,9 @@ function RailContent({
                 </div>
               );
             })}
+            {snapshot && snapshot.projects.length === 0 ? <p className="px-4 py-2 text-[12px] text-muted">No projects yet</p> : null}
           </nav>
-        </div>
-      </div>
-
-      <div className="border-t border-line p-3">
-        <button type="button" onClick={onConnection} className="flex min-h-11 w-full items-center gap-2.5 rounded-[9px] px-3 text-left text-xs text-muted hover:bg-line-soft hover:text-ink">
-          <Settings2 size={16} />
-          <span className="min-w-0 flex-1"><span className="block font-semibold">Board connection</span><span className="mt-0.5 block truncate text-[10px]">{connected ? lastSyncedLabel : `Disconnected · ${lastSyncedLabel}`}</span></span>
-          {connected ? <span className="size-2 rounded-full bg-teal-500"><span className="sr-only">connected</span></span> : <CircleAlert size={14} className="text-urgent" aria-label="disconnected" />}
-        </button>
+        </section>
       </div>
     </div>
   );
@@ -175,23 +162,17 @@ export function WorkspaceFrame({
   snapshot,
   page,
   pointOfContact,
-  connected,
-  lastSyncedLabel,
   drawerOpen,
   onDrawerChange,
   onNavigate,
-  onConnection,
   children,
 }: {
   snapshot: BoardSnapshot | null;
   page: BoardPage;
   pointOfContact: BoardAgent | null;
-  connected: boolean;
-  lastSyncedLabel: string;
   drawerOpen: boolean;
   onDrawerChange: (open: boolean) => void;
   onNavigate: (page: BoardPage) => void;
-  onConnection: () => void;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
@@ -248,26 +229,26 @@ export function WorkspaceFrame({
 
   return (
     <div className="min-h-dvh bg-canvas text-ink">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white px-4 lg:hidden">
-        <div className="flex items-center gap-2.5"><img src="/cicada-mark.svg" alt="" className="size-8 rounded-[9px] bg-teal-500 p-1.5" /><div><p className="text-sm font-bold leading-none">Nexus</p><p className="mt-1 text-[10px] leading-none text-muted">Seventeen</p></div></div>
-        <button ref={openerRef} type="button" className="flex size-10 items-center justify-center rounded-[9px] text-muted hover:bg-line-soft hover:text-ink" aria-label="Open navigation" aria-expanded={drawerOpen} onClick={() => onDrawerChange(true)}><Menu size={20} /></button>
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-canvas px-4 lg:hidden">
+        <p className="min-w-0 truncate font-display text-base font-light tracking-[0.02em]">Cicada Tech Systems LLC.</p>
+        <button ref={openerRef} type="button" className="flex size-11 shrink-0 items-center justify-center rounded-full bg-taupe text-white transition-[background-color,transform] duration-150 ease-out hover:bg-taupe-hover motion-safe:hover:scale-105 motion-safe:active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Open navigation" aria-expanded={drawerOpen} onClick={() => onDrawerChange(true)}><Menu size={18} strokeWidth={1.5} /></button>
       </header>
 
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} connected={connected} lastSyncedLabel={lastSyncedLabel} onNavigate={onNavigate} onConnection={onConnection} />
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[260px] border-r border-line lg:block">
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} />
       </aside>
 
       {drawerOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button type="button" className="absolute inset-0 bg-scrim/45" aria-label="Close navigation" onClick={closeDrawer} />
-          <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="absolute inset-y-0 left-0 w-[min(88vw,320px)] border-r border-line bg-white shadow-[12px_0_40px_rgba(23,28,36,.18)]">
-            <button type="button" className="absolute right-3 top-3 z-10 flex size-10 items-center justify-center rounded-[9px] text-muted hover:bg-line-soft hover:text-ink" aria-label="Close navigation" onClick={closeDrawer}><X size={19} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} connected={connected} lastSyncedLabel={lastSyncedLabel} onNavigate={navigate} onConnection={() => { onDrawerChange(false); onConnection(); }} />
+          <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={closeDrawer} />
+          <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,260px)] border-r border-line bg-canvas shadow-[12px_0_40px_rgba(74,69,65,.14)]">
+            <button type="button" className="absolute right-3 top-3 z-10 flex size-11 items-center justify-center rounded-full text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={closeDrawer}><X size={18} strokeWidth={1.5} /></button>
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} />
           </aside>
         </div>
       ) : null}
 
-      <div className="lg:pl-64">{children}</div>
+      <div className="lg:pl-[260px]">{children}</div>
     </div>
   );
 }

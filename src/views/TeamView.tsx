@@ -49,7 +49,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
             <Users size={16} />
             Fixed role team
           </div>
-          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
+          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
             Move quickly in development without letting one agent mark its own homework.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
@@ -83,7 +83,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
               <h2 className="font-display text-[16px] font-semibold tracking-[-0.02em] text-ink">Separation of duties</h2>
               <p className="mt-0.5 text-xs text-muted">Engineers journal every loop; a different manager checks the result before a human sees it.</p>
             </div>
-            <Pill tone="green"><ShieldCheck size={12} /> Intended policy</Pill>
+            <Pill tone="green"><ShieldCheck size={12} /> Enforced by policy</Pill>
           </div>
         </div>
 
@@ -93,8 +93,8 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
               ['Manager assigns', 'Scope + acceptance criteria', 'manager'],
               ['Engineer loops', 'Research → Plan → Execute → Test', 'engineer'],
               ['Manager reviews', 'Checks journal, diff, tests, risk', 'manager'],
-              ['Human checks', 'Intended release authority', 'human'],
-              ['Demo broker records', 'Consumes authorization in-browser', 'broker'],
+              ['Human checks', 'Only production authority', 'human'],
+              ['Broker deploys', 'Consumes one approval once', 'broker'],
             ].map(([label, detail, kind], index, stages) => (
               <div key={label} className="contents">
                 <div
@@ -266,9 +266,9 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
               </span>
               <div>
                 <Pill tone="amber">Human-only capability</Pill>
-                <h2 className="mt-3 font-display text-xl font-semibold tracking-[-0.03em] text-ink sm:text-2xl">Managers post the task. A person authorizes release.</h2>
+                <h2 className="mt-3 font-display text-xl font-semibold tracking-[-0.03em] text-ink sm:text-2xl">Managers post the task. A person authorizes production.</h2>
                 <p className="mt-2 max-w-2xl text-[13px] leading-5 text-muted">
-                  A manager checks the engineer's journal, diff, tests, and remaining risks before posting a production-check task. In this browser demo, a human authorizes the exact evidence-bound candidate and a simulated broker records one-time consumption. No deployment occurs.
+                  A manager checks the engineer's journal, diff, tests, and remaining risks before posting a production-check task. The manager cannot approve it. A human authorizes the exact evidence-bound candidate; the deployment broker consumes that approval once.
                 </p>
               </div>
             </div>
@@ -279,7 +279,7 @@ export function TeamView({ agents, runs, onControlAgent }: TeamViewProps) {
               {[
                 ['1', 'Engineering manager', 'Checks work and posts the task'],
                 ['2', 'Human owner', 'Checks and signs one candidate'],
-                ['3', 'Simulated broker', 'Records consumption once'],
+                ['3', 'Deployment broker', 'Consumes approval once'],
               ].map(([step, actor, action], index) => (
                 <div key={step} className="relative flex items-center gap-3 rounded-xl border border-line bg-white p-3">
                   <span className={cn('grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[10px] font-semibold', index === 1 ? 'bg-caution-fill text-ink' : 'bg-muted-surface text-muted')}>

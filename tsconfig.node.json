@@ -14,5 +14,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "tooling/**/*.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }

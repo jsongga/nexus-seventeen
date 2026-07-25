@@ -10,7 +10,6 @@ export {
   parseAgentRunOutput,
   parseBoundedAgentContext,
   parseTaskWakeClaim,
-  parseTaskWorkerIdentity,
   parseTaskWorkerJournal,
 } from "./schema.js";
 export { TASK_WAKE_REASONS } from "./types.js";
@@ -24,11 +23,14 @@ export type {
   AgentRunOutput,
   AgentRunTerminalStatus,
   AgentTaskContext,
+  AgentTaskPhase,
+  AgentTaskPhaseUpdate,
   AreaMemoryEntry,
   AppendRunOutputRequest,
   BoundedAgentContext,
   ClaimedAgentRun,
   ClaimNextWakeRequest,
+  CreateAgentTaskPhaseRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
   TaskContextMessage,
@@ -36,4 +38,6 @@ export type {
   TaskWakeReason,
   TaskWorkerIdentity,
   TaskWorkerOptions,
+  UpdateAgentTaskPhaseRequest,
+  UpdateTaskEstimateRequest,
 } from "./types.js";

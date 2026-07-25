@@ -5,6 +5,13 @@ import {
   activityFromClaudeStreamLine,
   activityFromCodexJsonLine,
   activityFromProviderLine,
+  estimateActivity,
+  estimateMinutesFromActivity,
+  estimateMinutesFromProviderLine,
+  phaseActivity,
+  phaseSignalFromActivity,
+  phaseSignalFromProviderLine,
+  phaseStageFromActivity,
   sanitizeActivity,
 } from "../src/provider-activity.js";
 
@@ -91,6 +98,65 @@ test("ignores Claude text and thinking while reporting safe completion states", 
 test("dispatches lines through the selected provider parser", () => {
   assert.equal(activityFromProviderLine("codex", '{"type":"item.started","item":{"type":"web_search","query":"private"}}'), "Researching relevant information.");
   assert.equal(activityFromProviderLine("claude", '{"type":"tool_progress","tool_name":"Edit","input":{"path":"/tmp/private"}}'), "Updating the implementation.");
+});
+
+test("maps only fixed safe activity labels to durable task stages", () => {
+  assert.equal(phaseStageFromActivity("Inspecting the relevant code and context."), "research");
+  assert.equal(phaseStageFromActivity("Preparing the implementation plan."), "planning");
+  assert.equal(phaseStageFromActivity("Updating the implementation."), "execution");
+  assert.equal(phaseStageFromActivity("Running a development check."), "testing");
+  assert.equal(phaseStageFromActivity("Work finished; preparing the recorded result."), "review");
+  assert.equal(phaseStageFromActivity("Raw provider text must not become a phase."), null);
+});
+
+test("extracts a bounded agent estimate only from completed tool output", () => {
+  const codex = JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", command: "private command", aggregated_output: "STEWARD_ESTIMATE_MINUTES=45\n" },
+  });
+  const claude = JSON.stringify({
+    type: "user",
+    message: { content: [{ type: "tool_result", content: "STEWARD_ESTIMATE_MINUTES=90\n" }] },
+  });
+  assert.equal(estimateMinutesFromProviderLine("codex", codex), 45);
+  assert.equal(estimateMinutesFromProviderLine("claude", claude), 90);
+  assert.equal(activityFromProviderLine("codex", codex), null, "estimate command is not mislabeled as testing");
+  assert.equal(estimateMinutesFromProviderLine("codex", JSON.stringify({
+    type: "item.started",
+    item: { type: "command_execution", command: "printf STEWARD_ESTIMATE_MINUTES=45" },
+  })), null);
+  assert.equal(estimateMinutesFromProviderLine("codex", JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", aggregated_output: "STEWARD_ESTIMATE_MINUTES=17\n" },
+  })), null);
+  assert.equal(estimateMinutesFromActivity(estimateActivity(120)), 120);
+  assert.equal(estimateMinutesFromActivity("Agent guessed 120 minutes."), null);
+});
+
+test("extracts bounded parallel phase signals only from completed tool output", () => {
+  const signal = {
+    key: "api",
+    title: "Implement API",
+    stage: "execution" as const,
+    status: "in_progress" as const,
+    parallelGroup: "delivery",
+  };
+  const marker = `STEWARD_PHASE_JSON=${JSON.stringify(signal)}\n`;
+  const line = JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", aggregated_output: marker },
+  });
+  assert.deepEqual(phaseSignalFromProviderLine("codex", line), signal);
+  assert.equal(activityFromProviderLine("codex", line), null);
+  assert.deepEqual(phaseSignalFromActivity(phaseActivity(signal)), signal);
+  assert.deepEqual(phaseSignalFromProviderLine("codex", JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", aggregated_output: marker.replace("in_progress", "completed") },
+  })), { ...signal, status: "completed" }, "completed status preserves its semantic stage");
+  assert.equal(phaseSignalFromProviderLine("codex", JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", aggregated_output: marker.replace("execution", "done") },
+  })), null, "the legacy done stage requires completed status");
 });
 
 test("activity sanitizer removes likely credentials, links, and local paths and enforces a bound", () => {

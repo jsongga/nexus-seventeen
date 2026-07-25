@@ -1,6 +1,103 @@
-import type { BoardAgent, BoardMessage, BoardProject, BoardSnapshot, BoardTask } from './types';
+import type { AgentStatus, AgentWorkerConnection, BoardAgent, BoardMessage, BoardProject, BoardSnapshot, BoardTask, BoardTaskPhase } from './types';
 
 const pointOfContactTerms = /(?:\bpoc\b|point of contact)/iu;
+
+const agentWorkLabels: Record<AgentStatus, string> = {
+  sleeping: 'No task',
+  queued: 'Queued',
+  running: 'Working',
+  interrupting: 'Stopping',
+  waiting_for_human: 'Needs you',
+  failed: 'Failed',
+};
+
+export function agentWorkLabel(status: AgentStatus): string {
+  return agentWorkLabels[status];
+}
+
+export function workerConnectionLabel(connection: AgentWorkerConnection): string {
+  if (connection === 'waiting_for_wake') return 'Worker ready';
+  if (connection === 'watching_run') return 'Worker connected';
+  return 'Worker not detected';
+}
+
+export function workerAssignmentHint(connection: AgentWorkerConnection): string {
+  if (connection === 'waiting_for_wake') return 'Worker ready — starts when assigned.';
+  if (connection === 'watching_run') return 'Worker connected — this task will wait behind current work.';
+  return 'Worker not detected — assignment stays queued until it reconnects.';
+}
+
+const activeTaskStatuses = new Set<BoardTask['status']>(['running', 'waiting_for_human', 'blocked', 'queued']);
+const phaseStageOrder: Record<Exclude<BoardTaskPhase['stage'], 'done'>, number> = {
+  research: 0,
+  planning: 1,
+  execution: 2,
+  testing: 3,
+  review: 4,
+};
+
+export interface AgentPipelineFocus {
+  task: BoardTask | null;
+  phase: BoardTaskPhase | null;
+  stage: 'Implementing' | 'Reviewing' | null;
+  loop: number | null;
+}
+
+/** Keeps the compact agent header grounded in durable task and phase state. */
+export function agentPipelineFocus(agent: BoardAgent, tasks: BoardTask[]): AgentPipelineFocus {
+  const assigned = tasks
+    .filter((task) => task.assignedAgentId === agent.id)
+    .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
+  const task = assigned.find((item) => item.id === agent.currentTaskId && activeTaskStatuses.has(item.status))
+    ?? assigned.find((item) => activeTaskStatuses.has(item.status))
+    ?? null;
+  if (task === null) return { task: null, phase: null, stage: null, loop: null };
+
+  const phases = [...task.phases].sort((left, right) => (
+    left.orderKey - right.orderKey
+      || left.createdAt.localeCompare(right.createdAt)
+      || left.id.localeCompare(right.id)
+  ));
+  const phase = phases.filter((item) => item.status === 'in_progress').at(-1)
+    ?? phases.filter((item) => item.status === 'blocked').at(-1)
+    ?? phases.find((item) => item.status === 'pending')
+    ?? phases.at(-1)
+    ?? null;
+  const stage = task.kind === 'manager_review' || agent.role === 'manager'
+    ? 'Reviewing'
+    : 'Implementing';
+  if (phase === null) return { task, phase, stage, loop: null };
+
+  const phaseIndex = phases.findIndex((item) => item.id === phase.id);
+  let loop = 1;
+  let previousStage: number | null = null;
+  const loopUnits: Array<{ stage: number; parallelGroup: string | null }> = [];
+  let previousRowParallelGroup: string | null = null;
+  for (const item of phases.slice(0, phaseIndex + 1)) {
+    // Older snapshots rewrote finished phases to `done`; they carry no semantic
+    // position, so they must not create a false loop boundary.
+    if (item.stage === 'done') {
+      previousRowParallelGroup = item.parallelGroup;
+      continue;
+    }
+    const stageOrder = phaseStageOrder[item.stage];
+    const lastUnit = loopUnits.at(-1);
+    const sameContiguousParallelGroup = item.parallelGroup !== null
+      && item.parallelGroup === previousRowParallelGroup
+      && lastUnit?.parallelGroup === item.parallelGroup;
+    if (sameContiguousParallelGroup && lastUnit) {
+      lastUnit.stage = Math.max(lastUnit.stage, stageOrder);
+    } else {
+      loopUnits.push({ stage: stageOrder, parallelGroup: item.parallelGroup });
+    }
+    previousRowParallelGroup = item.parallelGroup;
+  }
+  for (const unit of loopUnits) {
+    if (previousStage !== null && unit.stage < previousStage) loop += 1;
+    previousStage = unit.stage;
+  }
+  return { task, phase, stage, loop: loop > 1 ? loop : null };
+}
 
 export interface ProjectResource {
   id: string;
@@ -36,36 +133,10 @@ export function isExplicitPointOfContact(agent: BoardAgent): boolean {
   return agent.id === 'steward-poc' || pointOfContactTerms.test(`${agent.name} ${agent.area} ${agent.mission}`);
 }
 
-export function taskIsResumable(task: BoardTask): boolean {
-  return task.kind !== 'human_check'
-    && task.assignedAgentId !== null
-    && task.endedAt === null
-    && (task.status === 'blocked' || task.status === 'failed' || task.status === 'interrupted');
-}
-
 export function taskNeedsHumanAction(task: BoardTask): boolean {
-  return (task.status === 'waiting_for_human' && task.endedAt === null)
+  return task.status === 'waiting_for_human'
     || (task.kind === 'manager_review' && task.assignedAgentId === null && task.endedAt === null)
-    || (task.kind === 'human_check' && task.endedAt === null)
-    || taskIsResumable(task);
-}
-
-function taskAttentionRank(task: BoardTask): number {
-  if (task.status === 'waiting_for_human' && task.endedAt === null) return 0;
-  if (task.kind === 'human_check' && task.endedAt === null) return 1;
-  if (task.kind === 'manager_review' && task.assignedAgentId === null && task.endedAt === null) return 2;
-  if (taskIsResumable(task)) return 3;
-  if (task.status === 'running') return 4;
-  if (task.status === 'queued') return 5;
-  if (task.status === 'proposed' || task.status === 'backlog') return 6;
-  if (task.status === 'blocked' || task.status === 'failed' || task.status === 'interrupted') return 7;
-  return 8;
-}
-
-export function compareTasksByAttention(left: BoardTask, right: BoardTask): number {
-  return taskAttentionRank(left) - taskAttentionRank(right)
-    || right.updatedAt.localeCompare(left.updatedAt)
-    || left.id.localeCompare(right.id);
+    || (task.kind === 'human_check' && task.endedAt === null);
 }
 
 export function isWebLink(value: string): boolean {

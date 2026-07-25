@@ -1,7 +1,15 @@
+import type {
+  AgentRole,
+  TaskKind,
+  TaskPhaseStage,
+  TaskPhaseStatus,
+} from "@cicada/steward-task-board-contract";
+
 export const TASK_WAKE_REASONS = Object.freeze([
   "human_assignment",
   "human_answer",
   "human_resume",
+  "workflow_handoff",
 ] as const);
 
 export type TaskWakeReason = typeof TASK_WAKE_REASONS[number];
@@ -28,9 +36,37 @@ export interface AgentMission {
 }
 
 export interface AgentTaskContext {
+  readonly kind: TaskKind;
+  readonly requiredRole: AgentRole | null;
   readonly title: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
+  readonly version: number;
+  readonly expectedAgentMinutes: number | null;
+  readonly phases: readonly AgentTaskPhase[];
+}
+
+export interface AgentTaskPhase {
+  readonly phaseId: string;
+  readonly title: string;
+  readonly stage: TaskPhaseStage;
+  readonly status: TaskPhaseStatus;
+  readonly parallelGroup: string | null;
+  readonly orderKey: number;
+  readonly version: number;
+}
+
+/**
+ * A provider-authored desired phase state. A null phaseId creates a phase;
+ * an existing phaseId updates that phase using the version from task context.
+ */
+export interface AgentTaskPhaseUpdate {
+  readonly phaseId: string | null;
+  readonly title: string;
+  readonly stage: TaskPhaseStage;
+  readonly status: TaskPhaseStatus;
+  readonly parallelGroup: string | null;
+  readonly orderKey: number;
 }
 
 export interface TaskContextMessage {
@@ -111,6 +147,9 @@ export type AgentRunOutput =
 export interface AgentRunOutcome {
   readonly status: AgentRunTerminalStatus;
   readonly outputs: readonly AgentRunOutput[];
+  /** Null means the agent does not yet have enough evidence to publish or revise an estimate. */
+  readonly expectedAgentMinutes: number | null;
+  readonly phases: readonly AgentTaskPhaseUpdate[];
   readonly detail: string;
 }
 
@@ -163,6 +202,29 @@ export interface SettleAgentRunRequest {
   readonly idempotencyKey: string;
 }
 
+export interface UpdateTaskEstimateRequest {
+  readonly claim: TaskWakeClaim;
+  readonly version: number;
+  readonly expectedAgentMinutes: number;
+}
+
+export interface CreateAgentTaskPhaseRequest {
+  readonly claim: TaskWakeClaim;
+  readonly title: string;
+  readonly stage: TaskPhaseStage;
+  readonly parallelGroup: string | null;
+}
+
+export interface UpdateAgentTaskPhaseRequest {
+  readonly claim: TaskWakeClaim;
+  readonly phase: AgentTaskPhase;
+  readonly title?: string;
+  readonly stage?: TaskPhaseStage;
+  readonly status?: TaskPhaseStatus;
+  readonly parallelGroup?: string | null;
+  readonly orderKey?: number;
+}
+
 export interface AgentRunInterrupt {
   readonly sequence: number;
   readonly interruptId: string;
@@ -177,6 +239,9 @@ export interface AgentRunInterrupt {
 export interface TaskBoardClient {
   claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<ClaimedAgentRun | null>;
   waitForRunInterrupt(claim: TaskWakeClaim, signal?: AbortSignal): Promise<AgentRunInterrupt | null>;
+  updateTaskEstimate(request: UpdateTaskEstimateRequest, signal?: AbortSignal): Promise<number>;
+  createTaskPhase(request: CreateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase>;
+  updateTaskPhase(request: UpdateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase>;
   appendRunOutput(request: AppendRunOutputRequest, signal?: AbortSignal): Promise<void>;
   settleAgentRun(request: SettleAgentRunRequest, signal?: AbortSignal): Promise<void>;
 }

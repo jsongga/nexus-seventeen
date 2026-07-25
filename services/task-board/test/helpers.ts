@@ -1,7 +1,14 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CreateTaskRequest } from "@cicada/steward-task-board-contract";
+import type {
+  AutomationPipelineStage,
+  AutomationStageExecutor,
+  CreateTaskRequest,
+  CreateWorkItemRequest,
+  UpdateAutomationConfigurationRequest,
+  WorkItemStage,
+} from "@cicada/steward-task-board-contract";
 import { TaskBoard, normalizeTaskBoardConfig, type TaskBoardConfig } from "../src/index.js";
 
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
@@ -57,7 +64,48 @@ export function taskRequest(overrides: Partial<CreateTaskRequest> = {}): CreateT
     workspaceRefs: ["repo:checkout", "branch:feature/retry"],
     assignedAgentId: "engineer-one",
     assignedRole: "engineer",
-    expectedAgentMinutes: 45,
+    ...overrides,
+  };
+}
+
+export function workItemRequest(overrides: Partial<CreateWorkItemRequest> = {}): CreateWorkItemRequest {
+  return {
+    originalRequest: "Make checkout retries safe and observable.",
+    priority: "normal",
+    projectTarget: { mode: "auto" },
+    ...overrides,
+  };
+}
+
+const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = [
+  "refinement",
+  "project_resolution",
+  "research",
+  "planning",
+  "implementation",
+  "testing",
+  "verification",
+  "human_review",
+  "deployment",
+];
+
+export function automationStages(
+  overrides: Readonly<Partial<Record<WorkItemStage, AutomationStageExecutor>>> = {},
+): readonly AutomationPipelineStage[] {
+  return AUTOMATION_STAGE_ORDER.map((stage) => ({
+    stage,
+    executor: overrides[stage]
+      ?? (stage === "human_review" ? { kind: "human" as const } : { kind: "disabled" as const }),
+  }));
+}
+
+export function automationConfigurationRequest(
+  overrides: Partial<UpdateAutomationConfigurationRequest> = {},
+): UpdateAutomationConfigurationRequest {
+  return {
+    version: 1,
+    agentTypes: [],
+    stages: automationStages(),
     ...overrides,
   };
 }

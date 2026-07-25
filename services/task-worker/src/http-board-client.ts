@@ -1,14 +1,18 @@
 import { TASK_BOARD_API_VERSION, type ClaimRunResult } from "@cicada/steward-task-board-contract";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
 import type {
+  AgentTaskPhase,
   AgentRunInterrupt,
   AppendRunOutputRequest,
   BoundedAgentContext,
   ClaimedAgentRun,
   ClaimNextWakeRequest,
+  CreateAgentTaskPhaseRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
   TaskWakeClaim,
+  UpdateAgentTaskPhaseRequest,
+  UpdateTaskEstimateRequest,
 } from "./types.js";
 
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
@@ -94,6 +98,67 @@ function nonNegative(value: unknown, label: string): number {
   return Number(value);
 }
 
+function positive(value: unknown, label: string): number {
+  const parsed = nonNegative(value, label);
+  if (parsed === 0) throw new Error(`${label} is invalid`);
+  return parsed;
+}
+
+function estimateMinutes(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return Number(value);
+}
+
+function phaseStage(value: unknown, label: string): AgentTaskPhase["stage"] {
+  if (
+    value !== "research" && value !== "planning" && value !== "execution" &&
+    value !== "testing" && value !== "review" && value !== "done"
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function phaseStatus(value: unknown, label: string): AgentTaskPhase["status"] {
+  if (
+    value !== "pending" && value !== "in_progress" && value !== "blocked" &&
+    value !== "completed" && value !== "failed"
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function taskPhase(value: unknown, projectId: string, taskId: string, label: string): AgentTaskPhase {
+  const item = exact(value, [
+    "apiVersion", "phaseId", "projectId", "taskId", "title", "stage", "status", "parallelGroup", "orderKey",
+    "startedAt", "endedAt", "version", "createdAt", "updatedAt",
+  ], label);
+  if (item.apiVersion !== TASK_BOARD_API_VERSION || item.projectId !== projectId || item.taskId !== taskId) {
+    throw new Error(`${label} binding is invalid`);
+  }
+  const stage = phaseStage(item.stage, `${label}.stage`);
+  const status = phaseStatus(item.status, `${label}.status`);
+  if (stage === "done" && status !== "completed") throw new Error(`${label} completion state is invalid`);
+  if (item.parallelGroup !== null) id(item.parallelGroup, `${label}.parallelGroup`);
+  if (item.startedAt !== null) timestamp(item.startedAt, `${label}.startedAt`);
+  if (item.endedAt !== null) timestamp(item.endedAt, `${label}.endedAt`);
+  timestamp(item.createdAt, `${label}.createdAt`);
+  timestamp(item.updatedAt, `${label}.updatedAt`);
+  return Object.freeze({
+    phaseId: id(item.phaseId, `${label}.phaseId`),
+    title: bounded(item.title, `${label}.title`, 240),
+    stage,
+    status,
+    parallelGroup: item.parallelGroup as string | null,
+    orderKey: nonNegative(item.orderKey, `${label}.orderKey`),
+    version: positive(item.version, `${label}.version`),
+  });
+}
+
 function bounded(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string" || value.trim().length === 0 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) {
     throw new Error(`${label} is invalid`);
@@ -170,7 +235,7 @@ class JsonClient {
     this.#fetch = options.fetchImplementation ?? globalThis.fetch;
   }
 
-  async request(method: "GET" | "POST", path: string, body: unknown | null, signal?: AbortSignal, longPoll = false): Promise<HttpResult> {
+  async request(method: "GET" | "POST" | "PATCH", path: string, body: unknown | null, signal?: AbortSignal, longPoll = false): Promise<HttpResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), longPoll ? 35_000 : this.#timeoutMs);
     timeout.unref();
@@ -226,7 +291,8 @@ function asClaimResult(value: unknown): ClaimRunResult {
   if (
     run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
     run.status !== "active" || run.endedAt !== null || run.result !== null ||
-    wakeup.reason !== "human_assignment" && wakeup.reason !== "human_answer" && wakeup.reason !== "human_resume"
+    wakeup.reason !== "human_assignment" && wakeup.reason !== "human_answer" &&
+    wakeup.reason !== "human_resume" && wakeup.reason !== "workflow_handoff"
   ) {
     throw new Error("Claim run or wakeup state is invalid");
   }
@@ -309,7 +375,7 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     : {
         taskId: id(context.parentTask.taskId, "parent.taskId"),
         title: bounded(context.parentTask.title, "parent.title", 512),
-        objective: bounded(context.parentTask.objective, "parent.objective", 4_000),
+        objective: bounded(context.parentTask.objective, "parent.objective", 8_000),
         acceptanceCriteria: bounded(context.parentTask.acceptanceCriteria, "parent.acceptanceCriteria", 4_000),
         status: bounded(context.parentTask.status, "parent.status", 64),
         assignedAgentId: context.parentTask.assignedAgentId === null
@@ -354,9 +420,30 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     },
     projectMemory: bounded(`${context.projectMemory.name}\n\n${context.projectMemory.description}`, "projectMemory", 4_000),
     task: {
+      kind: task.kind,
+      requiredRole: task.requiredRole,
       title: bounded(task.title, "task.title", 512),
-      objective: bounded(task.objective, "task.objective", 4_000),
+      objective: bounded(task.objective, "task.objective", 8_000),
       acceptanceCriteria: bounded(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
+      version: positive(task.version, "task.version"),
+      expectedAgentMinutes: estimateMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes"),
+      phases: (() => {
+        if (!Array.isArray(task.phases)) throw new Error("Claim task phases are invalid");
+        const parsed = task.phases.map((phase, index) => taskPhase(
+          phase,
+          run.projectId,
+          task.taskId,
+          `task.phases[${index}]`,
+        ));
+        if (parsed.length <= 64) return parsed;
+        const selected = new Set<number>();
+        for (let index = parsed.length - 1; index >= 0 && selected.size < 64; index -= 1) {
+          const phase = parsed[index];
+          if (phase !== undefined && phase.status !== "completed" && phase.status !== "failed") selected.add(index);
+        }
+        for (let index = parsed.length - 1; index >= 0 && selected.size < 64; index -= 1) selected.add(index);
+        return parsed.filter((_phase, index) => selected.has(index));
+      })(),
     },
     areaMemory,
     parentEvidence,
@@ -441,6 +528,85 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       });
     }
     return null;
+  }
+
+  async updateTaskEstimate(request: UpdateTaskEstimateRequest, signal?: AbortSignal): Promise<number> {
+    const taskId = request.claim.taskId;
+    if (taskId === null) throw new Error("A taskless run cannot estimate work");
+    const version = positive(request.version, "estimate.version");
+    const minutes = estimateMinutes(request.expectedAgentMinutes, "estimate.expectedAgentMinutes");
+    if (minutes === null) throw new Error("An estimate update requires a concrete duration");
+    const result = await this.#http.request(
+      "PATCH",
+      `/v1/tasks/${encodeURIComponent(taskId)}`,
+      { version, expectedAgentMinutes: minutes },
+      signal,
+    );
+    const envelope = exact(result.body, ["task"], "Estimate response");
+    const task = object(envelope.task, "Estimated task");
+    if (
+      task.taskId !== taskId || task.projectId !== request.claim.projectId ||
+      task.assignedAgentId !== request.claim.agentId || task.expectedAgentMinutes !== minutes
+    ) {
+      throw new Error("Task-board estimate response belongs to another task or value");
+    }
+    const nextVersion = positive(task.version, "estimatedTask.version");
+    if (nextVersion !== version + 1) throw new Error("Task-board estimate response version is invalid");
+    return nextVersion;
+  }
+
+  async createTaskPhase(request: CreateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase> {
+    const taskId = request.claim.taskId;
+    if (taskId === null) throw new Error("A taskless run cannot create a phase");
+    const result = await this.#http.request(
+      "POST",
+      `/v1/tasks/${encodeURIComponent(taskId)}/phases`,
+      { title: request.title, stage: request.stage, parallelGroup: request.parallelGroup },
+      signal,
+    );
+    const envelope = exact(result.body, ["phase"], "Phase creation response");
+    const phase = taskPhase(envelope.phase, request.claim.projectId, taskId, "Created phase");
+    if (
+      phase.title !== request.title || phase.stage !== request.stage || phase.status !== "pending" ||
+      phase.parallelGroup !== request.parallelGroup
+    ) {
+      throw new Error("Task-board phase creation response does not match the request");
+    }
+    return phase;
+  }
+
+  async updateTaskPhase(request: UpdateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase> {
+    const taskId = request.claim.taskId;
+    if (taskId === null) throw new Error("A taskless run cannot update a phase");
+    if (request.phase.phaseId.length === 0) throw new Error("Phase id is invalid");
+    const body = {
+      version: positive(request.phase.version, "phase.version"),
+      ...("title" in request ? { title: request.title } : {}),
+      ...("stage" in request ? { stage: request.stage } : {}),
+      ...("status" in request ? { status: request.status } : {}),
+      ...("parallelGroup" in request ? { parallelGroup: request.parallelGroup } : {}),
+      ...("orderKey" in request ? { orderKey: request.orderKey } : {}),
+    };
+    if (Object.keys(body).length === 1) throw new Error("Phase update contains no changes");
+    const result = await this.#http.request(
+      "PATCH",
+      `/v1/task-phases/${encodeURIComponent(request.phase.phaseId)}`,
+      body,
+      signal,
+    );
+    const envelope = exact(result.body, ["phase"], "Phase update response");
+    const phase = taskPhase(envelope.phase, request.claim.projectId, taskId, "Updated phase");
+    if (
+      phase.phaseId !== request.phase.phaseId || phase.version !== request.phase.version + 1 ||
+      request.title !== undefined && phase.title !== request.title ||
+      request.stage !== undefined && phase.stage !== request.stage ||
+      request.status !== undefined && phase.status !== request.status ||
+      "parallelGroup" in request && phase.parallelGroup !== request.parallelGroup ||
+      request.orderKey !== undefined && phase.orderKey !== request.orderKey
+    ) {
+      throw new Error("Task-board phase update response does not match the request");
+    }
+    return phase;
   }
 
   async appendRunOutput(request: AppendRunOutputRequest, signal?: AbortSignal): Promise<void> {

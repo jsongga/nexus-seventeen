@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type {
+  ManagerReviewServiceConfig,
+  ManagerReviewServiceOptions,
+} from "./config.js";
 import { ReviewServiceError } from "./errors.js";
 import {
   applyProductionCheckCors,
@@ -13,49 +17,13 @@ import {
 } from "./http.js";
 import { parseFixedManagerIdentity } from "./schema.js";
 import { withRuntimeGenerationProof } from "./runtime-generation-proof.js";
-import type {
-  ManagerCredential,
-  ManagerHandoffRegistrar,
-  ManagerReviewPermitConsumer,
-  ManagerRuntimeAuthorizer,
-} from "./types.js";
+import type { ManagerCredential } from "./types.js";
 import { ManagerReviewWorkflow } from "./workflow.js";
 
-export interface ManagerReviewServiceOptions {
-  readonly workspaceId: string;
-  readonly storePath: string;
-  readonly evidenceIssuerToken: string;
-  readonly evidenceIssuerPrincipal: string;
-  readonly humanToken: string;
-  readonly managers: readonly ManagerCredential[];
-  readonly handoffRegistrar: ManagerHandoffRegistrar;
-  readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
-  readonly managerReviewPermitConsumer: ManagerReviewPermitConsumer;
-  readonly corsOrigins?: readonly string[];
-  readonly host?: string;
-  readonly port?: number;
-  readonly maxBodyBytes?: number;
-  readonly handoffRetryMs?: number;
-  readonly now?: () => Date;
-}
-
-export interface ManagerReviewServiceConfig {
-  readonly workspaceId: string;
-  readonly storePath: string;
-  readonly evidenceIssuerToken: string;
-  readonly evidenceIssuerPrincipal: string;
-  readonly humanToken: string;
-  readonly managers: readonly ManagerCredential[];
-  readonly handoffRegistrar: ManagerHandoffRegistrar;
-  readonly managerRuntimeAuthorizer: ManagerRuntimeAuthorizer;
-  readonly managerReviewPermitConsumer: ManagerReviewPermitConsumer;
-  readonly corsOrigins: ReadonlySet<string>;
-  readonly host: string;
-  readonly port: number;
-  readonly maxBodyBytes: number;
-  readonly handoffRetryMs: number;
-  readonly now: (() => Date) | undefined;
-}
+export type {
+  ManagerReviewServiceConfig,
+  ManagerReviewServiceOptions,
+} from "./config.js";
 
 export interface ManagerReviewServiceAddress {
   readonly host: string;

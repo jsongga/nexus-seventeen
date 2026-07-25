@@ -8,6 +8,7 @@ const parent: BoardTask = {
   parentTaskId: null,
   kind: 'work',
   requiredRole: null,
+  requiresReview: true,
   title: 'Completed improvement',
   objective: 'The original improvement is complete.',
   acceptanceCriteria: 'Original checks pass.',
@@ -16,7 +17,10 @@ const parent: BoardTask = {
   assignedRole: 'engineer',
   status: 'completed',
   expectedAgentMinutes: 30,
+  estimateRecordedAt: '2026-07-19T10:00:00.000Z',
   expectedCompletedAt: '2026-07-19T10:30:00.000Z',
+  orderKey: 0,
+  phases: [],
   startedAt: '2026-07-19T10:00:00.000Z',
   endedAt: '2026-07-19T10:20:00.000Z',
   result: 'The original improvement is ready for review.',
@@ -68,7 +72,6 @@ describe('agent task proposals', () => {
       objective: 'Customers understand how to recover.',
       acceptanceCriteria: 'The next step is clear and tested.',
       workspaceRefs: ['/workspace/billing', 'packages/recovery'],
-      expectedAgentMinutes: 30,
     });
     input.workspaceRefs.pop();
     expect(parent.workspaceRefs).toHaveLength(2);
@@ -92,7 +95,9 @@ describe('agent task proposals', () => {
       startedAt: null,
       endedAt: null,
       result: null,
-      expectedAgentMinutes: 30,
+      expectedAgentMinutes: null,
+      estimateRecordedAt: null,
+      phases: [],
       workspaceRefs: [...parent.workspaceRefs],
     };
     expect(proposalIsOnBoard(parent, proposal, [parent, child])).toBe(true);

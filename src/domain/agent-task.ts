@@ -1,6 +1,6 @@
-import type { AgentLaneId } from './human-run-control';
 import type {
   AgentId,
+  AgentLaneId,
   Brand,
   ISODateTime,
   PolicyDecision,

@@ -38,27 +38,27 @@ const eventToneStyles: Record<
   { ring: string; icon: string; line: string; Icon: typeof CheckCircle2 }
 > = {
   neutral: {
-    ring: 'border-line-soft bg-muted-surface',
+    ring: 'border-[#d9dde1] bg-[#eef0f2]',
     icon: 'text-muted',
-    line: 'bg-muted-surface',
+    line: 'bg-[#e4e7ea]',
     Icon: FileClock,
   },
   green: {
-    ring: 'border-teal-border bg-teal-soft',
+    ring: 'border-[#b9ddd9] bg-[#e8f5f3]',
     icon: 'text-teal-700',
-    line: 'bg-teal-border',
+    line: 'bg-[#b9ddd9]',
     Icon: CheckCircle2,
   },
   amber: {
-    ring: 'border-caution-border bg-caution-soft',
+    ring: 'border-[#f0d391] bg-[#fff6df]',
     icon: 'text-caution',
-    line: 'bg-caution-border',
+    line: 'bg-[#f0d391]',
     Icon: FileClock,
   },
   red: {
-    ring: 'border-urgent-border bg-urgent-soft',
+    ring: 'border-[#e8b5af] bg-[#fff0ee]',
     icon: 'text-urgent',
-    line: 'bg-urgent-border',
+    line: 'bg-[#e8b5af]',
     Icon: ShieldAlert,
   },
 };
@@ -78,36 +78,36 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
         <div className="max-w-3xl">
           <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-muted">
             <FileClock size={14} className="text-teal-700" />
-            Demo event history
+            Immutable history
           </div>
-          <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
+          <h1 className="font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
             Reconstruct every decision, handoff, and blocked action.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
-            This browser-local prototype keeps an attributed event timeline so you can evaluate the oversight model.
+            The audit ledger is append-only, so oversight survives beyond a chat transcript and production decisions stay attributable.
           </p>
         </div>
 
-        <Card className="grid grid-cols-3 divide-x divide-line overflow-hidden sm:min-w-[410px]">
+        <Card className="grid grid-cols-3 divide-x divide-[#e4e7ea] overflow-hidden sm:min-w-[410px]">
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Events</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-ink">{items.length}</p>
-            <p className="text-[9px] font-semibold text-muted">in view</p>
+            <p className="text-[9px] font-semibold text-[#66707a]">in view</p>
           </div>
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Human</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-ink">{humanEvents}</p>
-            <p className="text-[9px] font-semibold text-muted">human actions</p>
+            <p className="text-[9px] font-semibold text-[#66707a]">signed actions</p>
           </div>
           <div className="p-4">
             <p className="text-[9px] font-bold uppercase tracking-[0.11em] text-muted">Blocked</p>
             <p className="mt-1.5 font-mono text-xl font-medium tabular-nums text-urgent">{blockedEvents}</p>
-            <p className="text-[9px] font-semibold text-muted">demo stops</p>
+            <p className="text-[9px] font-semibold text-[#66707a]">policy stops</p>
           </div>
         </Card>
       </header>
 
-      <Card as="section" className="overflow-hidden border-teal-border !bg-white">
+      <Card as="section" className="overflow-hidden border-[#b9ddd9] !bg-white">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-500 text-ink">
@@ -115,15 +115,15 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
             </span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-base font-bold tracking-[-0.02em] text-ink">Browser-local event timeline</h2>
-                <Pill tone="green">Demo data</Pill>
+                <h2 className="font-display text-base font-bold tracking-[-0.02em] text-ink">Append-only event ledger</h2>
+                <Pill tone="green">Retention on</Pill>
               </div>
               <p className="mt-1 max-w-2xl text-[12px] leading-5 text-muted">
-                New actions append in this browser and persist in local storage. This is not a tamper-resistant audit ledger.
+                Entries may be added, never edited in place. Release actions retain the actor, target, policy result, and evidence reference.
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-teal-border bg-teal-soft px-3 py-2.5">
+          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-[#b9ddd9] bg-[#e8f5f3] px-3 py-2.5">
             <Fingerprint size={16} className="text-teal-700" />
             <div>
               <p className="text-[10px] font-bold text-teal-700">Evidence-linked</p>
@@ -155,7 +155,7 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
                   aria-pressed={active}
                 >
                   {filter.label}
-                  <span className={cn('ml-0.5 font-mono text-[10px] tabular-nums', active ? 'text-ink/65' : 'text-muted')}>
+                  <span className={cn('ml-0.5 font-mono text-[10px] tabular-nums', active ? 'text-ink/65' : 'text-[#66707a]')}>
                     {actorCount(items, filter.value)}
                   </span>
                 </Button>
@@ -183,24 +183,24 @@ export function AuditView({ items, actorFilter = 'all', onActorFilterChange }: A
                       </span>
                     </div>
 
-                    <div className={cn('min-w-0 py-5 sm:py-6', !isLast && 'border-b border-line-soft')}>
+                    <div className={cn('min-w-0 py-5 sm:py-6', !isLast && 'border-b border-[#eef0f2]')}>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-display text-[15px] font-bold tracking-[-0.015em] text-ink">{item.actor}</span>
                         <Pill tone={actor.tone}>
                           <ActorIcon size={11} /> {actor.label}
                         </Pill>
-                        <span className="text-[13px] font-semibold text-muted">{item.action}</span>
+                        <span className="text-[13px] font-semibold text-[#404a54]">{item.action}</span>
                       </div>
-                      <div className="mt-2 inline-flex max-w-full items-center rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-medium text-muted">
+                      <div className="mt-2 inline-flex max-w-full items-center rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-medium text-[#404a54]">
                         <span className="truncate">{item.target}</span>
                       </div>
                       <p className="mt-2 max-w-3xl text-[12px] leading-5 text-muted">{item.detail}</p>
-                      <p className="mt-2 font-mono text-[10px] font-medium tabular-nums text-muted sm:hidden">{item.time}</p>
+                      <p className="mt-2 font-mono text-[10px] font-medium tabular-nums text-[#66707a] sm:hidden">{item.time}</p>
                     </div>
 
-                    <div className={cn('hidden py-6 text-right sm:block', !isLast && 'border-b border-line-soft')}>
+                    <div className={cn('hidden py-6 text-right sm:block', !isLast && 'border-b border-[#eef0f2]')}>
                       <p className="font-mono text-[11px] font-medium tabular-nums text-muted">{item.time}</p>
-                      <p className="mt-1 font-mono text-[9px] text-muted">{item.id}</p>
+                      <p className="mt-1 font-mono text-[9px] text-[#66707a]">{item.id}</p>
                     </div>
                   </li>
                 );

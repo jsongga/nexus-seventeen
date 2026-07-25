@@ -1,111 +1,137 @@
 # Live Document Broadcast
 
-**Status** — draft design · **Author** — Steward project team · **Date** — 2026-07-18 · **Scope** — how one writer's document edits reach many read-only watchers in real time inside Steward; excludes multi-writer co-editing, editor-component selection, and durable storage internals.
+**Status** — rung 1 API and human UI implemented; bundled agent adapter pending · **Author** — Steward project team · **Updated** — 2026-07-19 · **Scope** — durable Markdown documents with one writer and any number of read-only watchers; excludes multi-writer editing, presence, rich editor selection, and delta encoding.
 
 ## Summary
 
-Steward is a human-led control plane for software agents. This doc adds one capability: a person (or agent) edits a document — a text note, a spreadsheet, a drawing — and **everyone else watches it change live, without being able to edit it**. Exactly one writer at a time; any number of read-only watchers.
+Steward now has a small document system beside its todo list. A human creates a Markdown document, one human or API-connected agent holds its **pen**, and subscribed clients receive each saved version. The pen is an exclusive write right, not a collaboration session: there is nothing to merge because the board accepts saves only from the current actor and client-session identity.
 
-Three nouns matter:
+The task-board service owns document truth in SQLite. The React app is only a client — closing or updating the frontend does not release a pen, erase a document, or stop agents. When the app returns, it discovers document summaries from the board, fetches the selected body, and resumes that document's event stream.
 
-- A **document** is one editable artifact: rich text, a sheet, or a drawing. Its content is a value, not a stream of keystrokes.
-- The **pen** is the exclusive right to write a document. At any instant one holder has it; everyone else watches.
-- A **watcher** is a client rendering the document read-only, kept current by pushed updates.
+| Shipped in rung 1 | Deliberately not shipped |
+|---|---|
+| Plain `text/markdown` snapshots | Rich text, sheets, and drawings |
+| Persistent pen holder and fencing epoch | Pen heartbeat, renewal, or idle timeout |
+| Content-version compare-and-swap | Multi-writer merge or offline editing |
+| Authenticated, resumable SSE per document | Presence or watcher counts |
+| Human force takeover | Automatic revocation |
+| Explicit Save; no autosave | Snapshot diffs or CRDT deltas |
 
-The key simplification: **single-writer is a broadcast problem, not a collaboration problem.** With one writer there are no conflicting edits to merge, so Steward needs no CRDT, no operational transform, and none of the paywalled or self-hosted co-editing backends those require. It needs one-way fan-out — which the control plane already does for the agent registry.
+Document operations do not create tasks or wake agents. Agents still wake only for a new human assignment, a human answer, or an explicit human resume.
 
-This is a design, not a shipped feature. It extends the typed frontend contract in [`../src/control-plane/contract.ts`](../src/control-plane/contract.ts); no document transport is wired into `App.tsx` yet.
+The HTTP API authorizes same-project agent credentials, but Steward's bundled one-shot task worker does not yet expose document reads, streams, or pen operations to the launched model. Current agents continue to receive bounded task context and communicate through task messages. Agent document use therefore requires a separate adapter today; it is not automatic model context or a background watcher.
 
-## Why single-writer is the whole trick
+## Where the feature lives
 
-"Real-time collaboration" is expensive because of **conflict resolution** — two people editing the same paragraph, and the system must merge without corrupting either. That merge logic (Yjs, operational transform) is also what vendors gate: Univer's real-time collaboration is a paid tier, Excalidraw's sync room is self-hosted and community-wired.
-
-Single-writer removes the merge entirely. There is one source of truth for content, so watchers only need to **receive and render** it. That collapses the problem to fan-out plus one lock.
-
-| | Multi-writer co-editing | Single-writer broadcast (this doc) |
-|---|---|---|
-| Conflict handling | CRDT / OT merge | None — one writer, no conflicts |
-| Backend needed | Collab server (often paid/DIY) | The existing SSE event stream |
-| Editor licensing | May require paid collab tier | Any editor's **free** read-only render works |
-| Watcher role | Peer editor | Read-only viewer |
-
-## It reuses the control plane, not a new product
-
-Steward's clients already `bootstrap()` a snapshot and `subscribe(afterSequence)` to a resumable server-sent-events (SSE) stream for the agent registry ([`ControlPlaneGateway` in `contract.ts`](../src/control-plane/contract.ts)). A watched document is just **another projection on that same channel**.
+Rung 1 belongs to the active task-board path, not the compatibility-only legacy `/live` control plane. It borrows the legacy stream's snapshot-and-resume pattern without making the frontend or that older service authoritative.
 
 ```mermaid
 flowchart LR
-    writer[Pen holder] -->|edit deltas + version| plane[Control plane]
-    plane -->|append to durable log| log[(Event log)]
-    log -->|snapshot + resumable SSE| w1[Watcher A read-only]
-    log -->|snapshot + resumable SSE| w2[Watcher B read-only]
-    lease[Pen lease / epoch] --> plane
+    ui[React frontend] -->|summaries, full document, pen, save| board[Task-board service]
+    agent[Same-project agent adapter] -->|full document, pen, save| board
+    board --> db[(SQLite documents + events)]
+    db -->|replay after sequence| sse[Authenticated document SSE]
+    sse --> ui
+    sse --> agent
 ```
 
-- **Join** — a watcher gets the current document snapshot at a sequence number.
-- **Follow** — it receives ordered update events after that sequence; a dropped connection resumes from the last sequence it saw, or reloads the snapshot. This is the same resume contract the registry stream already specifies (`afterSequence`, `retentionStartsAtSequence`).
-- **Render read-only** — the editor is mounted non-editable: TipTap `editable: false`, Excalidraw `viewModeEnabled`, a read-only sheet render, a diagram viewer. No editor's paid collaboration feature is touched, so the **free tier of every candidate editor is sufficient**.
+The implementation is split by responsibility:
+
+- [`packages/task-board-contract/src/index.ts`](../packages/task-board-contract/src/index.ts) — document, pen, request, and snapshot types.
+- [`services/task-board/src/store.ts`](../services/task-board/src/store.ts) — schema v4 and the v3-to-v4 migration.
+- [`services/task-board/src/board.ts`](../services/task-board/src/board.ts) — persistence, authorization boundaries, version checks, fencing, and event insertion.
+- [`services/task-board/src/service.ts`](../services/task-board/src/service.ts) — authenticated HTTP and SSE routes.
+- [`src/task-board/client.ts`](../src/task-board/client.ts) — strict response parsing and resumable stream consumption.
+- [`src/task-board/DocumentsPage.tsx`](../src/task-board/DocumentsPage.tsx) — desktop/mobile viewer, editor, handoff controls, and recorded references.
+
+## HTTP and stream contract
+
+Board snapshots contain document summaries only. The full body travels only when a human or agent opens one document, which keeps normal task-board refreshes small.
+
+| Operation | Route | Authority |
+|---|---|---|
+| Create and receive the first pen | `POST /v1/projects/:projectId/documents` | Human only |
+| Read the current full snapshot | `GET /v1/documents/:documentId` | Human or same-project agent |
+| Acquire, release, or force-take the pen | `POST /v1/documents/:documentId/pen` | Human or same-project agent; force is human-only |
+| Save a full Markdown snapshot | `PATCH /v1/documents/:documentId` | Current actor and client session holding the pen |
+| Replay and follow saved versions | `GET /v1/documents/:documentId/events?after=N` | Human or same-project agent |
+
+Each mutation appends a durable, per-document sequence. SSE replays every event after the supplied cursor and then follows new commits with one frame shape:
+
+```text
+id: 12
+event: document
+data: {"document": {"sequence": 12, "contentVersion": 4, "content": "..."}}
+```
+
+The real payload also includes the document identity, project, title, content type, pen state, and timestamps. The `id` and `document.sequence` must match. A reconnect first reads the latest durable snapshot, then subscribes after its sequence; it never treats a cached browser value as authority.
 
 ## Holding the pen
 
-"One person writing" must be enforced, not assumed. Steward already issues a **fencing token** — `runtimeEpoch` on `AgentLeaseProjection` in [`contract.ts`](../src/control-plane/contract.ts) — that increases with every new owner. The pen reuses that idea:
+Every save must pass three independent checks:
 
-- A client requests the pen; the control plane grants a **lease** carrying the current epoch and writes it as an event.
-- Writes are accepted only from the current epoch holder. When the pen hands off, the epoch increments and the previous holder is **fenced** — its late writes are rejected, not merged.
-- Watchers see who holds the pen as ordinary state; the UI shows the pen holder and, optionally, lightweight **presence** ("3 watching").
+1. **Authenticated actor** — the bearer credential identifies the human or agent. Agents are limited to their own project.
+2. **Pen epoch** — every new grant increments `penEpoch`; a late write from the previous holder is rejected.
+3. **Content version** — the save must name the exact `contentVersion` it edited; a stale draft cannot overwrite a newer snapshot.
 
-The lease answers "who may write." It never proves a keystroke landed — that is the update event's job, exactly as a command receipt in `contract.ts` proves durable intent, not a finished side effect.
+`clientId` distinguishes browser or agent client sessions. It is part of pen ownership, but it is not authentication and cannot impersonate the bearer actor. Creating a document grants epoch 1 to the creating human client. An ordinary acquire succeeds only when the pen is free; acquiring it again from the same actor and client is idempotent. Release clears the holder without changing the epoch. A human may explicitly force a takeover, which grants the next epoch and fences the former holder.
 
-## What travels on the wire: deltas, not snapshots
+The frontend keeps its ID in session storage and claims ownership of that ID in same-origin local storage. An opener-created or duplicated tab that inherits session storage sees the existing claim and rotates to a new ID. A normal reload releases and reclaims the same ID; if shared browser storage is unavailable, the page chooses a fresh runtime ID rather than trusting a possibly copied value.
 
-Two ways to keep watchers current:
+There is no lease timer or heartbeat. If a holder disappears, the document remains safely read-only until that holder returns, releases it, or a human confirms force takeover. This matches Steward's event-driven agent lifecycle and avoids background wakeups.
 
-- **Full snapshot per change** — resend the whole document on every edit. Simplest; wasteful.
-- **Delta per change** — send only what changed since a sequence. More work; far cheaper.
+## Human workflow
 
-Prefer **deltas**, for one reason that matters in Steward specifically: watchers may be **agents**, and Steward's token budget treats "repeated full-context reads" as a named waste (see `ARCHITECTURE.md`, token-efficient routing). An agent watching a document should ingest the change, not re-read the document each time.
+The Documents page groups durable documents by project. Opening one fetches its full body and follows only its stream. The page shows the holder, content version, pen epoch, durable sequence, and connection state in text as well as controls.
 
-**Complexity ladder** — pick the rung the document size justifies:
+- A watcher sees the saved Markdown snapshot read-only.
+- A pen holder edits a local draft and must choose **Save snapshot**; there is no autosave.
+- Drafts are bounded, stored per document for the browser session, and restored across document changes, app navigation, and reload. A five-second board refresh, stale-write response, pen release, or newer streamed version also preserves them. A newer content version blocks Save until the human chooses the saved version; leaving the tab with any dirty draft triggers the browser's unsaved-work warning.
+- Taking an occupied pen requires confirmation. The previous epoch can no longer write after takeover.
+- On mobile, the page uses a document-list/detail flow with an explicit Back control.
+- Task-derived briefs, results, links, and workspace paths remain visible under **Recorded references**. They are task-board evidence, not editable documents.
 
-1. **Snapshot-only** — resend the document on change. Fine for small notes and drawings; no delta machinery.
-2. **+ Snapshot diffs** — send a computed patch against the last snapshot; periodic full snapshots let late joiners and reconnects resync.
-3. **+ Yjs delta encoding** — use a Yjs document *single-writer*, purely for its compact delta format and reconnect catch-up. Not for merge — there is nothing to merge. Worth it only when documents are large or edits are frequent.
+## Token and complexity budget
 
-Every rung uses the same SSE channel and the same read-only render. Rung 1 ships first; 2 and 3 are opt-in optimizations behind the same event shape.
+Single-writer removes CRDT and operational-transform costs. Rung 1 also avoids repeatedly loading every document into the main board view: normal refreshes carry summaries, and a full body is fetched and streamed only for the selected document.
+
+| Rung | Transport | Status | When it earns its cost |
+|---|---|---|---|
+| 1 | Full snapshot per saved version | **Shipped** | Small project notes; simplest auditable behavior |
+| 2 | Computed patch plus periodic snapshots | Future | Documents are updated often enough that snapshots waste bandwidth or agent context |
+| 3 | Yjs used only as a compact delta codec | Future | Large or structured documents justify another state format |
+
+Rung 1 caps content at 48 KiB of valid text. That bound keeps one saved event manageable while real usage establishes whether deltas are worth their protocol, storage, recovery, and test surface.
 
 ## Worked example
 
-A verifier agent holds the pen on a spreadsheet of test results. A human owner and two other agents watch.
+A same-project agent adapter holds epoch 8 on a release note and saves content version 5. A manager and human reviewer subscribed after sequence 14 receive sequence 15 with the complete saved snapshot. The human then confirms a takeover: the board grants epoch 9 and broadcasts the new pen state. An agent save carrying epoch 8 is rejected even if its content version was otherwise current. The human edits version 5 and explicitly saves version 6. The bundled task worker cannot perform this flow until its model-tool boundary gains document operations.
 
-1. Each watcher `bootstrap()`s the sheet snapshot at sequence 40 and renders it read-only.
-2. The verifier fills a row. The control plane appends update event 41 (a delta: "row 7 = passed"). All three watchers apply it instantly. No merge, because no one else can write.
-3. A watcher's network drops. On reconnect it presents `afterSequence: 41`; the plane replays 42–45. If those sequences aged out of retention, it reloads the snapshot instead — never trusting stale local state.
-4. The human takes the pen to correct a value. The plane increments the epoch, fences the verifier, and the verifier's next stray write is rejected rather than silently applied.
+No task was created, no agent was woken, and no concurrent text was merged. The database remains authoritative throughout a frontend restart.
 
-The document was live for everyone, edited by one, and never in conflict.
+## Boundaries and current limits
 
-## Boundaries this design keeps
+Consistent with [`ARCHITECTURE.md`](ARCHITECTURE.md):
 
-Consistent with Steward's invariants ([`ARCHITECTURE.md`](ARCHITECTURE.md) security invariants):
+- **A live document is not deployment evidence** — approvals, test results, diffs, and durable task decisions remain the source records.
+- **The stream is delivery, not truth** — SQLite projections and events are authoritative; clients recover from a snapshot and sequence.
+- **Watching grants no authority** — reading a document cannot queue, interrupt, approve, deploy, or acquire its pen.
+- **The pen grants document writes only** — it conveys no task, agent, or production permission.
 
-- **A live document is not evidence.** Like the impact overview, a watched document is a presentation projection. A passing test, diff, or durable decision remains the source record.
-- **The stream is delivery, not truth.** The durable log is authoritative; SSE only delivers it. Reconnecting clients resync from sequence or snapshot.
-- **Watching grants no authority.** Read-only watchers cannot write, queue, interrupt, approve, or deploy. The pen grants writing to a document — nothing else.
+Rung 1 has known, bounded limits:
 
-## Limits and open risks
-
-- **Pen handoff needs an operational policy** — request, grant, idle-timeout, and forced revocation intervals are undefined. A crashed pen holder must release the pen after a deadline, or the document freezes.
-- **Snapshot cadence vs. retention** — rungs 2–3 need periodic full snapshots so reconnects past the retention window can resync; the interval is unmeasured.
-- **Editor read-only fidelity is per-tool** — each editor's non-editable mode and its snapshot/delta format must be verified before selection. This doc does not choose the editor.
-- **Large binary drawings** — image-heavy drawings may not delta cheaply; snapshot-only (rung 1) may dominate their cost regardless.
-- **No offline editing** — a watcher that loses contact watches a frozen view; it cannot queue edits, because it never had the pen.
-- **Not yet built** — the transport, lease, and document projection are typed intentions extending `contract.ts`, not running code.
+- Documents are plain Markdown shown in a plain-text viewer/editor.
+- Every event stores a full snapshot, so history grows with document size and save frequency.
+- Slow SSE consumers may buffer until they disconnect and replay from their last sequence.
+- Pens have no timeout. Recovery is an explicit human force takeover.
+- There is no presence, watcher count, offline edit queue, delta transport, or multi-writer merge.
+- The bundled task worker does not place documents in agent context or expose document tools yet.
 
 ## Alternatives Considered
 
-- **Full CRDT co-editing (Yjs/Automerge as merge engine)** — rejected for this scope. Merge is the costly part, and the requirement is single-writer, so there is nothing to merge. Yjs may still appear at ladder rung 3 purely as a delta codec, not as a conflict resolver.
-- **Adopt a collaboration product (Univer Pro, hosted Tiptap, Excalidraw rooms)** — rejected. These exist to solve multi-writer merge and are paid or self-hosted for that reason. Single-writer broadcast needs none of it, and every candidate editor's free read-only render suffices.
-- **Broadcast full snapshots on every edit** — kept as ladder rung 1 for small documents, rejected as the default for large or fast-changing ones because agent watchers would re-ingest the whole document per change, which Steward's token budget explicitly avoids.
-- **A separate document server outside the control plane** — rejected. It would duplicate the snapshot, resume, retention, and fencing machinery `contract.ts` already defines, and split the audit trail across two systems.
-- **Let watchers edit and reconcile later** — rejected. That is multi-writer co-editing by another name and reintroduces the merge problem the single-writer constraint was chosen to avoid.
-- **Poll for document changes** — rejected. Polling spends tokens and requests while nothing changes; the existing event-driven SSE stream pushes only real updates, matching the observer's event-driven principle in `ARCHITECTURE.md`.
+- **Reuse the legacy `/live` stream as the authority** — rejected. The product frontend and event-driven agents use the SQLite task board; routing documents through the compatibility control plane would create a second authority and couple this feature to an inactive path.
+- **Run a separate document server** — rejected for rung 1. It would duplicate authentication, project scope, persistence, fencing, and recovery for a small Markdown feature.
+- **Full CRDT co-editing** — rejected. The requirement is one writer, so merge machinery adds protocol and operational cost without solving a present conflict.
+- **Automatic pen expiry** — rejected. A timer would reintroduce heartbeat and renewal behavior that Steward intentionally avoids. Explicit release plus human force takeover is deterministic and visible.
+- **Polling full documents** — rejected. The board already polls small summaries; selected-document SSE pushes only committed changes and reconnects from a durable cursor.
+- **Start with diffs** — deferred. Full snapshots are easier to audit and recover, and the 48 KiB bound makes them acceptable until measurements justify rung 2.

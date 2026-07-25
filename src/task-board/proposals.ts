@@ -48,7 +48,6 @@ export function proposalChildInput(parent: BoardTask, proposal: TaskProposal): C
     objective: proposal.objective,
     acceptanceCriteria: proposal.acceptanceCriteria,
     workspaceRefs: [...parent.workspaceRefs],
-    expectedAgentMinutes: 30,
   };
 }
 
@@ -58,7 +57,6 @@ export function proposalIsOnBoard(parent: BoardTask, proposal: TaskProposal, tas
     && task.title === proposal.title
     && task.objective === proposal.objective
     && task.acceptanceCriteria === proposal.acceptanceCriteria
-    && task.expectedAgentMinutes === 30
     && task.workspaceRefs.length === parent.workspaceRefs.length
     && task.workspaceRefs.every((reference, index) => reference === parent.workspaceRefs[index])
   ));

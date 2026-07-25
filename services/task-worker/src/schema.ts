@@ -1,6 +1,9 @@
 import type {
   AgentRunOutcome,
   AgentRunOutput,
+  AgentTaskContext,
+  AgentTaskPhase,
+  AgentTaskPhaseUpdate,
   BoundedAgentContext,
   CompletedRunJournalEntry,
   TaskWakeClaim,
@@ -9,8 +12,7 @@ import type {
 } from "./types.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
-const ROUTE_SEGMENT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const MAX_CONTEXT_BYTES = 64 * 1024;
+const MAX_CONTEXT_BYTES = 256 * 1024;
 const MAX_OUTCOME_BYTES = 64 * 1024;
 const MAX_AREA_MEMORY_ITEMS = 8;
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
@@ -33,21 +35,6 @@ function exact(value: unknown, keys: readonly string[], label: string): Record<s
 function identifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) throw new Error(`${label} is invalid`);
   return value;
-}
-
-function routeSegmentIdentifier(value: unknown, label: string): string {
-  if (typeof value !== "string" || !ROUTE_SEGMENT_IDENTIFIER.test(value)) {
-    throw new Error(`${label} must be a URL-safe path-segment identifier`);
-  }
-  return value;
-}
-
-export function parseTaskWorkerIdentity(value: unknown): TaskWorkerIdentity {
-  const item = exact(value, ["workerId", "agentId"], "Task worker identity");
-  return Object.freeze({
-    workerId: identifier(item.workerId, "workerId"),
-    agentId: routeSegmentIdentifier(item.agentId, "agentId"),
-  });
 }
 
 function prose(value: unknown, label: string, maximum: number): string {
@@ -78,6 +65,97 @@ function timestamp(value: unknown, label: string): string {
 function nonNegativeInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`${label} is invalid`);
   return Number(value);
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  const parsed = nonNegativeInteger(value, label);
+  if (parsed === 0) throw new Error(`${label} is invalid`);
+  return parsed;
+}
+
+function expectedAgentMinutes(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
+    throw new Error(`${label} must be a 15-minute interval between 15 and 10080`);
+  }
+  return Number(value);
+}
+
+function phaseStage(value: unknown, label: string): AgentTaskPhase["stage"] {
+  if (
+    value !== "research" && value !== "planning" && value !== "execution" &&
+    value !== "testing" && value !== "review" && value !== "done"
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function phaseStatus(value: unknown, label: string): AgentTaskPhase["status"] {
+  if (
+    value !== "pending" && value !== "in_progress" && value !== "blocked" &&
+    value !== "completed" && value !== "failed"
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function taskKind(value: unknown, label: string): AgentTaskContext["kind"] {
+  if (value !== "work" && value !== "manager_review" && value !== "human_check") {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function agentRole(value: unknown, label: string): "engineer" | "manager" | "verifier" {
+  if (value !== "engineer" && value !== "manager" && value !== "verifier") {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function parallelGroup(value: unknown, label: string): string | null {
+  return value === null ? null : identifier(value, label);
+}
+
+function assertPhaseCompletion(stage: AgentTaskPhase["stage"], status: AgentTaskPhase["status"], label: string): void {
+  if (stage === "done" && status !== "completed") {
+    throw new Error(`${label} may use the legacy done stage only when status is completed`);
+  }
+}
+
+function contextPhase(value: unknown, index: number): AgentTaskPhase {
+  const label = `task.phases[${index}]`;
+  const item = exact(value, ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey", "version"], label);
+  const stage = phaseStage(item.stage, `${label}.stage`);
+  const status = phaseStatus(item.status, `${label}.status`);
+  assertPhaseCompletion(stage, status, label);
+  return Object.freeze({
+    phaseId: identifier(item.phaseId, `${label}.phaseId`),
+    title: prose(item.title, `${label}.title`, 240),
+    stage,
+    status,
+    parallelGroup: parallelGroup(item.parallelGroup, `${label}.parallelGroup`),
+    orderKey: nonNegativeInteger(item.orderKey, `${label}.orderKey`),
+    version: positiveInteger(item.version, `${label}.version`),
+  });
+}
+
+function phaseUpdate(value: unknown, index: number): AgentTaskPhaseUpdate {
+  const label = `phases[${index}]`;
+  const item = exact(value, ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey"], label);
+  const stage = phaseStage(item.stage, `${label}.stage`);
+  const status = phaseStatus(item.status, `${label}.status`);
+  assertPhaseCompletion(stage, status, label);
+  return Object.freeze({
+    phaseId: item.phaseId === null ? null : identifier(item.phaseId, `${label}.phaseId`),
+    title: prose(item.title, `${label}.title`, 240),
+    stage,
+    status,
+    parallelGroup: parallelGroup(item.parallelGroup, `${label}.parallelGroup`),
+    orderKey: nonNegativeInteger(item.orderKey, `${label}.orderKey`),
+  });
 }
 
 function nullableCursor(value: unknown, label: string): number | null {
@@ -142,7 +220,11 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   ], "Agent context");
   if (item.apiVersion !== 1) throw new Error("Agent context version is invalid");
   const mission = exact(item.mission, ["role", "area", "mission"], "Agent mission");
-  const task = exact(item.task, ["title", "objective", "acceptanceCriteria"], "Agent task context");
+  const task = exact(
+    item.task,
+    ["kind", "requiredRole", "title", "objective", "acceptanceCriteria", "version", "expectedAgentMinutes", "phases"],
+    "Agent task context",
+  );
   const currentTaskId = identifier(item.taskId, "context.taskId");
   if (!Array.isArray(item.areaMemory) || item.areaMemory.length > MAX_AREA_MEMORY_ITEMS) {
     throw new Error("Agent area memory is invalid");
@@ -219,6 +301,20 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   if (!Array.isArray(item.workspaceRefs) || item.workspaceRefs.length > 32) {
     throw new Error("Agent context workspace references are invalid");
   }
+  if (!Array.isArray(task.phases) || task.phases.length > 64) throw new Error("Agent task phases are invalid");
+  const phases = task.phases.map(contextPhase);
+  if (new Set(phases.map((phase) => phase.phaseId)).size !== phases.length) {
+    throw new Error("Agent task phases contain duplicate phase IDs");
+  }
+  if (phases.some((phase, index) => {
+    const previous = phases[index - 1];
+    return previous !== undefined && (
+      phase.orderKey < previous.orderKey ||
+      phase.orderKey === previous.orderKey && phase.phaseId <= previous.phaseId
+    );
+  })) {
+    throw new Error("Agent task phase ordering is invalid");
+  }
   let parentEvidence: BoundedAgentContext["parentEvidence"] = null;
   if (item.parentEvidence !== null) {
     const parent = exact(item.parentEvidence, [
@@ -250,7 +346,7 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
     parentEvidence = Object.freeze({
       taskId: identifier(parent.taskId, "parent.taskId"),
       title: prose(parent.title, "parent.title", 512),
-      objective: prose(parent.objective, "parent.objective", 4_000),
+      objective: prose(parent.objective, "parent.objective", 8_000),
       acceptanceCriteria: prose(parent.acceptanceCriteria, "parent.acceptanceCriteria", 4_000),
       status: prose(parent.status, "parent.status", 64),
       assignedAgentId: parent.assignedAgentId === null ? null : identifier(parent.assignedAgentId, "parent.assignedAgentId"),
@@ -274,9 +370,14 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
     }),
     projectMemory: prose(item.projectMemory, "projectMemory", 8_000),
     task: Object.freeze({
+      kind: taskKind(task.kind, "task.kind"),
+      requiredRole: task.requiredRole === null ? null : agentRole(task.requiredRole, "task.requiredRole"),
       title: prose(task.title, "task.title", 512),
-      objective: prose(task.objective, "task.objective", 4_000),
+      objective: prose(task.objective, "task.objective", 8_000),
       acceptanceCriteria: prose(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
+      version: positiveInteger(task.version, "task.version"),
+      expectedAgentMinutes: expectedAgentMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes"),
+      phases: Object.freeze(phases),
     }),
     areaMemory: Object.freeze(areaMemory),
     parentEvidence,
@@ -324,7 +425,7 @@ export function parseAgentRunOutput(value: unknown): AgentRunOutput {
 
 export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
   boundedJson(value, MAX_OUTCOME_BYTES, "Agent outcome");
-  const item = exact(value, ["status", "outputs", "detail"], "Agent outcome");
+  const item = exact(value, ["status", "outputs", "expectedAgentMinutes", "phases", "detail"], "Agent outcome");
   if (
     item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" &&
     item.status !== "waiting_for_human"
@@ -332,7 +433,11 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
     throw new Error("Agent outcome status is invalid");
   }
   if (!Array.isArray(item.outputs) || item.outputs.length > 64) throw new Error("Agent outcome outputs are invalid");
+  if (!Array.isArray(item.phases) || item.phases.length > 32) throw new Error("Agent outcome phases are invalid");
   const outputs = item.outputs.map(parseAgentRunOutput);
+  const phases = item.phases.map(phaseUpdate);
+  const existingIds = phases.flatMap((phase) => phase.phaseId === null ? [] : [phase.phaseId]);
+  if (new Set(existingIds).size !== existingIds.length) throw new Error("Agent outcome phases contain duplicate phase IDs");
   const results = outputs.filter((output) => output.type === "result").length;
   const questions = outputs.filter((output) => output.type === "human_question").length;
   if (item.status === "completed" ? results !== 1 || questions !== 0 : results !== 0) {
@@ -347,6 +452,8 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
   return Object.freeze({
     status: item.status,
     outputs: Object.freeze(outputs),
+    expectedAgentMinutes: expectedAgentMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes"),
+    phases: Object.freeze(phases),
     detail: prose(item.detail, "outcome.detail", 2_000),
   });
 }

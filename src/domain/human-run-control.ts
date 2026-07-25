@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  AgentLaneId,
   Brand,
   EngineeringLoop,
   EngineeringLoopStage,
@@ -16,7 +17,7 @@ import {
   type AgentExpectedMinutes,
 } from './agent-task';
 
-export type AgentLaneId = Brand<string, 'AgentLaneId'>;
+export type { AgentLaneId } from './types';
 export type AgentRunId = Brand<string, 'AgentRunId'>;
 export type QueuedWorkId = Brand<string, 'QueuedWorkId'>;
 export type RunControlSignalId = Brand<string, 'RunControlSignalId'>;

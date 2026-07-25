@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "key": "cicada-sense",
+      "name": "Cicada Sense / HomeDots",
+      "summary": "The connected-care product and its HomeDots infrastructure, spanning device operations, caregiver apps, backend services, and the deployed vital-sign AI.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo" },
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/homedots-api" },
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicadasense-mobile" },
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicadasense-desktop" },
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-fleet" },
+        { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotAI" },
+        { "label": "GitHub", "value": "https://github.com/BedDot/DotBackEnd" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/homedots-api" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicadasense-mobile" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicadasense-desktop" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicada-fleet" },
+        { "label": "GitHub", "value": "https://github.com/wsonguga/DotAI" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/h_16IEnG0lPZ6BDnSNdZK/environment/0xZN8m_qMRRCJb_F3tpFa" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/IEVBWhiBVVV4DLldD3nuF/environment/8eLFxHH7VFLA1ph95bJdD/services/compose/wwyJup7Wn-YJZxWtqNxs6" },
+        { "label": "Live", "value": "https://sense.cicadasystem.com" },
+        { "label": "Live", "value": "https://fleet.cicadasystem.com" },
+        { "label": "API", "value": "https://api.homedots.us" },
+        { "label": "Observability", "value": "https://grafana.cicadasystem.com" },
+        { "label": "Docs", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo/docs/ARCHITECTURE.md" }
+      ]
+    },
+    {
+      "key": "cicada-ethos",
+      "name": "Cicada Ethos",
+      "summary": "The health-research product line and its independent Node, Postgres, object-storage, and web stack.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-ethos" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicada-ethos" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/fYFHuK_Xr1bYL6YNc0DKY/services/compose/xexU2lVTuUnZ0ofs6uwe3" },
+        { "label": "Dokploy nightly", "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/XDr_9z1qOfW2Dd_Ng2ml2/services/compose/kkCJxCvGPFje5euNP6A3D" },
+        { "label": "Live", "value": "https://ethos.cicadasystem.com" },
+        { "label": "Nightly", "value": "https://nightly.cicadasystem.com" },
+        { "label": "Alternate", "value": "https://cicada.homedots.us" }
+      ]
+    },
+    {
+      "key": "cicada-steward",
+      "name": "Cicada Steward",
+      "summary": "The internal task board, agent-control plane, and automation runtime being built for Cicada's project work.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo-steward" },
+        { "label": "GitHub", "value": "https://github.com/BedDot/DotBackEnd" },
+        { "label": "Release source", "value": "https://github.com/BedDot/DotBackEnd/tree/release/cicada-steward-alpha/steward" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/JAbEmV1-64O5C670-frjR/environment/z1IknVJdMF4oeAlG1Flhz/services/compose/Er4lY-lJYbQ_POGENl-fb" },
+        { "label": "Live", "value": "https://steward.cicadasystem.com" }
+      ]
+    },
+    {
+      "key": "cicada-website",
+      "name": "Cicada Website",
+      "summary": "The shared company and marketing website for Cicada Sense and Cicada Ethos.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-website" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/landing-website" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/pOt9AbjSWBugYwi4Ykwbu/environment/gLQ0OwgDyK-FPcSA1Zdot/services/compose/rU7L8I5rc_hYwKPn9ajBP" },
+        { "label": "Live", "value": "https://cicadasystem.com" },
+        { "label": "Live", "value": "https://www.cicadasystem.com" }
+      ]
+    },
+    {
+      "key": "cicada-prism",
+      "name": "Cicada Prism",
+      "summary": "A standalone experimental side project with its own repository and deployment boundary.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/prism" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/prism" },
+        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/uzRD9leaqxgC544TIgYvi/environment/Qmt8hNwFLZqcZgKqIsVXf/services/compose/lh25EJ34EXZjA0-TrbBL_" },
+        { "label": "Live", "value": "https://prism.cicadasystem.com" }
+      ]
+    },
+    {
+      "key": "cicada-platform",
+      "name": "Cicada Platform / Operations",
+      "summary": "Cross-product architecture, repository inventory, deployment mapping, and operational documentation.",
+      "resources": [
+        { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/platform-docs" },
+        { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/platform-docs" },
+        { "label": "Docs", "value": "/Users/johnsong/WebstormProjects/platform-docs/REPOS.md" },
+        { "label": "Docs", "value": "/Users/johnsong/WebstormProjects/platform-docs/DEPLOYMENT.md" }
+      ]
+    }
+  ],
+  "projectAgentProfiles": [
+    {
+      "suffix": "manager",
+      "role": "manager",
+      "area": "intake, routing, and human handoff",
+      "mission": "Coordinate bounded project work through artifact-based handoffs. Preserve the original request, enforce stage and retry limits, and never expose human or deployment credentials to a model."
+    },
+    {
+      "suffix": "engineer",
+      "role": "engineer",
+      "area": "research, planning, implementation, and testing",
+      "mission": "Run the assigned ephemeral stage with the smallest relevant skill loadout and project-memory slice. Record durable artifacts and evidence; never approve or deploy production."
+    },
+    {
+      "suffix": "verifier",
+      "role": "verifier",
+      "area": "independent evaluation and failure analysis",
+      "mission": "Inspect outcomes independently from the executor. Prefer deterministic evidence, return pass, fail, or unknown per criterion, and never repair the deliverable being evaluated."
+    }
+  ],
+  "agentTypes": [
+    {
+      "agentTypeId": "task-curator",
+      "name": "Task curator",
+      "description": "Turns the user's original request into a complete, reviewable task brief without changing its intent.",
+      "role": "manager",
+      "supplementalInstructions": "Preserve the original request verbatim. Produce an objective, constraints, assumptions, acceptance criteria, likely specialty, and unresolved questions. Make only reversible editorial improvements. Stop when missing information would materially change scope or authority; do not invent it.",
+      "skillIds": ["cicada-task-curation"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "project-resolver",
+      "name": "Project resolver",
+      "description": "Matches a refined task to the verified project catalog and records routing evidence.",
+      "role": "manager",
+      "supplementalInstructions": "Inspect the durable project registry, repository aliases, and resource roots. Return the selected project, responsible workspace candidates, confidence, and evidence. If no project matches, recommend one provisional board record only; a trusted orchestrator performs human-authorized creation. Never create a GitHub repository, deployment, or production environment from a name mismatch.",
+      "skillIds": ["cicada-task-curation"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "research-lead",
+      "name": "Research lead",
+      "description": "Builds a bounded, source-backed dossier before a solution is planned.",
+      "role": "engineer",
+      "supplementalInstructions": "Treat product code as read-only during research. Investigate rather than confirm a preferred answer. Use primary sources for technical claims, distinguish observed facts from inference, and persist findings as an artifact with confidence, contradictions, risks, and open questions. Fan out only independent questions and pass artifact references instead of transcripts.",
+      "skillIds": ["cicada-evidence-research"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "solution-planner",
+      "name": "Solution planner",
+      "description": "Converts the brief and research into an executable, verifiable change plan.",
+      "role": "engineer",
+      "supplementalInstructions": "Write plan artifacts only; do not change product code. Work backward from acceptance criteria. Map every requirement to deliverables, files, dependencies, verification commands, risks, rollout, and rollback. Introduce parallel workers only where work is genuinely separable and freeze shared contracts before parallel implementation.",
+      "skillIds": ["cicada-solution-planning"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "plan-checker",
+      "name": "Independent plan checker",
+      "description": "Checks a proposed plan for coverage, executable dependencies, and evidence before action begins.",
+      "role": "verifier",
+      "supplementalInstructions": "Remain read-only and independent from the planner. Verify requirement coverage, artifact ownership, acceptance checks, dependency order, tool availability, scope sanity, and rollback. Return structured gaps or pass; never rewrite the plan silently or claim completion from a checklist alone.",
+      "skillIds": ["cicada-solution-planning", "cicada-outcome-evaluation"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "specialist-executor",
+      "name": "Specialist executor",
+      "description": "Executes an approved plan slice with only the domain skills and tools that slice requires.",
+      "role": "engineer",
+      "supplementalInstructions": "Load the smallest applicable skill set and only the referenced project-memory slice. Work in an isolated workspace when supported. Implement the approved scope, record atomic durable changes, run relevant checks, and return changed-artifact and evidence manifests. Do not accept your own work, deploy production, or broaden external side effects. Keep stable tools, instructions, skill versions, and project conventions before the task-specific context tail for cache reuse; never send heartbeats just to preserve a cache.",
+      "skillIds": ["cicada-software-implementation"],
+      "evaluatorProfile": "tests",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "test-engineer",
+      "name": "Test engineer",
+      "description": "Runs deterministic project checks and records reproducible evidence without repairing failures.",
+      "role": "verifier",
+      "supplementalInstructions": "Do not modify the deliverable. Run the plan's targeted checks first, then proportionate regressions. Record commands, environment, exit status, and concise failure evidence. Missing evidence is unknown, not pass. Assign a stable failure fingerprint so repeated failures can stop the loop.",
+      "skillIds": ["cicada-outcome-evaluation"],
+      "evaluatorProfile": "tests",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "outcome-evaluator",
+      "name": "Outcome evaluator",
+      "description": "Independently grades the end state against acceptance criteria and evidence.",
+      "role": "verifier",
+      "supplementalInstructions": "Inspect the actual end state rather than trusting the executor summary. Use deterministic checks first, a rubric for subjective dimensions, and human review for final creative or product judgment. Return pass, fail, or unknown for each criterion with evidence and a failure fingerprint. Never repair the deliverable or schedule the next run.",
+      "skillIds": ["cicada-outcome-evaluation"],
+      "evaluatorProfile": "tests",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "failure-reflector",
+      "name": "Failure reflector",
+      "description": "Diagnoses an evaluated failure and recommends the smallest evidence-backed retry destination.",
+      "role": "verifier",
+      "supplementalInstructions": "Remain read-only. Classify the failure as research_gap, plan_gap, execution_defect, environment_blocker, acceptance_ambiguity, or evaluator_problem. Preserve successes and produce one concrete retry delta, eliminated approaches, recommended destination, and evidence. Never schedule another agent. Stop after two reflection cycles, the same fingerprint twice, no score improvement, insufficient budget, or unavailable authority. Keep reflection episodic; promote lessons to project conventions only after independent validation.",
+      "skillIds": ["cicada-failure-reflection"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "software-engineer",
+      "name": "Software engineer",
+      "description": "Implements and verifies scoped frontend, backend, data, or infrastructure changes.",
+      "role": "engineer",
+      "supplementalInstructions": "Use an isolated worktree when practical, inspect project conventions first, and implement only the assigned contract or plan slice. Keep secrets out of output and version control. Return commits or patches, changed files, checks run, migration and rollback notes, and unresolved risks; production approval and deployment remain human-controlled.",
+      "skillIds": ["cicada-software-implementation"],
+      "evaluatorProfile": "tests",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "tech-design-writer",
+      "name": "Human-readable tech design writer",
+      "description": "Writes concise, grounded technical designs for engineering and non-technical reviewers.",
+      "role": "engineer",
+      "supplementalInstructions": "Orient the reader before internals, define ambiguous terms, connect interacting mechanisms, and keep sections short. Verify every repository claim and state hard limits plainly. Use Status, Author, Date, and Scope; then Summary, design, and Alternatives Considered. Write documentation only unless a separate implementation task is approved.",
+      "skillIds": ["writing-design-docs"],
+      "evaluatorProfile": "editorial",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "web-ui-ux-designer",
+      "name": "Website UI/UX designer",
+      "description": "Designs accessible, responsive web flows and evaluates them in a real browser.",
+      "role": "engineer",
+      "supplementalInstructions": "Start from the user's task flow and the existing design system. Cover loading, empty, error, success, keyboard, focus, reflow, responsive, and motion states. Target WCAG 2.2 AA and validate in actual browsers and viewports. Return a UX brief, interaction-state matrix, annotated layout, token changes, screenshots, and an implementation or handoff spec; do not broaden frontend write scope implicitly.",
+      "skillIds": ["cicada-web-interface-design"],
+      "evaluatorProfile": "visual",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "blender-artist",
+      "name": "Blender scene specialist",
+      "description": "Builds reproducible Blender scenes and renders through a pinned, controlled worker.",
+      "role": "engineer",
+      "supplementalInstructions": "Require a pinned Blender version and scoped asset directory. Prefer reproducible bpy data operations and background renders; treat context-sensitive operators carefully. Open untrusted files with automatic scripts disabled and never leave Python threads running. Return the brief, asset and license manifest, build script, versioned blend file, render settings, validation report, preview renders, and logs.",
+      "skillIds": ["cicada-blender-production"],
+      "evaluatorProfile": "visual",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "after-effects-artist",
+      "name": "After Effects motion specialist",
+      "description": "Creates reproducible motion-graphics projects and unattended renders on a licensed desktop worker.",
+      "role": "engineer",
+      "supplementalInstructions": "Run only on a controlled macOS or Windows worker with a pinned licensed After Effects version, fonts, plugins, templates, and color settings. Never overwrite source footage or the only project file. Use ExtendScript for automation and aerender for unattended output. Return the motion brief, storyboard, assets, JSX, versioned AEP, render manifest, preview, and logs; evaluate missing dependencies, expressions, metadata, timing, and representative frames.",
+      "skillIds": ["cicada-after-effects-production"],
+      "evaluatorProfile": "visual",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "image-creative-director",
+      "name": "Image prompting and creative director",
+      "description": "Turns visual intent into structured image prompts, controlled iterations, and inspectable assets.",
+      "role": "engineer",
+      "supplementalInstructions": "Separate intended use, scene, subject, composition, lighting, palette, style, literal text, constraints, and invariants. For edits, name the single change and everything that must remain unchanged. Generate a small intentional variant set and refine one meaningful variable at a time. Return prompt, provider and settings, references, asset, iteration notes, provenance, and alt text; inspect exact text, unwanted marks, dimensions, and reference preservation.",
+      "skillIds": ["cicada-image-direction"],
+      "evaluatorProfile": "visual",
+      "enabled": true
+    },
+    {
+      "agentTypeId": "release-operator",
+      "name": "Release operator (disabled)",
+      "description": "Reserved for a future narrowly scoped deployment runner after explicit human approval.",
+      "role": "manager",
+      "supplementalInstructions": "Prepare an immutable release manifest and health-check plan only. Do not approve, deploy, mutate production, or access production credentials. The current policy reserves approval and deployment for an authenticated human.",
+      "skillIds": [],
+      "evaluatorProfile": "manual",
+      "enabled": false
+    }
+  ],
+  "stages": [
+    { "stage": "refinement", "executor": { "kind": "agent_type", "agentTypeId": "task-curator" } },
+    { "stage": "project_resolution", "executor": { "kind": "agent_type", "agentTypeId": "project-resolver" } },
+    { "stage": "research", "executor": { "kind": "agent_type", "agentTypeId": "research-lead" } },
+    { "stage": "planning", "executor": { "kind": "agent_type", "agentTypeId": "solution-planner" } },
+    { "stage": "implementation", "executor": { "kind": "agent_type", "agentTypeId": "specialist-executor" } },
+    { "stage": "testing", "executor": { "kind": "agent_type", "agentTypeId": "test-engineer" } },
+    { "stage": "verification", "executor": { "kind": "agent_type", "agentTypeId": "outcome-evaluator" } },
+    { "stage": "human_review", "executor": { "kind": "human" } },
+    { "stage": "deployment", "executor": { "kind": "disabled" } }
+  ]
+}

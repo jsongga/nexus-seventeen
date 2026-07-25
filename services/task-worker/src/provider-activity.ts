@@ -1,3 +1,5 @@
+import type { TaskPhaseStage, TaskPhaseStatus } from "@cicada/steward-task-board-contract";
+
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS = 160;
 const FAILURE_STATES = new Set(["cancelled", "error", "failed", "rejected"]);
@@ -5,6 +7,14 @@ const FAILURE_STATES = new Set(["cancelled", "error", "failed", "rejected"]);
 type JsonObject = Record<string, unknown>;
 
 export type ActivityProvider = "codex" | "claude";
+
+export interface LivePhaseSignal {
+  readonly key: string;
+  readonly title: string;
+  readonly stage: TaskPhaseStage;
+  readonly status: TaskPhaseStatus;
+  readonly parallelGroup: string | null;
+}
 
 export interface ActivityBufferOptions {
   readonly minimumIntervalMs?: number;
@@ -34,6 +44,136 @@ function failed(item: JsonObject): boolean {
   return typeof item.status === "string" && FAILURE_STATES.has(item.status.toLowerCase());
 }
 
+function estimateFromText(value: unknown): number | null {
+  if (typeof value !== "string" || value.length > MAX_EVENT_CHARACTERS) return null;
+  const matches = [...value.matchAll(/(?:^|\r?\n)STEWARD_ESTIMATE_MINUTES=(\d{1,5})(?=\r?\n|$)/gu)];
+  const raw = matches.at(-1)?.[1];
+  if (raw === undefined) return null;
+  const minutes = Number(raw);
+  return Number.isSafeInteger(minutes) && minutes >= 15 && minutes <= 10_080 && minutes % 15 === 0
+    ? minutes
+    : null;
+}
+
+function claudeToolResultEstimate(content: unknown): number | null {
+  const direct = estimateFromText(content);
+  if (direct !== null || !Array.isArray(content)) return direct;
+  for (const entry of content) {
+    const block = object(entry);
+    const estimate = block?.type === "text" ? estimateFromText(block.text) : null;
+    if (estimate !== null) return estimate;
+  }
+  return null;
+}
+
+function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
+  if (typeof value !== "string" || value.length > MAX_EVENT_CHARACTERS) return null;
+  const matches = [...value.matchAll(/(?:^|\r?\n)STEWARD_PHASE_JSON=([^\r\n]{2,768})(?=\r?\n|$)/gu)];
+  const raw = matches.at(-1)?.[1];
+  if (raw === undefined) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw) as unknown; } catch { return null; }
+  const item = object(parsed);
+  if (item === null || Object.keys(item).sort().join(",") !== "key,parallelGroup,stage,status,title") return null;
+  if (
+    typeof item.key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.key) ||
+    item.parallelGroup !== null && (typeof item.parallelGroup !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.parallelGroup)) ||
+    item.stage !== "research" && item.stage !== "planning" && item.stage !== "execution" &&
+      item.stage !== "testing" && item.stage !== "review" && item.stage !== "done" ||
+    item.status !== "pending" && item.status !== "in_progress" && item.status !== "blocked" &&
+      item.status !== "completed" && item.status !== "failed" ||
+    item.stage === "done" && item.status !== "completed"
+  ) {
+    return null;
+  }
+  const title = typeof item.title === "string" ? sanitizeActivity(item.title, 120) : null;
+  if (title === null) return null;
+  return Object.freeze({
+    key: item.key,
+    title,
+    stage: item.stage,
+    status: item.status,
+    parallelGroup: item.parallelGroup,
+  });
+}
+
+function claudeToolResultPhase(content: unknown): LivePhaseSignal | null {
+  const direct = phaseSignalFromText(content);
+  if (direct !== null || !Array.isArray(content)) return direct;
+  for (const entry of content) {
+    const block = object(entry);
+    const phase = block?.type === "text" ? phaseSignalFromText(block.text) : null;
+    if (phase !== null) return phase;
+  }
+  return null;
+}
+
+/** Extracts only an exact numeric marker from completed tool output; all other provider text is ignored. */
+export function estimateMinutesFromProviderLine(provider: ActivityProvider, line: string): number | null {
+  const event = eventFromLine(line);
+  if (event === null || typeof event.type !== "string") return null;
+  if (provider === "codex") {
+    if (event.type !== "item.completed") return null;
+    const item = object(event.item);
+    return item?.type === "command_execution" ? estimateFromText(item.aggregated_output) : null;
+  }
+  if (event.type !== "user") return null;
+  const content = object(event.message)?.content;
+  if (!Array.isArray(content)) return null;
+  for (const entry of content) {
+    const block = object(entry);
+    if (block?.type !== "tool_result") continue;
+    const estimate = claudeToolResultEstimate(block.content);
+    if (estimate !== null) return estimate;
+  }
+  return null;
+}
+
+/** Extracts a strictly bounded phase signal only from completed tool output. */
+export function phaseSignalFromProviderLine(provider: ActivityProvider, line: string): LivePhaseSignal | null {
+  const event = eventFromLine(line);
+  if (event === null || typeof event.type !== "string") return null;
+  if (provider === "codex") {
+    if (event.type !== "item.completed") return null;
+    const item = object(event.item);
+    return item?.type === "command_execution" ? phaseSignalFromText(item.aggregated_output) : null;
+  }
+  if (event.type !== "user") return null;
+  const content = object(event.message)?.content;
+  if (!Array.isArray(content)) return null;
+  for (const entry of content) {
+    const block = object(entry);
+    if (block?.type !== "tool_result") continue;
+    const phase = claudeToolResultPhase(block.content);
+    if (phase !== null) return phase;
+  }
+  return null;
+}
+
+export function estimateActivity(minutes: number): string {
+  if (!Number.isSafeInteger(minutes) || minutes < 15 || minutes > 10_080 || minutes % 15 !== 0) {
+    throw new Error("Estimate minutes are invalid");
+  }
+  return `Agent estimated ${minutes} minutes of work remaining.`;
+}
+
+export function estimateMinutesFromActivity(activity: string): number | null {
+  const match = /^Agent estimated (\d{1,5}) minutes of work remaining\.$/u.exec(activity);
+  return match === null ? null : estimateFromText(`STEWARD_ESTIMATE_MINUTES=${match[1]}\n`);
+}
+
+const SAFE_PHASE_PREFIX = "STEWARD_SAFE_PHASE=";
+
+export function phaseActivity(signal: LivePhaseSignal): string {
+  return `${SAFE_PHASE_PREFIX}${JSON.stringify(signal)}`;
+}
+
+export function phaseSignalFromActivity(activity: string): LivePhaseSignal | null {
+  return activity.startsWith(SAFE_PHASE_PREFIX)
+    ? phaseSignalFromText(`STEWARD_PHASE_JSON=${activity.slice(SAFE_PHASE_PREFIX.length)}\n`)
+    : null;
+}
+
 function codexItemActivity(eventType: string, item: JsonObject): string | null {
   const itemType = typeof item.type === "string" ? item.type : "";
   const completed = eventType === "item.completed";
@@ -48,6 +188,7 @@ function codexItemActivity(eventType: string, item: JsonObject): string | null {
       return completed ? "Prepared the implementation plan." : "Preparing the implementation plan.";
     case "command_execution":
       if (!completed) return "Running a development check.";
+      if (estimateFromText(item.aggregated_output) !== null || phaseSignalFromText(item.aggregated_output) !== null) return null;
       return failed(item) ? "A development check found more work." : "A development check completed.";
     case "file_change":
       return completed ? "Updated the implementation." : "Updating the implementation.";
@@ -133,6 +274,7 @@ function claudeContentActivity(content: unknown): string | null {
     if (block === null || typeof block.type !== "string") continue;
     if (block.type === "tool_use") return claudeToolActivity(block.name);
     if (block.type === "tool_result") {
+      if (claudeToolResultEstimate(block.content) !== null || claudeToolResultPhase(block.content) !== null) return null;
       return failed(block) ? "A development step found more work." : "A development step completed.";
     }
   }
@@ -207,6 +349,39 @@ export function sanitizeActivity(value: string, maximumCharacters = DEFAULT_MAXI
   if (result.length === 0) return null;
   if (result.length > maximumCharacters) result = `${result.slice(0, maximumCharacters - 1).trimEnd()}…`;
   return result;
+}
+
+/** Maps only fixed, sanitized lifecycle labels to a durable phase stage. */
+export function phaseStageFromActivity(activity: string): Exclude<TaskPhaseStage, "done"> | null {
+  switch (activity) {
+    case "Agent process started.":
+    case "Work started.":
+    case "Reviewing the task and choosing the next safe step.":
+    case "Researching relevant information.":
+    case "Relevant research was gathered.":
+    case "Gathering information with an approved tool.":
+    case "Information gathering completed.":
+    case "Inspecting the relevant code and context.":
+    case "Delegating a focused investigation.":
+    case "Applying the configured development workflow.":
+      return "research";
+    case "Preparing the implementation plan.":
+    case "Prepared the implementation plan.":
+      return "planning";
+    case "Updating the implementation.":
+    case "Updated the implementation.":
+      return "execution";
+    case "Running a development check.":
+    case "A development check completed.":
+    case "A development check found more work.":
+    case "A development step found more work.":
+      return "testing";
+    case "Work finished; preparing the recorded result.":
+    case "Preparing a focused question for human input.":
+      return "review";
+    default:
+      return null;
+  }
 }
 
 /**

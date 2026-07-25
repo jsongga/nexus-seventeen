@@ -12,6 +12,7 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, milliseconds);
+    timer.unref();
     function done() {
       signal.removeEventListener("abort", done);
       clearTimeout(timer);

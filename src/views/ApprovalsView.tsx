@@ -43,18 +43,18 @@ export function ApprovalsView({
           <Pill tone="green">Manager → human</Pill>
           <span className="text-[11px] font-semibold text-muted">Human-only decision queue</span>
         </div>
-        <h1 className="mt-3 font-display text-[22px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[26px]">
+        <h1 className="mt-3 font-display text-[28px] font-light leading-tight tracking-[-0.035em] text-ink sm:text-[36px]">
           Decisions, with the proof attached.
         </h1>
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-muted sm:text-[15px]">
-          Managers review completed engineering loops to the best of their ability, then post a decision-ready task here. Only a human can record release authorization.
+          Managers review completed engineering loops to the best of their ability, then post a decision-ready task here. Only a human can approve production deployment.
         </p>
       </header>
 
       <section className="grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-caution-soft text-caution">
+            <span className="grid size-10 place-items-center rounded-xl bg-[#fff6df] text-caution">
               <Clock3 size={18} />
             </span>
             <div>
@@ -65,18 +65,18 @@ export function ApprovalsView({
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-teal-soft text-teal-700">
+            <span className="grid size-10 place-items-center rounded-xl bg-[#e8f5f3] text-teal-700">
               <CheckCircle2 size={18} />
             </span>
             <div>
               <p className="font-mono text-2xl font-medium tabular-nums text-ink">{completed}</p>
-              <p className="text-[11px] font-semibold text-muted">Human decisions recorded</p>
+              <p className="text-[11px] font-semibold text-muted">Human-approved or deployed</p>
             </div>
           </div>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-teal-soft text-teal-700">
+            <span className="grid size-10 place-items-center rounded-xl bg-[#e8f5f3] text-teal-700">
               <Fingerprint size={18} />
             </span>
             <div>
@@ -87,20 +87,20 @@ export function ApprovalsView({
         </Card>
       </section>
 
-      <Card className="overflow-hidden border-ink-panel !bg-ink-panel text-white">
+      <Card className="overflow-hidden border-ink !bg-ink text-white">
         <div className="grid gap-4 p-5 sm:grid-cols-[auto_1fr_auto] sm:items-center sm:px-6">
-          <span className="grid size-11 place-items-center rounded-[14px] border border-line bg-ink-panel text-teal-300">
+          <span className="grid size-11 place-items-center rounded-[14px] border border-[#3a444f] bg-[#222a34] text-[#7fe0d6]">
             <LockKeyhole size={21} />
           </span>
           <div>
-            <h2 className="font-display text-sm font-bold">Managers prepare. Humans authorize release.</h2>
-            <p className="mt-1 text-[11px] leading-5 text-white/70">
-              This demo checks that a recent human approval matches the release digest, then records simulated consumption. No deployment occurs.
+            <h2 className="font-display text-sm font-bold">Managers prepare. Humans authorize production.</h2>
+            <p className="mt-1 text-[11px] leading-5 text-[#c8ced4]">
+              A manager can assess the work and post a task, but cannot approve or deploy it. The broker accepts only a recent human approval for the matching release digest.
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[10px] font-bold text-white/70">
-            <ShieldCheck size={15} className="text-teal-300" />
-            Demo policy check
+          <div className="flex items-center gap-2 text-[10px] font-bold text-[#d7dce1]">
+            <ShieldCheck size={15} className="text-[#7fe0d6]" />
+            Server policy required
           </div>
         </div>
       </Card>
@@ -114,7 +114,7 @@ export function ApprovalsView({
             </p>
           </div>
           <div className="flex items-center gap-1 rounded-xl border border-line bg-white p-1">
-            <Filter size={14} className="ml-2 mr-1 text-muted" />
+            <Filter size={14} className="ml-2 mr-1 text-[#66707a]" />
             {(
               [
                 ['pending', 'Waiting'],
@@ -130,7 +130,7 @@ export function ApprovalsView({
                   'min-h-8 rounded-lg px-3 text-[11px] font-bold transition-colors',
                   filter === key
                     ? 'bg-teal-500 text-ink'
-                    : 'text-muted hover:bg-muted-surface hover:text-ink',
+                    : 'text-muted hover:bg-[#eef0f2] hover:text-ink',
                 )}
               >
                 {label}
@@ -150,12 +150,12 @@ export function ApprovalsView({
         </div>
         {visible.length === 0 ? (
           <Card className="mt-4 flex flex-col items-center px-5 py-14 text-center">
-            <span className="grid size-12 place-items-center rounded-[14px] bg-muted-surface text-muted">
+            <span className="grid size-12 place-items-center rounded-[14px] bg-[#eef0f2] text-muted">
               <CircleSlash2 size={21} />
             </span>
             <h3 className="mt-3 font-display text-base font-bold text-ink">Nothing in this queue</h3>
             <p className="mt-1 max-w-sm text-[12px] leading-5 text-muted">
-              Completed decisions stay in this browser-local event history even when the inbox is empty.
+              Completed decisions stay in the audit trail even when this inbox is empty.
             </p>
           </Card>
         ) : null}

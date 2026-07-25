@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { WORK_ITEM_CURSOR_MAX_BYTES } from "@cicada/steward-task-board-contract";
 import { TaskBoard } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
@@ -14,27 +15,39 @@ import {
   sendJson,
 } from "./http.js";
 import {
-  parseAgentIdentifier,
   parseAgentMessage,
   parseAnswer,
   parseClaim,
   parseCreateAgent,
+  parseCreateDocument,
   parseCreateProject,
   parseCreateTask,
+  parseCreateTaskPhase,
+  parseCreateWorkItem,
   parseHumanMessage,
   parseIdentifier,
   parseIdempotencyKey,
   parseInterrupt,
+  parseDocumentPenUpdate,
+  parseDocumentUpdate,
   parseQuestion,
   parseResume,
   parseSettle,
+  parseUpdateAutomationConfiguration,
   parseUpdateTask,
+  parseUpdateTaskPhase,
+  parseUpdateWorkItem,
 } from "./schema.js";
 
 export interface TaskBoardAddress {
   readonly host: string;
   readonly port: number;
   readonly url: string;
+}
+
+interface DocumentStream {
+  readonly response: ServerResponse;
+  readonly unsubscribe: () => void;
 }
 
 function routeUrl(value: string | undefined): URL {
@@ -47,6 +60,19 @@ function routeUrl(value: string | undefined): URL {
 
 function noQuery(url: URL): void {
   if (url.search.length > 0) throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are not accepted");
+}
+
+function optionalWorkItemCursorQuery(url: URL): string | undefined {
+  const values = url.searchParams.getAll("cursor");
+  if ([...url.searchParams.keys()].some((key) => key !== "cursor") || values.length > 1) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
+  }
+  const cursor = values[0];
+  if (cursor === undefined) return undefined;
+  if (cursor.length < 1 || Buffer.byteLength(cursor, "utf8") > WORK_ITEM_CURSOR_MAX_BYTES) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "cursor is invalid");
+  }
+  return cursor;
 }
 
 function exactIntegerQuery(url: URL, keys: readonly string[], field: string, fallback: number, maximum: number): number {
@@ -65,6 +91,8 @@ export class TaskBoardService {
   readonly config: TaskBoardConfig;
   readonly #board: TaskBoard;
   readonly #server: Server;
+  readonly #documentStreams = new Set<DocumentStream>();
+  readonly #closingAbort = new AbortController();
   #started = false;
   #closing = false;
 
@@ -103,6 +131,54 @@ export class TaskBoardService {
       sendJson(response, 200, { status: "ok" });
       return;
     }
+    if (url.pathname === "/v1/automation-configuration" && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { configuration: this.#board.getAutomationConfiguration() });
+      return;
+    }
+    if (url.pathname === "/v1/automation-configuration" && request.method === "PATCH") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const configuration = this.#board.updateAutomationConfiguration(
+        parseUpdateAutomationConfiguration(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, { configuration });
+      return;
+    }
+    if (url.pathname === "/v1/work-items" && request.method === "GET") {
+      const cursor = optionalWorkItemCursorQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, this.#board.listWorkItemsPage(cursor));
+      return;
+    }
+    if (url.pathname === "/v1/work-items" && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const result = this.#board.createWorkItem(
+        parseCreateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseIdempotencyKey(request.headers["idempotency-key"]),
+      );
+      sendJson(response, result.duplicate ? 200 : 201, { workItem: result.workItem });
+      return;
+    }
+    const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);
+    if (workItemMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { workItem: this.#board.requireWorkItem(parseIdentifier(workItemMatch[1], "workItemId")) });
+      return;
+    }
+    if (workItemMatch && request.method === "PATCH") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const workItem = this.#board.updateWorkItem(
+        parseIdentifier(workItemMatch[1], "workItemId"),
+        parseUpdateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, { workItem });
+      return;
+    }
     if (url.pathname === "/v1/projects" && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
@@ -120,6 +196,63 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, this.#board.snapshot(parseIdentifier(boardMatch[1], "projectId")));
+      return;
+    }
+    const documentCreateMatch = /^\/v1\/projects\/([^/]+)\/documents$/u.exec(url.pathname);
+    if (documentCreateMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const projectId = parseIdentifier(documentCreateMatch[1], "projectId");
+      const document = this.#board.createDocument(
+        projectId,
+        parseCreateDocument(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 201, { document });
+      return;
+    }
+    const documentMatch = /^\/v1\/documents\/([^/]+)$/u.exec(url.pathname);
+    if (documentMatch && request.method === "GET") {
+      noQuery(url);
+      const documentId = parseIdentifier(documentMatch[1], "documentId");
+      const document = this.#board.getDocument(documentId);
+      this.#documentActor(request, document.projectId);
+      sendJson(response, 200, { document });
+      return;
+    }
+    const documentPenMatch = /^\/v1\/documents\/([^/]+)\/pen$/u.exec(url.pathname);
+    if (documentPenMatch && request.method === "POST") {
+      noQuery(url);
+      const documentId = parseIdentifier(documentPenMatch[1], "documentId");
+      const current = this.#board.getDocument(documentId);
+      const actor = this.#documentActor(request, current.projectId);
+      const document = this.#board.updateDocumentPen(
+        documentId,
+        parseDocumentPenUpdate(await readJsonBody(request, this.config.maxBodyBytes)),
+        actor,
+      );
+      sendJson(response, 200, { document });
+      return;
+    }
+    if (documentMatch && request.method === "PATCH") {
+      noQuery(url);
+      const documentId = parseIdentifier(documentMatch[1], "documentId");
+      const current = this.#board.getDocument(documentId);
+      const actor = this.#documentActor(request, current.projectId);
+      const document = this.#board.updateDocument(
+        documentId,
+        parseDocumentUpdate(await readJsonBody(request, this.config.maxBodyBytes)),
+        actor,
+      );
+      sendJson(response, 200, { document });
+      return;
+    }
+    const documentEventsMatch = /^\/v1\/documents\/([^/]+)\/events$/u.exec(url.pathname);
+    if (documentEventsMatch && request.method === "GET") {
+      const documentId = parseIdentifier(documentEventsMatch[1], "documentId");
+      const document = this.#board.getDocument(documentId);
+      this.#documentActor(request, document.projectId);
+      const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
+      this.#openDocumentStream(request, response, documentId, document.sequence, after);
       return;
     }
     const agentCreateMatch = /^\/v1\/projects\/([^/]+)\/agents$/u.exec(url.pathname);
@@ -154,6 +287,32 @@ export class TaskBoardService {
       sendJson(response, 200, { task: this.#board.updateTask(taskId, update, actor) });
       return;
     }
+    const phaseCreateMatch = /^\/v1\/tasks\/([^/]+)\/phases$/u.exec(url.pathname);
+    if (phaseCreateMatch && request.method === "POST") {
+      noQuery(url);
+      const taskId = parseIdentifier(phaseCreateMatch[1], "taskId");
+      const agent = this.#board.authenticateAgent(bearerToken(request));
+      const phase = this.#board.createTaskPhase(
+        taskId,
+        parseCreateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes)),
+        agent.agentId,
+      );
+      sendJson(response, 201, { phase });
+      return;
+    }
+    const phaseMatch = /^\/v1\/task-phases\/([^/]+)$/u.exec(url.pathname);
+    if (phaseMatch && request.method === "PATCH") {
+      noQuery(url);
+      const phaseId = parseIdentifier(phaseMatch[1], "phaseId");
+      const agent = this.#board.authenticateAgent(bearerToken(request));
+      const phase = this.#board.updateTaskPhase(
+        phaseId,
+        parseUpdateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes)),
+        agent.agentId,
+      );
+      sendJson(response, 200, { phase });
+      return;
+    }
     const messageMatch = /^\/v1\/tasks\/([^/]+)\/messages$/u.exec(url.pathname);
     if (messageMatch && request.method === "POST") {
       noQuery(url);
@@ -177,7 +336,8 @@ export class TaskBoardService {
           throw new TaskBoardError(403, "TASK_NOT_ASSIGNED", "Task is not assigned to this agent");
         }
       }
-      sendJson(response, 200, this.#board.listMessagePage(taskId, after));
+      const messages = this.#board.listMessages(taskId, after);
+      sendJson(response, 200, { messages, cursor: messages.at(-1)?.sequence ?? after });
       return;
     }
     const questionMatch = /^\/v1\/tasks\/([^/]+)\/questions$/u.exec(url.pathname);
@@ -205,7 +365,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.resumeAgent(
-        parseAgentIdentifier(resumeMatch[1]),
+        parseIdentifier(resumeMatch[1], "agentId"),
         parseResume(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -217,7 +377,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.interruptAgent(
-        parseAgentIdentifier(interruptMatch[1]),
+        parseIdentifier(interruptMatch[1], "agentId"),
         parseInterrupt(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -226,20 +386,25 @@ export class TaskBoardService {
     }
     const claimMatch = /^\/v1\/agents\/([^/]+)\/runs\/claim$/u.exec(url.pathname);
     if (claimMatch && request.method === "POST") {
-      const agentId = parseAgentIdentifier(claimMatch[1]);
+      const agentId = parseIdentifier(claimMatch[1], "agentId");
       this.#board.authenticateAgent(bearerToken(request), agentId);
       const waitMs = exactIntegerQuery(url, ["waitMs"], "waitMs", 0, 30_000);
       const claim = parseClaim(await readJsonBody(request, this.config.maxBodyBytes));
       const abort = new AbortController();
       const onClose = (): void => abort.abort();
-      request.socket.once("close", onClose);
-      const result = await this.#board.waitToClaimRun(
-        agentId,
-        claim,
-        waitMs,
-        abort.signal,
-      );
-      request.socket.off("close", onClose);
+      if (request.socket.destroyed) abort.abort();
+      else request.socket.once("close", onClose);
+      let result: Awaited<ReturnType<TaskBoard["waitToClaimRun"]>>;
+      try {
+        result = await this.#board.waitToClaimRun(
+          agentId,
+          claim,
+          waitMs,
+          AbortSignal.any([abort.signal, this.#closingAbort.signal]),
+        );
+      } finally {
+        request.socket.off("close", onClose);
+      }
       if (result === null) sendEmpty(response, 204);
       else sendJson(response, 201, result);
       return;
@@ -261,14 +426,97 @@ export class TaskBoardService {
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const abort = new AbortController();
       const onClose = (): void => abort.abort();
-      request.socket.once("close", onClose);
-      const result = await this.#board.waitForRunInterrupts(runId, agent.agentId, after, waitMs, abort.signal);
-      request.socket.off("close", onClose);
+      if (request.socket.destroyed) abort.abort();
+      else request.socket.once("close", onClose);
+      let result: Awaited<ReturnType<TaskBoard["waitForRunInterrupts"]>>;
+      try {
+        result = await this.#board.waitForRunInterrupts(
+          runId,
+          agent.agentId,
+          after,
+          waitMs,
+          AbortSignal.any([abort.signal, this.#closingAbort.signal]),
+        );
+      } finally {
+        request.socket.off("close", onClose);
+      }
       if (result === null) sendEmpty(response, 204);
       else sendJson(response, 200, result);
       return;
     }
     throw new TaskBoardError(404, "NOT_FOUND", "Endpoint was not found");
+  }
+
+  #documentActor(request: IncomingMessage, projectId: string): Readonly<{ type: "human" | "agent"; id: string }> {
+    if (isHuman(request, this.config)) {
+      return Object.freeze({ type: "human", id: this.config.humanPrincipal });
+    }
+    const agent = this.#board.authenticateAgent(bearerToken(request));
+    if (agent.projectId !== projectId) {
+      throw new TaskBoardError(403, "DOCUMENT_PROJECT_FORBIDDEN", "Agent belongs to another project");
+    }
+    return Object.freeze({ type: "agent", id: agent.agentId });
+  }
+
+  #openDocumentStream(
+    request: IncomingMessage,
+    response: ServerResponse,
+    documentId: string,
+    currentSequence: number,
+    after: number,
+  ): void {
+    if (after > currentSequence) {
+      throw new TaskBoardError(409, "DOCUMENT_CURSOR_AHEAD", "Document cursor is ahead of durable state");
+    }
+
+    let stream: DocumentStream | undefined;
+    const remove = (): void => {
+      if (stream === undefined) return;
+      stream.unsubscribe();
+      this.#documentStreams.delete(stream);
+      stream = undefined;
+    };
+    const write = (document: import("@cicada/steward-task-board-contract").DocumentSnapshot): boolean => {
+      if (response.writableEnded || response.destroyed) return false;
+      // A false return is backpressure, not a failed delivery. The durable cursor
+      // lets a disconnected client replay; do not truncate a valid large frame.
+      response.write(
+        `id: ${document.sequence}\nevent: document\ndata: ${JSON.stringify({ document })}\n\n`,
+      );
+      return true;
+    };
+    const unsubscribe = this.#board.subscribeDocumentEvents(documentId, (event) => {
+      if (!write(event.document)) {
+        remove();
+        response.end();
+      }
+    });
+    stream = { response, unsubscribe };
+    this.#documentStreams.add(stream);
+    request.once("close", remove);
+    response.once("close", remove);
+
+    response.statusCode = 200;
+    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.flushHeaders();
+
+    let cursor = after;
+    while (!response.writableEnded) {
+      const events = this.#board.listDocumentEvents(documentId, cursor);
+      for (const event of events) {
+        if (!write(event.document)) {
+          remove();
+          response.end();
+          return;
+        }
+        cursor = event.sequence;
+      }
+      if (events.length < 200) break;
+    }
   }
 
   async start(): Promise<TaskBoardAddress> {
@@ -291,8 +539,21 @@ export class TaskBoardService {
   async close(): Promise<void> {
     if (this.#closing) return;
     this.#closing = true;
+    this.#closingAbort.abort();
+    for (const stream of [...this.#documentStreams]) {
+      stream.unsubscribe();
+      stream.response.end();
+      this.#documentStreams.delete(stream);
+    }
     if (this.#started) {
-      await new Promise<void>((resolve, reject) => this.#server.close((error) => error ? reject(error) : resolve()));
+      const stopped = new Promise<void>((resolve, reject) => {
+        this.#server.close((error) => error ? reject(error) : resolve());
+      });
+      // Let aborted held requests end their responses, then close the keep-alive
+      // sockets they leave behind instead of waiting out keepAliveTimeout.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      this.#server.closeIdleConnections();
+      await stopped;
       this.#started = false;
     }
     this.#board.close();

@@ -4,7 +4,14 @@ import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
-import { ActivityBuffer, activityFromProviderLine } from "./provider-activity.js";
+import {
+  ActivityBuffer,
+  activityFromProviderLine,
+  estimateActivity,
+  estimateMinutesFromProviderLine,
+  phaseActivity,
+  phaseSignalFromProviderLine,
+} from "./provider-activity.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentLauncher, AgentRunHandle, AgentRunOutcome } from "./types.js";
 
@@ -40,10 +47,30 @@ const RESULT_SCHEMA = Object.freeze({
         required: ["title", "objective", "acceptanceCriteria"],
       },
     },
+    expectedAgentMinutes: { type: ["integer", "null"], minimum: 15, maximum: 10_080, multipleOf: 15 },
+    phases: {
+      type: "array",
+      maxItems: 32,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          phaseId: { type: ["string", "null"], pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+          title: { type: "string", minLength: 1, maxLength: 240 },
+          stage: { type: "string", enum: ["research", "planning", "execution", "testing", "review", "done"] },
+          status: { type: "string", enum: ["pending", "in_progress", "blocked", "completed", "failed"] },
+          parallelGroup: { type: ["string", "null"], pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+          orderKey: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        },
+        required: ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey"],
+      },
+    },
     humanQuestion: { type: ["string", "null"], maxLength: 2_000 },
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
-  required: ["status", "progress", "result", "proposedChildTasks", "humanQuestion", "detail"],
+  required: [
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "detail",
+  ],
 } as const);
 
 const SECRET_PATTERNS = Object.freeze([
@@ -205,10 +232,16 @@ function prompt(request: AgentLaunchRequest): string {
     `You are the fixed Cicada ${fixedRole} agent for ${request.context.mission.area}.`,
     request.context.mission.mission,
     ...workflow,
-    "This is a single human-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.",
+    "This is a single event-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.",
     "Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.",
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
     "Progress entries must be short, result-oriented updates. Do not include secrets or a technical transcript.",
+    "After inspecting the task, estimate only the agent's remaining work in 15-minute intervals. Return expectedAgentMinutes null until there is enough evidence; null leaves any current estimate unchanged.",
+    "Use phases for durable work stages. Return only phases that should be created or changed: copy an active existing phaseId from context to update it, or use null to create one. Phases with the same non-null parallelGroup may run concurrently.",
+    "When a phase completes, keep its semantic research, planning, execution, testing, or review stage and set status completed. The legacy done stage may appear in old context but should not be created.",
+    "Completed and failed phases are immutable history. Every repeated research-plan-execute-test loop must create new phase rows: use null phaseId in terminal output and fresh live keys rather than reusing a completed phaseId or key.",
+    "As soon as planning gives you enough evidence, publish the remaining-work estimate before implementation by running a command that prints exactly STEWARD_ESTIMATE_MINUTES=N on its own line, where N is a 15-minute interval. Do this again only if new evidence materially changes the estimate.",
+    "Make planned phases visible while they run by printing one exact line per state change: STEWARD_PHASE_JSON={\"key\":\"cycle-1-execution\",\"title\":\"Short user-facing title\",\"stage\":\"execution\",\"status\":\"in_progress\",\"parallelGroup\":null}. Reuse a key only while that phase is active; after completion, use a fresh key for every later cycle. Use the same non-null parallelGroup for concurrent work. Do not repeat these live phases in terminal phases.",
     `Wake reason: ${request.wakeReason}`,
     "Bounded task context follows as JSON:",
     JSON.stringify(request.context),
@@ -361,12 +394,14 @@ function providerResult(provider: "codex" | "claude", stdout: string): unknown {
 
 function structuredOutcome(value: unknown): AgentRunOutcome {
   const item = outputObject(value, "Provider result");
-  const expected = ["status", "progress", "result", "proposedChildTasks", "humanQuestion", "detail"].sort();
+  const expected = [
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "detail",
+  ].sort();
   const actual = Object.keys(item).sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new AgentProcessError("Provider result has unexpected or missing fields");
   }
-  if (!Array.isArray(item.progress) || !Array.isArray(item.proposedChildTasks)) {
+  if (!Array.isArray(item.progress) || !Array.isArray(item.proposedChildTasks) || !Array.isArray(item.phases)) {
     throw new AgentProcessError("Provider result collections are invalid");
   }
   const outputs: unknown[] = item.progress.map((body) => ({ type: "progress", body }));
@@ -381,7 +416,13 @@ function structuredOutcome(value: unknown): AgentRunOutcome {
   }
   if (item.result !== null) outputs.push({ type: "result", body: item.result });
   if (item.humanQuestion !== null) outputs.push({ type: "human_question", question: item.humanQuestion });
-  const outcome = parseAgentRunOutcome({ status: item.status, outputs, detail: item.detail });
+  const outcome = parseAgentRunOutcome({
+    status: item.status,
+    outputs,
+    expectedAgentMinutes: item.expectedAgentMinutes,
+    phases: item.phases,
+    detail: item.detail,
+  });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;
 }
@@ -447,6 +488,10 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     let pendingLine = "";
     let activityFinished = false;
     const observeLine = (line: string): void => {
+      const estimate = estimateMinutesFromProviderLine(this.#options.provider, line);
+      if (estimate !== null) activity.publish(estimateActivity(estimate));
+      const phase = phaseSignalFromProviderLine(this.#options.provider, line);
+      if (phase !== null) activity.publish(phaseActivity(phase));
       const ready = activityBuffer.push(activityFromProviderLine(this.#options.provider, line));
       if (ready !== null) activity.publish(ready);
     };

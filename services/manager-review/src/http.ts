@@ -3,7 +3,7 @@ import { STEWARD_RUNTIME_GENERATION_PROOF_HEADER } from "@cicada/steward-protoco
 import { tokenMatches } from "./canonical.js";
 import { ReviewServiceError } from "./errors.js";
 import { parseManagerRuntimeClaim } from "./schema.js";
-import type { ManagerReviewServiceConfig } from "./service.js";
+import type { ManagerReviewServiceConfig } from "./config.js";
 import type { ManagerRuntimeClaim } from "./types.js";
 
 export const MANAGER_RUNTIME_INSTANCE_HEADER = "x-steward-runtime-instance-id" as const;

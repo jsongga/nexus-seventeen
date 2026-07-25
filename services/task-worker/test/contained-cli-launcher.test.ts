@@ -47,12 +47,15 @@ process.stdin.on("end", () => {
     progress: ["The focused retry checks pass."],
     result: "Customers can retry checkout without a duplicate charge.",
     proposedChildTasks: [],
+    expectedAgentMinutes: 45,
+    phases: [],
     humanQuestion: null,
     detail: "Checkout retries are now idempotent and tested."
   };
   process.stdout.write('{"type":"thread.started","thread_id":"secret');
   process.stdout.write('-thread"}\\n');
   process.stdout.write(JSON.stringify({type:"item.started",item:{type:"command_execution",command:"cat /Users/alice/private.txt",aggregated_output:"sk-proj-provider-secret-token"}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"command_execution",exit_code:0,aggregated_output:"STEWARD_ESTIMATE_MINUTES=45\\n"}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
 });
@@ -83,13 +86,15 @@ process.stdin.on("end", () => {
   assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "result"]);
   assert.deepEqual(observedActivity, [
     "Agent process started.",
+    "Agent estimated 45 minutes of work remaining.",
     "Work finished; preparing the recorded result.",
   ]);
   assert.doesNotMatch(observedActivity.join(" "), /secret|alice|private|cat /iu);
   const prompt = await readFile(join(fixture.scratch, "prompt.txt"), "utf8");
   assert.match(prompt, /research → plan → execute → test/u);
-  assert.match(prompt, /single human-triggered run/u);
+  assert.match(prompt, /single event-triggered run/u);
   assert.match(prompt, /Never deploy/u);
+  assert.match(prompt, /STEWARD_ESTIMATE_MINUTES=N/u);
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];
   assert.ok(args.includes("workspace-write"));
   assert.ok(args.includes("--output-schema"));
@@ -104,7 +109,7 @@ test("parses Claude stream-json activity while preserving its terminal structure
     'process.stdin.on("end", () => {',
     '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "prompt.txt"), input);',
     '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
-    '  const result = {status:"completed",progress:["The focused checks pass."],result:"Customers see a reliable checkout retry.",proposedChildTasks:[],humanQuestion:null,detail:"The checkout retry is implemented and verified."};',
+    '  const result = {status:"completed",progress:["The focused checks pass."],result:"Customers see a reliable checkout retry.",proposedChildTasks:[],expectedAgentMinutes:45,phases:[],humanQuestion:null,detail:"The checkout retry is implemented and verified."};',
     '  console.log(JSON.stringify({type:"system",subtype:"init",cwd:"/Users/alice/private-repo",session_id:"secret-session"}));',
     '  console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",name:"Read",input:{file_path:"/Users/alice/private.ts",token:"sk-ant-provider-secret"}}]}}));',
     '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result,result:"raw terminal text"}));',
@@ -156,7 +161,7 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
     'process.stdin.resume();',
     'process.stdin.on("end", () => {',
     '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
-    '  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],humanQuestion:null,detail:"Done."};',
+    '  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};',
     '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result}));',
     '});',
   ].join("\n"));
@@ -193,7 +198,7 @@ process.stdin.on("data", (chunk) => { input += chunk; });
 process.stdin.on("end", () => {
   require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "prompt.txt"), input);
   require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));
-  const result = {status:"completed",progress:[],result:"The evidence is ready for human review.",proposedChildTasks:[],humanQuestion:null,detail:"Oversight completed."};
+  const result = {status:"completed",progress:[],result:"The evidence is ready for human review.",proposedChildTasks:[],expectedAgentMinutes:30,phases:[],humanQuestion:null,detail:"Oversight completed."};
   console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
   console.log(JSON.stringify({type:"turn.completed"}));
 });

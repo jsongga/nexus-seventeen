@@ -1,16 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
 import { TaskWorkerJournalStore } from "./journal.js";
-import { sanitizeActivity } from "./provider-activity.js";
+import {
+  estimateMinutesFromActivity,
+  phaseStageFromActivity,
+  phaseSignalFromActivity,
+  sanitizeActivity,
+  type LivePhaseSignal,
+} from "./provider-activity.js";
 import {
   parseAgentRunOutcome,
   parseBoundedAgentContext,
   parseTaskWakeClaim,
-  parseTaskWorkerIdentity,
 } from "./schema.js";
 import {
   TASK_WAKE_REASONS,
   type AgentRunHandle,
   type AgentRunOutcome,
+  type AgentTaskPhase,
+  type AgentTaskPhaseUpdate,
   type BoundedAgentContext,
   type ClaimedAgentRun,
   type TaskWakeClaim,
@@ -123,6 +130,8 @@ function interruptedOutcome(reason: string): AgentRunOutcome {
   return Object.freeze({
     status: "interrupted",
     outputs: Object.freeze([]),
+    expectedAgentMinutes: null,
+    phases: Object.freeze([]),
     detail: safeDetail(reason, "The agent run was interrupted."),
   });
 }
@@ -131,8 +140,54 @@ function failedOutcome(error: unknown, fallback: string): AgentRunOutcome {
   return Object.freeze({
     status: "failed",
     outputs: Object.freeze([]),
+    expectedAgentMinutes: null,
+    phases: Object.freeze([]),
     detail: safeDetail(error, fallback),
   });
+}
+
+interface LiveTaskState {
+  taskVersion: number;
+  expectedAgentMinutes: number | null;
+  currentPhase: AgentTaskPhase | null;
+  parallelPhases: Map<string, AgentTaskPhase>;
+  phaseSource: "inferred" | "structured";
+  phaseTracking: boolean;
+  estimateTracking: boolean;
+}
+
+function livePhaseTitle(stage: Exclude<AgentTaskPhase["stage"], "done">): string {
+  switch (stage) {
+    case "research": return "Review task";
+    case "planning": return "Plan work";
+    case "execution": return "Execute work";
+    case "testing": return "Test work";
+    case "review": return "Review result";
+  }
+}
+
+function samePhaseState(phase: AgentTaskPhase, update: AgentTaskPhaseUpdate): boolean {
+  return phase.title === update.title && phase.stage === update.stage && phase.status === update.status &&
+    phase.parallelGroup === update.parallelGroup && phase.orderKey === update.orderKey;
+}
+
+function wakeAuthorizationFailure(claim: TaskWakeClaim, context: BoundedAgentContext): string | null {
+  if (!ALLOWED_WAKE_REASONS.has(claim.reason)) {
+    return `Wake reason ${claim.reason} is not human-authorized or an approved workflow handoff.`;
+  }
+  if (claim.reason !== "workflow_handoff") return null;
+  if (
+    context.task.kind !== "manager_review" ||
+    context.task.requiredRole !== "manager" ||
+    context.mission.role !== "manager" ||
+    context.parentEvidence === null ||
+    context.parentEvidence.status !== "completed" ||
+    context.parentEvidence.endedAt === null ||
+    context.parentEvidence.result === null
+  ) {
+    return "Workflow handoff is not bound to a manager review with completed parent evidence.";
+  }
+  return null;
 }
 
 function assertClaimBinding(
@@ -193,10 +248,8 @@ export class TaskWorker {
   }
 
   static async create(options: TaskWorkerOptions): Promise<TaskWorker> {
-    const identity = parseTaskWorkerIdentity(options.identity);
-    const normalized = { ...options, identity };
-    const store = await TaskWorkerJournalStore.open(options.statePath, identity);
-    return new TaskWorker(normalized, store);
+    const store = await TaskWorkerJournalStore.open(options.statePath, options.identity);
+    return new TaskWorker(options, store);
   }
 
   get snapshot(): TaskWorkerSnapshot {
@@ -255,7 +308,7 @@ export class TaskWorker {
     }
   }
 
-  /** The dispatcher performs no timer-based model work; every launch follows a claimed human wake. */
+  /** The dispatcher performs no timer-based model work; every launch follows a claimed, authorized wake. */
   async run(signal: AbortSignal): Promise<void> {
     await this.start();
     while (!signal.aborted) {
@@ -347,9 +400,37 @@ export class TaskWorker {
     const outcome = active.interruptReason === null
       ? failedOutcome("Worker restarted after the one-shot launch boundary; refusing to launch a duplicate agent process.", "Run recovery failed.")
       : interruptedOutcome(active.interruptReason);
+    await this.#closeRecoveredPhases(active.claim, signal);
     await this.#recordOutcome(outcome);
     await this.#flushAndFinish();
     return true;
+  }
+
+  async #closeRecoveredPhases(claim: TaskWakeClaim, signal?: AbortSignal): Promise<void> {
+    const cursors = claim.taskId === null || claim.requestedMessageCursor === null
+      ? Object.freeze({})
+      : Object.freeze({ [claim.taskId]: claim.requestedMessageCursor });
+    try {
+      const replay = await this.#options.board.claimNextWake({
+        agentId: this.#options.identity.agentId,
+        claimId: claim.claimId,
+        messageCursors: cursors,
+        longPollMs: 0,
+      }, signal);
+      if (replay === null) return;
+      const parsed = assertClaimBinding(replay, this.#options.identity.agentId, claim.claimId, cursors);
+      if (parsed.claim.runId !== claim.runId || parsed.claim.wakeupId !== claim.wakeupId || parsed.context === null) return;
+      for (const phase of parsed.context.task.phases) {
+        if (phase.status === "completed" || phase.status === "failed") continue;
+        try {
+          await this.#options.board.updateTaskPhase({ claim, phase, status: "failed" }, signal);
+        } catch {
+          // Recovery settlement remains primary if a phase changed concurrently.
+        }
+      }
+    } catch {
+      // Refusing a duplicate model launch is more important than phase cleanup.
+    }
   }
 
   async #executeActive(contextInput: BoundedAgentContext, signal?: AbortSignal): Promise<void> {
@@ -357,6 +438,15 @@ export class TaskWorker {
     const active = this.#state.active;
     if (active === null || active.phase !== "claimed") throw new Error("Task worker has no claimed run to execute");
     const control = new AbortController();
+    const liveTask: LiveTaskState = {
+      taskVersion: context.task.version,
+      expectedAgentMinutes: context.task.expectedAgentMinutes,
+      currentPhase: null,
+      parallelPhases: new Map(),
+      phaseSource: "inferred",
+      phaseTracking: true,
+      estimateTracking: true,
+    };
     const onAbort = () => { void this.interrupt("Task worker shutdown requested"); };
     signal?.addEventListener("abort", onAbort, { once: true });
     const watch = this.#options.board.waitForRunInterrupt(active.claim, control.signal)
@@ -375,9 +465,10 @@ export class TaskWorker {
         await this.interrupt(safeDetail(error, "The durable interrupt channel failed."));
       });
     try {
-      if (!ALLOWED_WAKE_REASONS.has(active.claim.reason)) {
+      const authorizationFailure = wakeAuthorizationFailure(active.claim, context);
+      if (authorizationFailure !== null) {
         await this.#recordOutcome(failedOutcome(
-          `Wake reason ${active.claim.reason} is not human-authorized.`,
+          authorizationFailure,
           "Wake reason is not authorized.",
         ));
         await this.#flushAndFinish();
@@ -408,6 +499,10 @@ export class TaskWorker {
 
       let outcome: AgentRunOutcome;
       try {
+        await this.#startLivePhase(active.claim, liveTask);
+        if (signal?.aborted || this.#state.active?.interruptReason !== null) {
+          throw new Error("The run was interrupted before the model launch boundary");
+        }
         const handle = await this.#options.launcher.launch({
           runId: active.claim.runId,
           wakeReason: active.claim.reason as TaskWakeReason,
@@ -422,7 +517,7 @@ export class TaskWorker {
           await this.#store.save(next);
         });
 
-        const activityForwarding = this.#forwardActivity(active.claim, handle.activity).then(
+        const activityForwarding = this.#forwardActivity(active.claim, handle.activity, liveTask).then(
           () => null,
           (error: unknown) => error,
         );
@@ -453,10 +548,12 @@ export class TaskWorker {
           outcome = parseAgentRunOutcome(terminal.value);
         }
       } catch (error) {
-        outcome = this.#state.active?.interruptReason === null
+        outcome = this.#state.active?.interruptReason === null && !signal?.aborted
           ? failedOutcome(error, "The one-shot agent process failed.")
-          : interruptedOutcome(this.#state.active?.interruptReason ?? "The agent run was interrupted.");
+          : interruptedOutcome(this.#state.active?.interruptReason ?? "Task worker shutdown requested");
       }
+      await this.#applyStructuredTaskState(active.claim, context, outcome, liveTask);
+      await this.#finishLivePhase(active.claim, liveTask, outcome.status);
       await this.#recordOutcome(outcome);
       await this.#flushAndFinish();
     } finally {
@@ -469,15 +566,267 @@ export class TaskWorker {
     }
   }
 
-  async #forwardActivity(claim: TaskWakeClaim, activity: AsyncIterable<string>): Promise<void> {
+  async #startLivePhase(claim: TaskWakeClaim, liveTask: LiveTaskState): Promise<void> {
+    if (!liveTask.phaseTracking || claim.taskId === null) return;
+    try {
+      const created = await this.#options.board.createTaskPhase({
+        claim,
+        title: livePhaseTitle("research"),
+        stage: "research",
+        parallelGroup: null,
+      });
+      liveTask.currentPhase = await this.#options.board.updateTaskPhase({
+        claim,
+        phase: created,
+        status: "in_progress",
+      });
+    } catch {
+      liveTask.phaseTracking = false;
+    }
+  }
+
+  async #advanceLivePhase(
+    claim: TaskWakeClaim,
+    liveTask: LiveTaskState,
+    stage: Exclude<AgentTaskPhase["stage"], "done">,
+  ): Promise<void> {
+    if (!liveTask.phaseTracking || liveTask.phaseSource !== "inferred" || claim.taskId === null) return;
+    if (liveTask.currentPhase?.stage === stage && liveTask.currentPhase.status === "in_progress") return;
+    try {
+      const current = liveTask.currentPhase;
+      if (current !== null && current.status !== "completed" && current.status !== "failed") {
+        liveTask.currentPhase = await this.#options.board.updateTaskPhase({
+          claim,
+          phase: current,
+          status: "completed",
+        });
+      }
+      const created = await this.#options.board.createTaskPhase({
+        claim,
+        title: livePhaseTitle(stage),
+        stage,
+        parallelGroup: null,
+      });
+      liveTask.currentPhase = await this.#options.board.updateTaskPhase({
+        claim,
+        phase: created,
+        status: "in_progress",
+      });
+    } catch {
+      liveTask.phaseTracking = false;
+    }
+  }
+
+  async #finishLivePhase(
+    claim: TaskWakeClaim,
+    liveTask: LiveTaskState,
+    outcome: AgentRunOutcome["status"],
+  ): Promise<void> {
+    const current = liveTask.currentPhase;
+    if (claim.taskId === null) return;
+    if (
+      liveTask.phaseTracking && current !== null &&
+      current.status !== "completed" && current.status !== "failed"
+    ) {
+      try {
+        liveTask.currentPhase = outcome === "completed"
+          ? await this.#options.board.updateTaskPhase({
+              claim,
+              phase: current,
+              status: "completed",
+            })
+          : await this.#options.board.updateTaskPhase({
+              claim,
+              phase: current,
+              status: outcome === "waiting_for_human" ? "blocked" : "failed",
+            });
+      } catch {
+        liveTask.phaseTracking = false;
+      }
+    }
+    for (const [key, phase] of liveTask.parallelPhases) {
+      if (phase.status === "completed" || phase.status === "failed") continue;
+      try {
+        const updated = outcome === "completed"
+          ? await this.#options.board.updateTaskPhase({ claim, phase, status: "completed" })
+          : await this.#options.board.updateTaskPhase({
+              claim,
+              phase,
+              status: outcome === "waiting_for_human" ? "blocked" : "failed",
+            });
+        liveTask.parallelPhases.set(key, updated);
+      } catch {
+        // The task outcome remains authoritative if phase telemetry conflicts.
+      }
+    }
+  }
+
+  async #applyLivePhaseSignal(
+    claim: TaskWakeClaim,
+    liveTask: LiveTaskState,
+    signal: LivePhaseSignal,
+  ): Promise<void> {
+    if (!liveTask.phaseTracking || claim.taskId === null) return;
+    try {
+      let phase = liveTask.parallelPhases.get(signal.key);
+      if (phase !== undefined && (phase.status === "completed" || phase.status === "failed")) {
+        // Provider keys identify one durable phase row. A repeated loop must use
+        // a fresh key so history is appended rather than rewriting terminal work.
+        return;
+      }
+      if (phase === undefined) {
+        if (liveTask.phaseSource === "inferred" && liveTask.currentPhase !== null) {
+          // The marker is stronger evidence than lifecycle inference. Adopt the
+          // active inferred row so the marker's own tool call cannot create an
+          // interleaved testing -> execution sequence and a false loop.
+          phase = liveTask.currentPhase;
+          liveTask.currentPhase = null;
+        } else {
+          phase = await this.#options.board.createTaskPhase({
+            claim,
+            title: signal.title,
+            stage: signal.stage === "done" ? "review" : signal.stage,
+            parallelGroup: signal.parallelGroup,
+          });
+        }
+      }
+      liveTask.phaseSource = "structured";
+      if (
+        phase.title !== signal.title ||
+        phase.stage !== (signal.stage === "done" ? phase.stage : signal.stage) ||
+        phase.status !== signal.status ||
+        phase.parallelGroup !== signal.parallelGroup
+      ) {
+        const stage = signal.stage === "done" ? phase.stage : signal.stage;
+        phase = await this.#options.board.updateTaskPhase({
+          claim,
+          phase,
+          ...(phase.title === signal.title ? {} : { title: signal.title }),
+          ...(phase.stage === stage ? {} : { stage }),
+          ...(phase.status === signal.status ? {} : { status: signal.status }),
+          ...(phase.parallelGroup === signal.parallelGroup ? {} : { parallelGroup: signal.parallelGroup }),
+        });
+      }
+      liveTask.parallelPhases.set(signal.key, phase);
+    } catch {
+      liveTask.phaseTracking = false;
+    }
+  }
+
+  async #applyStructuredTaskState(
+    claim: TaskWakeClaim,
+    context: BoundedAgentContext,
+    outcome: AgentRunOutcome,
+    liveTask: LiveTaskState,
+  ): Promise<void> {
+    if (claim.taskId === null) return;
+    if (
+      liveTask.estimateTracking &&
+      outcome.expectedAgentMinutes !== null &&
+      outcome.expectedAgentMinutes !== liveTask.expectedAgentMinutes
+    ) {
+      try {
+        liveTask.taskVersion = await this.#options.board.updateTaskEstimate({
+          claim,
+          version: liveTask.taskVersion,
+          expectedAgentMinutes: outcome.expectedAgentMinutes,
+        });
+        liveTask.expectedAgentMinutes = outcome.expectedAgentMinutes;
+      } catch {
+        // A human may have reordered the task while this run was active, which
+        // advances its CAS version. Metadata loss must not invalidate completed work.
+        liveTask.estimateTracking = false;
+      }
+    }
+
+    const existing = new Map(context.task.phases.map((phase) => [phase.phaseId, phase] as const));
+    for (const desired of outcome.phases) {
+      try {
+        let phase: AgentTaskPhase;
+        if (desired.phaseId === null) {
+          phase = await this.#options.board.createTaskPhase({
+            claim,
+            title: desired.title,
+            // A newly created phase starts pending; use a non-terminal stage for
+            // the instant before a completed desired state is applied.
+            stage: desired.stage === "done" ? "review" : desired.stage,
+            parallelGroup: desired.parallelGroup,
+          });
+          existing.set(phase.phaseId, phase);
+        } else {
+          const current = existing.get(desired.phaseId);
+          if (current === undefined) continue;
+          if (current.status === "completed" || current.status === "failed") continue;
+          phase = current;
+        }
+        const desiredStage = desired.stage === "done" && desired.status === "completed"
+          ? phase.stage
+          : desired.stage;
+        if (samePhaseState(phase, { ...desired, stage: desiredStage })) continue;
+        phase = await this.#options.board.updateTaskPhase({
+          claim,
+          phase,
+          ...(phase.title === desired.title ? {} : { title: desired.title }),
+          ...(phase.stage === desiredStage ? {} : { stage: desiredStage }),
+          ...(phase.status === desired.status ? {} : { status: desired.status }),
+          ...(phase.parallelGroup === desired.parallelGroup ? {} : { parallelGroup: desired.parallelGroup }),
+          ...(phase.orderKey === desired.orderKey ? {} : { orderKey: desired.orderKey }),
+        });
+        existing.set(phase.phaseId, phase);
+      } catch {
+        // Phase telemetry is useful but subordinate to the task's tested result.
+        // Conflicts remain visible in board history and do not rewrite the outcome.
+      }
+    }
+    if (outcome.status === "completed") {
+      for (const [phaseId, phase] of existing) {
+        if (phase.status === "completed" || phase.status === "failed") continue;
+        try {
+          existing.set(phaseId, await this.#options.board.updateTaskPhase({
+            claim,
+            phase,
+            status: "completed",
+          }));
+        } catch {
+          // A concurrent phase change cannot invalidate the task's tested result.
+        }
+      }
+    }
+  }
+
+  async #forwardActivity(
+    claim: TaskWakeClaim,
+    activity: AsyncIterable<string>,
+    liveTask: LiveTaskState,
+  ): Promise<void> {
     if (claim.taskId === null) return;
     let sequence = 0;
     for await (const observed of activity) {
-      const body = sanitizeActivity(observed);
+      const phaseSignal = phaseSignalFromActivity(observed);
+      if (phaseSignal !== null) await this.#applyLivePhaseSignal(claim, liveTask, phaseSignal);
+      const body = phaseSignal === null ? sanitizeActivity(observed) : "Agent updated a task phase.";
       if (body === null) continue;
       const current = this.#state.active;
       if (current === null || current.claim.runId !== claim.runId || current.phase === "outputs_pending") return;
       sequence += 1;
+      const estimate = estimateMinutesFromActivity(body);
+      if (
+        estimate !== null && liveTask.estimateTracking &&
+        estimate !== liveTask.expectedAgentMinutes
+      ) {
+        try {
+          liveTask.taskVersion = await this.#options.board.updateTaskEstimate({
+            claim,
+            version: liveTask.taskVersion,
+            expectedAgentMinutes: estimate,
+          });
+          liveTask.expectedAgentMinutes = estimate;
+        } catch {
+          liveTask.estimateTracking = false;
+        }
+      }
+      const stage = phaseStageFromActivity(body);
+      if (stage !== null) await this.#advanceLivePhase(claim, liveTask, stage);
       const request = {
         claim,
         output: Object.freeze({ type: "progress" as const, body }),

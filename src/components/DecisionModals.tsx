@@ -32,34 +32,34 @@ export function ProductionApprovalModal({
     <Modal
       open
       onClose={onClose}
-      title="Simulate release authorization"
-      description="This browser-local demo records a final human decision for one exact release candidate. It does not deploy."
+      title="Authorize production"
+      description="A final human checkpoint for one exact release candidate."
     >
       <div className="space-y-5 px-5 py-5 sm:px-6">
-        <div className="rounded-[14px] border border-ink-panel bg-ink-panel p-4">
+        <div className="rounded-[14px] border border-ink bg-ink p-4">
           <div className="flex items-start gap-3">
             <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-500 text-ink">
               <LockKeyhole size={17} />
             </span>
             <div>
-              <p className="text-sm font-bold text-white">No deployment occurs in this demo</p>
-              <p className="mt-1 text-[12px] leading-5 text-white/70">
-                The simulated approval is bound to the release digests below and can be consumed only once in this browser.
+              <p className="text-sm font-bold text-white">Agents cannot cross this boundary</p>
+              <p className="mt-1 text-[12px] leading-5 text-[#d7dce1]">
+                Your approval is bound to the verified release digests below and can be consumed only once.
               </p>
             </div>
           </div>
         </div>
 
         <div className="overflow-hidden rounded-[14px] border border-line bg-white">
-          <div className="flex items-center gap-3 border-b border-line-soft p-4">
+          <div className="flex items-center gap-3 border-b border-[#eef0f2] p-4">
             <GitCommitHorizontal size={17} className="text-teal-700" />
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Commit</p>
               <p className="mt-0.5 break-all font-mono text-[11px] font-medium text-ink">{approval.release.commit}</p>
             </div>
-            <Pill tone="green">Demo evidence</Pill>
+            <Pill tone="green">Verified</Pill>
           </div>
-          <div className="flex items-center gap-3 border-b border-line-soft p-4">
+          <div className="flex items-center gap-3 border-b border-[#eef0f2] p-4">
             <Fingerprint size={17} className="text-teal-700" />
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Build digest</p>
@@ -93,7 +93,7 @@ export function ProductionApprovalModal({
 
         <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
           <Check size={14} className="text-teal-700" />
-          The demo attributes this decision to Jordan Lee and consumes it once in this browser.
+          Approval will be attributed to Jordan Lee and expire after one deployment.
         </div>
 
         <div className="grid grid-cols-2 gap-3 pt-1">
@@ -107,7 +107,7 @@ export function ProductionApprovalModal({
             onClick={() => onConfirm(approval)}
             icon={<Fingerprint size={16} />}
           >
-            Record authorization
+            Approve & deploy
           </Button>
         </div>
       </div>
@@ -132,7 +132,7 @@ export function RequestChangesModal({
   return (
     <Modal open onClose={onClose} title="Send back with direction" description={approval.title}>
       <div className="space-y-5 px-5 py-5 sm:px-6">
-        <div className="flex items-start gap-3 rounded-[14px] border border-urgent-border bg-urgent-soft p-4">
+        <div className="flex items-start gap-3 rounded-[14px] border border-[#e8b5af] bg-[#fff0ee] p-4">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-urgent" />
           <p className="text-[12px] leading-5 text-urgent">
             Agents will stop this handoff, preserve its evidence, and create a new revision from your direction.
@@ -262,10 +262,10 @@ export function NewMissionModal({
             />
           </div>
         </div>
-        <div className="rounded-[14px] border border-teal-border bg-teal-soft p-4">
+        <div className="rounded-[14px] border border-[#b9ddd9] bg-[#e8f5f3] p-4">
           <div className="flex items-start gap-3">
             <ClipboardList size={17} className="mt-0.5 shrink-0 text-teal-700" />
-            <p className="text-[11px] leading-5 text-teal-700">
+            <p className="text-[11px] leading-5 text-[#365f5b]">
               Creating this mission does not start code changes. Mira first drafts scope, acceptance criteria, risks, and a route for you to approve.
             </p>
           </div>
