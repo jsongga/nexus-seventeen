@@ -17,8 +17,9 @@ import { agentQueryPromptFromObjective } from './client';
 import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot } from './types';
 import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
 import {
+  agentWorkLabel,
   agentPipelineFocus,
-  recentUpdatesForProject,
+  updatesForProject,
 } from './workspace-model';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -105,17 +106,22 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
         {ordered.map(({ entry, id }, index) => (
           <li
             key={id}
-            draggable
-            onDragStart={() => setDraggedId(id)}
-            onDragEnd={() => setDraggedId(null)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={() => drop(id)}
-            className={cn('group relative min-w-0 rounded-[14px] border border-line bg-[#faf8f4] transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
+            className={cn('group min-w-0 rounded-[14px] border border-line bg-[#faf8f4] transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
           >
-            <span className="absolute left-2 top-2 cursor-grab text-muted opacity-60" aria-hidden="true"><GripVertical size={13} /></span>
-            <div className="absolute right-1 top-1 z-10 flex opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-              <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
-              <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
+            <div className="flex h-7 items-center justify-between px-1">
+              <span
+                draggable
+                onDragStart={() => setDraggedId(id)}
+                onDragEnd={() => setDraggedId(null)}
+                className="flex size-7 cursor-grab items-center justify-center text-muted opacity-60"
+                aria-hidden="true"
+              ><GripVertical size={13} /></span>
+              <span className="flex opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+                <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
+                <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
+              </span>
             </div>
             {entry.href ? (
               <a
@@ -124,14 +130,14 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
                 rel="noopener noreferrer"
                 aria-label={`${entry.label}: ${entry.value} (opens in a new tab)`}
                 title={entry.value}
-                className="flex min-h-28 flex-col items-center justify-center rounded-[14px] px-3 pb-3 pt-7 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                className="flex min-h-24 flex-col items-center justify-center rounded-b-[14px] px-3 pb-3 pt-1 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
               >
                 <span className="flex size-10 items-center justify-center rounded-[12px] bg-white shadow-sm">{projectResourceIcon(entry.kind)}</span>
                 <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
                 <span className="mt-0.5 max-w-full truncate text-[10px] text-muted">{projectLinkLabel(entry.href)}</span>
               </a>
             ) : (
-              <div title={entry.value} className="flex min-h-28 flex-col items-center justify-center px-3 pb-3 pt-7 text-center text-[#514c46]">
+              <div title={entry.value} className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-[#514c46]">
                 <span className="flex size-10 items-center justify-center rounded-[12px] bg-white text-muted shadow-sm">{projectResourceIcon(entry.kind)}</span>
                 <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
                 <span className="mt-0.5 max-w-full truncate font-mono text-[9px] text-muted">{entry.value}</span>
@@ -168,8 +174,24 @@ export function ProjectPage({
   onTask: (taskId: string) => void;
   onAddTask: () => void;
 }) {
-  const updates = recentUpdatesForProject(snapshot, project.id);
+  const updates = updatesForProject(snapshot, project.id);
   const metadata = parseProjectMetadata(project.description);
+  const tasks = snapshot.tasks.filter((task) => task.projectId === project.id);
+  const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
+  const completedTasks = tasks.filter((task) => task.status === 'completed');
+  const activeTasks = tasks.filter((task) => task.status === 'running' || task.status === 'queued');
+  const attentionTasks = tasks.filter((task) => task.status === 'waiting_for_human' || task.status === 'blocked' || task.status === 'failed');
+  const plannedTasks = tasks.filter((task) => task.status === 'proposed' || task.status === 'backlog');
+  const interruptedTasks = tasks.filter((task) => task.status === 'interrupted');
+  const completionPercent = tasks.length === 0 ? 0 : Math.round((completedTasks.length / tasks.length) * 100);
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const taskGroups = [
+    { label: 'Needs attention', tasks: attentionTasks, tone: 'text-urgent' },
+    { label: 'In progress', tasks: activeTasks, tone: 'text-teal-700' },
+    { label: 'Planned', tasks: plannedTasks, tone: 'text-muted' },
+    { label: 'Completed', tasks: completedTasks, tone: 'text-success' },
+    { label: 'Interrupted', tasks: interruptedTasks, tone: 'text-muted' },
+  ].filter((group) => group.tasks.length > 0);
   const updateRow = (update: (typeof updates)[number]) => (
     <li key={update.id}>
       <button type="button" className="w-full px-4 py-3.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-[#faf6f0] motion-safe:active:scale-[0.995] sm:px-5" onClick={() => onTask(update.taskId)}>
@@ -183,44 +205,138 @@ export function ProjectPage({
   return (
     <>
       <PageHeader eyebrow="Project" title={project.name} actions={<Button size="sm" variant="primary" icon={<Plus size={15} />} onClick={onAddTask}>Add task</Button>} />
-      <main className="w-full max-w-6xl bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-117px)] lg:px-12 lg:py-8">
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.4fr)]">
-          <section aria-labelledby="project-details-heading">
-            <Card className={cn(warmCard, 'overflow-hidden')}>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-4 sm:px-5">
-                <h2 id="project-details-heading" className="text-sm font-medium text-ink">Project details</h2>
-                <time dateTime={project.updatedAt} className="text-[11px] text-muted">Updated {formatTime(project.updatedAt)}</time>
-              </div>
-              {metadata.summaries.length > 0 || metadata.entries.length > 0 ? (
-                <div className="px-4 py-4 sm:px-5">
-                  {metadata.summaries.length > 0 ? (
-                    <div className="space-y-2">
-                      <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Summary</h3>
-                      {metadata.summaries.map((summary, index) => (
-                        <p key={`${summary}:${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-[#514c46]">{summary}</p>
-                      ))}
-                    </div>
-                  ) : null}
-                  {metadata.entries.length > 0 ? (
-                    <div className={cn(metadata.summaries.length > 0 && 'mt-4 border-t border-line pt-4')}>
-                      <ProjectResourceDashboard projectId={project.id} entries={metadata.entries} />
-                    </div>
-                  ) : null}
-                </div>
-              ) : <div className="px-5 py-8 text-sm leading-6 text-muted">No project summary or links have been recorded.</div>}
-            </Card>
-          </section>
+      <main className="w-full max-w-7xl bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-117px)] lg:px-12 lg:py-8">
+        <section aria-labelledby="delivery-overview-heading">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 id="delivery-overview-heading" className="text-sm font-medium text-ink">Delivery overview</h2>
+              <p className="mt-1 text-xs text-muted">Current durable task state across the whole project.</p>
+            </div>
+            <time dateTime={project.updatedAt} className="text-[11px] text-muted">Project updated {formatTime(project.updatedAt)}</time>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              { label: 'Completed', value: completedTasks.length, detail: `${completionPercent}% of tracked work` },
+              { label: 'In progress', value: activeTasks.length, detail: activeTasks.length === 1 ? 'task moving' : 'tasks moving' },
+              { label: 'Needs attention', value: attentionTasks.length, detail: attentionTasks.length === 0 ? 'No intervention needed' : 'Blocked, failed, or waiting' },
+              { label: 'Planned', value: plannedTasks.length, detail: plannedTasks.length === 1 ? 'task not started' : 'tasks not started' },
+            ].map((metric) => (
+              <Card key={metric.label} className={cn(warmCard, '!rounded-[14px] p-4')}>
+                <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">{metric.label}</p>
+                <p className="mt-2 font-display text-3xl font-light text-ink">{metric.value}</p>
+                <p className="mt-1 text-[11px] text-muted">{metric.detail}</p>
+              </Card>
+            ))}
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" role="progressbar" aria-label="Task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
+            <div className="h-full rounded-full bg-success-fill transition-[width] duration-300" style={{ width: `${completionPercent}%` }} />
+          </div>
+        </section>
 
-          <section aria-labelledby="project-updates-heading">
-            <Card className={cn(warmCard, 'overflow-hidden')}>
-              <div className="border-b border-line px-4 py-4 sm:px-5">
-                <h2 id="project-updates-heading" className="text-sm font-medium text-ink">Recent updates</h2>
-              </div>
-              {updates.length > 0
-                ? <ol className="divide-y divide-line">{updates.map(updateRow)}</ol>
-                : <div className="px-5 py-10 text-center text-sm text-muted">Updates will appear when tasks or agents record progress.</div>}
-            </Card>
-          </section>
+        <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(17rem,0.75fr)]">
+          <div className="space-y-5">
+            <section aria-labelledby="project-work-heading">
+              <Card className={cn(warmCard, 'overflow-hidden')}>
+                <div className="border-b border-line px-4 py-4 sm:px-5">
+                  <h2 id="project-work-heading" className="text-sm font-medium text-ink">All work</h2>
+                  <p className="mt-1 text-xs text-muted">{tasks.length} tracked {tasks.length === 1 ? 'task' : 'tasks'}, grouped by current state.</p>
+                </div>
+                {taskGroups.length > 0 ? (
+                  <div className="divide-y divide-line">
+                    {taskGroups.map((group) => (
+                      <section key={group.label} aria-labelledby={`work-group-${group.label.replaceAll(' ', '-').toLowerCase()}`} className="px-4 py-4 sm:px-5">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 id={`work-group-${group.label.replaceAll(' ', '-').toLowerCase()}`} className={cn('text-[10px] font-medium uppercase tracking-[0.13em]', group.tone)}>{group.label}</h3>
+                          <span className="text-[10px] tabular-nums text-muted">{group.tasks.length}</span>
+                        </div>
+                        <ul className="mt-2 space-y-1">
+                          {group.tasks.map((task) => (
+                            <li key={task.id}>
+                              <button type="button" className="flex w-full items-start justify-between gap-3 rounded-[10px] px-2 py-2 text-left transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" onClick={() => onTask(task.id)}>
+                                <span className="min-w-0">
+                                  <span className="block truncate text-sm font-medium text-ink">{task.title}</span>
+                                  <span className="mt-0.5 block truncate text-[11px] text-muted">
+                                    {task.assignedAgentId ? agentById.get(task.assignedAgentId)?.name ?? task.assignedAgentId : 'Unassigned'}
+                                    {task.result?.trim() ? ` · ${task.result.trim()}` : ''}
+                                  </span>
+                                </span>
+                                <time dateTime={task.updatedAt} className="shrink-0 text-[10px] text-muted">{formatTime(task.updatedAt)}</time>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                ) : <div className="px-5 py-10 text-center text-sm text-muted">No work has been recorded for this project yet.</div>}
+              </Card>
+            </section>
+
+            <section aria-labelledby="project-updates-heading">
+              <Card className={cn(warmCard, 'overflow-hidden')}>
+                <div className="border-b border-line px-4 py-4 sm:px-5">
+                  <h2 id="project-updates-heading" className="text-sm font-medium text-ink">Activity history</h2>
+                  <p className="mt-1 text-xs text-muted">Recorded progress, decisions, questions, and results.</p>
+                </div>
+                {updates.length > 0
+                  ? <ol className="divide-y divide-line">{updates.map(updateRow)}</ol>
+                  : <div className="px-5 py-10 text-center text-sm text-muted">Activity will appear when tasks or agents record progress.</div>}
+              </Card>
+            </section>
+          </div>
+
+          <div className="space-y-5">
+            <section aria-labelledby="project-team-heading">
+              <Card className={cn(warmCard, 'overflow-hidden')}>
+                <div className="border-b border-line px-4 py-4 sm:px-5">
+                  <h2 id="project-team-heading" className="text-sm font-medium text-ink">Team</h2>
+                  <p className="mt-1 text-xs text-muted">{agents.length} {agents.length === 1 ? 'agent' : 'agents'} assigned to this project.</p>
+                </div>
+                {agents.length > 0 ? (
+                  <ul className="divide-y divide-line">
+                    {agents.map((agent) => {
+                      const currentTask = tasks.find((task) => task.id === agent.currentTaskId);
+                      return (
+                        <li key={agent.id} className="flex items-start gap-3 px-4 py-3.5 sm:px-5">
+                          <span className="mt-1"><span className="sr-only">{agentWorkLabel(agent.status)}</span><span className={cn('block size-2 rounded-full', agent.status === 'failed' ? 'bg-urgent' : agent.status === 'running' || agent.status === 'queued' ? 'bg-success-fill' : 'bg-taupe')} /></span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-ink">{agent.name}</span>
+                            <span className="mt-0.5 block text-[11px] text-muted">{agent.role} · {agentWorkLabel(agent.status)}</span>
+                            <span className="mt-1 block truncate text-xs text-[#514c46]">{currentTask?.title ?? agent.area}</span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : <div className="px-5 py-8 text-sm text-muted">No agents are assigned to this project.</div>}
+              </Card>
+            </section>
+
+            <section aria-labelledby="project-details-heading">
+              <Card className={cn(warmCard, 'overflow-hidden')}>
+                <div className="border-b border-line px-4 py-4 sm:px-5">
+                  <h2 id="project-details-heading" className="text-sm font-medium text-ink">Project context</h2>
+                </div>
+                {metadata.summaries.length > 0 || metadata.entries.length > 0 ? (
+                  <div className="px-4 py-4 sm:px-5">
+                    {metadata.summaries.length > 0 ? (
+                      <div className="space-y-2">
+                        <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Summary</h3>
+                        {metadata.summaries.map((summary, index) => (
+                          <p key={`${summary}:${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-[#514c46]">{summary}</p>
+                        ))}
+                      </div>
+                    ) : null}
+                    {metadata.entries.length > 0 ? (
+                      <div className={cn(metadata.summaries.length > 0 && 'mt-4 border-t border-line pt-4')}>
+                        <ProjectResourceDashboard projectId={project.id} entries={metadata.entries} />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : <div className="px-5 py-8 text-sm leading-6 text-muted">No project summary or resources have been recorded.</div>}
+              </Card>
+            </section>
+          </div>
         </div>
       </main>
     </>

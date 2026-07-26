@@ -207,7 +207,7 @@ export function resourcesForProject(project: BoardProject, tasks: BoardTask[]): 
   return resources.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-export function recentUpdatesForProject(snapshot: BoardSnapshot, projectId: string): ProjectUpdate[] {
+export function updatesForProject(snapshot: BoardSnapshot, projectId: string): ProjectUpdate[] {
   const projectTasks = snapshot.tasks.filter((task) => task.projectId === projectId);
   const taskById = new Map(projectTasks.map((task) => [task.id, task]));
   const agentById = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
@@ -243,6 +243,9 @@ export function recentUpdatesForProject(snapshot: BoardSnapshot, projectId: stri
     }));
 
   return [...messages, ...taskUpdates]
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, 12);
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export function recentUpdatesForProject(snapshot: BoardSnapshot, projectId: string): ProjectUpdate[] {
+  return updatesForProject(snapshot, projectId).slice(0, 12);
 }

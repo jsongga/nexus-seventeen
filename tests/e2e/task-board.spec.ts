@@ -1223,14 +1223,22 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: 'Cicada platform', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cicada platform' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Recent updates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Delivery overview' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'All work' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Activity history' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Team' })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Task completion' })).toHaveAttribute('aria-valuenow', '50');
+  await expect(page.getByRole('heading', { name: 'Completed' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Planned' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project setup' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Docs & links' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Resources' })).toBeVisible();
   await expect(page.getByRole('link', { name: /GitHub: https:\/\/github.com\/acme\/cicada/u })).toBeVisible();
   await expect(page.getByRole('link', { name: /Documentation: https:\/\/docs.example.com\/cicada/u })).toBeVisible();
   await expect(page.getByText('/workspace/billing', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Move GitHub later' }).click();
+  const moveGitHubLater = page.getByRole('button', { name: 'Move GitHub later' });
+  await moveGitHubLater.focus();
+  await moveGitHubLater.press('Enter');
   await expect(page.getByRole('button', { name: 'Move GitHub earlier' })).toBeVisible();
 
   companyRail = await openCompanyRail(page);
