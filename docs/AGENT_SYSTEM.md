@@ -113,7 +113,7 @@ Anthropic's [prompt cache](https://platform.claude.com/docs/en/build-with-claude
 - The engineer role is broader than ideal for read-only research and planning. The runtime must enforce tool allowlists in addition to prompt instructions.
 - After Effects requires a licensed macOS or Windows worker; it cannot run inside the current Dokploy container.
 - Fixed profiles do not launch workers. The task fleet remains idle and token-free until a task is assigned, but it still needs a secured local lane configuration before it can execute.
-- Production approval and deployment are reserved for an authenticated human by [`src/shared/role-policy/policy.ts`](../src/shared/role-policy/policy.ts). The release-operator template therefore remains disabled.
+- Production approval and deployment remain outside the agent runtime. The release-operator template therefore remains disabled.
 
 ## Alternatives considered
 

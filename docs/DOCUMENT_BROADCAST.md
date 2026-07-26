@@ -23,7 +23,7 @@ The HTTP API authorizes same-project agent credentials, but Steward's bundled on
 
 ## Where the feature lives
 
-Rung 1 belongs to the active task-board path, not the compatibility-only legacy `/live` control plane. It borrows the legacy stream's snapshot-and-resume pattern without making the frontend or that older service authoritative.
+Rung 1 belongs to the active task-board path. It uses a snapshot-and-resume pattern without making the frontend authoritative.
 
 ```mermaid
 flowchart LR
@@ -129,7 +129,7 @@ Rung 1 has known, bounded limits:
 
 ## Alternatives Considered
 
-- **Reuse the legacy `/live` stream as the authority** — rejected. The product frontend and event-driven agents use the SQLite task board; routing documents through the compatibility control plane would create a second authority and couple this feature to an inactive path.
+- **Create a second streaming authority** — rejected. The product frontend and event-driven agents use the SQLite task board; routing documents through another service would create conflicting state ownership.
 - **Run a separate document server** — rejected for rung 1. It would duplicate authentication, project scope, persistence, fencing, and recovery for a small Markdown feature.
 - **Full CRDT co-editing** — rejected. The requirement is one writer, so merge machinery adds protocol and operational cost without solving a present conflict.
 - **Automatic pen expiry** — rejected. A timer would reintroduce heartbeat and renewal behavior that Steward intentionally avoids. Explicit release plus human force takeover is deterministic and visible.
