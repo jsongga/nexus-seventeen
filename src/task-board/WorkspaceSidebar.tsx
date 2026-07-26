@@ -1,10 +1,11 @@
 import {
+  ChevronDown,
   CircleAlert,
   CircleX,
   Menu,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../components/ui';
 import type { BoardAgent, BoardSnapshot } from './types';
 import { agentWorkLabel, taskNeedsHumanAction } from './workspace-model';
@@ -54,9 +55,18 @@ function RailContent({
   onNavigate: (page: BoardPage) => void;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const navRow = 'group flex min-h-11 w-full items-center rounded-full px-4 text-left text-sm font-normal transition-[background-color,color,transform] duration-150 ease-out motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-10';
   const activeRow = 'bg-taupe text-white';
   const inactiveRow = 'text-ink hover:bg-surface';
+  const toggleProject = (projectId: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas text-ink">
@@ -107,7 +117,7 @@ function RailContent({
               <span className={cn(
                 'ml-2 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em]',
                 pageIs(page, 'agent', pointOfContact.id) ? 'bg-white/25 text-white' : 'bg-surface text-muted',
-              )}>POC</span>
+              )}>Agent</span>
               <span className="ml-2"><AgentStatusMark agent={pointOfContact} /></span>
             </button>
           ) : null}
@@ -118,17 +128,39 @@ function RailContent({
           <nav aria-label="Projects and agents" className="mt-3 space-y-3">
             {snapshot?.projects.map((project) => {
               const agents = snapshot.agents.filter((agent) => agent.projectId === project.id && agent.id !== pointOfContact?.id);
+              const collapsed = collapsedProjects.has(project.id);
               return (
                 <div key={project.id}>
-                  <button
-                    type="button"
-                    aria-current={pageIs(page, 'project', project.id) ? 'page' : undefined}
-                    className={cn(navRow, pageIs(page, 'project', project.id) ? activeRow : inactiveRow)}
-                    onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
+                  <div
+                    className={cn(
+                      'flex items-center rounded-full transition-colors duration-150',
+                      pageIs(page, 'project', project.id) ? activeRow : inactiveRow,
+                    )}
                   >
-                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  </button>
-                  {agents.length > 0 ? (
+                    <button
+                      type="button"
+                      aria-current={pageIs(page, 'project', project.id) ? 'page' : undefined}
+                      className="min-h-11 min-w-0 flex-1 truncate rounded-l-full py-2 pl-4 pr-2 text-left text-sm font-normal motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-10"
+                      onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
+                    >
+                      {project.name}
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={!collapsed}
+                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${project.name} agents`}
+                      className="mr-1 flex size-9 shrink-0 items-center justify-center rounded-full motion-safe:active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                      onClick={() => toggleProject(project.id)}
+                    >
+                      <ChevronDown
+                        aria-hidden="true"
+                        size={15}
+                        strokeWidth={1.5}
+                        className={cn('transition-transform duration-150', collapsed && '-rotate-90')}
+                      />
+                    </button>
+                  </div>
+                  {agents.length > 0 && !collapsed ? (
                     <div className="mt-0.5 space-y-0.5">
                       {agents.map((agent) => (
                         <button
@@ -136,7 +168,7 @@ function RailContent({
                           type="button"
                           aria-current={pageIs(page, 'agent', agent.id) ? 'page' : undefined}
                           className={cn(
-                            'flex min-h-11 w-full items-center gap-2 rounded-full py-2 pl-10 pr-3 text-left text-[13px] font-normal transition-[background-color,color,transform] duration-150 ease-out motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9',
+                            'flex min-h-9 w-full items-center gap-2 rounded-full py-1 pl-8 pr-3 text-left text-[12px] font-normal leading-4 transition-[background-color,color,transform] duration-150 ease-out motion-safe:active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-7',
                             pageIs(page, 'agent', agent.id) ? activeRow : 'text-muted hover:bg-surface hover:text-ink',
                           )}
                           onClick={() => onNavigate({ kind: 'agent', agentId: agent.id })}

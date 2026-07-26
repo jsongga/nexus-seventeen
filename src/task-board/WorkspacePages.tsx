@@ -1,5 +1,12 @@
 import {
-  ExternalLink,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Cloud,
+  Folder,
+  Github,
+  GripVertical,
+  Link,
   MessageSquareText,
   Plus,
   Send,
@@ -8,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Pill, cn } from '../components/ui';
 import { agentQueryPromptFromObjective } from './client';
 import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot } from './types';
-import { parseProjectMetadata } from './project-metadata';
+import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
 import {
   agentPipelineFocus,
   recentUpdatesForProject,
@@ -27,6 +34,114 @@ function projectLinkLabel(href: string): string {
   const url = new URL(href);
   const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/u, '');
   return `${url.host}${path}${url.search}${url.hash}`;
+}
+
+function projectResourceIcon(kind: ProjectMetadataEntry['kind']) {
+  const props = { size: 22, strokeWidth: 1.5, 'aria-hidden': true } as const;
+  if (kind === 'workspace') return <Folder {...props} />;
+  if (kind === 'github') return <Github {...props} />;
+  if (kind === 'dokploy') return <Cloud {...props} />;
+  if (kind === 'docs') return <BookOpen {...props} />;
+  return <Link {...props} />;
+}
+
+function resourceId(entry: ProjectMetadataEntry, index: number): string {
+  return `${entry.key}:${entry.value}:${index}`;
+}
+
+function ProjectResourceDashboard({ projectId, entries }: { projectId: string; entries: ProjectMetadataEntry[] }) {
+  const storageKey = `nexus-seventeen:project-resources:${projectId}`;
+  const [order, setOrder] = useState<string[]>([]);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const resources = entries.map((entry, index) => ({ entry, id: resourceId(entry, index) }));
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]') as unknown;
+      setOrder(Array.isArray(saved) && saved.every((item) => typeof item === 'string') ? saved : []);
+    } catch {
+      setOrder([]);
+    }
+  }, [storageKey]);
+
+  const ordered = [...resources].sort((left, right) => {
+    const leftIndex = order.indexOf(left.id);
+    const rightIndex = order.indexOf(right.id);
+    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+  });
+  const saveOrder = (next: string[]) => {
+    setOrder(next);
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      // The dashboard still reorders for this session when browser storage is unavailable.
+    }
+  };
+  const move = (id: string, direction: -1 | 1) => {
+    const current = ordered.map((resource) => resource.id);
+    const from = current.indexOf(id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= current.length) return;
+    [current[from], current[to]] = [current[to]!, current[from]!];
+    saveOrder(current);
+  };
+  const drop = (targetId: string) => {
+    if (!draggedId || draggedId === targetId) return;
+    const current = ordered.map((resource) => resource.id);
+    const from = current.indexOf(draggedId);
+    const to = current.indexOf(targetId);
+    current.splice(to, 0, current.splice(from, 1)[0]!);
+    saveOrder(current);
+    setDraggedId(null);
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Resources</h3>
+        <p className="text-[10px] text-muted">Drag to arrange</p>
+      </div>
+      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
+        {ordered.map(({ entry, id }, index) => (
+          <li
+            key={id}
+            draggable
+            onDragStart={() => setDraggedId(id)}
+            onDragEnd={() => setDraggedId(null)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => drop(id)}
+            className={cn('group relative min-w-0 rounded-[14px] border border-line bg-[#faf8f4] transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
+          >
+            <span className="absolute left-2 top-2 cursor-grab text-muted opacity-60" aria-hidden="true"><GripVertical size={13} /></span>
+            <div className="absolute right-1 top-1 z-10 flex opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+              <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
+              <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
+            </div>
+            {entry.href ? (
+              <a
+                href={entry.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${entry.label}: ${entry.value} (opens in a new tab)`}
+                title={entry.value}
+                className="flex min-h-28 flex-col items-center justify-center rounded-[14px] px-3 pb-3 pt-7 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+              >
+                <span className="flex size-10 items-center justify-center rounded-[12px] bg-white shadow-sm">{projectResourceIcon(entry.kind)}</span>
+                <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
+                <span className="mt-0.5 max-w-full truncate text-[10px] text-muted">{projectLinkLabel(entry.href)}</span>
+              </a>
+            ) : (
+              <div title={entry.value} className="flex min-h-28 flex-col items-center justify-center px-3 pb-3 pt-7 text-center text-[#514c46]">
+                <span className="flex size-10 items-center justify-center rounded-[12px] bg-white text-muted shadow-sm">{projectResourceIcon(entry.kind)}</span>
+                <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
+                <span className="mt-0.5 max-w-full truncate font-mono text-[9px] text-muted">{entry.value}</span>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description?: string | null; actions?: React.ReactNode }) {
@@ -87,36 +202,9 @@ export function ProjectPage({
                     </div>
                   ) : null}
                   {metadata.entries.length > 0 ? (
-                    <dl className={cn('divide-y divide-line', metadata.summaries.length > 0 && 'mt-4 border-t border-line')}>
-                      {metadata.entries.map((entry, index) => (
-                        <div
-                          key={`${entry.key}:${entry.value}:${index}`}
-                          className={cn(
-                            'grid gap-1 py-3 last:pb-0 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3',
-                            index === 0 && metadata.summaries.length === 0 && 'pt-0',
-                          )}
-                        >
-                          <dt className="text-[11px] font-medium text-muted">{entry.label}</dt>
-                          <dd className="min-w-0 text-sm leading-5 text-[#514c46]">
-                            {entry.href ? (
-                              <a
-                                className="inline-flex max-w-full items-center gap-1.5 font-medium text-teal-700 underline decoration-line underline-offset-4 transition-colors hover:decoration-current"
-                                href={entry.href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={`${entry.label}: ${entry.value} (opens in a new tab)`}
-                                title={entry.value}
-                              >
-                                <span className="truncate">{projectLinkLabel(entry.href)}</span>
-                                <ExternalLink aria-hidden="true" className="shrink-0" size={13} strokeWidth={1.7} />
-                              </a>
-                            ) : (
-                              <span className={cn('block break-words', entry.kind === 'workspace' && 'font-mono text-xs')}>{entry.value}</span>
-                            )}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <div className={cn(metadata.summaries.length > 0 && 'mt-4 border-t border-line pt-4')}>
+                      <ProjectResourceDashboard projectId={project.id} entries={metadata.entries} />
+                    </div>
                   ) : null}
                 </div>
               ) : <div className="px-5 py-8 text-sm leading-6 text-muted">No project summary or links have been recorded.</div>}

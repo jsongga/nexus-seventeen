@@ -1127,6 +1127,10 @@ test('queued work can be reassigned or returned to backlog before claim without 
 });
 
 test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wake', async ({ page }) => {
+  const projectWithResources = {
+    ...project,
+    description: 'Summary: Agents own defined parts of the system and improve customer outcomes.\nGitHub: https://github.com/acme/cicada\nDocs: https://docs.example.com/cicada\nWorkspace: /workspace/billing',
+  };
   const projectTask = {
     ...task,
     workspaceRefs: ['/workspace/billing', 'https://docs.example.com/invoice-recovery'],
@@ -1166,11 +1170,11 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
       });
     }
     if (url.pathname === '/board-api/v1/projects') {
-      await route.fulfill({ json: { projects: [project] } });
+      await route.fulfill({ json: { projects: [projectWithResources] } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: { ...board(), agents: [agent, manager], tasks: [earlierQuery, projectTask] } });
+      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [agent, manager], tasks: [earlierQuery, projectTask] } });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${projectTask.taskId}/messages` || url.pathname === `/board-api/v1/tasks/${earlierQuery.taskId}/messages`) {
@@ -1199,11 +1203,15 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   let companyRail = await openCompanyRail(page);
   await expect(companyRail.getByText('Cicada Tech Systems LLC.', { exact: true })).toBeVisible();
   await expect(companyRail.getByRole('heading', { name: 'Projects' })).toBeVisible();
-  await expect(companyRail.getByText('POC', { exact: true })).toBeVisible();
+  await expect(companyRail.getByText('Agent', { exact: true })).toBeVisible();
   await expect(companyRail.getByText('Point of contact', { exact: true })).toHaveCount(0);
   await expect(companyRail.getByRole('button', { name: /Board connection/u })).toHaveCount(0);
   await expect(companyRail.getByRole('button', { name: /billing-engineer/u })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toHaveCount(0);
+  await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /release-manager/u })).toBeVisible();
+  await companyRail.getByRole('button', { name: 'Collapse Cicada platform agents' }).click();
+  await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /release-manager/u })).toHaveCount(0);
+  await companyRail.getByRole('button', { name: 'Expand Cicada platform agents' }).click();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /release-manager/u })).toBeVisible();
 
   await companyRail.getByRole('button', { name: 'Documents' }).click();
@@ -1213,13 +1221,17 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole('heading', { name: 'Recorded references' })).toHaveCount(0);
 
   companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /Cicada platform/u }).click();
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: 'Cicada platform', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cicada platform' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent updates' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project setup' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Docs & links' })).toHaveCount(0);
-  await expect(page.getByText('/workspace/billing', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('docs.example.com', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Resources' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /GitHub: https:\/\/github.com\/acme\/cicada/u })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Documentation: https:\/\/docs.example.com\/cicada/u })).toBeVisible();
+  await expect(page.getByText('/workspace/billing', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Move GitHub later' }).click();
+  await expect(page.getByRole('button', { name: 'Move GitHub earlier' })).toBeVisible();
 
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: /billing-engineer/u }).click();
