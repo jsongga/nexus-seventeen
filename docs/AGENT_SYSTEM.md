@@ -8,7 +8,7 @@ Cicada Steward gives a human one place to submit work, then uses short-lived age
 
 The checked-in catalog at [`catalog/company-bootstrap.json`](../catalog/company-bootstrap.json) defines six product-level projects, 18 fixed authority profiles, 16 reusable agent types, and the safe linear portion of the pipeline. [`scripts/reconcile-bootstrap.mjs`](../scripts/reconcile-bootstrap.mjs) applies it without duplicating existing records and stores one-time agent credentials in macOS Keychain.
 
-Saving this catalog does **not** start automation. The current automation registry is deliberately dormant: it records ownership for the UI but does not bind an agent type to a fixed profile, launch a worker, or evaluate a transition. That boundary is verified in [`services/task-board/test/board.test.ts`](../services/task-board/test/board.test.ts).
+Saving this catalog does **not** start automation. The current automation registry is deliberately dormant: it records ownership for the UI but does not bind an agent type to a fixed profile, launch a worker, or evaluate a transition. That boundary is verified in [`src/server/task-board/test/board.test.ts`](../src/server/task-board/test/board.test.ts).
 
 ## The four records
 
@@ -108,12 +108,12 @@ Anthropic's [prompt cache](https://platform.claude.com/docs/en/build-with-claude
 
 ## Current limits
 
-- [`services/task-board/src/schema.ts`](../services/task-board/src/schema.ts) stores nine ordered stage owners, not transition edges, conditions, retry limits, or backedges.
+- [`src/server/task-board/schema.ts`](../src/server/task-board/schema.ts) stores nine ordered stage owners, not transition edges, conditions, retry limits, or backedges.
 - Project creation and catalog reads are human-only. A trusted coordinator needs narrowly scoped server authority; the operator bearer token must never enter a model prompt.
 - The engineer role is broader than ideal for read-only research and planning. The runtime must enforce tool allowlists in addition to prompt instructions.
 - After Effects requires a licensed macOS or Windows worker; it cannot run inside the current Dokploy container.
 - Fixed profiles do not launch workers. The task fleet remains idle and token-free until a task is assigned, but it still needs a secured local lane configuration before it can execute.
-- Production approval and deployment are reserved for an authenticated human by [`packages/role-policy/src/policy.ts`](../packages/role-policy/src/policy.ts). The release-operator template therefore remains disabled.
+- Production approval and deployment are reserved for an authenticated human by [`src/shared/role-policy/policy.ts`](../src/shared/role-policy/policy.ts). The release-operator template therefore remains disabled.
 
 ## Alternatives considered
 

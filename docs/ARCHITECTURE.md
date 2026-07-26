@@ -104,7 +104,7 @@ The engineer CLI edge uses noninteractive, ephemeral provider modes; ignores use
 
 ## Token-efficient routing
 
-[`../packages/model-routing`](../packages/model-routing) has no model IDs or prices. A caller supplies six profiles: Codex and Claude across economy, balanced, and frontier tiers, with capacity and optional rate cards.
+[`../src/shared/model-routing`](../src/shared/model-routing) has no model IDs or prices. A caller supplies six profiles: Codex and Claude across economy, balanced, and frontier tiers, with capacity and optional rate cards.
 
 For engineer RPET, the configured lane model must equal the catalog's Codex economy baseline. Iteration 1 starts on economy. One observed failed Test justifies balanced; repeated failed Tests justify frontier. The selected model ID drives the actual CLI invocation, and the current action records tier, model, and reason. Oversized context or provider mismatch fails closed. Task risk and complexity remain low until the authoritative task protocol carries those fields; Steward does not infer spend from prose.
 

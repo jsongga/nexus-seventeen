@@ -6,8 +6,7 @@ WORKDIR /build
 COPY . .
 
 RUN npm ci --ignore-scripts \
-  && npm run build:web \
-  && npm run build:task-board
+  && npm run build:all
 
 FROM caddy:2-alpine AS caddy
 
@@ -18,13 +17,10 @@ RUN apk add --no-cache su-exec tini
 WORKDIR /app
 
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
-COPY --from=build /build/packages/task-board-contract/package.json ./packages/task-board-contract/package.json
-COPY --from=build /build/packages/task-board-contract/dist ./packages/task-board-contract/dist
-COPY --from=build /build/services/task-board/package.json ./services/task-board/package.json
-COPY --from=build /build/services/task-board/dist ./services/task-board/dist
+COPY --from=build /build/package.json ./package.json
+COPY --from=build /build/build ./build
 
-RUN mkdir -p /app/node_modules/@cicada /srv/steward /var/lib/steward/private \
-  && ln -s ../../packages/task-board-contract /app/node_modules/@cicada/steward-task-board-contract \
+RUN mkdir -p /srv/steward /var/lib/steward/private \
   && chown -R node:node /var/lib/steward \
   && chmod 0700 /var/lib/steward /var/lib/steward/private
 

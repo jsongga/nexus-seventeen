@@ -94,6 +94,23 @@ Detailed RPET summaries still arrive with the terminal structured result. During
 
 The core has no deployment endpoint or credentials. It automates the read-only review handoff only when the reviewer choice is unambiguous, then stops at a human check. A human still records the final production decision. The compatibility manager-review and deployment-broker services contain a stricter evidence/grant experiment, but they are not connected to the default task board.
 
+## Source layout
+
+The repository has one source tree and one package manifest:
+
+```text
+src/
+  web/       Browser application
+  server/    Runtime services grouped by operational role
+  shared/    Protocols, policies, routing, and board contracts
+tests/
+  server/    Runtime and integration tests
+  shared/    Shared-contract tests
+  e2e/       Browser workflows
+```
+
+Folders under `src/server` are module boundaries, not separate npm packages. Root scripts build and test the complete system, so there are no nested `package.json`, `tsconfig.json`, or repeated `src` directories to navigate.
+
 ## Outage behavior
 
 | Component unavailable | Result |
@@ -110,9 +127,7 @@ Use Node 22.13+ or Node 24+ so the built-in SQLite module runs without an experi
 ```bash
 cd nexus-seventeen
 npm ci
-npm run build:task-board
-npm run build:task-worker
-npm run build:task-fleet
+npm run build:runtime
 npm run build:web
 install -d -m 700 .steward-data
 ```
@@ -139,7 +154,7 @@ Use the UI to add a project by its absolute folder path. Steward derives the pro
 Copy the fleet template to the ignored local data directory, restrict it to the current user, and add one entry per agent. Each entry binds the existing board agent and token to a provider, model, working directory, and private journal:
 
 ```bash
-cp services/task-fleet/fleet.example.json .steward-data/fleet.json
+cp src/server/agents/task-fleet/fleet.example.json .steward-data/fleet.json
 chmod 600 .steward-data/fleet.json
 ```
 
@@ -212,9 +227,7 @@ npm audit --audit-level=high
 The focused durable core suites are also available directly:
 
 ```bash
-npm run test:task-board
-npm run test:task-worker
-npm run test:task-fleet
+npm run test:runtime
 npx vitest run src/task-board/client.test.ts
 npx playwright test tests/e2e/task-board.spec.ts
 ```

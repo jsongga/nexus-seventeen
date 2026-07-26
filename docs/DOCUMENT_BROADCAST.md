@@ -37,12 +37,12 @@ flowchart LR
 
 The implementation is split by responsibility:
 
-- [`packages/task-board-contract/src/index.ts`](../packages/task-board-contract/src/index.ts) — document, pen, request, and snapshot types.
-- [`services/task-board/src/store.ts`](../services/task-board/src/store.ts) — schema v4 and the v3-to-v4 migration.
-- [`services/task-board/src/board.ts`](../services/task-board/src/board.ts) — persistence, authorization boundaries, version checks, fencing, and event insertion.
-- [`services/task-board/src/service.ts`](../services/task-board/src/service.ts) — authenticated HTTP and SSE routes.
-- [`src/task-board/client.ts`](../src/task-board/client.ts) — strict response parsing and resumable stream consumption.
-- [`src/task-board/DocumentsPage.tsx`](../src/task-board/DocumentsPage.tsx) — desktop/mobile viewer, editor, handoff controls, and recorded references.
+- [`src/shared/task-board-contract/index.ts`](../src/shared/task-board-contract/index.ts) — document, pen, request, and snapshot types.
+- [`src/server/task-board/store.ts`](../src/server/task-board/store.ts) — schema v4 and the v3-to-v4 migration.
+- [`src/server/task-board/board.ts`](../src/server/task-board/board.ts) — persistence, authorization boundaries, version checks, fencing, and event insertion.
+- [`src/server/task-board/service.ts`](../src/server/task-board/service.ts) — authenticated HTTP and SSE routes.
+- [`src/web/task-board/client.ts`](../src/web/task-board/client.ts) — strict response parsing and resumable stream consumption.
+- [`src/web/task-board/DocumentsPage.tsx`](../src/web/task-board/DocumentsPage.tsx) — desktop/mobile viewer, editor, handoff controls, and recorded references.
 
 ## HTTP and stream contract
 

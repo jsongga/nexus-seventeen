@@ -45,7 +45,7 @@ on_signal() {
 trap on_signal INT TERM
 trap stop_processes EXIT
 
-node /app/services/task-board/dist/src/main.js &
+node /app/build/server/task-board/main.js &
 board_pid=$!
 
 attempt=0
