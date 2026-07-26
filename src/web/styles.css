@@ -1,15 +1,12 @@
 @import "tailwindcss";
 
-/* Dark mode is a class flip on <html>; tokens below resolve per-mode. */
+/* The supplied operations-console design is intentionally dark in every mode. */
 @custom-variant dark (&:is(.dark *));
 
 /*
-  Cicada brand tokens — canonical source: cicada-website/src/app/globals.css
-  + docs/DESIGN-SYSTEM.md. Raw values live in :root (light) and .dark; the
-  @theme inline block maps them to Tailwind utilities so every color/border
-  flips with the mode. Legacy utility names (canvas, ink, muted, line,
-  teal-soft, caution*, urgent*, mint, forest, paper, surface) are preserved
-  as aliases so existing markup keeps working.
+  Operations-console tokens derived from the supplied reference. The @theme
+  block maps them to Tailwind utilities while preserving legacy aliases used
+  throughout the task-board interface.
 */
 @theme inline {
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
@@ -104,128 +101,76 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Operations console aliases retained by the existing interface. */
+  --color-taupe: var(--active);
+  --color-taupe-hover: var(--active-hover);
+  --color-success: var(--success-text);
+  --color-success-fill: var(--success-fill);
+  --color-success-soft: var(--success-soft);
 }
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  --canvas: #eae9e4;          /* warm paper */
-  --card: #f6f5f1;            /* warm off-white card */
-  --popover: #ffffff;         /* popovers, modals, inputs */
-  --secondary: #e6e5df;
-  --ink-panel: #171c24;
-  --scrim: #10151c;
+  --canvas: #0e0f0a;
+  --card: #161811;
+  --popover: #1e2017;
+  --secondary: #1e2017;
+  --ink-panel: #161811;
+  --scrim: #050604;
+  --foreground: #e4e6d9;
+  --muted-foreground: #8b9077;
+  --border: #2d301f;
+  --border-soft: #24271a;
+  --input: #333725;
+  --ring: #929d6d;
+  --active: #5a6242;
+  --active-hover: #6d7650;
+  --success-text: #a8b77c;
+  --success-fill: #808b5e;
+  --success-soft: rgba(128, 139, 94, 0.14);
 
-  --foreground: #171c24;      /* ink */
-  --muted-foreground: #57595f;
-
-  --border: #d9d8d1;
-  --border-soft: #e4e2db;
-  --input: #e4e7ea;
-  --ring: #1b655d;
-
-  --teal-300: #7fe0d6;        /* text/icon on dark */
-  --teal-500: #41bbb0;        /* fills & marks (logo teal) */
-  --teal-600: #36a99f;        /* fill hover */
-  --teal-700: #1b655d;        /* teal text on light (AA on warm paper) */
-  --teal-soft: rgba(65, 187, 176, 0.12);
-  --accent: rgba(65, 187, 176, 0.12);
-
-  --caution-text: #8a5d0a;
-  --caution-fill: #f0b429;
-  --caution-soft: #fff5dc;
-
-  --urgent-text: #a01c14;
-  --urgent-fill: #7d1710;
-  --urgent-soft: #fff0ee;
-
-  --teal-border: #b9ddd9;
-  --border-strong: #c7c5bc;
-  --muted-surface: #eae7e0;
-  --caution-border: #ead09b;
-  --urgent-border: #e5b7b3;
-  --info-text: #3f6073;
-  --info-soft: #eef3f6;
-  --info-border: #ccd9e2;
-  --alt-text: #55547a;
-  --alt-soft: #f2f1f7;
-  --alt-border: #d5d3e3;
-
-  --chart-1: #41bbb0;
-  --chart-2: #237a72;
-  --chart-3: #7fe0d6;
-  --chart-4: #f0b429;
-  --chart-5: #8a5d0a;
-
-  --sidebar: #ffffff;
-  --sidebar-foreground: #171c24;
-  --sidebar-primary: #41bbb0;
-  --sidebar-primary-foreground: #171c24;
-  --sidebar-accent: rgba(65, 187, 176, 0.12);
-  --sidebar-accent-foreground: #237a72;
-  --sidebar-border: #e4e7ea;
-  --sidebar-ring: #237a72;
+  --teal-300: #a8b77c;
+  --teal-500: #808b5e;
+  --teal-600: #929d6d;
+  --teal-700: #a8b77c;
+  --teal-soft: rgba(128, 139, 94, 0.14);
+  --accent: rgba(128, 139, 94, 0.14);
+  --caution-text: #c3a95c;
+  --caution-fill: #8b7942;
+  --caution-soft: rgba(139, 121, 66, 0.16);
+  --urgent-text: #d48b7c;
+  --urgent-fill: #6b4038;
+  --urgent-soft: rgba(107, 64, 56, 0.2);
+  --teal-border: #50583a;
+  --border-strong: #3a3f29;
+  --muted-surface: #1e2017;
+  --caution-border: #5d512e;
+  --urgent-border: #59362f;
+  --info-text: #a4ad8a;
+  --info-soft: rgba(90, 98, 66, 0.16);
+  --info-border: #41472f;
+  --alt-text: #aaa98e;
+  --alt-soft: rgba(114, 119, 97, 0.14);
+  --alt-border: #3d402f;
+  --chart-1: #808b5e;
+  --chart-2: #a8b77c;
+  --chart-3: #5a6242;
+  --chart-4: #8b7942;
+  --chart-5: #6b4038;
+  --sidebar: #12130d;
+  --sidebar-foreground: #e4e6d9;
+  --sidebar-primary: #808b5e;
+  --sidebar-primary-foreground: #0e0f0a;
+  --sidebar-accent: #26291d;
+  --sidebar-accent-foreground: #e4e6d9;
+  --sidebar-border: #24271a;
+  --sidebar-ring: #929d6d;
 }
 
 .dark {
   color-scheme: dark;
-
-  --canvas: #171c24;
-  --card: #1b212b;
-  --popover: #1b212b;
-  --secondary: #232b36;
-  --ink-panel: #232b36;
-  --scrim: #05070a;
-
-  --foreground: #f3f3f3;
-  --muted-foreground: #9aa4b2;
-
-  --border: #28323f;
-  --border-soft: #232b36;
-  --input: #28323f;
-  --ring: #7fe0d6;
-
-  --teal-300: #7fe0d6;
-  --teal-500: #41bbb0;
-  --teal-600: #4fc9be;
-  --teal-700: #7fe0d6;        /* teal text on dark = teal-300 */
-  --teal-soft: rgba(65, 187, 176, 0.16);
-  --accent: rgba(65, 187, 176, 0.16);
-
-  --caution-text: #e8b04b;
-  --caution-fill: #f0b429;
-  --caution-soft: rgba(240, 180, 41, 0.14);
-
-  --urgent-text: #ff8a7a;
-  --urgent-fill: #7d1710;
-  --urgent-soft: rgba(160, 28, 20, 0.18);
-
-  --teal-border: #2f5c56;
-  --border-strong: #3a4552;
-  --muted-surface: #232b36;
-  --caution-border: #5a4a24;
-  --urgent-border: #5a2a26;
-  --info-text: #9fbccd;
-  --info-soft: rgba(63, 96, 115, 0.16);
-  --info-border: #33414d;
-  --alt-text: #b8b6d4;
-  --alt-soft: rgba(85, 84, 122, 0.20);
-  --alt-border: #3b3a4d;
-
-  --chart-1: #41bbb0;
-  --chart-2: #7fe0d6;
-  --chart-3: #237a72;
-  --chart-4: #f0b429;
-  --chart-5: #f3f3f3;
-
-  --sidebar: #1b212b;
-  --sidebar-foreground: #f3f3f3;
-  --sidebar-primary: #41bbb0;
-  --sidebar-primary-foreground: #171c24;
-  --sidebar-accent: rgba(65, 187, 176, 0.16);
-  --sidebar-accent-foreground: #7fe0d6;
-  --sidebar-border: #28323f;
-  --sidebar-ring: #7fe0d6;
 }
 
 :root {
@@ -275,8 +220,8 @@ select:focus-visible,
 }
 
 ::selection {
-  color: #171c24;
-  background: #7fe0d6;
+  color: #0e0f0a;
+  background: #a8b77c;
 }
 
 .font-mono {

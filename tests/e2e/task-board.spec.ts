@@ -1126,7 +1126,7 @@ test('queued work can be reassigned or returned to backlog before claim without 
   expect(runCommands).toEqual([]);
 });
 
-test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wake', async ({ page }) => {
+test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wake', async ({ page }, testInfo) => {
   const projectWithResources = {
     ...project,
     description: 'Summary: Agents own defined parts of the system and improve customer outcomes.\nGitHub: https://github.com/acme/cicada\nDocs: https://docs.example.com/cicada\nWorkspace: /workspace/billing',
@@ -1240,6 +1240,10 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await moveGitHubLater.focus();
   await moveGitHubLater.press('Enter');
   await expect(page.getByRole('button', { name: 'Move GitHub earlier' })).toBeVisible();
+  if (process.env.CAPTURE_UI === '1') {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath('project-dashboard.png'), fullPage: true });
+  }
 
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: /billing-engineer/u }).click();

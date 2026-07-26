@@ -16,18 +16,18 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary:
-    'border-taupe bg-taupe text-ink enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover',
+    'border-taupe bg-taupe text-white enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover',
   secondary:
-    'border-line bg-white text-ink enabled:hover:border-taupe-hover enabled:hover:bg-surface',
+    'border-line bg-card text-ink enabled:hover:border-taupe-hover enabled:hover:bg-surface',
   quiet: 'border-transparent bg-transparent text-ink enabled:hover:bg-surface',
-  danger: 'border-[#d5a19d] bg-white text-urgent enabled:hover:border-[#bd726c] enabled:hover:bg-urgent-soft',
-  mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:border-success-fill enabled:hover:bg-[#e2eadf]',
+  danger: 'border-urgent-border bg-card text-urgent enabled:hover:border-urgent enabled:hover:bg-urgent-soft',
+  mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:border-success-fill enabled:hover:bg-surface',
 };
 
 const buttonSizes = {
-  sm: 'min-h-9 gap-1.5 rounded-full px-3 text-[13px]',
-  md: 'min-h-11 gap-2 rounded-full px-4 text-sm',
-  lg: 'min-h-12 gap-2.5 rounded-full px-5 text-[15px]',
+  sm: 'min-h-9 gap-1.5 rounded-[2px] px-3 font-mono text-[12px] uppercase tracking-[0.06em]',
+  md: 'min-h-11 gap-2 rounded-[2px] px-4 text-sm',
+  lg: 'min-h-12 gap-2.5 rounded-[2px] px-5 text-[15px]',
 };
 
 export function Button({
@@ -68,7 +68,7 @@ export function Card({
   return (
     <Component
       className={cn(
-        'rounded-[14px] border border-line bg-white',
+        'rounded-[2px] border border-line bg-card',
         className,
       )}
     >
@@ -80,10 +80,10 @@ export function Card({
 const pillTones = {
   neutral: 'border-line bg-surface text-muted',
   green: 'border-success-fill/60 bg-success-soft text-success',
-  amber: 'border-[#ead09b] bg-caution-soft text-caution',
-  red: 'border-[#e5b7b3] bg-urgent-soft text-urgent',
-  blue: 'border-[#ccd9e2] bg-[#eef3f6] text-[#3f6073]',
-  purple: 'border-[#d5d3e3] bg-[#f2f1f7] text-[#55547a]',
+  amber: 'border-caution-border bg-caution-soft text-caution',
+  red: 'border-urgent-border bg-urgent-soft text-urgent',
+  blue: 'border-info-border bg-info-soft text-info',
+  purple: 'border-alt-border bg-alt-soft text-alt',
   dark: 'border-white/15 bg-white/10 text-white/85',
 };
 
@@ -101,7 +101,7 @@ export function Pill({
   return (
     <span
       className={cn(
-        'inline-flex min-h-6 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none',
+        'inline-flex min-h-6 items-center gap-1.5 rounded-[2px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase leading-none tracking-[0.06em]',
         pillTones[tone],
         className,
       )}
@@ -138,7 +138,7 @@ export function Avatar({
   return (
     <span
       className={cn(
-        'relative inline-flex shrink-0 items-center justify-center rounded-full border border-taupe font-display font-semibold text-ink',
+        'relative inline-flex shrink-0 items-center justify-center rounded-[2px] border border-taupe font-mono font-semibold text-ink',
         sizes[size],
         human && 'border-ink/15',
       )}
@@ -167,9 +167,9 @@ export function ProgressBar({
   };
 
   return (
-    <div className={cn('h-1.5 overflow-hidden rounded-full bg-line-soft', className)}>
+    <div className={cn('h-1.5 overflow-hidden bg-line-soft', className)}>
       <div
-        className={cn('h-full rounded-full transition-[width] duration-500', tones[tone])}
+        className={cn('h-full transition-[width] duration-500', tones[tone])}
         style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
       />
     </div>

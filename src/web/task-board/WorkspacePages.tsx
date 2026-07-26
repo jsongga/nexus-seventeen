@@ -23,7 +23,7 @@ import {
 } from './workspace-model';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-const warmCard = '!rounded-[18px] !border-line !bg-white !shadow-none';
+const warmCard = '!rounded-[2px] !border-line !bg-card !shadow-none';
 
 function formatTime(value: string | null): string {
   if (value === null) return 'Not recorded';
@@ -108,7 +108,7 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
             key={id}
             onDragOver={(event) => event.preventDefault()}
             onDrop={() => drop(id)}
-            className={cn('group min-w-0 rounded-[14px] border border-line bg-[#faf8f4] transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
+            className={cn('group min-w-0 border border-line bg-surface transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
           >
             <div className="flex h-7 items-center justify-between px-1">
               <span
@@ -119,8 +119,8 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
                 aria-hidden="true"
               ><GripVertical size={13} /></span>
               <span className="flex opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-                <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
-                <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-white hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
+                <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center text-muted hover:bg-card hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
+                <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center text-muted hover:bg-card hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
               </span>
             </div>
             {entry.href ? (
@@ -130,15 +130,15 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
                 rel="noopener noreferrer"
                 aria-label={`${entry.label}: ${entry.value} (opens in a new tab)`}
                 title={entry.value}
-                className="flex min-h-24 flex-col items-center justify-center rounded-b-[14px] px-3 pb-3 pt-1 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
               >
-                <span className="flex size-10 items-center justify-center rounded-[12px] bg-white shadow-sm">{projectResourceIcon(entry.kind)}</span>
+                <span className="flex size-10 items-center justify-center border border-line bg-card">{projectResourceIcon(entry.kind)}</span>
                 <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
                 <span className="mt-0.5 max-w-full truncate text-[10px] text-muted">{projectLinkLabel(entry.href)}</span>
               </a>
             ) : (
-              <div title={entry.value} className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-[#514c46]">
-                <span className="flex size-10 items-center justify-center rounded-[12px] bg-white text-muted shadow-sm">{projectResourceIcon(entry.kind)}</span>
+              <div title={entry.value} className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-muted">
+                <span className="flex size-10 items-center justify-center border border-line bg-card text-muted">{projectResourceIcon(entry.kind)}</span>
                 <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
                 <span className="mt-0.5 max-w-full truncate font-mono text-[9px] text-muted">{entry.value}</span>
               </div>
@@ -152,10 +152,10 @@ function ProjectResourceDashboard({ projectId, entries }: { projectId: string; e
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description?: string | null; actions?: React.ReactNode }) {
   return (
-    <header className="flex flex-col gap-2 border-b border-line bg-canvas px-4 py-4 sm:px-8 sm:py-5 lg:flex-row lg:items-end lg:justify-between lg:gap-4 lg:px-12 lg:py-8">
+    <header className="flex min-h-14 flex-col gap-2 border-b border-line bg-card px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
       <div className="min-w-0">
         <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">{eyebrow}</p>
-        <h1 className="mt-1.5 font-display text-2xl font-light tracking-[0.01em] text-ink sm:text-[28px]">{title}</h1>
+        <h1 className="mt-1 font-display text-xl font-medium tracking-[0.01em] text-ink sm:text-2xl">{title}</h1>
         {description ? <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
@@ -194,10 +194,10 @@ export function ProjectPage({
   ].filter((group) => group.tasks.length > 0);
   const updateRow = (update: (typeof updates)[number]) => (
     <li key={update.id}>
-      <button type="button" className="w-full px-4 py-3.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-[#faf6f0] motion-safe:active:scale-[0.995] sm:px-5" onClick={() => onTask(update.taskId)}>
-        <span className="flex flex-wrap items-center gap-2 text-[11px]"><span className="font-medium text-[#332f2a]">{update.author}</span><Pill className="!rounded-full" tone={update.kind === 'question' ? 'amber' : update.kind === 'result' ? 'green' : 'neutral'}>{update.kind}</Pill><time dateTime={update.createdAt} className="text-[#817a72]">{formatTime(update.createdAt)}</time></span>
+      <button type="button" className="w-full px-4 py-3.5 text-left transition-colors duration-150 hover:bg-surface sm:px-5" onClick={() => onTask(update.taskId)}>
+        <span className="flex flex-wrap items-center gap-2 font-mono text-[10px]"><span className="font-medium text-ink">{update.author}</span><Pill tone={update.kind === 'question' ? 'amber' : update.kind === 'result' ? 'green' : 'neutral'}>{update.kind}</Pill><time dateTime={update.createdAt} className="text-muted">{formatTime(update.createdAt)}</time></span>
         <span className="mt-1.5 block text-xs font-medium text-teal-700">{update.taskTitle}</span>
-        <span className="mt-1 line-clamp-2 block whitespace-pre-wrap text-sm leading-6 text-[#514c46]">{update.body}</span>
+        <span className="mt-1 line-clamp-2 block whitespace-pre-wrap text-sm leading-6 text-muted">{update.body}</span>
       </button>
     </li>
   );
@@ -205,36 +205,36 @@ export function ProjectPage({
   return (
     <>
       <PageHeader eyebrow="Project" title={project.name} actions={<Button size="sm" variant="primary" icon={<Plus size={15} />} onClick={onAddTask}>Add task</Button>} />
-      <main className="w-full max-w-7xl bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-117px)] lg:px-12 lg:py-8">
+      <main className="min-w-0 w-full max-w-[1400px] overflow-x-hidden bg-canvas p-4 sm:p-6 lg:min-h-[calc(100dvh-56px)] lg:p-8">
         <section aria-labelledby="delivery-overview-heading">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h2 id="delivery-overview-heading" className="text-sm font-medium text-ink">Delivery overview</h2>
+              <h2 id="delivery-overview-heading" className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-ink">Delivery overview</h2>
               <p className="mt-1 text-xs text-muted">Current durable task state across the whole project.</p>
             </div>
             <time dateTime={project.updatedAt} className="text-[11px] text-muted">Project updated {formatTime(project.updatedAt)}</time>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-px bg-line sm:grid-cols-4">
             {[
               { label: 'Completed', value: completedTasks.length, detail: `${completionPercent}% of tracked work` },
               { label: 'In progress', value: activeTasks.length, detail: activeTasks.length === 1 ? 'task moving' : 'tasks moving' },
               { label: 'Needs attention', value: attentionTasks.length, detail: attentionTasks.length === 0 ? 'No intervention needed' : 'Blocked, failed, or waiting' },
               { label: 'Planned', value: plannedTasks.length, detail: plannedTasks.length === 1 ? 'task not started' : 'tasks not started' },
             ].map((metric) => (
-              <Card key={metric.label} className={cn(warmCard, '!rounded-[14px] p-4')}>
-                <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">{metric.label}</p>
-                <p className="mt-2 font-display text-3xl font-light text-ink">{metric.value}</p>
-                <p className="mt-1 text-[11px] text-muted">{metric.detail}</p>
+              <Card key={metric.label} className="!rounded-none !border-0 p-4 sm:p-5">
+                <p className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted">{metric.label}</p>
+                <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-ink">{String(metric.value).padStart(2, '0')}</p>
+                <p className="mt-1 font-mono text-[10px] text-muted">{metric.detail}</p>
               </Card>
             ))}
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" role="progressbar" aria-label="Task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
-            <div className="h-full rounded-full bg-success-fill transition-[width] duration-300" style={{ width: `${completionPercent}%` }} />
+          <div className="mt-2 h-1 overflow-hidden bg-surface" role="progressbar" aria-label="Task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
+            <div className="h-full bg-success-fill transition-[width] duration-300" style={{ width: `${completionPercent}%` }} />
           </div>
         </section>
 
-        <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(17rem,0.75fr)]">
-          <div className="space-y-5">
+        <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+          <div className="min-w-0 space-y-5">
             <section aria-labelledby="project-work-heading">
               <Card className={cn(warmCard, 'overflow-hidden')}>
                 <div className="border-b border-line px-4 py-4 sm:px-5">
@@ -252,7 +252,7 @@ export function ProjectPage({
                         <ul className="mt-2 space-y-1">
                           {group.tasks.map((task) => (
                             <li key={task.id}>
-                              <button type="button" className="flex w-full items-start justify-between gap-3 rounded-[10px] px-2 py-2 text-left transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" onClick={() => onTask(task.id)}>
+                              <button type="button" className="flex w-full items-start justify-between gap-3 border-l-2 border-transparent px-2 py-2 text-left transition-colors hover:border-l-taupe hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" onClick={() => onTask(task.id)}>
                                 <span className="min-w-0">
                                   <span className="block truncate text-sm font-medium text-ink">{task.title}</span>
                                   <span className="mt-0.5 block truncate text-[11px] text-muted">
@@ -285,7 +285,7 @@ export function ProjectPage({
             </section>
           </div>
 
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-5">
             <section aria-labelledby="project-team-heading">
               <Card className={cn(warmCard, 'overflow-hidden')}>
                 <div className="border-b border-line px-4 py-4 sm:px-5">
@@ -302,7 +302,7 @@ export function ProjectPage({
                           <span className="min-w-0">
                             <span className="block truncate text-sm font-medium text-ink">{agent.name}</span>
                             <span className="mt-0.5 block text-[11px] text-muted">{agent.role} · {agentWorkLabel(agent.status)}</span>
-                            <span className="mt-1 block truncate text-xs text-[#514c46]">{currentTask?.title ?? agent.area}</span>
+                            <span className="mt-1 block truncate text-xs text-muted">{currentTask?.title ?? agent.area}</span>
                           </span>
                         </li>
                       );
@@ -323,7 +323,7 @@ export function ProjectPage({
                       <div className="space-y-2">
                         <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Summary</h3>
                         {metadata.summaries.map((summary, index) => (
-                          <p key={`${summary}:${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-[#514c46]">{summary}</p>
+                          <p key={`${summary}:${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-muted">{summary}</p>
                         ))}
                       </div>
                     ) : null}
