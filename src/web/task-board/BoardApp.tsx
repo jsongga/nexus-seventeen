@@ -799,7 +799,7 @@ export function BoardApp() {
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorStateForConnection} />;
   } else if (page.kind === 'project' && pageProject) {
-    content = <ProjectPage project={pageProject} snapshot={snapshot} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} />;
+    content = <ProjectPage project={pageProject} snapshot={snapshot} client={client} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} />;
   } else if (page.kind === 'agent' && pageAgent) {
     content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(() => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(() => client.answerQuestion(questionId, { answer }))} />;
   } else {

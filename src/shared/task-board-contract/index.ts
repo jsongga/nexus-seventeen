@@ -180,6 +180,16 @@ export interface StageHandoff {
   readonly createdAt: string;
 }
 
+export interface StageHandoffDraft {
+  readonly outcome: StageHandoffOutcome;
+  readonly summary: string;
+  readonly evidence: readonly string[];
+  readonly artifactIds: readonly string[];
+  readonly acceptanceCriteria: readonly CriterionResult[];
+  readonly blockers: readonly string[];
+  readonly recommendedReturnStage: WorkflowStage | null;
+}
+
 export interface ProjectArtifact {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly artifactId: string;
@@ -192,6 +202,14 @@ export interface ProjectArtifact {
   readonly caption: string;
   readonly createdBy: string;
   readonly createdAt: string;
+}
+
+export interface CreateProjectArtifactRequest {
+  readonly nodeId: string | null;
+  readonly taskId: string | null;
+  readonly mediaType: ArtifactMediaType;
+  readonly caption: string;
+  readonly contentBase64: string;
 }
 
 export interface ProjectEvent {
@@ -473,6 +491,13 @@ export interface ClaimRunResult {
     messages: readonly TaskMessage[];
     triggerQuestion: HumanQuestion | null;
     openQuestions: readonly HumanQuestion[];
+    workflow?: Readonly<{
+      planRevisionId: string;
+      nodeId: string;
+      stage: WorkflowStage;
+      skills: readonly SkillSnapshot[];
+      dependencyHandoffs: readonly StageHandoff[];
+    }> | null;
   }>;
 }
 
@@ -631,4 +656,5 @@ export interface InterruptAgentRequest {
 export interface SettleRunRequest {
   readonly outcome: "completed" | "failed" | "interrupted";
   readonly result: string;
+  readonly handoff?: StageHandoffDraft | null;
 }

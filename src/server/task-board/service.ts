@@ -1,6 +1,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { WORK_ITEM_CURSOR_MAX_BYTES, type ConfirmPlanRevisionRequest, type CreatePlanRevisionRequest } from "#shared/task-board-contract";
+import {
+  WORK_ITEM_CURSOR_MAX_BYTES,
+  type ConfirmPlanRevisionRequest,
+  type CreatePlanRevisionRequest,
+  type CreateProjectArtifactRequest,
+} from "#shared/task-board-contract";
 import { TaskBoard } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
@@ -50,6 +55,16 @@ interface DocumentStream {
   readonly unsubscribe: () => void;
 }
 
+function parseArtifact(value: unknown): CreateProjectArtifactRequest {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "Artifact request must be an object");
+  const item = value as Record<string, unknown>;
+  const expected = ["caption", "contentBase64", "mediaType", "nodeId", "taskId"].sort();
+  if (Object.keys(item).sort().some((key, index) => key !== expected[index]) || Object.keys(item).length !== expected.length) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Artifact request has unexpected or missing fields");
+  }
+  return item as unknown as CreateProjectArtifactRequest;
+}
+
 function routeUrl(value: string | undefined): URL {
   try {
     return new URL(value ?? "", "http://task-board.invalid");
@@ -92,6 +107,7 @@ export class TaskBoardService {
   readonly #board: TaskBoard;
   readonly #server: Server;
   readonly #documentStreams = new Set<DocumentStream>();
+  readonly #projectStreams = new Set<DocumentStream>();
   readonly #closingAbort = new AbortController();
   #started = false;
   #closing = false;
@@ -221,6 +237,45 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, { workflow: this.#board.projectWorkflow(parseIdentifier(workflowMatch[1], "projectId")) });
+      return;
+    }
+    const workflowEventsMatch = /^\/v1\/projects\/([^/]+)\/workflow\/events$/u.exec(url.pathname);
+    if (workflowEventsMatch && request.method === "GET") {
+      requireHuman(request, this.config);
+      const projectId = parseIdentifier(workflowEventsMatch[1], "projectId");
+      const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
+      this.#openProjectStream(request, response, projectId, after);
+      return;
+    }
+    const artifactsMatch = /^\/v1\/projects\/([^/]+)\/artifacts$/u.exec(url.pathname);
+    if (artifactsMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { artifacts: this.#board.listArtifacts(parseIdentifier(artifactsMatch[1], "projectId")) });
+      return;
+    }
+    if (artifactsMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const artifact = await this.#board.createArtifact(
+        parseIdentifier(artifactsMatch[1], "projectId"),
+        parseArtifact(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 201, { artifact });
+      return;
+    }
+    const artifactMatch = /^\/v1\/artifacts\/([^/]+)$/u.exec(url.pathname);
+    if (artifactMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const { artifact, bytes } = await this.#board.artifactContent(parseIdentifier(artifactMatch[1], "artifactId"));
+      response.statusCode = 200;
+      response.setHeader("Content-Type", artifact.mediaType);
+      response.setHeader("Content-Length", String(bytes.length));
+      response.setHeader("ETag", `"${artifact.digest}"`);
+      response.setHeader("Cache-Control", "private, immutable, max-age=31536000");
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.end(bytes);
       return;
     }
     const documentCreateMatch = /^\/v1\/projects\/([^/]+)\/documents$/u.exec(url.pathname);
@@ -544,6 +599,37 @@ export class TaskBoardService {
     }
   }
 
+  #openProjectStream(request: IncomingMessage, response: ServerResponse, projectId: string, after: number): void {
+    const write = (event: import("#shared/task-board-contract").ProjectEvent): boolean => {
+      if (response.writableEnded || response.destroyed) return false;
+      response.write(`id: ${event.sequence}\nevent: workflow\ndata: ${JSON.stringify({ event })}\n\n`);
+      return true;
+    };
+    let stream: DocumentStream | undefined;
+    const remove = (): void => {
+      if (!stream) return;
+      stream.unsubscribe();
+      this.#projectStreams.delete(stream);
+      stream = undefined;
+    };
+    const unsubscribe = this.#board.subscribeProjectEvents(projectId, (event) => {
+      if (!write(event)) { remove(); response.end(); }
+    });
+    stream = { response, unsubscribe };
+    this.#projectStreams.add(stream);
+    request.once("close", remove);
+    response.once("close", remove);
+    response.statusCode = 200;
+    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.flushHeaders();
+    for (const event of this.#board.listProjectEvents(projectId, after)) {
+      if (!write(event)) { remove(); response.end(); break; }
+    }
+  }
+
   async start(): Promise<TaskBoardAddress> {
     if (this.#started) throw new Error("TASK_BOARD_ALREADY_STARTED");
     if (this.#closing) throw new Error("TASK_BOARD_CLOSED");
@@ -569,6 +655,11 @@ export class TaskBoardService {
       stream.unsubscribe();
       stream.response.end();
       this.#documentStreams.delete(stream);
+    }
+    for (const stream of [...this.#projectStreams]) {
+      stream.unsubscribe();
+      stream.response.end();
+      this.#projectStreams.delete(stream);
     }
     if (this.#started) {
       const stopped = new Promise<void>((resolve, reject) => {

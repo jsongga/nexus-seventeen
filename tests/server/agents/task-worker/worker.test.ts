@@ -827,7 +827,7 @@ test("launcher receives only the bounded contract fields", async () => {
     assert.deepEqual(Object.keys(launcher.requests[0]?.context ?? {}).sort(), [
       "agentId", "apiVersion", "areaMemory", "messages", "messagesSinceCursor", "mission", "nextMessageCursor",
       "openQuestions", "parentEvidence", "projectId", "projectMemory", "task", "taskId", "triggerQuestion",
-      "workspaceRefs",
+      "workflow", "workspaceRefs",
     ]);
     assert.equal("token" in (launcher.requests[0]?.context ?? {}), false);
     assert.equal("boardUrl" in (launcher.requests[0]?.context ?? {}), false);

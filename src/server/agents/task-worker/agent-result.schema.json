@@ -68,6 +68,36 @@
       }
     },
     "humanQuestion": { "type": ["string", "null"], "maxLength": 2000 },
+    "handoff": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "type": "string", "enum": ["passed", "failed", "needs_input"] },
+            "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+            "evidence": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+            "artifactIds": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+            "acceptanceCriteria": {
+              "type": "array", "maxItems": 32,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                  "criterion": { "type": "string", "minLength": 1, "maxLength": 1000 },
+                  "passed": { "type": "boolean" },
+                  "evidence": { "type": "string", "minLength": 1, "maxLength": 2000 }
+                },
+                "required": ["criterion", "passed", "evidence"]
+              }
+            },
+            "blockers": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+            "recommendedReturnStage": { "type": ["string", "null"], "enum": ["research", "planning", "implementation", "testing", "verification", null] }
+          },
+          "required": ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"]
+        }
+      ]
+    },
     "detail": { "type": "string", "minLength": 1, "maxLength": 2000 }
   },
   "required": [
@@ -78,6 +108,7 @@
     "expectedAgentMinutes",
     "phases",
     "humanQuestion",
+    "handoff",
     "detail"
   ]
 }

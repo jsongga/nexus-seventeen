@@ -1,5 +1,9 @@
 import type {
   AgentRole,
+  SkillSnapshot,
+  StageHandoff,
+  WorkflowStage,
+  StageHandoffDraft,
   TaskKind,
   TaskPhaseStage,
   TaskPhaseStatus,
@@ -131,6 +135,13 @@ export interface BoundedAgentContext {
     status: "open" | "answered";
   }>[];
   readonly workspaceRefs: readonly string[];
+  readonly workflow: Readonly<{
+    planRevisionId: string;
+    nodeId: string;
+    stage: WorkflowStage;
+    skills: readonly SkillSnapshot[];
+    dependencyHandoffs: readonly StageHandoff[];
+  }> | null;
 }
 
 export type AgentRunOutput =
@@ -151,6 +162,7 @@ export interface AgentRunOutcome {
   readonly expectedAgentMinutes: number | null;
   readonly phases: readonly AgentTaskPhaseUpdate[];
   readonly detail: string;
+  readonly handoff?: StageHandoffDraft | null;
 }
 
 export interface AgentLaunchRequest {
@@ -200,6 +212,7 @@ export interface SettleAgentRunRequest {
   readonly outcome: AgentRunTerminalStatus;
   readonly result: string;
   readonly idempotencyKey: string;
+  readonly handoff?: StageHandoffDraft | null;
 }
 
 export interface UpdateTaskEstimateRequest {

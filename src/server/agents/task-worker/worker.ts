@@ -894,6 +894,7 @@ export class TaskWorker {
         claim: active.claim,
         outcome: outcome.status,
         result,
+        handoff: outcome.handoff ?? null,
         idempotencyKey: settlementIdempotency(active.claim, outcome, result),
       });
     }

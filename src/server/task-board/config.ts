@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { TaskBoardError } from "./errors.js";
 
 export interface TaskBoardOptions {
@@ -10,6 +10,7 @@ export interface TaskBoardOptions {
   readonly port?: number;
   readonly maxBodyBytes?: number;
   readonly now?: () => Date;
+  readonly artifactRoot?: string;
 }
 
 export interface TaskBoardConfig {
@@ -21,6 +22,7 @@ export interface TaskBoardConfig {
   readonly port: number;
   readonly maxBodyBytes: number;
   readonly now: () => Date;
+  readonly artifactRoot: string;
 }
 
 function boundedInteger(
@@ -87,6 +89,10 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   if (host !== "127.0.0.1" && host !== "::1") {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "Task board HTTP must bind to literal loopback");
   }
+  const artifactRoot = configText(options.artifactRoot ?? join(dirname(dbPath), "artifacts"), "artifactRoot", 4_096);
+  if (!isAbsolute(artifactRoot) || artifactRoot === "/") {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "artifactRoot must be an absolute directory path");
+  }
   return Object.freeze({
     dbPath,
     humanToken,
@@ -96,5 +102,6 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     port: boundedInteger(options.port, 4_318, 0, 65_535, "port"),
     maxBodyBytes: boundedInteger(options.maxBodyBytes, 64 * 1_024, 1_024, 256 * 1_024, "maxBodyBytes"),
     now: options.now ?? (() => new Date()),
+    artifactRoot,
   });
 }

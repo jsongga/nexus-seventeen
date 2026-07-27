@@ -2633,3 +2633,33 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
     verified.close();
   }
 });
+
+test("artifacts are immutable, content-validated, and visible in the project event stream", async () => {
+  const fixture = await boardFixture();
+  try {
+    const artifact = await fixture.board.createArtifact(fixture.project.projectId, {
+      nodeId: null,
+      taskId: null,
+      mediaType: "text/vnd.mermaid",
+      caption: "Checkout dependency map",
+      contentBase64: Buffer.from("flowchart LR\nA --> B\n").toString("base64"),
+    });
+    assert.equal(artifact.caption, "Checkout dependency map");
+    assert.equal(fixture.board.listArtifacts(fixture.project.projectId).length, 1);
+    const stored = await fixture.board.artifactContent(artifact.artifactId);
+    assert.equal(stored.bytes.toString("utf8"), "flowchart LR\nA --> B\n");
+    assert.equal(fixture.board.listProjectEvents(fixture.project.projectId).at(-1)?.eventType, "artifact_created");
+    await assert.rejects(
+      fixture.board.createArtifact(fixture.project.projectId, {
+        nodeId: null,
+        taskId: null,
+        mediaType: "image/png",
+        caption: "Spoofed image",
+        contentBase64: Buffer.from("not a png").toString("base64"),
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "ARTIFACT_MEDIA_MISMATCH",
+    );
+  } finally {
+    fixture.board.close();
+  }
+});

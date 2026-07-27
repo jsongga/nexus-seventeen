@@ -216,7 +216,7 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   boundedJson(value, MAX_CONTEXT_BYTES, "Agent context");
   const item = exact(value, [
     "apiVersion", "projectId", "agentId", "taskId", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
-    "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs",
+    "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
   ], "Agent context");
   if (item.apiVersion !== 1) throw new Error("Agent context version is invalid");
   const mission = exact(item.mission, ["role", "area", "mission"], "Agent mission");
@@ -300,6 +300,96 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   }
   if (!Array.isArray(item.workspaceRefs) || item.workspaceRefs.length > 32) {
     throw new Error("Agent context workspace references are invalid");
+  }
+  let workflow: BoundedAgentContext["workflow"] = null;
+  if (item.workflow !== null) {
+    const workflowItem = exact(
+      item.workflow,
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"],
+      "Workflow context",
+    );
+    if (
+      workflowItem.stage !== "research" && workflowItem.stage !== "planning" &&
+      workflowItem.stage !== "implementation" && workflowItem.stage !== "testing" &&
+      workflowItem.stage !== "verification"
+    ) throw new Error("Workflow stage is invalid");
+    if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16) {
+      throw new Error("Workflow skills are invalid");
+    }
+    const skills = workflowItem.skills.map((entry, index) => {
+      const skill = exact(entry, ["skillId", "name", "description", "digest", "content"], `Workflow skill ${index}`);
+      if (typeof skill.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(skill.digest)) {
+        throw new Error(`Workflow skill ${index} digest is invalid`);
+      }
+      return Object.freeze({
+        skillId: identifier(skill.skillId, `workflow.skills[${index}].skillId`),
+        name: prose(skill.name, `workflow.skills[${index}].name`, 256),
+        description: prose(skill.description, `workflow.skills[${index}].description`, 2_000),
+        digest: skill.digest as `sha256:${string}`,
+        content: prose(skill.content, `workflow.skills[${index}].content`, 32_000),
+      });
+    });
+    if (!Array.isArray(workflowItem.dependencyHandoffs) || workflowItem.dependencyHandoffs.length > 32) {
+      throw new Error("Workflow dependency handoffs are invalid");
+    }
+    const dependencyHandoffs = workflowItem.dependencyHandoffs.map((entry, index) => {
+      const handoff = exact(entry, [
+        "apiVersion", "handoffId", "nodeId", "taskId", "stage", "outcome", "summary", "evidence",
+        "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage", "createdAt",
+      ], `Workflow handoff ${index}`);
+      if (handoff.apiVersion !== "steward.task-board/v1") throw new Error(`Workflow handoff ${index} version is invalid`);
+      if (
+        handoff.stage !== "research" && handoff.stage !== "planning" &&
+        handoff.stage !== "implementation" && handoff.stage !== "testing" &&
+        handoff.stage !== "verification"
+      ) throw new Error(`Workflow handoff ${index} stage is invalid`);
+      if (handoff.outcome !== "passed" && handoff.outcome !== "failed" && handoff.outcome !== "needs_input") {
+        throw new Error(`Workflow handoff ${index} outcome is invalid`);
+      }
+      const stringList = (input: unknown, label: string, maximum: number): readonly string[] => {
+        if (!Array.isArray(input) || input.length > maximum) throw new Error(`${label} is invalid`);
+        return Object.freeze(input.map((value, itemIndex) => prose(value, `${label}[${itemIndex}]`, 2_000)));
+      };
+      if (!Array.isArray(handoff.acceptanceCriteria) || handoff.acceptanceCriteria.length > 32) {
+        throw new Error(`Workflow handoff ${index} acceptance criteria are invalid`);
+      }
+      const acceptanceCriteria = handoff.acceptanceCriteria.map((entryValue, criterionIndex) => {
+        const criterion = exact(entryValue, ["criterion", "passed", "evidence"], `Workflow criterion ${criterionIndex}`);
+        if (typeof criterion.passed !== "boolean") throw new Error(`Workflow criterion ${criterionIndex} result is invalid`);
+        return Object.freeze({
+          criterion: prose(criterion.criterion, `workflow.criterion[${criterionIndex}].criterion`, 1_000),
+          passed: criterion.passed,
+          evidence: prose(criterion.evidence, `workflow.criterion[${criterionIndex}].evidence`, 2_000),
+        });
+      });
+      const returnStage = handoff.recommendedReturnStage;
+      if (
+        returnStage !== null && returnStage !== "research" && returnStage !== "planning" &&
+        returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification"
+      ) throw new Error(`Workflow handoff ${index} return stage is invalid`);
+      return Object.freeze({
+        apiVersion: "steward.task-board/v1" as const,
+        handoffId: identifier(handoff.handoffId, `workflow.handoffs[${index}].handoffId`),
+        nodeId: identifier(handoff.nodeId, `workflow.handoffs[${index}].nodeId`),
+        taskId: identifier(handoff.taskId, `workflow.handoffs[${index}].taskId`),
+        stage: handoff.stage,
+        outcome: handoff.outcome,
+        summary: prose(handoff.summary, `workflow.handoffs[${index}].summary`, 4_000),
+        evidence: stringList(handoff.evidence, `workflow.handoffs[${index}].evidence`, 32),
+        artifactIds: stringList(handoff.artifactIds, `workflow.handoffs[${index}].artifactIds`, 32),
+        acceptanceCriteria: Object.freeze(acceptanceCriteria),
+        blockers: stringList(handoff.blockers, `workflow.handoffs[${index}].blockers`, 32),
+        recommendedReturnStage: returnStage,
+        createdAt: timestamp(handoff.createdAt, `workflow.handoffs[${index}].createdAt`),
+      });
+    });
+    workflow = Object.freeze({
+      planRevisionId: identifier(workflowItem.planRevisionId, "workflow.planRevisionId"),
+      nodeId: identifier(workflowItem.nodeId, "workflow.nodeId"),
+      stage: workflowItem.stage,
+      skills: Object.freeze(skills),
+      dependencyHandoffs: Object.freeze(dependencyHandoffs),
+    });
   }
   if (!Array.isArray(task.phases) || task.phases.length > 64) throw new Error("Agent task phases are invalid");
   const phases = task.phases.map(contextPhase);
@@ -387,6 +477,7 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
     triggerQuestion,
     openQuestions: Object.freeze(openQuestions),
     workspaceRefs: Object.freeze(item.workspaceRefs.map((entry, index) => prose(entry, `workspaceRefs[${index}]`, 512))),
+    workflow,
   });
 }
 
@@ -425,7 +516,11 @@ export function parseAgentRunOutput(value: unknown): AgentRunOutput {
 
 export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
   boundedJson(value, MAX_OUTCOME_BYTES, "Agent outcome");
-  const item = exact(value, ["status", "outputs", "expectedAgentMinutes", "phases", "detail"], "Agent outcome");
+  const raw = record(value, "Agent outcome");
+  const item = exact(value, [
+    "status", "outputs", "expectedAgentMinutes", "phases", "detail",
+    ...("handoff" in raw ? ["handoff"] : []),
+  ], "Agent outcome");
   if (
     item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" &&
     item.status !== "waiting_for_human"
@@ -449,12 +544,41 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
   if (item.status === "waiting_for_human" && outputs.at(-1)?.type !== "human_question") {
     throw new Error("A human question must be the final output because it ends the run");
   }
+  let handoff: AgentRunOutcome["handoff"] = null;
+  if (item.handoff !== undefined && item.handoff !== null) {
+    const value = exact(item.handoff, [
+      "outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage",
+    ], "Stage handoff");
+    if (value.outcome !== "passed" && value.outcome !== "failed" && value.outcome !== "needs_input") throw new Error("Stage handoff outcome is invalid");
+    const strings = (input: unknown, label: string): readonly string[] => {
+      if (!Array.isArray(input) || input.length > 32) throw new Error(`${label} is invalid`);
+      return Object.freeze(input.map((entry, index) => prose(entry, `${label}[${index}]`, 2_000)));
+    };
+    if (!Array.isArray(value.acceptanceCriteria) || value.acceptanceCriteria.length > 32) throw new Error("Stage handoff criteria are invalid");
+    const criteria = value.acceptanceCriteria.map((entry, index) => {
+      const criterion = exact(entry, ["criterion", "passed", "evidence"], `Stage handoff criterion ${index}`);
+      if (typeof criterion.passed !== "boolean") throw new Error(`Stage handoff criterion ${index} result is invalid`);
+      return Object.freeze({ criterion: prose(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: prose(criterion.evidence, "criterion evidence", 2_000) });
+    });
+    const returnStage = value.recommendedReturnStage;
+    if (returnStage !== null && returnStage !== "research" && returnStage !== "planning" && returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification") throw new Error("Stage handoff return stage is invalid");
+    handoff = Object.freeze({
+      outcome: value.outcome,
+      summary: prose(value.summary, "handoff.summary", 4_000),
+      evidence: strings(value.evidence, "handoff.evidence"),
+      artifactIds: strings(value.artifactIds, "handoff.artifactIds"),
+      acceptanceCriteria: Object.freeze(criteria),
+      blockers: strings(value.blockers, "handoff.blockers"),
+      recommendedReturnStage: returnStage,
+    });
+  }
   return Object.freeze({
     status: item.status,
     outputs: Object.freeze(outputs),
     expectedAgentMinutes: expectedAgentMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes"),
     phases: Object.freeze(phases),
     detail: prose(item.detail, "outcome.detail", 2_000),
+    handoff,
   });
 }
 

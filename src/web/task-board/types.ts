@@ -276,6 +276,70 @@ export interface BoardSnapshot {
   documents: BoardDocumentSummary[];
 }
 
+export type WorkflowStage = 'research' | 'planning' | 'implementation' | 'testing' | 'verification';
+
+export interface WorkflowPlan {
+  planRevisionId: string;
+  revision: number;
+  objective: string;
+  state: 'proposed' | 'confirmed' | 'superseded' | 'rejected';
+  createdAt: string;
+  confirmedAt: string | null;
+}
+
+export interface WorkflowNode {
+  nodeId: string;
+  planRevisionId: string;
+  title: string;
+  objective: string;
+  acceptanceCriteria: string[];
+  dependencyNodeIds: string[];
+  stageTemplate: WorkflowStage[];
+  currentStage: WorkflowStage | null;
+  state: 'pending' | 'ready' | 'active' | 'blocked' | 'stale' | 'completed' | 'cancelled';
+  updatedAt: string;
+}
+
+export interface WorkflowHandoff {
+  handoffId: string;
+  nodeId: string;
+  taskId: string;
+  stage: WorkflowStage;
+  outcome: 'passed' | 'failed' | 'needs_input';
+  summary: string;
+  evidence: string[];
+  artifactIds: string[];
+  blockers: string[];
+  createdAt: string;
+}
+
+export interface WorkflowEvent {
+  sequence: number;
+  eventId: string;
+  nodeId: string | null;
+  taskId: string | null;
+  eventType: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface ProjectWorkflow {
+  plans: WorkflowPlan[];
+  nodes: WorkflowNode[];
+  handoffs: WorkflowHandoff[];
+  events: WorkflowEvent[];
+}
+
+export interface ProjectArtifact {
+  artifactId: string;
+  nodeId: string | null;
+  taskId: string | null;
+  mediaType: string;
+  byteSize: number;
+  caption: string;
+  createdAt: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   description: string;

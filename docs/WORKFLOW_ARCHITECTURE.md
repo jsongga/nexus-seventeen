@@ -1,6 +1,6 @@
 # Transparent Agent Workflow
 
-**Status** — proposed · **Author** — Cicada · **Date** — 2026-07-26 · **Scope** — editable skills, confirmed task graphs, deterministic stage orchestration, compact agent handoffs, live project progress, diagrams, and image artifacts; excludes deployment automation and arbitrary agent-to-agent activation.
+**Status** — implemented · **Author** — Cicada · **Date** — 2026-07-26 · **Scope** — editable skills, confirmed task graphs, deterministic stage orchestration, compact agent handoffs, live project progress, diagrams, and image artifacts; excludes deployment automation and arbitrary agent-to-agent activation.
 
 ## Summary
 
@@ -94,7 +94,7 @@ The SQLite board gains:
 - `work_nodes` — stable subtask identities and current stage;
 - `work_node_dependencies` — directed dependency edges;
 - `stage_attempts` — links a work node and stage to an existing `tasks` row;
-- `handoffs` — structured outputs from completed attempts;
+- `stage_handoffs` — structured outputs from completed attempts;
 - `artifacts` — immutable metadata for diagrams, images, and files;
 - `project_events` — ordered project-wide events for replayable UI updates.
 

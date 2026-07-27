@@ -23,6 +23,9 @@ import type {
   CreateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
+  ProjectArtifact,
+  ProjectWorkflow,
+  WorkflowEvent,
   RunStatus,
   SaveAutomationConfigurationInput,
   TaskStatus,
@@ -1200,6 +1203,16 @@ export interface TaskBoardClient {
   resumeTask(taskId: string, input: { version: number }): Promise<void>;
   decideHumanCheck(taskId: string, input: { version: number; status: 'completed' | 'failed'; result: string }): Promise<void>;
   interruptRun(runId: string): Promise<void>;
+  getProjectWorkflow(projectId: string, signal?: AbortSignal): Promise<ProjectWorkflow>;
+  getProjectArtifacts(projectId: string, signal?: AbortSignal): Promise<ProjectArtifact[]>;
+  confirmWorkflow(planRevisionId: string): Promise<ProjectWorkflow>;
+  subscribeProjectEvents(input: {
+    projectId: string;
+    after: number;
+    signal: AbortSignal;
+    onEvent: (event: WorkflowEvent) => void;
+  }): Promise<void>;
+  getArtifactBlob(artifactId: string, signal?: AbortSignal): Promise<Blob>;
 }
 
 async function errorMessage(response: Response): Promise<string> {
@@ -1547,6 +1560,67 @@ export function createTaskBoardClient(options: {
 
   return {
     documentClientId,
+    async getProjectWorkflow(projectId, signal) {
+      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }), 'workflow response');
+      const workflow = record(envelope.workflow, 'workflow response.workflow');
+      return {
+        plans: array(workflow.plans, 'workflow plans', (value) => record(value, 'workflow plan')) as unknown as ProjectWorkflow['plans'],
+        nodes: array(workflow.nodes, 'workflow nodes', (value) => record(value, 'workflow node')) as unknown as ProjectWorkflow['nodes'],
+        handoffs: array(workflow.handoffs, 'workflow handoffs', (value) => record(value, 'workflow handoff')) as unknown as ProjectWorkflow['handoffs'],
+        events: array(workflow.events, 'workflow events', (value) => record(value, 'workflow event')) as unknown as ProjectWorkflow['events'],
+      };
+    },
+    async getProjectArtifacts(projectId, signal) {
+      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }), 'artifacts response');
+      return array(envelope.artifacts, 'artifacts response.artifacts', (value) => record(value, 'artifact')) as unknown as ProjectArtifact[];
+    },
+    async confirmWorkflow(planRevisionId) {
+      const envelope = record(await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ expectedState: 'proposed' }),
+      }), 'confirm workflow response');
+      const workflow = record(envelope.workflow, 'confirm workflow response.workflow');
+      return {
+        plans: array(workflow.plans, 'workflow plans', (value) => record(value, 'workflow plan')) as unknown as ProjectWorkflow['plans'],
+        nodes: array(workflow.nodes, 'workflow nodes', (value) => record(value, 'workflow node')) as unknown as ProjectWorkflow['nodes'],
+        handoffs: array(workflow.handoffs, 'workflow handoffs', (value) => record(value, 'workflow handoff')) as unknown as ProjectWorkflow['handoffs'],
+        events: array(workflow.events, 'workflow events', (value) => record(value, 'workflow event')) as unknown as ProjectWorkflow['events'],
+      };
+    },
+    async subscribeProjectEvents(input) {
+      const response = await request(
+        `/v1/projects/${encodeURIComponent(input.projectId)}/workflow/events?after=${input.after}`,
+        { signal: input.signal, headers: { accept: 'text/event-stream' } },
+      );
+      if (!response.body) throw new Error('The workflow event stream returned no body');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = '';
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          pending += decoder.decode(chunk.value, { stream: !chunk.done });
+          let boundary = pending.indexOf('\n\n');
+          while (boundary >= 0) {
+            const frame = pending.slice(0, boundary);
+            pending = pending.slice(boundary + 2);
+            const data = frame.split(/\r?\n/u).filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n');
+            if (data) {
+              const envelope = record(JSON.parse(data) as unknown, 'workflow event');
+              input.onEvent(record(envelope.event, 'workflow event.event') as unknown as WorkflowEvent);
+            }
+            boundary = pending.indexOf('\n\n');
+          }
+          if (pending.length > 64 * 1_024) throw new Error('A workflow event exceeded the size limit');
+          if (chunk.done) return;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    },
+    async getArtifactBlob(artifactId, signal) {
+      return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
+    },
     async getSnapshot(signal) {
       const [projectsValue, workItemsValue] = await Promise.all([
         json('/v1/projects', { signal }),

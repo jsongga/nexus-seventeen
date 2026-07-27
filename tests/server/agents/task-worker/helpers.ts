@@ -99,6 +99,7 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
     triggerQuestion: null,
     openQuestions: [],
     workspaceRefs: ["repo:checkout", "path:services/checkout"],
+    workflow: null,
     ...overrides,
   };
 }

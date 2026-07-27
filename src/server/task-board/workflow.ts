@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   ConfirmPlanRevisionRequest,
+  ClaimRunResult,
   CreatePlanRevisionRequest,
   PlanRevision,
   ProjectEvent,
   StageHandoff,
+  StageHandoffDraft,
   WorkNode,
   WorkflowStage,
 } from "#shared/task-board-contract";
@@ -54,6 +56,7 @@ export class TransparentWorkflow {
     readonly skills: SkillRegistry,
     readonly now: () => Date,
     readonly transaction: <T>(operation: () => T) => T,
+    readonly onEvent?: (event: ProjectEvent) => void,
   ) {}
 
   async propose(raw: CreatePlanRevisionRequest, actor: string): Promise<ProjectWorkflowSnapshot> {
@@ -100,6 +103,21 @@ export class TransparentWorkflow {
     return this.snapshot(projectId);
   }
 
+  claimContext(taskId: string): ClaimRunResult["context"]["workflow"] {
+    const row = this.db.prepare(`SELECT a.stage,a.skill_digests_json,n.node_id,n.plan_revision_id
+      FROM stage_attempts a JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
+    if (!row) return null;
+    const digests = json<Record<string, string>>(row.skill_digests_json);
+    const skills = this.skills.loadSync(Object.keys(digests));
+    for (const skill of skills) if (digests[skill.skillId] !== skill.digest) throw new TaskBoardError(409, "SKILL_DIGEST_CHANGED", `Skill ${skill.skillId} changed after confirmation`);
+    const handoffs = (this.db.prepare(`SELECT h.payload_json FROM work_node_dependencies d JOIN stage_handoffs h ON h.node_id=d.dependency_node_id
+      WHERE d.node_id=? ORDER BY h.created_at`).all(String(row.node_id)) as Row[]).map((item) => Object.freeze(json<StageHandoff>(item.payload_json)));
+    return Object.freeze({
+      planRevisionId: String(row.plan_revision_id), nodeId: String(row.node_id), stage: row.stage as WorkflowStage,
+      skills: Object.freeze(skills), dependencyHandoffs: Object.freeze(handoffs),
+    });
+  }
+
   confirm(planId: string, request: ConfirmPlanRevisionRequest, actor: string): readonly WorkNode[] {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
     const now = this.now().toISOString();
@@ -124,7 +142,7 @@ export class TransparentWorkflow {
     });
   }
 
-  settleAttempt(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string): readonly WorkNode[] {
+  settleAttempt(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
     const attempt = this.db.prepare(`SELECT a.*,n.project_id,n.stage_template_json,n.current_stage FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
     if (!attempt) return Object.freeze([]);
@@ -133,14 +151,25 @@ export class TransparentWorkflow {
       const nodeId = String(attempt.node_id); const projectId = String(attempt.project_id);
       const stage = String(attempt.stage) as WorkflowStage;
       const passed = outcome === "completed";
+      const supplied = draft ?? null;
       const handoff: StageHandoff = Object.freeze({
         apiVersion: "steward.task-board/v1", handoffId: `handoff_${randomUUID()}`, nodeId, taskId, stage,
-        outcome: passed ? "passed" : "failed", summary: result, evidence: Object.freeze([]), artifactIds: Object.freeze([]),
-        acceptanceCriteria: Object.freeze([]), blockers: Object.freeze(passed ? [] : [result]),
-        recommendedReturnStage: passed ? null : stage, createdAt: now,
+        outcome: supplied?.outcome ?? (passed ? "passed" : "failed"), summary: supplied?.summary ?? result,
+        evidence: supplied?.evidence ?? Object.freeze([]), artifactIds: supplied?.artifactIds ?? Object.freeze([]),
+        acceptanceCriteria: supplied?.acceptanceCriteria ?? Object.freeze([]),
+        blockers: supplied?.blockers ?? Object.freeze(passed ? [] : [result]),
+        recommendedReturnStage: supplied?.recommendedReturnStage ?? (passed ? null : stage), createdAt: now,
       });
       this.db.prepare("INSERT OR IGNORE INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(handoff.handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
       if (!passed) {
+        const returnStage = supplied?.recommendedReturnStage ?? null;
+        const attemptNumber = Number(attempt.attempt);
+        const template = json<WorkflowStage[]>(attempt.stage_template_json);
+        if (returnStage !== null && template.includes(returnStage) && attemptNumber < 3) {
+          this.db.prepare("UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?").run(returnStage, now, nodeId);
+          this.event(projectId, nodeId, taskId, "stage_retry_ready", `${stage} failed; returning to ${returnStage} (attempt ${attemptNumber + 1} of 3)`, now);
+          return Object.freeze(this.nodesForIds([nodeId]));
+        }
         this.db.prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?").run(now, nodeId);
         this.event(projectId, nodeId, taskId, "stage_failed", `${stage} failed: ${result.slice(0, 240)}`, now);
         return Object.freeze([]);
@@ -192,6 +221,12 @@ export class TransparentWorkflow {
   }
 
   event(projectId: string, nodeId: string | null, taskId: string | null, type: string, summary: string, createdAt = this.now().toISOString()): void {
-    this.db.prepare("INSERT INTO project_events(event_id,project_id,node_id,task_id,event_type,summary,created_at) VALUES(?,?,?,?,?,?,?)").run(`event_${randomUUID()}`, projectId, nodeId, taskId, type, summary, createdAt);
+    const eventId = `event_${randomUUID()}`;
+    this.db.prepare("INSERT INTO project_events(event_id,project_id,node_id,task_id,event_type,summary,created_at) VALUES(?,?,?,?,?,?,?)").run(eventId, projectId, nodeId, taskId, type, summary, createdAt);
+    const sequence = Number((this.db.prepare("SELECT sequence FROM project_events WHERE event_id=?").get(eventId) as Row).sequence);
+    this.onEvent?.(Object.freeze({
+      apiVersion: "steward.task-board/v1", sequence, eventId, projectId, nodeId, taskId,
+      eventType: type, summary, createdAt,
+    }));
   }
 }

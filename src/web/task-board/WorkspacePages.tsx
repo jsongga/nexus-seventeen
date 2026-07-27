@@ -14,7 +14,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Pill, cn } from '../components/ui';
 import { agentQueryPromptFromObjective } from './client';
-import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot } from './types';
+import type { TaskBoardClient } from './client';
+import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, ProjectWorkflow } from './types';
 import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
 import {
   agentWorkLabel,
@@ -168,12 +169,67 @@ export function ProjectPage({
   snapshot,
   onTask,
   onAddTask,
+  client,
 }: {
   project: BoardProject;
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
   onAddTask: () => void;
+  client: TaskBoardClient;
 }) {
+  const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
+  const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
+  const [artifactUrls, setArtifactUrls] = useState<Record<string, string>>({});
+  const [confirmingPlan, setConfirmingPlan] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.all([
+      client.getProjectWorkflow(project.id, controller.signal),
+      client.getProjectArtifacts(project.id, controller.signal),
+    ]).then(([nextWorkflow, nextArtifacts]) => {
+      setWorkflow(nextWorkflow);
+      setArtifacts(nextArtifacts);
+    }).catch(() => {
+      if (!controller.signal.aborted) setWorkflow(null);
+    });
+    return () => controller.abort();
+  }, [client, project.id, snapshot.generatedAt]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const created: string[] = [];
+    void Promise.all(artifacts.map(async (artifact) => {
+      const url = URL.createObjectURL(await client.getArtifactBlob(artifact.artifactId, controller.signal));
+      created.push(url);
+      return [artifact.artifactId, url] as const;
+    })).then((entries) => setArtifactUrls(Object.fromEntries(entries))).catch(() => undefined);
+    return () => {
+      controller.abort();
+      for (const url of created) URL.revokeObjectURL(url);
+    };
+  }, [artifacts, client]);
+  useEffect(() => {
+    if (!workflow) return;
+    const controller = new AbortController();
+    const after = Math.max(0, ...workflow.events.map((event) => event.sequence));
+    void client.subscribeProjectEvents({
+      projectId: project.id,
+      after,
+      signal: controller.signal,
+      onEvent: () => {
+        void client.getProjectWorkflow(project.id, controller.signal).then(setWorkflow).catch(() => undefined);
+      },
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [client, project.id, workflow === null]);
+  const confirmPlan = async (planRevisionId: string) => {
+    setConfirmingPlan(planRevisionId);
+    try {
+      setWorkflow(await client.confirmWorkflow(planRevisionId));
+    } finally {
+      setConfirmingPlan(null);
+    }
+  };
+  const proposedPlan = workflow?.plans.find((plan) => plan.state === 'proposed') ?? null;
   const updates = updatesForProject(snapshot, project.id);
   const metadata = parseProjectMetadata(project.description);
   const tasks = snapshot.tasks.filter((task) => task.projectId === project.id);
@@ -231,6 +287,69 @@ export function ProjectPage({
           <div className="mt-2 h-1 overflow-hidden bg-surface" role="progressbar" aria-label="Task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
             <div className="h-full bg-success-fill transition-[width] duration-300" style={{ width: `${completionPercent}%` }} />
           </div>
+        </section>
+
+        <section className="mt-6" aria-labelledby="workflow-heading">
+          <Card className={cn(warmCard, 'overflow-hidden')}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-4 sm:px-5">
+              <div>
+                <h2 id="workflow-heading" className="text-sm font-medium text-ink">Execution map</h2>
+                <p className="mt-1 text-xs text-muted">Confirmed subtasks, dependencies, stage handoffs, and durable artifacts.</p>
+              </div>
+              <Pill tone={workflow?.nodes.some((node) => node.state === 'blocked') ? 'amber' : 'neutral'}>
+                {workflow?.nodes.length ?? 0} subtasks
+              </Pill>
+              {proposedPlan ? <Button size="sm" variant="primary" disabled={confirmingPlan !== null} onClick={() => void confirmPlan(proposedPlan.planRevisionId)}>{confirmingPlan ? 'Confirming…' : `Confirm plan v${proposedPlan.revision}`}</Button> : null}
+            </div>
+            {workflow && workflow.nodes.length > 0 ? (
+              <div className="grid gap-px bg-line lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+                <div className="space-y-px bg-line">
+                  {workflow.nodes.map((node) => (
+                    <article key={node.nodeId} className="bg-card px-4 py-4 sm:px-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-medium text-ink">{node.title}</h3>
+                          <p className="mt-1 text-xs leading-5 text-muted">{node.objective}</p>
+                        </div>
+                        <Pill tone={node.state === 'completed' ? 'green' : node.state === 'blocked' ? 'amber' : 'neutral'}>{node.state}</Pill>
+                      </div>
+                      {node.dependencyNodeIds.length > 0 ? <p className="mt-2 font-mono text-[10px] text-muted">Depends on {node.dependencyNodeIds.join(', ')}</p> : <p className="mt-2 font-mono text-[10px] text-muted">Dependency root</p>}
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {node.stageTemplate.map((stage) => (
+                          <span key={stage} className={cn('border px-2 py-1 font-mono text-[9px] uppercase tracking-wide', node.currentStage === stage ? 'border-teal-700 bg-teal-50 text-teal-700' : 'border-line text-muted')}>{stage}</span>
+                        ))}
+                      </div>
+                      {workflow.handoffs.filter((handoff) => handoff.nodeId === node.nodeId).slice(-1).map((handoff) => (
+                        <p key={handoff.handoffId} className="mt-3 border-l-2 border-line pl-3 text-xs leading-5 text-muted"><span className="font-medium text-ink">{handoff.stage} handoff:</span> {handoff.summary}</p>
+                      ))}
+                    </article>
+                  ))}
+                </div>
+                <aside className="bg-card px-4 py-4 sm:px-5">
+                  <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Latest workflow updates</h3>
+                  <ol className="mt-3 space-y-3">
+                    {workflow.events.slice(0, 8).map((event) => (
+                      <li key={event.eventId} className="border-l border-line pl-3">
+                        <p className="text-xs leading-5 text-ink">{event.summary}</p>
+                        <time className="font-mono text-[9px] text-muted" dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
+                      </li>
+                    ))}
+                  </ol>
+                  {artifacts.length > 0 ? (
+                    <div className="mt-5 border-t border-line pt-4">
+                      <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Artifacts</h3>
+                      <ul className="mt-2 space-y-1">
+                        {artifacts.map((artifact) => <li key={artifact.artifactId} className="py-1">
+                          {artifact.mediaType.startsWith('image/') && artifactUrls[artifact.artifactId] ? <img className="mb-2 max-h-40 w-full border border-line object-contain" src={artifactUrls[artifact.artifactId]} alt={artifact.caption} /> : null}
+                          {artifactUrls[artifact.artifactId] ? <a className="block truncate text-xs text-teal-700 hover:underline" href={artifactUrls[artifact.artifactId]} target="_blank" rel="noreferrer">{artifact.caption}</a> : <span className="block truncate text-xs text-muted">{artifact.caption}</span>}
+                        </li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+                </aside>
+              </div>
+            ) : <div className="px-5 py-10 text-center text-sm text-muted">A dependency map will appear after task curation proposes a workflow plan.</div>}
+          </Card>
         </section>
 
         <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">

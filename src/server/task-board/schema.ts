@@ -716,11 +716,36 @@ export function parseClaim(value: unknown): ClaimRunRequest {
 }
 
 export function parseSettle(value: unknown): SettleRunRequest {
-  const item = exact(value, ["outcome", "result"], "Run settlement");
+  if (!isRecord(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "Run settlement must be an object");
+  const item = exact(value, ["outcome", "result", ...("handoff" in value ? ["handoff"] : [])], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Run outcome is invalid");
   }
-  return Object.freeze({ outcome: item.outcome, result: text(item.result, "result", 16_000) });
+  let handoff: SettleRunRequest["handoff"] = null;
+  if (item.handoff !== undefined && item.handoff !== null) {
+    if (!isRecord(item.handoff)) throw new TaskBoardError(400, "INVALID_REQUEST", "handoff is invalid");
+    const raw = exact(item.handoff, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], "handoff");
+    if (raw.outcome !== "passed" && raw.outcome !== "failed" && raw.outcome !== "needs_input") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff outcome is invalid");
+    const values = (input: unknown, field: string): readonly string[] => {
+      if (!Array.isArray(input) || input.length > 32) throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
+      return Object.freeze(input.map((entry, index) => text(entry, `${field}[${index}]`, 2_000)));
+    };
+    if (!Array.isArray(raw.acceptanceCriteria) || raw.acceptanceCriteria.length > 32) throw new TaskBoardError(400, "INVALID_REQUEST", "handoff criteria are invalid");
+    const criteria = raw.acceptanceCriteria.map((entry, index) => {
+      const criterion = exact(entry, ["criterion", "passed", "evidence"], `handoff criterion ${index}`);
+      if (typeof criterion.passed !== "boolean") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff criterion result is invalid");
+      return Object.freeze({ criterion: text(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: text(criterion.evidence, "evidence", 2_000) });
+    });
+    const returnStage = raw.recommendedReturnStage;
+    if (returnStage !== null && returnStage !== "research" && returnStage !== "planning" && returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff return stage is invalid");
+    handoff = Object.freeze({
+      outcome: raw.outcome, summary: text(raw.summary, "handoff.summary", 4_000),
+      evidence: values(raw.evidence, "handoff.evidence"), artifactIds: values(raw.artifactIds, "handoff.artifactIds"),
+      acceptanceCriteria: Object.freeze(criteria), blockers: values(raw.blockers, "handoff.blockers"),
+      recommendedReturnStage: returnStage,
+    });
+  }
+  return Object.freeze({ outcome: item.outcome, result: text(item.result, "result", 16_000), handoff });
 }
 
 export function parseIdempotencyKey(value: string | string[] | undefined): string {

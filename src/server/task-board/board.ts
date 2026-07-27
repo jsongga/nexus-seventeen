@@ -26,6 +26,7 @@ import {
   type CreateTaskRequest,
   type CreateWorkItemRequest,
   type CreatePlanRevisionRequest,
+  type CreateProjectArtifactRequest,
   type ConfirmPlanRevisionRequest,
   type HumanQuestion,
   type InterruptAgentRequest,
@@ -33,6 +34,8 @@ import {
   type DocumentSnapshot,
   type DocumentSummary,
   type Project,
+  type ProjectArtifact,
+  type ProjectEvent,
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
@@ -64,6 +67,7 @@ import { conflict, TaskBoardError } from "./errors.js";
 import { parseUpdateAutomationConfiguration } from "./schema.js";
 import { TaskBoardStore } from "./store.js";
 import { SkillRegistry } from "./skills.js";
+import { ArtifactStore } from "./artifacts.js";
 import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "./workflow.js";
 
 type Row = Record<string, SQLOutputValue>;
@@ -554,16 +558,26 @@ export class TaskBoard {
   readonly #interruptEvents = new EventEmitter();
   readonly #wakeupEvents = new EventEmitter();
   readonly #documentEvents = new EventEmitter();
+  readonly #projectEvents = new EventEmitter();
   readonly #workerConnections = new Map<string, WorkerConnectionCounts>();
   readonly #workflow: TransparentWorkflow;
+  readonly #artifacts: ArtifactStore;
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore) {
     this.#config = config;
     this.#store = store;
-    this.#workflow = new TransparentWorkflow(store.db, new SkillRegistry(resolve("skills")), config.now, (operation) => store.transaction(operation));
+    this.#workflow = new TransparentWorkflow(
+      store.db,
+      new SkillRegistry(resolve("skills")),
+      config.now,
+      (operation) => store.transaction(operation),
+      (event) => this.#projectEvents.emit(event.projectId, event),
+    );
+    this.#artifacts = new ArtifactStore(store.db, config.artifactRoot, config.now);
     this.#interruptEvents.setMaxListeners(512);
     this.#wakeupEvents.setMaxListeners(512);
     this.#documentEvents.setMaxListeners(512);
+    this.#projectEvents.setMaxListeners(512);
   }
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {
@@ -591,6 +605,45 @@ export class TaskBoard {
   projectWorkflow(projectId: string): ProjectWorkflowSnapshot {
     this.#requireProject(projectId);
     return this.#workflow.snapshot(projectId);
+  }
+
+  createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
+    return this.#artifacts.create(projectId, request, this.#config.humanPrincipal).then((artifact) => {
+      this.#workflow.event(projectId, artifact.nodeId, artifact.taskId, "artifact_created", artifact.caption);
+      return artifact;
+    });
+  }
+
+  listArtifacts(projectId: string): readonly ProjectArtifact[] {
+    this.#requireProject(projectId);
+    return this.#artifacts.list(projectId);
+  }
+
+  artifactContent(artifactId: string): Promise<{ artifact: ProjectArtifact; bytes: Buffer }> {
+    return this.#artifacts.content(artifactId);
+  }
+
+  listProjectEvents(projectId: string, after = 0): readonly ProjectEvent[] {
+    this.#requireProject(projectId);
+    return Object.freeze((this.#store.db.prepare(
+      "SELECT * FROM project_events WHERE project_id=? AND sequence>? ORDER BY sequence LIMIT 500",
+    ).all(projectId, after) as Row[]).map((row) => Object.freeze({
+      apiVersion: TASK_BOARD_API_VERSION,
+      sequence: Number(row.sequence),
+      eventId: String(row.event_id),
+      projectId: String(row.project_id),
+      nodeId: row.node_id === null ? null : String(row.node_id),
+      taskId: row.task_id === null ? null : String(row.task_id),
+      eventType: String(row.event_type),
+      summary: String(row.summary),
+      createdAt: String(row.created_at),
+    })));
+  }
+
+  subscribeProjectEvents(projectId: string, listener: (event: ProjectEvent) => void): () => void {
+    this.#requireProject(projectId);
+    this.#projectEvents.on(projectId, listener);
+    return () => this.#projectEvents.off(projectId, listener);
   }
 
   confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ProjectWorkflowSnapshot {
@@ -1714,7 +1767,7 @@ export class TaskBoard {
     });
     if (workflowWakeAgentId !== null) this.#wakeupEvents.emit(workflowWakeAgentId);
     if (current.taskId !== null) {
-      for (const node of this.#workflow.settleAttempt(current.taskId, request.outcome, request.result)) this.#activateWorkflowNode(node);
+      for (const node of this.#workflow.settleAttempt(current.taskId, request.outcome, request.result, request.handoff)) this.#activateWorkflowNode(node);
     }
     return { run: runFromRow(this.#store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
   }
@@ -1844,6 +1897,7 @@ export class TaskBoard {
         openQuestions: Object.freeze(this.#store.db.prepare(`
           SELECT * FROM questions WHERE agent_id = ? AND status = 'open' ORDER BY asked_at, question_id LIMIT 50
         `).all(run.agentId).map(questionFromRow)),
+        workflow: task === null ? null : this.#workflow.claimContext(task.taskId),
       }),
     });
   }

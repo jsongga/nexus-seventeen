@@ -66,10 +66,38 @@ const RESULT_SCHEMA = Object.freeze({
       },
     },
     humanQuestion: { type: ["string", "null"], maxLength: 2_000 },
+    handoff: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object", additionalProperties: false,
+          properties: {
+            outcome: { type: "string", enum: ["passed", "failed", "needs_input"] },
+            summary: { type: "string", minLength: 1, maxLength: 4_000 },
+            evidence: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            artifactIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 128 } },
+            acceptanceCriteria: {
+              type: "array", maxItems: 32, items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  criterion: { type: "string", minLength: 1, maxLength: 1_000 },
+                  passed: { type: "boolean" },
+                  evidence: { type: "string", minLength: 1, maxLength: 2_000 },
+                },
+                required: ["criterion", "passed", "evidence"],
+              },
+            },
+            blockers: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            recommendedReturnStage: { type: ["string", "null"], enum: ["research", "planning", "implementation", "testing", "verification", null] },
+          },
+          required: ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"],
+        },
+      ],
+    },
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
   required: [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "detail",
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "detail",
   ],
 } as const);
 
@@ -236,6 +264,7 @@ function prompt(request: AgentLaunchRequest): string {
     "Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.",
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
     "Progress entries must be short, result-oriented updates. Do not include secrets or a technical transcript.",
+    "When workflow context is present, return a compact handoff with criterion results, evidence references, artifact IDs, blockers, and a recommended return stage. Otherwise return handoff null.",
     "After inspecting the task, estimate only the agent's remaining work in 15-minute intervals. Return expectedAgentMinutes null until there is enough evidence; null leaves any current estimate unchanged.",
     "Use phases for durable work stages. Return only phases that should be created or changed: copy an active existing phaseId from context to update it, or use null to create one. Phases with the same non-null parallelGroup may run concurrently.",
     "When a phase completes, keep its semantic research, planning, execution, testing, or review stage and set status completed. The legacy done stage may appear in old context but should not be created.",
@@ -395,7 +424,9 @@ function providerResult(provider: "codex" | "claude", stdout: string): unknown {
 function structuredOutcome(value: unknown): AgentRunOutcome {
   const item = outputObject(value, "Provider result");
   const expected = [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "detail",
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion",
+    ...("handoff" in item ? ["handoff"] : []),
+    "detail",
   ].sort();
   const actual = Object.keys(item).sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
@@ -422,6 +453,7 @@ function structuredOutcome(value: unknown): AgentRunOutcome {
     expectedAgentMinutes: item.expectedAgentMinutes,
     phases: item.phases,
     detail: item.detail,
+    handoff: item.handoff ?? null,
   });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;

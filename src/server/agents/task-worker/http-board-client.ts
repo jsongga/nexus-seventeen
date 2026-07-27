@@ -286,7 +286,7 @@ function asClaimResult(value: unknown): ClaimRunResult {
   ], "Claim wakeup");
   const context = exact(result.context, [
     "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
-    "messageCursor", "messages", "triggerQuestion", "openQuestions",
+    "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
   ], "Claim context");
   if (
     run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
@@ -458,6 +458,7 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
       status: question.status,
     })),
     workspaceRefs: context.workspaceRefs,
+    workflow: context.workflow ?? null,
   };
   return parseBoundedAgentContext(internal);
 }
@@ -640,7 +641,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const result = await this.#http.request(
       "POST",
       `/v1/runs/${encodeURIComponent(request.claim.runId)}/settle`,
-      { outcome: request.outcome, result: request.result },
+      { outcome: request.outcome, result: request.result, handoff: request.handoff ?? null },
       signal,
     );
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
