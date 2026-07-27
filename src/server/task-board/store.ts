@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "./errors.js";
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS project_events (
   event_type TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS project_events_project ON project_events(project_id, sequence);
+`;
+
+const WORK_ITEM_PLANNING_SCHEMA = `
+CREATE TABLE IF NOT EXISTS work_item_planning_tasks (
+  work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL
+) STRICT;
 `;
 
 const MIGRATE_VERSION_1_TO_2 = `
@@ -304,6 +312,7 @@ ${WORK_ITEM_SCHEMA}
 
 ${AUTOMATION_CONFIGURATION_SCHEMA}
 ${WORKFLOW_SCHEMA}
+${WORK_ITEM_PLANNING_SCHEMA}
 
 CREATE TABLE agents (
   agent_id TEXT PRIMARY KEY,
@@ -475,6 +484,10 @@ function migrateVersion9To10(db: DatabaseSync): void {
 
 function migrateVersion10To11(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE; ${WORKFLOW_SCHEMA} PRAGMA user_version = 11; COMMIT;`);
+}
+
+function migrateVersion11To12(db: DatabaseSync): void {
+  db.exec(`BEGIN IMMEDIATE; ${WORK_ITEM_PLANNING_SCHEMA} PRAGMA user_version = 12; COMMIT;`);
 }
 
 function migrateVersion8To9(db: DatabaseSync): void {
@@ -721,6 +734,8 @@ export class TaskBoardStore {
         // The dormant automation configuration is added below.
       } else if (version === 10) {
         // Transparent workflow storage is added below.
+      } else if (version === 11) {
+        // Work-item planning-task links are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -733,6 +748,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 8) migrateVersion8To9(db);
       if (version >= 1 && version <= 9) migrateVersion9To10(db);
       if (version >= 1 && version <= 10) migrateVersion10To11(db);
+      if (version >= 1 && version <= 11) migrateVersion11To12(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

@@ -4,6 +4,7 @@ import type {
   StageHandoff,
   WorkflowStage,
   StageHandoffDraft,
+  WorkflowPlanDraft,
   TaskKind,
   TaskPhaseStage,
   TaskPhaseStatus,
@@ -163,6 +164,7 @@ export interface AgentRunOutcome {
   readonly phases: readonly AgentTaskPhaseUpdate[];
   readonly detail: string;
   readonly handoff?: StageHandoffDraft | null;
+  readonly workflowPlan?: WorkflowPlanDraft | null;
 }
 
 export interface AgentLaunchRequest {
@@ -213,6 +215,7 @@ export interface SettleAgentRunRequest {
   readonly result: string;
   readonly idempotencyKey: string;
   readonly handoff?: StageHandoffDraft | null;
+  readonly workflowPlan?: WorkflowPlanDraft | null;
 }
 
 export interface UpdateTaskEstimateRequest {

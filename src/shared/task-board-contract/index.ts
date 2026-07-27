@@ -233,6 +233,13 @@ export interface ProposedWorkNode {
   readonly stageTemplate: readonly WorkflowStage[];
 }
 
+export interface WorkflowPlanDraft {
+  readonly objective: string;
+  readonly assumptions: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly nodes: readonly ProposedWorkNode[];
+}
+
 export interface CreatePlanRevisionRequest {
   readonly workItemId: string;
   readonly objective: string;
@@ -657,4 +664,5 @@ export interface SettleRunRequest {
   readonly outcome: "completed" | "failed" | "interrupted";
   readonly result: string;
   readonly handoff?: StageHandoffDraft | null;
+  readonly workflowPlan?: WorkflowPlanDraft | null;
 }

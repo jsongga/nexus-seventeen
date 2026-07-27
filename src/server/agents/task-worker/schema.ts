@@ -520,6 +520,7 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
   const item = exact(value, [
     "status", "outputs", "expectedAgentMinutes", "phases", "detail",
     ...("handoff" in raw ? ["handoff"] : []),
+    ...("workflowPlan" in raw ? ["workflowPlan"] : []),
   ], "Agent outcome");
   if (
     item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" &&
@@ -572,6 +573,42 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
       recommendedReturnStage: returnStage,
     });
   }
+  let workflowPlan: AgentRunOutcome["workflowPlan"] = null;
+  if (item.workflowPlan !== undefined && item.workflowPlan !== null) {
+    const plan = exact(item.workflowPlan, ["objective", "assumptions", "acceptanceCriteria", "nodes"], "Workflow plan");
+    const stringList = (input: unknown, label: string, minimum = 0): readonly string[] => {
+      if (!Array.isArray(input) || input.length < minimum || input.length > 64) throw new Error(`${label} is invalid`);
+      return Object.freeze(input.map((entry, index) => prose(entry, `${label}[${index}]`, 2_000)));
+    };
+    if (!Array.isArray(plan.nodes) || plan.nodes.length < 1 || plan.nodes.length > 64) throw new Error("Workflow plan nodes are invalid");
+    const nodes = plan.nodes.map((entry, index) => {
+      const node = exact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], `Workflow plan node ${index}`);
+      if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) throw new Error(`Workflow plan node ${index} stages are invalid`);
+      const stageTemplate = node.stageTemplate.map((stage, stageIndex) => {
+        if (stage !== "research" && stage !== "planning" && stage !== "implementation" && stage !== "testing" && stage !== "verification") {
+          throw new Error(`Workflow plan node ${index} stage ${stageIndex} is invalid`);
+        }
+        return stage;
+      });
+      if (new Set(stageTemplate).size !== stageTemplate.length || stageTemplate.at(-1) !== "verification") {
+        throw new Error(`Workflow plan node ${index} stage order is invalid`);
+      }
+      return Object.freeze({
+        nodeId: identifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),
+        title: prose(node.title, `workflowPlan.nodes[${index}].title`, 512),
+        objective: prose(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000),
+        acceptanceCriteria: stringList(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, 1),
+        dependencyNodeIds: stringList(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`),
+        stageTemplate: Object.freeze(stageTemplate),
+      });
+    });
+    workflowPlan = Object.freeze({
+      objective: prose(plan.objective, "workflowPlan.objective", 8_000),
+      assumptions: stringList(plan.assumptions, "workflowPlan.assumptions"),
+      acceptanceCriteria: stringList(plan.acceptanceCriteria, "workflowPlan.acceptanceCriteria", 1),
+      nodes: Object.freeze(nodes),
+    });
+  }
   return Object.freeze({
     status: item.status,
     outputs: Object.freeze(outputs),
@@ -579,6 +616,7 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
     phases: Object.freeze(phases),
     detail: prose(item.detail, "outcome.detail", 2_000),
     handoff,
+    workflowPlan,
   });
 }
 

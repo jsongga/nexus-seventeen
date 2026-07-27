@@ -1213,6 +1213,11 @@ export interface TaskBoardClient {
     onEvent: (event: WorkflowEvent) => void;
   }): Promise<void>;
   getArtifactBlob(artifactId: string, signal?: AbortSignal): Promise<Blob>;
+  uploadArtifact(projectId: string, input: {
+    mediaType: string;
+    caption: string;
+    contentBase64: string;
+  }): Promise<ProjectArtifact>;
 }
 
 async function errorMessage(response: Response): Promise<string> {
@@ -1620,6 +1625,13 @@ export function createTaskBoardClient(options: {
     },
     async getArtifactBlob(artifactId, signal) {
       return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
+    },
+    async uploadArtifact(projectId, input) {
+      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, {
+        method: 'POST',
+        body: JSON.stringify({ nodeId: null, taskId: null, ...input }),
+      }), 'upload artifact response');
+      return record(envelope.artifact, 'upload artifact response.artifact') as unknown as ProjectArtifact;
     },
     async getSnapshot(signal) {
       const [projectsValue, workItemsValue] = await Promise.all([

@@ -10,6 +10,7 @@ import {
   MessageSquareText,
   Plus,
   Send,
+  Upload,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Pill, cn } from '../components/ui';
@@ -181,6 +182,7 @@ export function ProjectPage({
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
   const [artifactUrls, setArtifactUrls] = useState<Record<string, string>>({});
   const [confirmingPlan, setConfirmingPlan] = useState<string | null>(null);
+  const [uploadingArtifact, setUploadingArtifact] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     void Promise.all([
@@ -188,7 +190,12 @@ export function ProjectPage({
       client.getProjectArtifacts(project.id, controller.signal),
     ]).then(([nextWorkflow, nextArtifacts]) => {
       setWorkflow(nextWorkflow);
-      setArtifacts(nextArtifacts);
+      setArtifacts((current) => (
+        current.length === nextArtifacts.length &&
+        current.every((artifact, index) => artifact.artifactId === nextArtifacts[index]?.artifactId)
+          ? current
+          : nextArtifacts
+      ));
     }).catch(() => {
       if (!controller.signal.aborted) setWorkflow(null);
     });
@@ -229,7 +236,27 @@ export function ProjectPage({
       setConfirmingPlan(null);
     }
   };
-  const proposedPlan = workflow?.plans.find((plan) => plan.state === 'proposed') ?? null;
+  const proposedPlans = workflow?.plans.filter((plan) => plan.state === 'proposed') ?? [];
+  const uploadArtifact = async (file: File) => {
+    const mediaType = file.name.endsWith('.mmd') || file.name.endsWith('.mermaid')
+      ? 'text/vnd.mermaid'
+      : file.name.endsWith('.md') ? 'text/markdown' : file.type;
+    if (!['text/markdown', 'text/vnd.mermaid', 'image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) return;
+    setUploadingArtifact(true);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      const artifact = await client.uploadArtifact(project.id, {
+        mediaType,
+        caption: file.name,
+        contentBase64: window.btoa(binary),
+      });
+      setArtifacts((current) => [...current, artifact]);
+    } finally {
+      setUploadingArtifact(false);
+    }
+  };
   const updates = updatesForProject(snapshot, project.id);
   const metadata = parseProjectMetadata(project.description);
   const tasks = snapshot.tasks.filter((task) => task.projectId === project.id);
@@ -299,8 +326,27 @@ export function ProjectPage({
               <Pill tone={workflow?.nodes.some((node) => node.state === 'blocked') ? 'amber' : 'neutral'}>
                 {workflow?.nodes.length ?? 0} subtasks
               </Pill>
-              {proposedPlan ? <Button size="sm" variant="primary" disabled={confirmingPlan !== null} onClick={() => void confirmPlan(proposedPlan.planRevisionId)}>{confirmingPlan ? 'Confirming…' : `Confirm plan v${proposedPlan.revision}`}</Button> : null}
+              {proposedPlans.length > 0 ? <Pill tone="amber">{proposedPlans.length} awaiting review</Pill> : null}
             </div>
+            {proposedPlans.map((proposedPlan) => (
+              <div key={proposedPlan.planRevisionId} className="border-b border-line bg-surface px-4 py-4 sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted">Awaiting confirmation · Plan v{proposedPlan.revision}</p>
+                    <h3 className="mt-2 text-sm font-medium text-ink">{proposedPlan.objective}</h3>
+                  </div>
+                  <Button size="sm" variant="primary" disabled={confirmingPlan !== null} onClick={() => void confirmPlan(proposedPlan.planRevisionId)}>
+                    {confirmingPlan === proposedPlan.planRevisionId ? 'Confirming…' : 'Confirm plan'}
+                  </Button>
+                </div>
+                {proposedPlan.acceptanceCriteria.length > 0 ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-muted">
+                    {proposedPlan.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}
+                  </ul>
+                ) : null}
+                {proposedPlan.assumptions.length > 0 ? <p className="mt-2 text-[11px] text-muted">Assumptions: {proposedPlan.assumptions.join(' · ')}</p> : null}
+              </div>
+            ))}
             {workflow && workflow.nodes.length > 0 ? (
               <div className="grid gap-px bg-line lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
                 <div className="space-y-px bg-line">
@@ -335,17 +381,33 @@ export function ProjectPage({
                       </li>
                     ))}
                   </ol>
-                  {artifacts.length > 0 ? (
-                    <div className="mt-5 border-t border-line pt-4">
+                  <div className="mt-5 border-t border-line pt-4">
+                    <div className="flex items-center justify-between gap-2">
                       <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Artifacts</h3>
+                      <label className="flex cursor-pointer items-center gap-1 text-[10px] text-teal-700 hover:underline">
+                        <Upload size={11} />{uploadingArtifact ? 'Uploading…' : 'Upload'}
+                        <input
+                          className="sr-only"
+                          type="file"
+                          disabled={uploadingArtifact}
+                          accept=".md,.mmd,.mermaid,image/png,image/jpeg,image/webp"
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            if (file) void uploadArtifact(file);
+                            event.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {artifacts.length > 0 ? (
                       <ul className="mt-2 space-y-1">
                         {artifacts.map((artifact) => <li key={artifact.artifactId} className="py-1">
                           {artifact.mediaType.startsWith('image/') && artifactUrls[artifact.artifactId] ? <img className="mb-2 max-h-40 w-full border border-line object-contain" src={artifactUrls[artifact.artifactId]} alt={artifact.caption} /> : null}
                           {artifactUrls[artifact.artifactId] ? <a className="block truncate text-xs text-teal-700 hover:underline" href={artifactUrls[artifact.artifactId]} target="_blank" rel="noreferrer">{artifact.caption}</a> : <span className="block truncate text-xs text-muted">{artifact.caption}</span>}
                         </li>)}
                       </ul>
-                    </div>
-                  ) : null}
+                    ) : <p className="mt-2 text-xs text-muted">No diagrams, notes, or images attached.</p>}
+                  </div>
                 </aside>
               </div>
             ) : <div className="px-5 py-10 text-center text-sm text-muted">A dependency map will appear after task curation proposes a workflow plan.</div>}

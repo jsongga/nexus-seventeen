@@ -3,7 +3,6 @@ import type { AddressInfo } from "node:net";
 import {
   WORK_ITEM_CURSOR_MAX_BYTES,
   type ConfirmPlanRevisionRequest,
-  type CreatePlanRevisionRequest,
   type CreateProjectArtifactRequest,
 } from "#shared/task-board-contract";
 import { TaskBoard } from "./board.js";
@@ -175,14 +174,10 @@ export class TaskBoardService {
         parseCreateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
-      sendJson(response, result.duplicate ? 200 : 201, { workItem: result.workItem });
-      return;
-    }
-    if (url.pathname === "/v1/workflows" && request.method === "POST") {
-      noQuery(url);
-      requireHuman(request, this.config);
-      const workflow = await this.#board.proposeWorkflow(await readJsonBody(request, this.config.maxBodyBytes) as CreatePlanRevisionRequest);
-      sendJson(response, 201, { workflow });
+      if (!result.duplicate) this.#board.startWorkItemPlanning(result.workItem.workItemId);
+      sendJson(response, result.duplicate ? 200 : 201, {
+        workItem: this.#board.requireWorkItem(result.workItem.workItemId),
+      });
       return;
     }
     const confirmPlanMatch = /^\/v1\/plans\/([^/]+)\/confirm$/u.exec(url.pathname);
@@ -210,7 +205,8 @@ export class TaskBoardService {
         parseIdentifier(workItemMatch[1], "workItemId"),
         parseUpdateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
       );
-      sendJson(response, 200, { workItem });
+      this.#board.startWorkItemPlanning(workItem.workItemId);
+      sendJson(response, 200, { workItem: this.#board.requireWorkItem(workItem.workItemId) });
       return;
     }
     if (url.pathname === "/v1/projects" && request.method === "GET") {

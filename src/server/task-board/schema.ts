@@ -717,7 +717,11 @@ export function parseClaim(value: unknown): ClaimRunRequest {
 
 export function parseSettle(value: unknown): SettleRunRequest {
   if (!isRecord(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "Run settlement must be an object");
-  const item = exact(value, ["outcome", "result", ...("handoff" in value ? ["handoff"] : [])], "Run settlement");
+  const item = exact(value, [
+    "outcome", "result",
+    ...("handoff" in value ? ["handoff"] : []),
+    ...("workflowPlan" in value ? ["workflowPlan"] : []),
+  ], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Run outcome is invalid");
   }
@@ -745,7 +749,47 @@ export function parseSettle(value: unknown): SettleRunRequest {
       recommendedReturnStage: returnStage,
     });
   }
-  return Object.freeze({ outcome: item.outcome, result: text(item.result, "result", 16_000), handoff });
+  let workflowPlan: SettleRunRequest["workflowPlan"] = null;
+  if (item.workflowPlan !== undefined && item.workflowPlan !== null) {
+    const plan = exact(item.workflowPlan, ["objective", "assumptions", "acceptanceCriteria", "nodes"], "workflowPlan");
+    const strings = (input: unknown, field: string, minimum = 0): readonly string[] => {
+      if (!Array.isArray(input) || input.length < minimum || input.length > 64) {
+        throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
+      }
+      return Object.freeze(input.map((entry, index) => text(entry, `${field}[${index}]`, 2_000)));
+    };
+    if (!Array.isArray(plan.nodes) || plan.nodes.length < 1 || plan.nodes.length > 64) {
+      throw new TaskBoardError(400, "INVALID_REQUEST", "workflowPlan.nodes is invalid");
+    }
+    const nodes = plan.nodes.map((entry, index) => {
+      const node = exact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], `workflowPlan.nodes[${index}]`);
+      const stages = strings(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, 1);
+      if (
+        stages.length > 5 || new Set(stages).size !== stages.length || stages.at(-1) !== "verification" ||
+        stages.some((stage) => stage !== "research" && stage !== "planning" && stage !== "implementation" && stage !== "testing" && stage !== "verification")
+      ) throw new TaskBoardError(400, "INVALID_REQUEST", `workflowPlan.nodes[${index}].stageTemplate is invalid`);
+      return Object.freeze({
+        nodeId: parseIdentifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),
+        title: text(node.title, `workflowPlan.nodes[${index}].title`, 512),
+        objective: text(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000),
+        acceptanceCriteria: strings(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, 1),
+        dependencyNodeIds: strings(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`),
+        stageTemplate: Object.freeze(stages as import("#shared/task-board-contract").WorkflowStage[]),
+      });
+    });
+    workflowPlan = Object.freeze({
+      objective: text(plan.objective, "workflowPlan.objective", 8_000),
+      assumptions: strings(plan.assumptions, "workflowPlan.assumptions"),
+      acceptanceCriteria: strings(plan.acceptanceCriteria, "workflowPlan.acceptanceCriteria", 1),
+      nodes: Object.freeze(nodes),
+    });
+  }
+  return Object.freeze({
+    outcome: item.outcome,
+    result: text(item.result, "result", 16_000),
+    handoff,
+    workflowPlan,
+  });
 }
 
 export function parseIdempotencyKey(value: string | string[] | undefined): string {

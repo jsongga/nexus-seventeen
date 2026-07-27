@@ -94,10 +94,41 @@ const RESULT_SCHEMA = Object.freeze({
         },
       ],
     },
+    workflowPlan: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object", additionalProperties: false,
+          properties: {
+            objective: { type: "string", minLength: 1, maxLength: 8_000 },
+            assumptions: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            nodes: {
+              type: "array", minItems: 1, maxItems: 64, items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  nodeId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+                  title: { type: "string", minLength: 1, maxLength: 512 },
+                  objective: { type: "string", minLength: 1, maxLength: 4_000 },
+                  acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+                  dependencyNodeIds: { type: "array", maxItems: 64, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" } },
+                  stageTemplate: {
+                    type: "array", minItems: 1, maxItems: 5, uniqueItems: true,
+                    items: { type: "string", enum: ["research", "planning", "implementation", "testing", "verification"] },
+                  },
+                },
+                required: ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"],
+              },
+            },
+          },
+          required: ["objective", "assumptions", "acceptanceCriteria", "nodes"],
+        },
+      ],
+    },
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
   required: [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "detail",
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "detail",
   ],
 } as const);
 
@@ -240,6 +271,7 @@ function role(request: AgentLaunchRequest): "engineer" | "manager" | "verifier" 
 
 function prompt(request: AgentLaunchRequest): string {
   const fixedRole = role(request);
+  const planningRun = request.context.task.title.startsWith("Plan workflow:");
   const workflow = fixedRole === "engineer"
     ? [
         "Follow a research → plan → execute → test loop inside this one run.",
@@ -251,7 +283,11 @@ function prompt(request: AgentLaunchRequest): string {
           "Perform independent read-only research, plan the verification, inspect or run non-modifying checks, and report evidence.",
           "Do not edit the workspace, approve production, or deploy.",
         ]
-      : [
+      : planningRun ? [
+          "Refine the supplied request into a small dependency-aware workflow plan for human confirmation.",
+          "Do not implement, assign, or start the proposed nodes.",
+          "Call out assumptions explicitly and make every acceptance criterion observable.",
+        ] : [
           "Perform read-only oversight of the supplied task, evidence, progress, and risks.",
           "Return a clear READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED recommendation supported by the supplied evidence.",
           "Do not edit the workspace, approve production, or deploy.",
@@ -265,6 +301,7 @@ function prompt(request: AgentLaunchRequest): string {
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
     "Progress entries must be short, result-oriented updates. Do not include secrets or a technical transcript.",
     "When workflow context is present, return a compact handoff with criterion results, evidence references, artifact IDs, blockers, and a recommended return stage. Otherwise return handoff null.",
+    "When the task asks you to plan a workflow, return workflowPlan with a dependency hierarchy and unique ordered stages ending in verification. Otherwise return workflowPlan null.",
     "After inspecting the task, estimate only the agent's remaining work in 15-minute intervals. Return expectedAgentMinutes null until there is enough evidence; null leaves any current estimate unchanged.",
     "Use phases for durable work stages. Return only phases that should be created or changed: copy an active existing phaseId from context to update it, or use null to create one. Phases with the same non-null parallelGroup may run concurrently.",
     "When a phase completes, keep its semantic research, planning, execution, testing, or review stage and set status completed. The legacy done stage may appear in old context but should not be created.",
@@ -426,6 +463,7 @@ function structuredOutcome(value: unknown): AgentRunOutcome {
   const expected = [
     "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion",
     ...("handoff" in item ? ["handoff"] : []),
+    ...("workflowPlan" in item ? ["workflowPlan"] : []),
     "detail",
   ].sort();
   const actual = Object.keys(item).sort();
@@ -454,6 +492,7 @@ function structuredOutcome(value: unknown): AgentRunOutcome {
     phases: item.phases,
     detail: item.detail,
     handoff: item.handoff ?? null,
+    workflowPlan: item.workflowPlan ?? null,
   });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;

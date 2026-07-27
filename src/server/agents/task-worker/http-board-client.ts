@@ -641,7 +641,12 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const result = await this.#http.request(
       "POST",
       `/v1/runs/${encodeURIComponent(request.claim.runId)}/settle`,
-      { outcome: request.outcome, result: request.result, handoff: request.handoff ?? null },
+      {
+        outcome: request.outcome,
+        result: request.result,
+        handoff: request.handoff ?? null,
+        workflowPlan: request.workflowPlan ?? null,
+      },
       signal,
     );
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");

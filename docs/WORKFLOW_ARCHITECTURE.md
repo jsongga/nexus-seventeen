@@ -80,7 +80,7 @@ description: Execute a confirmed implementation stage.
 
 The remainder is Markdown instructions. The catalog and automation configuration continue to reference lowercase `skillIds`.
 
-**Load-time trust** — the board reads only `skills/<validated-id>/SKILL.md`, rejects symlinks and path traversal, enforces per-skill and aggregate byte limits, and computes a SHA-256 digest. Confirmation pins the selected skill IDs and digests to the plan revision. Editing a skill affects future confirmed revisions, never an active attempt.
+**Load-time trust** — the board reads only `skills/<validated-id>/SKILL.md`, rejects symlinks and path traversal, enforces per-skill limits, and computes a SHA-256 digest. Confirmation pins selected digests. If a referenced file changes before an attempt launches, that attempt stops visibly instead of silently using different instructions.
 
 **Compact prompts** — a worker receives only the stage’s pinned skills, direct dependency handoffs, acceptance criteria, relevant project memory, and referenced artifacts. It does not receive the full project transcript or unrelated skills.
 
@@ -166,21 +166,7 @@ Evaluator failures may recommend returning to research, planning, implementation
 
 ## Changing a plan
 
-History is never rewritten.
-
-1. An agent or human submits a plan-change proposal with reasons and affected nodes.
-2. Code validates a new graph revision.
-3. Small changes within confirmed scope may be accepted automatically:
-   - split a pending node;
-   - add a missing test;
-   - clarify implementation detail;
-   - adjust an estimate.
-4. Material changes require human confirmation:
-   - objective or acceptance-criteria changes;
-   - new project, permissions, or external effects;
-   - cancellation of active work;
-   - substantial scope expansion.
-5. Completed nodes remain immutable. Affected pending nodes become `stale`; active attempts finish or are explicitly interrupted. The new revision records what changed and why.
+The current version allows replacing an unconfirmed proposal. Once confirmed, its graph is immutable; scope changes require a new work item. This deliberately avoids exposing revision controls before stale-node and active-attempt semantics exist.
 
 ## Live progress and visibility
 
@@ -198,7 +184,7 @@ The task board exposes a project SSE endpoint with a monotonic cursor. Reconnect
 
 Agents post short progress messages at stage boundaries and meaningful discoveries. Provider reasoning, raw commands, and tool output remain private.
 
-The project dashboard adds:
+The project dashboard provides:
 
 - overall acceptance-criteria progress;
 - dependency graph and critical blockers;
@@ -206,7 +192,6 @@ The project dashboard adds:
 - live activity timeline;
 - pending human decisions;
 - artifact gallery;
-- plan-revision comparison.
 
 ## Diagrams and images
 
@@ -223,7 +208,7 @@ Initial media types:
 
 Mermaid source is rendered in the browser using strict mode and no HTML labels. Images are served through authenticated, same-origin endpoints with content sniffing disabled. Uploads have explicit size, pixel, and aggregate project limits.
 
-Artifacts are passed to agents as metadata and authorized file references. Binary data is never inserted into prompts.
+Humans can upload artifacts from the project dashboard. Handoffs may reference validated artifact IDs; binary data is never inserted into prompts.
 
 ## Token budget
 
@@ -236,7 +221,7 @@ Each stage prompt has a deterministic budget:
 5. selected artifact metadata;
 6. recent messages for this node only.
 
-When the budget is exceeded, code truncates optional history before required contracts. It never silently drops acceptance criteria, dependency handoffs, or human answers. Prompt digests and byte counts are recorded for audit, but prompt contents and model reasoning are not.
+The worker enforces an overall serialized context limit and per-field bounds. Prompt digests and separate token-budget telemetry are not implemented.
 
 ## Failure and recovery
 

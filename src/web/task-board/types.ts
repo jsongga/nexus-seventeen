@@ -282,6 +282,8 @@ export interface WorkflowPlan {
   planRevisionId: string;
   revision: number;
   objective: string;
+  assumptions: string[];
+  acceptanceCriteria: string[];
   state: 'proposed' | 'confirmed' | 'superseded' | 'rejected';
   createdAt: string;
   confirmedAt: string | null;

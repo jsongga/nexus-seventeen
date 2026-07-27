@@ -598,7 +598,7 @@ export class TaskBoard {
     return Object.freeze(this.#store.db.prepare("SELECT * FROM projects ORDER BY created_at, project_id").all().map(projectFromRow));
   }
 
-  proposeWorkflow(request: CreatePlanRevisionRequest): Promise<ProjectWorkflowSnapshot> {
+  proposeWorkflow(request: CreatePlanRevisionRequest): ProjectWorkflowSnapshot {
     return this.#workflow.propose(request, this.#config.humanPrincipal);
   }
 
@@ -677,7 +677,10 @@ export class TaskBoard {
       assignedAgentId: String(agent.agent_id), assignedRole: agentType.role, requiresReview: false,
     });
     const plan = this.#store.db.prepare("SELECT p.skill_digests_json FROM plan_revisions p JOIN work_nodes n ON n.plan_revision_id=p.plan_revision_id WHERE n.node_id=?").get(node.nodeId);
-    this.#workflow.linkAttempt(node.nodeId, task.taskId, stage, JSON.parse(String(plan?.skill_digests_json ?? "{}")) as Record<string, string>);
+    const planDigests = JSON.parse(String(plan?.skill_digests_json ?? "{}")) as Record<string, string>;
+    const stageDigests = Object.fromEntries(agentType.skillIds.flatMap((skillId) =>
+      planDigests[skillId] === undefined ? [] : [[skillId, planDigests[skillId]]]));
+    this.#workflow.linkAttempt(node.nodeId, task.taskId, stage, stageDigests);
     this.#workflow.event(node.projectId, node.nodeId, task.taskId, "stage_started", `${node.title} entered ${stage}`);
   }
 
@@ -822,6 +825,40 @@ export class TaskBoard {
       );
       return Object.freeze({ workItem: this.#requireWorkItem(workItemId), duplicate: false });
     });
+  }
+
+  startWorkItemPlanning(workItemId: string): BoardTask | null {
+    const workItem = this.#requireWorkItem(workItemId);
+    if (workItem.resolvedProjectId === null || workItem.endedAt !== null) return null;
+    const existing = this.#store.db.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?").get(workItemId);
+    if (existing) return this.#requireTask(String(existing.task_id));
+    const managers = this.#store.db.prepare(
+      "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
+    ).all(workItem.resolvedProjectId);
+    if (managers.length !== 1) return null;
+    const managerId = String(managers[0]!.agent_id);
+    const configuration = this.getAutomationConfiguration();
+    const enabledTypes = new Set(configuration.agentTypes.filter((agentType) => agentType.enabled).map((agentType) => agentType.agentTypeId));
+    const availableStages = configuration.stages.flatMap((stage) =>
+      stage.executor.kind === "agent_type" && enabledTypes.has(stage.executor.agentTypeId) ? [stage.stage] : []);
+    const task = this.createTask(workItem.resolvedProjectId, {
+      parentTaskId: null,
+      title: `Plan workflow: ${workItem.originalRequest.slice(0, 160)}`,
+      objective: workItem.originalRequest,
+      acceptanceCriteria: `Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and unique stage sequences ending in verification. Available automated stages: ${availableStages.join(", ") || "none configured"}.`,
+      workspaceRefs: [],
+      assignedAgentId: managerId,
+      assignedRole: "manager",
+      requiresReview: false,
+    });
+    const now = exactNow(this.#config.now);
+    this.#store.transaction(() => {
+      this.#store.db.prepare("INSERT INTO work_item_planning_tasks VALUES(?,?,?)").run(workItemId, task.taskId, now);
+      this.#store.db.prepare(
+        "UPDATE work_items SET state='processing',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+      ).run(now, workItemId);
+    });
+    return task;
   }
 
   updateWorkItem(workItemId: string, request: UpdateWorkItemRequest): WorkItem {
@@ -1068,7 +1105,14 @@ export class TaskBoard {
       }
       throw error;
     }
-    return this.#requireAgent(request.agentId);
+    const created = this.#requireAgent(request.agentId);
+    if (created.role === "manager") {
+      const pending = this.#store.db.prepare(
+        "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='submitted' AND ended_at IS NULL ORDER BY created_at,work_item_id",
+      ).all(projectId);
+      for (const row of pending) this.startWorkItemPlanning(String(row.work_item_id));
+    }
+    return created;
   }
 
   createTask(projectId: string, request: CreateTaskRequest): BoardTask {
@@ -1717,6 +1761,49 @@ export class TaskBoard {
       if (current.status === request.outcome && current.result === request.result) return { run: current, duplicate: true };
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
+    const planning = current.taskId === null ? undefined : this.#store.db.prepare(`
+      SELECT w.* FROM work_item_planning_tasks link
+      JOIN work_items w ON w.work_item_id=link.work_item_id
+      WHERE link.task_id=?
+    `).get(current.taskId);
+    if (planning && request.outcome === "completed") {
+      if (request.workflowPlan === undefined || request.workflowPlan === null) {
+        throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
+      }
+      const workItemId = String(planning.work_item_id);
+      const existingPlan = this.#store.db.prepare(
+        "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
+      ).get(workItemId);
+      if (!existingPlan) {
+        const configured = this.getAutomationConfiguration();
+        const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
+        for (const stage of requiredStages) {
+          const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
+          const agentType = executor?.kind === "agent_type"
+            ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
+            : undefined;
+          if (agentType === undefined) {
+            throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
+          }
+        }
+        const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
+          requiredStages.has(stage.stage as import("#shared/task-board-contract").WorkflowStage) &&
+          stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
+        const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
+          agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
+        this.#workflow.propose({
+          workItemId,
+          projectId: String(planning.resolved_project_id),
+          objective: request.workflowPlan.objective,
+          assumptions: request.workflowPlan.assumptions,
+          acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
+          skillIds,
+          nodes: request.workflowPlan.nodes,
+        }, agentId);
+      }
+    } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
+      throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
+    }
     const now = exactNow(this.#config.now);
     let workflowWakeAgentId: string | null = null;
     this.#store.transaction(() => {
@@ -1766,6 +1853,14 @@ export class TaskBoard {
       }, now);
     });
     if (workflowWakeAgentId !== null) this.#wakeupEvents.emit(workflowWakeAgentId);
+    if (planning && request.outcome !== "completed") {
+      const now = exactNow(this.#config.now);
+      this.#store.transaction(() => {
+        this.#store.db.prepare(
+          "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+        ).run(now, String(planning.work_item_id));
+      });
+    }
     if (current.taskId !== null) {
       for (const node of this.#workflow.settleAttempt(current.taskId, request.outcome, request.result, request.handoff)) this.#activateWorkflowNode(node);
     }

@@ -102,10 +102,10 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
     assert.equal(plan.state, "proposed");
     const confirmed = fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.plans[0]?.state, "confirmed");
-    assert.equal(confirmed.nodes.find((node) => node.nodeId === "investigate-retries")?.state, "active");
-    assert.equal(confirmed.nodes.find((node) => node.nodeId === "implement-retries")?.state, "pending");
+    assert.equal(confirmed.nodes.find((node) => node.title === "Investigate retries")?.state, "active");
+    assert.equal(confirmed.nodes.find((node) => node.title === "Implement retries")?.state, "pending");
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.some((task) => task.title === "research: Investigate retries"), true);
-    await assert.rejects(fixture.board.proposeWorkflow({
+    assert.throws(() => fixture.board.proposeWorkflow({
       workItemId: item.workItemId, projectId: fixture.project.projectId, objective: "Cycle",
       assumptions: [], acceptanceCriteria: ["Never"], skillIds: [],
       nodes: [
@@ -113,6 +113,100 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
         { nodeId: "cycle-b", title: "B", objective: "B", acceptanceCriteria: ["B"], dependencyNodeIds: ["cycle-a"], stageTemplate: ["research", "verification"] },
       ],
     }), (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("explicit work-item intake plans, confirms, executes, and completes without manual workflow API calls", async () => {
+  const fixture = await boardFixture();
+  try {
+    const verifier = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "verifier-one",
+      role: "verifier",
+      area: "independent-verification",
+      mission: "Verify confirmed acceptance criteria from durable evidence.",
+      model: "codex-mini",
+      token: "task-board-verifier-token-0123456789",
+    });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [
+        {
+          agentTypeId: "implementer", name: "Implementer", description: "Implements confirmed work.",
+          role: "engineer", supplementalInstructions: "Implement only the confirmed node.",
+          skillIds: ["cicada-software-implementation"], evaluatorProfile: "tests", enabled: true,
+        },
+        {
+          agentTypeId: "verifier", name: "Verifier", description: "Verifies completed work.",
+          role: "verifier", supplementalInstructions: "Verify every acceptance criterion independently.",
+          skillIds: ["cicada-outcome-evaluation"], evaluatorProfile: "tests", enabled: true,
+        },
+      ],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: "implementer" },
+        verification: { kind: "agent_type", agentTypeId: "verifier" },
+      }),
+    }));
+    const created = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Make checkout retries idempotent.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "complete-workflow-intake-0001");
+    const planningTask = fixture.board.startWorkItemPlanning(created.workItem.workItemId);
+    assert.equal(planningTask?.assignedAgentId, fixture.manager.agentId);
+    const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "complete-workflow-plan-0001",
+      messageCursor: null,
+    });
+    assert.ok(planningClaim);
+    fixture.board.settleRun(planningClaim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "Proposed one bounded implementation node.",
+      workflowPlan: {
+        objective: "Make checkout retries idempotent.",
+        assumptions: ["The checkout repository is available."],
+        acceptanceCriteria: ["Repeated retries create one charge."],
+        nodes: [{
+          nodeId: "idempotent-checkout",
+          title: "Implement idempotent checkout",
+          objective: "Prevent duplicate charges during retry.",
+          acceptanceCriteria: ["Focused retry tests pass."],
+          dependencyNodeIds: [],
+          stageTemplate: ["implementation", "verification"],
+        }],
+      },
+    });
+    const proposed = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(proposed.plans[0]?.state, "proposed");
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "waiting_for_human_review");
+    fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+
+    const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "complete-workflow-implementation-0001",
+      messageCursor: null,
+    });
+    assert.ok(implementation);
+    assert.equal(implementation.context.workflow?.stage, "implementation");
+    assert.deepEqual(implementation.context.workflow?.skills.map((skill) => skill.skillId), ["cicada-software-implementation"]);
+    fixture.board.settleRun(implementation.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Retry tests pass and duplicate charges are prevented.",
+    });
+
+    const verification = fixture.board.claimRun(verifier.agentId, {
+      claimId: "complete-workflow-verification-0001",
+      messageCursor: null,
+    });
+    assert.ok(verification);
+    assert.equal(verification.context.workflow?.stage, "verification");
+    assert.deepEqual(verification.context.workflow?.skills.map((skill) => skill.skillId), ["cicada-outcome-evaluation"]);
+    fixture.board.settleRun(verification.run.runId, verifier.agentId, {
+      outcome: "completed",
+      result: "The focused evidence satisfies the confirmed criterion.",
+    });
+    const completed = fixture.board.requireWorkItem(created.workItem.workItemId);
+    assert.equal(completed.state, "completed");
+    assert.ok(completed.endedAt);
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
   } finally {
     fixture.board.close();
   }
@@ -184,7 +278,7 @@ test("work items preserve original intake, resolve explicit projects, and enforc
         .run("Replace the accepted request.", automatic.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 12);
   } finally {
     direct.close();
   }
@@ -2266,7 +2360,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -2303,7 +2397,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -2343,7 +2437,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -2433,7 +2527,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -2504,7 +2598,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -2543,7 +2637,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -2578,7 +2672,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -2626,7 +2720,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 11);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -2661,5 +2755,27 @@ test("artifacts are immutable, content-validated, and visible in the project eve
     );
   } finally {
     fixture.board.close();
+  }
+});
+
+test("schema version 11 adds durable work-item planning links", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  fixture.board.close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec("DROP TABLE work_item_planning_tasks; PRAGMA user_version = 11;");
+  legacy.close();
+  const upgraded = await TaskBoard.open(config(path));
+  upgraded.close();
+  const verified = new DatabaseSync(path);
+  try {
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
+      "work_item_planning_tasks",
+    );
+  } finally {
+    verified.close();
   }
 });
