@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { WORK_ITEM_CURSOR_MAX_BYTES } from "#shared/task-board-contract";
+import { WORK_ITEM_CURSOR_MAX_BYTES, type ConfirmPlanRevisionRequest, type CreatePlanRevisionRequest } from "#shared/task-board-contract";
 import { TaskBoard } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
@@ -162,6 +162,24 @@ export class TaskBoardService {
       sendJson(response, result.duplicate ? 200 : 201, { workItem: result.workItem });
       return;
     }
+    if (url.pathname === "/v1/workflows" && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const workflow = await this.#board.proposeWorkflow(await readJsonBody(request, this.config.maxBodyBytes) as CreatePlanRevisionRequest);
+      sendJson(response, 201, { workflow });
+      return;
+    }
+    const confirmPlanMatch = /^\/v1\/plans\/([^/]+)\/confirm$/u.exec(url.pathname);
+    if (confirmPlanMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const workflow = this.#board.confirmWorkflow(
+        parseIdentifier(confirmPlanMatch[1], "planRevisionId"),
+        await readJsonBody(request, this.config.maxBodyBytes) as ConfirmPlanRevisionRequest,
+      );
+      sendJson(response, 200, { workflow });
+      return;
+    }
     const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);
     if (workItemMatch && request.method === "GET") {
       noQuery(url);
@@ -196,6 +214,13 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, this.#board.snapshot(parseIdentifier(boardMatch[1], "projectId")));
+      return;
+    }
+    const workflowMatch = /^\/v1\/projects\/([^/]+)\/workflow$/u.exec(url.pathname);
+    if (workflowMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { workflow: this.#board.projectWorkflow(parseIdentifier(workflowMatch[1], "projectId")) });
       return;
     }
     const documentCreateMatch = /^\/v1\/projects\/([^/]+)\/documents$/u.exec(url.pathname);

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   TASK_BOARD_API_VERSION,
@@ -24,6 +25,8 @@ import {
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
   type CreateWorkItemRequest,
+  type CreatePlanRevisionRequest,
+  type ConfirmPlanRevisionRequest,
   type HumanQuestion,
   type InterruptAgentRequest,
   type DocumentEvent,
@@ -60,6 +63,8 @@ import type { TaskBoardConfig } from "./config.js";
 import { conflict, TaskBoardError } from "./errors.js";
 import { parseUpdateAutomationConfiguration } from "./schema.js";
 import { TaskBoardStore } from "./store.js";
+import { SkillRegistry } from "./skills.js";
+import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "./workflow.js";
 
 type Row = Record<string, SQLOutputValue>;
 type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
@@ -550,10 +555,12 @@ export class TaskBoard {
   readonly #wakeupEvents = new EventEmitter();
   readonly #documentEvents = new EventEmitter();
   readonly #workerConnections = new Map<string, WorkerConnectionCounts>();
+  readonly #workflow: TransparentWorkflow;
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore) {
     this.#config = config;
     this.#store = store;
+    this.#workflow = new TransparentWorkflow(store.db, new SkillRegistry(resolve("skills")), config.now, (operation) => store.transaction(operation));
     this.#interruptEvents.setMaxListeners(512);
     this.#wakeupEvents.setMaxListeners(512);
     this.#documentEvents.setMaxListeners(512);
@@ -575,6 +582,50 @@ export class TaskBoard {
 
   listProjects(): readonly Project[] {
     return Object.freeze(this.#store.db.prepare("SELECT * FROM projects ORDER BY created_at, project_id").all().map(projectFromRow));
+  }
+
+  proposeWorkflow(request: CreatePlanRevisionRequest): Promise<ProjectWorkflowSnapshot> {
+    return this.#workflow.propose(request, this.#config.humanPrincipal);
+  }
+
+  projectWorkflow(projectId: string): ProjectWorkflowSnapshot {
+    this.#requireProject(projectId);
+    return this.#workflow.snapshot(projectId);
+  }
+
+  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ProjectWorkflowSnapshot {
+    const ready = this.#workflow.confirm(planRevisionId, request, this.#config.humanPrincipal);
+    for (const node of ready) this.#activateWorkflowNode(node);
+    return this.#workflow.snapshot(ready[0]?.projectId ?? String(this.#store.db.prepare("SELECT project_id FROM plan_revisions WHERE plan_revision_id=?").get(planRevisionId)?.project_id));
+  }
+
+  #activateWorkflowNode(node: import("#shared/task-board-contract").WorkNode): void {
+    const configuration = this.getAutomationConfiguration();
+    const stage = node.currentStage;
+    if (stage === null) return;
+    const configuredExecutor = configuration.stages.find((item) => item.stage === stage)?.executor;
+    if (configuredExecutor?.kind !== "agent_type") {
+      this.#workflow.event(node.projectId, node.nodeId, null, "node_blocked", `${node.title} has no configured ${stage} executor`);
+      return;
+    }
+    const agentType = configuration.agentTypes.find((item) => item.agentTypeId === configuredExecutor.agentTypeId && item.enabled);
+    if (!agentType) {
+      this.#workflow.event(node.projectId, node.nodeId, null, "node_blocked", `${node.title} executor is unavailable`);
+      return;
+    }
+    const agent = this.#store.db.prepare("SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1").get(node.projectId, agentType.role);
+    if (!agent) {
+      this.#workflow.event(node.projectId, node.nodeId, null, "node_blocked", `${node.title} has no compatible agent`);
+      return;
+    }
+    const task = this.createTask(node.projectId, {
+      parentTaskId: null, title: `${stage}: ${node.title}`, objective: node.objective,
+      acceptanceCriteria: node.acceptanceCriteria.join("\n"), workspaceRefs: [],
+      assignedAgentId: String(agent.agent_id), assignedRole: agentType.role, requiresReview: false,
+    });
+    const plan = this.#store.db.prepare("SELECT p.skill_digests_json FROM plan_revisions p JOIN work_nodes n ON n.plan_revision_id=p.plan_revision_id WHERE n.node_id=?").get(node.nodeId);
+    this.#workflow.linkAttempt(node.nodeId, task.taskId, stage, JSON.parse(String(plan?.skill_digests_json ?? "{}")) as Record<string, string>);
+    this.#workflow.event(node.projectId, node.nodeId, task.taskId, "stage_started", `${node.title} entered ${stage}`);
   }
 
   getAutomationConfiguration(): AutomationConfiguration {
@@ -1662,6 +1713,9 @@ export class TaskBoard {
       }, now);
     });
     if (workflowWakeAgentId !== null) this.#wakeupEvents.emit(workflowWakeAgentId);
+    if (current.taskId !== null) {
+      for (const node of this.#workflow.settleAttempt(current.taskId, request.outcome, request.result)) this.#activateWorkflowNode(node);
+    }
     return { run: runFromRow(this.#store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
   }
 

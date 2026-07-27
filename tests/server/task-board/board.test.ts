@@ -78,6 +78,46 @@ function sizedAutomationConfiguration(targetBytes: number) {
   return automationConfigurationRequest({ agentTypes, stages });
 }
 
+test("confirmed workflow persists an acyclic graph and activates only dependency roots", async () => {
+  const fixture = await boardFixture();
+  try {
+    const item = fixture.board.createWorkItem(workItemRequest(), "workflow-intake-0001").workItem;
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "researcher", name: "Researcher", description: "Research", role: "engineer",
+        supplementalInstructions: "Research the confirmed node and return evidence.", skillIds: ["cicada-evidence-research"], evaluatorProfile: "editorial", enabled: true,
+      }],
+      stages: automationStages({ research: { kind: "agent_type", agentTypeId: "researcher" } }),
+    }));
+    const proposed = await fixture.board.proposeWorkflow({
+      workItemId: item.workItemId, projectId: fixture.project.projectId,
+      objective: "Make retry behavior safe.", assumptions: [], acceptanceCriteria: ["Retry tests pass"],
+      skillIds: ["cicada-evidence-research"],
+      nodes: [
+        { nodeId: "investigate-retries", title: "Investigate retries", objective: "Find failure modes", acceptanceCriteria: ["Evidence recorded"], dependencyNodeIds: [], stageTemplate: ["research", "verification"] },
+        { nodeId: "implement-retries", title: "Implement retries", objective: "Make retries safe", acceptanceCriteria: ["Tests pass"], dependencyNodeIds: ["investigate-retries"], stageTemplate: ["research", "planning", "implementation", "testing", "verification"] },
+      ],
+    });
+    const plan = proposed.plans[0]!;
+    assert.equal(plan.state, "proposed");
+    const confirmed = fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
+    assert.equal(confirmed.plans[0]?.state, "confirmed");
+    assert.equal(confirmed.nodes.find((node) => node.nodeId === "investigate-retries")?.state, "active");
+    assert.equal(confirmed.nodes.find((node) => node.nodeId === "implement-retries")?.state, "pending");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.some((task) => task.title === "research: Investigate retries"), true);
+    await assert.rejects(fixture.board.proposeWorkflow({
+      workItemId: item.workItemId, projectId: fixture.project.projectId, objective: "Cycle",
+      assumptions: [], acceptanceCriteria: ["Never"], skillIds: [],
+      nodes: [
+        { nodeId: "cycle-a", title: "A", objective: "A", acceptanceCriteria: ["A"], dependencyNodeIds: ["cycle-b"], stageTemplate: ["research", "verification"] },
+        { nodeId: "cycle-b", title: "B", objective: "B", acceptanceCriteria: ["B"], dependencyNodeIds: ["cycle-a"], stageTemplate: ["research", "verification"] },
+      ],
+    }), (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE");
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("work items preserve original intake, resolve explicit projects, and enforce idempotent CAS updates", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
