@@ -3,7 +3,71 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "./errors.js";
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
+
+const WORKFLOW_SCHEMA = `
+CREATE TABLE IF NOT EXISTS plan_revisions (
+  plan_revision_id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  objective TEXT NOT NULL,
+  assumptions_json TEXT NOT NULL CHECK (json_valid(assumptions_json)),
+  acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json)),
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  skill_digests_json TEXT NOT NULL CHECK (json_valid(skill_digests_json)),
+  state TEXT NOT NULL CHECK (state IN ('proposed','confirmed','superseded','rejected')),
+  created_by TEXT NOT NULL,
+  confirmed_by TEXT,
+  created_at TEXT NOT NULL,
+  confirmed_at TEXT,
+  UNIQUE(work_item_id, revision)
+) STRICT;
+CREATE TABLE IF NOT EXISTS work_nodes (
+  node_id TEXT PRIMARY KEY,
+  plan_revision_id TEXT NOT NULL REFERENCES plan_revisions(plan_revision_id) ON DELETE RESTRICT,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  title TEXT NOT NULL, objective TEXT NOT NULL,
+  acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json)),
+  stage_template_json TEXT NOT NULL CHECK (json_valid(stage_template_json)),
+  current_stage TEXT,
+  state TEXT NOT NULL CHECK (state IN ('pending','ready','active','blocked','stale','completed','cancelled')),
+  version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS work_node_dependencies (
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
+  dependency_node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
+  PRIMARY KEY(node_id, dependency_node_id), CHECK(node_id <> dependency_node_id)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS stage_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  stage TEXT NOT NULL CHECK(stage IN ('research','planning','implementation','testing','verification')),
+  attempt INTEGER NOT NULL CHECK(attempt >= 1),
+  skill_digests_json TEXT NOT NULL CHECK(json_valid(skill_digests_json)),
+  UNIQUE(node_id, stage, attempt)
+) STRICT;
+CREATE TABLE IF NOT EXISTS stage_handoffs (
+  handoff_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  stage TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('passed','failed','needs_input')),
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  node_id TEXT REFERENCES work_nodes(node_id) ON DELETE RESTRICT, task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  media_type TEXT NOT NULL, byte_size INTEGER NOT NULL, digest TEXT NOT NULL,
+  storage_key TEXT NOT NULL UNIQUE, caption TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS project_events (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  node_id TEXT REFERENCES work_nodes(node_id) ON DELETE RESTRICT, task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  event_type TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS project_events_project ON project_events(project_id, sequence);
+`;
 
 const MIGRATE_VERSION_1_TO_2 = `
 ALTER TABLE runs ADD COLUMN task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT;
@@ -239,6 +303,7 @@ CREATE TABLE projects (
 ${WORK_ITEM_SCHEMA}
 
 ${AUTOMATION_CONFIGURATION_SCHEMA}
+${WORKFLOW_SCHEMA}
 
 CREATE TABLE agents (
   agent_id TEXT PRIMARY KEY,
@@ -406,6 +471,10 @@ function migrateVersion9To10(db: DatabaseSync): void {
     }
     throw error;
   }
+}
+
+function migrateVersion10To11(db: DatabaseSync): void {
+  db.exec(`BEGIN IMMEDIATE; ${WORKFLOW_SCHEMA} PRAGMA user_version = 11; COMMIT;`);
 }
 
 function migrateVersion8To9(db: DatabaseSync): void {
@@ -650,6 +719,8 @@ export class TaskBoardStore {
         // The global work-item intake table is added below.
       } else if (version === 9) {
         // The dormant automation configuration is added below.
+      } else if (version === 10) {
+        // Transparent workflow storage is added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -661,6 +732,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 7) migrateVersion7To8(db);
       if (version >= 1 && version <= 8) migrateVersion8To9(db);
       if (version >= 1 && version <= 9) migrateVersion9To10(db);
+      if (version >= 1 && version <= 10) migrateVersion10To11(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");
