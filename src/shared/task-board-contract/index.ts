@@ -44,6 +44,17 @@ export type WorkItemStage =
   | "verification"
   | "human_review"
   | "deployment";
+export type WorkflowStage = "research" | "planning" | "implementation" | "testing" | "verification";
+export type PlanRevisionState = "proposed" | "confirmed" | "superseded" | "rejected";
+export type WorkNodeState = "pending" | "ready" | "active" | "blocked" | "stale" | "completed" | "cancelled";
+export type StageHandoffOutcome = "passed" | "failed" | "needs_input";
+export type ArtifactMediaType =
+  | "text/markdown"
+  | "text/vnd.mermaid"
+  | "image/png"
+  | "image/jpeg"
+  | "image/webp"
+  | "image/svg+xml";
 export type WorkItemProjectTarget =
   | Readonly<{ mode: "auto" }>
   | Readonly<{ mode: "explicit"; projectId: string }>;
@@ -103,6 +114,119 @@ export interface WorkItemPage {
   readonly workItems: readonly WorkItem[];
   /** Omitted when the page exhausts the ordered work-item collection. */
   readonly nextCursor?: string;
+}
+
+export interface SkillSnapshot {
+  readonly skillId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly digest: `sha256:${string}`;
+  readonly content: string;
+}
+
+export interface PlanRevision {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly planRevisionId: string;
+  readonly workItemId: string;
+  readonly revision: number;
+  readonly objective: string;
+  readonly assumptions: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly projectId: string;
+  readonly skillDigests: Readonly<Record<string, string>>;
+  readonly state: PlanRevisionState;
+  readonly createdBy: string;
+  readonly confirmedBy: string | null;
+  readonly createdAt: string;
+  readonly confirmedAt: string | null;
+}
+
+export interface WorkNode {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly nodeId: string;
+  readonly planRevisionId: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly dependencyNodeIds: readonly string[];
+  readonly stageTemplate: readonly WorkflowStage[];
+  readonly currentStage: WorkflowStage | null;
+  readonly state: WorkNodeState;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CriterionResult {
+  readonly criterion: string;
+  readonly passed: boolean;
+  readonly evidence: string;
+}
+
+export interface StageHandoff {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly handoffId: string;
+  readonly nodeId: string;
+  readonly taskId: string;
+  readonly stage: WorkflowStage;
+  readonly outcome: StageHandoffOutcome;
+  readonly summary: string;
+  readonly evidence: readonly string[];
+  readonly artifactIds: readonly string[];
+  readonly acceptanceCriteria: readonly CriterionResult[];
+  readonly blockers: readonly string[];
+  readonly recommendedReturnStage: WorkflowStage | null;
+  readonly createdAt: string;
+}
+
+export interface ProjectArtifact {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly artifactId: string;
+  readonly projectId: string;
+  readonly nodeId: string | null;
+  readonly taskId: string | null;
+  readonly mediaType: ArtifactMediaType;
+  readonly byteSize: number;
+  readonly digest: `sha256:${string}`;
+  readonly caption: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+}
+
+export interface ProjectEvent {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly sequence: number;
+  readonly eventId: string;
+  readonly projectId: string;
+  readonly nodeId: string | null;
+  readonly taskId: string | null;
+  readonly eventType: string;
+  readonly summary: string;
+  readonly createdAt: string;
+}
+
+export interface ProposedWorkNode {
+  readonly nodeId: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly dependencyNodeIds: readonly string[];
+  readonly stageTemplate: readonly WorkflowStage[];
+}
+
+export interface CreatePlanRevisionRequest {
+  readonly workItemId: string;
+  readonly objective: string;
+  readonly assumptions: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly projectId: string;
+  readonly skillIds: readonly string[];
+  readonly nodes: readonly ProposedWorkNode[];
+}
+
+export interface ConfirmPlanRevisionRequest {
+  readonly expectedState: "proposed";
 }
 
 export interface DocumentPenHolder {
