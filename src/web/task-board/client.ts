@@ -31,7 +31,6 @@ import type {
   TaskKind,
   TaskPhaseStage,
   TaskPhaseStatus,
-  WakeReason,
   WorkItemPriority,
   WorkItemProjectTarget,
   WorkItemStage,
@@ -54,6 +53,7 @@ import {
   taskPhaseStages,
   taskPhaseStatuses,
   wakeReasons,
+  type WakeReason as WireWakeReason,
   workItemPageSize,
   workItemPriorities,
   workItemStages,
@@ -903,9 +903,15 @@ function eventRunId(event: RawEvent): string | null {
   return typeof event.data.runId === 'string' ? event.data.runId : null;
 }
 
-function eventWakeReason(event: RawEvent): WakeReason | null {
+// Returns the WIRE wake reason, not the view one. `wakeReasons` is derived from
+// the contract, so narrowing to the view type here would let a newly added
+// contract member pass the runtime check and then be cast into a view union that
+// excludes it. Keeping the wire type means the assignment into
+// BoardRun.wakeReason is where a contract addition fails to compile — which is
+// exactly where someone should be forced to decide how the UI displays it.
+function eventWakeReason(event: RawEvent): WireWakeReason | null {
   const value = event.data.wakeReason;
-  return typeof value === 'string' && wakeReasons.has(value as WakeReason) ? value as WakeReason : null;
+  return typeof value === 'string' && wakeReasons.has(value as WireWakeReason) ? value as WireWakeReason : null;
 }
 
 function newest(values: Array<string | null | undefined>, fallback: string): string {
