@@ -12,11 +12,85 @@
  *     WakeReason and AutomationEvaluatorProfile.
  */
 import {
+  AGENT_ROLES,
+  AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  DOCUMENT_ACTOR_TYPES,
+  EVALUATOR_PROFILES,
+  QUESTION_STATUSES,
+  RUN_STATUSES,
   TASK_BOARD_API_VERSION,
+  TASK_KINDS,
+  TASK_MESSAGE_KINDS,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  TASK_STATUSES,
+  WAKEUP_REASONS,
+  WORKER_CONNECTIONS,
   WORK_ITEM_PAGE_SIZE,
+  WORK_ITEM_PRIORITIES,
+  WORK_ITEM_STAGES,
+  WORK_ITEM_STATES,
+  type AgentRole,
+  type AgentStatus,
+  type AgentTypeEvaluatorProfile,
+  type DocumentActorType,
+  type QuestionStatus,
+  type RunStatus,
+  type TaskKind,
+  type TaskMessageKind,
+  type TaskPhaseStage,
+  type TaskPhaseStatus,
+  type TaskStatus,
+  type WakeupReason,
+  type WorkerConnection,
+  type WorkItemPriority,
+  type WorkItemStage,
+  type WorkItemState,
 } from '@shared/task-board-contract';
+
+// Prefixed because ./types.ts exports different types under these same three
+// names. Importing the wrong one compiles but is silently incorrect.
+export type WireAgentStatus = AgentStatus;
+export type WireTaskStatus = TaskStatus;
+export type WireRunStatus = RunStatus;
+export type WireWorkerConnection = WorkerConnection;
+
+// Renamed to the vocabulary the web app already uses.
+export type WakeReason = WakeupReason;
+export type AutomationEvaluatorProfile = AgentTypeEvaluatorProfile;
+
+export type {
+  AgentRole,
+  DocumentActorType,
+  QuestionStatus,
+  TaskKind,
+  TaskMessageKind,
+  TaskPhaseStage,
+  TaskPhaseStatus,
+  WorkItemPriority,
+  WorkItemStage,
+  WorkItemState,
+};
 
 export const apiVersion = TASK_BOARD_API_VERSION;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
 export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
+
+/** Runtime validators, derived so a contract change reaches parsing automatically. */
+export const rawAgentStatuses = new Set(AGENT_STATUSES);
+export const rawWorkerConnections = new Set(WORKER_CONNECTIONS);
+export const rawTaskStatuses = new Set(TASK_STATUSES);
+export const rawRunStatuses = new Set(RUN_STATUSES);
+export const roles = new Set(AGENT_ROLES);
+export const taskKinds = new Set(TASK_KINDS);
+export const taskPhaseStages = new Set(TASK_PHASE_STAGES);
+export const taskPhaseStatuses = new Set(TASK_PHASE_STATUSES);
+export const messageKinds = new Set(TASK_MESSAGE_KINDS);
+export const questionStatuses = new Set(QUESTION_STATUSES);
+export const wakeReasons = new Set(WAKEUP_REASONS);
+export const workItemPriorities = new Set(WORK_ITEM_PRIORITIES);
+export const workItemStates = new Set(WORK_ITEM_STATES);
+export const workItemStages = new Set(WORK_ITEM_STAGES);
+export const evaluatorProfiles = new Set(EVALUATOR_PROFILES);
+export const documentActorTypes = new Set(DOCUMENT_ACTOR_TYPES);

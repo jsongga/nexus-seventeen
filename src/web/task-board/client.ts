@@ -4,7 +4,6 @@ import type {
   AgentStatus,
   AutomationAgentType,
   AutomationConfiguration,
-  AutomationEvaluatorProfile,
   AutomationStageConfiguration,
   AutomationStageExecutor,
   BoardAgent,
@@ -39,27 +38,35 @@ import type {
   WorkItemState,
 } from './types';
 import { AUTOMATION_STAGE_ALLOWED_ROLES, AUTOMATION_STAGE_ORDER } from './types';
-import { apiVersion, maximumAutomationConfigurationBytes, workItemPageSize } from './wire';
+import {
+  apiVersion,
+  documentActorTypes,
+  evaluatorProfiles,
+  maximumAutomationConfigurationBytes,
+  messageKinds,
+  questionStatuses,
+  rawAgentStatuses,
+  rawRunStatuses,
+  rawTaskStatuses,
+  rawWorkerConnections,
+  roles,
+  taskKinds,
+  taskPhaseStages,
+  taskPhaseStatuses,
+  wakeReasons,
+  workItemPageSize,
+  workItemPriorities,
+  workItemStages,
+  workItemStates,
+  type WireAgentStatus,
+  type WireRunStatus,
+  type WireTaskStatus,
+  type WireWorkerConnection,
+} from './wire';
 
 type JsonRecord = Record<string, unknown>;
 
-const rawAgentStatuses = new Set(['idle', 'ready', 'running', 'interrupting', 'waiting_for_human'] as const);
-const rawWorkerConnections = new Set(['waiting_for_wake', 'watching_run'] as const);
-const rawTaskStatuses = new Set(['backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled'] as const);
-const rawRunStatuses = new Set(['active', 'waiting_for_human', 'completed', 'failed', 'interrupted'] as const);
-const roles = new Set(['engineer', 'manager', 'verifier'] as const);
-const taskKinds = new Set(['work', 'manager_review', 'human_check'] as const);
-const taskPhaseStages = new Set(['research', 'planning', 'execution', 'testing', 'review', 'done'] as const);
-const taskPhaseStatuses = new Set(['pending', 'in_progress', 'blocked', 'completed', 'failed'] as const);
 const actorTypes = new Set(['human', 'agent'] as const);
-const messageKinds = new Set(['note', 'progress', 'proposal', 'result'] as const);
-const questionStatuses = new Set(['open', 'answered'] as const);
-const wakeReasons = new Set<WakeReason>(['human_assignment', 'human_answer', 'human_resume', 'workflow_handoff']);
-const documentActorTypes = new Set(['human', 'agent'] as const);
-const workItemPriorities = new Set<WorkItemPriority>(['urgent', 'high', 'normal', 'low', 'opportunistic']);
-const workItemStates = new Set<WorkItemState>(['submitted', 'processing', 'needs_input', 'waiting_for_human_review', 'completed', 'failed', 'cancelled']);
-const workItemStages = new Set<WorkItemStage>(['refinement', 'project_resolution', 'research', 'planning', 'implementation', 'testing', 'verification', 'human_review', 'deployment']);
-const evaluatorProfiles = new Set<AutomationEvaluatorProfile>(['tests', 'editorial', 'visual', 'manual']);
 const automationExecutorKinds = new Set<AutomationStageExecutor['kind']>(['agent_type', 'human', 'disabled']);
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
@@ -161,12 +168,12 @@ interface RawWorkItem {
 interface RawAgent {
   agentId: string;
   projectId: string;
-  role: 'engineer' | 'manager' | 'verifier';
+  role: AgentRole;
   area: string;
   mission: string;
   model: string;
-  status: 'idle' | 'ready' | 'running' | 'interrupting' | 'waiting_for_human';
-  workerConnection: 'waiting_for_wake' | 'watching_run' | null;
+  status: WireAgentStatus;
+  workerConnection: WireWorkerConnection;
   createdAt: string;
 }
 
@@ -205,9 +212,9 @@ interface RawTask {
   objective: string;
   acceptanceCriteria: string;
   workspaceRefs: string[];
-  status: 'backlog' | 'queued' | 'in_progress' | 'blocked' | 'completed' | 'failed' | 'cancelled';
+  status: WireTaskStatus;
   assignedAgentId: string | null;
-  assignedRole: 'engineer' | 'manager' | 'verifier' | null;
+  assignedRole: AgentRole | null;
   expectedAgentMinutes: number | null;
   estimateRecordedAt: string | null;
   orderKey: number | null;
@@ -255,7 +262,7 @@ interface RawRun {
   projectId: string;
   agentId: string;
   taskId: string | null;
-  status: 'active' | 'waiting_for_human' | 'completed' | 'failed' | 'interrupted';
+  status: WireRunStatus;
   startedAt: string;
   endedAt: string | null;
 }
