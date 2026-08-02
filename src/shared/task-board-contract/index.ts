@@ -4,46 +4,55 @@ export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
 
-export type AgentRole = "engineer" | "manager" | "verifier";
-export type AgentStatus = "idle" | "ready" | "running" | "interrupting" | "waiting_for_human";
-export type WorkerConnection = "waiting_for_wake" | "watching_run" | null;
-export type TaskKind = "work" | "manager_review" | "human_check";
-export type TaskStatus =
-  | "backlog"
-  | "queued"
-  | "in_progress"
-  | "blocked"
-  | "completed"
-  | "failed"
-  | "cancelled";
-export type TaskPhaseStage = "research" | "planning" | "execution" | "testing" | "review" | "done";
-export type TaskPhaseStatus = "pending" | "in_progress" | "blocked" | "completed" | "failed";
-export type TaskMessageKind = "note" | "progress" | "proposal" | "result";
+export const AGENT_ROLES = ["engineer", "manager", "verifier"] as const;
+export type AgentRole = typeof AGENT_ROLES[number];
+
+export const AGENT_STATUSES = ["idle", "ready", "running", "interrupting", "waiting_for_human"] as const;
+export type AgentStatus = typeof AGENT_STATUSES[number];
+
+export const WORKER_CONNECTIONS = ["waiting_for_wake", "watching_run"] as const;
+export type WorkerConnection = typeof WORKER_CONNECTIONS[number] | null;
+
+export const TASK_KINDS = ["work", "manager_review", "human_check"] as const;
+export type TaskKind = typeof TASK_KINDS[number];
+
+export const TASK_STATUSES = ["backlog", "queued", "in_progress", "blocked", "completed", "failed", "cancelled"] as const;
+export type TaskStatus = typeof TASK_STATUSES[number];
+
+export const TASK_PHASE_STAGES = ["research", "planning", "execution", "testing", "review", "done"] as const;
+export type TaskPhaseStage = typeof TASK_PHASE_STAGES[number];
+
+export const TASK_PHASE_STATUSES = ["pending", "in_progress", "blocked", "completed", "failed"] as const;
+export type TaskPhaseStatus = typeof TASK_PHASE_STATUSES[number];
+
+export const TASK_MESSAGE_KINDS = ["note", "progress", "proposal", "result"] as const;
+export type TaskMessageKind = typeof TASK_MESSAGE_KINDS[number];
+
 export type ActorType = "human" | "agent" | "system";
-export type QuestionStatus = "open" | "answered";
-export type WakeupReason = "human_assignment" | "human_answer" | "human_resume" | "workflow_handoff";
-export type RunStatus = "active" | "waiting_for_human" | "completed" | "failed" | "interrupted";
+
+export const QUESTION_STATUSES = ["open", "answered"] as const;
+export type QuestionStatus = typeof QUESTION_STATUSES[number];
+
+export const WAKEUP_REASONS = ["human_assignment", "human_answer", "human_resume", "workflow_handoff"] as const;
+export type WakeupReason = typeof WAKEUP_REASONS[number];
+
+export const RUN_STATUSES = ["active", "waiting_for_human", "completed", "failed", "interrupted"] as const;
+export type RunStatus = typeof RUN_STATUSES[number];
+
 export type DocumentContentType = "text/markdown";
-export type DocumentActorType = Exclude<ActorType, "system">;
-export type WorkItemPriority = "urgent" | "high" | "normal" | "low" | "opportunistic";
-export type WorkItemState =
-  | "submitted"
-  | "processing"
-  | "needs_input"
-  | "waiting_for_human_review"
-  | "completed"
-  | "failed"
-  | "cancelled";
-export type WorkItemStage =
-  | "refinement"
-  | "project_resolution"
-  | "research"
-  | "planning"
-  | "implementation"
-  | "testing"
-  | "verification"
-  | "human_review"
-  | "deployment";
+
+export const DOCUMENT_ACTOR_TYPES = ["human", "agent"] as const;
+export type DocumentActorType = typeof DOCUMENT_ACTOR_TYPES[number];
+
+export const WORK_ITEM_PRIORITIES = ["urgent", "high", "normal", "low", "opportunistic"] as const;
+export type WorkItemPriority = typeof WORK_ITEM_PRIORITIES[number];
+
+export const WORK_ITEM_STATES = ["submitted", "processing", "needs_input", "waiting_for_human_review", "completed", "failed", "cancelled"] as const;
+export type WorkItemState = typeof WORK_ITEM_STATES[number];
+
+export const WORK_ITEM_STAGES = ["refinement", "project_resolution", "research", "planning", "implementation", "testing", "verification", "human_review", "deployment"] as const;
+export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
+
 export type WorkflowStage = "research" | "planning" | "implementation" | "testing" | "verification";
 export type PlanRevisionState = "proposed" | "confirmed" | "superseded" | "rejected";
 export type WorkNodeState = "pending" | "ready" | "active" | "blocked" | "stale" | "completed" | "cancelled";
@@ -58,7 +67,8 @@ export type ArtifactMediaType =
 export type WorkItemProjectTarget =
   | Readonly<{ mode: "auto" }>
   | Readonly<{ mode: "explicit"; projectId: string }>;
-export type AgentTypeEvaluatorProfile = "tests" | "editorial" | "visual" | "manual";
+export const EVALUATOR_PROFILES = ["tests", "editorial", "visual", "manual"] as const;
+export type AgentTypeEvaluatorProfile = typeof EVALUATOR_PROFILES[number];
 export type AutomationStageExecutor =
   | Readonly<{ kind: "agent_type"; agentTypeId: string }>
   | Readonly<{ kind: "human" }>
