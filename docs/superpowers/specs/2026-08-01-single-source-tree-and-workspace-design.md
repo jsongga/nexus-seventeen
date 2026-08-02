@@ -173,6 +173,35 @@ New `src/web/task-board/routing.ts`:
 Unit-tested round-trip over every `kind`, including unknown and malformed
 hashes. Deep-link and back-button cases added to `tests/e2e/task-board.spec.ts`.
 
+### Outcome (completed 2026-08-02)
+
+Delivered in `82f339a..6e5e656`. `routing.ts` holds the pure conversion;
+`useHashRoute` owns the hash and *derives* the page from it, returning
+`[page, navigate]` with push-vs-replace stated at each call site. No router
+library was added.
+
+**The `useHashRoute` export was initially dropped and then restored.** Dropping
+it was right for a *wrapper* hook and wrong for an *owning* one: keeping `page`
+as a `useState` copy of the URL, synced by three writers and two refs, produced
+two bugs that a final review reproduced in a live browser — a permanent URL/view
+disagreement when the board was unreachable, and a Back press that destroyed
+forward history. Deriving the page from the hash removed both mechanisms rather
+than patching them.
+
+**Known gaps — deliberately not fixed:**
+
+1. **On mobile, Back still exits the app from a full-screen view.** The task
+   detail and the navigation drawer are full-screen below `xl` but push no
+   history entry. `public/manifest.webmanifest` declares `display: standalone`,
+   where the system Back button is the only back affordance — so this is the
+   original complaint reappearing one layer down. Fixing it means giving
+   non-URL modal state its own history entries, which is beyond URL-syncing
+   `BoardPage`.
+2. **The task detail has no URL.** `openTask` sets `{ kind: 'tasks' }` plus
+   `selectedTaskId`, so the most shareable view in a task board is the one thing
+   that cannot be linked. This needs a new `BoardPage` member, whose shape this
+   work deliberately froze.
+
 ---
 
 ## Project C — Design adoption
