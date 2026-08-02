@@ -39,10 +39,10 @@ import type {
   WorkItemState,
 } from './types';
 import { AUTOMATION_STAGE_ALLOWED_ROLES, AUTOMATION_STAGE_ORDER } from './types';
+import { apiVersion, maximumAutomationConfigurationBytes, workItemPageSize } from './wire';
 
 type JsonRecord = Record<string, unknown>;
 
-const API_VERSION = 'steward.task-board/v1';
 const rawAgentStatuses = new Set(['idle', 'ready', 'running', 'interrupting', 'waiting_for_human'] as const);
 const rawWorkerConnections = new Set(['waiting_for_wake', 'watching_run'] as const);
 const rawTaskStatuses = new Set(['backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled'] as const);
@@ -63,14 +63,14 @@ const evaluatorProfiles = new Set<AutomationEvaluatorProfile>(['tests', 'editori
 const automationExecutorKinds = new Set<AutomationStageExecutor['kind']>(['agent_type', 'human', 'disabled']);
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
+// Client-side paging for task messages. Deliberately NOT the contract's
+// WORK_ITEM_PAGE_SIZE — same value today, different concerns.
 const taskMessagePageSize = 200;
 const maximumTaskMessages = 10_000;
 const maximumAgentQueryObjectiveCharacters = 8_000;
 const maximumAgentQueryConversationCharacters = 2_400;
 const maximumAgentQueryConversationTurns = 12;
 const maximumAgentQueryTurnCharacters = 480;
-const maximumAutomationConfigurationBytes = 48 * 1_024;
-const workItemPageSize = 200;
 const maximumWorkItemPages = 50;
 const maximumRawWorkItems = 10_000;
 const maximumWorkItemCursorBytes = 512;
@@ -390,7 +390,7 @@ function array<T>(value: unknown, path: string, parse: (item: unknown, path: str
 
 function apiEntity(value: unknown, path: string): JsonRecord {
   const item = record(value, path);
-  if (item.apiVersion !== API_VERSION) throw new Error(`${path}.apiVersion is incompatible`);
+  if (item.apiVersion !== apiVersion) throw new Error(`${path}.apiVersion is incompatible`);
   return item;
 }
 
@@ -593,7 +593,7 @@ function parseAutomationConfiguration(value: unknown, path: string): AutomationC
     'updatedAt',
     'updatedBy',
   ]);
-  if (item.apiVersion !== API_VERSION) throw new Error(`${path}.apiVersion is incompatible`);
+  if (item.apiVersion !== apiVersion) throw new Error(`${path}.apiVersion is incompatible`);
   if (item.configurationId !== 'company-default') throw new Error(`${path}.configurationId is unsupported`);
   const agentTypes = array(item.agentTypes, `${path}.agentTypes`, parseAutomationAgentType);
   const stages = array(item.stages, `${path}.stages`, parseAutomationStage);
