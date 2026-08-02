@@ -4,10 +4,9 @@ import {
   agentQueryRoutingContextMarker,
   createTaskBoardClient,
   DocumentStreamError,
-  parseBoardDocument,
-  parseBoardSnapshot,
   randomUuid,
 } from './client';
+import { parseBoardDocument, parseBoardSnapshot } from './parse';
 import type { AutomationAgentType, AutomationStageConfiguration } from './types';
 
 class MemoryStorage implements Storage {
