@@ -20,14 +20,40 @@ function hashSegments(hash: string): string[] {
   return withoutLeadingSlash.split('/');
 }
 
-/** decodeURIComponent throws on malformed input such as a bare '%'. */
-function decodeId(value: string | undefined): string | null {
-  if (!value) return null;
+function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
+  switch (kind) {
+    case 'tasks':
+    case 'automation':
+      return segmentCount === 1;
+    case 'documents':
+      return segmentCount === 1 || segmentCount === 2;
+    case 'project':
+    case 'agent':
+      return segmentCount === 2;
+    default:
+      return false;
+  }
+}
+
+/** Returns undefined for an absent id and null for an invalid encoded id. */
+function decodeId(value: string | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value.length === 0) return null;
   try {
     const decoded = decodeURIComponent(value);
     return decoded.length > 0 ? decoded : null;
   } catch {
     return null;
+  }
+}
+
+function pageHashWithId(kind: 'documents' | 'project' | 'agent', id: string): string {
+  try {
+    return `#/${kind}/${encodeURIComponent(id)}`;
+  } catch {
+    // An id that cannot be encoded cannot address a renderable page, so tasks
+    // is the honest destination and preserves routing's never-throws guarantee.
+    return '#/tasks';
   }
 }
 
@@ -38,16 +64,19 @@ export function pageToHash(page: BoardPage): string {
     case 'automation':
       return '#/automation';
     case 'documents':
-      return page.documentId ? `#/documents/${encodeURIComponent(page.documentId)}` : '#/documents';
+      return page.documentId ? pageHashWithId('documents', page.documentId) : '#/documents';
     case 'project':
-      return `#/project/${encodeURIComponent(page.projectId)}`;
+      return pageHashWithId('project', page.projectId);
     case 'agent':
-      return `#/agent/${encodeURIComponent(page.agentId)}`;
+      return pageHashWithId('agent', page.agentId);
   }
 }
 
 export function hashToPage(hash: string): BoardPage {
-  const [kind, rawId] = hashSegments(hash);
+  const segments = hashSegments(hash);
+  const [kind, rawId] = segments;
+  if (!acceptsSegmentCount(kind, segments.length)) return tasksPage;
+
   const id = decodeId(rawId);
   switch (kind) {
     case 'tasks':
@@ -55,13 +84,14 @@ export function hashToPage(hash: string): BoardPage {
     case 'automation':
       return { kind: 'automation' };
     case 'documents':
-      return id ? { kind: 'documents', documentId: id } : { kind: 'documents' };
+      if (id === null) return tasksPage;
+      return id === undefined ? { kind: 'documents' } : { kind: 'documents', documentId: id };
     case 'project':
       // A project or agent page without an id cannot render, so fall back
       // rather than producing a page that would immediately blank out.
-      return id ? { kind: 'project', projectId: id } : tasksPage;
+      return typeof id === 'string' ? { kind: 'project', projectId: id } : tasksPage;
     case 'agent':
-      return id ? { kind: 'agent', agentId: id } : tasksPage;
+      return typeof id === 'string' ? { kind: 'agent', agentId: id } : tasksPage;
     default:
       return tasksPage;
   }

@@ -27,6 +27,12 @@ describe('pageToHash', () => {
     expect(pageToHash({ kind: 'project', projectId: 'acme/web' })).toBe('#/project/acme%2Fweb');
     expect(pageToHash({ kind: 'agent', agentId: 'bot@host' })).toBe('#/agent/bot%40host');
   });
+
+  it('never throws when encoding an id it cannot represent', () => {
+    const loneSurrogate = '\uD800';
+    expect(() => pageToHash({ kind: 'project', projectId: loneSurrogate })).not.toThrow();
+    expect(pageToHash({ kind: 'project', projectId: loneSurrogate })).toBe('#/tasks');
+  });
 });
 
 describe('hashToPage', () => {
@@ -56,6 +62,23 @@ describe('hashToPage', () => {
     // decodeURIComponent('%') throws URIError; routing must absorb it.
     expect(() => hashToPage('#/project/%')).not.toThrow();
     expect(hashToPage('#/project/%')).toEqual({ kind: 'tasks' });
+  });
+
+  it('rejects hashes with more segments than the route accepts', () => {
+    expect(hashToPage('#/project/real/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/agent/real/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/automation/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/tasks/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/documents/doc-1/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/tasks/')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/documents/')).toEqual({ kind: 'tasks' });
+  });
+
+  it('treats a malformed id as malformed on every route, not just some', () => {
+    expect(hashToPage('#/project/%')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/agent/%')).toEqual({ kind: 'tasks' });
+    // Regression: this previously resolved to the documents index page.
+    expect(hashToPage('#/documents/%')).toEqual({ kind: 'tasks' });
   });
 
   it('accepts a hash with no leading marker', () => {
