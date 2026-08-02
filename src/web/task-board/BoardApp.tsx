@@ -645,26 +645,37 @@ export function BoardApp() {
   // being touched, including the snapshot reconciliation that falls back to the
   // tasks page when a project or agent disappears.
   const urlInitialised = useRef(false);
+  // A snapshot correction (the referenced project/agent/document vanished) is not
+  // a navigation the human performed, so it must not add a history entry --
+  // otherwise Back returns to the dead link and the next poll pushes the
+  // correction again, without bound.
+  const replaceNextUrlWrite = useRef(false);
   useEffect(() => {
     const next = pageToHash(page);
     const isFirstRun = !urlInitialised.current;
+    const shouldReplace = isFirstRun || replaceNextUrlWrite.current;
     // Mark before the early return below. On a deep link the hash already matches,
     // so an early return that skipped this would leave the flag false and make the
     // NEXT navigation replace the deep-link entry instead of pushing past it.
     urlInitialised.current = true;
+    replaceNextUrlWrite.current = false;
     if (window.location.hash === next) return;
     // The first write only normalises the address bar (e.g. "/" -> "#/tasks"), so
     // it must REPLACE. Pushing would leave a history entry whose back press
     // re-renders the same view, which reads as a broken back button.
-    if (isFirstRun) window.history.replaceState(null, '', next);
+    if (shouldReplace) window.history.replaceState(null, '', next);
     else window.history.pushState(null, '', next);
   }, [page]);
 
-  // URL -> page, for the browser back and forward buttons.
+  // URL -> page, for browser history and direct fragment changes.
   useEffect(() => {
-    const onPopState = () => setPage(hashToPage(window.location.hash));
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    const onUrlChange = () => setPage(hashToPage(window.location.hash));
+    window.addEventListener('popstate', onUrlChange);
+    window.addEventListener('hashchange', onUrlChange);
+    return () => {
+      window.removeEventListener('popstate', onUrlChange);
+      window.removeEventListener('hashchange', onUrlChange);
+    };
   }, []);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
@@ -697,10 +708,14 @@ export function BoardApp() {
       setSnapshot(next);
       setError(null);
       setConnected(true);
+      replaceNextUrlWrite.current = true;
       setPage((current) => {
         if (current.kind === 'project' && !next.projects.some((project) => project.id === current.projectId)) return { kind: 'tasks' };
         if (current.kind === 'agent' && !next.agents.some((agent) => agent.id === current.agentId)) return { kind: 'tasks' };
         if (current.kind === 'documents' && current.documentId && !next.documents.some((document) => document.id === current.documentId)) return { kind: 'documents' };
+        // React may bail out when this updater returns the same object, in which
+        // case the URL effect cannot consume the replacement marker.
+        replaceNextUrlWrite.current = false;
         return current;
       });
       setSelectedTaskId((current) => current && next.tasks.some((task) => task.id === current) ? current : null);

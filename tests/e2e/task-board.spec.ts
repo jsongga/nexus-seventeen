@@ -381,6 +381,41 @@ test('an unknown hash falls back to the task list instead of blanking the page',
   await expect(page.getByRole('button', { name: /Improve invoice recovery/u })).toBeVisible();
 });
 
+test('a deep link to a project missing from the snapshot does not trap Back', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.route('**/outside-board', async (route) => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Outside board</title><h1>Outside board</h1>',
+    });
+  });
+  await page.goto('/outside-board');
+  const historyLengthBeforeBoard = await page.evaluate(() => window.history.length);
+
+  await page.goto('/#/project/project-missing-from-snapshot');
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+  const historyLengthAfterReconciliation = await page.evaluate(() => window.history.length);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/outside-board$/u);
+  await expect(page.getByRole('heading', { name: 'Outside board' })).toBeVisible();
+  expect(historyLengthAfterReconciliation).toBe(historyLengthBeforeBoard + 1);
+});
+
+test('editing the hash directly updates the view', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+
+  await page.evaluate((projectId) => {
+    window.location.hash = `#/project/${encodeURIComponent(projectId)}`;
+  }, project.projectId);
+
+  await expect(page).toHaveURL(/#\/project\/project-cicada$/u);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+});
+
 test('the default app reads real board state and assignment is an explicit human wake', async ({ page }) => {
   let assignment: Record<string, unknown> | null = null;
   await page.route('**/board-api/v1/**', async (route) => {
