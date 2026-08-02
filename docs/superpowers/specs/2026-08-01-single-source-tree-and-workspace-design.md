@@ -111,6 +111,36 @@ graph LR
 deliberate check: add a fake status to the shared contract and confirm the web
 build **fails**. That failure is the deliverable — it proves the seam is real.
 
+### Outcome (completed 2026-08-02)
+
+Delivered in `88d091f..72d2b17`. The seam is real and **broader than planned**:
+all 16 contract vocabulary arrays fail the web typecheck when a member is added,
+not just the three status enums, because the check runs through `member()`'s
+return type rather than through the `Wire*` aliases.
+
+`client.ts` went 1897 → ~900 lines, split into `wire.ts` (the only file
+importing `@shared/*`), `parse.ts`, `project.ts`, `client.ts`.
+
+**Known gaps — deliberately not fixed, in rough priority order.** These are
+follow-up work, not blockers:
+
+1. **The workflow and artifact half of the wire protocol has no seam at all.**
+   `types.ts` hand-copies `WorkflowStage`, `PlanRevisionState`, `WorkNodeState`,
+   and `StageHandoffOutcome`, and `client.ts` pushes raw records into them
+   through 11 `as unknown as` casts, so there is no runtime validation either.
+   Verified: adding a `WorkNodeState` member produces **zero** typecheck errors.
+   All 11 casts predate this work. The honest claim is *the board wire surface
+   is unified; the workflow surface is not.*
+2. **`ActorType` has no runtime array** in the contract, so `parseEvent`'s
+   hand-rolled check has no seam — a new server actor type throws at runtime
+   with the build green. Adding `ACTOR_TYPES` would close it.
+3. **The document content cap is duplicated, uncoupled.** Web and server each
+   hardcode 48 KiB. Properly sharing it needs `DOCUMENT_CONTENT_MAX_BYTES` in
+   the contract plus a `src/server` edit, which Project A's constraints forbade.
+4. **Two component-level leaks.** `AutomationPage.tsx` hardcodes the four
+   evaluator options; `WorkspacePages.tsx` hardcodes five artifact media types
+   while the contract lists six (it includes `image/svg+xml`).
+
 ---
 
 ## Project B — Hash routing
