@@ -357,21 +357,29 @@ Collapsing them would couple two unrelated numbers. Leave a comment saying so:
 const taskMessagePageSize = 200;
 ```
 
-In `src/web/task-board/document-drafts.ts:10`, replace:
+In `src/web/task-board/document-drafts.ts:10`, **leave `maximumDraftBytes` local**
+and only add the comment explaining why:
 
 ```ts
+// Mirrors the server's document content cap (src/server/task-board/schema.ts).
+// Deliberately NOT the automation payload cap: the two limits are unrelated and
+// only happen to share a value today, so coupling them would let a change to one
+// silently break the other.
 const maximumDraftBytes = 48 * 1_024;
 ```
 
-with:
-
-```ts
-import { maximumAutomationConfigurationBytes } from './wire';
-
-// Document drafts are capped at the same size the board accepts for an
-// automation configuration payload.
-const maximumDraftBytes = maximumAutomationConfigurationBytes;
-```
+> **Corrected 2026-08-02.** This step originally told the implementer to set
+> `maximumDraftBytes = maximumAutomationConfigurationBytes`. That was wrong:
+> `src/server/task-board/schema.ts` caps *document content* with its own
+> independent `48 * 1_024`, and the contract has no document-content constant.
+> Coupling the two would make a change to the automation cap silently drift
+> document drafts away from what the server accepts — the same "same value
+> today, different concerns" trap this task deliberately avoids for
+> `taskMessagePageSize`. Caught by `codex review` on the Task 2 diff.
+>
+> Sharing the limit properly would mean adding `DOCUMENT_CONTENT_MAX_BYTES` to
+> the contract and using it on both sides, which requires editing `src/server`
+> — outside this plan's constraints. Left as a known, uncoupled duplicate.
 
 - [ ] **Step 9: Run the full web suite**
 

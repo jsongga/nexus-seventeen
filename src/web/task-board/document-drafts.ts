@@ -1,5 +1,3 @@
-import { maximumAutomationConfigurationBytes } from './wire';
-
 export interface StoredDocumentDraft {
   documentId: string;
   baseContentVersion: number;
@@ -10,9 +8,11 @@ export interface StoredDocumentDraft {
 const storageKey = 'cicada.documentDrafts.v1';
 const maximumDrafts = 8;
 
-// Document drafts are capped at the same size the board accepts for an
-// automation configuration payload.
-const maximumDraftBytes = maximumAutomationConfigurationBytes;
+// Mirrors the server's document content cap (src/server/task-board/schema.ts).
+// Deliberately NOT the automation payload cap: the two limits are unrelated and
+// only happen to share a value today, so coupling them would let a change to one
+// silently break the other.
+const maximumDraftBytes = 48 * 1_024;
 
 function contentBytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
