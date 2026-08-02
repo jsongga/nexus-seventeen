@@ -31,7 +31,10 @@ describe('pageToHash', () => {
   it('never throws when encoding an id it cannot represent', () => {
     const loneSurrogate = '\uD800';
     expect(() => pageToHash({ kind: 'project', projectId: loneSurrogate })).not.toThrow();
-    expect(pageToHash({ kind: 'project', projectId: loneSurrogate })).toBe('#/tasks');
+    const hash = pageToHash({ kind: 'project', projectId: loneSurrogate });
+    expect(hash).toBe('#/project/%EF%BF%BD/unencodable');
+    expect(hash).not.toBe('#/tasks');
+    expect(hashToPage(hash)).toEqual({ kind: 'tasks' });
   });
 });
 

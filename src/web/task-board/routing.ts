@@ -51,9 +51,9 @@ function pageHashWithId(kind: 'documents' | 'project' | 'agent', id: string): st
   try {
     return `#/${kind}/${encodeURIComponent(id)}`;
   } catch {
-    // An id that cannot be encoded cannot address a renderable page, so tasks
-    // is the honest destination and preserves routing's never-throws guarantee.
-    return '#/tasks';
+    // Keep the route kind visible without claiming this was a tasks page. The
+    // extra segment makes the sentinel invalid, so it safely parses to tasks.
+    return `#/${kind}/%EF%BF%BD/unencodable`;
   }
 }
 

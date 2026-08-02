@@ -21,7 +21,7 @@ import { AutomationPage } from './AutomationPage';
 import { ClientOperationGate, emptyAutomationEditorState, type AutomationEditorState } from './automation-model';
 import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './client';
 import { DocumentsPage } from './DocumentsPage';
-import { hashToPage, pageToHash } from './routing';
+import { useHashRoute } from './useHashRoute';
 import { AgentPage, ProjectPage } from './WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './WorkspaceSidebar';
 import {
@@ -634,49 +634,18 @@ function ConnectionForm({ settings, busy, onSubmit }: { settings: ConnectionSett
   );
 }
 
+function missingRouteFallback(page: BoardPage, snapshot: BoardSnapshot): BoardPage | null {
+  if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
+  if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
+  if (page.kind === 'documents' && page.documentId && !snapshot.documents.some((document) => document.id === page.documentId)) return { kind: 'documents' };
+  return null;
+}
+
 export function BoardApp() {
   const [connection, setConnection] = useState<ConnectionSettings>(initialConnection);
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: connection.baseUrl, token: connection.token }), [connection]);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
-  // Lazy initialiser: the URL is the source of truth on first render.
-  const [page, setPage] = useState<BoardPage>(() => hashToPage(window.location.hash));
-
-  // page -> URL. Watching the value means every setPage call site syncs without
-  // being touched, including the snapshot reconciliation that falls back to the
-  // tasks page when a project or agent disappears.
-  const urlInitialised = useRef(false);
-  // A snapshot correction (the referenced project/agent/document vanished) is not
-  // a navigation the human performed, so it must not add a history entry --
-  // otherwise Back returns to the dead link and the next poll pushes the
-  // correction again, without bound.
-  const replaceNextUrlWrite = useRef(false);
-  useEffect(() => {
-    const next = pageToHash(page);
-    const isFirstRun = !urlInitialised.current;
-    const shouldReplace = isFirstRun || replaceNextUrlWrite.current;
-    // Mark before the early return below. On a deep link the hash already matches,
-    // so an early return that skipped this would leave the flag false and make the
-    // NEXT navigation replace the deep-link entry instead of pushing past it.
-    urlInitialised.current = true;
-    replaceNextUrlWrite.current = false;
-    if (window.location.hash === next) return;
-    // The first write only normalises the address bar (e.g. "/" -> "#/tasks"), so
-    // it must REPLACE. Pushing would leave a history entry whose back press
-    // re-renders the same view, which reads as a broken back button.
-    if (shouldReplace) window.history.replaceState(null, '', next);
-    else window.history.pushState(null, '', next);
-  }, [page]);
-
-  // URL -> page, for browser history and direct fragment changes.
-  useEffect(() => {
-    const onUrlChange = () => setPage(hashToPage(window.location.hash));
-    window.addEventListener('popstate', onUrlChange);
-    window.addEventListener('hashchange', onUrlChange);
-    return () => {
-      window.removeEventListener('popstate', onUrlChange);
-      window.removeEventListener('hashchange', onUrlChange);
-    };
-  }, []);
+  const [page, navigate] = useHashRoute();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -708,16 +677,6 @@ export function BoardApp() {
       setSnapshot(next);
       setError(null);
       setConnected(true);
-      replaceNextUrlWrite.current = true;
-      setPage((current) => {
-        if (current.kind === 'project' && !next.projects.some((project) => project.id === current.projectId)) return { kind: 'tasks' };
-        if (current.kind === 'agent' && !next.agents.some((agent) => agent.id === current.agentId)) return { kind: 'tasks' };
-        if (current.kind === 'documents' && current.documentId && !next.documents.some((document) => document.id === current.documentId)) return { kind: 'documents' };
-        // React may bail out when this updater returns the same object, in which
-        // case the URL effect cannot consume the replacement marker.
-        replaceNextUrlWrite.current = false;
-        return current;
-      });
       setSelectedTaskId((current) => current && next.tasks.some((task) => task.id === current) ? current : null);
       return true;
     } catch (caught) {
@@ -733,10 +692,6 @@ export function BoardApp() {
   useEffect(() => {
     refreshController.current?.abort();
     setSnapshot(null);
-    // Reconnecting clears transient state, but the URL still says which page the
-    // human asked for — including on the initial mount, where this effect would
-    // otherwise discard a deep link.
-    setPage(hashToPage(window.location.hash));
     setSelectedTaskId(null);
     setTaskDetailOpen(false);
     setConnected(false);
@@ -756,6 +711,12 @@ export function BoardApp() {
       refreshSequence.current += 1;
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (snapshot === null) return;
+    const fallback = missingRouteFallback(page, snapshot);
+    if (fallback !== null) navigate(fallback, 'replace');
+  }, [navigate, page, snapshot]);
 
   const mutate = useCallback(async (operation: () => Promise<unknown>): Promise<boolean> => {
     if (!connected) {
@@ -792,7 +753,7 @@ export function BoardApp() {
   const dialogProject = snapshot?.projects.find((project) => project.id === dialogProjectId);
   function openTask(taskId: string) {
     setSelectedTaskId(taskId);
-    setPage({ kind: 'tasks' });
+    navigate({ kind: 'tasks' });
     setTaskDetailOpen(true);
   }
 
@@ -841,7 +802,7 @@ export function BoardApp() {
   } else if (snapshot === null) {
     content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<CircleAlert size={20} />} title="Connect the task board" body="Start the task-board service or update the connection. The frontend intentionally has no local demo fallback." action={<Button variant="primary" onClick={() => openDialog('connection')}>Connection settings</Button>} /></Card></main>;
   } else if (page.kind === 'documents') {
-    content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => setPage({ kind: 'documents', documentId })} onRefreshBoard={() => refresh(true)} />;
+    content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh(true)} />;
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorStateForConnection} />;
   } else if (page.kind === 'project' && pageProject) {
@@ -916,7 +877,7 @@ export function BoardApp() {
           : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { setPage(next); setTaskDetailOpen(false); }}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
       {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5 opacity-80">{error}. Existing durable state remains visible; no demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => openDialog('connection')}>Configure</button></div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 

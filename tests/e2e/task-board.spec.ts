@@ -416,6 +416,48 @@ test('editing the hash directly updates the view', async ({ page }) => {
   await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
 });
 
+test('canonicalising an unknown hash preserves backward and forward history', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' })
+    .getByRole('button', { name: project.name, exact: true }).click();
+  await expect(page).toHaveURL(/#\/project\/project-cicada$/u);
+
+  const historyLengthBeforeHashEdit = await page.evaluate(() => window.history.length);
+  await page.evaluate(() => {
+    window.location.hash = '#/garbage';
+  });
+
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+  const historyLengthAfterCanonicalisation = await page.evaluate(() => window.history.length);
+  expect(historyLengthAfterCanonicalisation).toBe(historyLengthBeforeHashEdit + 1);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/project\/project-cicada$/u);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.history.length)).toBe(historyLengthAfterCanonicalisation);
+
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+});
+
+test('a missing project route is corrected immediately against the loaded snapshot', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+
+  await page.evaluate(() => {
+    window.location.hash = '#/project/project-absent-from-loaded-snapshot';
+  });
+
+  await expect(page).toHaveURL(/#\/tasks$/u, { timeout: 1_000 });
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toHaveCount(0);
+});
+
 test('the default app reads real board state and assignment is an explicit human wake', async ({ page }) => {
   let assignment: Record<string, unknown> | null = null;
   await page.route('**/board-api/v1/**', async (route) => {
