@@ -11,8 +11,6 @@ import type {
   AutomationConfiguration,
   AutomationStageConfiguration,
   AutomationStageExecutor,
-  BoardDocument,
-  BoardSnapshot,
   TaskKind,
   TaskPhaseStage,
   TaskPhaseStatus,
@@ -27,6 +25,7 @@ import {
   documentActorTypes,
   evaluatorProfiles,
   maximumAutomationConfigurationBytes,
+  maximumWorkItemCursorBytes,
   messageKinds,
   questionStatuses,
   rawAgentStatuses,
@@ -45,7 +44,8 @@ import {
   type WireTaskStatus,
   type WireWorkerConnection,
 } from './wire';
-import { documentProjection, normalize } from './project';
+
+export { maximumWorkItemCursorBytes };
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -56,7 +56,6 @@ const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 export const maximumTaskMessages = 10_000;
 export const maximumWorkItemPages = 50;
 export const maximumRawWorkItems = 10_000;
-export const maximumWorkItemCursorBytes = 512;
 
 export interface RawProject {
   projectId: string;
@@ -770,15 +769,4 @@ export function parseRawBoard(value: unknown): RawBoard {
     events: array(item.recentEvents, 'board.recentEvents', parseEvent),
     documents: array(item.documents, 'board.documents', parseDocumentSummary),
   };
-}
-
-/** Parses the task-board's authoritative single-project snapshot into the frontend projection. */
-export function parseBoardSnapshot(value: unknown): BoardSnapshot {
-  const board = parseRawBoard(value);
-  return normalize([board], [board.project], [], []);
-}
-
-/** Parses one authoritative document snapshot returned by the task board. */
-export function parseBoardDocument(value: unknown): BoardDocument {
-  return documentProjection(parseDocument(value, 'document'));
 }

@@ -52,8 +52,6 @@ import {
 } from './project';
 import { workItemPageSize } from './wire';
 
-export { parseBoardDocument, parseBoardSnapshot } from './parse';
-
 // Client-side paging for task messages. Deliberately NOT the contract's
 // WORK_ITEM_PAGE_SIZE — same value today, different concerns.
 const taskMessagePageSize = 200;
@@ -64,6 +62,17 @@ const maximumAgentQueryTurnCharacters = 480;
 
 export const agentQueryConversationContextMarker = '\n\nRecent POC conversation (context only; newest request is above):\n';
 export const agentQueryRoutingContextMarker = '\n\nCompany routing map (use this only to identify the best project or agent):\n';
+
+/** Parses the task-board's authoritative single-project snapshot into the frontend projection. */
+export function parseBoardSnapshot(value: unknown): BoardSnapshot {
+  const board = parseRawBoard(value);
+  return normalize([board], [board.project], [], []);
+}
+
+/** Parses one authoritative document snapshot returned by the task board. */
+export function parseBoardDocument(value: unknown): BoardDocument {
+  return documentProjection(parseDocument(value, 'document'));
+}
 
 export function agentQueryPromptFromObjective(objective: string): string {
   const sectionIndexes = [

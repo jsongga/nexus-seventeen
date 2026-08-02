@@ -1,8 +1,8 @@
 /**
  * The web app's single doorway to the shared task-board contract.
  *
- * Only this file imports `@shared/*`. Everything else in src/web imports from
- * here, which keeps two hazards in one place:
+ * Only this file imports `@shared/*`; it also documents the wire/view naming
+ * hazards:
  *
  *  1. Wire types collide by name with the view types in ./types.ts —
  *     TaskStatus, AgentStatus and RunStatus mean different things on each
@@ -27,26 +27,16 @@ import {
   TASK_STATUSES,
   WAKEUP_REASONS,
   WORKER_CONNECTIONS,
+  WORK_ITEM_CURSOR_MAX_BYTES,
   WORK_ITEM_PAGE_SIZE,
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
-  type AgentRole,
   type AgentStatus,
-  type AgentTypeEvaluatorProfile,
-  type DocumentActorType,
-  type QuestionStatus,
   type RunStatus,
-  type TaskKind,
-  type TaskMessageKind,
-  type TaskPhaseStage,
-  type TaskPhaseStatus,
   type TaskStatus,
   type WakeupReason,
   type WorkerConnection,
-  type WorkItemPriority,
-  type WorkItemStage,
-  type WorkItemState,
 } from '@shared/task-board-contract';
 
 // Prefixed because ./types.ts exports different types under these same three
@@ -58,23 +48,10 @@ export type WireWorkerConnection = WorkerConnection;
 
 // Renamed to the vocabulary the web app already uses.
 export type WakeReason = WakeupReason;
-export type AutomationEvaluatorProfile = AgentTypeEvaluatorProfile;
-
-export type {
-  AgentRole,
-  DocumentActorType,
-  QuestionStatus,
-  TaskKind,
-  TaskMessageKind,
-  TaskPhaseStage,
-  TaskPhaseStatus,
-  WorkItemPriority,
-  WorkItemStage,
-  WorkItemState,
-};
 
 export const apiVersion = TASK_BOARD_API_VERSION;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
+export const maximumWorkItemCursorBytes = WORK_ITEM_CURSOR_MAX_BYTES;
 export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
