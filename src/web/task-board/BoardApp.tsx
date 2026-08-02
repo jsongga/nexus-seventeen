@@ -21,6 +21,7 @@ import { AutomationPage } from './AutomationPage';
 import { ClientOperationGate, emptyAutomationEditorState, type AutomationEditorState } from './automation-model';
 import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './client';
 import { DocumentsPage } from './DocumentsPage';
+import { hashToPage, pageToHash } from './routing';
 import { AgentPage, ProjectPage } from './WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './WorkspaceSidebar';
 import {
@@ -637,7 +638,34 @@ export function BoardApp() {
   const [connection, setConnection] = useState<ConnectionSettings>(initialConnection);
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: connection.baseUrl, token: connection.token }), [connection]);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
-  const [page, setPage] = useState<BoardPage>({ kind: 'tasks' });
+  // Lazy initialiser: the URL is the source of truth on first render.
+  const [page, setPage] = useState<BoardPage>(() => hashToPage(window.location.hash));
+
+  // page -> URL. Watching the value means every setPage call site syncs without
+  // being touched, including the snapshot reconciliation that falls back to the
+  // tasks page when a project or agent disappears.
+  const urlInitialised = useRef(false);
+  useEffect(() => {
+    const next = pageToHash(page);
+    const isFirstRun = !urlInitialised.current;
+    // Mark before the early return below. On a deep link the hash already matches,
+    // so an early return that skipped this would leave the flag false and make the
+    // NEXT navigation replace the deep-link entry instead of pushing past it.
+    urlInitialised.current = true;
+    if (window.location.hash === next) return;
+    // The first write only normalises the address bar (e.g. "/" -> "#/tasks"), so
+    // it must REPLACE. Pushing would leave a history entry whose back press
+    // re-renders the same view, which reads as a broken back button.
+    if (isFirstRun) window.history.replaceState(null, '', next);
+    else window.history.pushState(null, '', next);
+  }, [page]);
+
+  // URL -> page, for the browser back and forward buttons.
+  useEffect(() => {
+    const onPopState = () => setPage(hashToPage(window.location.hash));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -690,7 +718,10 @@ export function BoardApp() {
   useEffect(() => {
     refreshController.current?.abort();
     setSnapshot(null);
-    setPage({ kind: 'tasks' });
+    // Reconnecting clears transient state, but the URL still says which page the
+    // human asked for — including on the initial mount, where this effect would
+    // otherwise discard a deep link.
+    setPage(hashToPage(window.location.hash));
     setSelectedTaskId(null);
     setTaskDetailOpen(false);
     setConnected(false);

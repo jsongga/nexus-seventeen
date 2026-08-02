@@ -316,6 +316,29 @@ function board() {
   };
 }
 
+async function installDefaultBoard(page: Page): Promise<void> {
+  await page.route('**/board-api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+}
+
 async function openCompanyRail(page: Page): Promise<Locator> {
   if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
     await page.getByRole('button', { name: 'Open navigation' }).click();
@@ -324,6 +347,39 @@ async function openCompanyRail(page: Page): Promise<Locator> {
   await expect(companyNavigation).toBeVisible();
   return companyNavigation.locator('../..');
 }
+
+test('a project deep link survives a reload and the back button returns to it', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  let companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' })
+    .getByRole('button', { name: project.name, exact: true }).click();
+
+  // Navigating updates the URL.
+  await expect(page).toHaveURL(/#\/project\/project-cicada$/u);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+  const deepLink = page.url();
+
+  // The URL alone restores the same view.
+  await page.reload();
+  await expect(page).toHaveURL(deepLink);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+
+  // Going elsewhere and back returns to it.
+  companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('button', { name: 'Task List' }).click();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await page.goBack();
+  await expect(page).toHaveURL(deepLink);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+});
+
+test('an unknown hash falls back to the task list instead of blanking the page', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/#/nonsense/value');
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Improve invoice recovery/u })).toBeVisible();
+});
 
 test('the default app reads real board state and assignment is an explicit human wake', async ({ page }) => {
   let assignment: Record<string, unknown> | null = null;
