@@ -1,0 +1,371 @@
+<!--
+  Reference design for Project C — "Agentic Workspace Overview".
+
+  This is the ORIGINAL design as supplied, kept verbatim as the fidelity
+  reference for docs/superpowers/plans/2026-08-02-design-adoption.md.
+  Do not edit it to match the implementation; it is the target, not a record
+  of what was built. The implementation lives in Tailwind over the token layer
+  in src/web/styles.css — this file is never imported or served.
+-->
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic Workspace Overview</title>
+<style>
+  :root {
+    --bg-header: #D6D8CC;
+    --bg-main: #FFFFFF;
+    --text-primary: #2A2A28;
+    --text-secondary: #7A7A78;
+    --text-tertiary: #A0A0A0;
+    --border-color: #EAEAEA;
+    --bg-subtle: #F3F3F5;
+
+    --accent-dark: #5F4B51;
+    --status-green: #8B9883;
+    --status-blue: #A2BBE0;
+    --status-orange: #F28D50;
+    --status-red: #C45A34;
+    --status-gray: #D1D1D1;
+
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-pill: 99px;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  :focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 2px; border-radius: 2px; }
+  a:focus-visible, button:focus-visible { border-radius: var(--radius-sm); }
+
+  /* Header */
+  .workspace-header {
+    background-color: var(--bg-header);
+    padding: var(--space-xl) var(--space-xl);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-shrink: 0;
+  }
+  .header-titles { display: flex; flex-direction: column; gap: var(--space-xs); }
+  .header-meta { font-size: 11px; color: var(--accent-dark); opacity: 0.8; }
+  .project-title { font-size: 28px; font-weight: 400; letter-spacing: -0.5px; color: var(--text-primary); }
+  .header-actions { display: flex; gap: var(--space-sm); }
+  .icon-btn {
+    width: 32px; height: 32px; border-radius: var(--radius-pill);
+    background-color: var(--bg-main); border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; color: var(--text-secondary);
+  }
+
+  /* Layout */
+  .main-layout { display: flex; flex: 1; overflow: hidden; }
+
+  .sidebar-docs {
+    width: 260px;
+    border-right: 1px solid var(--border-color);
+    padding: var(--space-xl) var(--space-xl);
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+
+  .section-heading {
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+    margin-bottom: var(--space-md); letter-spacing: 0.2px;
+  }
+  .section-heading.with-underline {
+    border-bottom: 2px solid var(--text-primary);
+    padding-bottom: var(--space-xs);
+    display: inline-block;
+    margin-bottom: var(--space-lg);
+  }
+
+  .doc-list { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .doc-link {
+    text-decoration: none; color: var(--text-secondary); font-size: 13px;
+    display: flex; align-items: flex-start; gap: var(--space-sm);
+    line-height: 1.3; padding: 4px; margin: -4px; border-radius: var(--radius-sm);
+  }
+  .doc-link:hover { color: var(--text-primary); background-color: var(--bg-subtle); }
+  .doc-icon { width: 14px; height: 14px; background-color: var(--border-color); border-radius: 2px; flex-shrink: 0; margin-top: 2px; }
+  .doc-meta { display: block; font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+
+  .workspace-core {
+    flex: 1; padding: var(--space-xl);
+    display: flex; flex-direction: column; gap: var(--space-xl); overflow: hidden;
+  }
+
+  /* Pipeline table */
+  .tasks-section { flex-shrink: 0; }
+  .data-table { width: 100%; border-collapse: collapse; text-align: left; }
+  .data-table th {
+    font-size: 11px; font-weight: 500; color: var(--text-secondary);
+    padding-bottom: var(--space-sm); border-bottom: 1px solid var(--border-color);
+  }
+  .data-table td {
+    padding: 10px 0; border-bottom: 1px solid var(--border-color);
+    font-size: 13px; vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+
+  .cell-input-style {
+    background-color: var(--bg-subtle); padding: 6px 10px; border-radius: var(--radius-md);
+    display: inline-flex; align-items: center; gap: var(--space-sm); color: var(--text-primary);
+  }
+
+  .status-pill {
+    display: inline-flex; align-items: center; padding: 4px 8px;
+    border-radius: var(--radius-md); font-size: 11px; font-weight: 500;
+  }
+  .status-queued  { background-color: var(--status-gray);   color: #4A4A4A; }
+  .status-working { background-color: var(--status-blue);   color: #2B4570; }
+  .status-review  { background-color: var(--status-orange); color: #5A2A0D; }
+  .status-changes { background-color: var(--status-red);    color: #FFFFFF; }
+  .status-merged  { background-color: var(--status-green);  color: #1E3314; }
+
+  .task-meta { font-size: 11px; color: var(--text-secondary); }
+
+  /* Activity feed */
+  .updates-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .updates-feed {
+    flex: 1; overflow-y: auto; padding-right: var(--space-md);
+    display: flex; flex-direction: column; gap: var(--space-lg);
+  }
+  .updates-feed::-webkit-scrollbar { width: 6px; }
+  .updates-feed::-webkit-scrollbar-track { background: transparent; }
+  .updates-feed::-webkit-scrollbar-thumb { background-color: var(--border-color); border-radius: var(--radius-pill); }
+
+  .update-item { display: grid; grid-template-columns: 80px 1fr; gap: var(--space-md); }
+  .update-time { font-size: 11px; color: var(--text-secondary); padding-top: 2px; }
+  .update-content-wrapper { display: flex; flex-direction: column; gap: var(--space-sm); }
+  .update-text { color: var(--text-primary); line-height: 1.5; }
+  .update-agent { font-weight: 600; color: var(--accent-dark); }
+
+  .visual-preview {
+    background-color: var(--bg-subtle); border: 1px solid var(--border-color);
+    border-radius: var(--radius-md); padding: var(--space-md);
+    margin-top: var(--space-xs); cursor: pointer;
+  }
+  .visual-preview:focus-visible { outline: 2px solid var(--accent-dark); outline-offset: -2px; }
+
+  .mock-chart {
+    display: flex; align-items: flex-end; gap: 4px; height: 60px;
+    padding-bottom: 8px; border-bottom: 1px solid #DEDEDE;
+  }
+  .mock-bar { background-color: var(--status-blue); width: 12px; border-radius: 2px 2px 0 0; }
+  .mock-bar:nth-child(2) { height: 60%; background-color: var(--status-green); }
+  .mock-bar:nth-child(3) { height: 80%; background-color: var(--status-orange); }
+  .mock-bar:nth-child(4) { height: 30%; }
+  .mock-bar:nth-child(5) { height: 100%; }
+
+  .mock-diff { font-family: monospace; font-size: 10px; line-height: 1.4; color: var(--text-secondary); }
+  .diff-add { color: #407A25; background-color: #EEF6EA; padding: 0 4px; display: inline-block; width: 100%; }
+  .diff-sub { color: #A63030; background-color: #FDF0F0; padding: 0 4px; display: inline-block; width: 100%; }
+
+  /* Actions */
+  .workspace-actions {
+    margin-top: auto; padding-top: var(--space-md);
+    display: flex; justify-content: flex-end; gap: var(--space-sm);
+  }
+  .btn {
+    padding: 8px 16px; border-radius: var(--radius-pill); font-size: 12px;
+    font-weight: 500; cursor: pointer; border: none; text-decoration: none; display: inline-block;
+  }
+  .btn-secondary { background-color: var(--bg-subtle); color: var(--text-primary); }
+  .btn-primary { background-color: var(--accent-dark); color: var(--bg-main); }
+</style>
+</head>
+<body>
+
+  <header class="workspace-header">
+    <div class="header-titles">
+      <span class="header-meta">Workspace, System Architecture Refactor</span>
+      <h1 class="project-title" tabindex="0">Auth Module V2 Implementation</h1>
+    </div>
+    <div class="header-actions">
+      <button class="icon-btn" aria-label="Settings" tabindex="0">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
+      </button>
+      <button class="icon-btn" aria-label="Export" tabindex="0">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="main-layout">
+
+    <aside class="sidebar-docs">
+      <h2 class="section-heading with-underline" tabindex="0">Context &amp; Materials</h2>
+      <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;">
+        Reference these materials to understand the structural changes required for the new stateless architecture.
+      </p>
+
+      <h3 class="section-heading">Important Documents</h3>
+      <ul class="doc-list">
+        <li>
+          <a href="#" class="doc-link" tabindex="0">
+            <div class="doc-icon"></div>
+            <div>
+              PRD: Auth V2 Requirements
+              <span class="doc-meta">Updated 2d ago by Sarah</span>
+            </div>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="doc-link" tabindex="0">
+            <div class="doc-icon"></div>
+            <div>
+              Architecture Diagram (Current vs Future)
+              <span class="doc-meta">Figma · 4 screens</span>
+            </div>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="doc-link" tabindex="0">
+            <div class="doc-icon"></div>
+            <div>
+              API Contract Specifications
+              <span class="doc-meta">OpenAPI Spec</span>
+            </div>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="doc-link" tabindex="0">
+            <div class="doc-icon"></div>
+            <div>
+              Migration Strategy Notes
+              <span class="doc-meta">Notion · 1.2k words</span>
+            </div>
+          </a>
+        </li>
+      </ul>
+    </aside>
+
+    <section class="workspace-core">
+
+      <div class="tasks-section">
+        <h2 class="section-heading" tabindex="0">Active Thread Pipeline</h2>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 40%">Task Objective</th>
+              <th style="width: 20%">Assigned Agent</th>
+              <th style="width: 25%">Stage</th>
+              <th style="width: 15%">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="cell-input-style" tabindex="0">Implement JWT rotation logic</span></td>
+              <td><span class="task-meta">Coder-Alpha</span></td>
+              <td><span class="status-pill status-working">Agent Working</span></td>
+              <td><span class="task-meta">10m ago</span></td>
+            </tr>
+            <tr>
+              <td><span class="cell-input-style" tabindex="0">Database schema migration script</span></td>
+              <td><span class="task-meta">Data-Bot</span></td>
+              <td><span class="status-pill status-review">Awaiting Review</span></td>
+              <td><span class="task-meta">1h ago</span></td>
+            </tr>
+            <tr>
+              <td><span class="cell-input-style" tabindex="0">OAuth2 Provider Integration</span></td>
+              <td><span class="task-meta">Coder-Beta</span></td>
+              <td><span class="status-pill status-changes">Changes Requested</span></td>
+              <td><span class="task-meta">3h ago</span></td>
+            </tr>
+            <tr>
+              <td><span class="cell-input-style" tabindex="0">Deprecate legacy session store</span></td>
+              <td><span class="task-meta">-</span></td>
+              <td><span class="status-pill status-queued">Queued</span></td>
+              <td><span class="task-meta">-</span></td>
+            </tr>
+            <tr>
+              <td><span class="cell-input-style" tabindex="0">Setup initial routes &amp; middleware</span></td>
+              <td><span class="task-meta">Coder-Alpha</span></td>
+              <td><span class="status-pill status-merged">Merged</span></td>
+              <td><span class="task-meta">Yesterday</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="updates-section">
+        <h2 class="section-heading" style="display: flex; justify-content: space-between; align-items: center;" tabindex="0">
+          Recent Activity &amp; Visuals
+          <span class="status-pill status-gray" style="font-size: 10px;">Live Feed</span>
+        </h2>
+
+        <div class="updates-feed" tabindex="0">
+
+          <div class="update-item">
+            <div class="update-time">10:42 AM</div>
+            <div class="update-content-wrapper">
+              <div class="update-text">
+                <span class="update-agent">Coder-Alpha</span> generated a performance comparison chart for the new token validation middleware.
+              </div>
+              <div class="visual-preview" tabindex="0" aria-label="Performance Chart Preview">
+                <div class="mock-chart">
+                  <div class="mock-bar"></div>
+                  <div class="mock-bar"></div>
+                  <div class="mock-bar"></div>
+                  <div class="mock-bar"></div>
+                  <div class="mock-bar"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 8px;">Latency (ms) - V1 vs V2</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="update-item">
+            <div class="update-time">09:15 AM</div>
+            <div class="update-content-wrapper">
+              <div class="update-text">
+                <span class="update-agent">Data-Bot</span> submitted PR #142 for the migration script. Human review requested due to destructive table operations.
+              </div>
+              <div class="visual-preview" tabindex="0" aria-label="Code Diff Preview">
+                <div class="mock-diff">
+                  <div class="diff-sub">- DROP TABLE user_sessions;</div>
+                  <div class="diff-add">+ ALTER TABLE users ADD COLUMN refresh_token VARCHAR(255);</div>
+                  <div>  CREATE INDEX idx_refresh ON users(refresh_token);</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="update-item">
+            <div class="update-time">Yesterday</div>
+            <div class="update-content-wrapper">
+              <div class="update-text">
+                <span class="update-agent">System</span> successfully merged "Setup initial routes". Code coverage is at 94%.
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="workspace-actions">
+          <button class="btn btn-secondary" tabindex="0">Pause Agents</button>
+          <button class="btn btn-primary" tabindex="0">Compile Report</button>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+</body></html>
