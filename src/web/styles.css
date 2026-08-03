@@ -122,7 +122,7 @@
   --ink-panel: #F3F3F5;
   --scrim: rgba(42, 42, 40, 0.45);
   --foreground: #2A2A28;
-  --muted-foreground: #7A7A78;
+  --muted-foreground: #747472;
   --tertiary-foreground: #A0A0A0;
   --primary-foreground: #FFFFFF;
   --border: #EAEAEA;
@@ -146,13 +146,13 @@
   --caution-fill: #F28D50;
   --caution-soft: rgba(242, 141, 80, 0.22);
   --urgent-text: #8A3A20;
-  --urgent-fill: #C45A34;
+  --urgent-fill: #BE5531;
   --urgent-soft: rgba(196, 90, 52, 0.20);
   --teal-border: #EAEAEA;
   --border-strong: #D8D8D8;
   --muted-surface: #F3F3F5;
   --caution-border: #F28D50;
-  --urgent-border: #C45A34;
+  --urgent-border: #BE5531;
   --info-text: #2B4570;
   --info-soft: rgba(162, 187, 224, 0.30);
   --info-border: #A2BBE0;
