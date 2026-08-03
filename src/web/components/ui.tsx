@@ -25,7 +25,7 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes = {
-  sm: 'min-h-9 gap-1.5 rounded-[99px] px-3 font-mono text-[12px] uppercase tracking-[0.06em]',
+  sm: 'min-h-9 gap-1.5 rounded-[99px] px-3 text-[12px]',
   md: 'min-h-11 gap-2 rounded-[99px] px-4 text-sm',
   lg: 'min-h-12 gap-2.5 rounded-[99px] px-5 text-[15px]',
 };
@@ -68,7 +68,7 @@ export function Card({
   return (
     <Component
       className={cn(
-        'rounded-[2px] border border-line bg-card',
+        'rounded-sm border border-line bg-card',
         className,
       )}
     >
@@ -241,7 +241,7 @@ export function Modal({
         aria-labelledby={`${layerId}-title`}
         tabIndex={-1}
         className={cn(
-          'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-[20px] border border-line bg-surface shadow-[0_24px_64px_rgba(74,69,65,.16)] sm:max-w-lg sm:rounded-[18px]',
+          'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md',
           className,
         )}
       >
@@ -255,7 +255,7 @@ export function Modal({
           <button
             type="button"
             onClick={onClose}
-            className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95"
+            className="flex size-10 shrink-0 items-center justify-center rounded-[99px] text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95"
             aria-label="Close dialog"
           >
             <X size={19} />

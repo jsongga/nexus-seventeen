@@ -172,9 +172,9 @@ function WorkItemRow({ workItem, projects }: { workItem: BoardWorkItem; projects
     : projects.find((project) => project.id === projectId)?.name ?? projectId;
   const displayRequest = workItem.refinedObjective?.trim() || workItem.originalRequest;
   return (
-    <article className="mx-2 rounded-[10px] border-b border-line px-3 py-4 last:border-b-0">
+    <article className="mx-2 rounded-md border-b border-line px-3 py-4 last:border-b-0">
       <div className="flex items-start gap-4">
-        <span className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-full border border-taupe text-taupe" aria-hidden="true">
+        <span className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-taupe" aria-hidden="true">
           <Activity size={12} strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
@@ -205,7 +205,7 @@ function EmptyState({
 }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center px-5 py-10 text-center">
-      <div className="mb-4 flex size-11 items-center justify-center rounded-full bg-paper text-ink">
+      <div className="mb-4 flex size-11 items-center justify-center rounded-[99px] bg-paper text-ink">
         {icon}
       </div>
       <h2 className="font-display text-lg font-light tracking-[0.01em] text-ink">{title}</h2>
@@ -217,7 +217,7 @@ function EmptyState({
 
 function FormError({ children }: { children: ReactNode }) {
   return (
-    <div role="alert" className="rounded-[10px] border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent">
+    <div role="alert" className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent">
       {children}
     </div>
   );
@@ -250,14 +250,14 @@ function TaskRow({
       aria-label={`${task.title} ${task.status}`}
       onClick={onSelect}
       className={cn(
-        'group mx-2 w-[calc(100%-1rem)] rounded-[10px] border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out last:border-b-0 hover:bg-paper/75 motion-safe:active:scale-[0.995]',
+        'group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out last:border-b-0 hover:bg-paper/75 motion-safe:active:scale-[0.995]',
         selected && 'bg-paper hover:bg-paper',
       )}
     >
       <div className="flex items-center gap-4">
         <span
           className={cn(
-            'flex size-[22px] shrink-0 items-center justify-center rounded-full border border-taupe text-white',
+            'flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-white',
             completed && 'bg-taupe',
           )}
           aria-hidden="true"
@@ -272,11 +272,11 @@ function TaskRow({
           </span>
           <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
             {task.kind === 'human_check' ? (
-              <><span className="inline-flex items-center rounded-full bg-paper px-2 py-0.5 text-[11px]">Human</span><span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{taskStatusLabel(task)}</span></>
+              <><span className="inline-flex items-center rounded-[99px] bg-paper px-2 py-0.5 text-[11px]">Human</span><span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{taskStatusLabel(task)}</span></>
             ) : (
               <>
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-paper px-2 py-0.5 text-[11px]">
-                  {agent ? <span className={cn('size-1.5 rounded-full', statusDot)} /> : null}
+                <span className="inline-flex items-center gap-1.5 rounded-[99px] bg-paper px-2 py-0.5 text-[11px]">
+                  {agent ? <span className={cn('size-1.5 rounded-[99px]', statusDot)} /> : null}
                   {agent?.name ?? (task.requiredRole ? `Needs ${task.requiredRole}` : 'Unassigned')}
                 </span>
                 <span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{taskStatusLabel(task)}</span>
@@ -286,7 +286,7 @@ function TaskRow({
             {projectName ? <span className="inline-flex items-center gap-2"><span className="hidden sm:inline" aria-hidden="true">•</span>{projectName}</span> : null}
           </span>
         </span>
-        <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
+        <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
           <ChevronRight size={12} strokeWidth={2} />
         </span>
       </div>
@@ -311,24 +311,24 @@ function TaskPhases({ task }: { task: BoardTask }) {
 
   return (
     <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="task-phases-heading">
-      <h3 id="task-phases-heading" className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">Phases</h3>
+      <h3 id="task-phases-heading" className="text-xs font-semibold text-ink">Phases</h3>
       {phases.length === 0 ? (
         <p className="mt-3 text-sm leading-6 text-muted">The agent will add phases and an estimate after reviewing the task.</p>
       ) : (
-        <ol className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-canvas">
+        <ol className="mt-3 divide-y divide-line overflow-hidden rounded-md border border-line bg-canvas">
           {phases.map((phase) => {
             const parallel = phase.parallelGroup !== null && (parallelCounts.get(phase.parallelGroup) ?? 0) > 1;
             return (
               <li key={phase.id} className="flex items-start gap-3 px-3.5 py-3">
                 <span className={cn(
-                  'mt-1.5 size-2 shrink-0 rounded-full',
+                  'mt-1.5 size-2 shrink-0 rounded-[99px]',
                   phase.status === 'completed' ? 'bg-success-fill' : phase.status === 'in_progress' ? 'bg-taupe-hover' : phase.status === 'failed' ? 'bg-urgent' : phase.status === 'blocked' ? 'bg-caution-fill' : 'bg-line',
                 )} aria-hidden="true" />
                 <span className="min-w-0 flex-1">
                   <span className="block break-words text-sm font-medium text-ink">{phase.title}</span>
                   <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
                     <span className="capitalize">{phase.stage.replaceAll('_', ' ')}</span>
-                    {parallel ? <span className="rounded-full bg-paper px-2 py-0.5">Parallel</span> : null}
+                    {parallel ? <span className="rounded-[99px] bg-paper px-2 py-0.5">Parallel</span> : null}
                   </span>
                 </span>
                 <Pill tone={phaseStatusTone[phase.status]}>{phase.status.replaceAll('_', ' ')}</Pill>
@@ -390,14 +390,14 @@ function TaskDetail({
       <header className="border-b border-line px-4 py-5 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Current status</p>
+            <p className="mb-1.5 text-xs font-medium text-muted">Current status</p>
             <StatusPill task={task} />
           </div>
           {task.expectedAgentMinutes !== null ? <span className="text-[11px] text-muted">About {task.expectedAgentMinutes} agent min</span> : null}
         </div>
         <h2 className="mt-4 break-words font-display text-xl font-light tracking-[0.01em] text-ink">{task.title}</h2>
         <div className="mt-4">
-          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Description</p>
+          <p className="text-xs font-medium text-muted">Description</p>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">{task.objective}</p>
         </div>
       </header>
@@ -408,7 +408,7 @@ function TaskDetail({
         <section className="border-b border-caution-fill/30 bg-caution-soft/55 px-4 py-4 sm:px-5">
           <div className="flex items-center gap-2 text-caution">
             <HelpCircle size={17} />
-            <h3 className="text-xs font-bold uppercase tracking-[0.12em]">Waiting for your answer</h3>
+            <h3 className="text-xs font-semibold">Waiting for your answer</h3>
           </div>
           <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-6 text-ink">{openQuestion.prompt}</p>
           <textarea
@@ -431,7 +431,7 @@ function TaskDetail({
 
       {task.kind === 'human_check' && task.endedAt === null ? (
         <section className="border-b border-caution-fill/30 bg-caution-soft/45 px-4 py-4 sm:px-5">
-          <div className="flex items-center gap-2 text-caution"><UserRoundCheck size={17} /><h3 className="text-[11px] font-bold uppercase tracking-[0.14em]">Human release decision</h3></div>
+          <div className="flex items-center gap-2 text-caution"><UserRoundCheck size={17} /><h3 className="text-xs font-semibold">Human release decision</h3></div>
           <FieldLabel htmlFor={'human-decision-' + task.id}>Decision rationale</FieldLabel>
           <textarea
             id={'human-decision-' + task.id}
@@ -815,9 +815,9 @@ export function BoardApp() {
         <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', taskDetailOpen ? 'hidden xl:grid' : 'grid')}>
           <div><h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and project routing.</p></div>
           <div className="flex flex-wrap gap-2.5">
-            <Button className="size-11 min-h-0 rounded-full p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task')} />
-            <Button className="size-11 min-h-0 rounded-full p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
-            {taskDetailOpen ? <Button className="size-11 min-h-0 rounded-full p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
+            <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task')} />
+            <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
+            {taskDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
           </div>
         </header>
         <main className="w-full max-w-[1600px] p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8">

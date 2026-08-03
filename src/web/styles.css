@@ -122,7 +122,7 @@
   --ink-panel: #F3F3F5;
   --scrim: rgba(42, 42, 40, 0.45);
   --foreground: #2A2A28;
-  --muted-foreground: #747472;
+  --muted-foreground: #6F6F6D;
   --tertiary-foreground: #A0A0A0;
   --primary-foreground: #FFFFFF;
   --border: #EAEAEA;
@@ -132,6 +132,7 @@
   --active: #5F4B51;
   --active-hover: #4C3C41;
   --header: #D6D8CC;
+  --elevation-shadow-color: rgba(74, 69, 65, 0.16);
   --success-text: #1E3314;
   --success-fill: #8B9883;
   --success-soft: rgba(139, 152, 131, 0.22);

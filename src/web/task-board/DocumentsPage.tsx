@@ -39,9 +39,9 @@ const emptyDraft: DraftState = {
   remoteChanged: false,
 };
 
-const warmCard = '!rounded-[18px] !border-line !bg-surface !shadow-none';
-const pillAction = '!rounded-full !shadow-none';
-const warmInput = '!rounded-[14px] !border-line !bg-surface !shadow-none';
+const warmCard = '!rounded-md !border-line !bg-surface !shadow-none';
+const pillAction = '!rounded-[99px] !shadow-none';
+const warmInput = '!rounded-md !border-line !bg-surface !shadow-none';
 
 function formatTime(value: string): string {
   const parsed = new Date(value);
@@ -378,13 +378,13 @@ export function DocumentsPage({
 
           <main className="w-full max-w-5xl space-y-4 bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-101px)] lg:px-12 lg:py-8">
             {operationError ? (
-              <div role="alert" className="flex items-start gap-2 rounded-[16px] border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent">
+              <div role="alert" className="flex items-start gap-2 rounded-md border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent">
                 <CircleAlert size={17} className="mt-0.5 shrink-0" />
                 <span>{operationError}. Your unsaved draft remains in this tab.</span>
               </div>
             ) : null}
             {summaryWarning ? (
-              <div role="status" className="flex items-start gap-2 rounded-[16px] border border-caution-border bg-caution-soft px-4 py-3 text-sm text-caution">
+              <div role="status" className="flex items-start gap-2 rounded-md border border-caution-border bg-caution-soft px-4 py-3 text-sm text-caution">
                 <CircleAlert size={17} className="mt-0.5 shrink-0" />
                 <span>{summaryWarning}</span>
               </div>
@@ -396,7 +396,7 @@ export function DocumentsPage({
               ) : document ? (
                 <Card className={cn(warmCard, 'overflow-hidden')}>
                   <div className="border-b border-line px-4 py-4 sm:px-5">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">{selectedProject?.name ?? 'Document'}</p>
+                    <p className="text-xs font-medium text-muted">{selectedProject?.name ?? 'Document'}</p>
                     <h1 ref={documentHeadingRef} tabIndex={-1} className="mt-1 break-words font-display text-xl font-medium tracking-[-0.025em] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe">{document.title}</h1>
                     <p className="mt-1 text-[11px] text-muted">Saved {formatTime(document.updatedAt)} · Version {document.contentVersion}</p>
                   </div>
@@ -439,7 +439,7 @@ export function DocumentsPage({
                         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[11px] leading-4 text-muted">{draft.dirty ? holdsPen ? 'Unsaved in this tab' : 'Draft preserved — read-only' : 'Saved'}</p><Button className={pillAction} variant="primary" size="sm" icon={<Save size={14} />} disabled={!holdsPen || !draft.dirty || draft.remoteChanged || operationBusy || !connected} onClick={() => void saveSnapshot()}>Save snapshot</Button></div>
                       </>
                     ) : (
-                      <pre aria-label={`${document.title} saved snapshot`} className="min-h-[360px] whitespace-pre-wrap break-words rounded-[14px] border border-line bg-paper p-4 font-mono text-xs leading-6 text-ink">{document.content || 'This document is empty.'}</pre>
+                      <pre aria-label={`${document.title} saved snapshot`} className="min-h-[360px] whitespace-pre-wrap break-words rounded-md border border-line bg-paper p-4 font-mono text-xs leading-6 text-ink">{document.content || 'This document is empty.'}</pre>
                     )}
                   </div>
 
@@ -462,12 +462,12 @@ export function DocumentsPage({
 
           <main className="w-full max-w-[1200px] bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-109px)] lg:px-12 lg:py-8">
             {operationError ? (
-              <div role="alert" className="mb-4 flex items-start gap-2 rounded-[16px] border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent"><CircleAlert size={17} className="mt-0.5 shrink-0" /><span>{operationError}</span></div>
+              <div role="alert" className="mb-4 flex items-start gap-2 rounded-md border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent"><CircleAlert size={17} className="mt-0.5 shrink-0" /><span>{operationError}</span></div>
             ) : null}
-            <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
+            <div className="overflow-hidden rounded-md border border-line bg-surface">
               <table className="w-full table-fixed text-left">
                 <caption className="sr-only">Documents</caption>
-                <thead className="border-b border-line bg-paper text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
+                <thead className="border-b border-line bg-paper text-[11px] font-medium text-muted">
                   <tr>
                     <th scope="col" className="w-full px-4 py-3 sm:w-[42%] sm:px-5">Document</th>
                     <th scope="col" className="hidden w-[24%] px-4 py-3 sm:table-cell">Project</th>
