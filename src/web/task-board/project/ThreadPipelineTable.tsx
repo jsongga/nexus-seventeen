@@ -76,7 +76,7 @@ export function ThreadPipelineTable({
                 <td className="border-b border-line py-2.5 align-middle text-[13px]">
                   <button
                     type="button"
-                    className="inline-flex max-w-full items-center gap-2 rounded-[6px] bg-muted-surface px-2.5 py-1.5 text-left text-ink hover:bg-header focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                    className="inline-flex max-w-full items-center gap-2 rounded-[6px] bg-muted-surface px-2.5 py-1.5 text-left text-ink hover:bg-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
                     onClick={() => onTask(task.id)}
                   >
                     <span className="min-w-0 break-words">{task.title}</span>
