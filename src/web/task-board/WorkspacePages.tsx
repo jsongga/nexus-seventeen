@@ -11,7 +11,7 @@ import type { TaskBoardClient } from './client';
 import { ContextSidebar, type ContextDocument } from './ContextSidebar';
 import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
 import { ThreadPipelineTable } from './ThreadPipelineTable';
-import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact } from './types';
+import type { AgentQueryConversationTurn, BoardAgent, BoardDocumentSummary, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact } from './types';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import {
   agentPipelineFocus,
@@ -45,21 +45,36 @@ function contextDocuments(entries: ProjectMetadataEntry[]): ContextDocument[] {
   }));
 }
 
+function boardDocumentMeta(document: BoardDocumentSummary): string {
+  return `Updated ${formatTime(document.updatedAt)} · Version ${document.contentVersion}`;
+}
+
+function projectDocuments(projectId: string, documents: BoardDocumentSummary[]): ContextDocument[] {
+  return documents
+    .filter((document) => document.projectId === projectId)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title))
+    .map((document) => ({
+      id: `document:${document.id}`,
+      label: document.title,
+      value: document.title,
+      href: null,
+      meta: boardDocumentMeta(document),
+      documentId: document.id,
+    }));
+}
+
 /** Adds every artifact to the feed without duplicating it across task messages. */
 function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[]): ActivityFeedUpdate[] {
-  const newestUpdateByTask = new Map<string, ProjectUpdate>();
-  for (const update of updates) {
-    if (!newestUpdateByTask.has(update.taskId)) newestUpdateByTask.set(update.taskId, update);
-  }
+  const taskTitleById = new Map(updates.map((update) => [update.taskId, update.taskTitle]));
 
   const artifactUpdates = artifacts.map((artifact): ActivityFeedUpdate => {
-    const related = artifact.taskId ? newestUpdateByTask.get(artifact.taskId) : undefined;
+    const taskTitle = artifact.taskId ? taskTitleById.get(artifact.taskId) : undefined;
     return {
       id: `artifact:${artifact.artifactId}`,
-      author: related?.author ?? 'System',
-      body: related
-        ? `added ${artifact.caption} to ${related.taskTitle}.`
-        : `added ${artifact.caption} to the project.`,
+      author: 'Artifact',
+      body: taskTitle
+        ? `${artifact.caption} was added to ${taskTitle}.`
+        : `${artifact.caption} was added to the project.`,
       createdAt: artifact.createdAt,
       artifacts: [{
         artifactId: artifact.artifactId,
@@ -86,6 +101,7 @@ export function ProjectPage({
   snapshot,
   onTask,
   onAddTask,
+  onSelectDocument,
   client,
   connected,
 }: {
@@ -93,6 +109,7 @@ export function ProjectPage({
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
   onAddTask: () => void;
+  onSelectDocument: (documentId: string) => void;
   client: TaskBoardClient;
   connected: boolean;
 }) {
@@ -141,7 +158,10 @@ export function ProjectPage({
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const documents = contextDocuments(metadata.entries);
+  const documents = [
+    ...projectDocuments(project.id, snapshot.documents),
+    ...contextDocuments(metadata.entries),
+  ];
   const feedUpdates = activityUpdates(updates, artifacts);
   const activeRuns = snapshot.runs.filter((run) => (
     run.projectId === project.id
@@ -177,7 +197,7 @@ export function ProjectPage({
         actions={(
           <button
             type="button"
-            className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-white text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+            className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
             aria-label="Add task"
             title="Add task"
             disabled={!connected}
@@ -191,7 +211,7 @@ export function ProjectPage({
         <ContextSidebar
           intro={metadata.summaries.join('\n\n') || `Project context and reference materials for ${project.name}.`}
           documents={documents}
-          onSelectDocument={() => undefined}
+          onSelectDocument={onSelectDocument}
           orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
         />
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">
@@ -203,7 +223,7 @@ export function ProjectPage({
               <Button
                 variant="secondary"
                 size="sm"
-                className="!min-h-0 !rounded-[99px] !border-0 !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
+                className="!min-h-0 !rounded-[99px] !border-0 !bg-muted-surface !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
                 disabled={!connected || activeRuns.length === 0 || pausing}
                 title={!connected ? 'Reconnect the task board to pause agents' : activeRuns.length === 0 ? 'No active agents to pause' : undefined}
                 onClick={() => void pauseAgents()}

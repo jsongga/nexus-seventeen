@@ -1,11 +1,14 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '../components/ui';
-import type { ProjectMetadataEntry } from './project-metadata';
 
-export interface ContextDocument extends ProjectMetadataEntry {
+export interface ContextDocument {
   id: string;
+  label: string;
+  value: string;
+  href: string | null;
   meta: string;
+  documentId?: string;
 }
 
 function orderedDocuments(documents: ContextDocument[], order: string[]): ContextDocument[] {
@@ -25,7 +28,7 @@ export function ContextSidebar({
 }: {
   intro: string;
   documents: ContextDocument[];
-  onSelectDocument: (document: ContextDocument) => void;
+  onSelectDocument: (documentId: string) => void;
   orderStorageKey?: string;
 }) {
   const [order, setOrder] = useState<string[]>([]);
@@ -99,7 +102,18 @@ export function ContextSidebar({
                 onDragEnd={() => setDraggedId(null)}
                 aria-hidden="true"
               />
-              {document.href ? (
+              {document.documentId ? (
+                <button
+                  type="button"
+                  aria-label={`Open ${document.label}`}
+                  title={document.label}
+                  className="min-w-0 flex-1 rounded-[4px] text-left text-current focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                  onClick={() => onSelectDocument(document.documentId!)}
+                >
+                  <span className="block break-words">{document.label}</span>
+                  <span className="mt-0.5 block break-words text-[11px] text-tertiary">{document.meta}</span>
+                </button>
+              ) : document.href ? (
                 <a
                   href={document.href}
                   target="_blank"
@@ -107,7 +121,6 @@ export function ContextSidebar({
                   aria-label={`${document.label}: ${document.value} (opens in a new tab)`}
                   title={document.value}
                   className="min-w-0 flex-1 rounded-[4px] text-current no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
-                  onClick={() => onSelectDocument(document)}
                 >
                   <span className="block break-words">{document.label}</span>
                   <span className="mt-0.5 block break-all text-[11px] text-tertiary">{document.meta}</span>

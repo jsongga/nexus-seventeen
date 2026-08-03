@@ -1287,6 +1287,20 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
     version: 2,
     updatedAt: '2026-07-19T18:14:00.000Z',
   };
+  const accumulatedTasks = Array.from({ length: 30 }, (_, index) => ({
+    ...projectTask,
+    taskId: `completed-pipeline-task-${index}`,
+    title: `Completed customer workflow validation ${index + 1} with deliberately wrapping objective text`,
+    status: 'completed',
+    assignedAgentId: null,
+    assignedRole: null,
+    orderKey: 2_100 + index,
+    endedAt: '2026-07-19T18:28:00.000Z',
+    result: `Validation ${index + 1} completed.`,
+    version: 2,
+    updatedAt: '2026-07-19T18:28:00.000Z',
+  }));
+  const projectTasks = [earlierQuery, projectTask, ...accumulatedTasks];
   const mutations: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
@@ -1307,11 +1321,19 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [agent, manager], tasks: [earlierQuery, projectTask] } });
+      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [agent, manager], tasks: projectTasks, documents: [documentSummary(editableDocument)] } });
       return;
     }
-    if (url.pathname === `/board-api/v1/tasks/${projectTask.taskId}/messages` || url.pathname === `/board-api/v1/tasks/${earlierQuery.taskId}/messages`) {
+    if (url.pathname.startsWith('/board-api/v1/tasks/') && url.pathname.endsWith('/messages')) {
       await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/documents/${editableDocument.documentId}/events`) {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: ': keepalive\n\n' });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/documents/${editableDocument.documentId}` && request.method() === 'GET') {
+      await route.fulfill({ json: { document: cloneDocument(editableDocument) } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/tasks` && request.method() === 'POST') {
@@ -1350,7 +1372,7 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await companyRail.getByRole('button', { name: 'Documents' }).click();
   await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Documents' })).toBeVisible();
-  await expect(page.getByText('No documents yet', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Invoice recovery playbook.*Available to edit/u })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recorded references' })).toHaveCount(0);
 
   companyRail = await openCompanyRail(page);
@@ -1362,11 +1384,13 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole('heading', { name: 'Team' })).toHaveCount(0);
   const threadPipeline = page.getByRole('table', { name: 'Active Thread Pipeline' });
   await expect(threadPipeline.getByRole('columnheader', { name: 'Task Objective' })).toBeVisible();
-  await expect(threadPipeline.getByText('Merged', { exact: true })).toBeVisible();
-  await expect(threadPipeline.getByText('Queued', { exact: true })).toBeVisible();
+  await expect(threadPipeline.getByText('Merged', { exact: true }).first()).toBeVisible();
+  await expect(threadPipeline.getByText('Queued', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project setup' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Docs & links' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Important Documents' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Invoice recovery playbook' })).toBeVisible();
+  await expect(page.getByText(/Updated .* · Version 3/u)).toBeVisible();
   await expect(page.getByRole('link', { name: /GitHub: https:\/\/github.com\/acme\/cicada/u })).toBeVisible();
   await expect(page.getByRole('link', { name: /Documentation: https:\/\/docs.example.com\/cicada/u })).toBeVisible();
   await expect(page.getByText('/workspace/billing', { exact: true })).toBeVisible();
@@ -1374,10 +1398,28 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await moveGitHubLater.focus();
   await moveGitHubLater.press('Enter');
   await expect(page.getByRole('button', { name: 'Move GitHub earlier' })).toBeVisible();
+  const pipelineRows = page.getByRole('region', { name: 'Active thread pipeline rows' });
+  await expect(pipelineRows).toBeVisible();
+  expect(await pipelineRows.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))).toMatchObject({ clientHeight: expect.any(Number), scrollHeight: expect.any(Number) });
+  expect(await pipelineRows.evaluate((element) => element.scrollHeight)).toBeGreaterThan(await pipelineRows.evaluate((element) => element.clientHeight));
+  await expect(page.getByRole('button', { name: 'Pause Agents' })).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Compile Report' })).toBeInViewport();
+  const projectViewport = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(projectViewport.scrollWidth).toBeLessThanOrEqual(projectViewport.clientWidth);
   if (process.env.CAPTURE_UI === '1') {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath('project-dashboard.png'), fullPage: true });
   }
+
+  await page.getByRole('button', { name: 'Open Invoice recovery playbook' }).click();
+  await expect(page).toHaveURL(new RegExp(`#\\/documents\\/${editableDocument.documentId}$`, 'u'));
+  await expect(page.getByRole('heading', { name: editableDocument.title, exact: true })).toBeVisible();
 
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: /billing-engineer/u }).click();

@@ -45,9 +45,15 @@ export function ThreadPipelineTable({
   onTask: (taskId: string) => void;
 }) {
   return (
-    <section className="shrink-0" aria-labelledby="active-thread-pipeline-heading">
+    <section className="flex max-h-[20dvh] min-h-0 min-w-0 shrink-0 flex-col overflow-hidden md:max-h-[40dvh]" aria-labelledby="active-thread-pipeline-heading">
       <h2 id="active-thread-pipeline-heading" className="mb-4 text-xs font-semibold tracking-[0.2px] text-ink">Active Thread Pipeline</h2>
-      <table className="w-full table-fixed border-collapse text-left" aria-labelledby="active-thread-pipeline-heading">
+      <div
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-taupe-hover [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-[99px] [&::-webkit-scrollbar-thumb]:bg-line [&::-webkit-scrollbar-track]:bg-transparent"
+        role="region"
+        aria-label="Active thread pipeline rows"
+        tabIndex={0}
+      >
+        <table className="w-full table-fixed border-collapse text-left" aria-labelledby="active-thread-pipeline-heading">
         <colgroup>
           <col className="w-[40%]" />
           <col className="w-[20%]" />
@@ -92,7 +98,8 @@ export function ThreadPipelineTable({
             </tr>
           )}
         </tbody>
-      </table>
+        </table>
+      </div>
     </section>
   );
 }
