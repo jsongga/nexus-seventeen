@@ -122,6 +122,12 @@
   --ink-panel: #F3F3F5;
   --scrim: rgba(42, 42, 40, 0.45);
   --foreground: #2A2A28;
+  /*
+   * Contrast constraint: muted foreground is 5.0354:1 on the white canvas but
+   * only 4.5437:1 on --sidebar, just above the 4.5:1 AA floor. It is not
+   * sufficient on composited --caution-soft (4.1865:1), so Automation's
+   * caution callouts use --caution-text directly rather than text-muted.
+   */
   --muted-foreground: #6F6F6D;
   --tertiary-foreground: #A0A0A0;
   --primary-foreground: #FFFFFF;

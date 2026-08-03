@@ -45,6 +45,7 @@ export function ThreadPipelineTable({
   onTask: (taskId: string) => void;
 }) {
   return (
+    /* Keep the pipeline viewport-capped so the activity feed and both workspace actions remain reachable; dvh is viewport-relative by design. */
     <section className="flex max-h-[20dvh] min-h-0 min-w-0 shrink-0 flex-col overflow-hidden md:max-h-[40dvh]" aria-labelledby="active-thread-pipeline-heading">
       <h2 id="active-thread-pipeline-heading" className="mb-4 text-xs font-semibold tracking-[0.2px] text-ink">Active Thread Pipeline</h2>
       <div
