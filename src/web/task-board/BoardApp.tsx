@@ -240,7 +240,7 @@ function TaskRow({
 }) {
   const completed = task.status === 'completed';
   const statusDot = task.status === 'running'
-    ? 'bg-[#A3B899]'
+    ? 'bg-success-fill'
     : task.status === 'waiting_for_human' || task.status === 'blocked'
       ? 'bg-taupe'
       : 'bg-muted/55';

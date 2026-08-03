@@ -39,9 +39,9 @@ const emptyDraft: DraftState = {
   remoteChanged: false,
 };
 
-const warmCard = '!rounded-[18px] !border-line !bg-white !shadow-none';
+const warmCard = '!rounded-[18px] !border-line !bg-surface !shadow-none';
 const pillAction = '!rounded-full !shadow-none';
-const warmInput = '!rounded-[14px] !border-line !bg-white !shadow-none';
+const warmInput = '!rounded-[14px] !border-line !bg-surface !shadow-none';
 
 function formatTime(value: string): string {
   const parsed = new Date(value);
@@ -378,13 +378,13 @@ export function DocumentsPage({
 
           <main className="w-full max-w-5xl space-y-4 bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-101px)] lg:px-12 lg:py-8">
             {operationError ? (
-              <div role="alert" className="flex items-start gap-2 rounded-[16px] border border-[#e5c3bd] bg-[#fff5f1] px-4 py-3 text-sm text-urgent">
+              <div role="alert" className="flex items-start gap-2 rounded-[16px] border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent">
                 <CircleAlert size={17} className="mt-0.5 shrink-0" />
                 <span>{operationError}. Your unsaved draft remains in this tab.</span>
               </div>
             ) : null}
             {summaryWarning ? (
-              <div role="status" className="flex items-start gap-2 rounded-[16px] border border-[#e8d9b8] bg-[#fff9eb] px-4 py-3 text-sm text-caution">
+              <div role="status" className="flex items-start gap-2 rounded-[16px] border border-caution-border bg-caution-soft px-4 py-3 text-sm text-caution">
                 <CircleAlert size={17} className="mt-0.5 shrink-0" />
                 <span>{summaryWarning}</span>
               </div>
@@ -414,7 +414,7 @@ export function DocumentsPage({
                   </div>
 
                   {draft.remoteChanged ? (
-                    <div role="status" aria-live="polite" className="flex flex-col gap-3 border-b border-[#e8d9b8] bg-[#fff9eb] px-4 py-3 text-xs text-caution sm:flex-row sm:items-center sm:justify-between sm:px-5"><span className="flex items-start gap-2"><CircleAlert size={15} className="mt-0.5 shrink-0" />A newer saved version arrived. Your draft is preserved and cannot overwrite it.</span><Button className={pillAction} size="sm" variant="danger" icon={<Undo2 size={14} />} onClick={useSavedVersion}>Discard draft and load saved</Button></div>
+                    <div role="status" aria-live="polite" className="flex flex-col gap-3 border-b border-caution-border bg-caution-soft px-4 py-3 text-xs text-caution sm:flex-row sm:items-center sm:justify-between sm:px-5"><span className="flex items-start gap-2"><CircleAlert size={15} className="mt-0.5 shrink-0" />A newer saved version arrived. Your draft is preserved and cannot overwrite it.</span><Button className={pillAction} size="sm" variant="danger" icon={<Undo2 size={14} />} onClick={useSavedVersion}>Discard draft and load saved</Button></div>
                   ) : null}
 
                   <div className="p-4 sm:p-5">
@@ -444,7 +444,7 @@ export function DocumentsPage({
                   </div>
 
                   {streamError || streamState === 'reconnecting' ? (
-                    <div role="status" aria-live="polite" className="flex items-start gap-2 border-t border-[#e8d9b8] bg-[#fff9eb] px-4 py-3 text-xs text-caution sm:px-5"><CircleAlert size={14} className="mt-0.5 shrink-0" /><span>{streamError ?? 'Live updates paused. Reconnecting…'}</span></div>
+                    <div role="status" aria-live="polite" className="flex items-start gap-2 border-t border-caution-border bg-caution-soft px-4 py-3 text-xs text-caution sm:px-5"><CircleAlert size={14} className="mt-0.5 shrink-0" /><span>{streamError ?? 'Live updates paused. Reconnecting…'}</span></div>
                   ) : null}
                 </Card>
               ) : streamError ? (
@@ -462,9 +462,9 @@ export function DocumentsPage({
 
           <main className="w-full max-w-[1200px] bg-canvas p-4 sm:px-8 sm:py-6 lg:min-h-[calc(100dvh-109px)] lg:px-12 lg:py-8">
             {operationError ? (
-              <div role="alert" className="mb-4 flex items-start gap-2 rounded-[16px] border border-[#e5c3bd] bg-[#fff5f1] px-4 py-3 text-sm text-urgent"><CircleAlert size={17} className="mt-0.5 shrink-0" /><span>{operationError}</span></div>
+              <div role="alert" className="mb-4 flex items-start gap-2 rounded-[16px] border border-urgent-border bg-urgent-soft px-4 py-3 text-sm text-urgent"><CircleAlert size={17} className="mt-0.5 shrink-0" /><span>{operationError}</span></div>
             ) : null}
-            <div className="overflow-hidden rounded-[18px] border border-line bg-white">
+            <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
               <table className="w-full table-fixed text-left">
                 <caption className="sr-only">Documents</caption>
                 <thead className="border-b border-line bg-paper text-[10px] font-medium uppercase tracking-[0.12em] text-muted">

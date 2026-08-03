@@ -568,7 +568,7 @@ export function AutomationPage({
 
       <main className="w-full max-w-[1400px] p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8">
         <div className="max-w-6xl space-y-6">
-          <Card className="border-[#d8cfad] bg-[#fbf7e8] p-4 sm:p-5" as="section">
+          <Card className="border-caution-border bg-caution-soft p-4 sm:p-5" as="section">
             <div className="flex items-start gap-3">
               <CircleAlert className="mt-0.5 shrink-0 text-caution" size={18} />
               <div>
@@ -581,7 +581,7 @@ export function AutomationPage({
           </Card>
 
           {remote && saved ? (
-            <div role="alert" className="rounded-xl border border-[#d8cfad] bg-[#fbf7e8] px-4 py-4 text-sm leading-6 text-ink">
+            <div role="alert" className="rounded-xl border border-caution-border bg-caution-soft px-4 py-4 text-sm leading-6 text-ink">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-semibold">Saved configuration changed</p>

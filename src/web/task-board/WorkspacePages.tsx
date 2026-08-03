@@ -737,10 +737,10 @@ function AgentChat({
                   <article className={cn(
                     'max-w-[88%] rounded-[18px] px-4 py-3 text-sm leading-6 shadow-none sm:max-w-[76%]',
                     entry.sender === 'human'
-                      ? 'rounded-br-[6px] bg-taupe text-[#332f2a]'
+                      ? 'rounded-br-[6px] bg-taupe text-white'
                       : entry.sender === 'system'
                         ? 'bg-surface text-muted'
-                        : 'rounded-bl-[6px] border border-line bg-white text-[#514c46]',
+                        : 'rounded-bl-[6px] border border-line bg-surface text-ink',
                   )}>
                     <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[10px] leading-4 opacity-70">
                       <span className="font-medium">{entry.author}</span>
@@ -762,7 +762,7 @@ function AgentChat({
 
         <form className="shrink-0 border-t border-line bg-canvas py-4 sm:py-5" onSubmit={(event) => { event.preventDefault(); void send(); }}>
           <label htmlFor={`agent-message-${agent.id}`} className="sr-only">Message {agent.name}</label>
-          <div className="flex items-end gap-2 rounded-[18px] border border-line bg-white p-2 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-taupe-hover focus-within:shadow-[0_0_0_3px_rgba(213,200,186,.2)]">
+          <div className="flex items-end gap-2 rounded-[18px] border border-line bg-surface p-2 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-taupe-hover focus-within:shadow-[0_0_0_3px_rgba(213,200,186,.2)]">
             <textarea
               id={`agent-message-${agent.id}`}
               className="min-h-11 max-h-40 flex-1 resize-y bg-transparent px-2 py-2 text-sm leading-6 text-ink outline-none placeholder:text-muted"

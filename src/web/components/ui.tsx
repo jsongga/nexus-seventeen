@@ -18,16 +18,16 @@ const buttonVariants: Record<ButtonVariant, string> = {
   primary:
     'border-taupe bg-taupe text-white enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover',
   secondary:
-    'border-line bg-card text-ink enabled:hover:border-taupe-hover enabled:hover:bg-surface',
+    'border-line bg-surface text-ink enabled:hover:border-line-strong enabled:hover:bg-muted-surface',
   quiet: 'border-transparent bg-transparent text-ink enabled:hover:bg-surface',
-  danger: 'border-urgent-border bg-card text-urgent enabled:hover:border-urgent enabled:hover:bg-urgent-soft',
-  mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:border-success-fill enabled:hover:bg-surface',
+  danger: 'border-urgent-border bg-canvas text-urgent enabled:hover:bg-urgent-soft',
+  mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:bg-surface',
 };
 
 const buttonSizes = {
-  sm: 'min-h-9 gap-1.5 rounded-[2px] px-3 font-mono text-[12px] uppercase tracking-[0.06em]',
-  md: 'min-h-11 gap-2 rounded-[2px] px-4 text-sm',
-  lg: 'min-h-12 gap-2.5 rounded-[2px] px-5 text-[15px]',
+  sm: 'min-h-9 gap-1.5 rounded-[99px] px-3 font-mono text-[12px] uppercase tracking-[0.06em]',
+  md: 'min-h-11 gap-2 rounded-[99px] px-4 text-sm',
+  lg: 'min-h-12 gap-2.5 rounded-[99px] px-5 text-[15px]',
 };
 
 export function Button({
@@ -81,10 +81,10 @@ const pillTones = {
   neutral: 'border-line bg-surface text-muted',
   green: 'border-success-fill/60 bg-success-soft text-success',
   amber: 'border-caution-border bg-caution-soft text-caution',
-  red: 'border-urgent-border bg-urgent-soft text-urgent',
+  red: 'border-urgent-border bg-urgent-fill text-white',
   blue: 'border-info-border bg-info-soft text-info',
   purple: 'border-alt-border bg-alt-soft text-alt',
-  dark: 'border-white/15 bg-white/10 text-white/85',
+  dark: 'border-line-strong bg-ink-panel text-ink',
 };
 
 export function Pill({
@@ -162,8 +162,8 @@ export function ProgressBar({
   const tones = {
     green: 'bg-success-fill',
     amber: 'bg-caution-fill',
-    blue: 'bg-[#52758b]',
-    purple: 'bg-[#6a688f]',
+    blue: 'bg-info-border',
+    purple: 'bg-alt-border',
   };
 
   return (
@@ -241,11 +241,11 @@ export function Modal({
         aria-labelledby={`${layerId}-title`}
         tabIndex={-1}
         className={cn(
-          'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-[20px] border border-line bg-white shadow-[0_24px_64px_rgba(74,69,65,.16)] sm:max-w-lg sm:rounded-[18px]',
+          'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-[20px] border border-line bg-surface shadow-[0_24px_64px_rgba(74,69,65,.16)] sm:max-w-lg sm:rounded-[18px]',
           className,
         )}
       >
-        <header className="sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-white/95 px-5 py-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6">
           <div>
             <h2 id={`${layerId}-title`} className="font-display text-xl font-light tracking-[0.01em]">
               {title}
@@ -276,4 +276,4 @@ export function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor
 }
 
 export const inputClass =
-  'min-h-11 w-full rounded-xl border border-line bg-white px-3.5 text-sm text-ink transition-[background-color,border-color,box-shadow] duration-150 ease-out placeholder:text-muted hover:border-taupe-hover focus:border-taupe-hover focus:bg-white';
+  'min-h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink transition-[background-color,border-color,box-shadow] duration-150 ease-out placeholder:text-muted hover:border-taupe-hover focus:border-taupe-hover focus:bg-surface';
