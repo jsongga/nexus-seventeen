@@ -17,7 +17,10 @@ import { Button, Card, Pill, cn } from '../components/ui';
 import { agentQueryPromptFromObjective } from './client';
 import type { TaskBoardClient } from './client';
 import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, ProjectWorkflow } from './types';
+import { artifactMediaType, uploadArtifact as uploadProjectArtifact } from './project-artifacts';
+import { completionPercent as calculateCompletionPercent, projectTaskGroups } from './project-metrics';
 import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
+import { confirmPlan as confirmProjectPlan, fetchProjectWorkflow, proposedPlans as getProposedPlans } from './project-workflow';
 import {
   agentWorkLabel,
   agentPipelineFocus,
@@ -186,7 +189,7 @@ export function ProjectPage({
   useEffect(() => {
     const controller = new AbortController();
     void Promise.all([
-      client.getProjectWorkflow(project.id, controller.signal),
+      fetchProjectWorkflow(client, project.id, controller.signal),
       client.getProjectArtifacts(project.id, controller.signal),
     ]).then(([nextWorkflow, nextArtifacts]) => {
       setWorkflow(nextWorkflow);
@@ -223,7 +226,7 @@ export function ProjectPage({
       after,
       signal: controller.signal,
       onEvent: () => {
-        void client.getProjectWorkflow(project.id, controller.signal).then(setWorkflow).catch(() => undefined);
+        void fetchProjectWorkflow(client, project.id, controller.signal).then(setWorkflow).catch(() => undefined);
       },
     }).catch(() => undefined);
     return () => controller.abort();
@@ -231,27 +234,17 @@ export function ProjectPage({
   const confirmPlan = async (planRevisionId: string) => {
     setConfirmingPlan(planRevisionId);
     try {
-      setWorkflow(await client.confirmWorkflow(planRevisionId));
+      setWorkflow(await confirmProjectPlan(client, planRevisionId));
     } finally {
       setConfirmingPlan(null);
     }
   };
-  const proposedPlans = workflow?.plans.filter((plan) => plan.state === 'proposed') ?? [];
+  const proposedPlans = getProposedPlans(workflow);
   const uploadArtifact = async (file: File) => {
-    const mediaType = file.name.endsWith('.mmd') || file.name.endsWith('.mermaid')
-      ? 'text/vnd.mermaid'
-      : file.name.endsWith('.md') ? 'text/markdown' : file.type;
-    if (!['text/markdown', 'text/vnd.mermaid', 'image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) return;
+    if (artifactMediaType(file.name, file.type) === null) return;
     setUploadingArtifact(true);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = '';
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      const artifact = await client.uploadArtifact(project.id, {
-        mediaType,
-        caption: file.name,
-        contentBase64: window.btoa(binary),
-      });
+      const artifact = await uploadProjectArtifact(client, project.id, file);
       setArtifacts((current) => [...current, artifact]);
     } finally {
       setUploadingArtifact(false);
@@ -261,20 +254,14 @@ export function ProjectPage({
   const metadata = parseProjectMetadata(project.description);
   const tasks = snapshot.tasks.filter((task) => task.projectId === project.id);
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
-  const completedTasks = tasks.filter((task) => task.status === 'completed');
-  const activeTasks = tasks.filter((task) => task.status === 'running' || task.status === 'queued');
-  const attentionTasks = tasks.filter((task) => task.status === 'waiting_for_human' || task.status === 'blocked' || task.status === 'failed');
-  const plannedTasks = tasks.filter((task) => task.status === 'proposed' || task.status === 'backlog');
-  const interruptedTasks = tasks.filter((task) => task.status === 'interrupted');
-  const completionPercent = tasks.length === 0 ? 0 : Math.round((completedTasks.length / tasks.length) * 100);
+  const taskGroups = projectTaskGroups(snapshot, project.id);
+  const tasksInGroup = (label: string) => taskGroups.find((group) => group.label === label)?.tasks ?? [];
+  const completedTasks = tasksInGroup('Completed');
+  const activeTasks = tasksInGroup('In progress');
+  const attentionTasks = tasksInGroup('Needs attention');
+  const plannedTasks = tasksInGroup('Planned');
+  const completionPercent = calculateCompletionPercent(tasks);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const taskGroups = [
-    { label: 'Needs attention', tasks: attentionTasks, tone: 'text-urgent' },
-    { label: 'In progress', tasks: activeTasks, tone: 'text-teal-700' },
-    { label: 'Planned', tasks: plannedTasks, tone: 'text-muted' },
-    { label: 'Completed', tasks: completedTasks, tone: 'text-success' },
-    { label: 'Interrupted', tasks: interruptedTasks, tone: 'text-muted' },
-  ].filter((group) => group.tasks.length > 0);
   const updateRow = (update: (typeof updates)[number]) => (
     <li key={update.id}>
       <button type="button" className="w-full px-4 py-3.5 text-left transition-colors duration-150 hover:bg-surface sm:px-5" onClick={() => onTask(update.taskId)}>
