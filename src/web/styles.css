@@ -39,6 +39,7 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted-foreground);
   --color-muted-foreground: var(--muted-foreground);
+  --color-tertiary: var(--tertiary-foreground);
 
   /* Lines / borders / fields */
   --color-line: var(--border);
@@ -56,7 +57,7 @@
   --color-mint: var(--teal-500);
   --color-mint-strong: var(--teal-700);
   --color-primary: var(--teal-500);
-  --color-primary-foreground: var(--foreground);
+  --color-primary-foreground: var(--primary-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--teal-700);
 
@@ -103,7 +104,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Operations console aliases retained by the existing interface. */
+  /* Agentic Workspace aliases retained by the existing interface. */
   --color-taupe: var(--active);
   --color-taupe-hover: var(--active-hover);
   --color-success: var(--success-text);
@@ -122,6 +123,8 @@
   --scrim: rgba(42, 42, 40, 0.45);
   --foreground: #2A2A28;
   --muted-foreground: #7A7A78;
+  --tertiary-foreground: #A0A0A0;
+  --primary-foreground: #FFFFFF;
   --border: #EAEAEA;
   --border-soft: #F1F1F1;
   --input: #EAEAEA;
@@ -142,7 +145,7 @@
   --caution-text: #5A2A0D;
   --caution-fill: #F28D50;
   --caution-soft: rgba(242, 141, 80, 0.22);
-  --urgent-text: #C45A34;
+  --urgent-text: #8A3A20;
   --urgent-fill: #C45A34;
   --urgent-soft: rgba(196, 90, 52, 0.20);
   --teal-border: #EAEAEA;
