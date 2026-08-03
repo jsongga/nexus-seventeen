@@ -401,7 +401,7 @@ export function DocumentsPage({
                     <p className="mt-1 text-[11px] text-muted">Saved {formatTime(document.updatedAt)} · Version {document.contentVersion}</p>
                   </div>
 
-                  <div className="border-b border-line bg-paper px-4 py-3 sm:px-5">
+                  <div className="border-b border-line bg-muted-surface px-4 py-3 sm:px-5">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-center gap-2.5">
                         <PenLine size={15} className="shrink-0 text-muted" />
@@ -439,7 +439,7 @@ export function DocumentsPage({
                         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[11px] leading-4 text-muted">{draft.dirty ? holdsPen ? 'Unsaved in this tab' : 'Draft preserved — read-only' : 'Saved'}</p><Button className={pillAction} variant="primary" size="sm" icon={<Save size={14} />} disabled={!holdsPen || !draft.dirty || draft.remoteChanged || operationBusy || !connected} onClick={() => void saveSnapshot()}>Save snapshot</Button></div>
                       </>
                     ) : (
-                      <pre aria-label={`${document.title} saved snapshot`} className="min-h-[360px] whitespace-pre-wrap break-words rounded-md border border-line bg-paper p-4 font-mono text-xs leading-6 text-ink">{document.content || 'This document is empty.'}</pre>
+                      <pre aria-label={`${document.title} saved snapshot`} className="min-h-[360px] whitespace-pre-wrap break-words rounded-md border border-line bg-muted-surface p-4 font-mono text-xs leading-6 text-ink">{document.content || 'This document is empty.'}</pre>
                     )}
                   </div>
 
@@ -467,7 +467,7 @@ export function DocumentsPage({
             <div className="overflow-hidden rounded-md border border-line bg-surface">
               <table className="w-full table-fixed text-left">
                 <caption className="sr-only">Documents</caption>
-                <thead className="border-b border-line bg-paper text-[11px] font-medium text-muted">
+                <thead className="border-b border-line bg-muted-surface text-[11px] font-medium text-muted">
                   <tr>
                     <th scope="col" className="w-full px-4 py-3 sm:w-[42%] sm:px-5">Document</th>
                     <th scope="col" className="hidden w-[24%] px-4 py-3 sm:table-cell">Project</th>
@@ -485,7 +485,7 @@ export function DocumentsPage({
                         ? `${item.penHolder.actorId} is editing`
                         : 'Available to edit';
                     return (
-                      <tr key={item.id} className="cursor-pointer transition-colors duration-150 hover:bg-paper focus-within:bg-paper" onClick={() => onSelectDocument(item.id)}>
+                      <tr key={item.id} className="cursor-pointer transition-colors duration-150 hover:bg-muted-surface focus-within:bg-muted-surface" onClick={() => onSelectDocument(item.id)}>
                         <td className="p-0">
                           <button
                             ref={(node) => {

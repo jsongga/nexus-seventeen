@@ -1,8 +1,6 @@
 @import "tailwindcss";
 
 /* The Agentic Workspace uses a light, neutral workspace palette. */
-@custom-variant dark (&:is(.dark *));
-
 /*
   Agentic Workspace tokens derived from the supplied reference. The @theme
   block maps them to Tailwind utilities while preserving legacy aliases used
@@ -19,7 +17,6 @@
   --radius-lg: 6px;
   --radius-xl: 6px;
   --radius-2xl: 6px;
-  --radius-3xl: 99px;
 
   /* Surfaces */
   --color-canvas: var(--canvas);
@@ -30,7 +27,6 @@
   --color-popover: var(--popover);
   --color-secondary: var(--secondary);
   --color-ink-panel: var(--ink-panel);
-  --color-scrim: var(--scrim);
   --color-header: var(--header);
 
   /* Ink / text */
@@ -39,7 +35,6 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted-foreground);
   --color-muted-foreground: var(--muted-foreground);
-  --color-tertiary: var(--tertiary-foreground);
 
   /* Lines / borders / fields */
   --color-line: var(--border);
@@ -87,13 +82,6 @@
   --color-alt-soft: var(--alt-soft);
   --color-alt-border: var(--alt-border);
 
-  /* Data-viz ramp */
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-
   /* Sidebar */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -120,7 +108,6 @@
   --popover: #FFFFFF;
   --secondary: #F3F3F5;
   --ink-panel: #F3F3F5;
-  --scrim: rgba(42, 42, 40, 0.45);
   --foreground: #2A2A28;
   /*
    * Contrast constraint: muted foreground is 5.0354:1 on the white canvas but
@@ -129,7 +116,6 @@
    * caution callouts use --caution-text directly rather than text-muted.
    */
   --muted-foreground: #6F6F6D;
-  --tertiary-foreground: #A0A0A0;
   --primary-foreground: #FFFFFF;
   --border: #EAEAEA;
   --border-soft: #F1F1F1;
@@ -154,7 +140,7 @@
   --caution-soft: rgba(242, 141, 80, 0.22);
   --urgent-text: #8A3A20;
   --urgent-fill: #BE5531;
-  --urgent-soft: rgba(196, 90, 52, 0.20);
+  --urgent-soft: rgba(190, 85, 49, 0.20);
   --teal-border: #EAEAEA;
   --border-strong: #D8D8D8;
   --muted-surface: #F3F3F5;
@@ -166,11 +152,6 @@
   --alt-text: #4A4A4A;
   --alt-soft: rgba(209, 209, 209, 0.40);
   --alt-border: #D1D1D1;
-  --chart-1: #8B9883;
-  --chart-2: #A2BBE0;
-  --chart-3: #F28D50;
-  --chart-4: #C45A34;
-  --chart-5: #5F4B51;
   --sidebar: #F3F3F5;
   --sidebar-foreground: #2A2A28;
   --sidebar-primary: #5F4B51;
@@ -225,7 +206,7 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--ring) 34%, transparent);
+  outline: 3px solid color-mix(in srgb, var(--ring) 70%, transparent);
   outline-offset: 2px;
 }
 

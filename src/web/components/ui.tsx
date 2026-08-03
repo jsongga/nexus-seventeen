@@ -19,7 +19,7 @@ const buttonVariants: Record<ButtonVariant, string> = {
     'border-taupe bg-taupe text-white enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover',
   secondary:
     'border-line bg-surface text-ink enabled:hover:border-line-strong enabled:hover:bg-muted-surface',
-  quiet: 'border-transparent bg-transparent text-ink enabled:hover:bg-surface',
+  quiet: 'border-transparent bg-transparent text-ink enabled:hover:bg-muted-surface',
   danger: 'border-urgent-border bg-canvas text-urgent enabled:hover:bg-urgent-soft',
   mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:bg-surface',
 };
@@ -78,13 +78,12 @@ export function Card({
 }
 
 const pillTones = {
-  neutral: 'border-line bg-surface text-muted',
-  green: 'border-success-fill/60 bg-success-soft text-success',
-  amber: 'border-caution-border bg-caution-soft text-caution',
-  red: 'border-urgent-border bg-urgent-fill text-white',
-  blue: 'border-info-border bg-info-soft text-info',
-  purple: 'border-alt-border bg-alt-soft text-alt',
-  dark: 'border-line-strong bg-ink-panel text-ink',
+  neutral: 'bg-muted-surface text-muted',
+  green: 'bg-success-soft text-success',
+  amber: 'bg-caution-soft text-caution',
+  red: 'bg-urgent-fill text-white',
+  blue: 'bg-info-soft text-info',
+  purple: 'bg-alt-soft text-alt',
 };
 
 export function Pill({
@@ -109,92 +108,6 @@ export function Pill({
       {dot ? <span className="size-1.5 rounded-full bg-current opacity-70" /> : null}
       {children}
     </span>
-  );
-}
-
-export function Avatar({
-  name,
-  color = '#d9efec',
-  size = 'md',
-  human = false,
-}: {
-  name: string;
-  color?: string;
-  size?: 'sm' | 'md' | 'lg';
-  human?: boolean;
-}) {
-  const initials = name
-    .split(' ')
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join('');
-
-  const sizes = {
-    sm: 'size-7 text-[10px]',
-    md: 'size-9 text-xs',
-    lg: 'size-12 text-sm',
-  };
-
-  return (
-    <span
-      className={cn(
-        'relative inline-flex shrink-0 items-center justify-center rounded-[2px] border border-taupe font-mono font-semibold text-ink',
-        sizes[size],
-        human && 'border-ink/15',
-      )}
-      style={{ backgroundColor: color }}
-      aria-label={name}
-    >
-      {initials}
-    </span>
-  );
-}
-
-export function ProgressBar({
-  value,
-  tone = 'green',
-  className,
-}: {
-  value: number;
-  tone?: 'green' | 'amber' | 'blue' | 'purple';
-  className?: string;
-}) {
-  const tones = {
-    green: 'bg-success-fill',
-    amber: 'bg-caution-fill',
-    blue: 'bg-info-border',
-    purple: 'bg-alt-border',
-  };
-
-  return (
-    <div className={cn('h-1.5 overflow-hidden bg-line-soft', className)}>
-      <div
-        className={cn('h-full transition-[width] duration-500', tones[tone])}
-        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-      />
-    </div>
-  );
-}
-
-export function SectionHeading({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description?: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex items-end justify-between gap-4">
-      <div>
-        <h2 className="font-display text-lg font-light tracking-[0.01em] text-ink">
-          {title}
-        </h2>
-        {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
-      </div>
-      {action}
-    </div>
   );
 }
 

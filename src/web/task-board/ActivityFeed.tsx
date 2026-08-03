@@ -68,7 +68,7 @@ export function ActivityFeed({
                           <FileText size={18} strokeWidth={1.5} aria-hidden="true" />
                           <span className="min-w-0">
                             <span className="block break-words font-medium text-ink">{artifact.caption}</span>
-                            <span className="mt-1 block text-[11px] text-tertiary">{artifact.mediaType}</span>
+                            <span className="mt-1 block text-[11px] text-muted">{artifact.mediaType}</span>
                           </span>
                         </span>
                       )}

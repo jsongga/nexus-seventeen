@@ -111,7 +111,7 @@ export function ContextSidebar({
                   onClick={() => onSelectDocument(document.documentId!)}
                 >
                   <span className="block break-words">{document.label}</span>
-                  <span className="mt-0.5 block break-words text-[11px] text-tertiary">{document.meta}</span>
+                  <span className="mt-0.5 block break-words text-[11px] text-muted">{document.meta}</span>
                 </button>
               ) : document.href ? (
                 <a
@@ -123,12 +123,12 @@ export function ContextSidebar({
                   className="min-w-0 flex-1 rounded-[4px] text-current no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
                 >
                   <span className="block break-words">{document.label}</span>
-                  <span className="mt-0.5 block break-all text-[11px] text-tertiary">{document.meta}</span>
+                  <span className="mt-0.5 block break-all text-[11px] text-muted">{document.meta}</span>
                 </a>
               ) : (
                 <div title={document.value} className="min-w-0 flex-1">
                   <span className="block break-words">{document.label}</span>
-                  <span className="mt-0.5 block break-all text-[11px] text-tertiary">{document.meta}</span>
+                  <span className="mt-0.5 block break-all text-[11px] text-muted">{document.meta}</span>
                 </div>
               )}
               <span className="flex shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">

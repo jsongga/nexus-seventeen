@@ -2,8 +2,8 @@
  * Project workflow reads and plan confirmation.
  *
  * Deliberately not rendered by the current ProjectPage design, which shows the
- * documents, pipeline and activity regions only. Kept exported and tested so the
- * behaviour survives and can be re-surfaced without being rebuilt.
+ * documents, pipeline and activity regions only. Kept exported so the behaviour
+ * survives and can be re-surfaced without being rebuilt.
  */
 import type { TaskBoardClient } from './client';
 import type { ProjectWorkflow, WorkflowPlan as PlanRevision } from './types';

@@ -205,7 +205,7 @@ function EmptyState({
 }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center px-5 py-10 text-center">
-      <div className="mb-4 flex size-11 items-center justify-center rounded-[99px] bg-paper text-ink">
+      <div className="mb-4 flex size-11 items-center justify-center rounded-[99px] bg-muted-surface text-ink">
         {icon}
       </div>
       <h2 className="font-display text-lg font-light tracking-[0.01em] text-ink">{title}</h2>
@@ -315,7 +315,7 @@ function TaskPhases({ task }: { task: BoardTask }) {
       {phases.length === 0 ? (
         <p className="mt-3 text-sm leading-6 text-muted">The agent will add phases and an estimate after reviewing the task.</p>
       ) : (
-        <ol className="mt-3 divide-y divide-line overflow-hidden rounded-md border border-line bg-canvas">
+        <ol className="mt-3 divide-y divide-line overflow-hidden rounded-md border border-line bg-muted-surface">
           {phases.map((phase) => {
             const parallel = phase.parallelGroup !== null && (parallelCounts.get(phase.parallelGroup) ?? 0) > 1;
             return (
@@ -878,7 +878,7 @@ export function BoardApp() {
 
   return (
     <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
-      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5 opacity-80">{error}. Existing durable state remains visible; no demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => openDialog('connection')}>Configure</button></div></FormError></div> : null}
+      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5">{error}. Existing durable state remains visible; no demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => openDialog('connection')}>Configure</button></div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Its name, workspace scope, and engineer profile are added automatically."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>

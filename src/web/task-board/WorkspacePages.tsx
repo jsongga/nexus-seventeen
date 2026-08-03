@@ -223,7 +223,7 @@ export function ProjectPage({
               <Button
                 variant="secondary"
                 size="sm"
-                className="!min-h-0 !rounded-[99px] !border-0 !bg-muted-surface !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
+                className="!min-h-0 !border-0 !bg-muted-surface !px-4 !py-2"
                 disabled={!connected || activeRuns.length === 0 || pausing}
                 title={!connected ? 'Reconnect the task board to pause agents' : activeRuns.length === 0 ? 'No active agents to pause' : undefined}
                 onClick={() => void pauseAgents()}
@@ -234,7 +234,7 @@ export function ProjectPage({
               <Button
                 variant="primary"
                 size="sm"
-                className="!min-h-0 !rounded-[99px] !border-0 !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
+                className="!min-h-0 !border-0 !px-4 !py-2"
                 disabled
                 title="Compile Report is not implemented yet"
               >
@@ -463,8 +463,8 @@ function AgentChat({
                     entry.sender === 'human'
                       ? 'rounded-br-[6px] bg-taupe text-white'
                       : entry.sender === 'system'
-                        ? 'bg-surface text-muted'
-                        : 'rounded-bl-[6px] border border-line bg-surface text-ink',
+                        ? 'bg-muted-surface text-muted'
+                        : 'rounded-bl-[6px] border border-line bg-muted-surface text-ink',
                   )}>
                     <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[10px] leading-4 opacity-70">
                       <span className="font-medium">{entry.author}</span>
@@ -477,7 +477,7 @@ function AgentChat({
             </ol>
           ) : (
             <div className="flex h-full min-h-44 flex-col items-center justify-center text-center text-muted">
-              <span className="flex size-10 items-center justify-center rounded-full bg-surface"><MessageSquareText size={17} strokeWidth={1.5} /></span>
+              <span className="flex size-10 items-center justify-center rounded-full bg-muted-surface"><MessageSquareText size={17} strokeWidth={1.5} /></span>
               <p className="mt-3 text-sm">No messages yet.</p>
             </div>
           )}

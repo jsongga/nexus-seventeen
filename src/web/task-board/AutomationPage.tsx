@@ -284,7 +284,7 @@ function AgentTypeForm({
         </div>
       </div>
 
-      <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <div className="rounded-xl border border-line bg-muted-surface px-4 py-3">
         <p className="text-xs font-semibold text-muted">Role-derived authority</p>
         <p className="mt-1 text-sm font-medium text-ink">{authority.label}</p>
         <p className="mt-1 text-xs leading-5 text-muted">{authority.detail}</p>
@@ -331,7 +331,7 @@ function AgentTypeForm({
       </label>
 
       {initial && usedByStages.length > 0 ? (
-        <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-5 text-muted">
+        <p className="rounded-xl border border-line bg-muted-surface px-4 py-3 text-xs leading-5 text-muted">
           Used by {usedByStages.map((stage) => stageLabels[stage]).join(', ')}. Reassign those stages before disabling or deleting this type.
         </p>
       ) : null}
@@ -690,14 +690,14 @@ export function AutomationPage({
                     return (
                       <li key={stage} className="grid gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(220px,.8fr)] sm:items-center sm:px-6">
                         <div className="flex min-w-0 items-start gap-3">
-                          <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-[99px] bg-surface text-xs font-medium text-muted">{index + 1}</span>
+                          <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-[99px] bg-muted-surface text-xs font-medium text-muted">{index + 1}</span>
                           <div>
                             <h3 className="text-sm font-medium text-ink">{stageLabels[stage]}</h3>
                             <p className="mt-1 text-xs leading-5 text-muted">{stageDescriptions[stage]}</p>
                           </div>
                         </div>
                         {locked ? (
-                          <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3.5" aria-label={`${stageLabels[stage]} executor`}>
+                          <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-line bg-muted-surface px-3.5" aria-label={`${stageLabels[stage]} executor`}>
                             <span className="flex items-center gap-2 text-sm text-ink">
                               {stage === 'human_review' ? <ShieldCheck size={16} /> : <LockKeyhole size={16} />}
                               {stage === 'human_review' ? 'Human owner' : 'Disabled'}

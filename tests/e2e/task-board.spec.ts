@@ -489,12 +489,15 @@ test('the default app reads real board state and assignment is an explicit human
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
   await expect(page.getByText('Improve invoice recovery', { exact: true }).first()).toBeVisible();
-  const companyRail = await openCompanyRail(page);
+  let companyRail = await openCompanyRail(page);
   await expect(companyRail.getByText('Cicada Tech Systems LLC.', { exact: true })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: 'Task List' })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: /billing-engineer/u })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toHaveCount(0);
+  await companyRail.getByRole('button', { name: 'Documents' }).click();
+  await expect(page.getByText('No documents yet', { exact: true })).toBeVisible();
+  companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: 'Task List' }).click();
   await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
   await page.getByRole('button', { name: 'Assign and wake agent' }).click();
@@ -1400,13 +1403,9 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole('button', { name: 'Move GitHub earlier' })).toBeVisible();
   const pipelineRows = page.getByRole('region', { name: 'Active thread pipeline rows' });
   await expect(pipelineRows).toBeVisible();
-  expect(await pipelineRows.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }))).toMatchObject({ clientHeight: expect.any(Number), scrollHeight: expect.any(Number) });
   expect(await pipelineRows.evaluate((element) => element.scrollHeight)).toBeGreaterThan(await pipelineRows.evaluate((element) => element.clientHeight));
-  await expect(page.getByRole('button', { name: 'Pause Agents' })).toBeInViewport();
-  await expect(page.getByRole('button', { name: 'Compile Report' })).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Pause Agents' })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('button', { name: 'Compile Report' })).toBeInViewport({ ratio: 1 });
   const projectViewport = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
