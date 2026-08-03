@@ -1,10 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
-import type { SQLOutputValue } from "node:sqlite";
 import {
   TASK_BOARD_API_VERSION,
-  WORK_ITEM_CURSOR_MAX_BYTES,
   WORK_ITEM_PAGE_SIZE,
   type AutomationConfiguration,
   type AgentInterrupt,
@@ -39,11 +37,9 @@ import {
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
-  type TaskEvent,
   type TaskKind,
   type TaskMessage,
   type TaskPhase,
-  type TaskPhaseStage,
   type TaskPhaseStatus,
   type TaskStatus,
   type UpdateTaskRequest,
@@ -55,10 +51,6 @@ import {
   type Wakeup,
   type WorkItem,
   type WorkItemPage,
-  type WorkItemPriority,
-  type WorkItemProjectTarget,
-  type WorkItemStage,
-  type WorkItemState,
   type WorkerConnection,
 } from "#shared/task-board-contract";
 import { canonicalJson, sha256, tokenMatches } from "./canonical.js";
@@ -68,16 +60,42 @@ import { parseUpdateAutomationConfiguration } from "./schema.js";
 import { TaskBoardStore } from "./persistence/store.js";
 import { SkillRegistry } from "./skills.js";
 import { ArtifactStore } from "./persistence/artifacts.js";
+import { RETIRED_WAKEUP_EVENT_PREFIX, retiredWakeupEventId } from "./persistence/retired-wakeups.js";
+import {
+  claimMessageCursor,
+  claimRequestHash,
+  legacyClaimRequestHash,
+} from "./persistence/run-claims.js";
+import {
+  automationConfigurationFromRow,
+  documentEventFromRow,
+  documentFromRow,
+  documentSummaryFromRow,
+  eventFromRow,
+  interruptFromRow,
+  messageFromRow,
+  nullableString,
+  numberValue,
+  phaseFromRow,
+  projectFromRow,
+  questionFromRow,
+  runFromRow,
+  stringValue,
+  taskFromRow,
+  wakeupFromRow,
+  workItemFromRow,
+  type Row,
+} from "./persistence/rows.js";
 import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "./persistence/workflow.js";
+import { decodeWorkItemCursor, encodeWorkItemCursor } from "./persistence/work-item-cursor.js";
+import { exactNow } from "./timestamps.js";
 
-type Row = Record<string, SQLOutputValue>;
 type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
 type DocumentEventType = DocumentEvent["eventType"];
 type ActiveWorkerConnection = Exclude<WorkerConnection, null>;
 type WorkerConnectionCounts = { waitingForWake: number; watchingRun: number };
 type ReviewFollowupResult = Readonly<{ taskId: string; wakeAgentId: string | null }>;
 type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
-const RETIRED_WAKEUP_EVENT_PREFIX = "retired-wakeup:";
 const REVIEW_WORKFLOW_ACTOR = "system:steward-review-workflow";
 const WORK_ITEM_TERMINAL_RANK_SQL = "(ended_at IS NOT NULL)";
 const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
@@ -87,470 +105,6 @@ const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
   WHEN 'low' THEN 3
   WHEN 'opportunistic' THEN 4
 END`;
-
-interface WorkItemCursorTuple {
-  readonly version: 1;
-  readonly terminalRank: 0 | 1;
-  readonly priorityRank: 0 | 1 | 2 | 3 | 4;
-  readonly createdAt: string;
-  readonly workItemId: string;
-}
-
-function retiredWakeupEventId(wakeupId: string): string {
-  return RETIRED_WAKEUP_EVENT_PREFIX + wakeupId;
-}
-
-function stringValue(row: Row, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") throw new Error(`TASK_BOARD_DATABASE_CORRUPT:${key}`);
-  return value;
-}
-
-function nullableString(row: Row, key: string): string | null {
-  const value = row[key];
-  if (value === null) return null;
-  if (typeof value !== "string") throw new Error(`TASK_BOARD_DATABASE_CORRUPT:${key}`);
-  return value;
-}
-
-function numberValue(row: Row, key: string): number {
-  const value = row[key];
-  const number = typeof value === "bigint" ? Number(value) : value;
-  if (typeof number !== "number" || !Number.isSafeInteger(number)) {
-    throw new Error(`TASK_BOARD_DATABASE_CORRUPT:${key}`);
-  }
-  return number;
-}
-
-function nullableNumberValue(row: Row, key: string): number | null {
-  if (row[key] === null) return null;
-  return numberValue(row, key);
-}
-
-function parseJson<T>(value: string, label: string): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    throw new Error(`TASK_BOARD_DATABASE_CORRUPT:${label}`);
-  }
-}
-
-function exactNow(now: () => Date): string {
-  const value = now();
-  if (!(value instanceof Date) || Number.isNaN(value.valueOf())) throw new Error("TASK_BOARD_CLOCK_INVALID");
-  return value.toISOString();
-}
-
-function invalidWorkItemCursor(): TaskBoardError {
-  return new TaskBoardError(400, "INVALID_REQUEST", "cursor is invalid");
-}
-
-function exactIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 64) return false;
-  try {
-    return new Date(value).toISOString() === value;
-  } catch {
-    return false;
-  }
-}
-
-function decodeWorkItemCursor(value: string): WorkItemCursorTuple {
-  if (
-    value.length < 1 ||
-    Buffer.byteLength(value, "utf8") > WORK_ITEM_CURSOR_MAX_BYTES ||
-    !/^[A-Za-z0-9_-]+$/u.test(value)
-  ) {
-    throw invalidWorkItemCursor();
-  }
-  let bytes: Buffer;
-  let text: string;
-  let payload: unknown;
-  try {
-    bytes = Buffer.from(value, "base64url");
-    if (bytes.length === 0 || bytes.toString("base64url") !== value) throw invalidWorkItemCursor();
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    payload = JSON.parse(text) as unknown;
-  } catch {
-    throw invalidWorkItemCursor();
-  }
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    throw invalidWorkItemCursor();
-  }
-  const item = payload as Record<string, unknown>;
-  const actualKeys = Object.keys(item).sort();
-  const expectedKeys = ["createdAt", "priorityRank", "terminalRank", "version", "workItemId"];
-  if (
-    actualKeys.length !== expectedKeys.length ||
-    actualKeys.some((key, index) => key !== expectedKeys[index]) ||
-    canonicalJson(item) !== text ||
-    item.version !== 1 ||
-    (item.terminalRank !== 0 && item.terminalRank !== 1) ||
-    !Number.isSafeInteger(item.priorityRank) ||
-    Number(item.priorityRank) < 0 ||
-    Number(item.priorityRank) > 4 ||
-    !exactIsoTimestamp(item.createdAt) ||
-    typeof item.workItemId !== "string" ||
-    item.workItemId.length < 1 ||
-    item.workItemId.length > 128 ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(item.workItemId)
-  ) {
-    throw invalidWorkItemCursor();
-  }
-  return Object.freeze({
-    version: 1,
-    terminalRank: item.terminalRank,
-    priorityRank: Number(item.priorityRank) as WorkItemCursorTuple["priorityRank"],
-    createdAt: item.createdAt,
-    workItemId: item.workItemId,
-  });
-}
-
-function encodeWorkItemCursor(row: Row): string {
-  const terminalRank = numberValue(row, "work_item_terminal_rank");
-  const priorityRank = numberValue(row, "work_item_priority_rank");
-  if ((terminalRank !== 0 && terminalRank !== 1) || priorityRank < 0 || priorityRank > 4) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_cursor_rank");
-  }
-  const payload: WorkItemCursorTuple = Object.freeze({
-    version: 1,
-    terminalRank,
-    priorityRank: priorityRank as WorkItemCursorTuple["priorityRank"],
-    createdAt: stringValue(row, "created_at"),
-    workItemId: stringValue(row, "work_item_id"),
-  });
-  const encoded = Buffer.from(canonicalJson(payload), "utf8").toString("base64url");
-  if (Buffer.byteLength(encoded, "utf8") > WORK_ITEM_CURSOR_MAX_BYTES) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_cursor_size");
-  }
-  return encoded;
-}
-
-function expectedCompletedAt(
-  status: TaskStatus,
-  startedAt: string | null,
-  estimateRecordedAt: string | null,
-  minutes: number | null,
-): string | null {
-  if (status === "completed" || status === "failed" || status === "cancelled") return null;
-  if (startedAt === null || estimateRecordedAt === null || minutes === null) return null;
-  const anchor = Math.max(Date.parse(startedAt), Date.parse(estimateRecordedAt));
-  const raw = anchor + minutes * 60_000;
-  const interval = 15 * 60_000;
-  const milliseconds = Math.ceil(raw / interval) * interval;
-  if (!Number.isSafeInteger(milliseconds)) throw new Error("TASK_BOARD_TIME_RANGE_INVALID");
-  return new Date(milliseconds).toISOString();
-}
-
-function claimMessageCursor(request: ClaimRunRequest, taskId: string | null): number | null {
-  if (request.messageCursors !== undefined) {
-    return taskId === null ? null : request.messageCursors[taskId] ?? null;
-  }
-  return request.messageCursor ?? null;
-}
-
-function claimRequestHash(agentId: string, request: ClaimRunRequest, taskId: string | null): string {
-  return sha256({
-    action: "claim_run",
-    agentId,
-    claimId: request.claimId,
-    taskId,
-    messageCursor: claimMessageCursor(request, taskId),
-  });
-}
-
-function legacyClaimRequestHash(agentId: string, claimId: string, messageCursor: number | null): string {
-  return sha256({ action: "claim_run", agentId, request: { claimId, messageCursor } });
-}
-
-function projectFromRow(row: Row): Project {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    projectId: stringValue(row, "project_id"),
-    name: stringValue(row, "name"),
-    description: stringValue(row, "description"),
-    version: numberValue(row, "version"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-  });
-}
-
-function workItemFromRow(row: Row): WorkItem {
-  const mode = stringValue(row, "project_target_mode");
-  const targetProjectId = nullableString(row, "target_project_id");
-  let projectTarget: WorkItemProjectTarget;
-  if (mode === "auto" && targetProjectId === null) {
-    projectTarget = Object.freeze({ mode: "auto" });
-  } else if (mode === "explicit" && targetProjectId !== null) {
-    projectTarget = Object.freeze({ mode: "explicit", projectId: targetProjectId });
-  } else {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:project_target");
-  }
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    workItemId: stringValue(row, "work_item_id"),
-    originalRequest: stringValue(row, "original_request"),
-    refinedObjective: nullableString(row, "refined_objective"),
-    priority: stringValue(row, "priority") as WorkItemPriority,
-    projectTarget,
-    resolvedProjectId: nullableString(row, "resolved_project_id"),
-    state: stringValue(row, "state") as WorkItemState,
-    currentStage: nullableString(row, "current_stage") as WorkItemStage | null,
-    createdBy: stringValue(row, "created_by"),
-    version: numberValue(row, "version"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-    endedAt: nullableString(row, "ended_at"),
-  });
-}
-
-function automationConfigurationFromRow(row: Row): AutomationConfiguration {
-  if (stringValue(row, "configuration_id") !== "company-default") {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:automation_configuration_id");
-  }
-  let parsed: UpdateAutomationConfigurationRequest;
-  try {
-    parsed = parseUpdateAutomationConfiguration({
-      version: numberValue(row, "version"),
-      agentTypes: parseJson<unknown>(stringValue(row, "agent_types_json"), "agent_types_json"),
-      stages: parseJson<unknown>(stringValue(row, "stages_json"), "stages_json"),
-    });
-  } catch {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:automation_configuration");
-  }
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    configurationId: "company-default",
-    agentTypes: parsed.agentTypes,
-    stages: parsed.stages,
-    version: parsed.version,
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-    updatedBy: stringValue(row, "updated_by"),
-  });
-}
-
-function documentPenFromRow(row: Row): DocumentSnapshot["penHolder"] {
-  const actorType = nullableString(row, "pen_holder_actor_type");
-  if (actorType === null) return null;
-  return Object.freeze({
-    actorType: actorType as "human" | "agent",
-    actorId: stringValue(row, "pen_holder_actor_id"),
-    clientId: stringValue(row, "pen_holder_client_id"),
-    acquiredAt: stringValue(row, "pen_acquired_at"),
-  });
-}
-
-function documentSummaryFromRow(row: Row): DocumentSummary {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    documentId: stringValue(row, "document_id"),
-    projectId: stringValue(row, "project_id"),
-    title: stringValue(row, "title"),
-    contentType: "text/markdown",
-    contentVersion: numberValue(row, "content_version"),
-    penEpoch: numberValue(row, "pen_epoch"),
-    penHolder: documentPenFromRow(row),
-    sequence: numberValue(row, "sequence"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-  });
-}
-
-function documentFromRow(row: Row): DocumentSnapshot {
-  return Object.freeze({
-    ...documentSummaryFromRow(row),
-    content: stringValue(row, "content"),
-  });
-}
-
-function documentEventFromRow(row: Row): DocumentEvent {
-  const document = parseJson<DocumentSnapshot>(stringValue(row, "document_json"), "document_json");
-  if (
-    document.apiVersion !== TASK_BOARD_API_VERSION ||
-    typeof document.documentId !== "string" ||
-    typeof document.content !== "string" ||
-    !Number.isSafeInteger(document.sequence)
-  ) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:document_json");
-  }
-  const penHolder = document.penHolder === null ? null : Object.freeze({ ...document.penHolder });
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    eventId: stringValue(row, "event_id"),
-    documentId: stringValue(row, "document_id"),
-    projectId: stringValue(row, "project_id"),
-    sequence: numberValue(row, "sequence"),
-    eventType: stringValue(row, "event_type") as DocumentEventType,
-    actorType: stringValue(row, "actor_type") as "human" | "agent",
-    actorId: stringValue(row, "actor_id"),
-    clientId: stringValue(row, "client_id"),
-    document: Object.freeze({ ...document, penHolder }),
-    createdAt: stringValue(row, "created_at"),
-  });
-}
-
-function phaseFromRow(row: Row): TaskPhase {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    phaseId: stringValue(row, "phase_id"),
-    projectId: stringValue(row, "project_id"),
-    taskId: stringValue(row, "task_id"),
-    title: stringValue(row, "title"),
-    stage: stringValue(row, "stage") as TaskPhaseStage,
-    status: stringValue(row, "status") as TaskPhaseStatus,
-    parallelGroup: nullableString(row, "parallel_group"),
-    orderKey: numberValue(row, "order_key"),
-    startedAt: nullableString(row, "started_at"),
-    endedAt: nullableString(row, "ended_at"),
-    version: numberValue(row, "version"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-  });
-}
-
-function taskFromRow(row: Row, phases: readonly TaskPhase[] = []): BoardTask {
-  const startedAt = nullableString(row, "started_at");
-  const status = stringValue(row, "status") as TaskStatus;
-  const minutes = nullableNumberValue(row, "agent_estimate_minutes");
-  const estimateRecordedAt = nullableString(row, "estimate_recorded_at");
-  if ((minutes === null) !== (estimateRecordedAt === null)) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:agent_estimate");
-  }
-  const refs = parseJson<unknown>(stringValue(row, "workspace_refs_json"), "workspace_refs_json");
-  if (!Array.isArray(refs) || refs.some((value) => typeof value !== "string")) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:workspace_refs_json");
-  }
-  const requiresReviewValue = numberValue(row, "requires_review");
-  if (requiresReviewValue !== 0 && requiresReviewValue !== 1) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:requires_review");
-  }
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    taskId: stringValue(row, "task_id"),
-    projectId: stringValue(row, "project_id"),
-    parentTaskId: nullableString(row, "parent_task_id"),
-    kind: stringValue(row, "task_kind") as TaskKind,
-    requiredRole: nullableString(row, "required_role") as AgentRole | null,
-    requiresReview: requiresReviewValue === 1,
-    title: stringValue(row, "title"),
-    objective: stringValue(row, "objective"),
-    acceptanceCriteria: stringValue(row, "acceptance_criteria"),
-    workspaceRefs: Object.freeze([...refs] as string[]),
-    status,
-    assignedAgentId: nullableString(row, "assigned_agent_id"),
-    assignedRole: nullableString(row, "assigned_role") as AgentRole | null,
-    expectedAgentMinutes: minutes,
-    estimateRecordedAt,
-    orderKey: numberValue(row, "order_key"),
-    phases: Object.freeze([...phases]),
-    startedAt,
-    expectedCompletedAt: expectedCompletedAt(status, startedAt, estimateRecordedAt, minutes),
-    endedAt: nullableString(row, "ended_at"),
-    result: nullableString(row, "result"),
-    version: numberValue(row, "version"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-  });
-}
-
-function messageFromRow(row: Row): TaskMessage {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    messageId: stringValue(row, "message_id"),
-    sequence: numberValue(row, "sequence"),
-    projectId: stringValue(row, "project_id"),
-    taskId: stringValue(row, "task_id"),
-    runId: nullableString(row, "run_id"),
-    actorType: stringValue(row, "actor_type") as "human" | "agent",
-    actorId: stringValue(row, "actor_id"),
-    kind: stringValue(row, "kind") as TaskMessage["kind"],
-    body: stringValue(row, "body"),
-    createdAt: stringValue(row, "created_at"),
-  });
-}
-
-function questionFromRow(row: Row): HumanQuestion {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    questionId: stringValue(row, "question_id"),
-    projectId: stringValue(row, "project_id"),
-    taskId: stringValue(row, "task_id"),
-    agentId: stringValue(row, "agent_id"),
-    runId: stringValue(row, "run_id"),
-    question: stringValue(row, "question"),
-    status: stringValue(row, "status") as HumanQuestion["status"],
-    answer: nullableString(row, "answer"),
-    askedAt: stringValue(row, "asked_at"),
-    answeredAt: nullableString(row, "answered_at"),
-    answeredBy: nullableString(row, "answered_by"),
-    version: numberValue(row, "version"),
-  });
-}
-
-function wakeupFromRow(row: Row): Wakeup {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    wakeupId: stringValue(row, "wakeup_id"),
-    projectId: stringValue(row, "project_id"),
-    agentId: stringValue(row, "agent_id"),
-    reason: stringValue(row, "reason") as Wakeup["reason"],
-    taskId: nullableString(row, "task_id"),
-    questionId: nullableString(row, "question_id"),
-    detail: stringValue(row, "detail"),
-    createdBy: stringValue(row, "created_by"),
-    createdAt: stringValue(row, "created_at"),
-    claimedAt: nullableString(row, "claimed_at"),
-    runId: nullableString(row, "run_id"),
-  });
-}
-
-function runFromRow(row: Row): AgentRun {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    runId: stringValue(row, "run_id"),
-    claimId: stringValue(row, "claim_id"),
-    projectId: stringValue(row, "project_id"),
-    agentId: stringValue(row, "agent_id"),
-    wakeupId: stringValue(row, "wakeup_id"),
-    taskId: nullableString(row, "task_id"),
-    status: stringValue(row, "status") as AgentRun["status"],
-    startedAt: stringValue(row, "started_at"),
-    endedAt: nullableString(row, "ended_at"),
-    result: nullableString(row, "result"),
-  });
-}
-
-function interruptFromRow(row: Row): AgentInterrupt {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    sequence: numberValue(row, "sequence"),
-    interruptId: stringValue(row, "interrupt_id"),
-    projectId: stringValue(row, "project_id"),
-    agentId: stringValue(row, "agent_id"),
-    runId: nullableString(row, "run_id"),
-    reason: stringValue(row, "reason"),
-    requestedBy: stringValue(row, "requested_by"),
-    requestedAt: stringValue(row, "requested_at"),
-  });
-}
-
-function eventFromRow(row: Row): TaskEvent {
-  const data = parseJson<unknown>(stringValue(row, "data_json"), "data_json");
-  if (data === null || typeof data !== "object" || Array.isArray(data)) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:data_json");
-  }
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    eventId: stringValue(row, "event_id"),
-    projectId: stringValue(row, "project_id"),
-    taskId: nullableString(row, "task_id"),
-    actorType: stringValue(row, "actor_type") as TaskEvent["actorType"],
-    actorId: stringValue(row, "actor_id"),
-    eventType: stringValue(row, "event_type"),
-    data: Object.freeze(data as Record<string, unknown>),
-    createdAt: stringValue(row, "created_at"),
-  });
-}
 
 export class TaskBoard {
   readonly #config: TaskBoardConfig;
