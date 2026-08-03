@@ -1,4 +1,4 @@
-import type { BoardTask, CreateTaskInput } from './types';
+import type { BoardTask, CreateTaskInput } from '../types';
 
 export interface TaskProposal {
   title: string;

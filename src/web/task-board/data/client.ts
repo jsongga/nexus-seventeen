@@ -16,7 +16,7 @@ import type {
   SaveAutomationConfigurationInput,
   TaskKind,
   WorkflowEvent,
-} from './types';
+} from '../types';
 import {
   array,
   automationAgentTypeWire,
@@ -49,7 +49,7 @@ import {
   normalize,
   projectProjection,
   workItemProjection,
-} from './project';
+} from '../model/project';
 import { workItemPageSize } from './wire';
 
 // Client-side paging for task messages. Deliberately NOT the contract's

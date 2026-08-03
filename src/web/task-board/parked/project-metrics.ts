@@ -5,7 +5,7 @@
  * documents, pipeline and activity regions only. Kept exported and tested so the
  * behaviour survives and can be re-surfaced without being rebuilt.
  */
-import type { BoardSnapshot, BoardTask } from './types';
+import type { BoardSnapshot, BoardTask } from '../types';
 
 export interface ProjectTaskGroup {
   label: string;

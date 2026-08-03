@@ -65,10 +65,10 @@ import { canonicalJson, sha256, tokenMatches } from "./canonical.js";
 import type { TaskBoardConfig } from "./config.js";
 import { conflict, TaskBoardError } from "./errors.js";
 import { parseUpdateAutomationConfiguration } from "./schema.js";
-import { TaskBoardStore } from "./store.js";
+import { TaskBoardStore } from "./persistence/store.js";
 import { SkillRegistry } from "./skills.js";
-import { ArtifactStore } from "./artifacts.js";
-import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "./workflow.js";
+import { ArtifactStore } from "./persistence/artifacts.js";
+import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "./persistence/workflow.js";
 
 type Row = Record<string, SQLOutputValue>;
 type Actor = Readonly<{ type: "human" | "agent"; id: string }>;

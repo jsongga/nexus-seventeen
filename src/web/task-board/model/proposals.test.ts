@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseTaskProposal, proposalChildInput, proposalIsOnBoard } from './proposals';
-import type { BoardTask } from './types';
+import type { BoardTask } from '../types';
 
 const parent: BoardTask = {
   id: 'parent-completed',

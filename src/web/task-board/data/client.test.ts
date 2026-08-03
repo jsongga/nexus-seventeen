@@ -8,7 +8,7 @@ import {
   parseBoardSnapshot,
   randomUuid,
 } from './client';
-import type { AutomationAgentType, AutomationStageConfiguration } from './types';
+import type { AutomationAgentType, AutomationStageConfiguration } from '../types';
 
 class MemoryStorage implements Storage {
   private readonly values: Map<string, string>;

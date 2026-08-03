@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { TaskBoardError } from "./errors.js";
+import { TaskBoardError } from "../errors.js";
 
 const SCHEMA_VERSION = 12;
 

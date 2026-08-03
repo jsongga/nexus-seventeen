@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { cn } from '../components/ui';
+import { cn } from '../../components/ui';
 
 export interface ContextDocument {
   id: string;

@@ -6,9 +6,9 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { cn } from '../components/ui';
-import type { BoardAgent, BoardSnapshot } from './types';
-import { agentWorkLabel, taskNeedsHumanAction } from './workspace-model';
+import { cn } from '../../components/ui';
+import type { BoardAgent, BoardSnapshot } from '../types';
+import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
 
 export type BoardPage =
   | { kind: 'tasks' }

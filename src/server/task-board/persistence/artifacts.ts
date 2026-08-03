@@ -7,7 +7,7 @@ import type {
   CreateProjectArtifactRequest,
   ProjectArtifact,
 } from "#shared/task-board-contract";
-import { TaskBoardError } from "./errors.js";
+import { TaskBoardError } from "../errors.js";
 
 type Row = Record<string, unknown>;
 const MEDIA = new Set<ArtifactMediaType>([

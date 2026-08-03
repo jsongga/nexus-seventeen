@@ -1,4 +1,4 @@
-import type { AgentStatus, AgentWorkerConnection, BoardAgent, BoardMessage, BoardProject, BoardSnapshot, BoardTask, BoardTaskPhase } from './types';
+import type { AgentStatus, AgentWorkerConnection, BoardAgent, BoardMessage, BoardProject, BoardSnapshot, BoardTask, BoardTaskPhase } from '../types';
 
 const pointOfContactTerms = /(?:\bpoc\b|point of contact)/iu;
 

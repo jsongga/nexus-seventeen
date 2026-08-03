@@ -10,7 +10,7 @@ import {
   workerAssignmentHint,
   workerConnectionLabel,
 } from './workspace-model';
-import type { BoardAgent, BoardProject, BoardSnapshot, BoardTask } from './types';
+import type { BoardAgent, BoardProject, BoardSnapshot, BoardTask } from '../types';
 
 const project: BoardProject = {
   id: 'project-one',

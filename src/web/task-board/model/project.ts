@@ -23,7 +23,7 @@ import type {
   BoardWorkItem,
   RunStatus,
   TaskStatus,
-} from './types';
+} from '../types';
 import type {
   RawBoard,
   RawDocument,
@@ -32,14 +32,14 @@ import type {
   RawMessage,
   RawProject,
   RawWorkItem,
-} from './parse';
+} from '../data/parse';
 import {
   wakeReasons,
   type WakeReason as WireWakeReason,
   type WireAgentStatus,
   type WireRunStatus,
   type WireTaskStatus,
-} from './wire';
+} from '../data/wire';
 
 export function taskStatus(status: WireTaskStatus, hasOpenQuestion: boolean): TaskStatus {
   if (hasOpenQuestion) return 'waiting_for_human';

@@ -5,8 +5,8 @@
  * documents, pipeline and activity regions only. Kept exported so the behaviour
  * survives and can be re-surfaced without being rebuilt.
  */
-import type { TaskBoardClient } from './client';
-import type { ProjectWorkflow, WorkflowPlan as PlanRevision } from './types';
+import type { TaskBoardClient } from '../data/client';
+import type { ProjectWorkflow, WorkflowPlan as PlanRevision } from '../types';
 
 export function fetchProjectWorkflow(
   client: TaskBoardClient,

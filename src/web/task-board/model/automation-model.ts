@@ -1,4 +1,4 @@
-import type { AutomationConfiguration } from './types';
+import type { AutomationConfiguration } from '../types';
 
 export interface ClientOperationToken<T extends object> {
   readonly client: T;

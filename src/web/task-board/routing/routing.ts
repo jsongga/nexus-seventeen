@@ -1,4 +1,4 @@
-import type { BoardPage } from './WorkspaceSidebar';
+import type { BoardPage } from '../views/WorkspaceSidebar';
 
 /**
  * BoardPage <-> URL hash conversion.

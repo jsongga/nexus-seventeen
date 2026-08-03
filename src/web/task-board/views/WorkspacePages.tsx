@@ -4,20 +4,20 @@ import {
   Send,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Pill, cn } from '../components/ui';
-import { ActivityFeed, type ActivityFeedUpdate } from './ActivityFeed';
-import { agentQueryPromptFromObjective } from './client';
-import type { TaskBoardClient } from './client';
-import { ContextSidebar, type ContextDocument } from './ContextSidebar';
-import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
-import { ThreadPipelineTable } from './ThreadPipelineTable';
-import type { AgentQueryConversationTurn, BoardAgent, BoardDocumentSummary, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact } from './types';
-import { WorkspaceHeader } from './WorkspaceHeader';
+import { Button, Pill, cn } from '../../components/ui';
+import { ActivityFeed, type ActivityFeedUpdate } from '../project/ActivityFeed';
+import { agentQueryPromptFromObjective } from '../data/client';
+import type { TaskBoardClient } from '../data/client';
+import { ContextSidebar, type ContextDocument } from '../project/ContextSidebar';
+import { parseProjectMetadata, type ProjectMetadataEntry } from '../model/project-metadata';
+import { ThreadPipelineTable } from '../project/ThreadPipelineTable';
+import type { AgentQueryConversationTurn, BoardAgent, BoardDocumentSummary, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact } from '../types';
+import { WorkspaceHeader } from '../project/WorkspaceHeader';
 import {
   agentPipelineFocus,
   type ProjectUpdate,
   updatesForProject,
-} from './workspace-model';
+} from '../model/workspace-model';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 

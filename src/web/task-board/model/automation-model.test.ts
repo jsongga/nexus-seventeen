@@ -6,7 +6,7 @@ import {
   ClientOperationGate,
   reconcileAutomationConfiguration,
 } from './automation-model';
-import type { AutomationConfiguration } from './types';
+import type { AutomationConfiguration } from '../types';
 
 function configuration(version = 1): AutomationConfiguration {
   return {

@@ -10,7 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
-import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
+import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../../components/ui';
 import {
   acceptRemoteAutomationConfiguration,
   automationEditorFromConfiguration,
@@ -19,8 +19,8 @@ import {
   discardAutomationDraft,
   reconcileAutomationConfiguration,
   type AutomationEditorState,
-} from './automation-model';
-import { BoardApiError, type TaskBoardClient } from './client';
+} from '../model/automation-model';
+import { BoardApiError, type TaskBoardClient } from '../data/client';
 import {
   AUTOMATION_STAGE_ALLOWED_ROLES,
   AUTOMATION_STAGE_ORDER,
@@ -30,7 +30,7 @@ import {
   type AutomationEvaluatorProfile,
   type AutomationStageExecutor,
   type WorkItemStage,
-} from './types';
+} from '../types';
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;

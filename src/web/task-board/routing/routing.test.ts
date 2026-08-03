@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardPage } from './WorkspaceSidebar';
+import type { BoardPage } from '../views/WorkspaceSidebar';
 import { hashToPage, pageToHash } from './routing';
 
 const pages: BoardPage[] = [

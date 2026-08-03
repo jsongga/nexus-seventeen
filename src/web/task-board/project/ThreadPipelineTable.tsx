@@ -1,5 +1,5 @@
-import { Pill } from '../components/ui';
-import type { BoardAgent, BoardTask, TaskStatus } from './types';
+import { Pill } from '../../components/ui';
+import type { BoardAgent, BoardTask, TaskStatus } from '../types';
 
 type PipelineStage = {
   label: 'Queued' | 'Agent Working' | 'Awaiting Review' | 'Changes Requested' | 'Merged';

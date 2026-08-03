@@ -9,10 +9,10 @@ import {
   Undo2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, FieldLabel, Modal, cn, inputClass } from '../components/ui';
-import type { TaskBoardClient } from './client';
-import { documentContentFits, documentDraftStore, protectUnsavedDocumentDrafts } from './document-drafts';
-import type { BoardDocument, BoardSnapshot, CreateDocumentInput } from './types';
+import { Button, Card, FieldLabel, Modal, cn, inputClass } from '../../components/ui';
+import type { TaskBoardClient } from '../data/client';
+import { documentContentFits, documentDraftStore, protectUnsavedDocumentDrafts } from '../model/document-drafts';
+import type { BoardDocument, BoardSnapshot, CreateDocumentInput } from '../types';
 
 const dateTime = new Intl.DateTimeFormat(undefined, {
   month: 'short',

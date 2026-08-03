@@ -17,17 +17,17 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
-import { AutomationPage } from './AutomationPage';
-import { ClientOperationGate, emptyAutomationEditorState, type AutomationEditorState } from './automation-model';
-import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './client';
-import { DocumentsPage } from './DocumentsPage';
-import { useHashRoute } from './useHashRoute';
-import { AgentPage, ProjectPage } from './WorkspacePages';
-import { WorkspaceFrame, type BoardPage } from './WorkspaceSidebar';
+import { AutomationPage } from './views/AutomationPage';
+import { ClientOperationGate, emptyAutomationEditorState, type AutomationEditorState } from './model/automation-model';
+import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
+import { DocumentsPage } from './views/DocumentsPage';
+import { useHashRoute } from './routing/useHashRoute';
+import { AgentPage, ProjectPage } from './views/WorkspacePages';
+import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
 import {
   isExplicitPointOfContact,
   selectPointOfContact,
-} from './workspace-model';
+} from './model/workspace-model';
 import type {
   BoardAgent,
   BoardQuestion,

@@ -18,8 +18,8 @@ import type {
   WorkItemProjectTarget,
   WorkItemStage,
   WorkItemState,
-} from './types';
-import { AUTOMATION_STAGE_ALLOWED_ROLES, AUTOMATION_STAGE_ORDER } from './types';
+} from '../types';
+import { AUTOMATION_STAGE_ALLOWED_ROLES, AUTOMATION_STAGE_ORDER } from '../types';
 import {
   apiVersion,
   documentActorTypes,

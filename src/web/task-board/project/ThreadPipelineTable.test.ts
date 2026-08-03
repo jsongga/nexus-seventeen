@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pipelineStageForStatus } from './ThreadPipelineTable';
-import type { TaskStatus } from './types';
+import type { TaskStatus } from '../types';
 
 describe('pipelineStageForStatus', () => {
   it.each([

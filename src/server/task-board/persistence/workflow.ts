@@ -11,8 +11,8 @@ import type {
   WorkNode,
   WorkflowStage,
 } from "#shared/task-board-contract";
-import { TaskBoardError } from "./errors.js";
-import { SkillRegistry } from "./skills.js";
+import { TaskBoardError } from "../errors.js";
+import { SkillRegistry } from "../skills.js";
 
 type Row = Record<string, unknown>;
 const STAGES = new Set<WorkflowStage>(["research", "planning", "implementation", "testing", "verification"]);
