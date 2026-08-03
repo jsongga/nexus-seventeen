@@ -1,34 +1,25 @@
 import {
-  BookOpen,
-  ChevronLeft,
-  ChevronRight,
-  Cloud,
-  Folder,
-  Github,
-  GripVertical,
-  Link,
   MessageSquareText,
   Plus,
   Send,
-  Upload,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Pill, cn } from '../components/ui';
+import { Button, Pill, cn } from '../components/ui';
+import { ActivityFeed, type ActivityFeedUpdate } from './ActivityFeed';
 import { agentQueryPromptFromObjective } from './client';
 import type { TaskBoardClient } from './client';
-import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, ProjectWorkflow } from './types';
-import { artifactMediaType, uploadArtifact as uploadProjectArtifact } from './project-artifacts';
-import { completionPercent as calculateCompletionPercent, projectTaskGroups } from './project-metrics';
+import { ContextSidebar, type ContextDocument } from './ContextSidebar';
 import { parseProjectMetadata, type ProjectMetadataEntry } from './project-metadata';
-import { confirmPlan as confirmProjectPlan, fetchProjectWorkflow, proposedPlans as getProposedPlans } from './project-workflow';
+import { ThreadPipelineTable } from './ThreadPipelineTable';
+import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact } from './types';
+import { WorkspaceHeader } from './WorkspaceHeader';
 import {
-  agentWorkLabel,
   agentPipelineFocus,
+  type ProjectUpdate,
   updatesForProject,
 } from './workspace-model';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-const warmCard = '!rounded-[2px] !border-line !bg-card !shadow-none';
 
 function formatTime(value: string | null): string {
   if (value === null) return 'Not recorded';
@@ -42,130 +33,52 @@ function projectLinkLabel(href: string): string {
   return `${url.host}${path}${url.search}${url.hash}`;
 }
 
-function projectResourceIcon(kind: ProjectMetadataEntry['kind']) {
-  const props = { size: 22, strokeWidth: 1.5, 'aria-hidden': true } as const;
-  if (kind === 'workspace') return <Folder {...props} />;
-  if (kind === 'github') return <Github {...props} />;
-  if (kind === 'dokploy') return <Cloud {...props} />;
-  if (kind === 'docs') return <BookOpen {...props} />;
-  return <Link {...props} />;
-}
-
 function resourceId(entry: ProjectMetadataEntry, index: number): string {
   return `${entry.key}:${entry.value}:${index}`;
 }
 
-function ProjectResourceDashboard({ projectId, entries }: { projectId: string; entries: ProjectMetadataEntry[] }) {
-  const storageKey = `nexus-seventeen:project-resources:${projectId}`;
-  const [order, setOrder] = useState<string[]>([]);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const resources = entries.map((entry, index) => ({ entry, id: resourceId(entry, index) }));
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]') as unknown;
-      setOrder(Array.isArray(saved) && saved.every((item) => typeof item === 'string') ? saved : []);
-    } catch {
-      setOrder([]);
-    }
-  }, [storageKey]);
-
-  const ordered = [...resources].sort((left, right) => {
-    const leftIndex = order.indexOf(left.id);
-    const rightIndex = order.indexOf(right.id);
-    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
-  });
-  const saveOrder = (next: string[]) => {
-    setOrder(next);
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(next));
-    } catch {
-      // The dashboard still reorders for this session when browser storage is unavailable.
-    }
-  };
-  const move = (id: string, direction: -1 | 1) => {
-    const current = ordered.map((resource) => resource.id);
-    const from = current.indexOf(id);
-    const to = from + direction;
-    if (from < 0 || to < 0 || to >= current.length) return;
-    [current[from], current[to]] = [current[to]!, current[from]!];
-    saveOrder(current);
-  };
-  const drop = (targetId: string) => {
-    if (!draggedId || draggedId === targetId) return;
-    const current = ordered.map((resource) => resource.id);
-    const from = current.indexOf(draggedId);
-    const to = current.indexOf(targetId);
-    current.splice(to, 0, current.splice(from, 1)[0]!);
-    saveOrder(current);
-    setDraggedId(null);
-  };
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Resources</h3>
-        <p className="text-[10px] text-muted">Drag to arrange</p>
-      </div>
-      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
-        {ordered.map(({ entry, id }, index) => (
-          <li
-            key={id}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={() => drop(id)}
-            className={cn('group min-w-0 border border-line bg-surface transition-[border-color,transform] hover:border-taupe-hover', draggedId === id && 'opacity-50')}
-          >
-            <div className="flex h-7 items-center justify-between px-1">
-              <span
-                draggable
-                onDragStart={() => setDraggedId(id)}
-                onDragEnd={() => setDraggedId(null)}
-                className="flex size-7 cursor-grab items-center justify-center text-muted opacity-60"
-                aria-hidden="true"
-              ><GripVertical size={13} /></span>
-              <span className="flex opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-                <button type="button" disabled={index === 0} aria-label={`Move ${entry.label} earlier`} className="flex size-7 items-center justify-center text-muted hover:bg-card hover:text-ink disabled:invisible" onClick={() => move(id, -1)}><ChevronLeft size={13} /></button>
-                <button type="button" disabled={index === ordered.length - 1} aria-label={`Move ${entry.label} later`} className="flex size-7 items-center justify-center text-muted hover:bg-card hover:text-ink disabled:invisible" onClick={() => move(id, 1)}><ChevronRight size={13} /></button>
-              </span>
-            </div>
-            {entry.href ? (
-              <a
-                href={entry.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`${entry.label}: ${entry.value} (opens in a new tab)`}
-                title={entry.value}
-                className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
-              >
-                <span className="flex size-10 items-center justify-center border border-line bg-card">{projectResourceIcon(entry.kind)}</span>
-                <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
-                <span className="mt-0.5 max-w-full truncate text-[10px] text-muted">{projectLinkLabel(entry.href)}</span>
-              </a>
-            ) : (
-              <div title={entry.value} className="flex min-h-24 flex-col items-center justify-center px-3 pb-3 pt-1 text-center text-muted">
-                <span className="flex size-10 items-center justify-center border border-line bg-card text-muted">{projectResourceIcon(entry.kind)}</span>
-                <span className="mt-2 max-w-full truncate text-xs font-medium">{entry.label}</span>
-                <span className="mt-0.5 max-w-full truncate font-mono text-[9px] text-muted">{entry.value}</span>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+function contextDocuments(entries: ProjectMetadataEntry[]): ContextDocument[] {
+  return entries.map((entry, index) => ({
+    ...entry,
+    id: resourceId(entry, index),
+    meta: entry.href ? projectLinkLabel(entry.href) : entry.value,
+  }));
 }
 
-function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description?: string | null; actions?: React.ReactNode }) {
-  return (
-    <header className="flex min-h-14 flex-col gap-2 border-b border-line bg-card px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
-      <div className="min-w-0">
-        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">{eyebrow}</p>
-        <h1 className="mt-1 font-display text-xl font-medium tracking-[0.01em] text-ink sm:text-2xl">{title}</h1>
-        {description ? <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
-    </header>
-  );
+/** Adds every artifact to the feed without duplicating it across task messages. */
+function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[]): ActivityFeedUpdate[] {
+  const newestUpdateByTask = new Map<string, ProjectUpdate>();
+  for (const update of updates) {
+    if (!newestUpdateByTask.has(update.taskId)) newestUpdateByTask.set(update.taskId, update);
+  }
+
+  const artifactUpdates = artifacts.map((artifact): ActivityFeedUpdate => {
+    const related = artifact.taskId ? newestUpdateByTask.get(artifact.taskId) : undefined;
+    return {
+      id: `artifact:${artifact.artifactId}`,
+      author: related?.author ?? 'System',
+      body: related
+        ? `added ${artifact.caption} to ${related.taskTitle}.`
+        : `added ${artifact.caption} to the project.`,
+      createdAt: artifact.createdAt,
+      artifacts: [{
+        artifactId: artifact.artifactId,
+        caption: artifact.caption,
+        mediaType: artifact.mediaType,
+      }],
+    };
+  });
+
+  return [
+    ...updates.map((update): ActivityFeedUpdate => ({
+      id: update.id,
+      author: update.author,
+      body: update.body,
+      createdAt: update.createdAt,
+      artifacts: [],
+    })),
+    ...artifactUpdates,
+  ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 export function ProjectPage({
@@ -174,340 +87,144 @@ export function ProjectPage({
   onTask,
   onAddTask,
   client,
+  connected,
 }: {
   project: BoardProject;
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
   onAddTask: () => void;
   client: TaskBoardClient;
+  connected: boolean;
 }) {
-  const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
   const [artifactUrls, setArtifactUrls] = useState<Record<string, string>>({});
-  const [confirmingPlan, setConfirmingPlan] = useState<string | null>(null);
-  const [uploadingArtifact, setUploadingArtifact] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [pausedRunIds, setPausedRunIds] = useState<Set<string>>(() => new Set());
+  const [pauseError, setPauseError] = useState<string | null>(null);
+
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([
-      fetchProjectWorkflow(client, project.id, controller.signal),
-      client.getProjectArtifacts(project.id, controller.signal),
-    ]).then(([nextWorkflow, nextArtifacts]) => {
-      setWorkflow(nextWorkflow);
+    void client.getProjectArtifacts(project.id, controller.signal).then((nextArtifacts) => {
       setArtifacts((current) => (
         current.length === nextArtifacts.length &&
         current.every((artifact, index) => artifact.artifactId === nextArtifacts[index]?.artifactId)
           ? current
           : nextArtifacts
       ));
-    }).catch(() => {
-      if (!controller.signal.aborted) setWorkflow(null);
-    });
+    }).catch(() => undefined);
     return () => controller.abort();
   }, [client, project.id, snapshot.generatedAt]);
+
   useEffect(() => {
     const controller = new AbortController();
     const created: string[] = [];
+    let disposed = false;
+    setArtifactUrls({});
     void Promise.all(artifacts.map(async (artifact) => {
       const url = URL.createObjectURL(await client.getArtifactBlob(artifact.artifactId, controller.signal));
       created.push(url);
       return [artifact.artifactId, url] as const;
-    })).then((entries) => setArtifactUrls(Object.fromEntries(entries))).catch(() => undefined);
+    })).then((entries) => {
+      if (!disposed) setArtifactUrls(Object.fromEntries(entries));
+    }).catch(() => undefined);
     return () => {
+      disposed = true;
       controller.abort();
       for (const url of created) URL.revokeObjectURL(url);
     };
   }, [artifacts, client]);
-  useEffect(() => {
-    if (!workflow) return;
-    const controller = new AbortController();
-    const after = Math.max(0, ...workflow.events.map((event) => event.sequence));
-    void client.subscribeProjectEvents({
-      projectId: project.id,
-      after,
-      signal: controller.signal,
-      onEvent: () => {
-        void fetchProjectWorkflow(client, project.id, controller.signal).then(setWorkflow).catch(() => undefined);
-      },
-    }).catch(() => undefined);
-    return () => controller.abort();
-  }, [client, project.id, workflow === null]);
-  const confirmPlan = async (planRevisionId: string) => {
-    setConfirmingPlan(planRevisionId);
-    try {
-      setWorkflow(await confirmProjectPlan(client, planRevisionId));
-    } finally {
-      setConfirmingPlan(null);
-    }
-  };
-  const proposedPlans = getProposedPlans(workflow);
-  const uploadArtifact = async (file: File) => {
-    if (artifactMediaType(file.name, file.type) === null) return;
-    setUploadingArtifact(true);
-    try {
-      const artifact = await uploadProjectArtifact(client, project.id, file);
-      setArtifacts((current) => [...current, artifact]);
-    } finally {
-      setUploadingArtifact(false);
-    }
-  };
+
   const updates = updatesForProject(snapshot, project.id);
   const metadata = parseProjectMetadata(project.description);
-  const tasks = snapshot.tasks.filter((task) => task.projectId === project.id);
+  const tasks = snapshot.tasks
+    .filter((task) => task.projectId === project.id)
+    .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
-  const taskGroups = projectTaskGroups(snapshot, project.id);
-  const tasksInGroup = (label: string) => taskGroups.find((group) => group.label === label)?.tasks ?? [];
-  const completedTasks = tasksInGroup('Completed');
-  const activeTasks = tasksInGroup('In progress');
-  const attentionTasks = tasksInGroup('Needs attention');
-  const plannedTasks = tasksInGroup('Planned');
-  const completionPercent = calculateCompletionPercent(tasks);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const updateRow = (update: (typeof updates)[number]) => (
-    <li key={update.id}>
-      <button type="button" className="w-full px-4 py-3.5 text-left transition-colors duration-150 hover:bg-surface sm:px-5" onClick={() => onTask(update.taskId)}>
-        <span className="flex flex-wrap items-center gap-2 font-mono text-[10px]"><span className="font-medium text-ink">{update.author}</span><Pill tone={update.kind === 'question' ? 'amber' : update.kind === 'result' ? 'green' : 'neutral'}>{update.kind}</Pill><time dateTime={update.createdAt} className="text-muted">{formatTime(update.createdAt)}</time></span>
-        <span className="mt-1.5 block text-xs font-medium text-teal-700">{update.taskTitle}</span>
-        <span className="mt-1 line-clamp-2 block whitespace-pre-wrap text-sm leading-6 text-muted">{update.body}</span>
-      </button>
-    </li>
-  );
+  const documents = contextDocuments(metadata.entries);
+  const feedUpdates = activityUpdates(updates, artifacts);
+  const activeRuns = snapshot.runs.filter((run) => (
+    run.projectId === project.id
+      && (run.status === 'running' || run.status === 'queued')
+      && run.interruptRequestedAt === null
+      && !pausedRunIds.has(run.id)
+  ));
+
+  const pauseAgents = async () => {
+    setPausing(true);
+    setPauseError(null);
+    const results = await Promise.allSettled(activeRuns.map((run) => client.interruptRun(run.id)));
+    const pausedIds = activeRuns.flatMap((run, index) => results[index]?.status === 'fulfilled' ? [run.id] : []);
+    if (pausedIds.length > 0) {
+      setPausedRunIds((current) => new Set([...current, ...pausedIds]));
+    }
+    if (results.some((result) => result.status === 'rejected')) {
+      setPauseError('Some active agents could not be paused. Refresh and try again.');
+    }
+    setPausing(false);
+  };
+
+  const openArtifact = (artifactId: string) => {
+    const url = artifactUrls[artifactId];
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   return (
-    <>
-      <PageHeader eyebrow="Project" title={project.name} actions={<Button size="sm" variant="primary" icon={<Plus size={15} />} onClick={onAddTask}>Add task</Button>} />
-      <main className="min-w-0 w-full max-w-[1400px] overflow-x-hidden bg-canvas p-4 sm:p-6 lg:min-h-[calc(100dvh-56px)] lg:p-8">
-        <section aria-labelledby="delivery-overview-heading">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 id="delivery-overview-heading" className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-ink">Delivery overview</h2>
-              <p className="mt-1 text-xs text-muted">Current durable task state across the whole project.</p>
+    <div className="flex h-[calc(100dvh-3.5rem)] min-w-0 flex-col overflow-hidden bg-canvas lg:h-dvh">
+      <WorkspaceHeader
+        eyebrow="Workspace, Project Overview"
+        title={project.name}
+        actions={(
+          <button
+            type="button"
+            className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-white text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label="Add task"
+            title="Add task"
+            disabled={!connected}
+            onClick={onAddTask}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />
+          </button>
+        )}
+      />
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">
+        <ContextSidebar
+          intro={metadata.summaries.join('\n\n') || `Project context and reference materials for ${project.name}.`}
+          documents={documents}
+          onSelectDocument={() => undefined}
+          orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
+        />
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">
+          <ThreadPipelineTable tasks={tasks} agentById={agentById} onTask={onTask} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <ActivityFeed updates={feedUpdates} artifactUrls={artifactUrls} onOpenArtifact={openArtifact} />
+            {pauseError ? <p className="pt-2 text-right text-[11px] text-urgent" role="alert">{pauseError}</p> : null}
+            <div className="mt-auto flex justify-end gap-2 pt-4">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="!min-h-0 !rounded-[99px] !border-0 !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
+                disabled={!connected || activeRuns.length === 0 || pausing}
+                title={!connected ? 'Reconnect the task board to pause agents' : activeRuns.length === 0 ? 'No active agents to pause' : undefined}
+                onClick={() => void pauseAgents()}
+              >
+                {pausing ? 'Pausing…' : 'Pause Agents'}
+              </Button>
+              {/* Compile reporting stays disabled because no report endpoint exists. */}
+              <Button
+                variant="primary"
+                size="sm"
+                className="!min-h-0 !rounded-[99px] !border-0 !px-4 !py-2 !font-sans !text-[12px] !normal-case !tracking-normal"
+                disabled
+                title="Compile Report is not implemented yet"
+              >
+                Compile Report
+              </Button>
             </div>
-            <time dateTime={project.updatedAt} className="text-[11px] text-muted">Project updated {formatTime(project.updatedAt)}</time>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-px bg-line sm:grid-cols-4">
-            {[
-              { label: 'Completed', value: completedTasks.length, detail: `${completionPercent}% of tracked work` },
-              { label: 'In progress', value: activeTasks.length, detail: activeTasks.length === 1 ? 'task moving' : 'tasks moving' },
-              { label: 'Needs attention', value: attentionTasks.length, detail: attentionTasks.length === 0 ? 'No intervention needed' : 'Blocked, failed, or waiting' },
-              { label: 'Planned', value: plannedTasks.length, detail: plannedTasks.length === 1 ? 'task not started' : 'tasks not started' },
-            ].map((metric) => (
-              <Card key={metric.label} className="!rounded-none !border-0 p-4 sm:p-5">
-                <p className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted">{metric.label}</p>
-                <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-ink">{String(metric.value).padStart(2, '0')}</p>
-                <p className="mt-1 font-mono text-[10px] text-muted">{metric.detail}</p>
-              </Card>
-            ))}
-          </div>
-          <div className="mt-2 h-1 overflow-hidden bg-surface" role="progressbar" aria-label="Task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
-            <div className="h-full bg-success-fill transition-[width] duration-300" style={{ width: `${completionPercent}%` }} />
           </div>
         </section>
-
-        <section className="mt-6" aria-labelledby="workflow-heading">
-          <Card className={cn(warmCard, 'overflow-hidden')}>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-4 sm:px-5">
-              <div>
-                <h2 id="workflow-heading" className="text-sm font-medium text-ink">Execution map</h2>
-                <p className="mt-1 text-xs text-muted">Confirmed subtasks, dependencies, stage handoffs, and durable artifacts.</p>
-              </div>
-              <Pill tone={workflow?.nodes.some((node) => node.state === 'blocked') ? 'amber' : 'neutral'}>
-                {workflow?.nodes.length ?? 0} subtasks
-              </Pill>
-              {proposedPlans.length > 0 ? <Pill tone="amber">{proposedPlans.length} awaiting review</Pill> : null}
-            </div>
-            {proposedPlans.map((proposedPlan) => (
-              <div key={proposedPlan.planRevisionId} className="border-b border-line bg-surface px-4 py-4 sm:px-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted">Awaiting confirmation · Plan v{proposedPlan.revision}</p>
-                    <h3 className="mt-2 text-sm font-medium text-ink">{proposedPlan.objective}</h3>
-                  </div>
-                  <Button size="sm" variant="primary" disabled={confirmingPlan !== null} onClick={() => void confirmPlan(proposedPlan.planRevisionId)}>
-                    {confirmingPlan === proposedPlan.planRevisionId ? 'Confirming…' : 'Confirm plan'}
-                  </Button>
-                </div>
-                {proposedPlan.acceptanceCriteria.length > 0 ? (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-muted">
-                    {proposedPlan.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}
-                  </ul>
-                ) : null}
-                {proposedPlan.assumptions.length > 0 ? <p className="mt-2 text-[11px] text-muted">Assumptions: {proposedPlan.assumptions.join(' · ')}</p> : null}
-              </div>
-            ))}
-            {workflow && workflow.nodes.length > 0 ? (
-              <div className="grid gap-px bg-line lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-                <div className="space-y-px bg-line">
-                  {workflow.nodes.map((node) => (
-                    <article key={node.nodeId} className="bg-card px-4 py-4 sm:px-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="text-sm font-medium text-ink">{node.title}</h3>
-                          <p className="mt-1 text-xs leading-5 text-muted">{node.objective}</p>
-                        </div>
-                        <Pill tone={node.state === 'completed' ? 'green' : node.state === 'blocked' ? 'amber' : 'neutral'}>{node.state}</Pill>
-                      </div>
-                      {node.dependencyNodeIds.length > 0 ? <p className="mt-2 font-mono text-[10px] text-muted">Depends on {node.dependencyNodeIds.join(', ')}</p> : <p className="mt-2 font-mono text-[10px] text-muted">Dependency root</p>}
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {node.stageTemplate.map((stage) => (
-                          <span key={stage} className={cn('border px-2 py-1 font-mono text-[9px] uppercase tracking-wide', node.currentStage === stage ? 'border-teal-700 bg-teal-50 text-teal-700' : 'border-line text-muted')}>{stage}</span>
-                        ))}
-                      </div>
-                      {workflow.handoffs.filter((handoff) => handoff.nodeId === node.nodeId).slice(-1).map((handoff) => (
-                        <p key={handoff.handoffId} className="mt-3 border-l-2 border-line pl-3 text-xs leading-5 text-muted"><span className="font-medium text-ink">{handoff.stage} handoff:</span> {handoff.summary}</p>
-                      ))}
-                    </article>
-                  ))}
-                </div>
-                <aside className="bg-card px-4 py-4 sm:px-5">
-                  <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Latest workflow updates</h3>
-                  <ol className="mt-3 space-y-3">
-                    {workflow.events.slice(0, 8).map((event) => (
-                      <li key={event.eventId} className="border-l border-line pl-3">
-                        <p className="text-xs leading-5 text-ink">{event.summary}</p>
-                        <time className="font-mono text-[9px] text-muted" dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
-                      </li>
-                    ))}
-                  </ol>
-                  <div className="mt-5 border-t border-line pt-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Artifacts</h3>
-                      <label className="flex cursor-pointer items-center gap-1 text-[10px] text-teal-700 hover:underline">
-                        <Upload size={11} />{uploadingArtifact ? 'Uploading…' : 'Upload'}
-                        <input
-                          className="sr-only"
-                          type="file"
-                          disabled={uploadingArtifact}
-                          accept=".md,.mmd,.mermaid,image/png,image/jpeg,image/webp"
-                          onChange={(event) => {
-                            const file = event.currentTarget.files?.[0];
-                            if (file) void uploadArtifact(file);
-                            event.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
-                    </div>
-                    {artifacts.length > 0 ? (
-                      <ul className="mt-2 space-y-1">
-                        {artifacts.map((artifact) => <li key={artifact.artifactId} className="py-1">
-                          {artifact.mediaType.startsWith('image/') && artifactUrls[artifact.artifactId] ? <img className="mb-2 max-h-40 w-full border border-line object-contain" src={artifactUrls[artifact.artifactId]} alt={artifact.caption} /> : null}
-                          {artifactUrls[artifact.artifactId] ? <a className="block truncate text-xs text-teal-700 hover:underline" href={artifactUrls[artifact.artifactId]} target="_blank" rel="noreferrer">{artifact.caption}</a> : <span className="block truncate text-xs text-muted">{artifact.caption}</span>}
-                        </li>)}
-                      </ul>
-                    ) : <p className="mt-2 text-xs text-muted">No diagrams, notes, or images attached.</p>}
-                  </div>
-                </aside>
-              </div>
-            ) : <div className="px-5 py-10 text-center text-sm text-muted">A dependency map will appear after task curation proposes a workflow plan.</div>}
-          </Card>
-        </section>
-
-        <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-          <div className="min-w-0 space-y-5">
-            <section aria-labelledby="project-work-heading">
-              <Card className={cn(warmCard, 'overflow-hidden')}>
-                <div className="border-b border-line px-4 py-4 sm:px-5">
-                  <h2 id="project-work-heading" className="text-sm font-medium text-ink">All work</h2>
-                  <p className="mt-1 text-xs text-muted">{tasks.length} tracked {tasks.length === 1 ? 'task' : 'tasks'}, grouped by current state.</p>
-                </div>
-                {taskGroups.length > 0 ? (
-                  <div className="divide-y divide-line">
-                    {taskGroups.map((group) => (
-                      <section key={group.label} aria-labelledby={`work-group-${group.label.replaceAll(' ', '-').toLowerCase()}`} className="px-4 py-4 sm:px-5">
-                        <div className="flex items-center justify-between gap-3">
-                          <h3 id={`work-group-${group.label.replaceAll(' ', '-').toLowerCase()}`} className={cn('text-[10px] font-medium uppercase tracking-[0.13em]', group.tone)}>{group.label}</h3>
-                          <span className="text-[10px] tabular-nums text-muted">{group.tasks.length}</span>
-                        </div>
-                        <ul className="mt-2 space-y-1">
-                          {group.tasks.map((task) => (
-                            <li key={task.id}>
-                              <button type="button" className="flex w-full items-start justify-between gap-3 border-l-2 border-transparent px-2 py-2 text-left transition-colors hover:border-l-taupe hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" onClick={() => onTask(task.id)}>
-                                <span className="min-w-0">
-                                  <span className="block truncate text-sm font-medium text-ink">{task.title}</span>
-                                  <span className="mt-0.5 block truncate text-[11px] text-muted">
-                                    {task.assignedAgentId ? agentById.get(task.assignedAgentId)?.name ?? task.assignedAgentId : 'Unassigned'}
-                                    {task.result?.trim() ? ` · ${task.result.trim()}` : ''}
-                                  </span>
-                                </span>
-                                <time dateTime={task.updatedAt} className="shrink-0 text-[10px] text-muted">{formatTime(task.updatedAt)}</time>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    ))}
-                  </div>
-                ) : <div className="px-5 py-10 text-center text-sm text-muted">No work has been recorded for this project yet.</div>}
-              </Card>
-            </section>
-
-            <section aria-labelledby="project-updates-heading">
-              <Card className={cn(warmCard, 'overflow-hidden')}>
-                <div className="border-b border-line px-4 py-4 sm:px-5">
-                  <h2 id="project-updates-heading" className="text-sm font-medium text-ink">Activity history</h2>
-                  <p className="mt-1 text-xs text-muted">Recorded progress, decisions, questions, and results.</p>
-                </div>
-                {updates.length > 0
-                  ? <ol className="divide-y divide-line">{updates.map(updateRow)}</ol>
-                  : <div className="px-5 py-10 text-center text-sm text-muted">Activity will appear when tasks or agents record progress.</div>}
-              </Card>
-            </section>
-          </div>
-
-          <div className="min-w-0 space-y-5">
-            <section aria-labelledby="project-team-heading">
-              <Card className={cn(warmCard, 'overflow-hidden')}>
-                <div className="border-b border-line px-4 py-4 sm:px-5">
-                  <h2 id="project-team-heading" className="text-sm font-medium text-ink">Team</h2>
-                  <p className="mt-1 text-xs text-muted">{agents.length} {agents.length === 1 ? 'agent' : 'agents'} assigned to this project.</p>
-                </div>
-                {agents.length > 0 ? (
-                  <ul className="divide-y divide-line">
-                    {agents.map((agent) => {
-                      const currentTask = tasks.find((task) => task.id === agent.currentTaskId);
-                      return (
-                        <li key={agent.id} className="flex items-start gap-3 px-4 py-3.5 sm:px-5">
-                          <span className="mt-1"><span className="sr-only">{agentWorkLabel(agent.status)}</span><span className={cn('block size-2 rounded-full', agent.status === 'failed' ? 'bg-urgent' : agent.status === 'running' || agent.status === 'queued' ? 'bg-success-fill' : 'bg-taupe')} /></span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-ink">{agent.name}</span>
-                            <span className="mt-0.5 block text-[11px] text-muted">{agent.role} · {agentWorkLabel(agent.status)}</span>
-                            <span className="mt-1 block truncate text-xs text-muted">{currentTask?.title ?? agent.area}</span>
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : <div className="px-5 py-8 text-sm text-muted">No agents are assigned to this project.</div>}
-              </Card>
-            </section>
-
-            <section aria-labelledby="project-details-heading">
-              <Card className={cn(warmCard, 'overflow-hidden')}>
-                <div className="border-b border-line px-4 py-4 sm:px-5">
-                  <h2 id="project-details-heading" className="text-sm font-medium text-ink">Project context</h2>
-                </div>
-                {metadata.summaries.length > 0 || metadata.entries.length > 0 ? (
-                  <div className="px-4 py-4 sm:px-5">
-                    {metadata.summaries.length > 0 ? (
-                      <div className="space-y-2">
-                        <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Summary</h3>
-                        {metadata.summaries.map((summary, index) => (
-                          <p key={`${summary}:${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-muted">{summary}</p>
-                        ))}
-                      </div>
-                    ) : null}
-                    {metadata.entries.length > 0 ? (
-                      <div className={cn(metadata.summaries.length > 0 && 'mt-4 border-t border-line pt-4')}>
-                        <ProjectResourceDashboard projectId={project.id} entries={metadata.entries} />
-                      </div>
-                    ) : null}
-                  </div>
-                ) : <div className="px-5 py-8 text-sm leading-6 text-muted">No project summary or resources have been recorded.</div>}
-              </Card>
-            </section>
-          </div>
-        </div>
       </main>
-    </>
+    </div>
   );
 }
 
@@ -706,11 +423,11 @@ function AgentChat({
                 ) : <p className="mt-1 text-sm leading-5 text-muted">No current task</p>}
               </div>
               <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:justify-end">
-                {focus.stage ? <Pill className="!rounded-full" tone={focus.stage === 'Reviewing' ? 'amber' : 'green'} dot>{focus.stage}</Pill> : null}
-                <Pill className="max-w-full !rounded-full" tone="neutral">
+                {focus.stage ? <Pill tone={focus.stage === 'Reviewing' ? 'amber' : 'green'} dot>{focus.stage}</Pill> : null}
+                <Pill className="max-w-full" tone="neutral">
                   <span className="block max-w-[18rem] truncate">{focus.phase ? `Phase · ${focus.phase.title}` : focus.task ? 'Phase not reported' : 'No active phase'}</span>
                 </Pill>
-                {focus.loop ? <Pill className="!rounded-full" tone="blue">Loop {focus.loop}</Pill> : null}
+                {focus.loop ? <Pill tone="blue">Loop {focus.loop}</Pill> : null}
               </div>
             </div>
           </header>
