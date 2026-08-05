@@ -22,11 +22,20 @@
 		}
 	}
 
-	# Keep the operator's bearer token end-to-end. The gateway deliberately does
-	# not add one, so an unauthenticated visitor cannot inherit human authority.
+	# Traefik's sso-signin and sso-nexus forward-auth middlewares gate this edge
+	# to nexus-operator or admin-full-access staff, so Caddy can safely inject the
+	# operator token. Removing the sso-nexus forward-auth gate would let visitors
+	# inherit human authority here and must be treated as a security boundary change.
 	handle_path /board-api/* {
+		@operatorToken expression `{env.STEWARD_TASK_BOARD_HUMAN_TOKEN} != ""`
+		reverse_proxy @operatorToken 127.0.0.1:4318 {
+			header_up -Origin
+			header_up Authorization "Bearer {env.STEWARD_TASK_BOARD_HUMAN_TOKEN}"
+		}
+		# Fail closed when the token is empty, and never forward a client identity.
 		reverse_proxy 127.0.0.1:4318 {
 			header_up -Origin
+			header_up -Authorization
 		}
 	}
 

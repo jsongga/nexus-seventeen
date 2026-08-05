@@ -298,7 +298,7 @@ function safeBaseUrl(value: string): string {
   }
   const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
   if (parsed.username || parsed.password || (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback))) {
-    throw new Error('Task board credentials require HTTPS or a loopback URL');
+    throw new Error('Task board URL requires HTTPS or a loopback host');
   }
   if (parsed.search || parsed.hash) throw new Error('Task board URL cannot include a query or fragment');
   return trimmed;
@@ -487,12 +487,10 @@ async function consumeDocumentStream(
 
 export function createTaskBoardClient(options: {
   baseUrl?: string;
-  token?: string;
   fetch?: typeof fetch;
   documentClientId?: string;
 } = {}): TaskBoardClient {
   const baseUrl = safeBaseUrl(options.baseUrl ?? '');
-  const token = options.token?.trim() ?? '';
   const requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const documentClientId = stableDocumentClientId(options.documentClientId);
   const agentRoles = new Map<string, CreateAgentInput['role']>();
@@ -509,7 +507,6 @@ export function createTaskBoardClient(options: {
       redirect: 'error',
       referrerPolicy: 'no-referrer',
       headers: {
-        ...(token.length > 0 ? { authorization: `Bearer ${token}` } : {}),
         ...(init?.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...init?.headers,
       },

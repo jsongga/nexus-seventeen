@@ -15,10 +15,10 @@ import {
   Square,
   UserRoundCheck,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
 import { AutomationPage } from './views/AutomationPage';
-import { ClientOperationGate, emptyAutomationEditorState, type AutomationEditorState } from './model/automation-model';
+import { emptyAutomationEditorState } from './model/automation-model';
 import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
 import { DocumentsPage } from './views/DocumentsPage';
 import { useHashRoute } from './routing/useHashRoute';
@@ -94,25 +94,7 @@ const workItemStageLabel: Record<WorkItemStage, string> = {
   deployment: 'Deploying',
 };
 
-type DialogName = 'project' | 'task' | 'connection' | null;
-
-interface ConnectionSettings {
-  baseUrl: string;
-  token: string;
-}
-
-function defaultBaseUrl(): string {
-  const configured = document.querySelector<HTMLMetaElement>('meta[name="cicada-task-board-url"]')?.content;
-  if (configured) return configured;
-  return '/board-api';
-}
-
-function initialConnection(): ConnectionSettings {
-  return {
-    baseUrl: window.sessionStorage.getItem('cicada.taskBoardUrl') ?? defaultBaseUrl(),
-    token: window.sessionStorage.getItem('cicada.humanToken') ?? '',
-  };
-}
+type DialogName = 'project' | 'task' | null;
 
 function prettyStatus(value: string): string {
   return value.replaceAll('_', ' ');
@@ -621,19 +603,6 @@ function WorkItemForm({
   );
 }
 
-function ConnectionForm({ settings, busy, onSubmit }: { settings: ConnectionSettings; busy: boolean; onSubmit: (settings: ConnectionSettings) => void }) {
-  const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
-  const [token, setToken] = useState(settings.token);
-  return (
-    <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); onSubmit({ baseUrl: baseUrl.trim().replace(/\/$/, ''), token: token.trim() }); }}>
-      <div><FieldLabel htmlFor="board-url">Task board URL</FieldLabel><input id="board-url" className={inputClass} required value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://127.0.0.1:4318" /></div>
-      <div><FieldLabel htmlFor="human-token">Human access token</FieldLabel><input id="human-token" type="password" className={inputClass} value={token} onChange={(event) => setToken(event.target.value)} placeholder="Required when board authentication is enabled" /></div>
-      <p className="text-xs leading-5 text-muted">Saved only for this browser tab. Agent credentials stay in the worker and are never sent to this frontend.</p>
-      <Button className="w-full" type="submit" variant="primary" disabled={busy || baseUrl.trim().length === 0}>Connect</Button>
-    </form>
-  );
-}
-
 function missingRouteFallback(page: BoardPage, snapshot: BoardSnapshot): BoardPage | null {
   if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
   if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
@@ -642,8 +611,7 @@ function missingRouteFallback(page: BoardPage, snapshot: BoardSnapshot): BoardPa
 }
 
 export function BoardApp() {
-  const [connection, setConnection] = useState<ConnectionSettings>(initialConnection);
-  const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: connection.baseUrl, token: connection.token }), [connection]);
+  const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: '/board-api' }), []);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
   const [page, navigate] = useHashRoute();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -656,14 +624,8 @@ export function BoardApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
-  const automationConnectionGate = useRef(new ClientOperationGate(connection));
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
-
-  const setAutomationEditorStateForConnection = useCallback((update: SetStateAction<AutomationEditorState>) => {
-    if (!automationConnectionGate.current.isActiveFor(connection)) return;
-    setAutomationEditorState(update);
-  }, [connection]);
 
   const refresh = useCallback(async (quiet = false): Promise<boolean> => {
     const sequence = ++refreshSequence.current;
@@ -720,7 +682,7 @@ export function BoardApp() {
 
   const mutate = useCallback(async (operation: () => Promise<unknown>): Promise<boolean> => {
     if (!connected) {
-      setError('The task board is disconnected. Reconnect before making changes');
+      setError('The board service is not reachable, so changes are unavailable');
       return false;
     }
     setBusy(true);
@@ -762,17 +724,6 @@ export function BoardApp() {
     setDialog(name);
   }
 
-  function changeConnection(next: ConnectionSettings) {
-    window.sessionStorage.setItem('cicada.taskBoardUrl', next.baseUrl);
-    window.sessionStorage.setItem('cicada.humanToken', next.token);
-    if (next.baseUrl !== connection.baseUrl || next.token !== connection.token) {
-      automationConnectionGate.current.activate(next);
-      setAutomationEditorState(emptyAutomationEditorState());
-      setConnection(next);
-    }
-    setDialog(null);
-  }
-
   async function createProject(input: CreateProjectInput): Promise<void> {
     await mutate(async () => {
       const project = await client.createProject(input);
@@ -800,11 +751,11 @@ export function BoardApp() {
   if (loading && snapshot === null) {
     content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<RefreshCw className="animate-spin" size={20} />} title="Locating your agents" body="Reading durable projects, tasks, questions, and progress from the task board." /></Card></main>;
   } else if (snapshot === null) {
-    content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<CircleAlert size={20} />} title="Connect the task board" body="Start the task-board service or update the connection. The frontend intentionally has no local demo fallback." action={<Button variant="primary" onClick={() => openDialog('connection')}>Connection settings</Button>} /></Card></main>;
+    content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<CircleAlert size={20} />} title="Board service unreachable" body="The task board service could not be reached. No local demo data is shown." /></Card></main>;
   } else if (page.kind === 'documents') {
     content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh(true)} />;
   } else if (page.kind === 'automation') {
-    content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorStateForConnection} />;
+    content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorState} />;
   } else if (page.kind === 'project' && pageProject) {
     content = <ProjectPage project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
   } else if (page.kind === 'agent' && pageAgent) {
@@ -878,12 +829,11 @@ export function BoardApp() {
 
   return (
     <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
-      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5">{error}. Existing durable state remains visible; no demo data is being shown.</p></div><button type="button" className="shrink-0 underline" onClick={() => openDialog('connection')}>Configure</button></div></FormError></div> : null}
+      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5">The board service is not reachable. {error}. Existing durable state remains visible. No demo data is being shown.</p></div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Its name, workspace scope, and engineer profile are added automatically."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
       <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'auto'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} onSubmit={createWorkItem} /></Modal>
-      <Modal open={dialog === 'connection'} onClose={() => setDialog(null)} title="Task board connection" description="The UI can disappear without stopping agents or losing work."><ConnectionForm settings={connection} busy={busy} onSubmit={changeConnection} /></Modal>
       {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}
     </WorkspaceFrame>
   );

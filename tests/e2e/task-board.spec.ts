@@ -111,7 +111,6 @@ const editableDocument: DocumentFixture = {
   createdAt: '2026-07-19T18:02:00.000Z',
   updatedAt: '2026-07-19T18:20:00.000Z',
 };
-const documentHumanToken = 'e2e-human-document-token-1234567890';
 const documentAgentToken = 'e2e-agent-document-token-1234567890';
 
 function cloneDocument(document: DocumentFixture): DocumentFixture {
@@ -135,9 +134,6 @@ async function installDocumentBoard(
   initialDocument: DocumentFixture,
   broadcastContent: string,
 ) {
-  await page.addInitScript((token) => {
-    window.sessionStorage.setItem('cicada.humanToken', token);
-  }, documentHumanToken);
   let current = cloneDocument(initialDocument);
   const history = [cloneDocument(initialDocument)];
   const documentRequests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
@@ -1662,7 +1658,7 @@ test('durable documents broadcast, acquire, save, and release without waking an 
     penEpoch: 5,
     penHolder: null,
   });
-  expect(new Set(mock.documentAuthorizations)).toEqual(new Set([`Bearer ${documentHumanToken}`]));
+  expect(new Set(mock.documentAuthorizations)).toEqual(new Set([undefined]));
   expect(mock.wakeRequests).toEqual([]);
 
   if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
@@ -1752,7 +1748,7 @@ test('a human force takeover fences an agent-held document epoch without touchin
   });
   await expect(page.getByLabel('Edit Agent research notes')).toHaveValue(broadcastContent);
   expect(new Set(mock.documentAuthorizations)).toEqual(new Set([
-    `Bearer ${documentHumanToken}`,
+    undefined,
     `Bearer ${documentAgentToken}`,
   ]));
   expect(mock.wakeRequests).toEqual([]);
@@ -1827,7 +1823,10 @@ test('a failed authoritative read never falls back to demo agents', async ({ pag
   }));
   await page.goto('/');
   await expect(page.getByText('Task board unavailable')).toBeVisible();
+  await expect(page.getByText('The board service is not reachable.')).toBeVisible();
   await expect(page.getByText('No demo data is being shown.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Configure' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Connection settings' })).toHaveCount(0);
   await expect(page.getByText('Patch')).toHaveCount(0);
 });
 

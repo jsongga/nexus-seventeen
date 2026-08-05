@@ -976,7 +976,6 @@ describe('task-board HTTP client', () => {
     });
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
-      token: 'human-token-value',
       documentClientId: 'document-tab-one',
       fetch: request as unknown as typeof fetch,
     });
@@ -1016,10 +1015,10 @@ describe('task-board HTTP client', () => {
       }],
     ]);
     expect(calls.some(([url]) => /\/tasks|\/resume|\/interrupt/u.test(url))).toBe(false);
-    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === 'Bearer human-token-value')).toBe(true);
+    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)).toBe(true);
   });
 
-  it('authenticates and validates resumable document snapshot events', async () => {
+  it('validates resumable document snapshot events without adding browser authorization', async () => {
     const streamed = { ...documentSnapshot, contentVersion: 3, sequence: 5, content: '# Streamed' };
     const request = vi.fn(async () => new Response(
       `: keepalive\n\nid: 5\nevent: document\ndata: ${JSON.stringify({ document: streamed })}\n\n`,
@@ -1027,7 +1026,6 @@ describe('task-board HTTP client', () => {
     ));
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
-      token: 'human-token-value',
       documentClientId: 'document-tab-one',
       fetch: request as unknown as typeof fetch,
     });
@@ -1046,7 +1044,7 @@ describe('task-board HTTP client', () => {
       expect.objectContaining({
         cache: 'no-store',
         credentials: 'omit',
-        headers: expect.objectContaining({ authorization: 'Bearer human-token-value', accept: 'text/event-stream' }),
+        headers: { accept: 'text/event-stream' },
         signal: expect.any(AbortSignal),
       }),
     );
@@ -1193,7 +1191,6 @@ describe('task-board HTTP client', () => {
     });
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
-      token: 'human-token-value',
       fetch: request as unknown as typeof fetch,
     });
 
@@ -1258,7 +1255,6 @@ describe('task-board HTTP client', () => {
     });
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
-      token: 'human-token-value',
       fetch: request as unknown as typeof fetch,
     });
 
@@ -1282,7 +1278,7 @@ describe('task-board HTTP client', () => {
     expect(calls.some(([url]) => url.endsWith('/v1/questions/question-one/answer'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/resume'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/interrupt'))).toBe(true);
-    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === 'Bearer human-token-value')).toBe(true);
+    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)).toBe(true);
     expect(calls.every(([, init]) => init?.credentials === 'omit' && init.redirect === 'error')).toBe(true);
   });
 
@@ -1377,10 +1373,10 @@ describe('task-board HTTP client', () => {
     expect(request.mock.calls.filter(([url]) => String(url).includes('/messages?after='))).toHaveLength(1);
   });
 
-  it('will not send a bearer token over a remote insecure or scheme-relative URL', () => {
-    expect(() => createTaskBoardClient({ baseUrl: 'http://board.example.test', token: 'secret' })).toThrow(/HTTPS/u);
-    expect(() => createTaskBoardClient({ baseUrl: '//board.example.test', token: 'secret' })).toThrow(/invalid/u);
-    expect(() => createTaskBoardClient({ baseUrl: 'http://127.0.0.1:4318', token: 'secret' })).not.toThrow();
+  it('rejects remote insecure and scheme-relative board URLs while allowing loopback development', () => {
+    expect(() => createTaskBoardClient({ baseUrl: 'http://board.example.test' })).toThrow(/HTTPS/u);
+    expect(() => createTaskBoardClient({ baseUrl: '//board.example.test' })).toThrow(/invalid/u);
+    expect(() => createTaskBoardClient({ baseUrl: 'http://127.0.0.1:4318' })).not.toThrow();
   });
 
   it('enforces manager review assignment and records a human check without waking an agent', async () => {
