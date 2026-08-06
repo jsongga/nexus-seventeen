@@ -27,7 +27,7 @@ import {
   type WorkItemState,
 } from "#shared/task-board-contract";
 import { parseUpdateAutomationConfiguration } from "../schema.js";
-import { expectedCompletedAt } from "../timestamps.js";
+import { expectedCompletedAt } from "./timestamps.js";
 
 export type Row = Record<string, SQLOutputValue>;
 

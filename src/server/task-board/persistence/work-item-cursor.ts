@@ -1,7 +1,7 @@
 import { WORK_ITEM_CURSOR_MAX_BYTES } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import { TaskBoardError } from "../errors.js";
-import { exactIsoTimestamp } from "../timestamps.js";
+import { exactIsoTimestamp } from "./timestamps.js";
 import { numberValue, stringValue, type Row } from "./rows.js";
 
 interface WorkItemCursorTuple {
