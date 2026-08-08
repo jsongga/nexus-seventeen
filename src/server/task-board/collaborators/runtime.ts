@@ -475,6 +475,9 @@ export class TaskBoardRuntime {
     this.interruptEvents.removeAllListeners();
     this.wakeupEvents.removeAllListeners();
     this.documentEvents.removeAllListeners();
+    // projectEvents was omitted here before, so subscribeProjectEvents
+    // listeners outlived close(). All four emitters are released together.
+    this.projectEvents.removeAllListeners();
     this.#workerConnections.clear();
   }
 

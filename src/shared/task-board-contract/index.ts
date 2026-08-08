@@ -1,6 +1,14 @@
 export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
 /** Maximum persisted UTF-8 JSON size of the { agentTypes, stages } automation aggregate. */
 export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
+/**
+ * Maximum UTF-8 size of a document's Markdown content.
+ *
+ * Deliberately a separate constant from AUTOMATION_CONFIGURATION_MAX_BYTES:
+ * the two limits are unrelated and only happen to share a value today, so
+ * coupling them would let a change to one silently move the other.
+ */
+export const DOCUMENT_CONTENT_MAX_BYTES = 48 * 1_024;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
 

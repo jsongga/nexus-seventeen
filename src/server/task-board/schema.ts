@@ -1,4 +1,4 @@
-import { AUTOMATION_CONFIGURATION_MAX_BYTES } from "#shared/task-board-contract";
+import { AUTOMATION_CONFIGURATION_MAX_BYTES, DOCUMENT_CONTENT_MAX_BYTES } from "#shared/task-board-contract";
 import type {
   AgentTypeEvaluatorProfile,
   AgentRole,
@@ -137,7 +137,7 @@ function nonNegativeVersion(value: unknown, field: string): number {
 function documentContent(value: unknown): string {
   if (
     typeof value !== "string" ||
-    Buffer.byteLength(value, "utf8") > 48 * 1_024 ||
+    Buffer.byteLength(value, "utf8") > DOCUMENT_CONTENT_MAX_BYTES ||
     /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
   ) {
     throw new TaskBoardError(400, "INVALID_DOCUMENT_CONTENT", "content must be valid text no larger than 48 KiB");

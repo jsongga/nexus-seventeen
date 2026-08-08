@@ -1,3 +1,5 @@
+import { maximumDocumentContentBytes } from '../data/wire';
+
 export interface StoredDocumentDraft {
   documentId: string;
   baseContentVersion: number;
@@ -8,11 +10,12 @@ export interface StoredDocumentDraft {
 const storageKey = 'cicada.documentDrafts.v1';
 const maximumDrafts = 8;
 
-// Mirrors the server's document content cap (src/server/task-board/schema.ts).
+// The server's document content cap, taken from the shared contract rather
+// than mirrored, so the two sides cannot drift.
 // Deliberately NOT the automation payload cap: the two limits are unrelated and
 // only happen to share a value today, so coupling them would let a change to one
 // silently break the other.
-const maximumDraftBytes = 48 * 1_024;
+const maximumDraftBytes = maximumDocumentContentBytes;
 
 function contentBytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
