@@ -12,11 +12,13 @@
  *     WakeReason and AutomationEvaluatorProfile.
  */
 import {
+  ACTOR_TYPES,
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
+  PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   RUN_STATUSES,
   TASK_BOARD_API_VERSION,
@@ -25,6 +27,7 @@ import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   TASK_STATUSES,
+  STAGE_HANDOFF_OUTCOMES,
   WAKEUP_REASONS,
   WORKER_CONNECTIONS,
   WORK_ITEM_CURSOR_MAX_BYTES,
@@ -32,11 +35,14 @@ import {
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
+  WORK_NODE_STATES,
+  WORKFLOW_STAGES,
   type AgentStatus,
   type RunStatus,
   type TaskStatus,
   type WakeupReason,
   type WorkerConnection,
+  type WorkflowStage,
 } from '@shared/task-board-contract';
 
 // Prefixed because ./types.ts exports different types under these same three
@@ -48,6 +54,7 @@ export type WireWorkerConnection = WorkerConnection;
 
 // Renamed to the vocabulary the web app already uses.
 export type WakeReason = WakeupReason;
+export type { WorkflowStage };
 
 export const apiVersion = TASK_BOARD_API_VERSION;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
@@ -56,6 +63,7 @@ export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
 export const rawAgentStatuses = new Set(AGENT_STATUSES);
+export const actorTypes = new Set(ACTOR_TYPES);
 export const rawWorkerConnections = new Set(WORKER_CONNECTIONS);
 export const rawTaskStatuses = new Set(TASK_STATUSES);
 export const rawRunStatuses = new Set(RUN_STATUSES);
@@ -71,3 +79,7 @@ export const workItemStates = new Set(WORK_ITEM_STATES);
 export const workItemStages = new Set(WORK_ITEM_STAGES);
 export const evaluatorProfiles = new Set(EVALUATOR_PROFILES);
 export const documentActorTypes = new Set(DOCUMENT_ACTOR_TYPES);
+export const workflowStages = new Set(WORKFLOW_STAGES);
+export const planRevisionStates = new Set(PLAN_REVISION_STATES);
+export const workNodeStates = new Set(WORK_NODE_STATES);
+export const stageHandoffOutcomes = new Set(STAGE_HANDOFF_OUTCOMES);

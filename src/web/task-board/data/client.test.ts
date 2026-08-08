@@ -294,6 +294,87 @@ const documentSnapshot = {
   ...documentSummary,
   content: '# Release notes\n\nInvoice recovery is clearer.',
 };
+const workflowPlan = {
+  apiVersion,
+  planRevisionId: 'plan-one',
+  workItemId: workItem.workItemId,
+  revision: 1,
+  objective: 'Make invoice recovery dependable.',
+  assumptions: ['The billing provider remains available.'],
+  acceptanceCriteria: ['The focused recovery test passes.'],
+  projectId: project.projectId,
+  skillDigests: { 'cicada-software-implementation': `sha256:${'1'.repeat(64)}` },
+  state: 'confirmed',
+  createdBy: 'human:operator',
+  confirmedBy: 'human:operator',
+  createdAt: '2026-07-19T10:20:00.000Z',
+  confirmedAt: '2026-07-19T10:21:00.000Z',
+};
+const workflowNode = {
+  apiVersion,
+  nodeId: 'node-one',
+  planRevisionId: workflowPlan.planRevisionId,
+  projectId: project.projectId,
+  title: 'Verify invoice recovery',
+  objective: 'Prove the recovery path is dependable.',
+  acceptanceCriteria: ['The focused recovery test passes.'],
+  dependencyNodeIds: [],
+  stageTemplate: ['implementation', 'testing', 'verification'],
+  currentStage: 'testing',
+  state: 'active',
+  version: 2,
+  createdAt: '2026-07-19T10:21:00.000Z',
+  updatedAt: '2026-07-19T10:22:00.000Z',
+};
+const workflowHandoff = {
+  apiVersion,
+  handoffId: 'handoff-one',
+  nodeId: workflowNode.nodeId,
+  taskId: task.taskId,
+  stage: 'implementation',
+  outcome: 'passed',
+  summary: 'Invoice recovery implementation is complete.',
+  evidence: ['Focused tests passed.'],
+  artifactIds: ['artifact-one'],
+  acceptanceCriteria: [{ criterion: 'The focused recovery test passes.', passed: true, evidence: 'Passed.' }],
+  blockers: [],
+  recommendedReturnStage: null,
+  createdAt: '2026-07-19T10:22:00.000Z',
+};
+const workflowEvent = {
+  apiVersion,
+  sequence: 1,
+  eventId: 'workflow-event-one',
+  projectId: project.projectId,
+  nodeId: workflowNode.nodeId,
+  taskId: task.taskId,
+  eventType: 'stage_completed',
+  summary: 'Implementation completed; testing is ready.',
+  createdAt: '2026-07-19T10:22:00.000Z',
+};
+const projectArtifact = {
+  apiVersion,
+  artifactId: 'artifact-one',
+  projectId: project.projectId,
+  nodeId: workflowNode.nodeId,
+  taskId: task.taskId,
+  mediaType: 'text/markdown',
+  byteSize: 42,
+  digest: `sha256:${'a'.repeat(64)}`,
+  caption: 'Focused invoice recovery evidence',
+  createdBy: 'agent:billing-engineer',
+  createdAt: '2026-07-19T10:22:00.000Z',
+};
+
+function workflowSnapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    plans: [workflowPlan],
+    nodes: [workflowNode],
+    handoffs: [workflowHandoff],
+    events: [workflowEvent],
+    ...overrides,
+  };
+}
 
 function boardSnapshot() {
   return {
@@ -519,6 +600,100 @@ describe('task-board protocol projection', () => {
 });
 
 describe('task-board HTTP client', () => {
+  it('parses valid workflow and artifact payloads into the web projection', async () => {
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects/project-one/workflow')) {
+        return new Response(JSON.stringify({ workflow: workflowSnapshot() }));
+      }
+      if (path.endsWith('/v1/projects/project-one/artifacts')) {
+        return new Response(JSON.stringify({ artifacts: [projectArtifact] }));
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.getProjectWorkflow(project.projectId)).resolves.toEqual({
+      plans: [{
+        planRevisionId: workflowPlan.planRevisionId,
+        revision: 1,
+        objective: workflowPlan.objective,
+        assumptions: workflowPlan.assumptions,
+        acceptanceCriteria: workflowPlan.acceptanceCriteria,
+        state: 'confirmed',
+        createdAt: workflowPlan.createdAt,
+        confirmedAt: workflowPlan.confirmedAt,
+      }],
+      nodes: [{
+        nodeId: workflowNode.nodeId,
+        planRevisionId: workflowPlan.planRevisionId,
+        title: workflowNode.title,
+        objective: workflowNode.objective,
+        acceptanceCriteria: workflowNode.acceptanceCriteria,
+        dependencyNodeIds: [],
+        stageTemplate: ['implementation', 'testing', 'verification'],
+        currentStage: 'testing',
+        state: 'active',
+        updatedAt: workflowNode.updatedAt,
+      }],
+      handoffs: [{
+        handoffId: workflowHandoff.handoffId,
+        nodeId: workflowNode.nodeId,
+        taskId: task.taskId,
+        stage: 'implementation',
+        outcome: 'passed',
+        summary: workflowHandoff.summary,
+        evidence: workflowHandoff.evidence,
+        artifactIds: workflowHandoff.artifactIds,
+        blockers: [],
+        createdAt: workflowHandoff.createdAt,
+      }],
+      events: [{
+        sequence: 1,
+        eventId: workflowEvent.eventId,
+        nodeId: workflowNode.nodeId,
+        taskId: task.taskId,
+        eventType: workflowEvent.eventType,
+        summary: workflowEvent.summary,
+        createdAt: workflowEvent.createdAt,
+      }],
+    });
+    await expect(client.getProjectArtifacts(project.projectId)).resolves.toEqual([{
+      artifactId: projectArtifact.artifactId,
+      nodeId: workflowNode.nodeId,
+      taskId: task.taskId,
+      mediaType: 'text/markdown',
+      byteSize: 42,
+      caption: projectArtifact.caption,
+      createdAt: projectArtifact.createdAt,
+    }]);
+  });
+
+  it('rejects an unknown workflow enum member at the response boundary', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      workflow: workflowSnapshot({ nodes: [{ ...workflowNode, state: 'paused' }] }),
+    })));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.getProjectWorkflow(project.projectId)).rejects.toThrow(
+      'workflow response.workflow.nodes[0].state has an unsupported value',
+    );
+  });
+
+  it('rejects an artifact with a missing required field at the response boundary', async () => {
+    const missingCaption: Record<string, unknown> = { ...projectArtifact };
+    delete missingCaption.caption;
+    const request = vi.fn(async () => new Response(JSON.stringify({ artifacts: [missingCaption] })));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.getProjectArtifacts(project.projectId)).rejects.toThrow(
+      'artifacts response.artifacts[0].caption must be a string',
+    );
+  });
+
   it('loads automation configuration on demand and sends one exact versioned replacement', async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

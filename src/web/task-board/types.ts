@@ -1,3 +1,7 @@
+import type { WorkflowStage } from './data/wire';
+
+export type { WorkflowStage };
+
 export type AgentStatus =
   | 'sleeping'
   | 'queued'
@@ -275,8 +279,6 @@ export interface BoardSnapshot {
   runs: BoardRun[];
   documents: BoardDocumentSummary[];
 }
-
-export type WorkflowStage = 'research' | 'planning' | 'implementation' | 'testing' | 'verification';
 
 export interface WorkflowPlan {
   planRevisionId: string;

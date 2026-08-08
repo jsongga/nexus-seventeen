@@ -28,7 +28,8 @@ export type TaskPhaseStatus = typeof TASK_PHASE_STATUSES[number];
 export const TASK_MESSAGE_KINDS = ["note", "progress", "proposal", "result"] as const;
 export type TaskMessageKind = typeof TASK_MESSAGE_KINDS[number];
 
-export type ActorType = "human" | "agent" | "system";
+export const ACTOR_TYPES = ["human", "agent", "system"] as const;
+export type ActorType = typeof ACTOR_TYPES[number];
 
 export const QUESTION_STATUSES = ["open", "answered"] as const;
 export type QuestionStatus = typeof QUESTION_STATUSES[number];
@@ -53,10 +54,17 @@ export type WorkItemState = typeof WORK_ITEM_STATES[number];
 export const WORK_ITEM_STAGES = ["refinement", "project_resolution", "research", "planning", "implementation", "testing", "verification", "human_review", "deployment"] as const;
 export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
 
-export type WorkflowStage = "research" | "planning" | "implementation" | "testing" | "verification";
-export type PlanRevisionState = "proposed" | "confirmed" | "superseded" | "rejected";
-export type WorkNodeState = "pending" | "ready" | "active" | "blocked" | "stale" | "completed" | "cancelled";
-export type StageHandoffOutcome = "passed" | "failed" | "needs_input";
+export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
+export type WorkflowStage = typeof WORKFLOW_STAGES[number];
+
+export const PLAN_REVISION_STATES = ["proposed", "confirmed", "superseded", "rejected"] as const;
+export type PlanRevisionState = typeof PLAN_REVISION_STATES[number];
+
+export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
+export type WorkNodeState = typeof WORK_NODE_STATES[number];
+
+export const STAGE_HANDOFF_OUTCOMES = ["passed", "failed", "needs_input"] as const;
+export type StageHandoffOutcome = typeof STAGE_HANDOFF_OUTCOMES[number];
 export type ArtifactMediaType =
   | "text/markdown"
   | "text/vnd.mermaid"

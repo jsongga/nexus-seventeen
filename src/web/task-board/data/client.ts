@@ -32,9 +32,12 @@ import {
   parseAutomationStage,
   parseDocument,
   parseMessage,
+  parseProjectArtifact,
+  parseProjectWorkflow,
   parseProject,
   parseRawBoard,
   parseWorkItem,
+  parseWorkflowEvent,
   record,
   string,
   validateAutomationParts,
@@ -158,6 +161,11 @@ function projectFromEnvelope(value: unknown, path: string): BoardProject {
 function workItemFromEnvelope(value: unknown, path: string): BoardWorkItem {
   const envelope = record(value, path);
   return workItemProjection(parseWorkItem(envelope.workItem, `${path}.workItem`));
+}
+
+function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
+  const envelope = record(value, path);
+  return parseProjectWorkflow(envelope.workflow, `${path}.workflow`);
 }
 
 function workItemPageFromEnvelope(value: unknown, path: string): {
@@ -602,31 +610,23 @@ export function createTaskBoardClient(options: {
   return {
     documentClientId,
     async getProjectWorkflow(projectId, signal) {
-      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }), 'workflow response');
-      const workflow = record(envelope.workflow, 'workflow response.workflow');
-      return {
-        plans: array(workflow.plans, 'workflow plans', (value) => record(value, 'workflow plan')) as unknown as ProjectWorkflow['plans'],
-        nodes: array(workflow.nodes, 'workflow nodes', (value) => record(value, 'workflow node')) as unknown as ProjectWorkflow['nodes'],
-        handoffs: array(workflow.handoffs, 'workflow handoffs', (value) => record(value, 'workflow handoff')) as unknown as ProjectWorkflow['handoffs'],
-        events: array(workflow.events, 'workflow events', (value) => record(value, 'workflow event')) as unknown as ProjectWorkflow['events'],
-      };
+      return workflowFromEnvelope(
+        await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }),
+        'workflow response',
+      );
     },
     async getProjectArtifacts(projectId, signal) {
       const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }), 'artifacts response');
-      return array(envelope.artifacts, 'artifacts response.artifacts', (value) => record(value, 'artifact')) as unknown as ProjectArtifact[];
+      return array(envelope.artifacts, 'artifacts response.artifacts', parseProjectArtifact);
     },
     async confirmWorkflow(planRevisionId) {
-      const envelope = record(await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/confirm`, {
-        method: 'POST',
-        body: JSON.stringify({ expectedState: 'proposed' }),
-      }), 'confirm workflow response');
-      const workflow = record(envelope.workflow, 'confirm workflow response.workflow');
-      return {
-        plans: array(workflow.plans, 'workflow plans', (value) => record(value, 'workflow plan')) as unknown as ProjectWorkflow['plans'],
-        nodes: array(workflow.nodes, 'workflow nodes', (value) => record(value, 'workflow node')) as unknown as ProjectWorkflow['nodes'],
-        handoffs: array(workflow.handoffs, 'workflow handoffs', (value) => record(value, 'workflow handoff')) as unknown as ProjectWorkflow['handoffs'],
-        events: array(workflow.events, 'workflow events', (value) => record(value, 'workflow event')) as unknown as ProjectWorkflow['events'],
-      };
+      return workflowFromEnvelope(
+        await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/confirm`, {
+          method: 'POST',
+          body: JSON.stringify({ expectedState: 'proposed' }),
+        }),
+        'confirm workflow response',
+      );
     },
     async subscribeProjectEvents(input) {
       const response = await request(
@@ -648,7 +648,7 @@ export function createTaskBoardClient(options: {
             const data = frame.split(/\r?\n/u).filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n');
             if (data) {
               const envelope = record(JSON.parse(data) as unknown, 'workflow event');
-              input.onEvent(record(envelope.event, 'workflow event.event') as unknown as WorkflowEvent);
+              input.onEvent(parseWorkflowEvent(envelope.event, 'workflow event.event'));
             }
             boundary = pending.indexOf('\n\n');
           }
@@ -667,7 +667,7 @@ export function createTaskBoardClient(options: {
         method: 'POST',
         body: JSON.stringify({ nodeId: null, taskId: null, ...input }),
       }), 'upload artifact response');
-      return record(envelope.artifact, 'upload artifact response.artifact') as unknown as ProjectArtifact;
+      return parseProjectArtifact(envelope.artifact, 'upload artifact response.artifact');
     },
     async getSnapshot(signal) {
       const [projectsValue, workItemsValue] = await Promise.all([

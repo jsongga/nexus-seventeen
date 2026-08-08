@@ -11,9 +11,15 @@ import type {
   AutomationConfiguration,
   AutomationStageConfiguration,
   AutomationStageExecutor,
+  ProjectArtifact,
+  ProjectWorkflow,
   TaskKind,
   TaskPhaseStage,
   TaskPhaseStatus,
+  WorkflowEvent,
+  WorkflowHandoff,
+  WorkflowNode,
+  WorkflowPlan,
   WorkItemPriority,
   WorkItemProjectTarget,
   WorkItemStage,
@@ -21,24 +27,29 @@ import type {
 } from '../types';
 import { AUTOMATION_STAGE_ALLOWED_ROLES, AUTOMATION_STAGE_ORDER } from '../types';
 import {
+  actorTypes,
   apiVersion,
   documentActorTypes,
   evaluatorProfiles,
   maximumAutomationConfigurationBytes,
   maximumWorkItemCursorBytes,
   messageKinds,
+  planRevisionStates,
   questionStatuses,
   rawAgentStatuses,
   rawRunStatuses,
   rawTaskStatuses,
   rawWorkerConnections,
   roles,
+  stageHandoffOutcomes,
   taskKinds,
   taskPhaseStages,
   taskPhaseStatuses,
   workItemPriorities,
   workItemStages,
   workItemStates,
+  workNodeStates,
+  workflowStages,
   type WireAgentStatus,
   type WireRunStatus,
   type WireTaskStatus,
@@ -49,7 +60,6 @@ export { maximumWorkItemCursorBytes };
 
 export type JsonRecord = Record<string, unknown>;
 
-const actorTypes = new Set(['human', 'agent'] as const);
 const automationExecutorKinds = new Set<AutomationStageExecutor['kind']>(['agent_type', 'human', 'disabled']);
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
@@ -373,6 +383,123 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
     createdAt: timestamp(item.createdAt, `${path}.createdAt`),
     updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
     endedAt,
+  };
+}
+
+function validateStringRecord(value: unknown, path: string): void {
+  const item = record(value, path);
+  for (const [key, entry] of Object.entries(item)) string(entry, `${path}.${key}`);
+}
+
+export function parseWorkflowPlan(value: unknown, path: string): WorkflowPlan {
+  const item = apiEntity(value, path);
+  string(item.workItemId, `${path}.workItemId`);
+  string(item.projectId, `${path}.projectId`);
+  validateStringRecord(item.skillDigests, `${path}.skillDigests`);
+  string(item.createdBy, `${path}.createdBy`);
+  nullableString(item.confirmedBy, `${path}.confirmedBy`);
+  return {
+    planRevisionId: string(item.planRevisionId, `${path}.planRevisionId`),
+    revision: integer(item.revision, `${path}.revision`, 1),
+    objective: string(item.objective, `${path}.objective`),
+    assumptions: array(item.assumptions, `${path}.assumptions`, string),
+    acceptanceCriteria: array(item.acceptanceCriteria, `${path}.acceptanceCriteria`, string),
+    state: member(item.state, planRevisionStates, `${path}.state`),
+    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    confirmedAt: nullableTimestamp(item.confirmedAt, `${path}.confirmedAt`),
+  };
+}
+
+export function parseWorkflowNode(value: unknown, path: string): WorkflowNode {
+  const item = apiEntity(value, path);
+  string(item.projectId, `${path}.projectId`);
+  integer(item.version, `${path}.version`, 1);
+  timestamp(item.createdAt, `${path}.createdAt`);
+  return {
+    nodeId: string(item.nodeId, `${path}.nodeId`),
+    planRevisionId: string(item.planRevisionId, `${path}.planRevisionId`),
+    title: string(item.title, `${path}.title`),
+    objective: string(item.objective, `${path}.objective`),
+    acceptanceCriteria: array(item.acceptanceCriteria, `${path}.acceptanceCriteria`, string),
+    dependencyNodeIds: array(item.dependencyNodeIds, `${path}.dependencyNodeIds`, string),
+    stageTemplate: array(
+      item.stageTemplate,
+      `${path}.stageTemplate`,
+      (stage, stagePath) => member(stage, workflowStages, stagePath),
+    ),
+    currentStage: item.currentStage === null
+      ? null
+      : member(item.currentStage, workflowStages, `${path}.currentStage`),
+    state: member(item.state, workNodeStates, `${path}.state`),
+    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+  };
+}
+
+function parseCriterionResult(value: unknown, path: string): void {
+  const item = record(value, path);
+  string(item.criterion, `${path}.criterion`);
+  boolean(item.passed, `${path}.passed`);
+  string(item.evidence, `${path}.evidence`);
+}
+
+export function parseWorkflowHandoff(value: unknown, path: string): WorkflowHandoff {
+  const item = apiEntity(value, path);
+  array(item.acceptanceCriteria, `${path}.acceptanceCriteria`, parseCriterionResult);
+  if (item.recommendedReturnStage !== null) {
+    member(item.recommendedReturnStage, workflowStages, `${path}.recommendedReturnStage`);
+  }
+  return {
+    handoffId: string(item.handoffId, `${path}.handoffId`),
+    nodeId: string(item.nodeId, `${path}.nodeId`),
+    taskId: string(item.taskId, `${path}.taskId`),
+    stage: member(item.stage, workflowStages, `${path}.stage`),
+    outcome: member(item.outcome, stageHandoffOutcomes, `${path}.outcome`),
+    summary: string(item.summary, `${path}.summary`),
+    evidence: array(item.evidence, `${path}.evidence`, string),
+    artifactIds: array(item.artifactIds, `${path}.artifactIds`, string),
+    blockers: array(item.blockers, `${path}.blockers`, string),
+    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+  };
+}
+
+export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent {
+  const item = apiEntity(value, path);
+  string(item.projectId, `${path}.projectId`);
+  return {
+    sequence: integer(item.sequence, `${path}.sequence`, 1),
+    eventId: string(item.eventId, `${path}.eventId`),
+    nodeId: nullableString(item.nodeId, `${path}.nodeId`),
+    taskId: nullableString(item.taskId, `${path}.taskId`),
+    eventType: string(item.eventType, `${path}.eventType`),
+    summary: string(item.summary, `${path}.summary`),
+    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+  };
+}
+
+export function parseProjectWorkflow(value: unknown, path: string): ProjectWorkflow {
+  const item = record(value, path);
+  return {
+    plans: array(item.plans, `${path}.plans`, parseWorkflowPlan),
+    nodes: array(item.nodes, `${path}.nodes`, parseWorkflowNode),
+    handoffs: array(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff),
+    events: array(item.events, `${path}.events`, parseWorkflowEvent),
+  };
+}
+
+export function parseProjectArtifact(value: unknown, path: string): ProjectArtifact {
+  const item = apiEntity(value, path);
+  string(item.projectId, `${path}.projectId`);
+  const digest = string(item.digest, `${path}.digest`);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(digest)) throw new Error(`${path}.digest must be a SHA-256 digest`);
+  string(item.createdBy, `${path}.createdBy`);
+  return {
+    artifactId: string(item.artifactId, `${path}.artifactId`),
+    nodeId: nullableString(item.nodeId, `${path}.nodeId`),
+    taskId: nullableString(item.taskId, `${path}.taskId`),
+    mediaType: string(item.mediaType, `${path}.mediaType`),
+    byteSize: integer(item.byteSize, `${path}.byteSize`, 1),
+    caption: string(item.caption, `${path}.caption`),
+    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -720,15 +847,11 @@ export function parseInterrupt(value: unknown, path: string): RawInterrupt {
 
 export function parseEvent(value: unknown, path: string): RawEvent {
   const item = apiEntity(value, path);
-  const actorType = string(item.actorType, `${path}.actorType`);
-  if (actorType !== 'human' && actorType !== 'agent' && actorType !== 'system') {
-    throw new Error(`${path}.actorType has an unsupported value`);
-  }
   return {
     eventId: string(item.eventId, `${path}.eventId`),
     projectId: string(item.projectId, `${path}.projectId`),
     taskId: nullableString(item.taskId, `${path}.taskId`),
-    actorType,
+    actorType: member(item.actorType, actorTypes, `${path}.actorType`),
     actorId: string(item.actorId, `${path}.actorId`),
     eventType: string(item.eventType, `${path}.eventType`),
     data: record(item.data, `${path}.data`),
@@ -743,7 +866,7 @@ export function parseMessage(value: unknown, path: string): RawMessage {
     sequence: integer(item.sequence, `${path}.sequence`, 1),
     projectId: string(item.projectId, `${path}.projectId`),
     taskId: string(item.taskId, `${path}.taskId`),
-    actorType: member(item.actorType, actorTypes, `${path}.actorType`),
+    actorType: member(item.actorType, documentActorTypes, `${path}.actorType`),
     actorId: string(item.actorId, `${path}.actorId`),
     kind: member(item.kind, messageKinds, `${path}.kind`),
     body: string(item.body, `${path}.body`),
