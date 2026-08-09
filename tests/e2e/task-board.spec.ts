@@ -511,9 +511,65 @@ test('the default app reads real board state and assignment is an explicit human
   });
 });
 
+test('a failed assignment stays actionable while successful polls keep the board connected', async ({ page }) => {
+  let projectReads = 0;
+  await page.clock.install({ time: new Date('2026-07-19T18:30:00.000Z') });
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      projectReads += 1;
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}` && request.method() === 'PATCH') {
+      await route.fulfill({
+        status: 409,
+        json: { error: { code: 'TASK_VERSION_CONFLICT', message: 'Task version changed' } },
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Task List', exact: true })).toBeVisible();
+  await expect.poll(() => projectReads).toBeGreaterThanOrEqual(1);
+  await page.getByRole('button', { name: /Improve invoice recovery backlog/u }).click();
+
+  const taskDetail = page.getByRole('region', { name: 'Task details: Improve invoice recovery' });
+  await taskDetail.getByRole('button', { name: 'Assign and wake agent' }).click();
+  const actionError = taskDetail.getByRole('alert');
+  await expect(actionError).toContainText('This task changed in another session. Refresh before trying again.');
+  await expect(page.getByText('Task board unavailable', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Action errors')).toHaveCount(0);
+
+  const readsBeforePolling = projectReads;
+  await page.clock.runFor(10_100);
+  await expect.poll(() => projectReads).toBeGreaterThanOrEqual(readsBeforePolling + 2);
+  await expect(actionError).toContainText('This task changed in another session. Refresh before trying again.');
+  await expect(page.getByText('Task board unavailable', { exact: true })).toHaveCount(0);
+
+  await taskDetail.getByRole('button', { name: 'Dismiss error' }).click();
+  await expect(taskDetail.getByRole('alert')).toHaveCount(0);
+});
+
 test('creating a task requires and records one explicit project with priority', async ({ page }) => {
   let createdRequest: Record<string, unknown> | null = null;
   let createdIdempotencyKey: string | undefined;
+  let createAttempts = 0;
   let workItems: Record<string, unknown>[] = [];
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
@@ -523,6 +579,14 @@ test('creating a task requires and records one explicit project with priority', 
       return;
     }
     if (url.pathname === '/board-api/v1/work-items' && request.method() === 'POST') {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        await route.fulfill({
+          status: 400,
+          json: { error: { code: 'PROJECT_REQUIRED', message: 'Choose the project again.' } },
+        });
+        return;
+      }
       createdRequest = request.postDataJSON() as Record<string, unknown>;
       createdIdempotencyKey = request.headers()['idempotency-key'];
       const createdWorkItem = {
@@ -574,6 +638,18 @@ test('creating a task requires and records one explicit project with priority', 
   await expect(dialog.getByRole('button', { name: 'Choose a project' })).toBeDisabled();
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Check this change: Choose the project again.');
+  await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Check this change: Choose the project again.' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+
+  await taskListActions.getByRole('button', { name: 'Add task' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await dialog.getByRole('textbox').fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
+  await dialog.getByLabel('Project').selectOption(project.projectId);
+  await dialog.getByRole('button', { name: 'Submit task' }).click();
   await expect.poll(() => createdRequest).not.toBeNull();
 
   expect(createdRequest).toEqual({
@@ -605,6 +681,9 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   let confirmRequest: Record<string, unknown> | null = null;
   let archiveRequest: Record<string, unknown> | null = null;
   let cancelRequest: Record<string, unknown> | null = null;
+  let rejectAttempts = 0;
+  let archiveAttempts = 0;
+  let cancelAttempts = 0;
 
   const planningTask = () => ({
     ...task,
@@ -755,7 +834,24 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
       return;
     }
     if (url.pathname === `/board-api/v1/work-items/work-item-detail-primary` && method === 'PATCH') {
-      archiveRequest = request.postDataJSON() as Record<string, unknown>;
+      const input = request.postDataJSON() as Record<string, unknown>;
+      if (input.action === 'cancel') {
+        rejectAttempts += 1;
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'WORK_ITEM_VERSION_CONFLICT', message: 'Work item changed' } },
+        });
+        return;
+      }
+      archiveAttempts += 1;
+      if (archiveAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'WORK_ITEM_VERSION_CONFLICT', message: 'Work item changed' } },
+        });
+        return;
+      }
+      archiveRequest = input;
       primaryWorkItem = {
         ...primaryWorkItem!,
         version: 6,
@@ -766,6 +862,14 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
       return;
     }
     if (url.pathname === `/board-api/v1/work-items/work-item-detail-cancel` && method === 'PATCH') {
+      cancelAttempts += 1;
+      if (cancelAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'WORK_ITEM_VERSION_CONFLICT', message: 'Work item changed' } },
+        });
+        return;
+      }
       cancelRequest = request.postDataJSON() as Record<string, unknown>;
       cancellableWorkItem = {
         ...cancellableWorkItem!,
@@ -893,6 +997,18 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await expect(implementationNode.getByText('Implement recovery guidance', { exact: true })).toBeVisible();
   await expect(implementationNode.getByText('Research recovery failures', { exact: true })).toBeVisible();
 
+  await pane.getByRole('button', { name: 'Reject plan' }).click();
+  dialog = page.getByRole('dialog', { name: 'Reject proposed plan' });
+  await dialog.getByLabel('Reason').fill('The dependency ordering needs another pass.');
+  await dialog.getByRole('button', { name: 'Reject and cancel' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
+  await expect.poll(() => rejectAttempts).toBe(1);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await pane.getByRole('button', { name: 'Reject plan' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Keep work item' }).click();
+
   const requestsBeforeConflict = workItemListRequests;
   await pane.getByRole('button', { name: 'Confirm plan' }).click();
   await expect(pane.getByRole('alert').filter({ hasText: 'This work item ended before the plan could be confirmed.' })).toBeVisible();
@@ -908,6 +1024,12 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await pane.getByRole('button', { name: 'Archive', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Archive work item' });
   await dialog.getByRole('button', { name: 'Archive work item' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await pane.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Archive work item' }).click();
   await expect.poll(() => archiveRequest).toEqual({ version: 5, action: 'archive' });
   await expect(page).toHaveURL(/#\/tasks$/u);
   await expect(primaryRow).toHaveCount(0);
@@ -921,6 +1043,13 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await cancellableRow.getByRole('button', { name: /Submitted/u }).click();
   await pane.getByRole('button', { name: 'Cancel work item' }).click();
   dialog = page.getByRole('dialog', { name: 'Cancel work item' });
+  await dialog.getByLabel('Reason').fill('A newer request supersedes this intake.');
+  await dialog.getByRole('button', { name: 'Cancel work item' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await pane.getByRole('button', { name: 'Cancel work item' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
   await dialog.getByLabel('Reason').fill('A newer request supersedes this intake.');
   await dialog.getByRole('button', { name: 'Cancel work item' }).click();
   await expect.poll(() => cancelRequest).toEqual({
@@ -1102,9 +1231,11 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   };
   let createdProject: Record<string, unknown> | null = null;
   let projectCreated = false;
+  let projectCreateAttempts = 0;
   let taskSubmitted = false;
   let agentCreateRequests = 0;
   let managerVersion = 1;
+  let rotationAttempts = 0;
   let createdWorkItemRequest: Record<string, unknown> | null = null;
   const rotatedToken = 'rotated-payment-tools-manager-token-012345678901';
   const lazyManager = {
@@ -1170,6 +1301,14 @@ test('project intake lazily creates a manager whose lane token can be rotated an
       return;
     }
     if (url.pathname === '/board-api/v1/projects' && request.method() === 'POST') {
+      projectCreateAttempts += 1;
+      if (projectCreateAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'PROJECT_PATH_CONFLICT', message: 'Project path changed' } },
+        });
+        return;
+      }
       createdProject = request.postDataJSON() as Record<string, unknown>;
       projectCreated = true;
       await route.fulfill({ status: 201, json: { project: importedProject } });
@@ -1217,6 +1356,14 @@ test('project intake lazily creates a manager whose lane token can be rotated an
     }
     if (url.pathname === `/board-api/v1/agents/${lazyManager.agentId}/rotate-token` && request.method() === 'POST') {
       expect(request.postDataJSON()).toEqual({ version: managerVersion });
+      rotationAttempts += 1;
+      if (rotationAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'AGENT_VERSION_CONFLICT', message: 'Agent version changed' } },
+        });
+        return;
+      }
       managerVersion += 1;
       await route.fulfill({
         json: { agent: { ...lazyManager, version: managerVersion }, token: rotatedToken },
@@ -1234,6 +1381,17 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   await page.getByRole('button', { name: 'Add project' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
+  await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
+  await dialog.getByRole('button', { name: 'Add project' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');
+  await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'The board changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add project' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
   await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
   await expect.poll(() => createdProject).not.toBeNull();
@@ -1271,9 +1429,34 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?' });
   await expect(rotationDialog).toContainText('disconnects any worker using the current token');
   await rotationDialog.getByRole('button', { name: 'Rotate token', exact: true }).click();
+  await expect(rotationDialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');
+  await expect(rotationDialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+  await rotationDialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'The board changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Rotate token', exact: true }).click();
+  await expect(rotationDialog.getByRole('alert')).toHaveCount(0);
+  await rotationDialog.getByRole('button', { name: 'Rotate token', exact: true }).click();
   await expect(laneConfig).toContainText(rotatedToken);
   await expect(page.getByText('Token visible for this page session only.')).toBeVisible();
   expect(await page.evaluate(() => Object.keys(window.sessionStorage).filter((key) => key.startsWith('cicada.pendingAgentToken.')))).toEqual([]);
+
+  await page.getByRole('textbox', { name: `Message ${lazyManager.agentId}` }).fill('Trigger an unanchored mutation error');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const toastViewport = page.getByRole('region', { name: 'Action errors' });
+  await expect(toastViewport.getByRole('alert')).toContainText('Not found');
+  const viewportBounds = await toastViewport.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      maxHeight: Number.parseFloat(styles.maxHeight),
+      overflowY: styles.overflowY,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(viewportBounds.overflowY).toBe('auto');
+  expect(viewportBounds.maxHeight).toBeLessThanOrEqual(viewportBounds.viewportHeight - 32);
 });
 
 test('agent pages stay chat-first while unavailable assignments remain durable', async ({ page }) => {

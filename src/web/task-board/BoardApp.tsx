@@ -15,8 +15,8 @@ import {
   Square,
   UserRoundCheck,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, Toast, cn, inputClass } from '../components/ui';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
@@ -24,7 +24,19 @@ import { DocumentsPage } from './views/DocumentsPage';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
-import { WorkItemDetail, type WorkItemDetailMutationResult } from './views/WorkItemDetail';
+import { WorkItemDetail } from './views/WorkItemDetail';
+import {
+  actionErrorContexts,
+  actionErrorMessage,
+  errorPipelineReducer,
+  initialErrorPipelineState,
+  isDialogAnchoredActionContext,
+  mutationNetworkError,
+  newestActionErrors,
+  useActionErrors,
+  type ActionError,
+  type ActionResult,
+} from './model/action-errors';
 import {
   isExplicitPointOfContact,
   selectPointOfContact,
@@ -346,30 +358,6 @@ function TaskPhases({ task }: { task: BoardTask }) {
   );
 }
 
-interface TaskDetailMutationResult {
-  saved: boolean;
-  error?: string;
-}
-
-function taskDetailMutationError(caught: unknown): string {
-  if (!(caught instanceof BoardApiError)) {
-    return caught instanceof Error ? caught.message : 'The change could not be saved.';
-  }
-  if (caught.code === 'TASK_TERMINAL') {
-    return 'This task is already completed or cancelled and cannot be recovered. Refresh to see its current state.';
-  }
-  if (caught.code === 'TASK_WORKFLOW_BOUND') {
-    return 'Workflow stage tasks cannot return to backlog. Retry or reassign this task instead.';
-  }
-  if (caught.code === 'TASK_UNASSIGNED') {
-    return 'This task has no assigned agent. Reassign it before retrying.';
-  }
-  if (caught.code === 'TASK_VERSION_CONFLICT' || caught.code === 'WORK_NODE_VERSION_CONFLICT') {
-    return 'This task changed in another session. Refresh before trying again.';
-  }
-  return caught.message;
-}
-
 function TaskDetail({
   task,
   agents,
@@ -389,13 +377,13 @@ function TaskDetail({
   questions: BoardQuestion[];
   runs: BoardRun[];
   busy: boolean;
-  onAssign: (agentId: string) => Promise<TaskDetailMutationResult>;
-  onReturnToBacklog: () => Promise<TaskDetailMutationResult>;
-  onRetry: () => Promise<TaskDetailMutationResult>;
-  onRecoveryBacklog: () => Promise<TaskDetailMutationResult>;
-  onAnswer: (questionId: string, answer: string) => Promise<TaskDetailMutationResult>;
-  onInterrupt: (runId: string) => Promise<TaskDetailMutationResult>;
-  onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<TaskDetailMutationResult>;
+  onAssign: (agentId: string) => Promise<ActionResult>;
+  onReturnToBacklog: () => Promise<ActionResult>;
+  onRetry: () => Promise<ActionResult>;
+  onRecoveryBacklog: () => Promise<ActionResult>;
+  onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
+  onInterrupt: (runId: string) => Promise<ActionResult>;
+  onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<ActionResult>;
 }) {
   const eligibleAgents = useMemo(
     () => task.requiredRole === null ? agents : agents.filter((agent) => agent.role === task.requiredRole),
@@ -421,7 +409,7 @@ function TaskDetail({
   const [agentId, setAgentId] = useState(defaultAgentId);
   const [answer, setAnswer] = useState('');
   const [decisionRationale, setDecisionRationale] = useState('');
-  const [actionError, setActionError] = useState<string | null>(null);
+  const actionErrors = useActionErrors();
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
   const queuedUnclaimed = task.status === 'queued' && !activeRun;
@@ -431,14 +419,13 @@ function TaskDetail({
     setAgentId(defaultAgentId);
     setAnswer('');
     setDecisionRationale('');
-    setActionError(null);
   }, [defaultAgentId, task.id]);
 
-  async function runAction(operation: () => Promise<TaskDetailMutationResult>): Promise<boolean> {
-    setActionError(null);
+  async function runAction(context: string, operation: () => Promise<ActionResult>): Promise<boolean> {
+    actionErrors.start(context);
     const result = await operation();
-    if (result.saved) return true;
-    setActionError(result.error ?? 'The change could not be saved. Refresh and try again.');
+    if (result.ok) return true;
+    actionErrors.fail(context, result.error);
     return false;
   }
 
@@ -480,7 +467,7 @@ function TaskDetail({
             variant="primary"
             icon={<Send size={16} />}
             disabled={busy || answer.trim().length === 0}
-            onClick={() => void runAction(() => onAnswer(openQuestion.id, answer.trim())).then((saved) => { if (saved) setAnswer(''); })}
+            onClick={() => void runAction(actionErrorContexts.taskAnswer(task.id, openQuestion.id), () => onAnswer(openQuestion.id, answer.trim())).then((saved) => { if (saved) setAnswer(''); })}
           >
             Answer and wake agent
           </Button>
@@ -503,7 +490,7 @@ function TaskDetail({
               variant="mint"
               icon={<CheckCircle2 size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void runAction(() => onDecideHumanCheck('completed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void runAction(actionErrorContexts.taskHumanCheckApprove(task.id), () => onDecideHumanCheck('completed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
             >
               Approve
             </Button>
@@ -511,7 +498,7 @@ function TaskDetail({
               variant="danger"
               icon={<CircleAlert size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void runAction(() => onDecideHumanCheck('failed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void runAction(actionErrorContexts.taskHumanCheckRequestChanges(task.id), () => onDecideHumanCheck('failed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
             >
               Request changes
             </Button>
@@ -526,7 +513,7 @@ function TaskDetail({
             <p className="mt-1 text-xs leading-5 text-muted">Retry the same assignment, choose another eligible agent, or return standalone work to the backlog.</p>
           </div>
           {recovery.retry ? (
-            <Button className="w-full" variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => void runAction(onRetry)}>
+            <Button className="w-full" variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskRetry(task.id), onRetry)}>
               Retry
             </Button>
           ) : null}
@@ -550,12 +537,12 @@ function TaskDetail({
             icon={<UserRoundCheck size={16} />}
             disabled={busy || recovery.reassign.disabledReason !== null || agentId.length === 0}
             aria-describedby={busy || recovery.reassign.disabledReason ? `recovery-help-${task.id}` : undefined}
-            onClick={() => void runAction(() => onAssign(agentId))}
+            onClick={() => void runAction(actionErrorContexts.taskRecoveryReassign(task.id), () => onAssign(agentId))}
           >
             Reassign
           </Button>
           {recovery.backlog ? (
-            <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(onRecoveryBacklog)}>
+            <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskRecoveryBacklog(task.id), onRecoveryBacklog)}>
               Return to backlog
             </Button>
           ) : null}
@@ -573,20 +560,20 @@ function TaskDetail({
                   {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
                 </select>
               ) : <p className="text-sm text-muted">No {task.requiredRole ?? 'eligible'} agent is available.</p>}
-              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void runAction(() => onAssign(agentId))}>
+              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void runAction(actionErrorContexts.taskAssign(task.id), () => onAssign(agentId))}>
                 {queuedUnclaimed ? task.kind === 'manager_review' ? 'Reassign manager and wake' : 'Reassign and wake agent' : task.kind === 'manager_review' ? 'Assign manager and wake' : 'Assign and wake agent'}
               </Button>
-              {queuedUnclaimed ? <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(onReturnToBacklog)}>Return to backlog</Button> : null}
+              {queuedUnclaimed ? <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskReturnToBacklog(task.id), onReturnToBacklog)}>Return to backlog</Button> : null}
             </div>
         </section>
       ) : null}
 
-      {actionError ? <div className="border-t border-line px-4 py-4 sm:px-5"><FormError>{actionError}</FormError></div> : null}
+      {actionErrors.errors.length > 0 ? <div className="border-t border-line px-4 py-4 sm:px-5"><InlineActionErrors errors={actionErrors.errors} onDismiss={actionErrors.dismiss} /></div> : null}
 
       {task.kind !== 'human_check' && activeRun ? (
         <section className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
           <span className="text-sm text-muted">Agent is working on this task.</span>
-          <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void runAction(() => onInterrupt(activeRun.id))}>Interrupt</Button>
+          <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskInterrupt(task.id, activeRun.id), () => onInterrupt(activeRun.id))}>Interrupt</Button>
         </section>
       ) : null}
       </Card>
@@ -594,7 +581,17 @@ function TaskDetail({
   );
 }
 
-function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: CreateProjectInput) => Promise<void> }) {
+function ProjectForm({
+  busy,
+  errors,
+  onDismissError,
+  onSubmit,
+}: {
+  busy: boolean;
+  errors: readonly ActionError[];
+  onDismissError: (context: string) => void;
+  onSubmit: (input: CreateProjectInput) => Promise<ActionResult>;
+}) {
   const [workspacePath, setWorkspacePath] = useState('');
   const normalizedPath = workspacePath.trim().replace(/[\\/]+$/u, '');
   const projectName = normalizedPath.split(/[\\/]/u).at(-1)?.trim() ?? '';
@@ -605,6 +602,7 @@ function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: Crea
         <FieldLabel htmlFor="project-folder">Project folder</FieldLabel>
         <input id="project-folder" className={cn(inputClass, 'font-mono text-xs')} autoFocus required value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder="/absolute/path/to/project" />
       </div>
+      <InlineActionErrors errors={errors} onDismiss={onDismissError} />
       <Button className="w-full" type="submit" variant="primary" disabled={busy || !validPath}>Add project</Button>
     </form>
   );
@@ -630,12 +628,16 @@ function WorkItemForm({
   projects,
   defaultProjectId,
   busy,
+  errors,
+  onDismissError,
   onSubmit,
 }: {
   projects: BoardSnapshot['projects'];
   defaultProjectId: string | null;
   busy: boolean;
-  onSubmit: (input: CreateWorkItemInput) => Promise<void>;
+  errors: readonly ActionError[];
+  onDismissError: (context: string) => void;
+  onSubmit: (input: CreateWorkItemInput) => Promise<ActionResult>;
 }) {
   const [prompt, setPrompt] = useState('');
   const [priority, setPriority] = useState<CreateWorkItemInput['priority']>('normal');
@@ -716,6 +718,7 @@ function WorkItemForm({
           ) : null}
         </div>
       </div>
+      <InlineActionErrors errors={errors} onDismiss={onDismissError} />
       <Button className="w-full" type="submit" variant="primary" disabled={busy || !normalizedPrompt || !projectChosen}>
         {projectChosen ? 'Submit task' : 'Choose a project'}
       </Button>
@@ -741,9 +744,9 @@ export function BoardApp() {
   const [dialog, setDialog] = useState<DialogName>(null);
   const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorPipeline, dispatchErrorPipeline] = useReducer(errorPipelineReducer, initialErrorPipelineState);
+  const [connectivityError, setConnectivityError] = useState<string | null>(null);
   const [signInExpired, setSignInExpired] = useState(false);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
   const refreshSequence = useRef(0);
@@ -751,6 +754,7 @@ export function BoardApp() {
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastOpenWorkItemId = useRef<string | null>(null);
   const workItemDetailWasOpen = useRef(false);
+  const connected = snapshot !== null && !errorPipeline.connectivityDown;
 
   const refresh = useCallback(async (quiet = false): Promise<boolean> => {
     const sequence = ++refreshSequence.current;
@@ -762,16 +766,17 @@ export function BoardApp() {
       const next = await client.getSnapshot(controller.signal);
       if (sequence !== refreshSequence.current) return false;
       setSnapshot(next);
-      setError(null);
-      setConnected(true);
+      dispatchErrorPipeline({ type: 'snapshot-succeeded' });
+      setConnectivityError(null);
+      setSignInExpired(false);
       setSelectedTaskId((current) => current && next.tasks.some((task) => task.id === current) ? current : null);
       return true;
     } catch (caught) {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return false;
-      setConnected(false);
+      dispatchErrorPipeline({ type: 'snapshot-failed' });
       const signIn = signInFailure(caught);
       setSignInExpired(signIn?.canRetrySignIn ?? false);
-      setError(signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
+      setConnectivityError(signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
       return false;
     } finally {
       if (sequence === refreshSequence.current) setLoading(false);
@@ -783,8 +788,6 @@ export function BoardApp() {
     setSnapshot(null);
     setSelectedTaskId(null);
     setTaskDetailOpen(false);
-    setConnected(false);
-    setError(null);
     void refresh();
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh(true);
@@ -807,57 +810,55 @@ export function BoardApp() {
     if (fallback !== null) navigate(fallback, 'replace');
   }, [navigate, page, snapshot]);
 
-  const mutate = useCallback(async (operation: () => Promise<unknown>): Promise<boolean> => {
+  const mutate = useCallback(async (context: string, operation: () => Promise<unknown>): Promise<ActionResult> => {
+    dispatchErrorPipeline({ type: 'action-started', context });
     if (!connected) {
-      setError('The board service is not reachable, so changes are unavailable');
-      return false;
+      dispatchErrorPipeline({ type: 'action-failed', context, error: mutationNetworkError });
+      return { ok: false, error: mutationNetworkError };
     }
     setBusy(true);
-    setError(null);
     try {
       await operation();
-      setDialog(null);
       await refresh(true);
-      return true;
+      return { ok: true };
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The change could not be saved');
-      return false;
+      const error = actionErrorMessage(caught);
+      dispatchErrorPipeline({ type: 'action-failed', context, error });
+      return { ok: false, error };
     } finally {
       setBusy(false);
     }
   }, [connected, refresh]);
 
-  const mutateWorkItemDetail = useCallback(async (operation: () => Promise<unknown>): Promise<WorkItemDetailMutationResult> => {
-    if (!connected) return { saved: false, error: 'The board service is not reachable. Reconnect before saving this change.' };
+  const mutateWorkItemDetail = useCallback(async (operation: () => Promise<unknown>): Promise<ActionResult> => {
+    if (!connected) return { ok: false, error: mutationNetworkError };
     setBusy(true);
     try {
       await operation();
       await refresh(true);
-      return { saved: true };
+      return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError) {
         if (caught.code === 'WORK_ITEM_ENDED') {
           await refresh(true);
-          return { saved: false, error: 'This work item ended before the plan could be confirmed. Refresh to see its current state.' };
         }
         if (caught.code === 'WORK_ITEM_VERSION_CONFLICT' || caught.code === 'PLAN_NOT_PROPOSED') {
           await refresh(true);
-          return { saved: false, error: 'This work item or plan changed in another session. Refresh before trying again.' };
         }
       }
-      return { saved: false, error: caught instanceof Error ? caught.message : 'The change could not be saved.' };
+      return { ok: false, error: actionErrorMessage(caught) };
     } finally {
       setBusy(false);
     }
   }, [connected, refresh]);
 
-  const mutateTaskDetail = useCallback(async (operation: () => Promise<unknown>): Promise<TaskDetailMutationResult> => {
-    if (!connected) return { saved: false, error: 'The board service is not reachable. Reconnect before changing this task.' };
+  const mutateTaskDetail = useCallback(async (operation: () => Promise<unknown>): Promise<ActionResult> => {
+    if (!connected) return { ok: false, error: mutationNetworkError };
     setBusy(true);
     try {
       await operation();
       await refresh(true);
-      return { saved: true };
+      return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError && (
         caught.code === 'TASK_TERMINAL'
@@ -866,7 +867,7 @@ export function BoardApp() {
       )) {
         await refresh(true);
       }
-      return { saved: false, error: taskDetailMutationError(caught) };
+      return { ok: false, error: actionErrorMessage(caught) };
     } finally {
       setBusy(false);
     }
@@ -888,6 +889,18 @@ export function BoardApp() {
   const pageProject = page.kind === 'project' ? snapshot?.projects.find((project) => project.id === page.projectId) : undefined;
   const pageAgent = page.kind === 'agent' ? snapshot?.agents.find((agent) => agent.id === page.agentId) : undefined;
   const dialogProject = snapshot?.projects.find((project) => project.id === dialogProjectId);
+  const projectCreateErrors = errorPipeline.actionErrors.filter((entry) => entry.context === actionErrorContexts.projectCreate);
+  const workItemCreateErrors = errorPipeline.actionErrors.filter((entry) => entry.context === actionErrorContexts.workItemCreate);
+  const tokenRotationErrors = pageAgent === undefined
+    ? []
+    : errorPipeline.actionErrors.filter((entry) => entry.context === actionErrorContexts.agentRotateToken(pageAgent.id));
+  const unanchoredActionErrors = newestActionErrors(
+    errorPipeline.actionErrors.filter((entry) => !isDialogAnchoredActionContext(entry.context)),
+  );
+
+  function dismissActionError(context: string) {
+    dispatchErrorPipeline({ type: 'action-dismissed', context });
+  }
 
   useEffect(() => {
     const belowXl = typeof window.matchMedia === 'function'
@@ -919,16 +932,29 @@ export function BoardApp() {
   }
 
   function openDialog(name: Exclude<DialogName, null>, projectId?: string) {
+    dismissActionError(name === 'project'
+      ? actionErrorContexts.projectCreate
+      : actionErrorContexts.workItemCreate);
     setDialogProjectId(projectId ?? null);
     setDialog(name);
   }
 
-  async function createProject(input: CreateProjectInput): Promise<void> {
-    await mutate(() => client.createProject(input));
+  function closeDialog() {
+    if (dialog === 'project') dismissActionError(actionErrorContexts.projectCreate);
+    if (dialog === 'task') dismissActionError(actionErrorContexts.workItemCreate);
+    setDialog(null);
   }
 
-  async function createWorkItem(input: CreateWorkItemInput) {
-    await mutate(() => client.createWorkItem(input));
+  async function createProject(input: CreateProjectInput): Promise<ActionResult> {
+    const result = await mutate(actionErrorContexts.projectCreate, () => client.createProject(input));
+    if (result.ok) setDialog(null);
+    return result;
+  }
+
+  async function createWorkItem(input: CreateWorkItemInput): Promise<ActionResult> {
+    const result = await mutate(actionErrorContexts.workItemCreate, () => client.createWorkItem(input));
+    if (result.ok) setDialog(null);
+    return result;
   }
 
   let content: ReactNode;
@@ -950,12 +976,12 @@ export function BoardApp() {
   } else if (page.kind === 'project' && pageProject) {
     content = <ProjectPage project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
   } else if (page.kind === 'agent' && pageAgent) {
-    content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(() => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(() => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
+    content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} rotationErrors={tokenRotationErrors} onDismissActionError={dismissActionError} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(actionErrorContexts.agentSend(pageAgent.id), () => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(actionErrorContexts.questionAnswer(questionId), () => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
       let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
-      const saved = await mutate(async () => {
+      const result = await mutate(actionErrorContexts.agentRotateToken(pageAgent.id), async () => {
         rotated = await client.rotateAgentToken(pageAgent.id, { version: pageAgent.version });
       });
-      return saved ? rotated : null;
+      return result.ok ? rotated : null;
     }} />;
   } else {
     content = (
@@ -1030,7 +1056,7 @@ export function BoardApp() {
                 onCancel={(reason) => mutateWorkItemDetail(() => client.cancelWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version, reason }))}
                 onArchive={async () => {
                   const result = await mutateWorkItemDetail(() => client.archiveWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version }));
-                  if (result.saved) closeWorkItem();
+                  if (result.ok) closeWorkItem();
                   return result;
                 }}
               /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={(agentId) => mutateTaskDetail(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version }))} onReturnToBacklog={() => mutateTaskDetail(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version }))} onRetry={() => mutateTaskDetail(() => client.retryTask(selectedTask.id, selectedTask.version))} onRecoveryBacklog={() => mutateTaskDetail(() => client.backlogTask(selectedTask.id, selectedTask.version))} onAnswer={(questionId, answer) => mutateTaskDetail(() => client.answerQuestion(questionId, { answer }))} onInterrupt={(runId) => mutateTaskDetail(() => client.interruptRun(runId))} onDecideHumanCheck={(status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutateTaskDetail(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
@@ -1055,12 +1081,23 @@ export function BoardApp() {
 
   return (
     <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
-      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${error}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
+      {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
-      <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Agent identities are created when the project receives work."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
-      <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'unselected'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} onSubmit={createWorkItem} /></Modal>
-      {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}
+      <Modal open={dialog === 'project'} onClose={closeDialog} title="Add project from disk" description="Enter the project folder. Agent identities are created when the project receives work."><ProjectForm busy={busy || !connected} errors={projectCreateErrors} onDismissError={dismissActionError} onSubmit={createProject} /></Modal>
+      <Modal open={dialog === 'task'} onClose={closeDialog} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'unselected'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} errors={workItemCreateErrors} onDismissError={dismissActionError} onSubmit={createWorkItem} /></Modal>
+      {unanchoredActionErrors.length > 0 ? (
+        <div className="fixed bottom-4 left-4 right-4 z-[70] mx-auto flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col gap-2 overflow-y-auto overscroll-contain" role="region" aria-label="Action errors">
+          {unanchoredActionErrors.map((entry) => (
+            <Toast
+              key={entry.context}
+              onDismiss={() => dismissActionError(entry.context)}
+            >
+              {entry.error}
+            </Toast>
+          ))}
+        </div>
+      ) : null}
     </WorkspaceFrame>
   );
 }

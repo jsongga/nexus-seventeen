@@ -188,5 +188,70 @@ export function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor
   );
 }
 
+export function Toast({
+  children,
+  onDismiss,
+  dismissLabel = 'Dismiss error',
+  className,
+}: {
+  children: ReactNode;
+  onDismiss: () => void;
+  dismissLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'rounded-md border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]',
+        className,
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 break-words leading-5">{children}</div>
+        <button
+          type="button"
+          className="-mr-1 -mt-1 flex size-10 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-urgent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-urgent"
+          onClick={onDismiss}
+          aria-label={dismissLabel}
+        >
+          <X size={17} aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function InlineActionErrors({
+  errors,
+  onDismiss,
+  className,
+}: {
+  errors: readonly { context: string; error: string }[];
+  onDismiss: (context: string) => void;
+  className?: string;
+}) {
+  if (errors.length === 0) return null;
+  return (
+    <div className={cn('space-y-2', className)}>
+      {errors.map((entry) => (
+        <div key={entry.context} className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+          <div className="flex items-start justify-between gap-3">
+            <span className="min-w-0 flex-1 leading-5">{entry.error}</span>
+            <button
+              type="button"
+              className="-mr-1 -mt-1 flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-urgent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-urgent"
+              onClick={() => onDismiss(entry.context)}
+              aria-label="Dismiss error"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export const inputClass =
   'min-h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink transition-[background-color,border-color,box-shadow] duration-150 ease-out placeholder:text-muted hover:border-taupe-hover focus:border-taupe-hover focus:bg-surface';

@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../../components/ui';
+import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import type { TaskBoardClient } from '../data/client';
 import {
   deriveWorkItemDetailAffordances,
@@ -22,6 +22,7 @@ import {
   workItemStateTone,
   workItemStatusLabel,
 } from '../model/work-item-labels';
+import { actionErrorContexts, useActionErrors, type ActionResult } from '../model/action-errors';
 import type {
   BoardQuestion,
   BoardTask,
@@ -29,11 +30,6 @@ import type {
   ProjectWorkflow,
   WorkflowNode,
 } from '../types';
-
-export interface WorkItemDetailMutationResult {
-  saved: boolean;
-  error?: string;
-}
 
 interface WorkItemDetailProps {
   workItem: BoardWorkItem;
@@ -43,10 +39,10 @@ interface WorkItemDetailProps {
   client: TaskBoardClient;
   busy: boolean;
   onClose: () => void;
-  onAnswer: (questionId: string, answer: string) => Promise<WorkItemDetailMutationResult>;
-  onConfirm: (planRevisionId: string) => Promise<WorkItemDetailMutationResult>;
-  onCancel: (reason: string) => Promise<WorkItemDetailMutationResult>;
-  onArchive: () => Promise<WorkItemDetailMutationResult>;
+  onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
+  onConfirm: (planRevisionId: string) => Promise<ActionResult>;
+  onCancel: (reason: string) => Promise<ActionResult>;
+  onArchive: () => Promise<ActionResult>;
 }
 
 function StatusTimeline({ workItem }: { workItem: BoardWorkItem }) {
@@ -137,13 +133,18 @@ export function WorkItemDetail({
   const [answer, setAnswer] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'archive' | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const actionErrors = useActionErrors();
   const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
   const [workflowState, setWorkflowState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [workflowAttempt, setWorkflowAttempt] = useState(0);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
+  const actionContexts = {
+    rejectPlan: actionErrorContexts.workItemRejectPlan(workItem.id),
+    cancel: actionErrorContexts.workItemCancel(workItem.id),
+    archive: actionErrorContexts.workItemArchive(workItem.id),
+  } as const;
   const affordances = deriveWorkItemDetailAffordances({
     workItemState: workItem.state,
     planningTaskState: planningTask?.status ?? null,
@@ -154,7 +155,6 @@ export function WorkItemDetail({
     setAnswer('');
     setCancelReason('');
     setConfirmation(null);
-    setActionError(null);
   }, [workItem.id]);
 
   useEffect(() => {
@@ -193,21 +193,47 @@ export function WorkItemDetail({
     () => proposedPlan === null || workflow === null ? [] : nodesForPlan(workflow, proposedPlan.planRevisionId),
     [proposedPlan, workflow],
   );
+  const answerContext = openQuestion === null
+    ? null
+    : actionErrorContexts.workItemAnswer(workItem.id, openQuestion.id);
+  const confirmPlanContext = proposedPlan === null
+    ? null
+    : actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId);
+  const cancellationContext = confirmation === 'reject' ? actionContexts.rejectPlan : actionContexts.cancel;
 
-  async function save(operation: () => Promise<WorkItemDetailMutationResult>, onSaved?: () => void) {
-    setActionError(null);
+  async function save(context: string, operation: () => Promise<ActionResult>, onSaved?: () => void) {
+    actionErrors.start(context);
     const result = await operation();
-    if (result.saved) onSaved?.();
-    else setActionError(result.error ?? 'The change could not be saved. Refresh and try again.');
+    if (result.ok) onSaved?.();
+    else actionErrors.fail(context, result.error);
   }
 
   async function submitCancellation() {
     const reason = cancelReason.trim();
-    if (reason.length === 0) return;
-    await save(() => onCancel(reason), () => {
+    if (reason.length === 0 || (confirmation !== 'cancel' && confirmation !== 'reject')) return;
+    await save(cancellationContext, () => onCancel(reason), () => {
       setCancelReason('');
-      setConfirmation(null);
+      closeConfirmation();
     });
+  }
+
+  function confirmationContext(next: typeof confirmation): string | null {
+    if (next === 'reject') return actionContexts.rejectPlan;
+    if (next === 'cancel') return actionContexts.cancel;
+    if (next === 'archive') return actionContexts.archive;
+    return null;
+  }
+
+  function openConfirmation(next: Exclude<typeof confirmation, null>) {
+    actionErrors.dismiss(confirmationContext(next)!);
+    if (next === 'cancel' || next === 'reject') setCancelReason('');
+    setConfirmation(next);
+  }
+
+  function closeConfirmation() {
+    const context = confirmationContext(confirmation);
+    if (context !== null) actionErrors.dismiss(context);
+    setConfirmation(null);
   }
 
   return (
@@ -265,7 +291,7 @@ export function WorkItemDetail({
             onSubmit={(event) => {
               event.preventDefault();
               if (!openQuestion || answer.trim().length === 0) return;
-              void save(() => onAnswer(openQuestion.id, answer.trim()), () => setAnswer(''));
+              void save(actionErrorContexts.workItemAnswer(workItem.id, openQuestion.id), () => onAnswer(openQuestion.id, answer.trim()), () => setAnswer(''));
             }}
           >
             <div className="flex items-center gap-2 text-caution">
@@ -332,8 +358,8 @@ export function WorkItemDetail({
                 {planNodes.length > 0 ? <ol className="mt-3 space-y-3">{planNodes.map((node) => <WorkflowNodeCard key={node.nodeId} node={node} allNodes={planNodes} />)}</ol> : <p className="mt-3 rounded-md border border-line bg-muted-surface p-3.5 text-sm text-muted">This proposed plan contains no work nodes.</p>}
                 {affordances.confirmPlan || affordances.rejectPlan ? (
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={() => void save(() => onConfirm(proposedPlan.planRevisionId))}>Confirm plan</Button>
-                    <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={() => { setCancelReason(''); setConfirmation('reject'); setActionError(null); }}>Reject plan</Button>
+                    <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={() => void save(actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId), () => onConfirm(proposedPlan.planRevisionId))}>Confirm plan</Button>
+                    <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={() => openConfirmation('reject')}>Reject plan</Button>
                   </div>
                 ) : null}
               </div>
@@ -345,12 +371,16 @@ export function WorkItemDetail({
           </section>
         ) : null}
 
-        {actionError ? <div className="border-b border-urgent/20 bg-urgent-soft px-4 py-3 text-sm text-urgent sm:px-5" role="alert">{actionError}</div> : null}
+        <InlineActionErrors
+          className={actionErrors.errors.some((entry) => entry.context === answerContext || entry.context === confirmPlanContext) ? 'border-b border-line px-4 py-3 sm:px-5' : undefined}
+          errors={actionErrors.errors.filter((entry) => entry.context === answerContext || entry.context === confirmPlanContext)}
+          onDismiss={actionErrors.dismiss}
+        />
 
         {affordances.cancel || affordances.archive ? (
           <footer className="flex flex-wrap justify-end gap-2 px-4 py-4 sm:px-5">
-            {affordances.cancel ? <Button variant="danger" disabled={busy} onClick={() => { setCancelReason(''); setConfirmation('cancel'); setActionError(null); }}>Cancel work item</Button> : null}
-            {affordances.archive ? <Button icon={<Archive size={15} />} disabled={busy} onClick={() => { setConfirmation('archive'); setActionError(null); }}>Archive</Button> : null}
+            {affordances.cancel ? <Button variant="danger" disabled={busy} onClick={() => openConfirmation('cancel')}>Cancel work item</Button> : null}
+            {affordances.archive ? <Button icon={<Archive size={15} />} disabled={busy} onClick={() => openConfirmation('archive')}>Archive</Button> : null}
           </footer>
         ) : null}
         </Card>
@@ -358,7 +388,7 @@ export function WorkItemDetail({
 
       <Modal
         open={confirmation === 'cancel' || confirmation === 'reject'}
-        onClose={() => setConfirmation(null)}
+        onClose={closeConfirmation}
         title={confirmation === 'reject' ? 'Reject proposed plan' : 'Cancel work item'}
         description={confirmation === 'reject'
           ? 'Rejecting the plan cancels this work item and records your reason on its planning task.'
@@ -378,24 +408,24 @@ export function WorkItemDetail({
               placeholder={confirmation === 'reject' ? 'What must change before this can proceed?' : 'Why is this work item being cancelled?'}
             />
           </div>
-          {actionError ? <div className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">{actionError}</div> : null}
+          <InlineActionErrors errors={actionErrors.errors.filter((entry) => entry.context === cancellationContext)} onDismiss={actionErrors.dismiss} />
           <div className="grid gap-2 sm:grid-cols-2">
             <Button type="submit" variant="danger" disabled={busy || cancelReason.trim().length === 0}>{confirmation === 'reject' ? 'Reject and cancel' : 'Cancel work item'}</Button>
-            <Button disabled={busy} onClick={() => setConfirmation(null)}>Keep work item</Button>
+            <Button disabled={busy} onClick={closeConfirmation}>Keep work item</Button>
           </div>
         </form>
       </Modal>
 
       <Modal
         open={confirmation === 'archive'}
-        onClose={() => setConfirmation(null)}
+        onClose={closeConfirmation}
         title="Archive work item"
         description="Archived work items leave the default intake list but remain stored and retrievable."
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
-          <Button variant="primary" icon={<Archive size={15} />} disabled={busy} onClick={() => void save(onArchive, () => setConfirmation(null))}>Archive work item</Button>
-          <Button disabled={busy} onClick={() => setConfirmation(null)}>Keep visible</Button>
-          {actionError ? <div className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent sm:col-span-2" role="alert">{actionError}</div> : null}
+          <Button variant="primary" icon={<Archive size={15} />} disabled={busy} onClick={() => void save(actionContexts.archive, onArchive, closeConfirmation)}>Archive work item</Button>
+          <Button disabled={busy} onClick={closeConfirmation}>Keep visible</Button>
+          <InlineActionErrors className="sm:col-span-2" errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.archive)} onDismiss={actionErrors.dismiss} />
         </div>
       </Modal>
     </>

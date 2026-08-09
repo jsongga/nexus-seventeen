@@ -5,7 +5,7 @@ import {
   Send,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Modal, Pill, cn } from '../../components/ui';
+import { Button, InlineActionErrors, Modal, Pill, cn } from '../../components/ui';
 import { ActivityFeed, type ActivityFeedUpdate } from '../project/ActivityFeed';
 import { agentQueryPromptFromObjective } from '../data/client';
 import type { TaskBoardClient } from '../data/client';
@@ -20,6 +20,7 @@ import {
   updatesForProject,
 } from '../model/workspace-model';
 import { laneConfigurationState } from '../model/lane-config';
+import { actionErrorContexts, type ActionError, type ActionResult } from '../model/action-errors';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -256,9 +257,11 @@ interface AgentPageProps {
   isPointOfContact: boolean;
   explicitPointOfContact: boolean;
   busy: boolean;
+  rotationErrors: readonly ActionError[];
+  onDismissActionError: (context: string) => void;
   onTask: (taskId: string) => void;
-  onSend: (prompt: string, workspaceRefs: string[], routingContext?: string, recentConversation?: AgentQueryConversationTurn[]) => Promise<boolean>;
-  onAnswer: (questionId: string, answer: string) => Promise<boolean>;
+  onSend: (prompt: string, workspaceRefs: string[], routingContext?: string, recentConversation?: AgentQueryConversationTurn[]) => Promise<ActionResult>;
+  onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
   onRotateToken: () => Promise<RotateAgentTokenResult | null>;
 }
 
@@ -381,12 +384,14 @@ function AgentChat({
   onSend,
   onAnswer,
   onRotateToken,
-}: Pick<AgentPageProps, 'agent' | 'snapshot' | 'isPointOfContact' | 'busy' | 'onTask' | 'onSend' | 'onAnswer' | 'onRotateToken'>) {
+  rotationErrors,
+  onDismissActionError,
+}: Pick<AgentPageProps, 'agent' | 'snapshot' | 'isPointOfContact' | 'busy' | 'onTask' | 'onSend' | 'onAnswer' | 'onRotateToken' | 'rotationErrors' | 'onDismissActionError'>) {
   const [draft, setDraft] = useState('');
   const [visibleLaneToken, setVisibleLaneToken] = useState<string | null>(null);
   const [confirmRotation, setConfirmRotation] = useState(false);
   const [rotating, setRotating] = useState(false);
-  const [rotationError, setRotationError] = useState<string | null>(null);
+  const rotationContext = actionErrorContexts.agentRotateToken(agent.id);
   const historyEndRef = useRef<HTMLDivElement>(null);
   const history = useMemo(() => agentChatHistory(agent, snapshot, isPointOfContact), [agent, isPointOfContact, snapshot]);
   const focus = useMemo(() => agentPipelineFocus(agent, snapshot.tasks), [agent, snapshot.tasks]);
@@ -427,20 +432,27 @@ function AgentChat({
     const sent = currentOpenQuestion
       ? await onAnswer(currentOpenQuestion.id, prompt)
       : await onSend(prompt, isPointOfContact ? [] : focus.task?.workspaceRefs ?? [], routingMap || undefined, recentConversation);
-    if (sent) setDraft('');
+    if (sent.ok) setDraft('');
   }
 
   async function rotateToken() {
-    setConfirmRotation(false);
     setRotating(true);
-    setRotationError(null);
     const rotated = await onRotateToken();
-    if (rotated === null) {
-      setRotationError('The token could not be rotated. Refresh the agent and try again.');
-    } else {
+    if (rotated !== null) {
       setVisibleLaneToken(rotated.token);
+      closeRotationDialog();
     }
     setRotating(false);
+  }
+
+  function openRotationDialog() {
+    onDismissActionError(rotationContext);
+    setConfirmRotation(true);
+  }
+
+  function closeRotationDialog() {
+    onDismissActionError(rotationContext);
+    setConfirmRotation(false);
   }
 
   return (
@@ -494,7 +506,7 @@ function AgentChat({
               className="shrink-0"
               size="sm"
               disabled={busy || rotating}
-              onClick={() => setConfirmRotation(true)}
+              onClick={openRotationDialog}
             >
               {rotating ? 'Rotating…' : laneConfiguration.tokenVisible ? 'Rotate again' : 'Rotate token'}
             </Button>
@@ -508,7 +520,6 @@ function AgentChat({
               ? 'Token visible for this page session only. It will be masked after you leave or reload.'
               : 'No token is stored in the board snapshot. Rotate it to reveal a new value once.'}
           </p>
-          {rotationError ? <p className="mt-2 text-xs text-urgent" role="alert">{rotationError}</p> : null}
           </section>
 
           <div role="log" aria-label={`Chat history with ${agent.name}`} aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-5 sm:py-7">
@@ -560,7 +571,7 @@ function AgentChat({
       </main>
       <Modal
         open={confirmRotation}
-        onClose={() => setConfirmRotation(false)}
+        onClose={closeRotationDialog}
         title="Rotate agent token?"
         description="Rotating immediately disconnects any worker using the current token."
       >
@@ -568,8 +579,9 @@ function AgentChat({
           <p className="text-sm leading-6 text-muted">
             The old token will stop authenticating as soon as rotation succeeds. Update the fleet lane with the new token before reconnecting it.
           </p>
+          <InlineActionErrors errors={rotationErrors} onDismiss={onDismissActionError} />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button disabled={rotating} onClick={() => setConfirmRotation(false)}>Cancel</Button>
+            <Button disabled={rotating} onClick={closeRotationDialog}>Cancel</Button>
             <Button variant="danger" disabled={rotating} onClick={() => void rotateToken()}>Rotate token</Button>
           </div>
         </div>
@@ -579,5 +591,5 @@ function AgentChat({
 }
 
 export function AgentPage(props: AgentPageProps) {
-  return <AgentChat agent={props.agent} snapshot={props.snapshot} isPointOfContact={props.isPointOfContact} busy={props.busy} onTask={props.onTask} onSend={props.onSend} onAnswer={props.onAnswer} onRotateToken={props.onRotateToken} />;
+  return <AgentChat agent={props.agent} snapshot={props.snapshot} isPointOfContact={props.isPointOfContact} busy={props.busy} rotationErrors={props.rotationErrors} onDismissActionError={props.onDismissActionError} onTask={props.onTask} onSend={props.onSend} onAnswer={props.onAnswer} onRotateToken={props.onRotateToken} />;
 }
