@@ -33,6 +33,7 @@ import {
   type ProjectEvent,
   type RetryTaskRequest,
   type RetryTaskResponse,
+  type RotateAgentTokenResponse,
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
@@ -110,6 +111,10 @@ export class TaskBoard {
     return this.#runtime.agentFromRow(row);
   }
 
+  assertAgentCredentialVersion(agentId: string, credentialVersion: number): void {
+    this.#runtime.requireAgentCredentialVersion(agentId, credentialVersion);
+  }
+
   listProjects(): readonly Project[] {
     return this.#projects.listProjects();
   }
@@ -155,7 +160,9 @@ export class TaskBoard {
   }
 
   updateAutomationConfiguration(request: UpdateAutomationConfigurationRequest): AutomationConfiguration {
-    return this.#automation.updateConfiguration(request);
+    const configuration = this.#automation.updateConfiguration(request);
+    this.#projects.reconcileWorkflowsBestEffort();
+    return configuration;
   }
 
   listWorkItemsPage(cursor?: string, includeArchived = false): WorkItemPage {
@@ -222,6 +229,10 @@ export class TaskBoard {
     return this.#agents.createAgent(projectId, request);
   }
 
+  rotateAgentToken(agentId: string, version: number): RotateAgentTokenResponse {
+    return this.#agents.rotateToken(agentId, version);
+  }
+
   setAgentLaneError(agentId: string, detail: string | null): void {
     this.#agents.setLaneError(agentId, detail);
   }
@@ -284,12 +295,13 @@ export class TaskBoard {
     after: number,
     waitMs: number,
     signal: AbortSignal,
+    credentialVersion?: number,
   ): Promise<RunInterruptBatch | null> {
-    return this.#runs.waitForRunInterrupts(runId, agentId, after, waitMs, signal);
+    return this.#runs.waitForRunInterrupts(runId, agentId, after, waitMs, signal, credentialVersion);
   }
 
-  claimRun(agentId: string, request: ClaimRunRequest): ClaimRunResult | null {
-    return this.#runs.claimRun(agentId, request);
+  claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResult | null {
+    return this.#runs.claimRun(agentId, request, credentialVersion);
   }
 
   async waitToClaimRun(
@@ -297,8 +309,9 @@ export class TaskBoard {
     request: ClaimRunRequest,
     waitMs: number,
     signal: AbortSignal,
+    credentialVersion?: number,
   ): Promise<ClaimRunResult | null> {
-    return this.#runs.waitToClaimRun(agentId, request, waitMs, signal);
+    return this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
   }
 
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {

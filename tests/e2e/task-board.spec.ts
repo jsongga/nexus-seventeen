@@ -1,6 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type {
-  CreateAgentRequest,
   HumanQuestion,
   UpdateAutomationConfigurationRequest,
 } from '@shared/task-board-contract';
@@ -53,6 +52,7 @@ const agent = {
   mission: 'Keep billing reliable and understandable for customers.',
   model: 'configured-coding-model',
   status: 'idle',
+  version: 1,
   createdAt: '2026-07-19T18:05:00.000Z',
 };
 const manager = {
@@ -1093,7 +1093,7 @@ test('task details stay concise while showing a long description, agent estimate
   await expect(page.getByText(task.acceptanceCriteria, { exact: true })).toHaveCount(0);
 });
 
-test('adding a project asks only for its folder and creates its engineer profile automatically', async ({ page }) => {
+test('project intake lazily creates a manager whose lane token can be rotated and shown once', async ({ page }) => {
   const importedProject = {
     ...project,
     projectId: 'project-payment-tools',
@@ -1101,30 +1101,126 @@ test('adding a project asks only for its folder and creates its engineer profile
     description: '/workspace/payment-tools',
   };
   let createdProject: Record<string, unknown> | null = null;
-  const createdAgent: { value: CreateAgentRequest | null } = { value: null };
+  let projectCreated = false;
+  let taskSubmitted = false;
+  let agentCreateRequests = 0;
+  let managerVersion = 1;
+  let createdWorkItemRequest: Record<string, unknown> | null = null;
+  const rotatedToken = 'rotated-payment-tools-manager-token-012345678901';
+  const lazyManager = {
+    ...agent,
+    agentId: 'payment-tools-manager',
+    projectId: importedProject.projectId,
+    role: 'manager',
+    area: importedProject.name,
+    mission: 'Refine incoming payment-tools work and plan durable workflows.',
+    model: 'auto',
+    status: 'ready',
+    workerConnection: null,
+    lastError: null,
+    version: managerVersion,
+    createdAt: '2026-08-09T20:01:00.000Z',
+  };
+  const planningTask = {
+    ...task,
+    taskId: 'task-plan-payment-tools',
+    projectId: importedProject.projectId,
+    title: 'Plan workflow: Add a health check to payment tools',
+    objective: 'Add a health check to payment tools',
+    acceptanceCriteria: 'Return a concise workflow plan.',
+    workspaceRefs: [],
+    status: 'queued',
+    assignedAgentId: lazyManager.agentId,
+    assignedRole: 'manager',
+    requiresReview: false,
+    version: 1,
+    createdAt: '2026-08-09T20:01:00.000Z',
+    updatedAt: '2026-08-09T20:01:00.000Z',
+  };
+  const createdWorkItem = {
+    apiVersion,
+    workItemId: 'work-item-payment-tools-first',
+    originalRequest: 'Add a health check to payment tools',
+    refinedObjective: null,
+    priority: 'normal',
+    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
+    resolvedProjectId: importedProject.projectId,
+    planningTaskId: planningTask.taskId,
+    state: 'processing',
+    currentStage: 'planning',
+    createdBy: 'human:operator',
+    version: 2,
+    createdAt: '2026-08-09T20:01:00.000Z',
+    updatedAt: '2026-08-09T20:01:00.000Z',
+    endedAt: null,
+    cancelledReason: null,
+    archivedAt: null,
+  };
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === '/board-api/v1/work-items') {
-      await route.fulfill({ json: { workItems: [] } });
+    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'GET') {
+      await route.fulfill({ json: { workItems: taskSubmitted ? [createdWorkItem] : [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'POST') {
+      createdWorkItemRequest = request.postDataJSON() as Record<string, unknown>;
+      taskSubmitted = true;
+      await route.fulfill({ status: 201, json: { workItem: createdWorkItem } });
       return;
     }
     if (url.pathname === '/board-api/v1/projects' && request.method() === 'POST') {
       createdProject = request.postDataJSON() as Record<string, unknown>;
+      projectCreated = true;
       await route.fulfill({ status: 201, json: { project: importedProject } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/agents` && request.method() === 'POST') {
-      createdAgent.value = request.postDataJSON() as CreateAgentRequest;
-      await route.fulfill({ status: 204 });
+      agentCreateRequests += 1;
+      await route.fulfill({ status: 500, json: { error: { code: 'UNEXPECTED_AGENT_CREATE', message: 'Identity must be lazy' } } });
       return;
     }
     if (url.pathname === '/board-api/v1/projects') {
-      await route.fulfill({ json: { projects: [project] } });
+      await route.fulfill({ json: { projects: projectCreated ? [project, importedProject] : [project] } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
       await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/board`) {
+      await route.fulfill({
+        json: {
+          ...board(),
+          project: importedProject,
+          agents: taskSubmitted ? [{ ...lazyManager, version: managerVersion }] : [],
+          tasks: taskSubmitted ? [planningTask] : [],
+          recentEvents: taskSubmitted ? [{
+            apiVersion,
+            eventId: 'event-payment-tools-manager-created',
+            projectId: importedProject.projectId,
+            taskId: null,
+            actorType: 'system',
+            actorId: 'system:lazy-agent-identity',
+            eventType: 'agent_profile_created',
+            data: { agentId: lazyManager.agentId, role: 'manager' },
+            createdAt: lazyManager.createdAt,
+          }] : [],
+          documents: [],
+        },
+      });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${planningTask.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/agents/${lazyManager.agentId}/rotate-token` && request.method() === 'POST') {
+      expect(request.postDataJSON()).toEqual({ version: managerVersion });
+      managerVersion += 1;
+      await route.fulfill({
+        json: { agent: { ...lazyManager, version: managerVersion }, token: rotatedToken },
+      });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
@@ -1140,19 +1236,44 @@ test('adding a project asks only for its folder and creates its engineer profile
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
   await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
-  await expect.poll(() => createdAgent.value).not.toBeNull();
+  await expect.poll(() => createdProject).not.toBeNull();
 
   expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
-  expect(createdAgent.value).toMatchObject({
-    agentId: 'payment-tools-engineer',
-    role: 'engineer',
-    area: 'payment-tools',
-    model: agent.model,
+  expect(agentCreateRequests).toBe(0);
+
+  await page.getByRole('button', { name: 'Add task' }).click();
+  const taskDialog = page.getByRole('dialog');
+  await taskDialog.getByRole('textbox').fill(createdWorkItem.originalRequest);
+  await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
+  await taskDialog.getByRole('button', { name: 'Submit task' }).click();
+  await expect.poll(() => createdWorkItemRequest).not.toBeNull();
+  expect(createdWorkItemRequest).toEqual({
+    originalRequest: createdWorkItem.originalRequest,
+    priority: 'normal',
+    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
   });
-  expect(createdAgent.value?.mission).toContain('Research, plan, implement, test');
-  expect(typeof createdAgent.value?.token).toBe('string');
-  expect(String(createdAgent.value?.token)).toHaveLength(72);
-  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('cicada.pendingAgentToken.payment-tools-engineer'))).toBe(createdAgent.value?.token);
+
+  const companyRail = await openCompanyRail(page);
+  const lazyManagerButton = companyRail
+    .getByRole('navigation', { name: 'Projects and agents' })
+    .getByRole('button', { name: /^payment-tools-manager\b/u });
+  await expect(lazyManagerButton).toBeVisible();
+  await lazyManagerButton.click();
+  await expect(page.getByRole('heading', { name: 'Lane configuration' })).toBeVisible();
+  const laneConfig = page.getByLabel(`Fleet lane configuration for ${lazyManager.agentId}`);
+  await expect(laneConfig).toContainText('"agentId": "payment-tools-manager"');
+  await expect(laneConfig).toContainText('"workingDirectory": "/absolute/path/to/repository"');
+  await expect(laneConfig).toContainText('"provider": "<codex or claude>"');
+  await expect(laneConfig).toContainText('<rotate token to reveal>');
+  await expect(page.getByText(/replace the working-directory and provider placeholders/u)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Rotate token', exact: true }).click();
+  const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?' });
+  await expect(rotationDialog).toContainText('disconnects any worker using the current token');
+  await rotationDialog.getByRole('button', { name: 'Rotate token', exact: true }).click();
+  await expect(laneConfig).toContainText(rotatedToken);
+  await expect(page.getByText('Token visible for this page session only.')).toBeVisible();
+  expect(await page.evaluate(() => Object.keys(window.sessionStorage).filter((key) => key.startsWith('cicada.pendingAgentToken.')))).toEqual([]);
 });
 
 test('agent pages stay chat-first while unavailable assignments remain durable', async ({ page }) => {

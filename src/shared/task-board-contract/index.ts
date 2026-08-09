@@ -1,6 +1,7 @@
 export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
 /** Stable error codes introduced for clients that branch on board HTTP failures. */
 export const TASK_BOARD_ERROR_CODES = Object.freeze({
+  AGENT_VERSION_CONFLICT: "AGENT_VERSION_CONFLICT",
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
   PROJECT_REQUIRED: "PROJECT_REQUIRED",
   TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
@@ -380,6 +381,7 @@ export interface AgentProfile {
   readonly workerConnection: WorkerConnection;
   /** Most recent fleet fatal-class error; cleared after the lane next claims work successfully. */
   readonly lastError: string | null;
+  readonly version: number;
   readonly createdAt: string;
 }
 
@@ -621,6 +623,16 @@ export interface CreateAgentRequest {
   readonly area: string;
   readonly mission: string;
   readonly model: string;
+  readonly token: string;
+}
+
+export interface RotateAgentTokenRequest {
+  readonly version: number;
+}
+
+export interface RotateAgentTokenResponse {
+  readonly agent: AgentProfile;
+  /** Returned only in this one-time rotation response. It is never persisted in plaintext or included in snapshots. */
   readonly token: string;
 }
 

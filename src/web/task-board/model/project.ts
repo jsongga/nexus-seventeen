@@ -240,6 +240,7 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       lastError: raw.lastError,
       currentTaskId: current?.taskId ?? null,
       lastEventAt: newest(activity, raw.createdAt),
+      version: raw.version,
       createdAt: raw.createdAt,
       updatedAt: newest(activity, raw.createdAt),
     };

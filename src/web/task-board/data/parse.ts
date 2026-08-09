@@ -105,6 +105,7 @@ export interface RawAgent {
   status: WireAgentStatus;
   workerConnection: WireWorkerConnection;
   lastError: string | null;
+  version: number;
   createdAt: string;
 }
 
@@ -691,6 +692,7 @@ export function parseAgent(value: unknown, path: string): RawAgent {
     status: member(item.status, rawAgentStatuses, `${path}.status`),
     workerConnection,
     lastError,
+    version: integer(item.version, `${path}.version`, 1),
     createdAt: timestamp(item.createdAt, `${path}.createdAt`),
   };
 }

@@ -182,6 +182,7 @@ const agent = {
   status: 'running',
   workerConnection: 'watching_run',
   lastError: 'Board rejected the prior claim.',
+  version: 1,
   createdAt: '2026-07-19T10:01:00.000Z',
 };
 const manager = {
@@ -1236,6 +1237,43 @@ describe('task-board HTTP client', () => {
         }),
       }),
     );
+  });
+
+  it('rotates an agent token with its current version and parses the one-time token response', async () => {
+    const token = 'rotated-token-012345678901234567890123456789';
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push([String(url), init]);
+      return new Response(JSON.stringify({ agent: { ...agent, status: 'idle', version: 2 }, token }));
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.rotateAgentToken(agent.agentId, { version: 1 })).resolves.toEqual({
+      agentId: agent.agentId,
+      version: 2,
+      token,
+    });
+    expect(calls).toEqual([[
+      'https://board.example.test/v1/agents/billing-engineer/rotate-token',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ version: 1 }) }),
+    ]]);
+  });
+
+  it('rejects malformed token-rotation response envelopes', async () => {
+    const malformed = [
+      { agent: { ...agent, status: 'idle', version: 2 } },
+      { agent: { ...agent, status: 'idle', version: 2 }, token: 'short' },
+      { agent: { ...agent, status: 'idle', version: 2 }, token: 'x'.repeat(32), extra: true },
+    ];
+    for (const response of malformed) {
+      const client = createTaskBoardClient({
+        fetch: vi.fn(async () => new Response(JSON.stringify(response))) as unknown as typeof fetch,
+      });
+      await expect(client.rotateAgentToken(agent.agentId, { version: 1 })).rejects.toThrow(/rotation|token|supported/u);
+    }
   });
 
   it('uses a stable tab identity for snapshot creation, pen fencing, saves, and release without waking an agent', async () => {

@@ -39,6 +39,7 @@ import {
   parseDocumentUpdate,
   parseQuestion,
   parseRetryTask,
+  parseRotateAgentToken,
   parseResume,
   parseSettle,
   parseUpdateAutomationConfiguration,
@@ -323,9 +324,11 @@ export class TaskBoardService {
       const documentId = parseRouteIdentifier(documentPenMatch[1], "documentId");
       const current = this.#board.getDocument(documentId);
       const actor = this.#documentActor(request, current.projectId);
+      const update = parseDocumentPenUpdate(await readJsonBody(request, this.config.maxBodyBytes));
+      if (actor.type === "agent") this.#board.assertAgentCredentialVersion(actor.id, actor.credentialVersion);
       const document = this.#board.updateDocumentPen(
         documentId,
-        parseDocumentPenUpdate(await readJsonBody(request, this.config.maxBodyBytes)),
+        update,
         actor,
       );
       sendJson(response, 200, { document });
@@ -336,9 +339,11 @@ export class TaskBoardService {
       const documentId = parseRouteIdentifier(documentMatch[1], "documentId");
       const current = this.#board.getDocument(documentId);
       const actor = this.#documentActor(request, current.projectId);
+      const update = parseDocumentUpdate(await readJsonBody(request, this.config.maxBodyBytes));
+      if (actor.type === "agent") this.#board.assertAgentCredentialVersion(actor.id, actor.credentialVersion);
       const document = this.#board.updateDocument(
         documentId,
-        parseDocumentUpdate(await readJsonBody(request, this.config.maxBodyBytes)),
+        update,
         actor,
       );
       sendJson(response, 200, { document });
@@ -360,6 +365,15 @@ export class TaskBoardService {
       const projectId = parseRouteIdentifier(agentCreateMatch[1], "projectId");
       const agent = this.#board.createAgent(projectId, parseCreateAgent(await readJsonBody(request, this.config.maxBodyBytes)));
       sendJson(response, 201, { agent });
+      return;
+    }
+    const agentTokenRotateMatch = /^\/v1\/agents\/([^/]+)\/rotate-token$/u.exec(url.pathname);
+    if (agentTokenRotateMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const agentId = parseRouteIdentifier(agentTokenRotateMatch[1], "agentId");
+      const rotation = parseRotateAgentToken(await readJsonBody(request, this.config.maxBodyBytes));
+      sendJson(response, 200, this.#board.rotateAgentToken(agentId, rotation.version));
       return;
     }
     const taskCreateMatch = /^\/v1\/projects\/([^/]+)\/tasks$/u.exec(url.pathname);
@@ -412,9 +426,11 @@ export class TaskBoardService {
       noQuery(url);
       const taskId = parseRouteIdentifier(phaseCreateMatch[1], "taskId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
+      const requestBody = parseCreateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
       const phase = this.#board.createTaskPhase(
         taskId,
-        parseCreateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes)),
+        requestBody,
         agent.agentId,
       );
       sendJson(response, 201, { phase });
@@ -425,9 +441,11 @@ export class TaskBoardService {
       noQuery(url);
       const phaseId = parseRouteIdentifier(phaseMatch[1], "phaseId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
+      const requestBody = parseUpdateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
       const phase = this.#board.updateTaskPhase(
         phaseId,
-        parseUpdateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes)),
+        requestBody,
         agent.agentId,
       );
       sendJson(response, 200, { phase });
@@ -465,7 +483,9 @@ export class TaskBoardService {
       noQuery(url);
       const taskId = parseRouteIdentifier(questionMatch[1], "taskId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
-      const question = this.#board.askQuestion(taskId, agent.agentId, parseQuestion(await readJsonBody(request, this.config.maxBodyBytes)));
+      const requestBody = parseQuestion(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
+      const question = this.#board.askQuestion(taskId, agent.agentId, requestBody);
       sendJson(response, 201, { question });
       return;
     }
@@ -496,8 +516,9 @@ export class TaskBoardService {
     if (laneErrorMatch && request.method === "POST") {
       noQuery(url);
       const agentId = parseRouteIdentifier(laneErrorMatch[1], "agentId");
-      this.#board.authenticateAgent(bearerToken(request), agentId);
+      const agent = this.#board.authenticateAgent(bearerToken(request), agentId);
       const { detail } = parseLaneError(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.assertAgentCredentialVersion(agentId, agent.version);
       this.#board.setAgentLaneError(agentId, detail);
       sendEmpty(response, 204);
       return;
@@ -517,7 +538,7 @@ export class TaskBoardService {
     const claimMatch = /^\/v1\/agents\/([^/]+)\/runs\/claim$/u.exec(url.pathname);
     if (claimMatch && request.method === "POST") {
       const agentId = parseRouteIdentifier(claimMatch[1], "agentId");
-      this.#board.authenticateAgent(bearerToken(request), agentId);
+      const agent = this.#board.authenticateAgent(bearerToken(request), agentId);
       const waitMs = exactIntegerQuery(url, ["waitMs"], "waitMs", 0, 30_000);
       const claim = parseClaim(await readJsonBody(request, this.config.maxBodyBytes));
       const abort = new AbortController();
@@ -531,6 +552,7 @@ export class TaskBoardService {
           claim,
           waitMs,
           AbortSignal.any([abort.signal, this.#closingAbort.signal]),
+          agent.version,
         );
       } finally {
         request.socket.off("close", onClose);
@@ -544,7 +566,9 @@ export class TaskBoardService {
       noQuery(url);
       const runId = parseRouteIdentifier(settleMatch[1], "runId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
-      const result = this.#board.settleRun(runId, agent.agentId, parseSettle(await readJsonBody(request, this.config.maxBodyBytes)));
+      const settlement = parseSettle(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
+      const result = this.#board.settleRun(runId, agent.agentId, settlement);
       sendJson(response, 200, result);
       return;
     }
@@ -566,6 +590,7 @@ export class TaskBoardService {
           after,
           waitMs,
           AbortSignal.any([abort.signal, this.#closingAbort.signal]),
+          agent.version,
         );
       } finally {
         request.socket.off("close", onClose);
@@ -577,7 +602,10 @@ export class TaskBoardService {
     throw new TaskBoardError(404, "NOT_FOUND", "Endpoint was not found");
   }
 
-  #documentActor(request: IncomingMessage, projectId: string): Readonly<{ type: "human" | "agent"; id: string }> {
+  #documentActor(request: IncomingMessage, projectId: string): Readonly<
+    { type: "human"; id: string }
+    | { type: "agent"; id: string; credentialVersion: number }
+  > {
     if (isHuman(request, this.config)) {
       return Object.freeze({ type: "human", id: this.config.humanPrincipal });
     }
@@ -585,7 +613,7 @@ export class TaskBoardService {
     if (agent.projectId !== projectId) {
       throw new TaskBoardError(403, "DOCUMENT_PROJECT_FORBIDDEN", "Agent belongs to another project");
     }
-    return Object.freeze({ type: "agent", id: agent.agentId });
+    return Object.freeze({ type: "agent", id: agent.agentId, credentialVersion: agent.version });
   }
 
   #openDocumentStream(

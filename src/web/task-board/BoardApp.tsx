@@ -41,7 +41,6 @@ import type {
   BoardSnapshot,
   BoardTask,
   BoardWorkItem,
-  CreateAgentInput,
   CreateProjectInput,
   CreateWorkItemInput,
   TaskKind,
@@ -512,16 +511,6 @@ function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: Crea
   );
 }
 
-function automaticEngineerId(projectName: string, agents: BoardAgent[]): string {
-  const slug = projectName.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '') || 'project';
-  const base = `${slug.slice(0, 96)}-engineer`;
-  const used = new Set(agents.map((agent) => agent.id));
-  if (!used.has(base)) return base;
-  let suffix = 2;
-  while (used.has(`${base}-${suffix}`)) suffix += 1;
-  return `${base}-${suffix}`;
-}
-
 function taskTitleFromPrompt(prompt: string): string {
   const normalized = prompt.replace(/\s+/gu, ' ').trim();
   const firstLine = prompt.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
@@ -815,22 +804,7 @@ export function BoardApp() {
   }
 
   async function createProject(input: CreateProjectInput): Promise<void> {
-    await mutate(async () => {
-      const project = await client.createProject(input);
-      const agentId = automaticEngineerId(project.name, snapshot?.agents ?? []);
-      const token = `${randomUuid()}${randomUuid()}`;
-      const profile: CreateAgentInput = {
-        projectId: project.id,
-        agentId,
-        role: 'engineer',
-        area: project.name,
-        mission: `Own ${project.name}. Research, plan, implement, test, and record concise progress until assigned work is complete.`,
-        model: pointOfContact?.model ?? snapshot?.agents[0]?.model ?? 'auto',
-        token,
-      };
-      await client.createAgent(profile);
-      window.sessionStorage.setItem(`cicada.pendingAgentToken.${agentId}`, token);
-    });
+    await mutate(() => client.createProject(input));
   }
 
   async function createWorkItem(input: CreateWorkItemInput) {
@@ -856,7 +830,13 @@ export function BoardApp() {
   } else if (page.kind === 'project' && pageProject) {
     content = <ProjectPage project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
   } else if (page.kind === 'agent' && pageAgent) {
-    content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(() => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(() => client.answerQuestion(questionId, { answer }))} />;
+    content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(() => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(() => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
+      let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
+      const saved = await mutate(async () => {
+        rotated = await client.rotateAgentToken(pageAgent.id, { version: pageAgent.version });
+      });
+      return saved ? rotated : null;
+    }} />;
   } else {
     content = (
       <>
@@ -958,7 +938,7 @@ export function BoardApp() {
       {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${error}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
-      <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Its name, workspace scope, and engineer profile are added automatically."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
+      <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Agent identities are created when the project receives work."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
       <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'unselected'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} onSubmit={createWorkItem} /></Modal>
       {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}
     </WorkspaceFrame>

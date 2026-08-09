@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue, StatementResultingChanges } from "node:sqlite";
 import { test } from "node:test";
+import { Worker } from "node:worker_threads";
 import {
   AUTOMATION_CONFIGURATION_MAX_BYTES,
   TaskBoard,
@@ -382,14 +383,6 @@ test("startup reconciles confirmed ready workflow nodes left before activation",
 test("workflow activation rolls back its task and wakeup when attempt linkage fails", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.createAgent(fixture.project.projectId, {
-      agentId: "activation-atomic-verifier",
-      role: "verifier",
-      area: "workflow-activation",
-      mission: "Verify atomic activation.",
-      model: "codex-mini",
-      token: "activation-atomic-verifier-token-012345678901",
-    });
     configureActivationStages(fixture.board, { verification: "activation-atomic-type" });
     const proposed = await proposedActivationWorkflow(fixture, "atomic", ["verification"]);
     const { DatabaseSync } = await import("node:sqlite");
@@ -408,8 +401,98 @@ test("workflow activation rolls back its task and wakeup when attempt linkage fa
     }
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "ready");
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.find((agent) =>
-      agent.agentId === "activation-atomic-verifier")?.status, "idle");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"), false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("workflow activation creates a compatible identity and activates it atomically", async () => {
+  const fixture = await boardFixture();
+  try {
+    configureActivationStages(fixture.board, { verification: "activation-lazy-verifier" });
+    const proposed = await proposedActivationWorkflow(fixture, "lazy-identity", ["verification"]);
+
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(confirmed.nodes[0]?.state, "active");
+    const verifier = fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.role === "verifier");
+    assert.ok(verifier);
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks[0]?.assignedAgentId, verifier.agentId);
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='verifier'")
+        .get(fixture.project.projectId)?.count), 1);
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+        .get(confirmed.nodes[0]!.nodeId)?.count), 1);
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM task_events WHERE project_id=? AND event_type='agent_profile_created'")
+        .get(fixture.project.projectId)?.count), 3);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a disabled workflow executor stays policy-blocked without creating an identity", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      stages: automationStages({
+        verification: { kind: "disabled" },
+      }),
+    }));
+    const proposed = await proposedActivationWorkflow(fixture, "policy-blocked", ["verification"]);
+
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(confirmed.nodes[0]?.state, "blocked");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"), false);
+    assert.ok(confirmed.events.some((event) => event.eventType === "node_blocked"));
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("enabling a disabled workflow executor reconciles its policy-blocked node immediately", async () => {
+  const fixture = await boardFixture();
+  try {
+    const disabled = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      stages: automationStages({
+        verification: { kind: "disabled" },
+      }),
+    }));
+    const proposed = await proposedActivationWorkflow(fixture, "config-reenabled", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    assert.equal(confirmed.nodes[0]?.state, "blocked");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+
+    const enabled = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: disabled.version,
+      agentTypes: [{
+        agentTypeId: "config-reenabled-verifier",
+        name: "Configuration recovery verifier",
+        description: "Executes verification after its disabled policy is changed.",
+        role: "verifier",
+        supplementalInstructions: "Verify that configuration updates reconcile blocked workflow nodes.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "config-reenabled-verifier" },
+      }),
+    }));
+
+    assert.equal(enabled.version, disabled.version + 1);
+    const recovered = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(recovered.nodes[0]?.state, "active");
+    const task = fixture.board.snapshot(fixture.project.projectId).tasks[0];
+    assert.ok(task);
+    assert.equal(task.status, "queued");
+    assert.equal(task.assignedRole, "verifier");
   } finally {
     fixture.board.close();
   }
@@ -674,15 +757,14 @@ test("reconciler links a coherent half-created activation task and makes it sett
   }
 });
 
-test("creating a compatible agent activates a workflow node persisted as blocked", async () => {
+test("creating another compatible agent does not duplicate a lazily activated workflow", async () => {
   const fixture = await boardFixture();
   try {
     configureActivationStages(fixture.board, { verification: "activation-blocked-type" });
     const proposed = await proposedActivationWorkflow(fixture, "blocked", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
-    assert.equal(confirmed.nodes[0]?.state, "blocked");
-    assert.ok(confirmed.events.some((event) => event.eventType === "node_blocked"));
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+    assert.equal(confirmed.nodes[0]?.state, "active");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 1);
 
     const verifier = fixture.board.createAgent(fixture.project.projectId, {
       agentId: "activation-blocked-verifier",
@@ -694,7 +776,8 @@ test("creating a compatible agent activates a workflow node persisted as blocked
     });
     const activated = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(activated.nodes[0]?.state, "active");
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks[0]?.assignedAgentId, verifier.agentId);
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 1);
+    assert.notEqual(fixture.board.snapshot(fixture.project.projectId).tasks[0]?.assignedAgentId, verifier.agentId);
   } finally {
     fixture.board.close();
   }
@@ -1020,27 +1103,18 @@ test("reconciler skips a dead blocked activation orphan and creates a fresh task
   }
 });
 
-test("stale capacity-blocked candidates are not resurrected after becoming failure-blocked", async () => {
+test("stale policy-blocked candidates are not resurrected after becoming failure-blocked", async () => {
   const fixture = await boardFixture();
   try {
-    configureActivationStages(fixture.board, { verification: "activation-stale-type" });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      stages: automationStages({ verification: { kind: "disabled" } }),
+    }));
     const proposed = await proposedActivationWorkflow(fixture, "stale-blocked", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
     const blocked = confirmed.nodes[0]!;
     assert.equal(blocked.state, "blocked");
 
     const { DatabaseSync } = await import("node:sqlite");
-    const capacity = new DatabaseSync(fixture.path);
-    try {
-      capacity.prepare(`
-        INSERT INTO agents(agent_id,project_id,role,area,mission,model,token_hash,created_at)
-        VALUES ('activation-stale-verifier', ?, 'verifier', 'workflow-activation',
-          'Verify stale blocked candidates remain failed.', 'codex-mini',
-          'activation-stale-verifier-direct-token-hash', ?)
-      `).run(fixture.project.projectId, blocked.updatedAt);
-    } finally {
-      capacity.close();
-    }
     const originalPrepare = DatabaseSync.prototype.prepare;
     let interleaved = false;
     DatabaseSync.prototype.prepare = function interleaveFailureBlocking(this: DatabaseSyncType, sql: string) {
@@ -1081,10 +1155,12 @@ test("stale capacity-blocked candidates are not resurrected after becoming failu
   }
 });
 
-test("repeated reconciliation does not churn a still capacity-blocked node", async () => {
+test("repeated reconciliation does not churn a still policy-blocked node", async () => {
   const fixture = await boardFixture();
   try {
-    configureActivationStages(fixture.board, { verification: "activation-still-blocked-type" });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      stages: automationStages({ verification: { kind: "disabled" } }),
+    }));
     const proposed = await proposedActivationWorkflow(fixture, "still-blocked", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.nodes[0]?.state, "blocked");
@@ -1813,7 +1889,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
         .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 17);
   } finally {
     direct.close();
   }
@@ -2854,6 +2930,181 @@ test("work-item POST atomically queues and links planning before the plan is set
   }
 });
 
+test("a first work-item POST creates the manager, planning task, link, and processing state in one transaction", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path));
+  try {
+    const project = board.createProject({
+      name: "Payment tools",
+      description: "/workspace/payment-tools",
+    });
+    const request = workItemRequest({
+      originalRequest: "Plan the first payment-tools change.",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    });
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalExec = DatabaseSync.prototype.exec;
+    let begins = 0;
+    let commits = 0;
+    DatabaseSync.prototype.exec = function trackingLazyManagerTransaction(this: DatabaseSyncType, sql: string): void {
+      originalExec.call(this, sql);
+      const statement = sql.trim().replace(/;$/u, "").toUpperCase();
+      if (statement === "BEGIN IMMEDIATE") begins += 1;
+      if (statement === "COMMIT") commits += 1;
+    };
+    let created: ReturnType<TaskBoard["createWorkItem"]>;
+    try {
+      created = postWorkItem(board, request, "lazy-manager-first-intake-0001");
+    } finally {
+      DatabaseSync.prototype.exec = originalExec;
+    }
+
+    assert.equal(begins, 1);
+    assert.equal(commits, 1);
+    assert.equal(created.workItem.state, "processing");
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      const manager = inspected.prepare("SELECT agent_id,role,token_hash FROM agents WHERE project_id=? AND role='manager'")
+        .get(project.projectId);
+      assert.equal(manager?.agent_id, "payment-tools-manager");
+      assert.equal(manager?.role, "manager");
+      assert.ok(String(manager?.token_hash).length > 0);
+      const planning = inspected.prepare(`
+        SELECT task.assigned_agent_id,task.assigned_role,task.status,item.state,item.current_stage
+        FROM work_item_planning_tasks link
+        JOIN tasks task ON task.task_id=link.task_id
+        JOIN work_items item ON item.work_item_id=link.work_item_id
+        WHERE link.work_item_id=?
+      `).get(created.workItem.workItemId);
+      assert.equal(planning?.assigned_agent_id, manager?.agent_id);
+      assert.equal(planning?.assigned_role, "manager");
+      assert.equal(planning?.status, "queued");
+      assert.equal(planning?.state, "processing");
+      assert.equal(planning?.current_stage, "planning");
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    board.close();
+  }
+});
+
+test("duplicate work-item intake repairs a missing manager before starting planning", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path));
+  try {
+    const project = board.createProject({ name: "Import tools", description: "/workspace/import-tools" });
+    const request = workItemRequest({
+      originalRequest: "Repair manager-less duplicate intake.",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    });
+    const idempotencyKey = "lazy-manager-duplicate-repair-0001";
+    const created = board.createWorkItem(request, idempotencyKey);
+    assert.equal(created.workItem.state, "submitted");
+
+    const replay = postWorkItem(board, request, idempotencyKey);
+
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.workItem.state, "processing");
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+        .get(project.projectId)?.count), 1);
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?")
+        .get(created.workItem.workItemId)?.count), 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    board.close();
+  }
+});
+
+test("existing and concurrent first intake create exactly one manager per project", async () => {
+  const path = await databasePath();
+  const firstBoard = await TaskBoard.open(config(path));
+  try {
+    const project = firstBoard.createProject({ name: "Ledger tools", description: "/workspace/ledger-tools" });
+    const requests = ["one", "two"].map((suffix) => workItemRequest({
+      originalRequest: `Plan concurrent ledger intake ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    }));
+    const control = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+    const workers = requests.map((request, index) => new Worker(
+      new URL("./concurrent-intake-worker.js", import.meta.url),
+      {
+        workerData: {
+          control,
+          dbPath: path,
+          idempotencyKey: `lazy-manager-concurrent-intake-000${index + 1}`,
+          request,
+        },
+      },
+    ));
+    await Promise.all(workers.map((worker) => new Promise<void>((resolve, reject) => {
+      worker.on("message", (message: unknown) => {
+        if ((message as { type?: string }).type === "ready") resolve();
+      });
+      worker.once("error", reject);
+    })));
+    assert.equal(Atomics.load(new Int32Array(control), 0), 2);
+    const completions = workers.map((worker) => new Promise<void>((resolve, reject) => {
+      worker.on("message", (message: unknown) => {
+        const result = message as { type?: string; message?: string; state?: string };
+        if (result.type === "complete") {
+          assert.equal(result.state, "processing");
+          resolve();
+        } else if (result.type === "error") {
+          reject(new Error(result.message));
+        }
+      });
+      worker.once("error", reject);
+    }));
+    Atomics.store(new Int32Array(control), 1, 1);
+    Atomics.notify(new Int32Array(control), 1, workers.length);
+    await Promise.all(completions);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    let managerCount = 0;
+    let planningLinkCount = 0;
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      managerCount = Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+        .get(project.projectId)?.count);
+      planningLinkCount = Number(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks")
+        .get()?.count);
+    } finally {
+      inspected.close();
+    }
+    assert.equal(managerCount, 1);
+    assert.equal(planningLinkCount, 2);
+
+    const existingProject = firstBoard.createProject({ name: "Managed tools", description: "/workspace/managed-tools" });
+    firstBoard.createAgent(existingProject.projectId, {
+      agentId: "managed-tools-manager",
+      role: "manager",
+      area: "Managed tools",
+      mission: "Plan work for the managed project.",
+      model: "auto",
+      token: "managed-tools-manager-token-0123456789012345",
+    });
+    postWorkItem(firstBoard, workItemRequest({
+      originalRequest: "Use the manager that already exists.",
+      projectTarget: { mode: "explicit", projectId: existingProject.projectId },
+    }), "lazy-manager-existing-intake-0001");
+    const verified = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+        .get(existingProject.projectId)?.count), 1);
+    } finally {
+      verified.close();
+    }
+  } finally {
+    firstBoard.close();
+  }
+});
+
 test("work-item CAS readback stays bound to its mutation while another connection is ready to update", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
@@ -3349,6 +3600,126 @@ test("projects, fixed agents, tasks, messages, and events survive a database res
     assert.equal(reviewClaim.wakeup.createdBy, "system:steward-review-workflow");
   } finally {
     restarted.close();
+  }
+});
+
+test("rotating an agent token invalidates the old credential and fences stale versions", async () => {
+  const fixture = await boardFixture();
+  try {
+    assert.equal(fixture.board.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId).agentId, fixture.engineer.agentId);
+
+    const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
+
+    assert.deepEqual(Object.keys(rotated).sort(), ["agent", "token"]);
+    assert.equal(rotated.agent.version, fixture.engineer.version + 1);
+    assert.equal("token" in rotated.agent, false);
+    assert.ok(rotated.token.length >= 32);
+    assert.throws(
+      () => fixture.board.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401,
+    );
+    assert.equal(fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId).agentId, fixture.engineer.agentId);
+    assert.throws(
+      () => fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_VERSION_CONFLICT",
+    );
+    const snapshotAgent = fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => (
+      agent.agentId === fixture.engineer.agentId
+    ));
+    assert.ok(snapshotAgent);
+    assert.equal(snapshotAgent.version, rotated.agent.version);
+    assert.equal("token" in snapshotAgent, false);
+    assert.equal("tokenHash" in snapshotAgent, false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("rotation fences a held claim before it can consume a newly queued wakeup", async () => {
+  const fixture = await boardFixture();
+  try {
+    const waiting = fixture.board.waitToClaimRun(
+      fixture.engineer.agentId,
+      { claimId: "claim-held-across-rotation-0001", messageCursor: null },
+      30_000,
+      new AbortController().signal,
+      fixture.engineer.version,
+    );
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
+      "waiting_for_wake",
+    );
+
+    const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Queue after worker credential rotation",
+    }));
+
+    await assert.rejects(
+      waiting,
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED",
+    );
+    const afterOldClaim = fixture.board.snapshot(fixture.project.projectId);
+    assert.equal(afterOldClaim.recentRuns.length, 0);
+    assert.equal(afterOldClaim.tasks.find((candidate) => candidate.taskId === task.taskId)?.status, "queued");
+
+    const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
+    const claimed = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-new-token-after-rotation-0001",
+      messageCursor: null,
+    }, authenticated.version);
+    assert.ok(claimed);
+    assert.equal(claimed.task?.taskId, task.taskId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("rotation fences a held interrupt watch before it returns newly requested interrupts", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Watch across credential rotation" }));
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-for-held-interrupt-rotation-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const waiting = fixture.board.waitForRunInterrupts(
+      claim.run.runId,
+      fixture.engineer.agentId,
+      0,
+      30_000,
+      new AbortController().signal,
+      fixture.engineer.version,
+    );
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
+      "watching_run",
+    );
+
+    const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
+    fixture.board.interruptAgent(
+      fixture.engineer.agentId,
+      { reason: "Stop the worker whose credential was rotated." },
+      "interrupt-held-across-rotation-0001",
+    );
+
+    await assert.rejects(
+      waiting,
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED",
+    );
+    const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
+    const batch = await fixture.board.waitForRunInterrupts(
+      claim.run.runId,
+      fixture.engineer.agentId,
+      0,
+      0,
+      new AbortController().signal,
+      authenticated.version,
+    );
+    assert.equal(batch?.items[0]?.reason, "Stop the worker whose credential was rotated.");
+  } finally {
+    fixture.board.close();
   }
 });
 
@@ -5559,7 +5930,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -5599,7 +5970,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -5639,7 +6010,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -5729,7 +6100,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -5800,7 +6171,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -5839,7 +6210,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -5874,7 +6245,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -5922,7 +6293,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -5972,7 +6343,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -6011,7 +6382,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -6057,7 +6428,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
@@ -6087,7 +6458,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error",
@@ -6130,7 +6501,7 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
       "archived_at",
@@ -6141,6 +6512,38 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
     );
     assert.equal(verified.prepare("SELECT archived_at FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.archived_at, null);
     assert.equal(verified.prepare("SELECT cancelled_reason FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.cancelled_reason, null);
+  } finally {
+    verified.close();
+  }
+});
+
+test("schema version 17 adds agent credential versions without changing existing identities", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  fixture.board.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("ALTER TABLE agents DROP COLUMN version; PRAGMA user_version = 16;");
+  legacy.close();
+
+  const upgraded = await TaskBoard.open(config(path));
+  try {
+    assert.equal(upgraded.snapshot(fixture.project.projectId).agents.find((agent) => (
+      agent.agentId === fixture.engineer.agentId
+    ))?.version, 1);
+  } finally {
+    upgraded.close();
+  }
+
+  const verified = new DatabaseSync(path);
+  try {
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(
+      verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
+      "version",
+    );
+    assert.equal(verified.prepare("SELECT version FROM agents WHERE agent_id=?").get(fixture.engineer.agentId)?.version, 1);
   } finally {
     verified.close();
   }

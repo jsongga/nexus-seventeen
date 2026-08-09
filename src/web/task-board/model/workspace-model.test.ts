@@ -33,6 +33,7 @@ const agent = (overrides: Partial<BoardAgent>): BoardAgent => ({
   lastError: null,
   currentTaskId: null,
   lastEventAt: null,
+  version: 1,
   createdAt: '2026-07-19T10:00:00.000Z',
   updatedAt: '2026-07-19T10:00:00.000Z',
   ...overrides,

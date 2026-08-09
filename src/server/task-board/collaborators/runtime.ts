@@ -104,6 +104,7 @@ export class TaskBoardRuntime {
       status,
       workerConnection: this.workerConnection(agentId),
       lastError: nullableString(row, "last_error"),
+      version: numberValue(row, "version"),
       createdAt: stringValue(row, "created_at"),
     });
   }
@@ -128,6 +129,14 @@ export class TaskBoardRuntime {
   requireAgent(agentId: string): AgentProfile {
     const row = this.store.db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId);
     if (!row) throw new TaskBoardError(404, "AGENT_NOT_FOUND", "Agent was not found");
+    return this.agentFromRow(row);
+  }
+
+  requireAgentCredentialVersion(agentId: string, credentialVersion: number): AgentProfile {
+    const row = this.store.db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId);
+    if (!row || numberValue(row, "version") !== credentialVersion) {
+      throw new TaskBoardError(401, "UNAUTHORIZED", "Agent authentication is required");
+    }
     return this.agentFromRow(row);
   }
 

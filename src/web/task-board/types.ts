@@ -165,6 +165,7 @@ export interface BoardAgent {
   lastError: string | null;
   currentTaskId: string | null;
   lastEventAt: string | null;
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -354,13 +355,9 @@ export interface CreateProjectInput {
   description: string;
 }
 
-export interface CreateAgentInput {
-  projectId: string;
+export interface RotateAgentTokenResult {
   agentId: string;
-  role: AgentRole;
-  area: string;
-  mission: string;
-  model: string;
+  version: number;
   token: string;
 }
 

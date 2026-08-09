@@ -6,13 +6,13 @@ import type {
   BoardProject,
   BoardSnapshot,
   BoardWorkItem,
-  CreateAgentInput,
   CreateDocumentInput,
   CreateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
   ProjectArtifact,
   ProjectWorkflow,
+  RotateAgentTokenResult,
   SaveAutomationConfigurationInput,
   TaskKind,
   WorkflowEvent,
@@ -21,6 +21,7 @@ import {
   array,
   automationAgentTypeWire,
   automationStageWire,
+  boundedText,
   exactRecord,
   integer,
   maximumRawWorkItems,
@@ -30,6 +31,7 @@ import {
   parseAutomationAgentType,
   parseAutomationConfiguration,
   parseAutomationStage,
+  parseAgent,
   parseDocument,
   parseMessage,
   parseProjectArtifact,
@@ -163,6 +165,14 @@ function workItemFromEnvelope(value: unknown, path: string): BoardWorkItem {
   return workItemProjection(parseWorkItem(envelope.workItem, `${path}.workItem`));
 }
 
+function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTokenResult {
+  const envelope = exactRecord(value, path, ['agent', 'token']);
+  const agent = parseAgent(envelope.agent, `${path}.agent`);
+  const token = boundedText(envelope.token, `${path}.token`, 512);
+  if (token.length < 32) throw new Error(`${path}.token must contain at least 32 characters`);
+  return { agentId: agent.agentId, version: agent.version, token };
+}
+
 function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
   const envelope = record(value, path);
   return parseProjectWorkflow(envelope.workflow, `${path}.workflow`);
@@ -234,7 +244,7 @@ export interface TaskBoardClient {
   createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItem>;
   cancelWorkItem(workItemId: string, input: { version: number; reason: string }): Promise<BoardWorkItem>;
   archiveWorkItem(workItemId: string, input: { version: number }): Promise<BoardWorkItem>;
-  createAgent(input: CreateAgentInput): Promise<void>;
+  rotateAgentToken(agentId: string, input: { version: number }): Promise<RotateAgentTokenResult>;
   createTask(input: CreateTaskInput): Promise<void>;
   createAgentQuery(input: {
     projectId: string;
@@ -502,7 +512,7 @@ export function createTaskBoardClient(options: {
   const baseUrl = safeBaseUrl(options.baseUrl ?? '');
   const requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const documentClientId = stableDocumentClientId(options.documentClientId);
-  const agentRoles = new Map<string, CreateAgentInput['role']>();
+  const agentRoles = new Map<string, AgentRole>();
   const questionVersions = new Map<string, number>();
   const taskAgents = new Map<string, string>();
   const taskPolicies = new Map<string, Readonly<{ kind: TaskKind; requiredRole: AgentRole | null }>>();
@@ -831,9 +841,14 @@ export function createTaskBoardClient(options: {
         'archive work item response',
       );
     },
-    async createAgent(input) {
-      const { projectId, ...body } = input;
-      await post(`/v1/projects/${encodeURIComponent(projectId)}/agents`, body);
+    async rotateAgentToken(agentId, input) {
+      return tokenRotationFromEnvelope(
+        await json(`/v1/agents/${encodeURIComponent(agentId)}/rotate-token`, {
+          method: 'POST',
+          body: JSON.stringify({ version: integer(input.version, 'agent token rotation.version', 1) }),
+        }),
+        'agent token rotation response',
+      );
     },
     async createTask(input) {
       const { projectId, ...task } = input;

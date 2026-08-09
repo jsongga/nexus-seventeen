@@ -24,6 +24,7 @@ import type {
   CreateWorkItemRequest,
   InterruptAgentRequest,
   RetryTaskRequest,
+  RotateAgentTokenRequest,
   ResumeAgentRequest,
   SettleRunRequest,
   TaskMessageKind,
@@ -508,6 +509,11 @@ export function parseCreateAgent(value: unknown): CreateAgentRequest {
     model: parseIdentifier(item.model, "model", 256),
     token: token(item.token),
   });
+}
+
+export function parseRotateAgentToken(value: unknown): RotateAgentTokenRequest {
+  const item = exact(value, ["version"], "Agent token rotation");
+  return Object.freeze({ version: positiveVersion(item.version) });
 }
 
 export function parseCreateTask(value: unknown): CreateTaskRequest {

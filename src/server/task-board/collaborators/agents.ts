@@ -1,10 +1,11 @@
-import type { AgentProfile, CreateAgentRequest } from "#shared/task-board-contract";
+import { TASK_BOARD_ERROR_CODES, type AgentProfile, type CreateAgentRequest, type RotateAgentTokenResponse } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { WorkItemsCollaborator } from "./work-items.js";
+import { generatedToken, insertAgentIdentityInTransaction } from "./agent-identities.js";
 
 export class AgentsCollaborator {
   constructor(
@@ -19,28 +20,14 @@ export class AgentsCollaborator {
     if (tokenHash === sha256(this.runtime.config.humanToken)) {
       throw conflict("TOKEN_REALM_CONFLICT", "Agent credential must be distinct from the human credential");
     }
-    const now = exactNow(this.runtime.config.now);
     try {
       this.runtime.store.transaction(() => {
-        this.runtime.store.db.prepare(`
-          INSERT INTO agents(agent_id, project_id, role, area, mission, model, token_hash, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          request.agentId,
+        insertAgentIdentityInTransaction(
+          this.runtime,
           projectId,
-          request.role,
-          request.area,
-          request.mission,
-          request.model,
-          tokenHash,
-          now,
+          request,
+          { type: "human", id: this.runtime.config.humanPrincipal },
         );
-        this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_profile_created", {
-          agentId: request.agentId,
-          role: request.role,
-          area: request.area,
-          model: request.model,
-        }, now);
       });
     } catch (error) {
       if (String(error).includes("UNIQUE constraint failed")) {
@@ -57,6 +44,30 @@ export class AgentsCollaborator {
     }
     this.projects.reconcileWorkflowsBestEffort(projectId);
     return created;
+  }
+
+  rotateToken(agentId: string, version: number): RotateAgentTokenResponse {
+    return this.runtime.store.transaction(() => {
+      const current = this.runtime.requireAgent(agentId);
+      if (current.version !== version) {
+        throw conflict(TASK_BOARD_ERROR_CODES.AGENT_VERSION_CONFLICT, "Agent credential version changed");
+      }
+      const token = generatedToken(this.runtime);
+      const tokenHash = sha256(token);
+      const update = this.runtime.store.db.prepare(`
+        UPDATE agents SET token_hash=?,version=version+1 WHERE agent_id=? AND version=?
+      `).run(tokenHash, agentId, version);
+      if (Number(update.changes) !== 1) {
+        throw conflict(TASK_BOARD_ERROR_CODES.AGENT_VERSION_CONFLICT, "Agent credential version changed");
+      }
+      const now = exactNow(this.runtime.config.now);
+      this.runtime.insertEvent(current.projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_token_rotated", {
+        agentId,
+        previousVersion: version,
+        version: version + 1,
+      }, now);
+      return Object.freeze({ agent: this.runtime.requireAgent(agentId), token });
+    });
   }
 
   setLaneError(agentId: string, detail: string | null): void {

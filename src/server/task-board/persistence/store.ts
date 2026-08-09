@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -337,6 +337,7 @@ CREATE TABLE agents (
   model TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
   last_error TEXT,
+  version INTEGER NOT NULL CHECK (version >= 1),
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX agents_project ON agents(project_id, created_at, agent_id);
@@ -661,6 +662,18 @@ function migrateVersion15To16(db: DatabaseSync): void {
   `);
 }
 
+function migrateVersion16To17(db: DatabaseSync): void {
+  const hasAgents = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
+  if (!hasAgents) {
+    db.exec("PRAGMA user_version = 17;");
+    return;
+  }
+  const addVersion = hasColumns(db, "agents", ["version"])
+    ? ""
+    : "ALTER TABLE agents ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1);";
+  db.exec(`BEGIN IMMEDIATE; ${addVersion} PRAGMA user_version = 17; COMMIT;`);
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -945,6 +958,8 @@ export class TaskBoardStore {
         // Durable fleet lane errors are added below.
       } else if (version === 15) {
         // Terminal work-item archival is added below.
+      } else if (version === 16) {
+        // Agent credential versions are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -962,6 +977,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 13) migrateVersion13To14(db);
       if (version >= 1 && version <= 14) migrateVersion14To15(db);
       if (version >= 1 && version <= 15) migrateVersion15To16(db);
+      if (version >= 1 && version <= 16) migrateVersion16To17(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

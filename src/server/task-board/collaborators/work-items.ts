@@ -18,6 +18,7 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+import { createLazyManagerInTransaction } from "./agent-identities.js";
 
 export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
 type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
@@ -175,9 +176,13 @@ export class WorkItemsCollaborator {
     if (existing) {
       return Object.freeze({ task: this.runtime.requireTask(String(existing.task_id)), wakeAgentId: null });
     }
-    const managers = this.runtime.store.db.prepare(
+    let managers = this.runtime.store.db.prepare(
       "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
     ).all(workItem.resolvedProjectId);
+    if (managers.length === 0) {
+      const created = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
+      managers = created === null ? [] : [{ agent_id: created.agentId }];
+    }
     if (managers.length !== 1) return Object.freeze({ task: null, wakeAgentId: null });
     const managerId = String(managers[0]!.agent_id);
     const configuration = this.automation.getConfiguration();

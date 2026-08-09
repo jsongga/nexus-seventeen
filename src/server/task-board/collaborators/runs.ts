@@ -144,7 +144,9 @@ export class RunsCollaborator {
     after: number,
     waitMs: number,
     signal: AbortSignal,
+    credentialVersion?: number,
   ): Promise<RunInterruptBatch | null> {
+    this.requireCredentialVersion(agentId, credentialVersion);
     this.runtime.requireRun(runId, agentId, null, false);
     if (signal.aborted) return null;
     const immediate = this.interruptBatch(runId, after);
@@ -172,12 +174,13 @@ export class RunsCollaborator {
       releaseConnection();
     }
     if (signal.aborted) return null;
+    this.requireCredentialVersion(agentId, credentialVersion);
     const batch = this.interruptBatch(runId, after);
     return batch.items.length > 0 ? batch : null;
   }
 
-  claimRun(agentId: string, request: ClaimRunRequest): ClaimRunResult | null {
-    const agent = this.runtime.requireAgent(agentId);
+  claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResult | null {
+    this.requireCredentialVersion(agentId, credentialVersion);
     const prior = this.runtime.store.db.prepare("SELECT * FROM runs WHERE agent_id = ? AND claim_id = ?").get(agentId, request.claimId);
     if (prior) {
       const priorRun = runFromRow(prior);
@@ -196,6 +199,7 @@ export class RunsCollaborator {
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
     const now = exactNow(this.runtime.config.now);
     return this.runtime.store.transaction(() => {
+      const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
       this.runtime.retireStaleWakeupsForAgent(agentId, now);
@@ -234,7 +238,7 @@ export class RunsCollaborator {
       this.runtime.store.db.prepare(`
         INSERT INTO runs(run_id, claim_id, claim_request_hash, project_id, agent_id, wakeup_id, task_id, status, started_at, ended_at, result)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL)
-      `).run(runId, request.claimId, requestHash, agent.projectId, agentId, wakeup.wakeupId, wakeup.taskId, now);
+      `).run(runId, request.claimId, requestHash, currentAgent.projectId, agentId, wakeup.wakeupId, wakeup.taskId, now);
       const claim = this.runtime.store.db.prepare(`
         UPDATE wakeups SET claimed_at = ?, run_id = ? WHERE wakeup_id = ? AND claimed_at IS NULL
       `).run(now, runId, wakeup.wakeupId);
@@ -264,7 +268,7 @@ export class RunsCollaborator {
           }, now);
         }
       }
-      this.runtime.insertEvent(agent.projectId, wakeup.taskId, { type: "agent", id: agentId }, "agent_run_claimed", {
+      this.runtime.insertEvent(currentAgent.projectId, wakeup.taskId, { type: "agent", id: agentId }, "agent_run_claimed", {
         runId,
         claimId: request.claimId,
         wakeupId: wakeup.wakeupId,
@@ -287,12 +291,13 @@ export class RunsCollaborator {
     request: ClaimRunRequest,
     waitMs: number,
     signal: AbortSignal,
+    credentialVersion?: number,
   ): Promise<ClaimRunResult | null> {
     if (signal.aborted) {
       this.runtime.requireAgent(agentId);
       return null;
     }
-    const immediate = this.claimRun(agentId, request);
+    const immediate = this.claimRun(agentId, request, credentialVersion);
     if (immediate !== null || waitMs === 0) return immediate;
     const releaseConnection = this.runtime.retainWorkerConnection(agentId, "waiting_for_wake");
     try {
@@ -317,7 +322,7 @@ export class RunsCollaborator {
       releaseConnection();
     }
     if (signal.aborted) return null;
-    return this.claimRun(agentId, request);
+    return this.claimRun(agentId, request, credentialVersion);
   }
 
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {
@@ -560,5 +565,11 @@ export class RunsCollaborator {
       items: Object.freeze(items),
       cursor: items.at(-1)?.sequence ?? after,
     });
+  }
+
+  private requireCredentialVersion(agentId: string, credentialVersion: number | undefined) {
+    return credentialVersion === undefined
+      ? this.runtime.requireAgent(agentId)
+      : this.runtime.requireAgentCredentialVersion(agentId, credentialVersion);
   }
 }

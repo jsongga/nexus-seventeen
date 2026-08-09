@@ -22,6 +22,7 @@ import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+import { createLazyExecutorInTransaction } from "./agent-identities.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 
@@ -256,12 +257,18 @@ export class ProjectsCollaborator {
         this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} executor is unavailable`);
         return;
       }
-      const agent = this.runtime.store.db.prepare(
+      let agent = this.runtime.store.db.prepare(
         "SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1",
       ).get(current.projectId, agentType.role);
       if (!agent) {
-        this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} has no compatible agent`);
-        return;
+        createLazyExecutorInTransaction(this.runtime, current.projectId, agentType);
+        agent = this.runtime.store.db.prepare(
+          "SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1",
+        ).get(current.projectId, agentType.role);
+        if (!agent) {
+          this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} has no compatible agent`);
+          return;
+        }
       }
       const title = `${stage}: ${current.title}`;
       const acceptanceCriteria = current.acceptanceCriteria.join("\n");
