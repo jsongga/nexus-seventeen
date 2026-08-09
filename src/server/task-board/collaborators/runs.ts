@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
   TASK_BOARD_API_VERSION,
+  TASK_BOARD_ERROR_CODES,
+  isHardTerminalTaskStatus,
+  isRecoverableTaskStatus,
   type AgentInterrupt,
   type AgentRun,
+  type BoardTask,
   type ClaimRunRequest,
   type ClaimRunResult,
   type CreatePlanRevisionRequest,
@@ -36,31 +40,47 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { TaskBoardRuntime } from "./runtime.js";
+import type { TasksCollaborator } from "./tasks.js";
 
 export class RunsCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly projects: ProjectsCollaborator,
+    private readonly tasks: TasksCollaborator,
   ) {}
 
   resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
     const agent = this.runtime.requireAgent(agentId);
+    let requestedTask: BoardTask | null = null;
     if (request.taskId !== null) {
       const task = this.runtime.requireTask(request.taskId);
       if (task.projectId !== agent.projectId) throw conflict("TASK_PROJECT_MISMATCH", "Resume task belongs to another project");
+      if (isHardTerminalTaskStatus(task.status)) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot be resumed");
+      }
       if (task.kind === "human_check") throw conflict("HUMAN_CHECK_NOT_ASSIGNABLE", "Human checks cannot wake an agent");
       if (task.requiredRole !== null && task.requiredRole !== agent.role) {
         throw conflict("TASK_REQUIRED_ROLE_MISMATCH", `This task requires the ${task.requiredRole} role`);
       }
+      requestedTask = task;
     }
     const sourceKey = `${agentId}:${idempotencyKey}`;
-    const prior = this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE reason = 'human_resume' AND source_key = ?").get(sourceKey);
+    const prior = this.runtime.store.db.prepare(
+      "SELECT * FROM wakeups WHERE reason IN ('human_resume', 'resumed') AND source_key = ?",
+    ).get(sourceKey);
     if (prior) {
       if (stringValue(prior, "detail") !== request.reason || nullableString(prior, "task_id") !== request.taskId) {
         throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another resume");
       }
       return { wakeup: wakeupFromRow(prior), duplicate: true };
+    }
+    if (requestedTask !== null && isRecoverableTaskStatus(requestedTask.status)) {
+      if (requestedTask.assignedAgentId === null || requestedTask.assignedRole === null) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_UNASSIGNED, "Recoverable task has no assigned agent");
+      }
+      const recovered = this.tasks.retryTaskFromResume(requestedTask.taskId, agentId, sourceKey, request.reason);
+      return { wakeup: recovered.wakeup, duplicate: false };
     }
     const now = exactNow(this.runtime.config.now);
     let wakeupId = "";
@@ -393,7 +413,7 @@ export class RunsCollaborator {
         if (!taskRow) throw new Error("TASK_BOARD_DATABASE_CORRUPT:run_task");
         const task = this.runtime.requireTask(current.taskId);
         if (task.assignedAgentId === agentId && task.endedAt === null) {
-          const nextStatus: TaskStatus = request.outcome === "completed" ? "completed" : "blocked";
+          const nextStatus: TaskStatus = request.outcome;
           if (task.status !== nextStatus || request.outcome === "completed") {
             const lifecycle = request.outcome === "completed"
               ? this.runtime.store.db.prepare(`
@@ -403,9 +423,9 @@ export class RunsCollaborator {
                 `).run(now, request.result, now, task.taskId, agentId, task.version)
               : this.runtime.store.db.prepare(`
                   UPDATE tasks
-                  SET status = 'blocked', ended_at = NULL, result = NULL, version = version + 1, updated_at = ?
+                  SET status = ?, ended_at = ?, result = ?, version = version + 1, updated_at = ?
                   WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-                `).run(now, task.taskId, agentId, task.version);
+                `).run(request.outcome, now, request.result, now, task.taskId, agentId, task.version);
             if (Number(lifecycle.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
             this.runtime.insertEvent(task.projectId, task.taskId, { type: "agent", id: agentId }, "task_run_settled", {
               kind: task.kind,
@@ -418,9 +438,13 @@ export class RunsCollaborator {
             }, now);
             if (request.outcome === "completed") {
               this.runtime.reconcileTaskPhasesForTerminal(task, "completed", { type: "agent", id: agentId }, now);
-              this.runtime.retirePendingWakeupsForTask(task.taskId, "task_terminal", now);
               workflowWakeAgentId = this.runtime.createReviewFollowup(task, now)?.wakeAgentId ?? null;
             }
+            this.runtime.retirePendingWakeupsForTask(
+              task.taskId,
+              request.outcome === "completed" ? "task_terminal" : "task_recovery_required",
+              now,
+            );
           }
         }
       }

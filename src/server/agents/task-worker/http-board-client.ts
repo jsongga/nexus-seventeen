@@ -292,7 +292,8 @@ function asClaimResult(value: unknown): ClaimRunResult {
     run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
     run.status !== "active" || run.endedAt !== null || run.result !== null ||
     wakeup.reason !== "human_assignment" && wakeup.reason !== "human_answer" &&
-    wakeup.reason !== "human_resume" && wakeup.reason !== "workflow_handoff"
+    wakeup.reason !== "human_resume" && wakeup.reason !== "workflow_handoff" &&
+    wakeup.reason !== "assigned" && wakeup.reason !== "resumed"
   ) {
     throw new Error("Claim run or wakeup state is invalid");
   }

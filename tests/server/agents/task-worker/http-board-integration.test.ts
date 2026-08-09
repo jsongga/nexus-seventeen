@@ -548,9 +548,9 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
     const run = interrupted.recentRuns.find((candidate) => candidate.taskId === task.taskId);
     const blocked = interrupted.tasks.find((candidate) => candidate.taskId === task.taskId);
     assert.equal(run?.status, "interrupted");
-    assert.equal(blocked?.status, "blocked");
-    assert.equal(blocked?.endedAt, null);
-    assert.equal(blocked?.result, null);
+    assert.equal(blocked?.status, "interrupted");
+    assert.ok(blocked?.endedAt);
+    assert.equal(blocked?.result, reason);
   } finally {
     await close(item);
   }

@@ -1,7 +1,15 @@
 export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
-/** Stable error codes introduced for clients that branch on board HTTP hygiene failures. */
+/** Stable error codes introduced for clients that branch on board HTTP failures. */
 export const TASK_BOARD_ERROR_CODES = Object.freeze({
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
+  TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
+  TASK_RETRY_REQUIRED: "TASK_RETRY_REQUIRED",
+  TASK_TERMINAL: "TASK_TERMINAL",
+  TASK_UNASSIGNED: "TASK_UNASSIGNED",
+  TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
+  TASK_WORKFLOW_ATTEMPT_SUPERSEDED: "TASK_WORKFLOW_ATTEMPT_SUPERSEDED",
+  WORK_NODE_VERSION_CONFLICT: "WORK_NODE_VERSION_CONFLICT",
   WORK_ITEM_ENDED: "WORK_ITEM_ENDED",
 } as const);
 export type TaskBoardErrorCode = typeof TASK_BOARD_ERROR_CODES[keyof typeof TASK_BOARD_ERROR_CODES];
@@ -30,8 +38,20 @@ export type WorkerConnection = typeof WORKER_CONNECTIONS[number] | null;
 export const TASK_KINDS = ["work", "manager_review", "human_check"] as const;
 export type TaskKind = typeof TASK_KINDS[number];
 
-export const TASK_STATUSES = ["backlog", "queued", "in_progress", "blocked", "completed", "failed", "cancelled"] as const;
+export const TASK_STATUSES = ["backlog", "queued", "in_progress", "blocked", "completed", "failed", "interrupted", "cancelled"] as const;
 export type TaskStatus = typeof TASK_STATUSES[number];
+
+export function isRecoverableTaskStatus(
+  status: TaskStatus,
+): status is Extract<TaskStatus, "failed" | "blocked" | "interrupted"> {
+  return status === "failed" || status === "blocked" || status === "interrupted";
+}
+
+export function isHardTerminalTaskStatus(
+  status: TaskStatus,
+): status is Extract<TaskStatus, "completed" | "cancelled"> {
+  return status === "completed" || status === "cancelled";
+}
 
 export const TASK_PHASE_STAGES = ["research", "planning", "execution", "testing", "review", "done"] as const;
 export type TaskPhaseStage = typeof TASK_PHASE_STAGES[number];
@@ -48,7 +68,7 @@ export type ActorType = typeof ACTOR_TYPES[number];
 export const QUESTION_STATUSES = ["open", "answered"] as const;
 export type QuestionStatus = typeof QUESTION_STATUSES[number];
 
-export const WAKEUP_REASONS = ["human_assignment", "human_answer", "human_resume", "workflow_handoff"] as const;
+export const WAKEUP_REASONS = ["human_assignment", "human_answer", "human_resume", "workflow_handoff", "assigned", "resumed"] as const;
 export type WakeupReason = typeof WAKEUP_REASONS[number];
 
 export const RUN_STATUSES = ["active", "waiting_for_human", "completed", "failed", "interrupted"] as const;
@@ -643,6 +663,23 @@ export interface UpdateTaskRequest {
   readonly orderKey?: number;
   readonly status?: TaskStatus;
   readonly result?: string | null;
+}
+
+export interface RetryTaskRequest {
+  readonly version: number;
+}
+
+export interface RetryTaskResponse {
+  readonly task: BoardTask;
+  readonly wakeup: Wakeup;
+}
+
+export interface BacklogTaskRequest {
+  readonly version: number;
+}
+
+export interface BacklogTaskResponse {
+  readonly task: BoardTask;
 }
 
 export interface CreateTaskMessageRequest {

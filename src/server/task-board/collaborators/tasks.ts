@@ -1,15 +1,25 @@
 import { randomUUID } from "node:crypto";
 import type {
+  BacklogTaskRequest,
+  BacklogTaskResponse,
   BoardTask,
   CreateTaskPhaseRequest,
   CreateTaskRequest,
+  RetryTaskRequest,
+  RetryTaskResponse,
   TaskPhase,
   TaskStatus,
   UpdateTaskPhaseRequest,
   UpdateTaskRequest,
 } from "#shared/task-board-contract";
+import {
+  TASK_BOARD_ERROR_CODES,
+  isHardTerminalTaskStatus,
+  isRecoverableTaskStatus,
+} from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
+import { wakeupFromRow } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
 
@@ -89,10 +99,155 @@ export class TasksCollaborator {
     return task;
   }
 
+  retryTask(taskId: string, request: RetryTaskRequest): RetryTaskResponse {
+    return this.retryTaskInternal(taskId, request.version, null);
+  }
+
+  retryTaskFromResume(
+    taskId: string,
+    agentId: string,
+    sourceKey: string,
+    detail: string,
+  ): RetryTaskResponse {
+    return this.retryTaskInternal(taskId, null, { agentId, sourceKey, detail });
+  }
+
+  private retryTaskInternal(
+    taskId: string,
+    expectedVersion: number | null,
+    resume: Readonly<{ agentId: string; sourceKey: string; detail: string }> | null,
+  ): RetryTaskResponse {
+    let wakeupId = "";
+    let wakeAgentId = "";
+    this.runtime.store.transaction(() => {
+      const current = this.runtime.requireTask(taskId);
+      if (isHardTerminalTaskStatus(current.status)) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot be retried");
+      }
+      if (expectedVersion !== null && current.version !== expectedVersion) {
+        throw conflict("TASK_VERSION_CONFLICT", "Task version changed");
+      }
+      if (!isRecoverableTaskStatus(current.status)) {
+        throw conflict(
+          TASK_BOARD_ERROR_CODES.TASK_NOT_RECOVERABLE,
+          "Only failed, blocked, or interrupted tasks can be retried",
+        );
+      }
+      if (current.assignedAgentId === null || current.assignedRole === null) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_UNASSIGNED, "Recoverable task has no assigned agent");
+      }
+      if (resume !== null && current.assignedAgentId !== resume.agentId) {
+        throw conflict("WAKEUP_TASK_NOT_ASSIGNED", "Resume target is not assigned to this task");
+      }
+      this.runtime.assertNoActiveRunForTaskInTransaction(taskId);
+      const now = exactNow(this.runtime.config.now);
+      const nextVersion = current.version + 1;
+      const pendingHumanAnswer = this.runtime.store.db.prepare(`
+        SELECT *
+        FROM wakeups AS wakeup
+        WHERE wakeup.task_id = ?
+          AND wakeup.reason = 'human_answer'
+          AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM task_events AS event
+            WHERE event.event_id = 'retired-wakeup:' || wakeup.wakeup_id
+          )
+        ORDER BY wakeup.created_at DESC, wakeup.rowid DESC
+        LIMIT 1
+      `).get(taskId);
+      const update = this.runtime.store.db.prepare(`
+        UPDATE tasks
+        SET status = 'queued', ended_at = NULL, result = NULL, version = ?, updated_at = ?
+        WHERE task_id = ? AND version = ?
+          AND assigned_agent_id = ?
+          AND status IN ('failed', 'blocked', 'interrupted')
+      `).run(nextVersion, now, taskId, current.version, current.assignedAgentId);
+      if (Number(update.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task version changed");
+      wakeupId = pendingHumanAnswer === undefined ? "" : wakeupFromRow(pendingHumanAnswer).wakeupId;
+      this.runtime.retirePendingWakeupsForTask(taskId, "task_retried", now, wakeupId || null);
+      this.runtime.recoverWorkflowTaskInTransaction(taskId, "retry", now);
+      this.runtime.insertEvent(
+        current.projectId,
+        taskId,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "task_retried",
+        {
+          previousStatus: current.status,
+          status: "queued",
+          assignedAgentId: current.assignedAgentId,
+          previousVersion: current.version,
+          version: nextVersion,
+        },
+        now,
+      );
+      if (wakeupId === "") {
+        wakeupId = this.runtime.insertWakeup(
+          current.projectId,
+          current.assignedAgentId,
+          "resumed",
+          resume?.sourceKey ?? `task:${taskId}:retry:version:${nextVersion}`,
+          taskId,
+          null,
+          resume?.detail ?? `Retry task: ${current.title}`,
+          now,
+        );
+      }
+      wakeAgentId = current.assignedAgentId;
+    });
+    this.runtime.wakeupEvents.emit(wakeAgentId);
+    return Object.freeze({
+      task: this.runtime.requireTask(taskId),
+      wakeup: wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(wakeupId)!),
+    });
+  }
+
+  backlogTask(taskId: string, request: BacklogTaskRequest): BacklogTaskResponse {
+    this.runtime.store.transaction(() => {
+      const current = this.runtime.requireTask(taskId);
+      if (isHardTerminalTaskStatus(current.status)) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot return to backlog");
+      }
+      if (current.version !== request.version) throw conflict("TASK_VERSION_CONFLICT", "Task version changed");
+      this.runtime.assertNoActiveRunForTaskInTransaction(taskId);
+      if (this.runtime.isWorkflowTask(taskId)) {
+        throw conflict(TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_BOUND, "Workflow stage tasks cannot return to backlog");
+      }
+      const now = exactNow(this.runtime.config.now);
+      const nextVersion = current.version + 1;
+      const update = this.runtime.store.db.prepare(`
+        UPDATE tasks
+        SET status = 'backlog', assigned_agent_id = NULL, assigned_role = NULL,
+          agent_estimate_minutes = NULL, estimate_recorded_at = NULL,
+          ended_at = NULL, result = NULL, version = ?, updated_at = ?
+        WHERE task_id = ? AND version = ? AND status NOT IN ('completed', 'cancelled')
+      `).run(nextVersion, now, taskId, current.version);
+      if (Number(update.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task version changed");
+      this.runtime.retirePendingWakeupsForTask(taskId, "task_unassigned", now);
+      this.runtime.insertEvent(
+        current.projectId,
+        taskId,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "task_backlogged",
+        {
+          previousStatus: current.status,
+          status: "backlog",
+          previousAssignedAgentId: current.assignedAgentId,
+          assignedAgentId: null,
+          previousVersion: current.version,
+          version: nextVersion,
+        },
+        now,
+      );
+    });
+    return Object.freeze({ task: this.runtime.requireTask(taskId) });
+  }
+
   updateTask(taskId: string, request: UpdateTaskRequest, actor: Actor): BoardTask {
     const current = this.runtime.requireTask(taskId);
     if (current.version !== request.version) throw conflict("TASK_VERSION_CONFLICT", "Task version changed");
-    if (current.endedAt !== null) throw conflict("TASK_TERMINAL", "Terminal tasks are immutable");
+    if (isHardTerminalTaskStatus(current.status)) {
+      throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks are immutable");
+    }
     if (current.kind === "human_check" && actor.type !== "human") {
       throw new TaskBoardError(403, "HUMAN_CHECK_HUMAN_ONLY", "Human checks can only be decided by a human");
     }
@@ -114,17 +269,38 @@ export class TasksCollaborator {
     if (assignedAgentId !== null && assignedRole !== null) this.runtime.assertTaskAssignment(current, assignedAgentId, assignedRole);
     const assigneeChanged = actor.type === "human" && "assignedAgentId" in request && assignedAgentId !== current.assignedAgentId;
     const newAssignment = assigneeChanged && assignedAgentId !== null;
-    const status = request.status ?? (newAssignment && current.status === "backlog" ? "queued" : current.status);
+    const recoveringReassignment = newAssignment && isRecoverableTaskStatus(current.status);
+    const status = request.status ?? (newAssignment && (current.status === "backlog" || recoveringReassignment) ? "queued" : current.status);
+    const humanCheckSettlement = current.kind === "human_check" && actor.type === "human" && status === "failed";
+    const recoveryStatusTransition = request.status !== undefined && request.status !== current.status && (
+      isRecoverableTaskStatus(current.status) || isRecoverableTaskStatus(request.status)
+    );
+    if (
+      (recoveringReassignment && status !== "queued") ||
+      (recoveryStatusTransition && !(recoveringReassignment && status === "queued") && !humanCheckSettlement)
+    ) {
+      throw conflict(
+        TASK_BOARD_ERROR_CODES.TASK_RECOVERY_REQUIRED,
+        "Use retry, reassignment, backlog, or run settlement to change recovery state",
+      );
+    }
+    if (status === "backlog" && this.runtime.isWorkflowTask(taskId)) {
+      throw conflict(TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_BOUND, "Workflow stage tasks cannot return to backlog");
+    }
     if (current.kind === "human_check" && status !== "backlog" && status !== "completed" && status !== "failed" && status !== "cancelled") {
       throw new TaskBoardError(400, "HUMAN_CHECK_STATUS_INVALID", "Human checks stay in backlog until a human records a terminal decision");
     }
-    const terminal = status === "completed" || status === "failed" || status === "cancelled";
-    const result = "result" in request ? request.result ?? null : current.result;
-    if (terminal && result === null) throw new TaskBoardError(400, "TASK_RESULT_REQUIRED", "Terminal task status requires a result");
-    if (!terminal && result !== null) throw new TaskBoardError(400, "TASK_RESULT_NOT_TERMINAL", "Task result is reserved for terminal status");
+    const settled = status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled";
+    const hardTerminal = isHardTerminalTaskStatus(status);
+    const leavesRecoverableState = isRecoverableTaskStatus(current.status) && !settled;
+    const result = recoveringReassignment || leavesRecoverableState
+      ? null
+      : "result" in request ? request.result ?? null : current.result;
+    if (settled && result === null) throw new TaskBoardError(400, "TASK_RESULT_REQUIRED", "Settled task status requires a result");
+    if (!settled && result !== null) throw new TaskBoardError(400, "TASK_RESULT_NOT_TERMINAL", "Task result is reserved for a settled status");
     const now = exactNow(this.runtime.config.now);
-    const startedAt = current.startedAt ?? (status === "in_progress" || status === "blocked" || terminal ? now : null);
-    const endedAt = terminal ? now : null;
+    const startedAt = current.startedAt ?? (status === "in_progress" || status === "blocked" || settled ? now : null);
+    const endedAt = settled ? current.endedAt ?? now : null;
     const expectedAgentMinutes = assigneeChanged
       ? null
       : "expectedAgentMinutes" in request
@@ -138,12 +314,13 @@ export class TasksCollaborator {
     const nextVersion = current.version + 1;
     let workflowWakeAgentId: string | null = null;
     const changed = this.runtime.store.transaction(() => {
+      if (recoveringReassignment) this.runtime.assertNoActiveRunForTaskInTransaction(taskId);
       const update = this.runtime.store.db.prepare(`
         UPDATE tasks SET
           title = ?, objective = ?, acceptance_criteria = ?, workspace_refs_json = ?, status = ?,
           assigned_agent_id = ?, assigned_role = ?, agent_estimate_minutes = ?, estimate_recorded_at = ?, order_key = ?, started_at = ?, ended_at = ?,
           result = ?, version = ?, updated_at = ?
-        WHERE task_id = ? AND version = ? AND ended_at IS NULL
+        WHERE task_id = ? AND version = ? AND status NOT IN ('completed', 'cancelled')
       `).run(
         request.title ?? current.title,
         request.objective ?? current.objective,
@@ -174,12 +351,16 @@ export class TasksCollaborator {
         expectedAgentMinutes,
         orderKey: request.orderKey ?? current.orderKey,
       }, now);
-      if (terminal) this.runtime.reconcileTaskPhasesForTerminal(current, status, actor, now);
-      if (assignedAgentId !== current.assignedAgentId || terminal || status === "backlog") {
+      if (status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled") {
+        this.runtime.reconcileTaskPhasesForTerminal(current, status, actor, now);
+      }
+      if (assignedAgentId !== current.assignedAgentId || settled || status === "backlog") {
         const retirementReason = status === "cancelled"
           ? "task_cancelled"
-          : terminal
+          : hardTerminal
             ? "task_terminal"
+            : status === "failed" || status === "interrupted"
+              ? "task_recovery_required"
             : assignedAgentId === null
               ? "task_unassigned"
               : status === "backlog"
@@ -187,11 +368,13 @@ export class TasksCollaborator {
                 : "task_reassigned";
         this.runtime.retirePendingWakeupsForTask(taskId, retirementReason, now);
       }
-      if (newAssignment) {
+      if (recoveringReassignment) this.runtime.recoverWorkflowTaskInTransaction(taskId, "reassign", now);
+      const shouldWake = newAssignment && (status === "queued" || status === "blocked");
+      if (shouldWake) {
         this.runtime.insertWakeup(
           current.projectId,
           assignedAgentId,
-          "human_assignment",
+          recoveringReassignment ? "assigned" : "human_assignment",
           `task:${taskId}:version:${nextVersion}`,
           taskId,
           null,
@@ -205,7 +388,7 @@ export class TasksCollaborator {
       return true;
     });
     if (!changed) throw new Error("TASK_BOARD_UPDATE_FAILED");
-    if (newAssignment) this.runtime.wakeupEvents.emit(assignedAgentId);
+    if (newAssignment && (status === "queued" || status === "blocked")) this.runtime.wakeupEvents.emit(assignedAgentId);
     if (workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(workflowWakeAgentId);
     return this.runtime.requireTask(taskId);
   }

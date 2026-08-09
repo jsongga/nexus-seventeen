@@ -50,6 +50,7 @@ export function taskStatus(status: WireTaskStatus, hasOpenQuestion: boolean): Ta
     blocked: 'blocked',
     completed: 'completed',
     failed: 'failed',
+    interrupted: 'interrupted',
     cancelled: 'interrupted',
   };
   return statuses[status];

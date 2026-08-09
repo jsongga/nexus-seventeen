@@ -124,7 +124,7 @@ test("area memory accepts only compact ordered prior-task results", () => {
   );
 });
 
-for (const reason of ["human_assignment", "human_answer", "human_resume"] as const) {
+for (const reason of ["human_assignment", "human_answer", "human_resume", "assigned", "resumed"] as const) {
   test(`launches exactly one one-shot agent for ${reason}`, async () => {
     const root = await tempRoot();
     const board = new FakeBoard();

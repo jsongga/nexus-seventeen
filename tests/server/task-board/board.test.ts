@@ -982,7 +982,7 @@ test("reconciler skips a dead blocked activation orphan and creates a fresh task
     assert.equal(tasks.length, 2);
     const replacement = tasks.find((task) => task.taskId !== orphan.taskId);
     assert.ok(replacement);
-    assert.equal(fixture.board.requireTask(orphan.taskId).status, "blocked");
+    assert.equal(fixture.board.requireTask(orphan.taskId).status, "failed");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?")
@@ -1437,7 +1437,7 @@ test("contradictory handoff validation leaves an active workflow run settleable"
     });
     assert.equal(settled.duplicate, false);
     assert.equal(settled.run.status, "failed");
-    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "blocked");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "failed");
     const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.nodes[0]?.state, "blocked");
     assert.equal(workflow.handoffs[0]?.outcome, "failed");
@@ -1576,6 +1576,48 @@ test("a duplicate settle repairs a terminal run whose workflow node is still act
   }
 });
 
+test("a duplicate failed settle repairs the legacy blocked-task workflow shape", async () => {
+  const fixture = await activeSettlementWorkflow("legacy-failed-repair");
+  const result = "The pre-v14 worker failed after persisting only the legacy task shape.";
+  const taskId = fixture.claim.task!.taskId;
+  fixture.board.close();
+
+  const { DatabaseSync } = await import("node:sqlite");
+  const partial = new DatabaseSync(fixture.path);
+  try {
+    partial.exec("PRAGMA foreign_keys = ON");
+    partial.prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+      .run("2026-08-09T18:15:00.000Z", result, fixture.claim.run.runId);
+    partial.prepare(`
+      UPDATE tasks
+      SET status='blocked',ended_at=NULL,result=NULL,version=version+1,updated_at=?
+      WHERE task_id=? AND ended_at IS NULL
+    `).run("2026-08-09T18:15:00.000Z", taskId);
+  } finally {
+    partial.close();
+  }
+
+  const restarted = await TaskBoard.open(config(fixture.path));
+  try {
+    assert.equal(restarted.requireTask(taskId).status, "blocked");
+    assert.equal(restarted.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    assert.equal(restarted.projectWorkflow(fixture.project.projectId).handoffs.length, 0);
+    const replay = restarted.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result,
+      handoff: settlementHandoff("failed"),
+    });
+    assert.equal(replay.duplicate, true);
+    const repaired = restarted.projectWorkflow(fixture.project.projectId);
+    assert.equal(repaired.nodes[0]?.state, "blocked");
+    assert.equal(repaired.handoffs.length, 1);
+    assert.equal(repaired.handoffs[0]?.taskId, taskId);
+    assert.equal(repaired.handoffs[0]?.outcome, "failed");
+  } finally {
+    restarted.close();
+  }
+});
+
 test("an old duplicate settle does not repair a workflow after the task has resumed", async () => {
   const fixture = await activeSettlementWorkflow("moved-on-retry");
   const oldResult = "The first verification run failed before workflow settlement.";
@@ -1622,7 +1664,7 @@ test("an old duplicate settle does not repair a workflow after the task has resu
     assert.equal(replay.run.status, "failed");
     const afterReplay = restarted.projectWorkflow(fixture.project.projectId);
     assert.equal(afterReplay.nodes[0]?.state, "active");
-    assert.equal(afterReplay.nodes[0]?.version, beforeResume.version);
+    assert.equal(afterReplay.nodes[0]?.version, beforeResume.version + 1);
     assert.equal(afterReplay.handoffs.length, 0);
     assert.equal(restarted.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === newer.run.runId)?.status, "active");
     assert.equal(restarted.requireTask(taskId).status, "in_progress");
@@ -1741,7 +1783,7 @@ test("work items preserve original intake, resolve explicit projects, and enforc
         .run("Replace the accepted request.", automatic.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 14);
   } finally {
     direct.close();
   }
@@ -2822,9 +2864,9 @@ test("human notes and task edits do not create a durable task wakeup", async () 
       result: "The first implementation attempt needs another pass.",
     });
     const blocked = fixture.board.requireTask(backlog.taskId);
-    assert.equal(blocked.status, "blocked");
-    assert.equal(blocked.endedAt, null);
-    assert.equal(blocked.result, null);
+    assert.equal(blocked.status, "failed");
+    assert.ok(blocked.endedAt);
+    assert.equal(blocked.result, "The first implementation attempt needs another pass.");
     const titleOnly = fixture.board.updateTask(backlog.taskId, {
       version: blocked.version,
       title: "Recover interrupted checkout safely",
@@ -3152,7 +3194,8 @@ test("asking a question atomically releases the run and only the human answer wa
     });
     assert.ok(resumed);
     assert.equal(resumed.wakeup.wakeupId, answered.wakeup.wakeupId);
-    assert.notEqual(resumed.wakeup.wakeupId, redundantResume.wakeup.wakeupId);
+    assert.equal(resumed.wakeup.wakeupId, redundantResume.wakeup.wakeupId);
+    assert.equal(redundantResume.wakeup.reason, "human_answer");
     assert.equal(resumed.task?.status, "in_progress");
     assert.equal(resumed.task?.startedAt, startedAt);
     assert.equal(resumed.context.triggerQuestion?.answer, answered.question.answer);
@@ -3160,10 +3203,71 @@ test("asking a question atomically releases the run and only the human answer wa
     const oversight = fixture.board.snapshot(fixture.project.projectId);
     assert.equal(oversight.openQuestions.length, 0);
     assert.equal(oversight.recentQuestions[0]?.answer, answered.question.answer);
-    const retiredResume = oversight.recentEvents.find((event) => (
-      event.eventType === "agent_wakeup_retired" && event.data.wakeupId === redundantResume.wakeup.wakeupId
-    ));
-    assert.equal(retiredResume?.data.supersededByWakeupId, answered.wakeup.wakeupId);
+    assert.equal(oversight.recentEvents.some((event) => (
+      event.eventType === "agent_wakeup_retired" && event.data.wakeupId === answered.wakeup.wakeupId
+    )), false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry preserves an unclaimed human answer wakeup and its question context", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Keep the answered recovery question",
+      requiresReview: false,
+    }));
+    const first = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-answer-preserved-before-retry-0001",
+      messageCursor: null,
+    });
+    assert.ok(first);
+    const question = fixture.board.askQuestion(task.taskId, fixture.engineer.agentId, {
+      clientEventId: "question-answer-preserved-before-retry-0001",
+      question: "Should the retry preserve the approved payment-intent identifier?",
+      runId: first.run.runId,
+    });
+    const answered = fixture.board.answerQuestion(question.questionId, {
+      answer: "Yes. Preserve the approved identifier and include it in the retry context.",
+      version: question.version,
+    });
+    const blocked = fixture.board.requireTask(task.taskId);
+    assert.equal(blocked.status, "blocked");
+
+    const retried = fixture.board.retryTask(task.taskId, { version: blocked.version });
+    assert.equal(retried.task.status, "queued");
+    assert.equal(retried.wakeup.wakeupId, answered.wakeup.wakeupId);
+    assert.equal(retried.wakeup.reason, "human_answer");
+    assert.equal(retried.wakeup.claimedAt, null);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        WHERE wakeup.task_id=? AND wakeup.reason='resumed' AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS(
+            SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          )
+      `).get(task.taskId)?.count), 0);
+      const persistedAnswer = inspected.prepare("SELECT claimed_at FROM wakeups WHERE wakeup_id=?")
+        .get(answered.wakeup.wakeupId);
+      assert.equal(persistedAnswer?.claimed_at, null);
+    } finally {
+      inspected.close();
+    }
+
+    const resumed = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-answer-preserved-after-retry-0001",
+      messageCursor: null,
+    });
+    assert.ok(resumed);
+    assert.equal(resumed.wakeup.wakeupId, answered.wakeup.wakeupId);
+    assert.equal(resumed.context.triggerQuestion?.questionId, question.questionId);
+    assert.equal(resumed.context.triggerQuestion?.answer, answered.question.answer);
+    assert.equal(resumed.context.openQuestions.length, 0);
   } finally {
     fixture.board.close();
   }
@@ -3265,12 +3369,9 @@ test("changing or clearing an assignee clears the previous agent's estimate", as
       "Unassign an estimated task",
       "claim-estimate-before-unassignment-0001",
     );
-    const unassigned = fixture.board.updateTask(blockedForBacklog.taskId, {
+    const unassigned = fixture.board.backlogTask(blockedForBacklog.taskId, {
       version: blockedForBacklog.version,
-      assignedAgentId: null,
-      assignedRole: null,
-      status: "backlog",
-    }, { type: "human", id: "human:alice" });
+    }).task;
     assert.equal(unassigned.assignedAgentId, null);
     assert.equal(unassigned.expectedAgentMinutes, null);
     assert.equal(unassigned.estimateRecordedAt, null);
@@ -3789,7 +3890,7 @@ test("claim is exact-idempotent and the database permits only one active run per
   }
 });
 
-test("human interrupt is durable, idempotent, visible immediately, and only an explicit resume restarts blocked work", async () => {
+test("human interrupt is durable, idempotent, visible immediately, and an explicit retry restarts interrupted work", async () => {
   const fixture = await boardFixture();
   try {
     fixture.board.createTask(fixture.project.projectId, taskRequest());
@@ -3808,17 +3909,14 @@ test("human interrupt is durable, idempotent, visible immediately, and only an e
       result: "Stopped after the durable human interrupt.",
     });
     const blocked = fixture.board.requireTask(claim.task!.taskId);
-    assert.equal(blocked.status, "blocked");
-    assert.equal(blocked.endedAt, null);
-    assert.equal(blocked.result, null);
+    assert.equal(blocked.status, "interrupted");
+    assert.ok(blocked.endedAt);
+    assert.equal(blocked.result, "Stopped after the durable human interrupt.");
     assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-after-interrupt-0001",
       messageCursor: 0,
     }), null);
-    fixture.board.resumeAgent(fixture.engineer.agentId, {
-      reason: "Human approved a safer follow-up iteration.",
-      taskId: blocked.taskId,
-    }, "resume-after-interrupt-0001");
+    fixture.board.retryTask(blocked.taskId, { version: blocked.version });
     const resumed = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-resumed-after-interrupt-0001",
       messageCursor: 0,
@@ -3826,6 +3924,584 @@ test("human interrupt is durable, idempotent, visible immediately, and only an e
     assert.ok(resumed);
     assert.equal(resumed.task?.status, "in_progress");
     assert.equal(resumed.task?.startedAt, blocked.startedAt);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry re-arms an assigned failed task and its next run settles end to end", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Retry failed checkout work",
+      requiresReview: false,
+    }));
+    const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-recovery-failed-first-0001",
+      messageCursor: null,
+    });
+    assert.ok(firstClaim);
+    fixture.board.settleRun(firstClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The first implementation pass failed its focused tests.",
+    });
+    const failed = fixture.board.requireTask(task.taskId);
+    assert.equal(failed.status, "failed");
+
+    const retried = fixture.board.retryTask(task.taskId, { version: failed.version });
+    assert.equal(retried.task.status, "queued");
+    assert.equal(retried.task.assignedAgentId, fixture.engineer.agentId);
+    assert.equal(retried.task.version, failed.version + 1);
+    assert.equal(retried.wakeup.reason, "resumed");
+    assert.throws(
+      () => fixture.board.retryTask(task.taskId, { version: failed.version }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_VERSION_CONFLICT",
+    );
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND reason='resumed'")
+        .get(task.taskId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+
+    const retryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-recovery-failed-second-0001",
+      messageCursor: null,
+    });
+    assert.ok(retryClaim);
+    assert.equal(retryClaim.task?.taskId, task.taskId);
+    assert.equal(retryClaim.task.status, "in_progress");
+    assert.equal(retryClaim.wakeup.wakeupId, retried.wakeup.wakeupId);
+    fixture.board.settleRun(retryClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The retried implementation and focused tests completed.",
+    });
+    assert.equal(fixture.board.requireTask(task.taskId).status, "completed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("resume compat-retries assigned failed work and leaves it claimable and settleable", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Resume failed checkout work through the compatibility path",
+      requiresReview: false,
+    }));
+    const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-resume-recovery-failed-first-0001",
+      messageCursor: null,
+    });
+    assert.ok(firstClaim);
+    fixture.board.settleRun(firstClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The first pass failed before the existing Resume affordance was used.",
+    });
+    const failed = fixture.board.requireTask(task.taskId);
+
+    const resumed = fixture.board.resumeAgent(fixture.engineer.agentId, {
+      reason: "Retry through the existing Resume control.",
+      taskId: task.taskId,
+    }, "resume-recovery-failed-compat-0001");
+    const rearmed = fixture.board.requireTask(task.taskId);
+    assert.equal(resumed.duplicate, false);
+    assert.equal(resumed.wakeup.reason, "resumed");
+    assert.equal(rearmed.status, "queued");
+    assert.equal(rearmed.result, null);
+    assert.equal(rearmed.endedAt, null);
+    assert.equal(rearmed.version, failed.version + 1);
+    assert.ok(fixture.board.snapshot(fixture.project.projectId).recentEvents.some((event) => (
+      event.taskId === task.taskId &&
+      event.eventType === "task_retried" &&
+      event.data.previousVersion === failed.version
+    )));
+
+    const replay = fixture.board.resumeAgent(fixture.engineer.agentId, {
+      reason: "Retry through the existing Resume control.",
+      taskId: task.taskId,
+    }, "resume-recovery-failed-compat-0001");
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.wakeup.wakeupId, resumed.wakeup.wakeupId);
+
+    const retryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-resume-recovery-failed-second-0001",
+      messageCursor: null,
+    });
+    assert.ok(retryClaim);
+    assert.equal(retryClaim.wakeup.wakeupId, resumed.wakeup.wakeupId);
+    fixture.board.settleRun(retryClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The compatibility-resumed task completed successfully.",
+    });
+    assert.equal(fixture.board.requireTask(task.taskId).status, "completed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry rejects an unassigned recoverable task without creating a wakeup", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Unassigned failed checkout work",
+      assignedAgentId: null,
+      assignedRole: null,
+    }));
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      seeded.prepare(`
+        UPDATE tasks
+        SET status='failed', started_at=?, ended_at=?, result=?, version=version+1, updated_at=?
+        WHERE task_id=?
+      `).run(
+        "2026-08-09T18:00:00.000Z",
+        "2026-08-09T18:00:00.000Z",
+        "No compatible agent was available for the failed pass.",
+        "2026-08-09T18:00:00.000Z",
+        task.taskId,
+      );
+    } finally {
+      seeded.close();
+    }
+    const failed = fixture.board.requireTask(task.taskId);
+
+    assert.throws(
+      () => fixture.board.retryTask(task.taskId, { version: failed.version }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED",
+    );
+    assert.throws(
+      () => fixture.board.resumeAgent(fixture.engineer.agentId, {
+        reason: "An unassigned failed task cannot be resumed.",
+        taskId: task.taskId,
+      }, "resume-unassigned-recovery-0001"),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED",
+    );
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("reassigning interrupted work retires the old agent and wakes the new agent", async () => {
+  const fixture = await boardFixture();
+  try {
+    const replacement = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "engineer-two",
+      role: "engineer",
+      area: "checkout-recovery",
+      mission: "Recover interrupted checkout tasks.",
+      model: "codex-mini",
+      token: "task-board-engineer-two-token-0123456789",
+    });
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Reassign interrupted checkout work",
+      requiresReview: false,
+    }));
+    const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-recovery-interrupted-first-0001",
+      messageCursor: null,
+    });
+    assert.ok(firstClaim);
+    fixture.board.settleRun(firstClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "interrupted",
+      result: "The original worker stopped before the recovery was complete.",
+    });
+    const interrupted = fixture.board.requireTask(task.taskId);
+    assert.equal(interrupted.status, "interrupted");
+
+    const reassigned = fixture.board.updateTask(task.taskId, {
+      version: interrupted.version,
+      assignedAgentId: replacement.agentId,
+      assignedRole: replacement.role,
+    }, { type: "human", id: "human:alice" });
+    assert.equal(reassigned.status, "queued");
+    assert.equal(reassigned.assignedAgentId, replacement.agentId);
+    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-recovery-interrupted-old-agent-0001",
+      messageCursor: null,
+    }), null);
+    const replacementClaim = fixture.board.claimRun(replacement.agentId, {
+      claimId: "claim-recovery-interrupted-new-agent-0001",
+      messageCursor: null,
+    });
+    assert.ok(replacementClaim);
+    assert.equal(replacementClaim.task?.taskId, task.taskId);
+    assert.equal(replacementClaim.wakeup.reason, "assigned");
+    fixture.board.settleRun(replacementClaim.run.runId, replacement.agentId, {
+      outcome: "completed",
+      result: "The replacement agent completed the interrupted work.",
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry, recoverable reassignment, and backlog reject an active task run atomically", async () => {
+  const fixture = await boardFixture();
+  try {
+    const replacement = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "active-recovery-replacement",
+      role: "engineer",
+      area: "active-recovery-fence",
+      mission: "Must not receive work while the original task run is active.",
+      model: "codex-mini",
+      token: "active-recovery-replacement-token-0123456789",
+    });
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Fence recovery against an active run",
+      requiresReview: false,
+    }));
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-active-recovery-fence-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      seeded.prepare(`
+        UPDATE tasks
+        SET status='failed', ended_at=?, result=?, version=version+1, updated_at=?
+        WHERE task_id=?
+      `).run(
+        "2026-08-09T18:05:00.000Z",
+        "Direct legacy race fixture while the run remains active.",
+        "2026-08-09T18:05:00.000Z",
+        task.taskId,
+      );
+    } finally {
+      seeded.close();
+    }
+    const before = fixture.board.requireTask(task.taskId);
+    const inspectedBefore = new DatabaseSync(fixture.path, { readOnly: true });
+    let wakeupsBefore = 0;
+    try {
+      wakeupsBefore = Number(inspectedBefore.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+        .get(task.taskId)?.count);
+    } finally {
+      inspectedBefore.close();
+    }
+
+    const recoveryOperations = [
+      () => fixture.board.retryTask(task.taskId, { version: before.version }),
+      () => fixture.board.updateTask(task.taskId, {
+        version: before.version,
+        assignedAgentId: replacement.agentId,
+        assignedRole: replacement.role,
+      }, { type: "human", id: "human:alice" }),
+      () => fixture.board.backlogTask(task.taskId, { version: before.version }),
+    ];
+    for (const operation of recoveryOperations) {
+      assert.throws(
+        operation,
+        (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "AGENT_RUN_ACTIVE",
+      );
+      assert.deepEqual(fixture.board.requireTask(task.taskId), before);
+    }
+    const inspectedAfter = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(inspectedAfter.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+        .get(task.taskId)?.count), wakeupsBefore);
+      assert.equal(inspectedAfter.prepare("SELECT status FROM runs WHERE run_id=?").get(claim.run.runId)?.status, "active");
+    } finally {
+      inspectedAfter.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("generic task PATCH cannot enter or leave recovery state", async () => {
+  const fixture = await boardFixture();
+  try {
+    const activeTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Reject PATCH into recovery while active",
+      requiresReview: false,
+    }));
+    const activeClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-patch-into-recovery-0001",
+      messageCursor: null,
+    });
+    assert.ok(activeClaim);
+    const activeBefore = fixture.board.requireTask(activeTask.taskId);
+    assert.throws(
+      () => fixture.board.updateTask(activeTask.taskId, {
+        version: activeBefore.version,
+        status: "failed",
+        result: "PATCH must not settle an active run.",
+      }, { type: "human", id: "human:alice" }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+    );
+    assert.deepEqual(fixture.board.requireTask(activeTask.taskId), activeBefore);
+    fixture.board.settleRun(activeClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "Settle through the run operation before testing recovery exit.",
+    });
+
+    const failed = fixture.board.requireTask(activeTask.taskId);
+    assert.throws(
+      () => fixture.board.updateTask(activeTask.taskId, {
+        version: failed.version,
+        status: "queued",
+      }, { type: "human", id: "human:alice" }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+    );
+    assert.deepEqual(fixture.board.requireTask(activeTask.taskId), failed);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("backlog unassigns blocked non-workflow work and retires every pending wakeup", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Return blocked checkout work to backlog",
+    }));
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      seeded.prepare("UPDATE tasks SET status='blocked',version=version+1,updated_at=? WHERE task_id=?")
+        .run("2026-08-09T18:10:00.000Z", task.taskId);
+    } finally {
+      seeded.close();
+    }
+    const blocked = fixture.board.requireTask(task.taskId);
+
+    const returned = fixture.board.backlogTask(task.taskId, { version: blocked.version }).task;
+    assert.equal(returned.status, "backlog");
+    assert.equal(returned.assignedAgentId, null);
+    assert.equal(returned.assignedRole, null);
+    assert.equal(returned.version, blocked.version + 1);
+    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-after-recovery-backlog-0001",
+      messageCursor: null,
+    }), null);
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS(
+            SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          )
+      `).get(task.taskId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("workflow-bound tasks cannot return to backlog", async () => {
+  const fixture = await activeSettlementWorkflow("recovery-backlog-bound");
+  try {
+    fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Verification needs another controlled attempt.",
+      handoff: settlementHandoff("failed"),
+    });
+    const failed = fixture.board.requireTask(fixture.claim.task!.taskId);
+    const beforeWorkflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    let wakeupsBefore = 0;
+    try {
+      wakeupsBefore = Number(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+        .get(failed.taskId)?.count);
+    } finally {
+      inspected.close();
+    }
+
+    assert.throws(
+      () => fixture.board.backlogTask(failed.taskId, { version: failed.version }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_WORKFLOW_BOUND",
+    );
+    assert.deepEqual(fixture.board.requireTask(failed.taskId), failed);
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), beforeWorkflow);
+    const verified = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+        .get(failed.taskId)?.count), wakeupsBefore);
+    } finally {
+      verified.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("hard-terminal tasks reject resume, retry, assign, and backlog without new wakeups", async () => {
+  const fixture = await boardFixture();
+  try {
+    const tasks = ["completed", "cancelled"].map((status) => {
+      const created = fixture.board.createTask(fixture.project.projectId, taskRequest({
+        title: `${status} task rejects recovery`,
+        requiresReview: false,
+      }));
+      return fixture.board.updateTask(created.taskId, {
+        version: created.version,
+        status: status as "completed" | "cancelled",
+        result: `The task is already ${status}.`,
+      }, { type: "human", id: "human:alice" });
+    });
+    const { DatabaseSync } = await import("node:sqlite");
+
+    for (const task of tasks) {
+      const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+      let wakeupsBefore = 0;
+      try {
+        wakeupsBefore = Number(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+          .get(task.taskId)?.count);
+      } finally {
+        inspected.close();
+      }
+      const operations = [
+        () => fixture.board.resumeAgent(fixture.engineer.agentId, {
+          reason: "A terminal task must not wake an agent.",
+          taskId: task.taskId,
+        }, `terminal-resume-${task.status}-0001`),
+        () => fixture.board.retryTask(task.taskId, { version: task.version }),
+        () => fixture.board.updateTask(task.taskId, {
+          version: task.version,
+          assignedAgentId: fixture.manager.agentId,
+          assignedRole: fixture.manager.role,
+        }, { type: "human", id: "human:alice" }),
+        () => fixture.board.backlogTask(task.taskId, { version: task.version }),
+      ];
+      for (const operation of operations) {
+        assert.throws(
+          operation,
+          (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+        );
+      }
+      const verified = new DatabaseSync(fixture.path, { readOnly: true });
+      try {
+        assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
+          .get(task.taskId)?.count), wakeupsBefore);
+      } finally {
+        verified.close();
+      }
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("resume checks project scope before revealing hard-terminal task state", async () => {
+  const fixture = await boardFixture();
+  try {
+    const otherProject = fixture.board.createProject({
+      name: "Private terminal work",
+      description: "Must not leak task state across projects.",
+    });
+    const task = fixture.board.createTask(otherProject.projectId, taskRequest({
+      title: "Cross-project completed task",
+      assignedAgentId: null,
+      assignedRole: null,
+      requiresReview: false,
+    }));
+    fixture.board.updateTask(task.taskId, {
+      version: task.version,
+      status: "completed",
+      result: "Completed in another project.",
+    }, { type: "human", id: "human:alice" });
+
+    assert.throws(
+      () => fixture.board.resumeAgent(fixture.engineer.agentId, {
+        reason: "This caller must not learn that the task is terminal.",
+        taskId: task.taskId,
+      }, "cross-project-terminal-resume-0001"),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_PROJECT_MISMATCH",
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retrying a workflow stage reuses its attempt and settles the node normally", async () => {
+  const fixture = await activeSettlementWorkflow("recovery-same-attempt");
+  try {
+    const taskId = fixture.claim.task!.taskId;
+    fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "The first verification pass found a recoverable defect.",
+      handoff: settlementHandoff("failed"),
+    });
+    const failed = fixture.board.requireTask(taskId);
+    assert.equal(failed.status, "failed");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "blocked");
+
+    const replacement = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "recovery-stage-verifier",
+      role: "verifier",
+      area: "workflow-recovery",
+      mission: "Recover workflow verification tasks without bypassing their wakeup.",
+      model: "codex-mini",
+      token: "recovery-stage-verifier-token-0123456789",
+    });
+    const workflowBeforeInvalidPatch = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.throws(
+      () => fixture.board.updateTask(taskId, {
+        version: failed.version,
+        assignedAgentId: replacement.agentId,
+        assignedRole: replacement.role,
+        status: "in_progress",
+      }, { type: "human", id: "human:alice" }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+    );
+    assert.deepEqual(fixture.board.requireTask(taskId), failed);
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), workflowBeforeInvalidPatch);
+
+    const retried = fixture.board.retryTask(taskId, { version: failed.version });
+    assert.equal(retried.task.status, "queued");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+        .get(fixture.node.nodeId)?.count, 1);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_handoffs WHERE task_id=?")
+        .get(taskId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+
+    const retryClaim = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-recovery-same-attempt-0001",
+      messageCursor: null,
+    });
+    assert.ok(retryClaim);
+    assert.equal(retryClaim.context.workflow?.nodeId, fixture.node.nodeId);
+    fixture.board.settleRun(retryClaim.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "The retried verification pass succeeded.",
+      handoff: settlementHandoff("passed"),
+    });
+    const completed = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(completed.nodes[0]?.state, "completed");
+    assert.equal(completed.handoffs.length, 1);
+    assert.equal(completed.handoffs[0]?.outcome, "passed");
+    const verified = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+        .get(fixture.node.nodeId)?.count, 1);
+    } finally {
+      verified.close();
+    }
   } finally {
     fixture.board.close();
   }
@@ -4352,7 +5028,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -4389,7 +5065,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -4429,7 +5105,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -4519,7 +5195,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -4590,7 +5266,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -4629,7 +5305,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -4664,7 +5340,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -4712,7 +5388,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -4762,7 +5438,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -4801,7 +5477,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -4810,6 +5486,48 @@ test("schema version 12 adds durable claim results while preserving active legac
       verified.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(claim.run.runId)?.claim_result_json,
       null,
     );
+  } finally {
+    verified.close();
+  }
+});
+
+test("schema version 13 adds recoverable interruption and recovery wakeup values", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+    title: "Preserve task state through the recovery migration",
+    requiresReview: false,
+  }));
+  fixture.board.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("PRAGMA user_version = 13;");
+  legacy.close();
+
+  const upgraded = await TaskBoard.open(config(path));
+  const claim = upgraded.claimRun(fixture.engineer.agentId, {
+    claimId: "claim-v13-recovery-migration-0001",
+    messageCursor: null,
+  });
+  assert.ok(claim);
+  upgraded.settleRun(claim.run.runId, fixture.engineer.agentId, {
+    outcome: "interrupted",
+    result: "The migrated task records an interrupted recovery state.",
+  });
+  const interrupted = upgraded.requireTask(task.taskId);
+  assert.equal(interrupted.status, "interrupted");
+  const retried = upgraded.retryTask(task.taskId, { version: interrupted.version });
+  assert.equal(retried.wakeup.reason, "resumed");
+  upgraded.close();
+
+  const verified = new DatabaseSync(path);
+  try {
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 14);
+    assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
+    assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
+    assert.equal(verified.prepare("SELECT status FROM tasks WHERE task_id=?").get(task.taskId)?.status, "queued");
   } finally {
     verified.close();
   }

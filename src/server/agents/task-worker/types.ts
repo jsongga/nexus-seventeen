@@ -15,6 +15,8 @@ export const TASK_WAKE_REASONS = Object.freeze([
   "human_answer",
   "human_resume",
   "workflow_handoff",
+  "assigned",
+  "resumed",
 ] as const);
 
 export type TaskWakeReason = typeof TASK_WAKE_REASONS[number];

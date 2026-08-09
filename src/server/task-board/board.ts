@@ -5,6 +5,8 @@ import {
   type AgentProfile,
   type AgentRun,
   type AnswerHumanQuestionRequest,
+  type BacklogTaskRequest,
+  type BacklogTaskResponse,
   type BoardSnapshot,
   type BoardTask,
   type ClaimRunRequest,
@@ -29,6 +31,8 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type RetryTaskRequest,
+  type RetryTaskResponse,
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
@@ -87,7 +91,7 @@ export class TaskBoard {
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects);
     this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);
-    this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects);
+    this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects, this.#tasks);
   }
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {
@@ -224,6 +228,14 @@ export class TaskBoard {
 
   updateTask(taskId: string, request: UpdateTaskRequest, actor: Actor): BoardTask {
     return this.#tasks.updateTask(taskId, request, actor);
+  }
+
+  retryTask(taskId: string, request: RetryTaskRequest): RetryTaskResponse {
+    return this.#tasks.retryTask(taskId, request);
+  }
+
+  backlogTask(taskId: string, request: BacklogTaskRequest): BacklogTaskResponse {
+    return this.#tasks.backlogTask(taskId, request);
   }
 
   createTaskPhase(taskId: string, request: CreateTaskPhaseRequest, agentId: string): TaskPhase {

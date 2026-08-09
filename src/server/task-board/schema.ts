@@ -6,6 +6,7 @@ import type {
   AutomationPipelineStage,
   AutomationStageExecutor,
   AnswerHumanQuestionRequest,
+  BacklogTaskRequest,
   ClaimRunRequest,
   ConfirmPlanRevisionRequest,
   CreateAgentRequest,
@@ -18,6 +19,7 @@ import type {
   CreateTaskRequest,
   CreateWorkItemRequest,
   InterruptAgentRequest,
+  RetryTaskRequest,
   ResumeAgentRequest,
   SettleRunRequest,
   TaskMessageKind,
@@ -203,6 +205,7 @@ function taskStatus(value: unknown): TaskStatus {
     value !== "blocked" &&
     value !== "completed" &&
     value !== "failed" &&
+    value !== "interrupted" &&
     value !== "cancelled"
   ) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "status is invalid");
@@ -652,6 +655,16 @@ export function parseUpdateTask(value: unknown): UpdateTaskRequest {
   if ("status" in item) result.status = taskStatus(item.status);
   if ("result" in item) result.result = item.result === null ? null : text(item.result, "result", 16_000);
   return Object.freeze(result);
+}
+
+export function parseRetryTask(value: unknown): RetryTaskRequest {
+  const item = exact(value, ["version"], "Task retry");
+  return Object.freeze({ version: positiveVersion(item.version) });
+}
+
+export function parseBacklogTask(value: unknown): BacklogTaskRequest {
+  const item = exact(value, ["version"], "Task backlog transition");
+  return Object.freeze({ version: positiveVersion(item.version) });
 }
 
 function messageKind(value: unknown, human: boolean): TaskMessageKind {

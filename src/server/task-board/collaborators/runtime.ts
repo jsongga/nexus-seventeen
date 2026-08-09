@@ -2,16 +2,20 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   TASK_BOARD_API_VERSION,
+  TASK_BOARD_ERROR_CODES,
+  isHardTerminalTaskStatus,
   type AgentProfile,
   type AgentRole,
   type AgentRun,
   type BoardTask,
+  type ProjectEvent,
   type TaskKind,
   type TaskPhase,
   type TaskPhaseStatus,
   type TaskStatus,
   type Wakeup,
   type WorkerConnection,
+  type WorkflowStage,
 } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import type { TaskBoardConfig } from "../config.js";
@@ -155,7 +159,7 @@ export class TaskBoardRuntime {
 
   reconcileTaskPhasesForTerminal(
     task: BoardTask,
-    taskStatus: Extract<TaskStatus, "completed" | "failed" | "cancelled">,
+    taskStatus: Extract<TaskStatus, "completed" | "failed" | "interrupted" | "cancelled">,
     actor: Actor,
     now: string,
   ): void {
@@ -194,6 +198,102 @@ export class TaskBoardRuntime {
     return taskFromRow(row, this.taskPhases(taskId));
   }
 
+  isWorkflowTask(taskId: string): boolean {
+    return this.store.db.prepare("SELECT 1 FROM stage_attempts WHERE task_id = ?").get(taskId) !== undefined;
+  }
+
+  recoverWorkflowTaskInTransaction(
+    taskId: string,
+    transition: "retry" | "reassign",
+    now: string,
+  ): boolean {
+    const link = this.store.db.prepare(`
+      SELECT
+        attempt.node_id,
+        attempt.stage,
+        attempt.attempt,
+        node.project_id,
+        node.plan_revision_id,
+        node.title,
+        node.state,
+        node.current_stage,
+        node.version
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id = attempt.node_id
+      WHERE attempt.task_id = ?
+    `).get(taskId);
+    if (link === undefined) return false;
+    const nodeId = stringValue(link, "node_id");
+    const stage = stringValue(link, "stage") as WorkflowStage;
+    const currentStage = nullableString(link, "current_stage");
+    const state = stringValue(link, "state");
+    const attempt = numberValue(link, "attempt");
+    const newerAttempt = this.store.db.prepare(`
+      SELECT 1 FROM stage_attempts
+      WHERE node_id = ? AND stage = ? AND attempt > ?
+      LIMIT 1
+    `).get(nodeId, stage, attempt);
+    if (
+      currentStage !== stage ||
+      (state !== "active" && state !== "blocked") ||
+      newerAttempt !== undefined
+    ) {
+      throw conflict(
+        TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_ATTEMPT_SUPERSEDED,
+        "Workflow task attempt is no longer recoverable",
+      );
+    }
+    const nodeVersion = numberValue(link, "version");
+    this.store.db.prepare("DELETE FROM stage_handoffs WHERE task_id = ?").run(taskId);
+    const update = this.store.db.prepare(`
+      UPDATE work_nodes
+      SET state = 'active', current_stage = ?, version = version + 1, updated_at = ?
+      WHERE node_id = ? AND version = ? AND current_stage = ? AND state IN ('active', 'blocked')
+    `).run(stage, now, nodeId, nodeVersion, stage);
+    if (Number(update.changes) !== 1) {
+      throw conflict(TASK_BOARD_ERROR_CODES.WORK_NODE_VERSION_CONFLICT, "Workflow node changed during task recovery");
+    }
+    this.store.db.prepare(`
+      UPDATE work_items
+      SET state = 'processing', current_stage = ?, version = version + 1, updated_at = ?
+      WHERE work_item_id = (
+        SELECT work_item_id FROM plan_revisions WHERE plan_revision_id = ?
+      ) AND ended_at IS NULL
+    `).run(stage, now, stringValue(link, "plan_revision_id"));
+    const projectId = stringValue(link, "project_id");
+    const eventId = `event_${randomUUID()}`;
+    const eventType = transition === "retry" ? "stage_task_retried" : "stage_task_reassigned";
+    const summary = transition === "retry"
+      ? `${stringValue(link, "title")} ${stage} attempt resumed`
+      : `${stringValue(link, "title")} ${stage} attempt reassigned`;
+    this.store.db.prepare(`
+      INSERT INTO project_events(event_id, project_id, node_id, task_id, event_type, summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(eventId, projectId, nodeId, taskId, eventType, summary, now);
+    const sequence = Number(this.store.db.prepare("SELECT sequence FROM project_events WHERE event_id = ?").get(eventId)?.sequence);
+    const event: ProjectEvent = Object.freeze({
+      apiVersion: TASK_BOARD_API_VERSION,
+      sequence,
+      eventId,
+      projectId,
+      nodeId,
+      taskId,
+      eventType,
+      summary,
+      createdAt: now,
+    });
+    this.store.afterCommit(() => {
+      for (const listener of this.projectEvents.listeners(projectId)) {
+        try {
+          (listener as (item: ProjectEvent) => void)(event);
+        } catch (error) {
+          console.error("[task-board] project event listener failed", error);
+        }
+      }
+    });
+    return true;
+  }
+
   requireRun(runId: string, agentId: string, taskId: string | null, active: boolean): AgentRun {
     const row = this.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
@@ -210,6 +310,11 @@ export class TaskBoardRuntime {
     const row = this.store.db.prepare("SELECT * FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     if (!row) throw conflict("RUN_NOT_ACTIVE", "Agent has no active run");
     return this.requireRun(stringValue(row, "run_id"), agentId, taskId, true);
+  }
+
+  assertNoActiveRunForTaskInTransaction(taskId: string): void {
+    const active = this.store.db.prepare("SELECT 1 FROM runs WHERE task_id = ? AND status = 'active' LIMIT 1").get(taskId);
+    if (active !== undefined) throw conflict("AGENT_RUN_ACTIVE", "Task already has an active run");
   }
 
   assertAssignment(projectId: string, agentId: string, role: AgentRole): void {
@@ -325,7 +430,12 @@ export class TaskBoardRuntime {
     return Object.freeze({ taskId, wakeAgentId: assignedAgentId });
   }
 
-  retirePendingWakeupsForTask(taskId: string, retirementReason: string, now: string): void {
+  retirePendingWakeupsForTask(
+    taskId: string,
+    retirementReason: string,
+    now: string,
+    preservedWakeupId: string | null = null,
+  ): void {
     const task = this.requireTask(taskId);
     const rows = this.store.db.prepare(`
       SELECT *
@@ -338,7 +448,9 @@ export class TaskBoardRuntime {
         )
       ORDER BY wakeup.created_at, wakeup.rowid
     `).all(taskId, RETIRED_WAKEUP_EVENT_PREFIX);
-    for (const row of rows) this.retireWakeup(row, task, retirementReason, now);
+    for (const row of rows) {
+      if (stringValue(row, "wakeup_id") !== preservedWakeupId) this.retireWakeup(row, task, retirementReason, now);
+    }
   }
 
   retireStaleWakeupsForAgent(agentId: string, now: string): void {
@@ -393,11 +505,7 @@ export class TaskBoardRuntime {
         }
         if (retirementReason === null) {
           if (task.status === "cancelled") retirementReason = "task_cancelled";
-          else if (
-            task.endedAt !== null ||
-            task.status === "completed" ||
-            task.status === "failed"
-          ) {
+          else if (isHardTerminalTaskStatus(task.status)) {
             retirementReason = "task_terminal";
           } else if (task.assignedAgentId === null) retirementReason = "task_unassigned";
           else if (task.assignedAgentId !== agentId) retirementReason = "task_reassigned";

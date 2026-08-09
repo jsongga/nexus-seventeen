@@ -21,7 +21,7 @@ export function expectedCompletedAt(
   estimateRecordedAt: string | null,
   minutes: number | null,
 ): string | null {
-  if (status === "completed" || status === "failed" || status === "cancelled") return null;
+  if (status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled") return null;
   if (startedAt === null || estimateRecordedAt === null || minutes === null) return null;
   const anchor = Math.max(Date.parse(startedAt), Date.parse(estimateRecordedAt));
   const raw = anchor + minutes * 60_000;

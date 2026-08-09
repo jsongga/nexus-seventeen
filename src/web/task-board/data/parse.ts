@@ -771,7 +771,7 @@ export function parseTask(value: unknown, path: string): RawTask {
     orderKey: item.orderKey === undefined ? null : integer(item.orderKey, `${path}.orderKey`),
     phases,
     startedAt: nullableTimestamp(item.startedAt, `${path}.startedAt`),
-    expectedCompletedAt: status === 'completed' || status === 'failed' || status === 'cancelled'
+    expectedCompletedAt: status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'cancelled'
       ? null
       : projectedCompletion,
     endedAt: nullableTimestamp(item.endedAt, `${path}.endedAt`),

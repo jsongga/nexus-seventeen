@@ -650,6 +650,15 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       result: "The run needs a human-approved follow-up pass.",
     });
     assert.equal(settle.status, 200);
+    const failedBoardResponse = await request(
+      address.url,
+      `/v1/projects/${project.projectId}/board`,
+      "GET",
+      HUMAN_TOKEN,
+    );
+    const failedTask = (await failedBoardResponse.json() as {
+      tasks: Array<{ taskId: string; version: number }>;
+    }).tasks.find((candidate) => candidate.taskId === task.taskId)!;
 
     const heldClaim = request(
       address.url,
@@ -660,20 +669,19 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     );
     const resume = await request(
       address.url,
-      "/v1/agents/engineer-one/resume",
+      `/v1/tasks/${task.taskId}/retry`,
       "POST",
       HUMAN_TOKEN,
-      { reason: "Human approved a follow-up verification pass.", taskId: task.taskId },
-      "http-resume-held-claim-0001",
+      { version: failedTask.version },
     );
-    assert.equal(resume.status, 201);
+    assert.equal(resume.status, 200);
     const heldClaimResponse = await heldClaim;
     assert.equal(heldClaimResponse.status, 201);
     const heldClaimBody = await heldClaimResponse.json() as {
       run: { runId: string; taskId: string | null };
       wakeup: { reason: string };
     };
-    assert.equal(heldClaimBody.wakeup.reason, "human_resume");
+    assert.equal(heldClaimBody.wakeup.reason, "resumed");
     assert.equal(heldClaimBody.run.taskId, task.taskId);
     assert.equal((await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=30001", "POST", AGENT_ONE_TOKEN, {
       claimId: "http-invalid-wait-0001",
@@ -718,6 +726,184 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     });
     assert.equal(browser.status, 200);
     assert.equal(browser.headers.get("access-control-allow-origin"), "https://app.cicada.build");
+  } finally {
+    await service.close();
+  }
+});
+
+test("task recovery routes retry, reassign, and backlog recoverable work", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await service.start();
+  try {
+    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "HTTP task recovery",
+      description: "Exercise human recovery transitions through the service boundary.",
+    });
+    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    for (const agent of [
+      { agentId: "engineer-one", token: AGENT_ONE_TOKEN },
+      { agentId: "engineer-two", token: AGENT_TWO_TOKEN },
+    ]) {
+      assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+        agentId: agent.agentId,
+        role: "engineer",
+        area: "http-recovery",
+        mission: "Recover explicitly assigned checkout work.",
+        model: "codex-mini",
+        token: agent.token,
+      })).status, 201);
+    }
+    const taskResponse = await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
+      title: "Recover a task through HTTP",
+      assignedAgentId: "engineer-one",
+      assignedRole: "engineer",
+      requiresReview: false,
+    }));
+    const taskId = (await taskResponse.json() as { task: { taskId: string } }).task.taskId;
+    const firstClaimResponse = await request(
+      address.url,
+      "/v1/agents/engineer-one/runs/claim?waitMs=0",
+      "POST",
+      AGENT_ONE_TOKEN,
+      { claimId: "http-recovery-first-claim-0001", messageCursor: null },
+    );
+    const firstRunId = (await firstClaimResponse.json() as { run: { runId: string } }).run.runId;
+    assert.equal((await request(address.url, `/v1/runs/${firstRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
+      outcome: "failed",
+      result: "The first HTTP recovery pass failed.",
+    })).status, 200);
+
+    const failedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    const failedTask = (await failedBoard.json() as { tasks: Array<{ taskId: string; status: string }> })
+      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    assert.equal(failedTask.status, "failed");
+    const resumeBody = {
+      reason: "Retry failed work through the existing Resume affordance.",
+      taskId,
+    };
+    const resumeResponse = await request(
+      address.url,
+      "/v1/agents/engineer-one/resume",
+      "POST",
+      HUMAN_TOKEN,
+      resumeBody,
+      "http-resume-failed-compat-0001",
+    );
+    assert.equal(resumeResponse.status, 201);
+    const resumed = await resumeResponse.json() as { wakeup: { wakeupId: string; reason: string } };
+    assert.equal(resumed.wakeup.reason, "resumed");
+    const resumeReplay = await request(
+      address.url,
+      "/v1/agents/engineer-one/resume",
+      "POST",
+      HUMAN_TOKEN,
+      resumeBody,
+      "http-resume-failed-compat-0001",
+    );
+    assert.equal(resumeReplay.status, 200);
+    assert.equal((await resumeReplay.json() as { wakeup: { wakeupId: string } }).wakeup.wakeupId, resumed.wakeup.wakeupId);
+    const resumedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    const resumedTask = (await resumedBoard.json() as { tasks: Array<{ taskId: string; status: string }> })
+      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    assert.equal(resumedTask.status, "queued");
+
+    const retryClaimResponse = await request(
+      address.url,
+      "/v1/agents/engineer-one/runs/claim?waitMs=0",
+      "POST",
+      AGENT_ONE_TOKEN,
+      { claimId: "http-recovery-retry-claim-0001", messageCursor: null },
+    );
+    const retryRunId = (await retryClaimResponse.json() as { run: { runId: string } }).run.runId;
+    assert.equal((await request(address.url, `/v1/runs/${retryRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
+      outcome: "interrupted",
+      result: "The retried HTTP run was interrupted.",
+    })).status, 200);
+
+    const interruptedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    const interruptedTask = (await interruptedBoard.json() as { tasks: Array<{ taskId: string; status: string; version: number }> })
+      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    assert.equal(interruptedTask.status, "interrupted");
+    const reassignResponse = await request(address.url, `/v1/tasks/${taskId}`, "PATCH", HUMAN_TOKEN, {
+      version: interruptedTask.version,
+      assignedAgentId: "engineer-two",
+      assignedRole: "engineer",
+    });
+    assert.equal(reassignResponse.status, 200);
+    const reassigned = (await reassignResponse.json() as { task: { status: string; version: number } }).task;
+    assert.equal(reassigned.status, "queued");
+    assert.equal((await request(
+      address.url,
+      "/v1/agents/engineer-one/runs/claim?waitMs=0",
+      "POST",
+      AGENT_ONE_TOKEN,
+      { claimId: "http-recovery-old-agent-claim-0001", messageCursor: null },
+    )).status, 204);
+    const replacementClaimResponse = await request(
+      address.url,
+      "/v1/agents/engineer-two/runs/claim?waitMs=0",
+      "POST",
+      AGENT_TWO_TOKEN,
+      { claimId: "http-recovery-new-agent-claim-0001", messageCursor: null },
+    );
+    assert.equal(replacementClaimResponse.status, 201);
+    const replacementClaim = await replacementClaimResponse.json() as {
+      run: { runId: string };
+      wakeup: { reason: string };
+      task: { version: number };
+    };
+    assert.equal(replacementClaim.wakeup.reason, "assigned");
+    assert.equal((await request(address.url, `/v1/runs/${replacementClaim.run.runId}/settle`, "POST", AGENT_TWO_TOKEN, {
+      outcome: "failed",
+      result: "Return the recovered task to the backlog for later triage.",
+    })).status, 200);
+
+    const secondFailedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    const secondFailed = (await secondFailedBoard.json() as { tasks: Array<{ taskId: string; version: number }> })
+      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    const backlogResponse = await request(address.url, `/v1/tasks/${taskId}/backlog`, "POST", HUMAN_TOKEN, {
+      version: secondFailed.version,
+    });
+    assert.equal(backlogResponse.status, 200);
+    const backlogged = (await backlogResponse.json() as {
+      task: { status: string; assignedAgentId: string | null };
+    }).task;
+    assert.equal(backlogged.status, "backlog");
+    assert.equal(backlogged.assignedAgentId, null);
+  } finally {
+    await service.close();
+  }
+});
+
+test("new task recovery routes reject malformed request bodies", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await service.start();
+  try {
+    for (const route of ["retry", "backlog"]) {
+      for (const body of [null, {}, { version: 1, unexpected: true }, { version: "1" }]) {
+        const response = await request(
+          address.url,
+          `/v1/tasks/malformed-recovery-task/${route}`,
+          "POST",
+          HUMAN_TOKEN,
+          body,
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json() as { error: { code: string } }).error.code, "INVALID_REQUEST");
+      }
+    }
   } finally {
     await service.close();
   }

@@ -21,6 +21,7 @@ import {
 import {
   parseAgentMessage,
   parseAnswer,
+  parseBacklogTask,
   parseClaim,
   parseConfirmPlanRevisionRequest,
   parseCreateAgent,
@@ -36,6 +37,7 @@ import {
   parseDocumentPenUpdate,
   parseDocumentUpdate,
   parseQuestion,
+  parseRetryTask,
   parseResume,
   parseSettle,
   parseUpdateAutomationConfiguration,
@@ -375,6 +377,28 @@ export class TaskBoardService {
             return { type: "agent" as const, id: agent.agentId };
           })();
       sendJson(response, 200, { task: this.#board.updateTask(taskId, update, actor) });
+      return;
+    }
+    const taskRetryMatch = /^\/v1\/tasks\/([^/]+)\/retry$/u.exec(url.pathname);
+    if (taskRetryMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const result = this.#board.retryTask(
+        parseRouteIdentifier(taskRetryMatch[1], "taskId"),
+        parseRetryTask(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, result);
+      return;
+    }
+    const taskBacklogMatch = /^\/v1\/tasks\/([^/]+)\/backlog$/u.exec(url.pathname);
+    if (taskBacklogMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const result = this.#board.backlogTask(
+        parseRouteIdentifier(taskBacklogMatch[1], "taskId"),
+        parseBacklogTask(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, result);
       return;
     }
     const phaseCreateMatch = /^\/v1\/tasks\/([^/]+)\/phases$/u.exec(url.pathname);

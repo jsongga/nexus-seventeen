@@ -218,6 +218,8 @@ export class TransparentWorkflow {
         AND NOT EXISTS(SELECT 1 FROM stage_handoffs handoff WHERE handoff.task_id=attempt.task_id)
         AND (
           (settled_run.status='completed' AND task.status='completed')
+          OR (settled_run.status='failed' AND task.status='failed')
+          OR (settled_run.status='interrupted' AND task.status='interrupted')
           OR (settled_run.status IN ('failed','interrupted') AND task.status='blocked')
         )
         AND NOT EXISTS(

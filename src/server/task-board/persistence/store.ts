@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -208,7 +208,7 @@ CREATE TABLE wakeups (
   wakeup_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
-  reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff')),
+  reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
   source_key TEXT NOT NULL,
   task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
   question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
@@ -337,7 +337,7 @@ CREATE TABLE tasks (
   objective TEXT NOT NULL,
   acceptance_criteria TEXT NOT NULL,
   workspace_refs_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'interrupted', 'cancelled')),
   assigned_agent_id TEXT REFERENCES agents(agent_id) ON DELETE RESTRICT,
   assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN ('engineer', 'manager', 'verifier')),
   -- Kept for file compatibility with schema versions 1-4. New code reads agent_estimate_minutes.
@@ -476,6 +476,130 @@ function migrateVersion12To13(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE; ${addClaimResult} PRAGMA user_version = 13; COMMIT;`);
 }
 
+function migrateVersion13To14(db: DatabaseSync): void {
+  const hasModernTasks = hasColumns(db, "tasks", [
+    "task_id", "project_id", "parent_task_id", "task_kind", "required_role", "requires_review",
+    "title", "objective", "acceptance_criteria", "workspace_refs_json", "status",
+    "assigned_agent_id", "assigned_role", "expected_agent_minutes", "agent_estimate_minutes",
+    "estimate_recorded_at", "order_key", "started_at", "ended_at", "result", "version", "created_at", "updated_at",
+  ]);
+  const hasWakeups = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wakeups'").get() !== undefined;
+  const hasModernWakeups = !hasWakeups || hasColumns(db, "wakeups", [
+    "wakeup_id", "project_id", "agent_id", "reason", "source_key", "task_id", "question_id",
+    "detail", "created_by", "created_at", "claimed_at", "run_id",
+  ]);
+  // The v1/v2 migration regression fixtures intentionally contain only skeletal tables.
+  // Earlier migrations preserve those shapes to prove column additions; there is no status
+  // or wakeup-reason constraint to rebuild in those fixtures.
+  if (!hasModernTasks || !hasModernWakeups) {
+    db.exec("PRAGMA user_version = 14;");
+    return;
+  }
+  db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      CREATE TABLE tasks_v14 (
+        task_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+        parent_task_id TEXT REFERENCES tasks_v14(task_id) ON DELETE RESTRICT,
+        task_kind TEXT NOT NULL CHECK (task_kind IN ('work', 'manager_review', 'human_check')),
+        required_role TEXT CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier')),
+        requires_review INTEGER NOT NULL CHECK (requires_review IN (0, 1)),
+        title TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        acceptance_criteria TEXT NOT NULL,
+        workspace_refs_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'interrupted', 'cancelled')),
+        assigned_agent_id TEXT REFERENCES agents(agent_id) ON DELETE RESTRICT,
+        assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN ('engineer', 'manager', 'verifier')),
+        expected_agent_minutes INTEGER NOT NULL CHECK (expected_agent_minutes >= 15 AND expected_agent_minutes <= 10080 AND expected_agent_minutes % 15 = 0),
+        agent_estimate_minutes INTEGER CHECK (agent_estimate_minutes IS NULL OR
+          (agent_estimate_minutes >= 15 AND agent_estimate_minutes <= 10080 AND agent_estimate_minutes % 15 = 0)),
+        estimate_recorded_at TEXT,
+        order_key INTEGER NOT NULL CHECK (order_key >= 0),
+        started_at TEXT,
+        ended_at TEXT,
+        result TEXT,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK ((assigned_agent_id IS NULL) = (assigned_role IS NULL)),
+        CHECK ((task_kind = 'manager_review' AND required_role = 'manager') OR
+               (task_kind IN ('work', 'human_check') AND required_role IS NULL)),
+        CHECK (required_role IS NULL OR assigned_role IS NULL OR required_role = assigned_role),
+        CHECK (task_kind <> 'human_check' OR assigned_agent_id IS NULL),
+        CHECK ((agent_estimate_minutes IS NULL) = (estimate_recorded_at IS NULL)),
+        CHECK (ended_at IS NULL OR started_at IS NOT NULL)
+      ) STRICT;
+      INSERT INTO tasks_v14(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json, status,
+        assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      )
+      SELECT
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json, status,
+        assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      FROM tasks
+      ORDER BY rowid;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_v14 RENAME TO tasks;
+      CREATE INDEX tasks_project ON tasks(project_id, created_at, task_id);
+      CREATE INDEX tasks_global_order ON tasks(order_key, task_id);
+      CREATE INDEX tasks_agent ON tasks(assigned_agent_id, status, updated_at);
+      CREATE UNIQUE INDEX tasks_one_review_stage
+        ON tasks(parent_task_id, task_kind)
+        WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
+
+      CREATE TABLE wakeups_v14 (
+        wakeup_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+        agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
+        reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
+        source_key TEXT NOT NULL,
+        task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+        question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
+        detail TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        claimed_at TEXT,
+        run_id TEXT,
+        UNIQUE(reason, source_key),
+        CHECK ((claimed_at IS NULL) = (run_id IS NULL))
+      ) STRICT;
+      INSERT INTO wakeups_v14(
+        wakeup_id, project_id, agent_id, reason, source_key, task_id, question_id,
+        detail, created_by, created_at, claimed_at, run_id
+      )
+      SELECT
+        wakeup_id, project_id, agent_id, reason, source_key, task_id, question_id,
+        detail, created_by, created_at, claimed_at, run_id
+      FROM wakeups
+      ORDER BY rowid;
+      DROP TABLE wakeups;
+      ALTER TABLE wakeups_v14 RENAME TO wakeups;
+      CREATE INDEX wakeups_pending ON wakeups(agent_id, created_at, wakeup_id) WHERE claimed_at IS NULL;
+      PRAGMA user_version = 14;
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -572,7 +696,7 @@ function migrateVersion6To7(db: DatabaseSync): void {
           wakeup_id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
           agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
-          reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff')),
+          reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
           source_key TEXT NOT NULL,
           task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
           question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
@@ -754,6 +878,8 @@ export class TaskBoardStore {
         // Work-item planning-task links are added below.
       } else if (version === 12) {
         // Durable claim results are added below.
+      } else if (version === 13) {
+        // Recovery task states and wakeup reasons are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -768,6 +894,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 10) migrateVersion10To11(db);
       if (version >= 1 && version <= 11) migrateVersion11To12(db);
       if (version >= 1 && version <= 12) migrateVersion12To13(db);
+      if (version >= 1 && version <= 13) migrateVersion13To14(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

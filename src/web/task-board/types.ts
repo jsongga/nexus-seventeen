@@ -39,7 +39,7 @@ export type RunStatus =
   | 'failed'
   | 'interrupted';
 
-export type WakeReason = 'human_assignment' | 'human_answer' | 'human_resume' | 'workflow_handoff';
+export type WakeReason = 'human_assignment' | 'human_answer' | 'human_resume' | 'workflow_handoff' | 'assigned' | 'resumed';
 
 export type WorkItemPriority = 'urgent' | 'high' | 'normal' | 'low' | 'opportunistic';
 export type WorkItemState =
