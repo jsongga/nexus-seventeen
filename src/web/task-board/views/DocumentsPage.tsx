@@ -57,6 +57,14 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+export function documentsByUpdatedAt(documents: BoardSnapshot['documents']): BoardSnapshot['documents'] {
+  return [...documents].sort((left, right) => (
+    right.updatedAtMs - left.updatedAtMs
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id)
+  ));
+}
+
 function CreateDocumentForm({
   snapshot,
   busy,
@@ -126,7 +134,7 @@ export function DocumentsPage({
   const documentButtonRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const orderedDocuments = useMemo(
-    () => [...snapshot.documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title)),
+    () => documentsByUpdatedAt(snapshot.documents),
     [snapshot.documents],
   );
 

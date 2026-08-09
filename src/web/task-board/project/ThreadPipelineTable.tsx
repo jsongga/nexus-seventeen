@@ -18,7 +18,7 @@ export function pipelineStageForStatus(status: TaskStatus): PipelineStage {
   return { label: prettyStatus(status), tone: taskStatusTone[status] };
 }
 
-function updatedLabel(value: string | null): string {
+export function updatedLabel(value: string | null): string {
   if (!value) return '-';
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) ? value : updatedDateTime.format(parsed);

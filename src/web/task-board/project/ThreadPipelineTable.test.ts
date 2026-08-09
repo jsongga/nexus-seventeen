@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pipelineStageForStatus } from './ThreadPipelineTable';
+import { pipelineStageForStatus, updatedLabel } from './ThreadPipelineTable';
 import type { TaskStatus } from '../types';
 
 describe('pipelineStageForStatus', () => {
@@ -16,5 +16,18 @@ describe('pipelineStageForStatus', () => {
     ['cancelled', { label: 'cancelled', tone: 'neutral' }],
   ] satisfies Array<[TaskStatus, ReturnType<typeof pipelineStageForStatus>]>)('maps %s to its workspace stage', (status, stage) => {
     expect(pipelineStageForStatus(status)).toEqual(stage);
+  });
+});
+
+describe('updatedLabel', () => {
+  it('formats equivalent offset and Z timestamps from their ISO values', () => {
+    const offset = '2026-07-19T12:00:00+02:00';
+    const utc = '2026-07-19T10:00:00Z';
+
+    expect(updatedLabel(offset)).toBe(updatedLabel(utc));
+  });
+
+  it('keeps the existing invalid-date fallback', () => {
+    expect(updatedLabel('not-a-timestamp')).toBe('not-a-timestamp');
   });
 });

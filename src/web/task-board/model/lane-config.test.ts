@@ -15,9 +15,12 @@ const agent: BoardAgent = {
   lastError: null,
   currentTaskId: null,
   lastEventAt: null,
+  lastEventAtMs: null,
   version: 1,
   createdAt: '2026-08-09T20:00:00.000Z',
+  createdAtMs: Date.parse('2026-08-09T20:00:00.000Z'),
   updatedAt: '2026-08-09T20:00:00.000Z',
+  updatedAtMs: Date.parse('2026-08-09T20:00:00.000Z'),
 };
 
 describe('lane configuration state', () => {

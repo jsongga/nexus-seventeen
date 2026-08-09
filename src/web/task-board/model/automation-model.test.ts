@@ -34,7 +34,9 @@ function configuration(version = 1): AutomationConfiguration {
     ],
     version,
     createdAt: '2026-07-19T10:00:00.000Z',
+    createdAtMs: Date.parse('2026-07-19T10:00:00.000Z'),
     updatedAt: `2026-07-19T10:${version.toString().padStart(2, '0')}:00.000Z`,
+    updatedAtMs: Date.parse(`2026-07-19T10:${version.toString().padStart(2, '0')}:00.000Z`),
     updatedBy: 'human:operator',
   };
 }

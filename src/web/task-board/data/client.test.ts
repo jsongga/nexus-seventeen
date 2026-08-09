@@ -10,6 +10,7 @@ import {
   randomUuid,
 } from './client';
 import type { AutomationAgentType, AutomationStageConfiguration } from '../types';
+import { newest } from '../model/project';
 
 class MemoryStorage implements Storage {
   private readonly values: Map<string, string>;
@@ -397,6 +398,15 @@ function boardSnapshot() {
 }
 
 describe('task-board protocol projection', () => {
+  it('chooses the same newest timestamp spelling regardless of input order', () => {
+    const utc = { iso: '2026-07-19T10:00:00Z', ms: Date.parse('2026-07-19T10:00:00Z') };
+    const offset = { iso: '2026-07-19T12:00:00+02:00', ms: Date.parse('2026-07-19T12:00:00+02:00') };
+    const fallback = { iso: '1970-01-01T00:00:00.000Z', ms: 0 };
+
+    expect(newest([utc, offset], fallback)).toEqual(offset);
+    expect(newest([offset, utc], fallback)).toEqual(offset);
+  });
+
   it('maps the durable service contract into user-facing task and run state', () => {
     const snapshot = parseBoardSnapshot(boardSnapshot());
     expect(snapshot.projects[0]).toMatchObject({ id: 'project-one' });
@@ -412,6 +422,38 @@ describe('task-board protocol projection', () => {
     expect(snapshot.runs[0]).toMatchObject({ id: 'run-one', taskId: 'task-one', wakeReason: 'human_assignment' });
     expect(snapshot.documents[0]).toMatchObject({ id: 'document-release-notes', contentVersion: 2, penEpoch: 1, sequence: 4 });
     expect(snapshot.revision).toBe(7);
+  });
+
+  it('orders mixed-precision and mixed-offset timestamps by their absolute instant', () => {
+    const earlierOffset = '2026-07-19T12:30:00+02:00';
+    const middleFraction = '2026-07-19T10:30:00.500Z';
+    const laterWholeSecond = '2026-07-19T10:30:01Z';
+    const snapshot = parseBoardSnapshot({
+      ...boardSnapshot(),
+      project: { ...project, updatedAt: middleFraction },
+      recentEvents: [
+        { ...event, eventId: 'event-offset', createdAt: earlierOffset },
+        { ...event, eventId: 'event-later', createdAt: laterWholeSecond },
+      ],
+    });
+
+    expect(snapshot.agents[0]?.lastEventAt).toBe(laterWholeSecond);
+    expect(snapshot.agents[0]?.lastEventAtMs).toBe(Date.parse(laterWholeSecond));
+    expect(snapshot.agents[0]?.updatedAt).toBe(laterWholeSecond);
+    expect(snapshot.agents[0]?.updatedAtMs).toBe(Date.parse(laterWholeSecond));
+    expect(snapshot.generatedAt).toBe(laterWholeSecond);
+    expect(snapshot.generatedAtMs).toBe(Date.parse(laterWholeSecond));
+    expect(snapshot.projects[0]).toMatchObject({
+      updatedAt: middleFraction,
+      updatedAtMs: Date.parse(middleFraction),
+    });
+  });
+
+  it('continues to reject timestamp strings that Date.parse cannot handle', () => {
+    expect(() => parseBoardSnapshot({
+      ...boardSnapshot(),
+      project: { ...project, updatedAt: 'not-a-timestamp' },
+    })).toThrow(/board\.project\.updatedAt must be a timestamp/u);
   });
 
   it('drops stale completion forecasts from terminal task projections', () => {
@@ -633,7 +675,9 @@ describe('task-board HTTP client', () => {
         acceptanceCriteria: workflowPlan.acceptanceCriteria,
         state: 'confirmed',
         createdAt: workflowPlan.createdAt,
+        createdAtMs: Date.parse(workflowPlan.createdAt),
         confirmedAt: workflowPlan.confirmedAt,
+        confirmedAtMs: Date.parse(workflowPlan.confirmedAt),
       }],
       nodes: [{
         nodeId: workflowNode.nodeId,
@@ -645,7 +689,10 @@ describe('task-board HTTP client', () => {
         stageTemplate: ['implementation', 'testing', 'verification'],
         currentStage: 'testing',
         state: 'active',
+        createdAt: workflowNode.createdAt,
+        createdAtMs: Date.parse(workflowNode.createdAt),
         updatedAt: workflowNode.updatedAt,
+        updatedAtMs: Date.parse(workflowNode.updatedAt),
       }],
       handoffs: [{
         handoffId: workflowHandoff.handoffId,
@@ -658,6 +705,7 @@ describe('task-board HTTP client', () => {
         artifactIds: workflowHandoff.artifactIds,
         blockers: [],
         createdAt: workflowHandoff.createdAt,
+        createdAtMs: Date.parse(workflowHandoff.createdAt),
       }],
       events: [{
         sequence: 1,
@@ -667,6 +715,7 @@ describe('task-board HTTP client', () => {
         eventType: workflowEvent.eventType,
         summary: workflowEvent.summary,
         createdAt: workflowEvent.createdAt,
+        createdAtMs: Date.parse(workflowEvent.createdAt),
       }],
     });
     await expect(client.getProjectArtifacts(project.projectId)).resolves.toEqual([{
@@ -677,6 +726,7 @@ describe('task-board HTTP client', () => {
       byteSize: 42,
       caption: projectArtifact.caption,
       createdAt: projectArtifact.createdAt,
+      createdAtMs: Date.parse(projectArtifact.createdAt),
     }]);
   });
 
@@ -1225,7 +1275,9 @@ describe('task-board HTTP client', () => {
       name: project.name,
       description: project.description,
       createdAt: project.createdAt,
+      createdAtMs: Date.parse(project.createdAt),
       updatedAt: project.updatedAt,
+      updatedAtMs: Date.parse(project.updatedAt),
     });
     expect(request).toHaveBeenCalledWith(
       'https://board.example.test/v1/projects',

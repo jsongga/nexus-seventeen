@@ -59,7 +59,7 @@ export function agentPipelineFocus(agent: BoardAgent, tasks: BoardTask[]): Agent
 
   const phases = [...task.phases].sort((left, right) => (
     left.orderKey - right.orderKey
-      || left.createdAt.localeCompare(right.createdAt)
+      || left.createdAtMs - right.createdAtMs
       || left.id.localeCompare(right.id)
   ));
   const phase = phases.filter((item) => item.status === 'in_progress').at(-1)
@@ -111,6 +111,7 @@ export interface ProjectResource {
   kind: 'brief' | 'outcome' | 'link' | 'setup';
   href: string | null;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface ProjectUpdate {
@@ -122,6 +123,7 @@ export interface ProjectUpdate {
   body: string;
   kind: BoardMessage['kind'] | 'task';
   createdAt: string;
+  createdAtMs: number;
 }
 
 export function isExplicitPointOfContact(agent: BoardAgent): boolean {
@@ -130,7 +132,7 @@ export function isExplicitPointOfContact(agent: BoardAgent): boolean {
 
 export function selectPointOfContact(agents: BoardAgent[]): BoardAgent | null {
   if (agents.length === 0) return null;
-  const ordered = [...agents].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const ordered = [...agents].sort((left, right) => left.createdAtMs - right.createdAtMs || left.id.localeCompare(right.id));
   return ordered.find(isExplicitPointOfContact)
     ?? ordered.find((agent) => agent.role === 'engineer')
     ?? ordered[0]
@@ -173,11 +175,14 @@ export function resourcesForProject(project: BoardProject, tasks: BoardTask[]): 
       kind: 'brief',
       href: null,
       updatedAt: project.updatedAt,
+      updatedAtMs: project.updatedAtMs,
     });
   }
 
   const seenReferences = new Set<string>();
-  for (const task of [...projectTasks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
+  for (const task of [...projectTasks].sort((left, right) => (
+    right.updatedAtMs - left.updatedAtMs || left.id.localeCompare(right.id)
+  ))) {
     for (const reference of task.workspaceRefs) {
       const value = reference.trim();
       if (!value || seenReferences.has(value)) continue;
@@ -191,6 +196,7 @@ export function resourcesForProject(project: BoardProject, tasks: BoardTask[]): 
         kind: link ? 'link' : 'setup',
         href: link ? value : null,
         updatedAt: task.updatedAt,
+        updatedAtMs: task.updatedAtMs,
       });
     }
   }
@@ -205,10 +211,15 @@ export function resourcesForProject(project: BoardProject, tasks: BoardTask[]): 
       kind: 'outcome',
       href: null,
       updatedAt: task.endedAt ?? task.updatedAt,
+      updatedAtMs: task.endedAtMs ?? task.updatedAtMs,
     });
   }
 
-  return resources.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return resources.sort((left, right) => (
+    right.updatedAtMs - left.updatedAtMs
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id)
+  ));
 }
 
 export function updatesForProject(snapshot: BoardSnapshot, projectId: string): ProjectUpdate[] {
@@ -230,6 +241,7 @@ export function updatesForProject(snapshot: BoardSnapshot, projectId: string): P
       body: message.body,
       kind: message.kind,
       createdAt: message.createdAt,
+      createdAtMs: message.createdAtMs,
     }));
 
   const messagedTaskIds = new Set(messages.map((message) => message.taskId));
@@ -244,10 +256,11 @@ export function updatesForProject(snapshot: BoardSnapshot, projectId: string): P
       body: task.result?.trim() || `${task.title} is ${task.status.replaceAll('_', ' ')}.`,
       kind: 'task',
       createdAt: task.updatedAt,
+      createdAtMs: task.updatedAtMs,
     }));
 
   return [...messages, ...taskUpdates]
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
 }
 
 export function recentUpdatesForProject(snapshot: BoardSnapshot, projectId: string): ProjectUpdate[] {

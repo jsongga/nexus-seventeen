@@ -73,7 +73,9 @@ export interface RawProject {
   description: string;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface RawWorkItem {
@@ -89,10 +91,14 @@ export interface RawWorkItem {
   createdBy: string;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
   endedAt: string | null;
+  endedAtMs: number | null;
   cancelledReason: string | null;
   archivedAt: string | null;
+  archivedAtMs: number | null;
 }
 
 export interface RawAgent {
@@ -107,6 +113,7 @@ export interface RawAgent {
   lastError: string | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface RawDocumentPenHolder {
@@ -114,6 +121,7 @@ export interface RawDocumentPenHolder {
   actorId: string;
   clientId: string;
   acquiredAt: string;
+  acquiredAtMs: number;
 }
 
 export interface RawDocumentSummary {
@@ -126,7 +134,9 @@ export interface RawDocumentSummary {
   penHolder: RawDocumentPenHolder | null;
   sequence: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface RawDocument extends RawDocumentSummary {
@@ -149,15 +159,21 @@ export interface RawTask {
   assignedRole: AgentRole | null;
   expectedAgentMinutes: number | null;
   estimateRecordedAt: string | null;
+  estimateRecordedAtMs: number | null;
   orderKey: number | null;
   phases: RawTaskPhase[];
   startedAt: string | null;
+  startedAtMs: number | null;
   expectedCompletedAt: string | null;
+  expectedCompletedAtMs: number | null;
   endedAt: string | null;
+  endedAtMs: number | null;
   result: string | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface RawTaskPhase {
@@ -170,10 +186,14 @@ export interface RawTaskPhase {
   parallelGroup: string | null;
   orderKey: number;
   startedAt: string | null;
+  startedAtMs: number | null;
   endedAt: string | null;
+  endedAtMs: number | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface RawQuestion {
@@ -185,7 +205,9 @@ export interface RawQuestion {
   status: 'open' | 'answered';
   answer: string | null;
   askedAt: string;
+  askedAtMs: number;
   answeredAt: string | null;
+  answeredAtMs: number | null;
   version: number;
 }
 
@@ -196,7 +218,9 @@ export interface RawRun {
   taskId: string | null;
   status: WireRunStatus;
   startedAt: string;
+  startedAtMs: number;
   endedAt: string | null;
+  endedAtMs: number | null;
 }
 
 export interface RawInterrupt {
@@ -204,6 +228,7 @@ export interface RawInterrupt {
   agentId: string;
   runId: string | null;
   requestedAt: string;
+  requestedAtMs: number;
 }
 
 export interface RawEvent {
@@ -215,6 +240,7 @@ export interface RawEvent {
   eventType: string;
   data: JsonRecord;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface RawMessage {
@@ -227,6 +253,7 @@ export interface RawMessage {
   kind: 'note' | 'progress' | 'proposal' | 'result';
   body: string;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface RawBoard {
@@ -312,8 +339,17 @@ export function timestamp(value: unknown, path: string): string {
   return parsed;
 }
 
-export function nullableTimestamp(value: unknown, path: string): string | null {
-  return value === null ? null : timestamp(value, path);
+type TimestampFields<Key extends string> = Record<Key, string> & Record<`${Key}Ms`, number>;
+type NullableTimestampFields<Key extends string> = Record<Key, string | null> & Record<`${Key}Ms`, number | null>;
+
+function timestampFields<Key extends string>(key: Key, value: unknown, path: string): TimestampFields<Key> {
+  const iso = timestamp(value, path);
+  return { [key]: iso, [`${key}Ms`]: Date.parse(iso) } as TimestampFields<Key>;
+}
+
+function nullableTimestampFields<Key extends string>(key: Key, value: unknown, path: string): NullableTimestampFields<Key> {
+  if (value === null) return { [key]: null, [`${key}Ms`]: null } as NullableTimestampFields<Key>;
+  return timestampFields(key, value, path);
 }
 
 export function member<T extends string>(value: unknown, values: ReadonlySet<T>, path: string): T {
@@ -340,8 +376,8 @@ export function parseProject(value: unknown, path: string): RawProject {
     name: string(item.name, `${path}.name`),
     description: string(item.description, `${path}.description`),
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -366,12 +402,12 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   const projectTarget = parseWorkItemProjectTarget(item.projectTarget, `${path}.projectTarget`);
   const resolvedProjectId = nullableString(item.resolvedProjectId, `${path}.resolvedProjectId`);
   const state = member(item.state, workItemStates, `${path}.state`);
-  const endedAt = nullableTimestamp(item.endedAt, `${path}.endedAt`);
+  const endedAt = nullableTimestampFields('endedAt', item.endedAt, `${path}.endedAt`);
   const cancelledReason = nullableString(item.cancelledReason, `${path}.cancelledReason`);
-  const archivedAt = nullableTimestamp(item.archivedAt, `${path}.archivedAt`);
+  const archivedAt = nullableTimestampFields('archivedAt', item.archivedAt, `${path}.archivedAt`);
   const terminal = state === 'completed' || state === 'failed' || state === 'cancelled';
-  if (terminal !== (endedAt !== null)) throw new Error(`${path}.endedAt does not match its state`);
-  if (archivedAt !== null && !terminal) throw new Error(`${path}.archivedAt requires a terminal state`);
+  if (terminal !== (endedAt.endedAt !== null)) throw new Error(`${path}.endedAt does not match its state`);
+  if (archivedAt.archivedAt !== null && !terminal) throw new Error(`${path}.archivedAt requires a terminal state`);
   if (cancelledReason !== null && state !== 'cancelled') throw new Error(`${path}.cancelledReason requires a cancelled state`);
   if (projectTarget.mode === 'explicit' && resolvedProjectId !== projectTarget.projectId) {
     throw new Error(`${path}.resolvedProjectId must match its explicit project target`);
@@ -390,11 +426,11 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
       : member(item.currentStage, workItemStages, `${path}.currentStage`),
     createdBy: string(item.createdBy, `${path}.createdBy`),
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
-    endedAt,
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
+    ...endedAt,
     cancelledReason,
-    archivedAt,
+    ...archivedAt,
   };
 }
 
@@ -418,8 +454,8 @@ export function parseWorkflowPlan(value: unknown, path: string): WorkflowPlan {
     assumptions: array(item.assumptions, `${path}.assumptions`, string),
     acceptanceCriteria: array(item.acceptanceCriteria, `${path}.acceptanceCriteria`, string),
     state: member(item.state, planRevisionStates, `${path}.state`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    confirmedAt: nullableTimestamp(item.confirmedAt, `${path}.confirmedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...nullableTimestampFields('confirmedAt', item.confirmedAt, `${path}.confirmedAt`),
   };
 }
 
@@ -427,7 +463,6 @@ export function parseWorkflowNode(value: unknown, path: string): WorkflowNode {
   const item = apiEntity(value, path);
   string(item.projectId, `${path}.projectId`);
   integer(item.version, `${path}.version`, 1);
-  timestamp(item.createdAt, `${path}.createdAt`);
   return {
     nodeId: string(item.nodeId, `${path}.nodeId`),
     planRevisionId: string(item.planRevisionId, `${path}.planRevisionId`),
@@ -444,7 +479,8 @@ export function parseWorkflowNode(value: unknown, path: string): WorkflowNode {
       ? null
       : member(item.currentStage, workflowStages, `${path}.currentStage`),
     state: member(item.state, workNodeStates, `${path}.state`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -471,7 +507,7 @@ export function parseWorkflowHandoff(value: unknown, path: string): WorkflowHand
     evidence: array(item.evidence, `${path}.evidence`, string),
     artifactIds: array(item.artifactIds, `${path}.artifactIds`, string),
     blockers: array(item.blockers, `${path}.blockers`, string),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -485,7 +521,7 @@ export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent 
     taskId: nullableString(item.taskId, `${path}.taskId`),
     eventType: string(item.eventType, `${path}.eventType`),
     summary: string(item.summary, `${path}.summary`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -512,7 +548,7 @@ export function parseProjectArtifact(value: unknown, path: string): ProjectArtif
     mediaType: string(item.mediaType, `${path}.mediaType`),
     byteSize: integer(item.byteSize, `${path}.byteSize`, 1),
     caption: string(item.caption, `${path}.caption`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -668,8 +704,8 @@ export function parseAutomationConfiguration(value: unknown, path: string): Auto
     agentTypes,
     stages,
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
     updatedBy: boundedText(item.updatedBy, `${path}.updatedBy`, 256),
   };
 }
@@ -693,7 +729,7 @@ export function parseAgent(value: unknown, path: string): RawAgent {
     workerConnection,
     lastError,
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -703,7 +739,7 @@ export function parseDocumentPenHolder(value: unknown, path: string): RawDocumen
     actorType: member(item.actorType, documentActorTypes, `${path}.actorType`),
     actorId: string(item.actorId, `${path}.actorId`),
     clientId: string(item.clientId, `${path}.clientId`),
-    acquiredAt: timestamp(item.acquiredAt, `${path}.acquiredAt`),
+    ...timestampFields('acquiredAt', item.acquiredAt, `${path}.acquiredAt`),
   };
 }
 
@@ -724,8 +760,8 @@ export function parseDocumentSummary(value: unknown, path: string): RawDocumentS
     penEpoch,
     penHolder,
     sequence: integer(item.sequence, `${path}.sequence`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -742,7 +778,12 @@ export function parseTask(value: unknown, path: string): RawTask {
   const taskId = string(item.taskId, `${path}.taskId`);
   const projectId = string(item.projectId, `${path}.projectId`);
   const status = member(item.status, rawTaskStatuses, `${path}.status`);
-  const projectedCompletion = nullableTimestamp(item.expectedCompletedAt, `${path}.expectedCompletedAt`);
+  const projectedCompletion = nullableTimestampFields('expectedCompletedAt', item.expectedCompletedAt, `${path}.expectedCompletedAt`);
+  const estimateRecordedAt = nullableTimestampFields(
+    'estimateRecordedAt',
+    item.estimateRecordedAt === undefined ? null : item.estimateRecordedAt,
+    `${path}.estimateRecordedAt`,
+  );
   const expectedAgentMinutes = item.expectedAgentMinutes === null || item.expectedAgentMinutes === undefined
     ? null
     : integer(item.expectedAgentMinutes, `${path}.expectedAgentMinutes`, 15);
@@ -783,20 +824,18 @@ export function parseTask(value: unknown, path: string): RawTask {
     assignedAgentId,
     assignedRole,
     expectedAgentMinutes,
-    estimateRecordedAt: item.estimateRecordedAt === undefined
-      ? null
-      : nullableTimestamp(item.estimateRecordedAt, `${path}.estimateRecordedAt`),
+    ...estimateRecordedAt,
     orderKey: item.orderKey === undefined ? null : integer(item.orderKey, `${path}.orderKey`),
     phases,
-    startedAt: nullableTimestamp(item.startedAt, `${path}.startedAt`),
-    expectedCompletedAt: status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'cancelled'
-      ? null
-      : projectedCompletion,
-    endedAt: nullableTimestamp(item.endedAt, `${path}.endedAt`),
+    ...nullableTimestampFields('startedAt', item.startedAt, `${path}.startedAt`),
+    ...(status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'cancelled'
+      ? nullableTimestampFields('expectedCompletedAt', null, `${path}.expectedCompletedAt`)
+      : projectedCompletion),
+    ...nullableTimestampFields('endedAt', item.endedAt, `${path}.endedAt`),
     result: nullableString(item.result, `${path}.result`),
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -816,11 +855,11 @@ export function parseTaskPhase(value: unknown, path: string): RawTaskPhase {
     status,
     parallelGroup: nullableString(item.parallelGroup, `${path}.parallelGroup`),
     orderKey: integer(item.orderKey, `${path}.orderKey`),
-    startedAt: nullableTimestamp(item.startedAt, `${path}.startedAt`),
-    endedAt: nullableTimestamp(item.endedAt, `${path}.endedAt`),
+    ...nullableTimestampFields('startedAt', item.startedAt, `${path}.startedAt`),
+    ...nullableTimestampFields('endedAt', item.endedAt, `${path}.endedAt`),
     version: integer(item.version, `${path}.version`, 1),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
+    ...timestampFields('updatedAt', item.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -834,8 +873,8 @@ export function parseQuestion(value: unknown, path: string): RawQuestion {
     question: string(item.question, `${path}.question`),
     status: member(item.status, questionStatuses, `${path}.status`),
     answer: nullableString(item.answer, `${path}.answer`),
-    askedAt: timestamp(item.askedAt, `${path}.askedAt`),
-    answeredAt: nullableTimestamp(item.answeredAt, `${path}.answeredAt`),
+    ...timestampFields('askedAt', item.askedAt, `${path}.askedAt`),
+    ...nullableTimestampFields('answeredAt', item.answeredAt, `${path}.answeredAt`),
     version: integer(item.version, `${path}.version`, 1),
   };
 }
@@ -848,8 +887,8 @@ export function parseRun(value: unknown, path: string): RawRun {
     agentId: string(item.agentId, `${path}.agentId`),
     taskId: nullableString(item.taskId, `${path}.taskId`),
     status: member(item.status, rawRunStatuses, `${path}.status`),
-    startedAt: timestamp(item.startedAt, `${path}.startedAt`),
-    endedAt: nullableTimestamp(item.endedAt, `${path}.endedAt`),
+    ...timestampFields('startedAt', item.startedAt, `${path}.startedAt`),
+    ...nullableTimestampFields('endedAt', item.endedAt, `${path}.endedAt`),
   };
 }
 
@@ -859,7 +898,7 @@ export function parseInterrupt(value: unknown, path: string): RawInterrupt {
     sequence: integer(item.sequence, `${path}.sequence`, 1),
     agentId: string(item.agentId, `${path}.agentId`),
     runId: nullableString(item.runId, `${path}.runId`),
-    requestedAt: timestamp(item.requestedAt, `${path}.requestedAt`),
+    ...timestampFields('requestedAt', item.requestedAt, `${path}.requestedAt`),
   };
 }
 
@@ -873,7 +912,7 @@ export function parseEvent(value: unknown, path: string): RawEvent {
     actorId: string(item.actorId, `${path}.actorId`),
     eventType: string(item.eventType, `${path}.eventType`),
     data: record(item.data, `${path}.data`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -888,7 +927,7 @@ export function parseMessage(value: unknown, path: string): RawMessage {
     actorId: string(item.actorId, `${path}.actorId`),
     kind: member(item.kind, messageKinds, `${path}.kind`),
     body: string(item.body, `${path}.body`),
-    createdAt: timestamp(item.createdAt, `${path}.createdAt`),
+    ...timestampFields('createdAt', item.createdAt, `${path}.createdAt`),
   };
 }
 

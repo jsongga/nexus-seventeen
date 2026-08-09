@@ -116,7 +116,9 @@ export interface AutomationConfiguration {
   stages: AutomationStageConfiguration[];
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
   updatedBy: string;
 }
 
@@ -139,10 +141,14 @@ export interface BoardWorkItem {
   createdBy: string;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
   endedAt: string | null;
+  endedAtMs: number | null;
   cancelledReason: string | null;
   archivedAt: string | null;
+  archivedAtMs: number | null;
 }
 
 export interface BoardProject {
@@ -150,7 +156,9 @@ export interface BoardProject {
   name: string;
   description: string | null;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface BoardAgent {
@@ -166,9 +174,12 @@ export interface BoardAgent {
   lastError: string | null;
   currentTaskId: string | null;
   lastEventAt: string | null;
+  lastEventAtMs: number | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface BoardTask {
@@ -187,15 +198,21 @@ export interface BoardTask {
   status: TaskStatus;
   expectedAgentMinutes: number | null;
   estimateRecordedAt: string | null;
+  estimateRecordedAtMs: number | null;
   expectedCompletedAt: string | null;
+  expectedCompletedAtMs: number | null;
   orderKey: number;
   phases: BoardTaskPhase[];
   startedAt: string | null;
+  startedAtMs: number | null;
   endedAt: string | null;
+  endedAtMs: number | null;
   result: string | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface BoardTaskPhase {
@@ -206,10 +223,14 @@ export interface BoardTaskPhase {
   parallelGroup: string | null;
   orderKey: number;
   startedAt: string | null;
+  startedAtMs: number | null;
   endedAt: string | null;
+  endedAtMs: number | null;
   version: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface BoardMessage {
@@ -221,6 +242,7 @@ export interface BoardMessage {
   kind: 'progress' | 'question' | 'answer' | 'decision' | 'result' | 'note' | 'proposal';
   body: string;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface BoardQuestion {
@@ -232,7 +254,9 @@ export interface BoardQuestion {
   status: QuestionStatus;
   answer: string | null;
   askedAt: string;
+  askedAtMs: number;
   answeredAt: string | null;
+  answeredAtMs: number | null;
   version: number;
 }
 
@@ -244,9 +268,13 @@ export interface BoardRun {
   status: RunStatus;
   wakeReason: WakeReason | null;
   startedAt: string | null;
+  startedAtMs: number | null;
   endedAt: string | null;
+  endedAtMs: number | null;
   interruptRequestedAt: string | null;
+  interruptRequestedAtMs: number | null;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface DocumentPenHolder {
@@ -254,6 +282,7 @@ export interface DocumentPenHolder {
   actorId: string;
   clientId: string;
   acquiredAt: string;
+  acquiredAtMs: number;
 }
 
 export interface BoardDocumentSummary {
@@ -266,7 +295,9 @@ export interface BoardDocumentSummary {
   penHolder: DocumentPenHolder | null;
   sequence: number;
   createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface BoardDocument extends BoardDocumentSummary {
@@ -276,6 +307,7 @@ export interface BoardDocument extends BoardDocumentSummary {
 export interface BoardSnapshot {
   revision: number;
   generatedAt: string;
+  generatedAtMs: number;
   workItems: BoardWorkItem[];
   projects: BoardProject[];
   agents: BoardAgent[];
@@ -295,7 +327,9 @@ export interface WorkflowPlan {
   acceptanceCriteria: string[];
   state: 'proposed' | 'confirmed' | 'superseded' | 'rejected';
   createdAt: string;
+  createdAtMs: number;
   confirmedAt: string | null;
+  confirmedAtMs: number | null;
 }
 
 export interface WorkflowNode {
@@ -308,7 +342,10 @@ export interface WorkflowNode {
   stageTemplate: WorkflowStage[];
   currentStage: WorkflowStage | null;
   state: 'pending' | 'ready' | 'active' | 'blocked' | 'stale' | 'completed' | 'cancelled';
+  createdAt: string;
+  createdAtMs: number;
   updatedAt: string;
+  updatedAtMs: number;
 }
 
 export interface WorkflowHandoff {
@@ -322,6 +359,7 @@ export interface WorkflowHandoff {
   artifactIds: string[];
   blockers: string[];
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface WorkflowEvent {
@@ -332,6 +370,7 @@ export interface WorkflowEvent {
   eventType: string;
   summary: string;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface ProjectWorkflow {
@@ -349,6 +388,7 @@ export interface ProjectArtifact {
   byteSize: number;
   caption: string;
   createdAt: string;
+  createdAtMs: number;
 }
 
 export interface CreateProjectInput {

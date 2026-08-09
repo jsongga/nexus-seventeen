@@ -86,8 +86,21 @@ export function eventWakeReason(event: RawEvent): WireWakeReason | null {
   return typeof value === 'string' && wakeReasons.has(value as WireWakeReason) ? value as WireWakeReason : null;
 }
 
-export function newest(values: Array<string | null | undefined>, fallback: string): string {
-  return values.filter((value): value is string => typeof value === 'string').sort().at(-1) ?? fallback;
+interface TimestampValue {
+  iso: string;
+  ms: number;
+}
+
+export function newest(values: Array<TimestampValue | null | undefined>, fallback: TimestampValue): TimestampValue {
+  let latest: TimestampValue | null = null;
+  for (const value of values) {
+    if (value !== null && value !== undefined && (
+      latest === null
+      || value.ms > latest.ms
+      || (value.ms === latest.ms && value.iso.localeCompare(latest.iso) > 0)
+    )) latest = value;
+  }
+  return latest ?? fallback;
 }
 
 export function documentSummary(raw: RawDocumentSummary): BoardDocumentSummary {
@@ -101,7 +114,9 @@ export function documentSummary(raw: RawDocumentSummary): BoardDocumentSummary {
     penHolder: raw.penHolder === null ? null : { ...raw.penHolder },
     sequence: raw.sequence,
     createdAt: raw.createdAt,
+    createdAtMs: raw.createdAtMs,
     updatedAt: raw.updatedAt,
+    updatedAtMs: raw.updatedAtMs,
   };
 }
 
@@ -115,7 +130,9 @@ export function projectProjection(raw: RawProject): BoardProject {
     name: raw.name,
     description: raw.description,
     createdAt: raw.createdAt,
+    createdAtMs: raw.createdAtMs,
     updatedAt: raw.updatedAt,
+    updatedAtMs: raw.updatedAtMs,
   };
 }
 
@@ -133,10 +150,14 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     createdBy: raw.createdBy,
     version: raw.version,
     createdAt: raw.createdAt,
+    createdAtMs: raw.createdAtMs,
     updatedAt: raw.updatedAt,
+    updatedAtMs: raw.updatedAtMs,
     endedAt: raw.endedAt,
+    endedAtMs: raw.endedAtMs,
     cancelledReason: raw.cancelledReason,
     archivedAt: raw.archivedAt,
+    archivedAtMs: raw.archivedAtMs,
   };
 }
 
@@ -152,7 +173,9 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     status: question.status,
     answer: question.answer,
     askedAt: question.askedAt,
+    askedAtMs: question.askedAtMs,
     answeredAt: question.answeredAt,
+    answeredAtMs: question.answeredAtMs,
     version: question.version,
   })));
   const openQuestionTasks = new Set(questions.filter((question) => question.status === 'open').map((question) => question.taskId));
@@ -165,10 +188,14 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       parallelGroup: phase.parallelGroup,
       orderKey: phase.orderKey,
       startedAt: phase.startedAt,
+      startedAtMs: phase.startedAtMs,
       endedAt: phase.endedAt,
+      endedAtMs: phase.endedAtMs,
       version: phase.version,
       createdAt: phase.createdAt,
+      createdAtMs: phase.createdAtMs,
       updatedAt: phase.updatedAt,
+      updatedAtMs: phase.updatedAtMs,
     }));
     tasksById.set(raw.taskId, {
       id: raw.taskId,
@@ -186,15 +213,21 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       status: taskStatus(raw.status, openQuestionTasks.has(raw.taskId)),
       expectedAgentMinutes: raw.expectedAgentMinutes,
       estimateRecordedAt: raw.estimateRecordedAt,
+      estimateRecordedAtMs: raw.estimateRecordedAtMs,
       expectedCompletedAt: raw.expectedCompletedAt,
+      expectedCompletedAtMs: raw.expectedCompletedAtMs,
       orderKey: raw.orderKey ?? index * 1024,
       phases,
       startedAt: raw.startedAt,
+      startedAtMs: raw.startedAtMs,
       endedAt: raw.endedAt,
+      endedAtMs: raw.endedAtMs,
       result: raw.result,
       version: raw.version,
       createdAt: raw.createdAt,
+      createdAtMs: raw.createdAtMs,
       updatedAt: raw.updatedAt,
+      updatedAtMs: raw.updatedAtMs,
     });
   }
 
@@ -214,9 +247,13 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
         status: runStatus(raw.status),
         wakeReason: event ? eventWakeReason(event) : null,
         startedAt: raw.startedAt,
+        startedAtMs: raw.startedAtMs,
         endedAt: raw.endedAt,
+        endedAtMs: raw.endedAtMs,
         interruptRequestedAt: interrupt?.requestedAt ?? null,
+        interruptRequestedAtMs: interrupt?.requestedAtMs ?? null,
         createdAt: raw.startedAt,
+        createdAtMs: raw.startedAtMs,
       });
     }
   }
@@ -226,7 +263,10 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     const current = owned.find((task) => task.status === 'in_progress' || task.status === 'blocked')
       ?? owned.find((task) => task.status === 'queued')
       ?? null;
-    const activity = board.events.filter((event) => event.actorId === raw.agentId).map((event) => event.createdAt);
+    const activity = board.events
+      .filter((event) => event.actorId === raw.agentId)
+      .map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }));
+    const latestActivity = newest(activity, { iso: raw.createdAt, ms: raw.createdAtMs });
     return {
       id: raw.agentId,
       projectId: raw.projectId,
@@ -239,10 +279,13 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       workerConnection: raw.workerConnection,
       lastError: raw.lastError,
       currentTaskId: current?.taskId ?? null,
-      lastEventAt: newest(activity, raw.createdAt),
+      lastEventAt: latestActivity.iso,
+      lastEventAtMs: latestActivity.ms,
       version: raw.version,
       createdAt: raw.createdAt,
-      updatedAt: newest(activity, raw.createdAt),
+      createdAtMs: raw.createdAtMs,
+      updatedAt: latestActivity.iso,
+      updatedAtMs: latestActivity.ms,
     };
   }));
 
@@ -258,22 +301,24 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     kind: message.kind,
     body: message.body,
     createdAt: message.createdAt,
+    createdAtMs: message.createdAtMs,
   }));
   const documents = boards.flatMap((board) => board.documents.map(documentSummary));
   const generatedAt = newest([
-    ...workItems.map((workItem) => workItem.updatedAt),
-    ...projects.map((project) => project.updatedAt),
-    ...boards.flatMap((board) => board.events.map((event) => event.createdAt)),
-    ...messages.map((message) => message.createdAt),
-    ...documents.map((document) => document.updatedAt),
-  ], new Date(0).toISOString());
+    ...workItems.map((workItem) => ({ iso: workItem.updatedAt, ms: workItem.updatedAtMs })),
+    ...projects.map((project) => ({ iso: project.updatedAt, ms: project.updatedAtMs })),
+    ...boards.flatMap((board) => board.events.map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }))),
+    ...messages.map((message) => ({ iso: message.createdAt, ms: message.createdAtMs })),
+    ...documents.map((document) => ({ iso: document.updatedAt, ms: document.updatedAtMs })),
+  ], { iso: new Date(0).toISOString(), ms: 0 });
   return {
     revision: workItems.reduce((sum, workItem) => sum + workItem.version, 0)
       + projects.reduce((sum, project) => sum + (listedProjects.find((raw) => raw.projectId === project.id)?.version ?? 0), 0)
       + tasks.reduce((sum, task) => sum + task.version, 0)
       + tasks.reduce((sum, task) => sum + task.phases.reduce((phaseSum, phase) => phaseSum + phase.version, 0), 0)
       + documents.reduce((sum, document) => sum + document.sequence, 0),
-    generatedAt,
+    generatedAt: generatedAt.iso,
+    generatedAtMs: generatedAt.ms,
     workItems,
     projects,
     agents,

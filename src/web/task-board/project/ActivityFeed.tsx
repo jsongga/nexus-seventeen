@@ -11,6 +11,7 @@ export interface ActivityFeedUpdate {
   author: string;
   body: string;
   createdAt: string;
+  createdAtMs: number;
   artifacts: ActivityArtifact[];
 }
 

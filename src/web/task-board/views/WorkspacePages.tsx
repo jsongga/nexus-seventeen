@@ -52,10 +52,14 @@ function boardDocumentMeta(document: BoardDocumentSummary): string {
   return `Updated ${formatTime(document.updatedAt)} · Version ${document.contentVersion}`;
 }
 
-function projectDocuments(projectId: string, documents: BoardDocumentSummary[]): ContextDocument[] {
+export function projectDocuments(projectId: string, documents: BoardDocumentSummary[]): ContextDocument[] {
   return documents
     .filter((document) => document.projectId === projectId)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title))
+    .sort((left, right) => (
+      right.updatedAtMs - left.updatedAtMs
+        || left.title.localeCompare(right.title)
+        || left.id.localeCompare(right.id)
+    ))
     .map((document) => ({
       id: `document:${document.id}`,
       label: document.title,
@@ -67,7 +71,7 @@ function projectDocuments(projectId: string, documents: BoardDocumentSummary[]):
 }
 
 /** Adds every artifact to the feed without duplicating it across task messages. */
-function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[]): ActivityFeedUpdate[] {
+export function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[]): ActivityFeedUpdate[] {
   const taskTitleById = new Map(updates.map((update) => [update.taskId, update.taskTitle]));
 
   const artifactUpdates = artifacts.map((artifact): ActivityFeedUpdate => {
@@ -79,6 +83,7 @@ function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[])
         ? `${artifact.caption} was added to ${taskTitle}.`
         : `${artifact.caption} was added to the project.`,
       createdAt: artifact.createdAt,
+      createdAtMs: artifact.createdAtMs,
       artifacts: [{
         artifactId: artifact.artifactId,
         caption: artifact.caption,
@@ -93,10 +98,11 @@ function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[])
       author: update.author,
       body: update.body,
       createdAt: update.createdAt,
+      createdAtMs: update.createdAtMs,
       artifacts: [],
     })),
     ...artifactUpdates,
-  ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  ].sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
 }
 
 export interface InterruptAllOutcome {
@@ -341,14 +347,39 @@ interface AgentPageProps {
   onRotateToken: () => Promise<RotateAgentTokenResult | null>;
 }
 
-interface AgentChatEntry {
+export interface AgentChatEntry {
   id: string;
   author: string;
   body: string;
   createdAt: string;
+  createdAtMs: number;
   sender: 'human' | 'agent' | 'system';
   contextRole: AgentQueryConversationTurn['role'] | null;
   order: number;
+}
+
+export function orderAgentChatEntries(entries: AgentChatEntry[]): AgentChatEntry[] {
+  return entries.sort((left, right) => left.createdAtMs - right.createdAtMs || left.order - right.order || left.id.localeCompare(right.id));
+}
+
+export function latestByUpdatedAt<T extends { id: string; updatedAtMs: number }>(items: T[]): T | undefined {
+  return items.reduce<T | undefined>((latest, item) => (
+    latest === undefined
+    || item.updatedAtMs > latest.updatedAtMs
+    || (item.updatedAtMs === latest.updatedAtMs && item.id.localeCompare(latest.id) > 0)
+      ? item
+      : latest
+  ), undefined);
+}
+
+export function latestByAskedAt<T extends { askedAtMs: number; id: string }>(items: T[]): T | undefined {
+  return items.reduce<T | undefined>((latest, item) => (
+    latest === undefined
+    || item.askedAtMs > latest.askedAtMs
+    || (item.askedAtMs === latest.askedAtMs && item.id.localeCompare(latest.id) > 0)
+      ? item
+      : latest
+  ), undefined);
 }
 
 export function agentPageUsesPointOfContactMode(isPointOfContact: boolean, explicitPointOfContact: boolean): boolean {
@@ -381,6 +412,7 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
       author: systemRequest ? 'System' : 'You',
       body: promptByTask.get(task.id) ?? task.objective,
       createdAt: task.createdAt,
+      createdAtMs: task.createdAtMs,
       sender: systemRequest ? 'system' : 'human',
       contextRole: systemRequest ? null : 'human',
       order: 0,
@@ -401,6 +433,7 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
           : agentNames.get(message.authorId ?? '') ?? agent.name,
       body: message.body,
       createdAt: message.createdAt,
+      createdAtMs: message.createdAtMs,
       sender: message.authorType,
       contextRole: message.authorType === 'system'
         ? null
@@ -421,6 +454,7 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
       author: agentNames.get(question.agentId) ?? agent.name,
       body: question.prompt,
       createdAt: question.askedAt,
+      createdAtMs: question.askedAtMs,
       sender: 'agent',
       contextRole: 'agent',
       order: 2,
@@ -431,6 +465,7 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
         author: 'You',
         body: question.answer,
         createdAt: question.answeredAt ?? question.askedAt,
+        createdAtMs: question.answeredAtMs ?? question.askedAtMs,
         sender: 'human',
         contextRole: 'human',
         order: 3,
@@ -446,13 +481,14 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
       author: agent.name,
       body: result,
       createdAt: task.endedAt ?? task.updatedAt,
+      createdAtMs: task.endedAtMs ?? task.updatedAtMs,
       sender: 'agent',
       contextRole: 'agent',
       order: 4,
     });
   }
 
-  return entries.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.order - right.order || left.id.localeCompare(right.id));
+  return orderAgentChatEntries(entries);
 }
 
 function AgentChat({
@@ -485,13 +521,16 @@ function AgentChat({
   const currentOpenQuestion = useMemo(() => {
     const chatTasks = agentChatTasks(agent, snapshot, isPointOfContact);
     const currentQuery = chatTasks.find((task) => task.id === agent.currentTaskId)
-      ?? chatTasks
-        .filter((task) => task.status === 'waiting_for_human' || task.status === 'running' || task.status === 'blocked' || task.status === 'queued')
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      ?? latestByUpdatedAt(chatTasks.filter((task) => (
+        task.status === 'waiting_for_human'
+          || task.status === 'running'
+          || task.status === 'blocked'
+          || task.status === 'queued'
+      )));
     if (!currentQuery) return null;
-    return snapshot.questions
-      .filter((question): question is BoardQuestion => question.taskId === currentQuery.id && question.status === 'open')
-      .sort((left, right) => right.askedAt.localeCompare(left.askedAt))[0] ?? null;
+    return latestByAskedAt(snapshot.questions.filter((question): question is BoardQuestion => (
+      question.taskId === currentQuery.id && question.status === 'open'
+    ))) ?? null;
   }, [agent, isPointOfContact, snapshot]);
   const routingMap = useMemo(() => !isPointOfContact ? '' : snapshot.projects.slice(0, 20).map((project) => {
     const owners = snapshot.agents

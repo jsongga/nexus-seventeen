@@ -141,6 +141,18 @@ function taskIsTerminal(task: BoardTask): boolean {
     || task.status === 'cancelled';
 }
 
+export function taskPhasesByOrder(phases: BoardTask['phases']): BoardTask['phases'] {
+  return [...phases].sort((left, right) => (
+    left.orderKey - right.orderKey
+      || left.createdAtMs - right.createdAtMs
+      || left.id.localeCompare(right.id)
+  ));
+}
+
+export function taskRunsByCreatedAt(runs: BoardRun[]): BoardRun[] {
+  return [...runs].sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
+}
+
 function StatusPill({ task }: { task: BoardTask }) {
   return <Pill tone={taskStatusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
 }
@@ -343,7 +355,7 @@ const phaseStatusTone = {
 } as const;
 
 function TaskPhases({ task }: { task: BoardTask }) {
-  const phases = [...task.phases].sort((left, right) => left.orderKey - right.orderKey || left.createdAt.localeCompare(right.createdAt));
+  const phases = taskPhasesByOrder(task.phases);
   const parallelCounts = new Map<string, number>();
   for (const phase of phases) {
     if (phase.parallelGroup) parallelCounts.set(phase.parallelGroup, (parallelCounts.get(phase.parallelGroup) ?? 0) + 1);
@@ -966,7 +978,7 @@ export function BoardApp() {
   const selectedTask = allTasks.find((task) => task.id === selectedTaskId);
   const selectedTaskAgents = snapshot?.agents.filter((agent) => agent.projectId === selectedTask?.projectId) ?? [];
   const taskQuestions = snapshot?.questions.filter((question) => question.taskId === selectedTask?.id) ?? [];
-  const taskRuns = snapshot?.runs.filter((run) => run.taskId === selectedTask?.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt)) ?? [];
+  const taskRuns = taskRunsByCreatedAt(snapshot?.runs.filter((run) => run.taskId === selectedTask?.id) ?? []);
   const openQuestionIds = new Set(snapshot?.questions.filter((question) => question.status === 'open').map((question) => question.taskId));
   const pointOfContact = selectPointOfContact(snapshot?.agents ?? []);
   const pageProject = page.kind === 'project' ? snapshot?.projects.find((project) => project.id === page.projectId) : undefined;
