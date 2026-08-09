@@ -167,12 +167,15 @@ export class RunsCollaborator {
       if (storedHash !== requestHash && storedHash !== legacyClaimRequestHash(agentId, request.claimId, selectedCursor)) {
         throw conflict("CLAIM_ID_CONFLICT", "claimId was used with another cursor");
       }
+      const persistedResult = nullableString(prior, "claim_result_json");
+      if (persistedResult !== null) return this.claimResultFromJson(persistedResult);
+      // Legacy runs created before claim-result persistence have NULL here; rebuild them while their source data remains valid.
       return this.claimResult(priorRun, selectedCursor ?? 0);
     }
     const existing = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
     const now = exactNow(this.runtime.config.now);
-    const claimed = this.runtime.store.transaction(() => {
+    return this.runtime.store.transaction(() => {
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
       this.runtime.retireStaleWakeupsForAgent(agentId, now);
@@ -247,13 +250,16 @@ export class RunsCollaborator {
         wakeupId: wakeup.wakeupId,
         wakeReason: wakeup.reason,
       }, now);
-      return Object.freeze({ runId, wakeup });
+      const result = this.claimResult(
+        runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
+        claimMessageCursor(request, wakeup.taskId) ?? 0,
+      );
+      const persisted = this.runtime.store.db.prepare(
+        "UPDATE runs SET claim_result_json = ? WHERE run_id = ? AND claim_result_json IS NULL",
+      ).run(JSON.stringify(result), runId);
+      if (Number(persisted.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+      return result;
     });
-    if (claimed === null) return null;
-    return this.claimResult(
-      runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(claimed.runId)!),
-      claimMessageCursor(request, claimed.wakeup.taskId) ?? 0,
-    );
   }
 
   async waitToClaimRun(
@@ -488,6 +494,24 @@ export class RunsCollaborator {
         workflow: task === null ? null : this.projects.claimContext(task.taskId),
       }),
     });
+  }
+
+  private claimResultFromJson(value: string): ClaimRunResult {
+    let result: unknown;
+    try {
+      result = JSON.parse(value);
+    } catch {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    }
+    if (
+      result === null ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      (result as { apiVersion?: unknown }).apiVersion !== TASK_BOARD_API_VERSION
+    ) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    }
+    return result as ClaimRunResult;
   }
 
   private interruptBatch(runId: string, after: number): RunInterruptBatch {

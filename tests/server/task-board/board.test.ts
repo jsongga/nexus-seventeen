@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue, StatementResultingChanges } from "node:sqlite";
@@ -99,6 +99,90 @@ async function activeSettlementWorkflow(suffix: string) {
   return { ...fixture, verifier, workItem, node, claim };
 }
 
+const CLAIM_CONTEXT_SKILL_ID = "cicada-evidence-research";
+
+async function claimContextWorkflow(suffix: string) {
+  const fixture = await boardFixture();
+  const skillPath = join(process.cwd(), "skills", CLAIM_CONTEXT_SKILL_ID, "SKILL.md");
+  const skillContent = await readFile(skillPath, "utf8");
+  const agentTypeId = `claim-context-${suffix}`;
+  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: [{
+      agentTypeId,
+      name: "Claim context researcher",
+      description: "Exercises claim-context validation inside the claim transaction.",
+      role: "engineer",
+      supplementalInstructions: "Return the confirmed skill context with the claimed run.",
+      skillIds: [CLAIM_CONTEXT_SKILL_ID],
+      evaluatorProfile: "tests",
+      enabled: true,
+    }],
+    stages: automationStages({
+      research: { kind: "agent_type", agentTypeId },
+    }),
+  }));
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: `Verify atomic claim context ${suffix}.`,
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `claim-context-${suffix}`).workItem;
+  const title = `Claim context ${suffix}`;
+  const proposed = fixture.board.proposeWorkflow({
+    workItemId: workItem.workItemId,
+    projectId: fixture.project.projectId,
+    objective: "Build claim context before committing the claim.",
+    assumptions: [],
+    acceptanceCriteria: ["Rejected claim context leaves no durable claim state."],
+    skillIds: [CLAIM_CONTEXT_SKILL_ID],
+    nodes: [{
+      nodeId: `claim-context-${suffix}`,
+      title,
+      objective: "Return a complete, validated claim payload.",
+      acceptanceCriteria: ["The run identifier and workflow context arrive together."],
+      dependencyNodeIds: [],
+      stageTemplate: ["research", "verification"],
+    }],
+  });
+  const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+  const node = confirmed.nodes[0]!;
+  const task = fixture.board.snapshot(fixture.project.projectId).tasks.find((candidate) => candidate.title === `research: ${title}`);
+  assert.ok(task);
+  assert.equal(task.status, "queued");
+  return { ...fixture, workItem, node, task, skillPath, skillContent };
+}
+
+async function changeClaimContextSkill(skillPath: string, skillContent: string, suffix: string): Promise<void> {
+  await writeFile(skillPath, `${skillContent}\nClaim-context digest mutation: ${suffix}.\n`, "utf8");
+}
+
+function assertSkillDigestChangedClaim(
+  fixture: Awaited<ReturnType<typeof claimContextWorkflow>>,
+  claimId: string,
+): void {
+  assert.throws(
+    () => fixture.board.claimRun(fixture.engineer.agentId, { claimId, messageCursor: null }),
+    (error: unknown) => (
+      error instanceof TaskBoardError &&
+      error.status === 409 &&
+      error.code === "SKILL_DIGEST_CHANGED"
+    ),
+  );
+}
+
+function assertCompleteClaimPayload(
+  claim: NonNullable<ReturnType<TaskBoard["claimRun"]>>,
+  fixture: Awaited<ReturnType<typeof claimContextWorkflow>>,
+): void {
+  assert.match(claim.run.runId, /^[0-9a-f-]{36}$/u);
+  assert.equal(claim.run.taskId, fixture.task.taskId);
+  assert.equal(claim.task?.taskId, fixture.task.taskId);
+  assert.equal(claim.context.agent.agentId, fixture.engineer.agentId);
+  assert.equal(claim.context.projectMemory.projectId, fixture.project.projectId);
+  assert.equal(claim.context.workflow?.planRevisionId, fixture.node.planRevisionId);
+  assert.equal(claim.context.workflow?.nodeId, fixture.node.nodeId);
+  assert.equal(claim.context.workflow?.stage, "research");
+  assert.deepEqual(claim.context.workflow?.skills.map((skill) => skill.skillId), [CLAIM_CONTEXT_SKILL_ID]);
+}
+
 function settlementHandoff(outcome: "passed" | "failed") {
   return {
     outcome,
@@ -188,6 +272,186 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
     }), (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE");
   } finally {
     fixture.board.close();
+  }
+});
+
+test("claim-context rejection rolls back the run, wakeup claim, and task start", async () => {
+  const fixture = await claimContextWorkflow("rollback");
+  try {
+    const initialTask = fixture.board.requireTask(fixture.task.taskId);
+    await changeClaimContextSkill(fixture.skillPath, fixture.skillContent, "rollback");
+
+    assertSkillDigestChangedClaim(fixture, "claim-context-rollback-0001");
+
+    const taskAfterRejection = fixture.board.requireTask(fixture.task.taskId);
+    assert.equal(taskAfterRejection.status, initialTask.status);
+    assert.equal(taskAfterRejection.startedAt, initialTask.startedAt);
+    assert.equal(taskAfterRejection.version, initialTask.version);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
+      false,
+    );
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM runs WHERE agent_id=?").get(fixture.engineer.agentId)?.count,
+        0,
+      );
+      const wakeup = inspected.prepare(
+        "SELECT claimed_at,run_id FROM wakeups WHERE agent_id=? AND task_id=?",
+      ).get(fixture.engineer.agentId, fixture.task.taskId);
+      assert.ok(wakeup);
+      assert.equal(wakeup.claimed_at, null);
+      assert.equal(wakeup.run_id, null);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    fixture.board.close();
+  }
+});
+
+test("a new claimId succeeds with complete context after a rejected claim is refreshed", async () => {
+  const fixture = await claimContextWorkflow("new-retry");
+  try {
+    await changeClaimContextSkill(fixture.skillPath, fixture.skillContent, "new-retry");
+    assertSkillDigestChangedClaim(fixture, "claim-context-new-retry-rejected-0001");
+
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-context-new-retry-success-0002",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assertCompleteClaimPayload(claim, fixture);
+  } finally {
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    fixture.board.close();
+  }
+});
+
+test("the same claimId is a fresh attempt after claim-context rejection", async () => {
+  const fixture = await claimContextWorkflow("same-retry");
+  const claimId = "claim-context-same-retry-0001";
+  try {
+    await changeClaimContextSkill(fixture.skillPath, fixture.skillContent, "same-retry");
+    assertSkillDigestChangedClaim(fixture, claimId);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
+      false,
+    );
+
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, { claimId, messageCursor: null });
+    assert.ok(claim);
+    assertCompleteClaimPayload(claim, fixture);
+  } finally {
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    fixture.board.close();
+  }
+});
+
+test("happy-path claim keeps the existing complete response shape", async () => {
+  const fixture = await claimContextWorkflow("happy-path");
+  try {
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-context-happy-path-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assertCompleteClaimPayload(claim, fixture);
+    assert.deepEqual(Object.keys(claim).sort(), ["apiVersion", "context", "run", "task", "wakeup"]);
+    assert.deepEqual(Object.keys(claim.context).sort(), [
+      "acceptanceCriteria",
+      "agent",
+      "areaMemory",
+      "messageCursor",
+      "messages",
+      "openQuestions",
+      "parentMessages",
+      "parentTask",
+      "projectMemory",
+      "triggerQuestion",
+      "workflow",
+      "workspaceRefs",
+    ]);
+  } finally {
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    fixture.board.close();
+  }
+});
+
+test("same-claimId replay returns the original claim payload after a skill digest changes", async () => {
+  const fixture = await claimContextWorkflow("persisted-replay");
+  const request = { claimId: "claim-context-persisted-replay-0001", messageCursor: null } as const;
+  try {
+    const first = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(first);
+    assertCompleteClaimPayload(first, fixture);
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const stored = inspected.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(first.run.runId);
+      assert.equal(typeof stored?.claim_result_json, "string");
+      assert.deepEqual(JSON.parse(String(stored?.claim_result_json)), first);
+    } finally {
+      inspected.close();
+    }
+
+    await changeClaimContextSkill(fixture.skillPath, fixture.skillContent, "persisted-replay");
+    const replay = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.deepEqual(replay.context, first.context);
+    assert.deepEqual(replay, first);
+
+    const settled = fixture.board.settleRun(first.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The persisted claim payload remained replayable after its skill changed.",
+    });
+    assert.equal(settled.run.status, "completed");
+  } finally {
+    await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
+    fixture.board.close();
+  }
+});
+
+test("same-claimId replay rebuilds legacy active runs without a persisted claim payload", async () => {
+  const fixture = await claimContextWorkflow("legacy-replay");
+  const request = { claimId: "claim-context-legacy-replay-0001", messageCursor: null } as const;
+  let fixtureOpen = true;
+  let restarted: TaskBoard | null = null;
+  try {
+    const first = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(first);
+    fixture.board.close();
+    fixtureOpen = false;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const direct = new DatabaseSync(fixture.path);
+    try {
+      const cleared = direct.prepare("UPDATE runs SET claim_result_json = NULL WHERE run_id = ?")
+        .run(first.run.runId);
+      assert.equal(Number(cleared.changes), 1);
+    } finally {
+      direct.close();
+    }
+
+    restarted = await TaskBoard.open(config(fixture.path));
+    const replay = restarted.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.deepEqual(replay.context, first.context);
+    assert.equal(replay.run.runId, first.run.runId);
+    const settled = restarted.settleRun(first.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The legacy replay fallback returned the active run.",
+    });
+    assert.equal(settled.run.status, "failed");
+  } finally {
+    if (fixtureOpen) fixture.board.close();
+    restarted?.close();
   }
 });
 
@@ -635,7 +899,7 @@ test("work items preserve original intake, resolve explicit projects, and enforc
         .run("Replace the accepted request.", automatic.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 13);
   } finally {
     direct.close();
   }
@@ -2717,7 +2981,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -2754,7 +3018,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -2794,7 +3058,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -2884,7 +3148,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -2955,7 +3219,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -2994,7 +3258,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -3029,7 +3293,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -3077,7 +3341,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -3127,10 +3391,53 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 12);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
+    );
+  } finally {
+    verified.close();
+  }
+});
+
+test("schema version 12 adds durable claim results while preserving active legacy runs", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Preserve a version 12 active run" }));
+  const request = { claimId: "claim-v12-migration-active-0001", messageCursor: null } as const;
+  const claim = fixture.board.claimRun(fixture.engineer.agentId, request);
+  assert.ok(claim);
+  fixture.board.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("ALTER TABLE runs DROP COLUMN claim_result_json; PRAGMA user_version = 12;");
+  legacy.close();
+
+  const upgraded = await TaskBoard.open(config(path));
+  try {
+    const replay = upgraded.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.equal(replay.run.runId, claim.run.runId);
+    upgraded.settleRun(claim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The migrated legacy run remained replayable and settleable.",
+    });
+  } finally {
+    upgraded.close();
+  }
+
+  const verified = new DatabaseSync(path);
+  try {
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 13);
+    assert.equal(
+      verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
+      "claim_result_json",
+    );
+    assert.equal(
+      verified.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(claim.run.runId)?.claim_result_json,
+      null,
     );
   } finally {
     verified.close();

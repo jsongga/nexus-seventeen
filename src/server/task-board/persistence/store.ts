@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -428,6 +428,9 @@ CREATE TABLE runs (
   run_id TEXT PRIMARY KEY,
   claim_id TEXT NOT NULL,
   claim_request_hash TEXT NOT NULL,
+  claim_result_json TEXT
+    CHECK (claim_result_json IS NULL OR
+           (json_valid(claim_result_json) AND json_type(claim_result_json) = 'object')),
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
   wakeup_id TEXT NOT NULL UNIQUE REFERENCES wakeups(wakeup_id) ON DELETE RESTRICT,
@@ -461,6 +464,16 @@ CREATE INDEX interrupts_project ON interrupts(project_id, requested_at DESC);
 function hasColumns(db: DatabaseSync, table: string, expected: readonly string[]): boolean {
   const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
   return expected.every((column) => columns.has(column));
+}
+
+function migrateVersion12To13(db: DatabaseSync): void {
+  const hasRuns = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get() !== undefined;
+  const addClaimResult = !hasRuns || hasColumns(db, "runs", ["claim_result_json"])
+    ? ""
+    : `ALTER TABLE runs ADD COLUMN claim_result_json TEXT
+         CHECK (claim_result_json IS NULL OR
+                (json_valid(claim_result_json) AND json_type(claim_result_json) = 'object'));`;
+  db.exec(`BEGIN IMMEDIATE; ${addClaimResult} PRAGMA user_version = 13; COMMIT;`);
 }
 
 function migrateVersion9To10(db: DatabaseSync): void {
@@ -736,6 +749,8 @@ export class TaskBoardStore {
         // Transparent workflow storage is added below.
       } else if (version === 11) {
         // Work-item planning-task links are added below.
+      } else if (version === 12) {
+        // Durable claim results are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -749,6 +764,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 9) migrateVersion9To10(db);
       if (version >= 1 && version <= 10) migrateVersion10To11(db);
       if (version >= 1 && version <= 11) migrateVersion11To12(db);
+      if (version >= 1 && version <= 12) migrateVersion12To13(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");
