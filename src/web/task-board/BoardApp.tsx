@@ -102,28 +102,28 @@ function prettyStatus(value: string): string {
 
 /**
  * The board sits behind staff SSO, which the app never sees succeed -- it only
- * ever notices the failure. A 401 means the session lapsed while the page
- * stayed open; reloading re-runs the document request, which IS allowed to
- * redirect to the identity provider, so the session renews and the user lands
- * back here. Reload once per page load, so a persistent 401 shows a message
- * instead of spinning.
+ * ever notices the failure. A 401 means the session lapsed while the page stayed
+ * open. Only a top-level navigation can renew it: the document request is allowed
+ * to redirect to the identity provider, and an XHR cannot follow that redirect.
  *
- * A 403 is different and must NOT reload: the session is valid but the account
- * lacks the operator group, and no amount of reloading grants it.
+ * This deliberately does NOT reload by itself. An earlier version did, guarded by
+ * a module-level flag -- which a reload destroys, so the flag reset every time
+ * and the page reloaded forever. Re-authentication is now something the operator
+ * triggers, so a persistent 401 costs one click rather than an infinite loop.
+ *
+ * A 403 is a different failure: the session is valid but the account is not in
+ * the operator group, and no amount of signing in again grants it.
  */
-let signInReloadAttempted = false;
-
-function signInMessage(caught: unknown): string | null {
+export function signInFailure(caught: unknown): { message: string; canRetrySignIn: boolean } | null {
   if (!(caught instanceof BoardApiError)) return null;
   if (caught.status === 403) {
-    return 'Your account is signed in but is not a board operator. Ask an administrator to add you to the nexus-operator group.';
+    return {
+      message: 'You are signed in, but your account is not a board operator. Ask an administrator to add you to the nexus-operator group.',
+      canRetrySignIn: false,
+    };
   }
   if (caught.status !== 401) return null;
-  if (!signInReloadAttempted && typeof globalThis.location?.reload === 'function') {
-    signInReloadAttempted = true;
-    globalThis.location.reload();
-  }
-  return 'Your sign-in expired. Reloading to sign in again — if this message stays, reload the page.';
+  return { message: 'Your sign-in has expired.', canRetrySignIn: true };
 }
 
 const taskKindLabel: Record<TaskKind, string> = {
@@ -649,6 +649,7 @@ export function BoardApp() {
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signInExpired, setSignInExpired] = useState(false);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
@@ -670,7 +671,9 @@ export function BoardApp() {
     } catch (caught) {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return false;
       setConnected(false);
-      setError(signInMessage(caught) ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
+      const signIn = signInFailure(caught);
+      setSignInExpired(signIn?.canRetrySignIn ?? false);
+      setError(signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
       return false;
     } finally {
       if (sequence === refreshSequence.current) setLoading(false);
@@ -777,7 +780,14 @@ export function BoardApp() {
   if (loading && snapshot === null) {
     content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<RefreshCw className="animate-spin" size={20} />} title="Locating your agents" body="Reading durable projects, tasks, questions, and progress from the task board." /></Card></main>;
   } else if (snapshot === null) {
-    content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<CircleAlert size={20} />} title="Board service unreachable" body="The task board service could not be reached. No local demo data is shown." /></Card></main>;
+    content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState
+      icon={<CircleAlert size={20} />}
+      title={signInExpired ? 'Your sign-in has expired' : 'Board service unreachable'}
+      body={signInExpired
+        ? 'Signing in again reloads this page through the identity provider and brings you straight back.'
+        : 'The task board service could not be reached. No local demo data is shown.'}
+      action={signInExpired ? <Button variant="primary" onClick={() => globalThis.location.reload()}>Sign in again</Button> : undefined}
+    /></Card></main>;
   } else if (page.kind === 'documents') {
     content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh(true)} />;
   } else if (page.kind === 'automation') {
@@ -855,7 +865,7 @@ export function BoardApp() {
 
   return (
     <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
-      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div><p className="font-semibold">Task board unavailable</p><p className="mt-1 text-xs leading-5">The board service is not reachable. {error}. Existing durable state remains visible. No demo data is being shown.</p></div></FormError></div> : null}
+      {error ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${error}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Its name, workspace scope, and engineer profile are added automatically."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>

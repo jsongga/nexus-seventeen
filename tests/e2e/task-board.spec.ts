@@ -2198,3 +2198,41 @@ test('automation configuration is edited as one dormant, versioned draft on desk
   }));
   expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
 });
+
+test('an expired sign-in offers one explicit retry and never reloads on its own', async ({ page }) => {
+  let boardRequests = 0;
+  let navigations = 0;
+  page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) navigations += 1; });
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    boardRequests += 1;
+    await route.fulfill({ status: 401, json: { error: { code: 'UNAUTHENTICATED', message: 'no session' } } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByText('Your sign-in has expired').first()).toBeVisible();
+
+  // The loop this guards against: a module-level "already reloaded" flag is reset
+  // by the reload itself, so the page reloads forever. Settle, then prove the
+  // navigation count is not climbing on its own.
+  const settled = navigations;
+  await page.waitForTimeout(3_000);
+  expect(navigations).toBe(settled);
+
+  // Re-authentication is available, but only when the operator asks for it.
+  const retry = page.getByRole('button', { name: 'Sign in again' }).first();
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect.poll(() => navigations).toBeGreaterThan(settled);
+  expect(boardRequests).toBeGreaterThan(0);
+});
+
+test('a signed-in account without the operator group is told so, with no retry offered', async ({ page }) => {
+  await page.route('**/board-api/v1/**', async (route) => {
+    await route.fulfill({ status: 403, json: { error: { code: 'FORBIDDEN', message: 'wrong group' } } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByText(/not a board operator/u).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toHaveCount(0);
+});
