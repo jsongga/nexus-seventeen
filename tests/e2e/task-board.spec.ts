@@ -349,6 +349,18 @@ async function openCompanyRail(page: Page): Promise<Locator> {
   return companyNavigation.locator('../..');
 }
 
+async function triggerVisiblePoll(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    if (document.visibilityState !== 'visible') throw new Error('The board must be visible before triggering a poll');
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
+async function renderedSnapshotRevision(taskDetail: Locator): Promise<number> {
+  const text = await taskDetail.textContent();
+  return Number(/Snapshot revision (\d+)/u.exec(text ?? '')?.[1] ?? 0);
+}
+
 async function discardDirtyDialog(page: Page): Promise<void> {
   const confirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
   await expect(confirmation).toBeVisible();
@@ -856,7 +868,7 @@ test('the default app reads real board state and assignment is an explicit human
 
 test('a failed assignment stays actionable while successful polls keep the board connected', async ({ page }) => {
   let projectReads = 0;
-  await page.clock.install({ time: new Date('2026-07-19T18:30:00.000Z') });
+  let boardReads = 0;
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -870,7 +882,13 @@ test('a failed assignment stays actionable while successful polls keep the board
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: board() });
+      boardReads += 1;
+      await route.fulfill({
+        json: {
+          ...board(),
+          tasks: [{ ...task, objective: `${task.objective}\n\nSnapshot revision ${boardReads}` }],
+        },
+      });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
@@ -900,8 +918,16 @@ test('a failed assignment stays actionable while successful polls keep the board
   await expect(page.getByLabel('Action errors')).toHaveCount(0);
 
   const readsBeforePolling = projectReads;
-  await page.clock.runFor(10_100);
-  await expect.poll(() => projectReads).toBeGreaterThanOrEqual(readsBeforePolling + 2);
+  const firstVisibleRevision = await renderedSnapshotRevision(taskDetail);
+  await triggerVisiblePoll(page);
+  await expect.poll(() => projectReads).toBeGreaterThanOrEqual(readsBeforePolling + 1);
+  await expect.poll(() => renderedSnapshotRevision(taskDetail)).toBeGreaterThan(firstVisibleRevision);
+
+  const readsBeforeSecondPoll = projectReads;
+  const secondVisibleRevision = await renderedSnapshotRevision(taskDetail);
+  await triggerVisiblePoll(page);
+  await expect.poll(() => projectReads).toBeGreaterThan(readsBeforeSecondPoll);
+  await expect.poll(() => renderedSnapshotRevision(taskDetail)).toBeGreaterThan(secondVisibleRevision);
   await expect(actionError).toContainText('This task changed in another session. Refresh before trying again.');
   await expect(page.getByText('Task board unavailable', { exact: true })).toHaveCount(0);
 
@@ -2812,6 +2838,100 @@ test('durable documents broadcast, acquire, save, and release without waking an 
     companyRail = await openCompanyRail(page);
     await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
   }
+});
+
+test('document creation waits for its snapshot commit while a poll tick is skipped', async ({ page }) => {
+  let createdDocument: DocumentFixture | null = null;
+  let holdMutationRefresh = false;
+  let heldMutationRefresh = false;
+  let releaseMutationRefresh!: () => void;
+  const mutationRefreshGate = new Promise<void>((resolve) => { releaseMutationRefresh = resolve; });
+  let projectReads = 0;
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      projectReads += 1;
+      if (holdMutationRefresh && request.headers()['x-nexus-refresh-kind'] === 'mutation') {
+        holdMutationRefresh = false;
+        heldMutationRefresh = true;
+        await mutationRefreshGate;
+      }
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({
+        json: {
+          ...board(),
+          documents: createdDocument === null ? [] : [documentSummary(createdDocument)],
+        },
+      });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/documents` && request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      createdDocument = {
+        ...editableDocument,
+        documentId: 'document-created-during-poll',
+        title: String(body.title),
+        content: String(body.content),
+        contentVersion: 1,
+        penEpoch: 1,
+        penHolder: {
+          actorType: 'human',
+          actorId: 'human:operator',
+          clientId: String(body.clientId),
+          acquiredAt: '2026-07-19T18:30:00.000Z',
+        },
+        sequence: 1,
+        createdAt: '2026-07-19T18:30:00.000Z',
+        updatedAt: '2026-07-19T18:30:00.000Z',
+      };
+      holdMutationRefresh = true;
+      await route.fulfill({ status: 201, json: { document: createdDocument } });
+      return;
+    }
+    if (createdDocument !== null && url.pathname === `/board-api/v1/documents/${createdDocument.documentId}` && request.method() === 'GET') {
+      await route.fulfill({ json: { document: createdDocument } });
+      return;
+    }
+    if (createdDocument !== null && url.pathname === `/board-api/v1/documents/${createdDocument.documentId}/events`) {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: ': keepalive\n\n' });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Task List', exact: true })).toBeVisible();
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create a document', exact: true });
+  await dialog.getByLabel('Title', { exact: true }).fill('Polling-safe release notes');
+  await dialog.getByLabel('Starting text', { exact: true }).fill('# Release notes\n\nCreated while refresh work overlaps.');
+  await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
+  await expect.poll(() => heldMutationRefresh).toBe(true);
+
+  const readsWhileMutationRefreshIsHeld = projectReads;
+  await triggerVisiblePoll(page);
+  expect(projectReads).toBe(readsWhileMutationRefreshIsHeld);
+
+  releaseMutationRefresh();
+  await expect(page.getByRole('heading', { name: 'Polling-safe release notes', exact: true })).toBeVisible();
+  await expect(page.getByText('The document was saved, but the project document list could not be refreshed.', { exact: false })).toHaveCount(0);
 });
 
 test('a human force takeover fences an agent-held document epoch without touching wake routes', async ({ page }) => {

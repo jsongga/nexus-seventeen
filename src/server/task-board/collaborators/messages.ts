@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  TASK_MESSAGE_PAGE_SIZE,
   TASK_BOARD_ERROR_CODES,
   isHardTerminalTaskStatus,
   type AnswerHumanQuestionRequest,
@@ -141,8 +142,8 @@ export class MessagesCollaborator {
   listMessages(taskId: string, after = 0): readonly TaskMessage[] {
     this.runtime.requireTask(taskId);
     return Object.freeze(this.runtime.store.db.prepare(`
-      SELECT * FROM task_messages WHERE task_id = ? AND sequence > ? ORDER BY sequence LIMIT 200
-    `).all(taskId, after).map(messageFromRow));
+      SELECT * FROM task_messages WHERE task_id = ? AND sequence > ? ORDER BY sequence LIMIT ?
+    `).all(taskId, after, TASK_MESSAGE_PAGE_SIZE).map(messageFromRow));
   }
 
   private appendMessage(

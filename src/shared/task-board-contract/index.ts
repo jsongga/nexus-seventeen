@@ -26,6 +26,8 @@ export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
  * coupling them would let a change to one silently move the other.
  */
 export const DOCUMENT_CONTENT_MAX_BYTES = 48 * 1_024;
+/** Number of chronologically ordered task messages returned by one list read. */
+export const TASK_MESSAGE_PAGE_SIZE = 200;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
 

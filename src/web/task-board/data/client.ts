@@ -17,6 +17,7 @@ import type {
   TaskKind,
   WorkflowEvent,
 } from '../types';
+import { TASK_MESSAGE_PAGE_SIZE } from '@shared/task-board-contract';
 import {
   array,
   automationAgentTypeWire,
@@ -58,9 +59,6 @@ import {
 } from '../model/project';
 import { workItemPageSize } from './wire';
 
-// Client-side paging for task messages. Deliberately NOT the contract's
-// WORK_ITEM_PAGE_SIZE — same value today, different concerns.
-const taskMessagePageSize = 200;
 const maximumAgentQueryObjectiveCharacters = 8_000;
 const maximumAgentQueryConversationCharacters = 2_400;
 const maximumAgentQueryConversationTurns = 12;
@@ -236,7 +234,7 @@ export interface InterruptRunResult {
 
 export interface TaskBoardClient {
   readonly documentClientId: string;
-  getSnapshot(signal?: AbortSignal): Promise<BoardSnapshot>;
+  getSnapshot(signal?: AbortSignal, requestMarker?: 'foreground' | 'poll' | 'mutation'): Promise<BoardSnapshot>;
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   getDocument(documentId: string, signal?: AbortSignal): Promise<BoardDocument>;
@@ -578,7 +576,7 @@ export function createTaskBoardClient(options: {
       );
       const page = array(envelope.messages, 'messages response.messages', parseMessage);
       const cursor = integer(envelope.cursor, 'messages response.cursor');
-      if (page.length > taskMessagePageSize) throw new Error('messages response exceeded the page size limit');
+      if (page.length > TASK_MESSAGE_PAGE_SIZE) throw new Error('messages response exceeded the page size limit');
       if (cursor < after) throw new Error('messages response cursor moved backwards');
       if (page.length === 0) {
         if (cursor !== after) throw new Error('messages response cursor advanced without messages');
@@ -599,7 +597,7 @@ export function createTaskBoardClient(options: {
         throw new Error(`messages response exceeded the ${maximumTaskMessages}-message task limit`);
       }
       messages.push(...page);
-      if (page.length < taskMessagePageSize) return messages;
+      if (page.length < TASK_MESSAGE_PAGE_SIZE) return messages;
       after = cursor;
     }
   }
@@ -695,10 +693,13 @@ export function createTaskBoardClient(options: {
     async getArtifactBlob(artifactId, signal) {
       return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
     },
-    async getSnapshot(signal) {
+    async getSnapshot(signal, requestMarker) {
+      const markerHeaders = requestMarker === undefined
+        ? undefined
+        : { 'x-nexus-refresh-kind': requestMarker };
       const [projectsValue, workItemsValue] = await Promise.all([
-        json('/v1/projects', { signal }),
-        json('/v1/work-items', { signal }),
+        json('/v1/projects', { signal, headers: markerHeaders }),
+        json('/v1/work-items', { signal, headers: markerHeaders }),
       ]);
       const projectsEnvelope = record(projectsValue, 'projects response');
       const projects = array(projectsEnvelope.projects, 'projects response.projects', parseProject);

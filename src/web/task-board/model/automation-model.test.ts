@@ -41,8 +41,8 @@ function configuration(version = 1): AutomationConfiguration {
   };
 }
 
-function dirtyState() {
-  const state = automationEditorFromConfiguration(configuration());
+function dirtyState(version = 1) {
+  const state = automationEditorFromConfiguration(configuration(version));
   return {
     ...state,
     draft: {
@@ -87,6 +87,27 @@ describe('automation editor reconciliation', () => {
     expect(reloaded.draft?.version).toBe(2);
     expect(reloaded.remote).toBeNull();
     expect(automationEditorIsDirty(reloaded)).toBe(false);
+  });
+
+  it('scenario A: rejects a stale load after a save when the editor is clean', () => {
+    const justSaved = automationEditorFromConfiguration(configuration(2));
+    const next = reconcileAutomationConfiguration(justSaved, configuration(1));
+
+    expect(next).toBe(justSaved);
+    expect(next.saved?.version).toBe(2);
+    expect(next.draft?.version).toBe(2);
+    expect(next.remote).toBeNull();
+  });
+
+  it('scenario B: rejects a stale load after a save when the editor became dirty again', () => {
+    const editedAfterSave = dirtyState(2);
+    const next = reconcileAutomationConfiguration(editedAfterSave, configuration(1));
+
+    expect(next).toBe(editedAfterSave);
+    expect(next.saved?.version).toBe(2);
+    expect(next.draft?.agentTypes[0]?.description).toContain('Locally refined');
+    expect(next.remote).toBeNull();
+    expect(automationEditorIsDirty(next)).toBe(true);
   });
 });
 

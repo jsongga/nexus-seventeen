@@ -100,6 +100,7 @@ export function reconcileAutomationConfiguration(
   current: AutomationEditorState,
   remote: AutomationConfiguration,
 ): AutomationEditorState {
+  if (current.saved !== null && remote.version < current.saved.version) return current;
   if (current.saved === null || current.draft === null || !automationEditorIsDirty(current)) {
     return automationEditorFromConfiguration(remote);
   }

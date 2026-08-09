@@ -15,7 +15,7 @@ import {
   Square,
   UserRoundCheck,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type Dispatch, type ReactNode } from 'react';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, Toast, cn, inputClass } from '../components/ui';
 import { fieldsAreDirty } from '../components/dialog-discard';
 import { AutomationPage } from './views/AutomationPage';
@@ -51,6 +51,13 @@ import {
   workItemStatusLabel,
 } from './model/work-item-labels';
 import { recoveryAffordances } from './model/task-recovery';
+import {
+  BOARD_REFRESH_DEADLINE_MS,
+  BoardRefreshCoordinator,
+  SnapshotCommitCoordinator,
+  refreshTimedOut,
+  type BoardRefreshKind,
+} from './model/refresh-coordinator';
 import {
   createTaskDetailDraftState,
   taskDetailDraftReducer,
@@ -838,8 +845,7 @@ export function BoardApp() {
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
   const [signInExpired, setSignInExpired] = useState(false);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
-  const refreshSequence = useRef(0);
-  const refreshController = useRef<AbortController | null>(null);
+  const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
   const observedTaskIds = useRef(new Set<string>());
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const taskRowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -851,51 +857,67 @@ export function BoardApp() {
   const workItemFormDirty = useRef(false);
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
 
-  const refresh = useCallback(async (quiet = false): Promise<boolean> => {
-    const sequence = ++refreshSequence.current;
-    refreshController.current?.abort();
-    const controller = new AbortController();
-    refreshController.current = controller;
-    if (!quiet) setLoading(true);
+  const commitSnapshot = useCallback((next: BoardSnapshot, signal: AbortSignal): Promise<boolean> => {
+    return snapshotCommits.commit(next, signal, setSnapshot);
+  }, [snapshotCommits]);
+
+  useLayoutEffect(() => {
+    if (snapshot !== null) snapshotCommits.acknowledge(snapshot);
+  }, [snapshot, snapshotCommits]);
+
+  useLayoutEffect(() => () => {
+    snapshotCommits.drain();
+  }, [snapshotCommits]);
+
+  const performRefresh = useCallback(async (kind: BoardRefreshKind, signal: AbortSignal): Promise<boolean> => {
     try {
-      const next = await client.getSnapshot(controller.signal);
-      if (sequence !== refreshSequence.current) return false;
+      const next = await client.getSnapshot(signal, kind);
+      if (!await commitSnapshot(next, signal)) {
+        if (refreshTimedOut(signal)) throw signal.reason;
+        return false;
+      }
       for (const task of next.tasks) observedTaskIds.current.add(task.id);
-      setSnapshot(next);
       dispatchErrorPipeline({ type: 'snapshot-succeeded' });
       setConnectivityError(null);
       setSignInExpired(false);
       return true;
     } catch (caught) {
-      if (controller.signal.aborted || sequence !== refreshSequence.current) return false;
+      const timedOut = refreshTimedOut(signal);
+      if (signal.aborted && !timedOut) return false;
       dispatchErrorPipeline({ type: 'snapshot-failed' });
       const signIn = signInFailure(caught);
       setSignInExpired(signIn?.canRetrySignIn ?? false);
-      setConnectivityError(signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
+      setConnectivityError(timedOut
+        ? `The board did not respond within ${BOARD_REFRESH_DEADLINE_MS / 1_000} seconds`
+        : signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
       return false;
-    } finally {
-      if (sequence === refreshSequence.current) setLoading(false);
     }
-  }, [client]);
+  }, [client, commitSnapshot]);
+
+  const refreshCoordinator = useMemo(() => new BoardRefreshCoordinator(performRefresh, {
+    onForegroundLoadingChange: setLoading,
+  }), [performRefresh]);
+  const refresh = useCallback((kind: BoardRefreshKind = 'foreground') => (
+    refreshCoordinator.refresh(kind)
+  ), [refreshCoordinator]);
 
   useEffect(() => {
-    refreshController.current?.abort();
+    refreshCoordinator.activate();
     setSnapshot(null);
-    void refresh();
+    void refresh('foreground');
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh(true);
+      if (document.visibilityState === 'visible') void refresh('poll');
     }, 5_000);
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') void refresh(true);
+      if (document.visibilityState === 'visible') void refresh('poll');
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
-      refreshController.current?.abort();
-      refreshSequence.current += 1;
+      refreshCoordinator.dispose();
     };
-  }, [refresh]);
+  }, [refresh, refreshCoordinator]);
 
   useEffect(() => {
     if (snapshot === null) return;
@@ -912,7 +934,7 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh(true);
+      await refresh('mutation');
       return { ok: true };
     } catch (caught) {
       const error = actionErrorMessage(caught);
@@ -928,15 +950,15 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh(true);
+      await refresh('mutation');
       return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError) {
         if (caught.code === 'WORK_ITEM_ENDED') {
-          await refresh(true);
+          await refresh('mutation');
         }
         if (caught.code === 'WORK_ITEM_VERSION_CONFLICT' || caught.code === 'PLAN_NOT_PROPOSED') {
-          await refresh(true);
+          await refresh('mutation');
         }
       }
       return { ok: false, error: actionErrorMessage(caught) };
@@ -950,7 +972,7 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh(true);
+      await refresh('mutation');
       return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError && (
@@ -958,7 +980,7 @@ export function BoardApp() {
         || caught.code === 'TASK_VERSION_CONFLICT'
         || caught.code === 'WORK_NODE_VERSION_CONFLICT'
       )) {
-        await refresh(true);
+        await refresh('mutation');
       }
       return { ok: false, error: actionErrorMessage(caught) };
     } finally {
@@ -1103,7 +1125,7 @@ export function BoardApp() {
       action={signInExpired ? <Button variant="primary" onClick={() => globalThis.location.reload()}>Sign in again</Button> : undefined}
     /></Card></main>;
   } else if (page.kind === 'documents') {
-    content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh(true)} />;
+    content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh('mutation')} />;
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorState} />;
   } else if (page.kind === 'project' && pageProject) {

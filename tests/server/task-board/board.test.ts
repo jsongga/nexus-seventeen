@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { Worker } from "node:worker_threads";
 import {
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  TASK_MESSAGE_PAGE_SIZE,
   TaskBoard,
   TaskBoardError,
   WORK_ITEM_PAGE_SIZE,
@@ -3778,6 +3779,27 @@ test("human notes and task edits do not create a durable task wakeup", async () 
       claimId: "claim-after-messages-0001",
       messageCursor: null,
     }), null);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("task message reads stop at the shared contract page size", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest());
+    for (let index = 0; index < TASK_MESSAGE_PAGE_SIZE + 1; index += 1) {
+      fixture.board.appendHumanMessage(task.taskId, {
+        clientEventId: `message-page-boundary-${index.toString().padStart(4, "0")}`,
+        kind: "note",
+        body: `Contract page boundary message ${index + 1}`,
+      });
+    }
+
+    const firstPage = fixture.board.listMessages(task.taskId);
+    assert.equal(firstPage.length, TASK_MESSAGE_PAGE_SIZE);
+    const secondPage = fixture.board.listMessages(task.taskId, firstPage.at(-1)!.sequence);
+    assert.equal(secondPage.length, 1);
   } finally {
     fixture.board.close();
   }

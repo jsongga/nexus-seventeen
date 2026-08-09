@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TASK_MESSAGE_PAGE_SIZE } from '@shared/task-board-contract';
 import {
   agentQueryConversationContextMarker,
   agentQueryRoutingContextMarker,
@@ -1260,6 +1261,24 @@ describe('task-board HTTP client', () => {
     expect(controller.signal.aborted).toBe(true);
   });
 
+  it('marks the entry requests for a coordinator-triggered snapshot read', async () => {
+    const markers: Array<string | null> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      if (path.endsWith('/v1/projects') || path.endsWith('/v1/work-items')) {
+        markers.push(new Headers(init?.headers).get('x-nexus-refresh-kind'));
+      }
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
+      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
+      return new Response('{}');
+    });
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await client.getSnapshot(undefined, 'mutation');
+
+    expect(markers).toEqual(['mutation', 'mutation']);
+  });
+
   it('returns the created project from the existing project response envelope', async () => {
     const request = vi.fn(async () => new Response(JSON.stringify({ project })));
     const client = createTaskBoardClient({
@@ -1744,8 +1763,8 @@ describe('task-board HTTP client', () => {
     expect(calls.every(([, init]) => init?.credentials === 'omit' && init.redirect === 'error')).toBe(true);
   });
 
-  it('loads progress and results after the first 200-message page in chronological order', async () => {
-    const firstPage = Array.from({ length: 200 }, (_, index) => ({
+  it('loads progress and results after one contract-sized message page in chronological order', async () => {
+    const firstPage = Array.from({ length: TASK_MESSAGE_PAGE_SIZE }, (_, index) => ({
       apiVersion,
       messageId: `message-${index + 1}`,
       sequence: index + 1,
@@ -1761,18 +1780,18 @@ describe('task-board HTTP client', () => {
     const laterMessages = [
       {
         ...firstPage[0],
-        messageId: 'message-201',
-        sequence: 201,
+        messageId: `message-${TASK_MESSAGE_PAGE_SIZE + 1}`,
+        sequence: TASK_MESSAGE_PAGE_SIZE + 1,
         body: 'The focused verification passed.',
-        createdAt: '2026-07-19T10:03:20.000Z',
+        createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + TASK_MESSAGE_PAGE_SIZE * 1_000).toISOString(),
       },
       {
         ...firstPage[0],
-        messageId: 'message-202',
-        sequence: 202,
+        messageId: `message-${TASK_MESSAGE_PAGE_SIZE + 2}`,
+        sequence: TASK_MESSAGE_PAGE_SIZE + 2,
         kind: 'result',
         body: 'Customers can recover failed invoices without support.',
-        createdAt: '2026-07-19T10:03:21.000Z',
+        createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + (TASK_MESSAGE_PAGE_SIZE + 1) * 1_000).toISOString(),
       },
     ];
     const calls: string[] = [];
@@ -1783,10 +1802,10 @@ describe('task-board HTTP client', () => {
       if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
       if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
       if (path.endsWith('/v1/tasks/task-one/messages?after=0')) {
-        return new Response(JSON.stringify({ messages: firstPage, cursor: 200 }));
+        return new Response(JSON.stringify({ messages: firstPage, cursor: TASK_MESSAGE_PAGE_SIZE }));
       }
-      if (path.endsWith('/v1/tasks/task-one/messages?after=200')) {
-        return new Response(JSON.stringify({ messages: laterMessages, cursor: 202 }));
+      if (path.endsWith(`/v1/tasks/task-one/messages?after=${TASK_MESSAGE_PAGE_SIZE}`)) {
+        return new Response(JSON.stringify({ messages: laterMessages, cursor: TASK_MESSAGE_PAGE_SIZE + 2 }));
       }
       return new Response('{}');
     });
@@ -1796,17 +1815,17 @@ describe('task-board HTTP client', () => {
 
     expect(calls.filter((path) => path.includes('/v1/tasks/task-one/messages?after='))).toEqual([
       'https://board.example.test/v1/tasks/task-one/messages?after=0',
-      'https://board.example.test/v1/tasks/task-one/messages?after=200',
+      `https://board.example.test/v1/tasks/task-one/messages?after=${TASK_MESSAGE_PAGE_SIZE}`,
     ]);
-    expect(snapshot.messages).toHaveLength(202);
+    expect(snapshot.messages).toHaveLength(TASK_MESSAGE_PAGE_SIZE + 2);
     expect(snapshot.messages.slice(-2)).toEqual([
-      expect.objectContaining({ id: 'message-201', kind: 'progress', body: 'The focused verification passed.' }),
-      expect.objectContaining({ id: 'message-202', kind: 'result', body: 'Customers can recover failed invoices without support.' }),
+      expect.objectContaining({ id: `message-${TASK_MESSAGE_PAGE_SIZE + 1}`, kind: 'progress', body: 'The focused verification passed.' }),
+      expect.objectContaining({ id: `message-${TASK_MESSAGE_PAGE_SIZE + 2}`, kind: 'result', body: 'Customers can recover failed invoices without support.' }),
     ]);
   });
 
   it('rejects a full message page whose cursor does not advance', async () => {
-    const page = Array.from({ length: 200 }, (_, index) => ({
+    const page = Array.from({ length: TASK_MESSAGE_PAGE_SIZE }, (_, index) => ({
       apiVersion,
       messageId: `stalled-message-${index + 1}`,
       sequence: index + 1,

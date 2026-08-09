@@ -497,6 +497,9 @@ export function AutomationPage({
 
   async function saveConfiguration() {
     if (!draft || !connected || saving || !dirty) return;
+    // Fence any GET that began against the version this save supersedes.
+    loadSequence.current += 1;
+    setLoading(false);
     const operation = saveOperations.current.begin();
     setSaving(true);
     setError(null);
