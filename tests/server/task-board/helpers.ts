@@ -9,6 +9,7 @@ import type {
   UpdateAutomationConfigurationRequest,
   WorkItemStage,
 } from "#shared/task-board-contract";
+import { WORK_ITEM_STAGES } from "#shared/task-board-contract";
 import { TaskBoard, normalizeTaskBoardConfig, type TaskBoardConfig } from "#server/task-board";
 
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
@@ -78,17 +79,7 @@ export function workItemRequest(
   };
 }
 
-const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = [
-  "refinement",
-  "project_resolution",
-  "research",
-  "planning",
-  "implementation",
-  "testing",
-  "verification",
-  "human_review",
-  "deployment",
-];
+const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = WORK_ITEM_STAGES;
 
 export function automationStages(
   overrides: Readonly<Partial<Record<WorkItemStage, AutomationStageExecutor>>> = {},

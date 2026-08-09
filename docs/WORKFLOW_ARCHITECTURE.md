@@ -310,7 +310,7 @@ tasks:
   - id: T5
     capability: backend
     depends_on: [T1, T2, T3]
-    paths: [src/server/agents/task-worker/types.ts, src/server/agents/task-worker/schema.ts, src/server/agents/task-worker/contained-cli-launcher.ts, src/server/agents/task-worker/agent-result.schema.json, tests/server/agents/task-worker]
+    paths: [src/server/agents/task-worker/types.ts, src/server/agents/task-worker/schema.ts, src/server/agents/task-worker/contained-cli-launcher.ts, scripts/write-agent-result-schema.mjs, tests/server/agents/task-worker]
     action: Add compact stage context, pinned skill bodies, structured handoffs, artifact references, and deterministic prompt budgets to worker execution.
     validation: npm run test:runtime
     done_when: Worker tests prove relevant-only context, digest binding, bounded prompts, and schema-valid handoffs.

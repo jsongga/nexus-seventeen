@@ -31,6 +31,7 @@ import {
   apiVersion,
   documentActorTypes,
   evaluatorProfiles,
+  identifierPattern,
   maximumAutomationConfigurationBytes,
   maximumWorkItemCursorBytes,
   messageKinds,
@@ -61,7 +62,6 @@ export { maximumWorkItemCursorBytes };
 export type JsonRecord = Record<string, unknown>;
 
 const automationExecutorKinds = new Set<AutomationStageExecutor['kind']>(['agent_type', 'human', 'disabled']);
-const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 export const maximumTaskMessages = 10_000;
 export const maximumWorkItemPages = 50;

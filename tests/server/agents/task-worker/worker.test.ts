@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { WAKEUP_REASONS } from "#shared/task-board-contract";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
 import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
@@ -209,7 +210,7 @@ test("area memory accepts only compact ordered prior-task results", () => {
   );
 });
 
-for (const reason of ["human_assignment", "human_answer", "human_resume", "assigned", "resumed"] as const) {
+for (const reason of WAKEUP_REASONS.filter((candidate) => candidate !== "workflow_handoff")) {
   test(`launches exactly one one-shot agent for ${reason}`, async () => {
     const root = await tempRoot();
     const board = new FakeBoard();

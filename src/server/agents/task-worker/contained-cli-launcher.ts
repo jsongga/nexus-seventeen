@@ -5,6 +5,15 @@ import { isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
+  AGENT_ROLES,
+  IDENTIFIER_PATTERN,
+  STAGE_HANDOFF_OUTCOMES,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  WORKFLOW_STAGES,
+  type AgentRole,
+} from "#shared/task-board-contract";
+import {
   ActivityBuffer,
   activityFromProviderLine,
   estimateActivity,
@@ -21,7 +30,8 @@ const MAX_STDERR_BYTES = 512 * 1024;
 const GROUP_POLL_MS = 20;
 const MAX_QUEUED_ACTIVITY = 64;
 
-const RESULT_SCHEMA = Object.freeze({
+export const RESULT_SCHEMA = Object.freeze({
+  $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   additionalProperties: false,
   properties: {
@@ -55,11 +65,11 @@ const RESULT_SCHEMA = Object.freeze({
         type: "object",
         additionalProperties: false,
         properties: {
-          phaseId: { type: ["string", "null"], pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+          phaseId: { type: ["string", "null"], pattern: IDENTIFIER_PATTERN },
           title: { type: "string", minLength: 1, maxLength: 240 },
-          stage: { type: "string", enum: ["research", "planning", "execution", "testing", "review", "done"] },
-          status: { type: "string", enum: ["pending", "in_progress", "blocked", "completed", "failed"] },
-          parallelGroup: { type: ["string", "null"], pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+          stage: { type: "string", enum: TASK_PHASE_STAGES },
+          status: { type: "string", enum: TASK_PHASE_STATUSES },
+          parallelGroup: { type: ["string", "null"], pattern: IDENTIFIER_PATTERN },
           orderKey: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         },
         required: ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey"],
@@ -72,7 +82,7 @@ const RESULT_SCHEMA = Object.freeze({
         {
           type: "object", additionalProperties: false,
           properties: {
-            outcome: { type: "string", enum: ["passed", "failed", "needs_input"] },
+            outcome: { type: "string", enum: STAGE_HANDOFF_OUTCOMES },
             summary: { type: "string", minLength: 1, maxLength: 4_000 },
             evidence: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
             artifactIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 128 } },
@@ -88,7 +98,7 @@ const RESULT_SCHEMA = Object.freeze({
               },
             },
             blockers: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
-            recommendedReturnStage: { type: ["string", "null"], enum: ["research", "planning", "implementation", "testing", "verification", null] },
+            recommendedReturnStage: { type: ["string", "null"], enum: [...WORKFLOW_STAGES, null] },
           },
           required: ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"],
         },
@@ -107,14 +117,14 @@ const RESULT_SCHEMA = Object.freeze({
               type: "array", minItems: 1, maxItems: 64, items: {
                 type: "object", additionalProperties: false,
                 properties: {
-                  nodeId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" },
+                  nodeId: { type: "string", pattern: IDENTIFIER_PATTERN },
                   title: { type: "string", minLength: 1, maxLength: 512 },
                   objective: { type: "string", minLength: 1, maxLength: 4_000 },
                   acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
-                  dependencyNodeIds: { type: "array", maxItems: 64, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" } },
+                  dependencyNodeIds: { type: "array", maxItems: 64, items: { type: "string", pattern: IDENTIFIER_PATTERN } },
                   stageTemplate: {
                     type: "array", minItems: 1, maxItems: 5, uniqueItems: true,
-                    items: { type: "string", enum: ["research", "planning", "implementation", "testing", "verification"] },
+                    items: { type: "string", enum: WORKFLOW_STAGES },
                   },
                 },
                 required: ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"],
@@ -261,12 +271,12 @@ function providerEnvironment(provider: "codex" | "claude", source: NodeJS.Proces
   return result;
 }
 
-function role(request: AgentLaunchRequest): "engineer" | "manager" | "verifier" {
+function role(request: AgentLaunchRequest): AgentRole {
   const value = request.context.mission.role;
-  if (value !== "engineer" && value !== "manager" && value !== "verifier") {
+  if (!(AGENT_ROLES as readonly string[]).includes(value)) {
     throw new AgentProcessError("Agent profile has an unsupported fixed role");
   }
-  return value;
+  return value as AgentRole;
 }
 
 function prompt(request: AgentLaunchRequest): string {

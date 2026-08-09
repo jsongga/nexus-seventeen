@@ -31,6 +31,23 @@ export const TASK_MESSAGE_PAGE_SIZE = 200;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
 
+/**
+ * Canonical identifier grammar shared by TypeScript validators and JSON Schema.
+ *
+ * Grammar changes begin here; runtime validators, web types, and generated
+ * schemas derive from these values.
+ *
+ * SQL CHECK-backed arrays are AGENT_ROLES, TASK_KINDS, TASK_STATUSES,
+ * TASK_PHASE_STAGES, TASK_PHASE_STATUSES, TASK_MESSAGE_KINDS, ACTOR_TYPES,
+ * QUESTION_STATUSES, WAKEUP_REASONS, RUN_STATUSES, DOCUMENT_ACTOR_TYPES (also
+ * exposed as the column-specific TASK_MESSAGE_ACTOR_TYPES alias),
+ * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
+ * PLAN_REVISION_STATES, WORK_NODE_STATES, and STAGE_HANDOFF_OUTCOMES. Adding or
+ * removing a member from one of those arrays also requires a schema-version bump
+ * and rebuild migration so existing databases receive the new CHECK constraint.
+ */
+export const IDENTIFIER_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" as const;
+
 export const AGENT_ROLES = ["engineer", "manager", "verifier"] as const;
 export type AgentRole = typeof AGENT_ROLES[number];
 
@@ -73,6 +90,7 @@ export type ActorType = typeof ACTOR_TYPES[number];
 export const QUESTION_STATUSES = ["open", "answered"] as const;
 export type QuestionStatus = typeof QUESTION_STATUSES[number];
 
+/** Adding a wake reason here also authorizes the task worker to launch for it. */
 export const WAKEUP_REASONS = ["human_assignment", "human_answer", "human_resume", "workflow_handoff", "assigned", "resumed"] as const;
 export type WakeupReason = typeof WAKEUP_REASONS[number];
 
@@ -83,6 +101,8 @@ export type DocumentContentType = "text/markdown";
 
 export const DOCUMENT_ACTOR_TYPES = ["human", "agent"] as const;
 export type DocumentActorType = typeof DOCUMENT_ACTOR_TYPES[number];
+/** Column-appropriate alias for the task_messages actor_type CHECK. */
+export const TASK_MESSAGE_ACTOR_TYPES = DOCUMENT_ACTOR_TYPES;
 
 export const WORK_ITEM_PRIORITIES = ["urgent", "high", "normal", "low", "opportunistic"] as const;
 export type WorkItemPriority = typeof WORK_ITEM_PRIORITIES[number];

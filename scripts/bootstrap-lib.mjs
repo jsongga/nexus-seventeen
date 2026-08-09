@@ -1,20 +1,17 @@
 import { readFile } from 'node:fs/promises';
+import {
+  AGENT_ROLES,
+  AUTOMATION_CONFIGURATION_MAX_BYTES,
+  EVALUATOR_PROFILES,
+  IDENTIFIER_PATTERN,
+  WORK_ITEM_STAGES,
+} from '#shared/task-board-contract';
 
-const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+const identifierPattern = new RegExp(IDENTIFIER_PATTERN, 'u');
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
-const roles = new Set(['engineer', 'manager', 'verifier']);
-const evaluatorProfiles = new Set(['tests', 'editorial', 'visual', 'manual']);
-const stageOrder = [
-  'refinement',
-  'project_resolution',
-  'research',
-  'planning',
-  'implementation',
-  'testing',
-  'verification',
-  'human_review',
-  'deployment',
-];
+const roles = new Set(AGENT_ROLES);
+const evaluatorProfiles = new Set(EVALUATOR_PROFILES);
+const stageOrder = WORK_ITEM_STAGES;
 const allowedStageRoles = {
   refinement: new Set(['manager']),
   project_resolution: new Set(['manager']),
@@ -141,7 +138,7 @@ export function validateCatalog(catalog) {
   }
 
   const aggregateBytes = Buffer.byteLength(JSON.stringify({ agentTypes: catalog.agentTypes, stages: catalog.stages }), 'utf8');
-  assert(aggregateBytes <= 48 * 1_024, 'automation configuration exceeds 48 KiB');
+  assert(aggregateBytes <= AUTOMATION_CONFIGURATION_MAX_BYTES, 'automation configuration exceeds 48 KiB');
   return catalog;
 }
 

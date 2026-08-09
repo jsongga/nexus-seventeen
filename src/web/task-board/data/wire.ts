@@ -19,11 +19,13 @@ import {
   DOCUMENT_CONTENT_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
+  IDENTIFIER_PATTERN,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   RUN_STATUSES,
   TASK_BOARD_API_VERSION,
   TASK_KINDS,
+  TASK_MESSAGE_PAGE_SIZE,
   TASK_MESSAGE_KINDS,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
@@ -64,27 +66,45 @@ export const apiVersion = TASK_BOARD_API_VERSION;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
 export const maximumDocumentContentBytes = DOCUMENT_CONTENT_MAX_BYTES;
 export const maximumWorkItemCursorBytes = WORK_ITEM_CURSOR_MAX_BYTES;
+export const taskMessagePageSize = TASK_MESSAGE_PAGE_SIZE;
 export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
+export const identifierPattern = new RegExp(IDENTIFIER_PATTERN, 'u');
+
+// Array aliases stay intact so view types can derive with `typeof X[number]`.
+export const agentRoleValues = AGENT_ROLES;
+export const workerConnectionValues = WORKER_CONNECTIONS;
+export const taskKindValues = TASK_KINDS;
+export const taskPhaseStageValues = TASK_PHASE_STAGES;
+export const taskPhaseStatusValues = TASK_PHASE_STATUSES;
+export const questionStatusValues = QUESTION_STATUSES;
+export const wakeReasonValues = WAKEUP_REASONS;
+export const workItemPriorityValues = WORK_ITEM_PRIORITIES;
+export const workItemStateValues = WORK_ITEM_STATES;
+export const workItemStageValues = WORK_ITEM_STAGES;
+export const evaluatorProfileValues = EVALUATOR_PROFILES;
+export const planRevisionStateValues = PLAN_REVISION_STATES;
+export const workNodeStateValues = WORK_NODE_STATES;
+export const stageHandoffOutcomeValues = STAGE_HANDOFF_OUTCOMES;
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
 export const rawAgentStatuses = new Set(AGENT_STATUSES);
 export const actorTypes = new Set(ACTOR_TYPES);
-export const rawWorkerConnections = new Set(WORKER_CONNECTIONS);
+export const rawWorkerConnections = new Set(workerConnectionValues);
 export const rawTaskStatuses = new Set(TASK_STATUSES);
 export const rawRunStatuses = new Set(RUN_STATUSES);
-export const roles = new Set(AGENT_ROLES);
-export const taskKinds = new Set(TASK_KINDS);
-export const taskPhaseStages = new Set(TASK_PHASE_STAGES);
-export const taskPhaseStatuses = new Set(TASK_PHASE_STATUSES);
+export const roles = new Set(agentRoleValues);
+export const taskKinds = new Set(taskKindValues);
+export const taskPhaseStages = new Set(taskPhaseStageValues);
+export const taskPhaseStatuses = new Set(taskPhaseStatusValues);
 export const messageKinds = new Set(TASK_MESSAGE_KINDS);
-export const questionStatuses = new Set(QUESTION_STATUSES);
-export const wakeReasons = new Set(WAKEUP_REASONS);
-export const workItemPriorities = new Set(WORK_ITEM_PRIORITIES);
-export const workItemStates = new Set(WORK_ITEM_STATES);
-export const workItemStages = new Set(WORK_ITEM_STAGES);
-export const evaluatorProfiles = new Set(EVALUATOR_PROFILES);
+export const questionStatuses = new Set(questionStatusValues);
+export const wakeReasons = new Set(wakeReasonValues);
+export const workItemPriorities = new Set(workItemPriorityValues);
+export const workItemStates = new Set(workItemStateValues);
+export const workItemStages = new Set(workItemStageValues);
+export const evaluatorProfiles = new Set(evaluatorProfileValues);
 export const documentActorTypes = new Set(DOCUMENT_ACTOR_TYPES);
 export const workflowStages = new Set(WORKFLOW_STAGES);
-export const planRevisionStates = new Set(PLAN_REVISION_STATES);
-export const workNodeStates = new Set(WORK_NODE_STATES);
-export const stageHandoffOutcomes = new Set(STAGE_HANDOFF_OUTCOMES);
+export const planRevisionStates = new Set(planRevisionStateValues);
+export const workNodeStates = new Set(workNodeStateValues);
+export const stageHandoffOutcomes = new Set(stageHandoffOutcomeValues);

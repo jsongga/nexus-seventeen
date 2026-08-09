@@ -17,7 +17,6 @@ import type {
   TaskKind,
   WorkflowEvent,
 } from '../types';
-import { TASK_MESSAGE_PAGE_SIZE } from '@shared/task-board-contract';
 import {
   array,
   automationAgentTypeWire,
@@ -57,7 +56,7 @@ import {
   projectProjection,
   workItemProjection,
 } from '../model/project';
-import { workItemPageSize } from './wire';
+import { taskMessagePageSize, workItemPageSize } from './wire';
 import { SseFrameParser, type SseEvent } from './sse';
 
 const maximumAgentQueryObjectiveCharacters = 8_000;
@@ -555,7 +554,7 @@ export function createTaskBoardClient(options: {
       );
       const page = array(envelope.messages, 'messages response.messages', parseMessage);
       const cursor = integer(envelope.cursor, 'messages response.cursor');
-      if (page.length > TASK_MESSAGE_PAGE_SIZE) throw new Error('messages response exceeded the page size limit');
+      if (page.length > taskMessagePageSize) throw new Error('messages response exceeded the page size limit');
       if (cursor < after) throw new Error('messages response cursor moved backwards');
       if (page.length === 0) {
         if (cursor !== after) throw new Error('messages response cursor advanced without messages');
@@ -576,7 +575,7 @@ export function createTaskBoardClient(options: {
         throw new Error(`messages response exceeded the ${maximumTaskMessages}-message task limit`);
       }
       messages.push(...page);
-      if (page.length < TASK_MESSAGE_PAGE_SIZE) return messages;
+      if (page.length < taskMessagePageSize) return messages;
       after = cursor;
     }
   }

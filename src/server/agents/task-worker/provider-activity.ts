@@ -1,4 +1,9 @@
-import type { TaskPhaseStage, TaskPhaseStatus } from "#shared/task-board-contract";
+import {
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  type TaskPhaseStage,
+  type TaskPhaseStatus,
+} from "#shared/task-board-contract";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS = 160;
@@ -26,6 +31,13 @@ function object(value: unknown): JsonObject | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as JsonObject
     : null;
+}
+
+function contractMember<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+): value is Values[number] {
+  return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
 function eventFromLine(line: string): JsonObject | null {
@@ -78,10 +90,8 @@ function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
   if (
     typeof item.key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.key) ||
     item.parallelGroup !== null && (typeof item.parallelGroup !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.parallelGroup)) ||
-    item.stage !== "research" && item.stage !== "planning" && item.stage !== "execution" &&
-      item.stage !== "testing" && item.stage !== "review" && item.stage !== "done" ||
-    item.status !== "pending" && item.status !== "in_progress" && item.status !== "blocked" &&
-      item.status !== "completed" && item.status !== "failed" ||
+    !contractMember(item.stage, TASK_PHASE_STAGES) ||
+    !contractMember(item.status, TASK_PHASE_STATUSES) ||
     item.stage === "done" && item.status !== "completed"
   ) {
     return null;

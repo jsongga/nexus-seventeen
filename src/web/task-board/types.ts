@@ -1,4 +1,20 @@
-import type { WorkflowStage } from './data/wire';
+import {
+  agentRoleValues,
+  evaluatorProfileValues,
+  planRevisionStateValues,
+  questionStatusValues,
+  stageHandoffOutcomeValues,
+  taskKindValues,
+  taskPhaseStageValues,
+  taskPhaseStatusValues,
+  wakeReasonValues,
+  workerConnectionValues,
+  workNodeStateValues,
+  workItemPriorityValues,
+  workItemStageValues,
+  workItemStateValues,
+  type WorkflowStage,
+} from './data/wire';
 
 export type { WorkflowStage };
 
@@ -10,10 +26,10 @@ export type AgentStatus =
   | 'waiting_for_human'
   | 'failed';
 
-export type AgentWorkerConnection = 'waiting_for_wake' | 'watching_run' | null;
+export type AgentWorkerConnection = typeof workerConnectionValues[number] | null;
 
-export type AgentRole = 'engineer' | 'manager' | 'verifier';
-export type TaskKind = 'work' | 'manager_review' | 'human_check';
+export type AgentRole = typeof agentRoleValues[number];
+export type TaskKind = typeof taskKindValues[number];
 
 export type TaskStatus =
   | 'proposed'
@@ -27,10 +43,10 @@ export type TaskStatus =
   | 'interrupted'
   | 'cancelled';
 
-export type TaskPhaseStage = 'research' | 'planning' | 'execution' | 'testing' | 'review' | 'done';
-export type TaskPhaseStatus = 'pending' | 'in_progress' | 'blocked' | 'completed' | 'failed';
+export type TaskPhaseStage = typeof taskPhaseStageValues[number];
+export type TaskPhaseStatus = typeof taskPhaseStatusValues[number];
 
-export type QuestionStatus = 'open' | 'answered';
+export type QuestionStatus = typeof questionStatusValues[number];
 
 export type RunStatus =
   | 'queued'
@@ -40,38 +56,12 @@ export type RunStatus =
   | 'failed'
   | 'interrupted';
 
-export type WakeReason = 'human_assignment' | 'human_answer' | 'human_resume' | 'workflow_handoff' | 'assigned' | 'resumed';
+export type WakeReason = typeof wakeReasonValues[number];
 
-export type WorkItemPriority = 'urgent' | 'high' | 'normal' | 'low' | 'opportunistic';
-export type WorkItemState =
-  | 'submitted'
-  | 'processing'
-  | 'needs_input'
-  | 'waiting_for_human_review'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-export type WorkItemStage =
-  | 'refinement'
-  | 'project_resolution'
-  | 'research'
-  | 'planning'
-  | 'implementation'
-  | 'testing'
-  | 'verification'
-  | 'human_review'
-  | 'deployment';
-export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = [
-  'refinement',
-  'project_resolution',
-  'research',
-  'planning',
-  'implementation',
-  'testing',
-  'verification',
-  'human_review',
-  'deployment',
-];
+export type WorkItemPriority = typeof workItemPriorityValues[number];
+export type WorkItemState = typeof workItemStateValues[number];
+export type WorkItemStage = typeof workItemStageValues[number];
+export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
 export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = {
   refinement: ['manager'],
   project_resolution: ['manager'],
@@ -87,7 +77,7 @@ export type WorkItemProjectTarget =
   | { mode: 'auto' }
   | { mode: 'explicit'; projectId: string };
 
-export type AutomationEvaluatorProfile = 'tests' | 'editorial' | 'visual' | 'manual';
+export type AutomationEvaluatorProfile = typeof evaluatorProfileValues[number];
 
 export interface AutomationAgentType {
   id: string;
@@ -325,7 +315,7 @@ export interface WorkflowPlan {
   objective: string;
   assumptions: string[];
   acceptanceCriteria: string[];
-  state: 'proposed' | 'confirmed' | 'superseded' | 'rejected';
+  state: typeof planRevisionStateValues[number];
   createdAt: string;
   createdAtMs: number;
   confirmedAt: string | null;
@@ -341,7 +331,7 @@ export interface WorkflowNode {
   dependencyNodeIds: string[];
   stageTemplate: WorkflowStage[];
   currentStage: WorkflowStage | null;
-  state: 'pending' | 'ready' | 'active' | 'blocked' | 'stale' | 'completed' | 'cancelled';
+  state: typeof workNodeStateValues[number];
   createdAt: string;
   createdAtMs: number;
   updatedAt: string;
@@ -353,7 +343,7 @@ export interface WorkflowHandoff {
   nodeId: string;
   taskId: string;
   stage: WorkflowStage;
-  outcome: 'passed' | 'failed' | 'needs_input';
+  outcome: typeof stageHandoffOutcomeValues[number];
   summary: string;
   evidence: string[];
   artifactIds: string[];

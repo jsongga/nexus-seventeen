@@ -1,3 +1,14 @@
+import {
+  AGENT_ROLES,
+  IDENTIFIER_PATTERN,
+  QUESTION_STATUSES,
+  STAGE_HANDOFF_OUTCOMES,
+  TASK_BOARD_API_VERSION,
+  TASK_KINDS,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  WORKFLOW_STAGES,
+} from "#shared/task-board-contract";
 import type {
   AgentRunOutcome,
   AgentRunOutput,
@@ -11,7 +22,7 @@ import type {
   TaskWorkerJournal,
 } from "./types.js";
 
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 const MAX_CONTEXT_BYTES = 256 * 1024;
 const MAX_OUTCOME_BYTES = 64 * 1024;
 const MAX_AREA_MEMORY_ITEMS = 8;
@@ -30,6 +41,17 @@ function exact(value: unknown, keys: readonly string[], label: string): Record<s
     throw new Error(`${label} has unexpected or missing fields`);
   }
   return item;
+}
+
+function contractMember<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+  label: string,
+): Values[number] {
+  if (typeof value !== "string" || !(values as readonly string[]).includes(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value as Values[number];
 }
 
 function identifier(value: unknown, label: string): string {
@@ -82,37 +104,19 @@ function expectedAgentMinutes(value: unknown, label: string): number | null {
 }
 
 function phaseStage(value: unknown, label: string): AgentTaskPhase["stage"] {
-  if (
-    value !== "research" && value !== "planning" && value !== "execution" &&
-    value !== "testing" && value !== "review" && value !== "done"
-  ) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  return contractMember(value, TASK_PHASE_STAGES, label);
 }
 
 function phaseStatus(value: unknown, label: string): AgentTaskPhase["status"] {
-  if (
-    value !== "pending" && value !== "in_progress" && value !== "blocked" &&
-    value !== "completed" && value !== "failed"
-  ) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  return contractMember(value, TASK_PHASE_STATUSES, label);
 }
 
 function taskKind(value: unknown, label: string): AgentTaskContext["kind"] {
-  if (value !== "work" && value !== "manager_review" && value !== "human_check") {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  return contractMember(value, TASK_KINDS, label);
 }
 
-function agentRole(value: unknown, label: string): "engineer" | "manager" | "verifier" {
-  if (value !== "engineer" && value !== "manager" && value !== "verifier") {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+function agentRole(value: unknown, label: string): typeof AGENT_ROLES[number] {
+  return contractMember(value, AGENT_ROLES, label);
 }
 
 function parallelGroup(value: unknown, label: string): string | null {
@@ -279,14 +283,14 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   }
   const openQuestions = item.openQuestions.map((entry, index) => {
     const question = exact(entry, ["questionId", "question", "answer", "status"], `Question ${index}`);
-    if (question.status !== "open" && question.status !== "answered") throw new Error(`Question ${index} status is invalid`);
-    if (question.status === "open" && question.answer !== null) throw new Error(`Question ${index} open answer is invalid`);
-    if (question.status === "answered" && question.answer === null) throw new Error(`Question ${index} answered value is missing`);
+    const questionStatus = contractMember(question.status, QUESTION_STATUSES, `Question ${index} status`);
+    if (questionStatus === "open" && question.answer !== null) throw new Error(`Question ${index} open answer is invalid`);
+    if (questionStatus === "answered" && question.answer === null) throw new Error(`Question ${index} answered value is missing`);
     return Object.freeze({
       questionId: identifier(question.questionId, `openQuestions[${index}].questionId`),
       question: prose(question.question, `openQuestions[${index}].question`, 2_000),
       answer: nullableProse(question.answer, `openQuestions[${index}].answer`, 4_000),
-      status: question.status,
+      status: questionStatus,
     });
   });
   let triggerQuestion: BoundedAgentContext["triggerQuestion"] = null;
@@ -308,11 +312,7 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
       ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"],
       "Workflow context",
     );
-    if (
-      workflowItem.stage !== "research" && workflowItem.stage !== "planning" &&
-      workflowItem.stage !== "implementation" && workflowItem.stage !== "testing" &&
-      workflowItem.stage !== "verification"
-    ) throw new Error("Workflow stage is invalid");
+    const workflowStage = contractMember(workflowItem.stage, WORKFLOW_STAGES, "Workflow stage");
     if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16) {
       throw new Error("Workflow skills are invalid");
     }
@@ -337,15 +337,9 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
         "apiVersion", "handoffId", "nodeId", "taskId", "stage", "outcome", "summary", "evidence",
         "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage", "createdAt",
       ], `Workflow handoff ${index}`);
-      if (handoff.apiVersion !== "steward.task-board/v1") throw new Error(`Workflow handoff ${index} version is invalid`);
-      if (
-        handoff.stage !== "research" && handoff.stage !== "planning" &&
-        handoff.stage !== "implementation" && handoff.stage !== "testing" &&
-        handoff.stage !== "verification"
-      ) throw new Error(`Workflow handoff ${index} stage is invalid`);
-      if (handoff.outcome !== "passed" && handoff.outcome !== "failed" && handoff.outcome !== "needs_input") {
-        throw new Error(`Workflow handoff ${index} outcome is invalid`);
-      }
+      if (handoff.apiVersion !== TASK_BOARD_API_VERSION) throw new Error(`Workflow handoff ${index} version is invalid`);
+      const handoffStage = contractMember(handoff.stage, WORKFLOW_STAGES, `Workflow handoff ${index} stage`);
+      const handoffOutcome = contractMember(handoff.outcome, STAGE_HANDOFF_OUTCOMES, `Workflow handoff ${index} outcome`);
       const stringList = (input: unknown, label: string, maximum: number): readonly string[] => {
         if (!Array.isArray(input) || input.length > maximum) throw new Error(`${label} is invalid`);
         return Object.freeze(input.map((value, itemIndex) => prose(value, `${label}[${itemIndex}]`, 2_000)));
@@ -362,18 +356,16 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
           evidence: prose(criterion.evidence, `workflow.criterion[${criterionIndex}].evidence`, 2_000),
         });
       });
-      const returnStage = handoff.recommendedReturnStage;
-      if (
-        returnStage !== null && returnStage !== "research" && returnStage !== "planning" &&
-        returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification"
-      ) throw new Error(`Workflow handoff ${index} return stage is invalid`);
+      const returnStage = handoff.recommendedReturnStage === null
+        ? null
+        : contractMember(handoff.recommendedReturnStage, WORKFLOW_STAGES, `Workflow handoff ${index} return stage`);
       return Object.freeze({
-        apiVersion: "steward.task-board/v1" as const,
+        apiVersion: TASK_BOARD_API_VERSION,
         handoffId: identifier(handoff.handoffId, `workflow.handoffs[${index}].handoffId`),
         nodeId: identifier(handoff.nodeId, `workflow.handoffs[${index}].nodeId`),
         taskId: identifier(handoff.taskId, `workflow.handoffs[${index}].taskId`),
-        stage: handoff.stage,
-        outcome: handoff.outcome,
+        stage: handoffStage,
+        outcome: handoffOutcome,
         summary: prose(handoff.summary, `workflow.handoffs[${index}].summary`, 4_000),
         evidence: stringList(handoff.evidence, `workflow.handoffs[${index}].evidence`, 32),
         artifactIds: stringList(handoff.artifactIds, `workflow.handoffs[${index}].artifactIds`, 32),
@@ -386,7 +378,7 @@ export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
     workflow = Object.freeze({
       planRevisionId: identifier(workflowItem.planRevisionId, "workflow.planRevisionId"),
       nodeId: identifier(workflowItem.nodeId, "workflow.nodeId"),
-      stage: workflowItem.stage,
+      stage: workflowStage,
       skills: Object.freeze(skills),
       dependencyHandoffs: Object.freeze(dependencyHandoffs),
     });
@@ -550,7 +542,7 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
     const value = exact(item.handoff, [
       "outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage",
     ], "Stage handoff");
-    if (value.outcome !== "passed" && value.outcome !== "failed" && value.outcome !== "needs_input") throw new Error("Stage handoff outcome is invalid");
+    const handoffOutcome = contractMember(value.outcome, STAGE_HANDOFF_OUTCOMES, "Stage handoff outcome");
     const strings = (input: unknown, label: string): readonly string[] => {
       if (!Array.isArray(input) || input.length > 32) throw new Error(`${label} is invalid`);
       return Object.freeze(input.map((entry, index) => prose(entry, `${label}[${index}]`, 2_000)));
@@ -561,10 +553,11 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
       if (typeof criterion.passed !== "boolean") throw new Error(`Stage handoff criterion ${index} result is invalid`);
       return Object.freeze({ criterion: prose(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: prose(criterion.evidence, "criterion evidence", 2_000) });
     });
-    const returnStage = value.recommendedReturnStage;
-    if (returnStage !== null && returnStage !== "research" && returnStage !== "planning" && returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification") throw new Error("Stage handoff return stage is invalid");
+    const returnStage = value.recommendedReturnStage === null
+      ? null
+      : contractMember(value.recommendedReturnStage, WORKFLOW_STAGES, "Stage handoff return stage");
     handoff = Object.freeze({
-      outcome: value.outcome,
+      outcome: handoffOutcome,
       summary: prose(value.summary, "handoff.summary", 4_000),
       evidence: strings(value.evidence, "handoff.evidence"),
       artifactIds: strings(value.artifactIds, "handoff.artifactIds"),
@@ -585,10 +578,7 @@ export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {
       const node = exact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], `Workflow plan node ${index}`);
       if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) throw new Error(`Workflow plan node ${index} stages are invalid`);
       const stageTemplate = node.stageTemplate.map((stage, stageIndex) => {
-        if (stage !== "research" && stage !== "planning" && stage !== "implementation" && stage !== "testing" && stage !== "verification") {
-          throw new Error(`Workflow plan node ${index} stage ${stageIndex} is invalid`);
-        }
-        return stage;
+        return contractMember(stage, WORKFLOW_STAGES, `Workflow plan node ${index} stage ${stageIndex}`);
       });
       if (new Set(stageTemplate).size !== stageTemplate.length || stageTemplate.at(-1) !== "verification") {
         throw new Error(`Workflow plan node ${index} stage order is invalid`);

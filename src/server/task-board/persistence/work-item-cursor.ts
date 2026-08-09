@@ -1,13 +1,15 @@
-import { WORK_ITEM_CURSOR_MAX_BYTES } from "#shared/task-board-contract";
+import { IDENTIFIER_PATTERN, WORK_ITEM_CURSOR_MAX_BYTES, WORK_ITEM_PRIORITIES } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import { TaskBoardError } from "../errors.js";
 import { exactIsoTimestamp } from "./timestamps.js";
 import { numberValue, stringValue, type Row } from "./rows.js";
 
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
+
 interface WorkItemCursorTuple {
   readonly version: 1;
   readonly terminalRank: 0 | 1;
-  readonly priorityRank: 0 | 1 | 2 | 3 | 4;
+  readonly priorityRank: number;
   readonly createdAt: string;
   readonly workItemId: string;
 }
@@ -49,12 +51,12 @@ export function decodeWorkItemCursor(value: string): WorkItemCursorTuple {
     (item.terminalRank !== 0 && item.terminalRank !== 1) ||
     !Number.isSafeInteger(item.priorityRank) ||
     Number(item.priorityRank) < 0 ||
-    Number(item.priorityRank) > 4 ||
+    Number(item.priorityRank) >= WORK_ITEM_PRIORITIES.length ||
     !exactIsoTimestamp(item.createdAt) ||
     typeof item.workItemId !== "string" ||
     item.workItemId.length < 1 ||
     item.workItemId.length > 128 ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(item.workItemId)
+    !IDENTIFIER.test(item.workItemId)
   ) {
     throw invalidWorkItemCursor();
   }
@@ -70,7 +72,11 @@ export function decodeWorkItemCursor(value: string): WorkItemCursorTuple {
 export function encodeWorkItemCursor(row: Row): string {
   const terminalRank = numberValue(row, "work_item_terminal_rank");
   const priorityRank = numberValue(row, "work_item_priority_rank");
-  if ((terminalRank !== 0 && terminalRank !== 1) || priorityRank < 0 || priorityRank > 4) {
+  if (
+    (terminalRank !== 0 && terminalRank !== 1) ||
+    priorityRank < 0 ||
+    priorityRank >= WORK_ITEM_PRIORITIES.length
+  ) {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_cursor_rank");
   }
   const payload: WorkItemCursorTuple = Object.freeze({

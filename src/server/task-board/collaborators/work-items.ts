@@ -13,6 +13,7 @@ import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
 import { decodeWorkItemCursor, encodeWorkItemCursor } from "../persistence/work-item-cursor.js";
+import { workItemPriorityCases } from "../persistence/work-item-priority-sql.js";
 import { stringValue, workItemFromRow } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
@@ -26,11 +27,7 @@ type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: strin
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and unique stage sequences ending in verification. Available automated stages: ";
 const WORK_ITEM_TERMINAL_RANK_SQL = "(ended_at IS NOT NULL)";
 const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
-  WHEN 'urgent' THEN 0
-  WHEN 'high' THEN 1
-  WHEN 'normal' THEN 2
-  WHEN 'low' THEN 3
-  WHEN 'opportunistic' THEN 4
+  ${workItemPriorityCases("  ")}
 END`;
 
 export class WorkItemsCollaborator {

@@ -1,5 +1,8 @@
 import { dirname, isAbsolute, join } from "node:path";
+import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";
 import { TaskBoardError } from "./errors.js";
+
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 
 export interface TaskBoardOptions {
   readonly dbPath: string;
@@ -82,7 +85,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "humanToken must contain at least 32 characters");
   }
   const humanPrincipal = configText(options.humanPrincipal, "humanPrincipal", 128);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(humanPrincipal)) {
+  if (!IDENTIFIER.test(humanPrincipal)) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "humanPrincipal is invalid");
   }
   const host = options.host ?? "127.0.0.1";

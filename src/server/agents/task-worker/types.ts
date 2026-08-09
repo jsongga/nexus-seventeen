@@ -1,26 +1,24 @@
-import type {
-  AgentRole,
-  SkillSnapshot,
-  StageHandoff,
-  WorkflowStage,
-  StageHandoffDraft,
-  WorkflowPlanDraft,
-  TaskKind,
-  TaskPhaseStage,
-  TaskPhaseStatus,
+import {
+  WAKEUP_REASONS,
+  type AgentRole,
+  type SkillSnapshot,
+  type StageHandoff,
+  type WorkflowStage,
+  type StageHandoffDraft,
+  type WorkflowPlanDraft,
+  type TaskKind,
+  type TaskPhaseStage,
+  type TaskPhaseStatus,
 } from "#shared/task-board-contract";
 
-export const TASK_WAKE_REASONS = Object.freeze([
-  "human_assignment",
-  "human_answer",
-  "human_resume",
-  "workflow_handoff",
-  "assigned",
-  "resumed",
-] as const);
+/**
+ * Backward-compatible worker name. Per the WAKEUP_REASONS contract, additions
+ * there are intentionally auto-authorized for worker launch through this alias.
+ */
+export const TASK_WAKE_REASONS = WAKEUP_REASONS;
 export const POISONED_CLAIM_REASON = "poisoned_claim";
 
-export type TaskWakeReason = typeof TASK_WAKE_REASONS[number];
+export type TaskWakeReason = typeof WAKEUP_REASONS[number];
 export type AgentRunTerminalStatus = "completed" | "failed" | "interrupted" | "waiting_for_human";
 
 /** A durable board claim. `reason` stays a string so the worker can reject new/unsafe reasons without launching. */

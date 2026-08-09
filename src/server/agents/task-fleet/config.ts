@@ -1,10 +1,11 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";
 import type { TaskFleetAgentConfig, TaskFleetConfig, TaskFleetRetryConfig } from "./types.js";
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 const DEFAULT_LONG_POLL_MS = 30_000;
 const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 1_000, maximumDelayMs: 60_000 });
 

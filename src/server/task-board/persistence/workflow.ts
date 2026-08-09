@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
+  IDENTIFIER_PATTERN,
   TASK_BOARD_ERROR_CODES,
+  WORKFLOW_STAGES,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CreatePlanRevisionRequest,
@@ -16,8 +18,8 @@ import { TaskBoardError } from "../errors.js";
 import { SkillRegistry } from "../skills.js";
 
 type Row = Record<string, unknown>;
-const STAGES = new Set<WorkflowStage>(["research", "planning", "implementation", "testing", "verification"]);
-const ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
+const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
+const ID = new RegExp(IDENTIFIER_PATTERN, "u");
 
 function text(value: unknown, field: string, max = 8_000): string {
   if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > max) {

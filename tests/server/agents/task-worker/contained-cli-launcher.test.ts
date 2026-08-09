@@ -3,7 +3,14 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
-import { ContainedCliAgentLauncher } from "#server/agents/task-worker/contained-cli-launcher";
+import {
+  IDENTIFIER_PATTERN,
+  STAGE_HANDOFF_OUTCOMES,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  WORKFLOW_STAGES,
+} from "#shared/task-board-contract";
+import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { context, tempRoot, until } from "./helpers.js";
 
 async function fakeCli(
@@ -32,6 +39,20 @@ async function collectActivity(activity: AsyncIterable<string>): Promise<string[
   for await (const item of activity) result.push(item);
   return result;
 }
+
+test("generated provider schema is the launcher schema and derives contract enums", async () => {
+  assert.equal(existsSync(join(process.cwd(), "src/server/agents/task-worker/agent-result.schema.json")), false);
+  const generated = JSON.parse(await readFile(join(process.cwd(), "build/server/agents/task-worker/agent-result.schema.json"), "utf8")) as unknown;
+  assert.deepEqual(generated, RESULT_SCHEMA);
+  assert.equal(RESULT_SCHEMA.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.stage.enum, TASK_PHASE_STAGES);
+  assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.status.enum, TASK_PHASE_STATUSES);
+  assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.outcome.enum, STAGE_HANDOFF_OUTCOMES);
+  assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.recommendedReturnStage.enum, [...WORKFLOW_STAGES, null]);
+  assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum, WORKFLOW_STAGES);
+  assert.equal(RESULT_SCHEMA.properties.phases.items.properties.phaseId.pattern, IDENTIFIER_PATTERN);
+  assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern, IDENTIFIER_PATTERN);
+});
 
 test("runs one real contained Codex process with bounded full-task context", async () => {
   const root = await tempRoot();
@@ -97,7 +118,10 @@ process.stdin.on("end", () => {
   assert.match(prompt, /STEWARD_ESTIMATE_MINUTES=N/u);
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];
   assert.ok(args.includes("workspace-write"));
-  assert.ok(args.includes("--output-schema"));
+  const outputSchema = args.indexOf("--output-schema");
+  assert.notEqual(outputSchema, -1);
+  const codexSchema = JSON.parse(await readFile(args[outputSchema + 1]!, "utf8")) as { readonly $schema?: unknown };
+  assert.equal(codexSchema.$schema, RESULT_SCHEMA.$schema);
 });
 
 test("parses Claude stream-json activity while preserving its terminal structured result", async () => {
@@ -151,7 +175,9 @@ test("parses Claude stream-json activity while preserving its terminal structure
   assert.notEqual(outputFormat, -1);
   assert.equal(args[outputFormat + 1], "stream-json");
   assert.ok(args.includes("--verbose"));
-  assert.ok(args.includes("--json-schema"));
+  const jsonSchema = args.indexOf("--json-schema");
+  assert.notEqual(jsonSchema, -1);
+  assert.equal((JSON.parse(args[jsonSchema + 1]!) as { readonly $schema?: unknown }).$schema, RESULT_SCHEMA.$schema);
   assert.ok(!args.includes("--bare"), "OAuth/keychain authentication remains available without an API key");
 });
 

@@ -21,6 +21,7 @@ import {
   type AutomationEditorState,
 } from '../model/automation-model';
 import { BoardApiError, type TaskBoardClient } from '../data/client';
+import { identifierPattern } from '../data/wire';
 import {
   AUTOMATION_STAGE_ALLOWED_ROLES,
   AUTOMATION_STAGE_ORDER,
@@ -32,7 +33,6 @@ import {
   type WorkItemStage,
 } from '../types';
 
-const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 
 const stageLabels: Record<WorkItemStage, string> = {

@@ -1,7 +1,17 @@
 import {
+  AGENT_ROLES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
   DOCUMENT_CONTENT_MAX_BYTES,
+  EVALUATOR_PROFILES,
+  IDENTIFIER_PATTERN,
+  STAGE_HANDOFF_OUTCOMES,
   TASK_BOARD_ERROR_CODES,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  TASK_STATUSES,
+  WORK_ITEM_PRIORITIES,
+  WORK_ITEM_STAGES,
+  WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import type {
   AgentTypeEvaluatorProfile,
@@ -44,6 +54,8 @@ import type {
 import { TaskBoardError } from "./errors.js";
 import { MAX_SAFE_ERROR_DETAIL_CHARACTERS, safeErrorDetail } from "../shared/safe-error-detail.js";
 
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value) as object | null;
@@ -83,13 +95,23 @@ function allowed(value: unknown, keys: readonly string[], required: readonly str
   return value;
 }
 
-export function parseIdentifier(value: unknown, field: string, maximum = 128): string {
+function contractMember<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+  detail: string,
+): Values[number] {
+  if (typeof value !== "string" || !(values as readonly string[]).includes(value)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", detail);
+  }
+  return value as Values[number];
+}
+
+export function parseIdentifier(value: unknown, field: string): string {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
-    value.length > maximum ||
     value.trim() !== value ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u.test(value)
+    !IDENTIFIER.test(value)
   ) {
     throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
   }
@@ -122,10 +144,7 @@ function token(value: unknown): string {
 }
 
 function role(value: unknown, field = "role"): AgentRole {
-  if (value !== "engineer" && value !== "manager" && value !== "verifier") {
-    throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
-  }
-  return value;
+  return contractMember(value, AGENT_ROLES, `${field} is invalid`);
 }
 
 function nullableRole(value: unknown, field: string): AgentRole | null {
@@ -184,46 +203,19 @@ function nullableExpectedMinutes(value: unknown): number | null {
 }
 
 function phaseStage(value: unknown): TaskPhaseStage {
-  if (
-    value !== "research" && value !== "planning" && value !== "execution" &&
-    value !== "testing" && value !== "review" && value !== "done"
-  ) {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "stage is invalid");
-  }
-  return value;
+  return contractMember(value, TASK_PHASE_STAGES, "stage is invalid");
 }
 
 function phaseStatus(value: unknown): TaskPhaseStatus {
-  if (
-    value !== "pending" && value !== "in_progress" && value !== "blocked" &&
-    value !== "completed" && value !== "failed"
-  ) {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "phase status is invalid");
-  }
-  return value;
+  return contractMember(value, TASK_PHASE_STATUSES, "phase status is invalid");
 }
 
 function taskStatus(value: unknown): TaskStatus {
-  if (
-    value !== "backlog" &&
-    value !== "queued" &&
-    value !== "in_progress" &&
-    value !== "blocked" &&
-    value !== "completed" &&
-    value !== "failed" &&
-    value !== "interrupted" &&
-    value !== "cancelled"
-  ) {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "status is invalid");
-  }
-  return value;
+  return contractMember(value, TASK_STATUSES, "status is invalid");
 }
 
 function workItemPriority(value: unknown): WorkItemPriority {
-  if (value !== "urgent" && value !== "high" && value !== "normal" && value !== "low" && value !== "opportunistic") {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "priority is invalid");
-  }
-  return value;
+  return contractMember(value, WORK_ITEM_PRIORITIES, "priority is invalid");
 }
 
 function workItemProjectTarget(value: unknown): WorkItemProjectTarget {
@@ -239,17 +231,7 @@ function workItemProjectTarget(value: unknown): WorkItemProjectTarget {
   throw new TaskBoardError(400, "INVALID_REQUEST", "projectTarget mode is invalid");
 }
 
-const AUTOMATION_STAGE_ORDER = Object.freeze([
-  "refinement",
-  "project_resolution",
-  "research",
-  "planning",
-  "implementation",
-  "testing",
-  "verification",
-  "human_review",
-  "deployment",
-] as const satisfies readonly WorkItemStage[]);
+const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = WORK_ITEM_STAGES;
 
 type AutomationAgentStage = Exclude<WorkItemStage, "human_review" | "deployment">;
 
@@ -264,10 +246,7 @@ const AUTOMATION_STAGE_ROLE_COMPATIBILITY = Object.freeze({
 }) satisfies Readonly<Record<AutomationAgentStage, readonly AgentRole[]>>;
 
 function evaluatorProfile(value: unknown): AgentTypeEvaluatorProfile {
-  if (value !== "tests" && value !== "editorial" && value !== "visual" && value !== "manual") {
-    throw new TaskBoardError(400, "INVALID_REQUEST", "evaluatorProfile is invalid");
-  }
-  return value;
+  return contractMember(value, EVALUATOR_PROFILES, "evaluatorProfile is invalid");
 }
 
 function skillIdentifier(value: unknown, field: string): string {
@@ -506,7 +485,7 @@ export function parseCreateAgent(value: unknown): CreateAgentRequest {
     role: role(item.role),
     area: text(item.area, "area", 256),
     mission: text(item.mission, "mission", 4_000),
-    model: parseIdentifier(item.model, "model", 256),
+    model: parseIdentifier(item.model, "model"),
     token: token(item.token),
   });
 }
@@ -605,7 +584,7 @@ export function parseCreateDocument(value: unknown): CreateDocumentRequest {
     title: text(item.title, "title", 240),
     contentType: item.contentType,
     content: documentContent(item.content),
-    clientId: parseIdentifier(item.clientId, "clientId", 256),
+    clientId: parseIdentifier(item.clientId, "clientId"),
   });
 }
 
@@ -619,7 +598,7 @@ export function parseDocumentPenUpdate(value: unknown): UpdateDocumentPenRequest
   }
   return Object.freeze({
     action: item.action,
-    clientId: parseIdentifier(item.clientId, "clientId", 256),
+    clientId: parseIdentifier(item.clientId, "clientId"),
     expectedPenEpoch: nonNegativeVersion(item.expectedPenEpoch, "expectedPenEpoch"),
     force: item.force,
   }) as UpdateDocumentPenRequest;
@@ -628,7 +607,7 @@ export function parseDocumentPenUpdate(value: unknown): UpdateDocumentPenRequest
 export function parseDocumentUpdate(value: unknown): UpdateDocumentRequest {
   const item = exact(value, ["clientId", "penEpoch", "contentVersion", "content"], "Document update");
   return Object.freeze({
-    clientId: parseIdentifier(item.clientId, "clientId", 256),
+    clientId: parseIdentifier(item.clientId, "clientId"),
     penEpoch: positiveVersion(item.penEpoch),
     contentVersion: positiveVersion(item.contentVersion),
     content: documentContent(item.content),
@@ -710,7 +689,7 @@ function messageKind(value: unknown, human: boolean): TaskMessageKind {
 export function parseAgentMessage(value: unknown): CreateTaskMessageRequest {
   const item = exact(value, ["clientEventId", "kind", "body", "runId"], "Agent task message");
   return Object.freeze({
-    clientEventId: parseIdentifier(item.clientEventId, "clientEventId", 256),
+    clientEventId: parseIdentifier(item.clientEventId, "clientEventId"),
     kind: messageKind(item.kind, false),
     body: text(item.body, "body", 16_000),
     runId: parseIdentifier(item.runId, "runId"),
@@ -720,7 +699,7 @@ export function parseAgentMessage(value: unknown): CreateTaskMessageRequest {
 export function parseHumanMessage(value: unknown): CreateHumanTaskMessageRequest {
   const item = exact(value, ["clientEventId", "kind", "body"], "Human task message");
   return Object.freeze({
-    clientEventId: parseIdentifier(item.clientEventId, "clientEventId", 256),
+    clientEventId: parseIdentifier(item.clientEventId, "clientEventId"),
     kind: messageKind(item.kind, true) as "note",
     body: text(item.body, "body", 16_000),
   });
@@ -729,7 +708,7 @@ export function parseHumanMessage(value: unknown): CreateHumanTaskMessageRequest
 export function parseQuestion(value: unknown): CreateHumanQuestionRequest {
   const item = exact(value, ["clientEventId", "question", "runId"], "Human question");
   return Object.freeze({
-    clientEventId: parseIdentifier(item.clientEventId, "clientEventId", 256),
+    clientEventId: parseIdentifier(item.clientEventId, "clientEventId"),
     question: text(item.question, "question", 8_000),
     runId: parseIdentifier(item.runId, "runId"),
   });
@@ -765,7 +744,7 @@ export function parseClaim(value: unknown): ClaimRunRequest {
   if (!legacy && !perTask) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Run claim has unexpected or missing fields");
   }
-  const claimId = parseIdentifier(value.claimId, "claimId", 256);
+  const claimId = parseIdentifier(value.claimId, "claimId");
   if (legacy) {
     const cursor = value.messageCursor;
     if (cursor !== null && (!Number.isSafeInteger(cursor) || Number(cursor) < 0)) {
@@ -801,7 +780,7 @@ export function parseSettle(value: unknown): SettleRunRequest {
   if (item.handoff !== undefined && item.handoff !== null) {
     if (!isRecord(item.handoff)) throw new TaskBoardError(400, "INVALID_REQUEST", "handoff is invalid");
     const raw = exact(item.handoff, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], "handoff");
-    if (raw.outcome !== "passed" && raw.outcome !== "failed" && raw.outcome !== "needs_input") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff outcome is invalid");
+    const handoffOutcome = contractMember(raw.outcome, STAGE_HANDOFF_OUTCOMES, "handoff outcome is invalid");
     const values = (input: unknown, field: string): readonly string[] => {
       if (!Array.isArray(input) || input.length > 32) throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
       return Object.freeze(input.map((entry, index) => text(entry, `${field}[${index}]`, 2_000)));
@@ -812,10 +791,11 @@ export function parseSettle(value: unknown): SettleRunRequest {
       if (typeof criterion.passed !== "boolean") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff criterion result is invalid");
       return Object.freeze({ criterion: text(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: text(criterion.evidence, "evidence", 2_000) });
     });
-    const returnStage = raw.recommendedReturnStage;
-    if (returnStage !== null && returnStage !== "research" && returnStage !== "planning" && returnStage !== "implementation" && returnStage !== "testing" && returnStage !== "verification") throw new TaskBoardError(400, "INVALID_REQUEST", "handoff return stage is invalid");
+    const returnStage = raw.recommendedReturnStage === null
+      ? null
+      : contractMember(raw.recommendedReturnStage, WORKFLOW_STAGES, "handoff return stage is invalid");
     handoff = Object.freeze({
-      outcome: raw.outcome, summary: text(raw.summary, "handoff.summary", 4_000),
+      outcome: handoffOutcome, summary: text(raw.summary, "handoff.summary", 4_000),
       evidence: values(raw.evidence, "handoff.evidence"), artifactIds: values(raw.artifactIds, "handoff.artifactIds"),
       acceptanceCriteria: Object.freeze(criteria), blockers: values(raw.blockers, "handoff.blockers"),
       recommendedReturnStage: returnStage,
@@ -838,7 +818,7 @@ export function parseSettle(value: unknown): SettleRunRequest {
       const stages = strings(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, 1);
       if (
         stages.length > 5 || new Set(stages).size !== stages.length || stages.at(-1) !== "verification" ||
-        stages.some((stage) => stage !== "research" && stage !== "planning" && stage !== "implementation" && stage !== "testing" && stage !== "verification")
+        stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))
       ) throw new TaskBoardError(400, "INVALID_REQUEST", `workflowPlan.nodes[${index}].stageTemplate is invalid`);
       return Object.freeze({
         nodeId: parseIdentifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),

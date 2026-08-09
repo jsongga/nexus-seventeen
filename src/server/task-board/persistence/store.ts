@@ -1,9 +1,40 @@
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import {
+  ACTOR_TYPES,
+  AGENT_ROLES,
+  DOCUMENT_ACTOR_TYPES,
+  PLAN_REVISION_STATES,
+  QUESTION_STATUSES,
+  RUN_STATUSES,
+  STAGE_HANDOFF_OUTCOMES,
+  TASK_MESSAGE_ACTOR_TYPES,
+  TASK_KINDS,
+  TASK_MESSAGE_KINDS,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  TASK_STATUSES,
+  WAKEUP_REASONS,
+  WORK_ITEM_PRIORITIES,
+  WORK_ITEM_STAGES,
+  WORK_ITEM_STATES,
+  WORK_NODE_STATES,
+  WORKFLOW_STAGES,
+} from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
+import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
 const SCHEMA_VERSION = 17;
+
+function sqlStringList(values: readonly string[], separator = ", "): string {
+  return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
+}
+
+const DEFAULT_AUTOMATION_STAGES_JSON = JSON.stringify(WORK_ITEM_STAGES.map((stage) => ({
+  executor: { kind: stage === "human_review" ? "human" : "disabled" },
+  stage,
+})));
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -15,7 +46,7 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
   acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json)),
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   skill_digests_json TEXT NOT NULL CHECK (json_valid(skill_digests_json)),
-  state TEXT NOT NULL CHECK (state IN ('proposed','confirmed','superseded','rejected')),
+  state TEXT NOT NULL CHECK (state IN (${sqlStringList(PLAN_REVISION_STATES, ",")})),
   created_by TEXT NOT NULL,
   confirmed_by TEXT,
   created_at TEXT NOT NULL,
@@ -30,7 +61,7 @@ CREATE TABLE IF NOT EXISTS work_nodes (
   acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json)),
   stage_template_json TEXT NOT NULL CHECK (json_valid(stage_template_json)),
   current_stage TEXT,
-  state TEXT NOT NULL CHECK (state IN ('pending','ready','active','blocked','stale','completed','cancelled')),
+  state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_NODE_STATES, ",")})),
   version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS work_node_dependencies (
@@ -42,7 +73,7 @@ CREATE TABLE IF NOT EXISTS stage_attempts (
   attempt_id TEXT PRIMARY KEY,
   node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
-  stage TEXT NOT NULL CHECK(stage IN ('research','planning','implementation','testing','verification')),
+  stage TEXT NOT NULL CHECK(stage IN (${sqlStringList(WORKFLOW_STAGES, ",")})),
   attempt INTEGER NOT NULL CHECK(attempt >= 1),
   skill_digests_json TEXT NOT NULL CHECK(json_valid(skill_digests_json)),
   UNIQUE(node_id, stage, attempt)
@@ -51,7 +82,7 @@ CREATE TABLE IF NOT EXISTS stage_handoffs (
   handoff_id TEXT PRIMARY KEY,
   node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
-  stage TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('passed','failed','needs_input')),
+  stage TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN (${sqlStringList(STAGE_HANDOFF_OUTCOMES, ",")})),
   payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), created_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -86,9 +117,9 @@ PRAGMA user_version = 2;
 
 const MIGRATE_VERSION_2_TO_3 = `
 ALTER TABLE tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'work'
-  CHECK (task_kind IN ('work', 'manager_review', 'human_check'));
+  CHECK (task_kind IN (${sqlStringList(TASK_KINDS)}));
 ALTER TABLE tasks ADD COLUMN required_role TEXT
-  CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier'));
+  CHECK (required_role IS NULL OR required_role IN (${sqlStringList(AGENT_ROLES)}));
 CREATE UNIQUE INDEX tasks_one_review_stage
   ON tasks(parent_task_id, task_kind)
   WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
@@ -104,7 +135,7 @@ CREATE TABLE documents (
   content TEXT NOT NULL,
   content_version INTEGER NOT NULL CHECK (content_version >= 1),
   pen_epoch INTEGER NOT NULL CHECK (pen_epoch >= 1),
-  pen_holder_actor_type TEXT CHECK (pen_holder_actor_type IS NULL OR pen_holder_actor_type IN ('human', 'agent')),
+  pen_holder_actor_type TEXT CHECK (pen_holder_actor_type IS NULL OR pen_holder_actor_type IN (${sqlStringList(DOCUMENT_ACTOR_TYPES)})),
   pen_holder_actor_id TEXT,
   pen_holder_client_id TEXT,
   pen_acquired_at TEXT,
@@ -124,7 +155,7 @@ CREATE TABLE document_events (
   event_id TEXT NOT NULL UNIQUE,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   event_type TEXT NOT NULL CHECK (event_type IN ('document_created', 'document_pen_acquired', 'document_pen_released', 'document_updated')),
-  actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent')),
+  actor_type TEXT NOT NULL CHECK (actor_type IN (${sqlStringList(DOCUMENT_ACTOR_TYPES)})),
   actor_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   document_json TEXT NOT NULL,
@@ -145,8 +176,8 @@ CREATE TABLE task_phases (
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
   title TEXT NOT NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('research', 'planning', 'execution', 'testing', 'review', 'done')),
-  status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
+  stage TEXT NOT NULL CHECK (stage IN (${sqlStringList(TASK_PHASE_STAGES)})),
+  status TEXT NOT NULL CHECK (status IN (${sqlStringList(TASK_PHASE_STATUSES)})),
   parallel_group TEXT,
   order_key INTEGER NOT NULL CHECK (order_key >= 0),
   started_at TEXT,
@@ -208,7 +239,7 @@ CREATE TABLE wakeups (
   wakeup_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
-  reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
+  reason TEXT NOT NULL CHECK (reason IN (${sqlStringList(WAKEUP_REASONS)})),
   source_key TEXT NOT NULL,
   task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
   question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
@@ -228,12 +259,12 @@ CREATE TABLE work_items (
   work_item_id TEXT PRIMARY KEY,
   original_request TEXT NOT NULL,
   refined_objective TEXT,
-  priority TEXT NOT NULL CHECK (priority IN ('urgent', 'high', 'normal', 'low', 'opportunistic')),
+  priority TEXT NOT NULL CHECK (priority IN (${sqlStringList(WORK_ITEM_PRIORITIES)})),
   project_target_mode TEXT NOT NULL CHECK (project_target_mode IN ('auto', 'explicit')),
   target_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
   resolved_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
-  state TEXT NOT NULL CHECK (state IN ('submitted', 'processing', 'needs_input', 'waiting_for_human_review', 'completed', 'failed', 'cancelled')),
-  current_stage TEXT CHECK (current_stage IS NULL OR current_stage IN ('refinement', 'project_resolution', 'research', 'planning', 'implementation', 'testing', 'verification', 'human_review', 'deployment')),
+  state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_ITEM_STATES)})),
+  current_stage TEXT CHECK (current_stage IS NULL OR current_stage IN (${sqlStringList(WORK_ITEM_STAGES)})),
   created_by TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
@@ -258,11 +289,7 @@ CREATE INDEX work_items_updated ON work_items(updated_at DESC, work_item_id);
 CREATE INDEX work_items_display_order ON work_items(
   (ended_at IS NOT NULL),
   CASE priority
-    WHEN 'urgent' THEN 0
-    WHEN 'high' THEN 1
-    WHEN 'normal' THEN 2
-    WHEN 'low' THEN 3
-    WHEN 'opportunistic' THEN 4
+    ${workItemPriorityCases("    ")}
   END,
   created_at,
   work_item_id
@@ -270,11 +297,7 @@ CREATE INDEX work_items_display_order ON work_items(
 CREATE INDEX work_items_unarchived_display_order ON work_items(
   (ended_at IS NOT NULL),
   CASE priority
-    WHEN 'urgent' THEN 0
-    WHEN 'high' THEN 1
-    WHEN 'normal' THEN 2
-    WHEN 'low' THEN 3
-    WHEN 'opportunistic' THEN 4
+    ${workItemPriorityCases("    ")}
   END,
   created_at,
   work_item_id
@@ -304,7 +327,7 @@ INSERT INTO automation_configuration(
 ) VALUES (
   'company-default',
   '[]',
-  '[{"executor":{"kind":"disabled"},"stage":"refinement"},{"executor":{"kind":"disabled"},"stage":"project_resolution"},{"executor":{"kind":"disabled"},"stage":"research"},{"executor":{"kind":"disabled"},"stage":"planning"},{"executor":{"kind":"disabled"},"stage":"implementation"},{"executor":{"kind":"disabled"},"stage":"testing"},{"executor":{"kind":"disabled"},"stage":"verification"},{"executor":{"kind":"human"},"stage":"human_review"},{"executor":{"kind":"disabled"},"stage":"deployment"}]',
+  '${DEFAULT_AUTOMATION_STAGES_JSON}',
   1,
   '1970-01-01T00:00:00.000Z',
   '1970-01-01T00:00:00.000Z',
@@ -331,7 +354,7 @@ ${WORK_ITEM_PLANNING_SCHEMA}
 CREATE TABLE agents (
   agent_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
-  role TEXT NOT NULL CHECK (role IN ('engineer', 'manager', 'verifier')),
+  role TEXT NOT NULL CHECK (role IN (${sqlStringList(AGENT_ROLES)})),
   area TEXT NOT NULL,
   mission TEXT NOT NULL,
   model TEXT NOT NULL,
@@ -346,16 +369,16 @@ CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   parent_task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
-  task_kind TEXT NOT NULL CHECK (task_kind IN ('work', 'manager_review', 'human_check')),
-  required_role TEXT CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier')),
+  task_kind TEXT NOT NULL CHECK (task_kind IN (${sqlStringList(TASK_KINDS)})),
+  required_role TEXT CHECK (required_role IS NULL OR required_role IN (${sqlStringList(AGENT_ROLES)})),
   requires_review INTEGER NOT NULL CHECK (requires_review IN (0, 1)),
   title TEXT NOT NULL,
   objective TEXT NOT NULL,
   acceptance_criteria TEXT NOT NULL,
   workspace_refs_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'interrupted', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN (${sqlStringList(TASK_STATUSES)})),
   assigned_agent_id TEXT REFERENCES agents(agent_id) ON DELETE RESTRICT,
-  assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN ('engineer', 'manager', 'verifier')),
+  assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN (${sqlStringList(AGENT_ROLES)})),
   -- Kept for file compatibility with schema versions 1-4. New code reads agent_estimate_minutes.
   expected_agent_minutes INTEGER NOT NULL CHECK (expected_agent_minutes >= 15 AND expected_agent_minutes <= 10080 AND expected_agent_minutes % 15 = 0),
   agent_estimate_minutes INTEGER CHECK (agent_estimate_minutes IS NULL OR
@@ -393,11 +416,11 @@ CREATE TABLE task_messages (
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
   run_id TEXT,
-  actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent')),
+  actor_type TEXT NOT NULL CHECK (actor_type IN (${sqlStringList(TASK_MESSAGE_ACTOR_TYPES)})),
   actor_id TEXT NOT NULL,
   client_event_id TEXT NOT NULL,
   request_hash TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('note', 'progress', 'proposal', 'result')),
+  kind TEXT NOT NULL CHECK (kind IN (${sqlStringList(TASK_MESSAGE_KINDS)})),
   body TEXT NOT NULL,
   created_at TEXT NOT NULL,
   UNIQUE(actor_type, actor_id, client_event_id)
@@ -409,7 +432,7 @@ CREATE TABLE task_events (
   event_id TEXT NOT NULL UNIQUE,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
-  actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent', 'system')),
+  actor_type TEXT NOT NULL CHECK (actor_type IN (${sqlStringList(ACTOR_TYPES)})),
   actor_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   data_json TEXT NOT NULL,
@@ -426,7 +449,7 @@ CREATE TABLE questions (
   client_event_id TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   question TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('open', 'answered')),
+  status TEXT NOT NULL CHECK (status IN (${sqlStringList(QUESTION_STATUSES)})),
   answer TEXT,
   asked_at TEXT NOT NULL,
   answered_at TEXT,
@@ -451,7 +474,7 @@ CREATE TABLE runs (
   agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
   wakeup_id TEXT NOT NULL UNIQUE REFERENCES wakeups(wakeup_id) ON DELETE RESTRICT,
   task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
-  status TEXT NOT NULL CHECK (status IN ('active', 'waiting_for_human', 'completed', 'failed', 'interrupted')),
+  status TEXT NOT NULL CHECK (status IN (${sqlStringList(RUN_STATUSES)})),
   started_at TEXT NOT NULL,
   ended_at TEXT,
   result TEXT,
@@ -518,16 +541,16 @@ function migrateVersion13To14(db: DatabaseSync): void {
         task_id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
         parent_task_id TEXT REFERENCES tasks_v14(task_id) ON DELETE RESTRICT,
-        task_kind TEXT NOT NULL CHECK (task_kind IN ('work', 'manager_review', 'human_check')),
-        required_role TEXT CHECK (required_role IS NULL OR required_role IN ('engineer', 'manager', 'verifier')),
+        task_kind TEXT NOT NULL CHECK (task_kind IN (${sqlStringList(TASK_KINDS)})),
+        required_role TEXT CHECK (required_role IS NULL OR required_role IN (${sqlStringList(AGENT_ROLES)})),
         requires_review INTEGER NOT NULL CHECK (requires_review IN (0, 1)),
         title TEXT NOT NULL,
         objective TEXT NOT NULL,
         acceptance_criteria TEXT NOT NULL,
         workspace_refs_json TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('backlog', 'queued', 'in_progress', 'blocked', 'completed', 'failed', 'interrupted', 'cancelled')),
+        status TEXT NOT NULL CHECK (status IN (${sqlStringList(TASK_STATUSES)})),
         assigned_agent_id TEXT REFERENCES agents(agent_id) ON DELETE RESTRICT,
-        assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN ('engineer', 'manager', 'verifier')),
+        assigned_role TEXT CHECK (assigned_role IS NULL OR assigned_role IN (${sqlStringList(AGENT_ROLES)})),
         expected_agent_minutes INTEGER NOT NULL CHECK (expected_agent_minutes >= 15 AND expected_agent_minutes <= 10080 AND expected_agent_minutes % 15 = 0),
         agent_estimate_minutes INTEGER CHECK (agent_estimate_minutes IS NULL OR
           (agent_estimate_minutes >= 15 AND agent_estimate_minutes <= 10080 AND agent_estimate_minutes % 15 = 0)),
@@ -573,7 +596,7 @@ function migrateVersion13To14(db: DatabaseSync): void {
         wakeup_id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
         agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
-        reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
+        reason TEXT NOT NULL CHECK (reason IN (${sqlStringList(WAKEUP_REASONS)})),
         source_key TEXT NOT NULL,
         task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
         question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
@@ -648,11 +671,7 @@ function migrateVersion15To16(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS work_items_unarchived_display_order ON work_items(
       (ended_at IS NOT NULL),
       CASE priority
-        WHEN 'urgent' THEN 0
-        WHEN 'high' THEN 1
-        WHEN 'normal' THEN 2
-        WHEN 'low' THEN 3
-        WHEN 'opportunistic' THEN 4
+        ${workItemPriorityCases("        ")}
       END,
       created_at,
       work_item_id
@@ -770,7 +789,7 @@ function migrateVersion6To7(db: DatabaseSync): void {
           wakeup_id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
           agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
-          reason TEXT NOT NULL CHECK (reason IN ('human_assignment', 'human_answer', 'human_resume', 'workflow_handoff', 'assigned', 'resumed')),
+          reason TEXT NOT NULL CHECK (reason IN (${sqlStringList(WAKEUP_REASONS)})),
           source_key TEXT NOT NULL,
           task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
           question_id TEXT REFERENCES questions(question_id) ON DELETE RESTRICT,
@@ -803,8 +822,8 @@ function migrateVersion6To7(db: DatabaseSync): void {
           project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
           task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
           title TEXT NOT NULL,
-          stage TEXT NOT NULL CHECK (stage IN ('research', 'planning', 'execution', 'testing', 'review', 'done')),
-          status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
+          stage TEXT NOT NULL CHECK (stage IN (${sqlStringList(TASK_PHASE_STAGES)})),
+          status TEXT NOT NULL CHECK (status IN (${sqlStringList(TASK_PHASE_STATUSES)})),
           parallel_group TEXT,
           order_key INTEGER NOT NULL CHECK (order_key >= 0),
           started_at TEXT,

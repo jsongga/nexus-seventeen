@@ -1,4 +1,10 @@
-import { TASK_BOARD_API_VERSION, type ClaimRunResult } from "#shared/task-board-contract";
+import {
+  IDENTIFIER_PATTERN,
+  TASK_BOARD_API_VERSION,
+  TASK_PHASE_STAGES,
+  TASK_PHASE_STATUSES,
+  type ClaimRunResult,
+} from "#shared/task-board-contract";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
 import { POISONED_CLAIM_REASON, TaskBoardClaimResponseError } from "./types.js";
 import type {
@@ -18,6 +24,7 @@ import type {
 } from "./types.js";
 
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 
 export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
@@ -81,7 +88,7 @@ function exact(value: unknown, keys: readonly string[], label: string): Record<s
 }
 
 function id(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u.test(value)) {
+  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
     throw new Error(`${label} is invalid`);
   }
   return value;
@@ -115,23 +122,17 @@ function estimateMinutes(value: unknown, label: string): number | null {
 }
 
 function phaseStage(value: unknown, label: string): AgentTaskPhase["stage"] {
-  if (
-    value !== "research" && value !== "planning" && value !== "execution" &&
-    value !== "testing" && value !== "review" && value !== "done"
-  ) {
+  if (typeof value !== "string" || !(TASK_PHASE_STAGES as readonly string[]).includes(value)) {
     throw new Error(`${label} is invalid`);
   }
-  return value;
+  return value as AgentTaskPhase["stage"];
 }
 
 function phaseStatus(value: unknown, label: string): AgentTaskPhase["status"] {
-  if (
-    value !== "pending" && value !== "in_progress" && value !== "blocked" &&
-    value !== "completed" && value !== "failed"
-  ) {
+  if (typeof value !== "string" || !(TASK_PHASE_STATUSES as readonly string[]).includes(value)) {
     throw new Error(`${label} is invalid`);
   }
-  return value;
+  return value as AgentTaskPhase["status"];
 }
 
 function taskPhase(value: unknown, projectId: string, taskId: string, label: string): AgentTaskPhase {

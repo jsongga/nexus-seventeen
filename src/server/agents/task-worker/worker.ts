@@ -49,6 +49,7 @@ class SerialExecutor {
   idle(): Promise<void> { return this.#tail; }
 }
 
+/** WAKEUP_REASONS additions are intentionally auto-authorized through TASK_WAKE_REASONS. */
 const ALLOWED_WAKE_REASONS = new Set<string>(TASK_WAKE_REASONS);
 const MAX_HISTORY = 256;
 const MAX_MESSAGE_CURSORS = 256;
