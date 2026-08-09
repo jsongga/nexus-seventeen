@@ -40,6 +40,17 @@
 		}
 	}
 
+	# Vite fingerprints everything under /assets/, so those files are immutable and
+	# safe to cache forever. index.html must NOT be: it is the only thing that
+	# names the current bundle, so a cached copy pins the browser to an old build
+	# and every later deploy is invisible to that user. Without this, a stale
+	# index.html kept serving a bundle from before an auth fix and made the fix
+	# look ineffective.
+	@immutable path /assets/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+	header / Cache-Control "no-cache"
+
 	handle {
 		root * /srv/steward
 		try_files {path} /index.html
