@@ -189,7 +189,48 @@ test("dormant automation configuration is human-only and CAS controlled", async 
   }
 });
 
-test("global work-item intake is human-only, idempotent, and CAS controlled", async () => {
+test("automatic work-item intake is rejected without creating a row", async () => {
+  const path = await databasePath();
+  const service = await createTaskBoardService({
+    dbPath: path,
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+    corsOrigins: ["https://app.cicada.build"],
+    now: () => new Date("2026-07-20T20:00:00.000Z"),
+  });
+  const address = await service.start();
+  try {
+    const response = await request(
+      address.url,
+      "/v1/work-items",
+      "POST",
+      HUMAN_TOKEN,
+      {
+        originalRequest: "Do not strand this request in automatic project routing.",
+        projectTarget: { mode: "auto" },
+      },
+      "http-work-item-auto-rejected-0001",
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: { code: "PROJECT_REQUIRED", message: "Choose a project" },
+    });
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    await service.close();
+  }
+});
+
+test("global work-item intake is human-only, explicitly targeted, idempotent, and CAS controlled", async () => {
   const service = await createTaskBoardService({
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
@@ -201,7 +242,15 @@ test("global work-item intake is human-only, idempotent, and CAS controlled", as
   });
   const address = await service.start();
   try {
-    const body = { originalRequest: "Investigate and improve checkout reliability." };
+    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "Checkout reliability",
+      description: "Customer-facing recovery work.",
+    });
+    const project = (await projectResponse.json() as { project: { projectId: string } }).project;
+    const body = {
+      originalRequest: "Investigate and improve checkout reliability.",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    };
     assert.equal((await request(address.url, "/v1/work-items", "POST", HUMAN_TOKEN, body)).status, 400);
     assert.equal((await request(
       address.url,
@@ -235,8 +284,8 @@ test("global work-item intake is human-only, idempotent, and CAS controlled", as
     }).workItem;
     assert.equal(created.originalRequest, body.originalRequest);
     assert.equal(created.priority, "normal");
-    assert.deepEqual(created.projectTarget, { mode: "auto" });
-    assert.equal(created.resolvedProjectId, null);
+    assert.deepEqual(created.projectTarget, body.projectTarget);
+    assert.equal(created.resolvedProjectId, project.projectId);
     assert.equal(created.state, "submitted");
     assert.equal(created.currentStage, "refinement");
     assert.equal(created.version, 1);
@@ -259,15 +308,10 @@ test("global work-item intake is human-only, idempotent, and CAS controlled", as
       "/v1/work-items",
       "POST",
       HUMAN_TOKEN,
-      { originalRequest: "A different request." },
+      { originalRequest: "A different request.", projectTarget: body.projectTarget },
       "http-work-item-create-0001",
     )).status, 409);
 
-    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
-      name: "Checkout reliability",
-      description: "Customer-facing recovery work.",
-    });
-    const project = (await projectResponse.json() as { project: { projectId: string } }).project;
     const updateResponse = await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
       version: created.version,
       priority: "high",
@@ -507,7 +551,10 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
   const fixture = await boardFixture(path);
   for (let index = 0; index < 201; index += 1) {
     fixture.board.createWorkItem(
-      { originalRequest: `HTTP paginated work item ${index}` },
+      {
+        originalRequest: `HTTP paginated work item ${index}`,
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
       `http-pagination-${index}`,
     );
   }

@@ -1080,7 +1080,9 @@ test("repeated reconciliation does not churn a still capacity-blocked node", asy
 test("confirmed workflow persists an acyclic graph and activates only dependency roots", async () => {
   const fixture = await boardFixture();
   try {
-    const item = fixture.board.createWorkItem(workItemRequest(), "workflow-intake-0001").workItem;
+    const item = fixture.board.createWorkItem(workItemRequest({
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "workflow-intake-0001").workItem;
     fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
       agentTypes: [{
         agentTypeId: "researcher", name: "Researcher", description: "Research", role: "engineer",
@@ -1717,52 +1719,57 @@ test("a completed run with a valid handoff settles its workflow node", async () 
   }
 });
 
-test("work items preserve original intake, resolve explicit projects, and enforce idempotent CAS updates", async () => {
+test("work items preserve explicit intake and enforce idempotent CAS updates", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const automaticRequest = { originalRequest: "Investigate checkout retries before choosing a project." };
-  const automatic = fixture.board.createWorkItem(automaticRequest, "work-item-create-auto-0001");
-  assert.equal(automatic.duplicate, false);
-  assert.equal(automatic.workItem.priority, "normal");
-  assert.deepEqual(automatic.workItem.projectTarget, { mode: "auto" });
-  assert.equal(automatic.workItem.resolvedProjectId, null);
-  assert.equal(automatic.workItem.state, "submitted");
-  assert.equal(automatic.workItem.currentStage, "refinement");
-  assert.equal(automatic.workItem.refinedObjective, null);
-  assert.equal(automatic.workItem.createdBy, "human:alice");
-  assert.equal(automatic.workItem.version, 1);
+  const explicitRequest = workItemRequest({
+    originalRequest: "Investigate checkout retries in the selected project.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  });
+  const created = fixture.board.createWorkItem(explicitRequest, "work-item-create-explicit-0001");
+  assert.equal(created.duplicate, false);
+  assert.equal(created.workItem.priority, "normal");
+  assert.deepEqual(created.workItem.projectTarget, explicitRequest.projectTarget);
+  assert.equal(created.workItem.resolvedProjectId, fixture.project.projectId);
+  assert.equal(created.workItem.state, "submitted");
+  assert.equal(created.workItem.currentStage, "refinement");
+  assert.equal(created.workItem.refinedObjective, null);
+  assert.equal(created.workItem.createdBy, "human:alice");
+  assert.equal(created.workItem.version, 1);
 
-  const replay = fixture.board.createWorkItem(automaticRequest, "work-item-create-auto-0001");
+  const replay = fixture.board.createWorkItem(explicitRequest, "work-item-create-explicit-0001");
   assert.equal(replay.duplicate, true);
-  assert.equal(replay.workItem.workItemId, automatic.workItem.workItemId);
+  assert.equal(replay.workItem.workItemId, created.workItem.workItemId);
   assert.throws(
     () => fixture.board.createWorkItem(
-      { originalRequest: "A different request." },
-      "work-item-create-auto-0001",
+      workItemRequest({
+        originalRequest: "A different request.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-create-explicit-0001",
     ),
     (error: unknown) => error instanceof TaskBoardError && error.code === "IDEMPOTENCY_CONFLICT",
   );
 
-  const explicit = fixture.board.createWorkItem(workItemRequest({
+  const urgent = fixture.board.createWorkItem(workItemRequest({
     priority: "urgent",
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "work-item-create-explicit-0001");
-  assert.deepEqual(explicit.workItem.projectTarget, { mode: "explicit", projectId: fixture.project.projectId });
-  assert.equal(explicit.workItem.resolvedProjectId, fixture.project.projectId);
-  assert.equal(fixture.board.listWorkItems()[0]?.workItemId, explicit.workItem.workItemId);
+  }), "work-item-create-urgent-0001");
+  assert.deepEqual(urgent.workItem.projectTarget, { mode: "explicit", projectId: fixture.project.projectId });
+  assert.equal(urgent.workItem.resolvedProjectId, fixture.project.projectId);
+  assert.equal(fixture.board.listWorkItems()[0]?.workItemId, urgent.workItem.workItemId);
 
-  const targeted = fixture.board.updateWorkItem(automatic.workItem.workItemId, {
-    version: automatic.workItem.version,
+  const updated = fixture.board.updateWorkItem(created.workItem.workItemId, {
+    version: created.workItem.version,
     priority: "high",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   });
-  assert.equal(targeted.version, 2);
-  assert.equal(targeted.priority, "high");
-  assert.equal(targeted.resolvedProjectId, fixture.project.projectId);
-  assert.equal(targeted.originalRequest, automaticRequest.originalRequest);
+  assert.equal(updated.version, 2);
+  assert.equal(updated.priority, "high");
+  assert.equal(updated.resolvedProjectId, fixture.project.projectId);
+  assert.equal(updated.originalRequest, explicitRequest.originalRequest);
   assert.throws(
-    () => fixture.board.updateWorkItem(automatic.workItem.workItemId, {
-      version: automatic.workItem.version,
+    () => fixture.board.updateWorkItem(created.workItem.workItemId, {
+      version: created.workItem.version,
       priority: "low",
     }),
     (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
@@ -1780,7 +1787,7 @@ test("work items preserve original intake, resolve explicit projects, and enforc
   try {
     assert.throws(
       () => direct.prepare("UPDATE work_items SET original_request = ? WHERE work_item_id = ?")
-        .run("Replace the accepted request.", automatic.workItem.workItemId),
+        .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
     assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 15);
@@ -1790,10 +1797,48 @@ test("work items preserve original intake, resolve explicit projects, and enforc
 
   const restarted = await TaskBoard.open(config(path));
   try {
-    assert.equal(restarted.requireWorkItem(automatic.workItem.workItemId).originalRequest, automaticRequest.originalRequest);
+    assert.equal(restarted.requireWorkItem(created.workItem.workItemId).originalRequest, explicitRequest.originalRequest);
     assert.equal(restarted.listWorkItems().length, 2);
   } finally {
     restarted.close();
+  }
+});
+
+test("duplicate intake leaves a legacy null-resolved submitted item inert and cancellable", async () => {
+  const fixture = await boardFixture();
+  try {
+    const legacyRequest = workItemRequest({
+      originalRequest: "Preserve this legacy automatic intake until an operator cancels it.",
+      projectTarget: { mode: "auto" },
+    });
+    const idempotencyKey = "work-item-legacy-auto-inert-0001";
+    const created = fixture.board.createWorkItem(legacyRequest, idempotencyKey).workItem;
+    const before = fixture.board.requireWorkItem(created.workItemId);
+
+    const replay = postWorkItem(fixture.board, legacyRequest, idempotencyKey);
+
+    assert.equal(replay.duplicate, true);
+    assert.deepEqual(replay.workItem, before);
+    assert.equal(replay.workItem.state, "submitted");
+    assert.equal(replay.workItem.currentStage, "refinement");
+    assert.equal(replay.workItem.resolvedProjectId, null);
+    assert.equal(replay.workItem.endedAt, null);
+    assert.ok(fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId));
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(
+        "SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?",
+      ).get(created.workItemId)?.count, 0);
+      assert.equal(inspected.prepare(
+        "SELECT COUNT(*) AS count FROM tasks WHERE objective=?",
+      ).get(legacyRequest.originalRequest)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
   }
 });
 
@@ -2420,10 +2465,12 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
     const active = Array.from({ length: 199 }, (_unused, index) => fixture.board.createWorkItem({
       originalRequest: `Paginated active work item ${index}`,
       priority: index < 70 ? "urgent" : index < 140 ? "high" : "opportunistic",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }, `pagination-active-${index}`).workItem);
     const terminalUrgent = fixture.board.createWorkItem({
       originalRequest: "Paginated terminal urgent work item",
       priority: "urgent",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }, "pagination-terminal-urgent").workItem;
 
     const { DatabaseSync } = await import("node:sqlite");
@@ -2457,6 +2504,7 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
     const terminalLow = fixture.board.createWorkItem({
       originalRequest: "Paginated terminal low-priority work item",
       priority: "low",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }, "pagination-terminal-low").workItem;
     const terminal = new DatabaseSync(path);
     try {
@@ -5056,7 +5104,10 @@ test("schema version 8 migration adds global work-item intake without changing e
   const upgraded = await TaskBoard.open(config(path));
   try {
     assert.equal(upgraded.requireTask(existingTask.taskId).title, existingTask.title);
-    const created = upgraded.createWorkItem({ originalRequest: "Refine this request after the v9 migration." }, "migration-v9-work-item-0001");
+    const created = upgraded.createWorkItem({
+      originalRequest: "Refine this request after the v9 migration.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }, "migration-v9-work-item-0001");
     assert.equal(created.workItem.state, "submitted");
     assert.equal(created.workItem.priority, "normal");
   } finally {

@@ -841,7 +841,7 @@ describe('task-board HTTP client', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('creates a durable automatic work item with a caller-stable idempotency key', async () => {
+  it('creates a durable explicitly targeted work item with a caller-stable idempotency key', async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
@@ -855,7 +855,7 @@ describe('task-board HTTP client', () => {
     await expect(client.createWorkItem({
       originalRequest: '  Improve invoice recovery for customers.  ',
       priority: 'normal',
-      projectTarget: { mode: 'auto' },
+      projectId: project.projectId,
       idempotencyKey: 'work-item:create:one',
     })).resolves.toMatchObject({
       id: workItem.workItemId,
@@ -873,7 +873,7 @@ describe('task-board HTTP client', () => {
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
       originalRequest: 'Improve invoice recovery for customers.',
       priority: 'normal',
-      projectTarget: { mode: 'auto' },
+      projectTarget: { mode: 'explicit', projectId: project.projectId },
     });
   });
 
@@ -884,15 +884,21 @@ describe('task-board HTTP client', () => {
     await expect(client.createWorkItem({
       originalRequest: '   ',
       priority: 'normal',
-      projectTarget: { mode: 'auto' },
+      projectId: project.projectId,
       idempotencyKey: 'work-item:create:one',
     })).rejects.toThrow(/enter a task/iu);
     await expect(client.createWorkItem({
       originalRequest: 'A valid task',
       priority: 'normal',
-      projectTarget: { mode: 'auto' },
+      projectId: project.projectId,
       idempotencyKey: 'short',
     })).rejects.toThrow(/idempotency key/iu);
+    await expect(client.createWorkItem({
+      originalRequest: 'A valid task',
+      priority: 'normal',
+      projectId: '   ',
+      idempotencyKey: 'work-item:create:one',
+    })).rejects.toThrow(/choose a project/iu);
     expect(request).not.toHaveBeenCalled();
   });
 

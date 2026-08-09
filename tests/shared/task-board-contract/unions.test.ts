@@ -35,6 +35,7 @@ test('run statuses include active rather than running', () => {
 });
 
 test('task recovery adds stable error and wakeup vocabulary', () => {
+  assert.equal(TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, 'PROJECT_REQUIRED');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, 'TASK_TERMINAL');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_UNASSIGNED, 'TASK_UNASSIGNED');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_BOUND, 'TASK_WORKFLOW_BOUND');

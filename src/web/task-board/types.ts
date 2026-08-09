@@ -372,7 +372,7 @@ export interface CreateTaskInput {
 export interface CreateWorkItemInput {
   originalRequest: string;
   priority: Exclude<WorkItemPriority, 'opportunistic'>;
-  projectTarget: WorkItemProjectTarget;
+  projectId: string;
   idempotencyKey: string;
 }
 

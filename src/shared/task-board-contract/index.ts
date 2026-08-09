@@ -2,6 +2,7 @@ export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
 /** Stable error codes introduced for clients that branch on board HTTP failures. */
 export const TASK_BOARD_ERROR_CODES = Object.freeze({
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  PROJECT_REQUIRED: "PROJECT_REQUIRED",
   TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
   TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
   TASK_RETRY_REQUIRED: "TASK_RETRY_REQUIRED",
@@ -107,6 +108,10 @@ export type ArtifactMediaType =
   | "image/webp"
   | "image/svg+xml";
 export type WorkItemProjectTarget =
+  /**
+   * Retained for wire compatibility with existing data and older clients.
+   * Work-item request parsers currently reject automatic project targets.
+   */
   | Readonly<{ mode: "auto" }>
   | Readonly<{ mode: "explicit"; projectId: string }>;
 export const EVALUATOR_PROFILES = ["tests", "editorial", "visual", "manual"] as const;
@@ -571,7 +576,7 @@ export interface CreateWorkItemRequest {
   readonly originalRequest: string;
   /** Defaults to normal. */
   readonly priority?: WorkItemPriority;
-  /** Defaults to automatic project resolution. */
+  /** Required by the current server; automatic targets are rejected with PROJECT_REQUIRED. */
   readonly projectTarget?: WorkItemProjectTarget;
 }
 

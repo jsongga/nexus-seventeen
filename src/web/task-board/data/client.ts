@@ -791,16 +791,15 @@ export function createTaskBoardClient(options: {
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(idempotencyKey)) {
         throw new Error('Task submission has an invalid idempotency key');
       }
-      if (input.projectTarget.mode === 'explicit' && input.projectTarget.projectId.trim().length === 0) {
-        throw new Error('Choose a project or use automatic project selection');
-      }
+      const projectId = input.projectId.trim();
+      if (projectId.length === 0) throw new Error('Choose a project');
       return workItemFromEnvelope(
         await json('/v1/work-items', {
           method: 'POST',
           body: JSON.stringify({
             originalRequest,
             priority: input.priority,
-            projectTarget: input.projectTarget,
+            projectTarget: { mode: 'explicit', projectId },
           }),
           headers: { 'idempotency-key': idempotencyKey },
         }),

@@ -1,4 +1,8 @@
-import { AUTOMATION_CONFIGURATION_MAX_BYTES, DOCUMENT_CONTENT_MAX_BYTES } from "#shared/task-board-contract";
+import {
+  AUTOMATION_CONFIGURATION_MAX_BYTES,
+  DOCUMENT_CONTENT_MAX_BYTES,
+  TASK_BOARD_ERROR_CODES,
+} from "#shared/task-board-contract";
 import type {
   AgentTypeEvaluatorProfile,
   AgentRole,
@@ -225,7 +229,7 @@ function workItemProjectTarget(value: unknown): WorkItemProjectTarget {
   if (!isRecord(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "projectTarget must be an object");
   if (value.mode === "auto") {
     exact(value, ["mode"], "Automatic project target");
-    return Object.freeze({ mode: "auto" });
+    throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, "Choose a project");
   }
   if (value.mode === "explicit") {
     const item = exact(value, ["mode", "projectId"], "Explicit project target");
@@ -427,12 +431,13 @@ export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevi
 
 export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest {
   const item = allowed(value, ["originalRequest", "priority", "projectTarget"], ["originalRequest"], "Work item");
+  if (item.projectTarget === undefined) {
+    throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, "Choose a project");
+  }
   return Object.freeze({
     originalRequest: text(item.originalRequest, "originalRequest", 16_000),
     priority: item.priority === undefined ? "normal" : workItemPriority(item.priority),
-    projectTarget: item.projectTarget === undefined
-      ? Object.freeze({ mode: "auto" as const })
-      : workItemProjectTarget(item.projectTarget),
+    projectTarget: workItemProjectTarget(item.projectTarget),
   });
 }
 

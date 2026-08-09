@@ -68,11 +68,12 @@ export function taskRequest(overrides: Partial<CreateTaskRequest> = {}): CreateT
   };
 }
 
-export function workItemRequest(overrides: Partial<CreateWorkItemRequest> = {}): CreateWorkItemRequest {
+export function workItemRequest(
+  overrides: Partial<CreateWorkItemRequest> & Pick<CreateWorkItemRequest, "projectTarget">,
+): CreateWorkItemRequest {
   return {
     originalRequest: "Make checkout retries safe and observable.",
     priority: "normal",
-    projectTarget: { mode: "auto" },
     ...overrides,
   };
 }

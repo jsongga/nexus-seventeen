@@ -559,17 +559,18 @@ function WorkItemForm({
   const [projectId, setProjectId] = useState(defaultProjectId ?? '');
   const [idempotencyKey, setIdempotencyKey] = useState(randomUuid);
   const normalizedPrompt = prompt.trim();
+  const projectChosen = projects.some((project) => project.id === projectId);
   const regenerateIdempotencyKey = () => setIdempotencyKey(randomUuid());
   return (
     <form
       className="space-y-4 p-5 sm:p-6"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!normalizedPrompt) return;
+        if (!normalizedPrompt || !projectChosen) return;
         void onSubmit({
           originalRequest: normalizedPrompt,
           priority,
-          projectTarget: projectId ? { mode: 'explicit', projectId } : { mode: 'auto' },
+          projectId,
           idempotencyKey,
         });
       }}
@@ -613,18 +614,28 @@ function WorkItemForm({
           <select
             id="work-item-project"
             className={inputClass}
-            value={projectId}
+            required
+            disabled={projects.length === 0}
+            aria-describedby={projects.length === 0 ? 'work-item-project-help' : undefined}
+            value={projectChosen ? projectId : ''}
             onChange={(event) => {
               setProjectId(event.target.value);
               regenerateIdempotencyKey();
             }}
           >
-            <option value="">Auto</option>
+            <option value="" disabled>Choose a project</option>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
+          {projects.length === 0 ? (
+            <p id="work-item-project-help" className="mt-2 text-xs leading-5 text-muted">
+              No projects exist yet. Close this form and choose Add project first.
+            </p>
+          ) : null}
         </div>
       </div>
-      <Button className="w-full" type="submit" variant="primary" disabled={busy || !normalizedPrompt}>Submit task</Button>
+      <Button className="w-full" type="submit" variant="primary" disabled={busy || !normalizedPrompt || !projectChosen}>
+        {projectChosen ? 'Submit task' : 'Choose a project'}
+      </Button>
     </form>
   );
 }
@@ -800,7 +811,7 @@ export function BoardApp() {
     content = (
       <>
         <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', taskDetailOpen ? 'hidden xl:grid' : 'grid')}>
-          <div><h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and project routing.</p></div>
+          <div><h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
           <div className="flex flex-wrap gap-2.5">
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task')} />
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
@@ -869,7 +880,7 @@ export function BoardApp() {
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <Modal open={dialog === 'project'} onClose={() => setDialog(null)} title="Add project from disk" description="Enter the project folder. Its name, workspace scope, and engineer profile are added automatically."><ProjectForm busy={busy || !connected} onSubmit={createProject} /></Modal>
-      <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'auto'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} onSubmit={createWorkItem} /></Modal>
+      <Modal open={dialog === 'task'} onClose={() => setDialog(null)} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'unselected'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} onSubmit={createWorkItem} /></Modal>
       {error && dialog ? <div role="alert" className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-lg rounded-xl border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]"><div className="flex items-start justify-between gap-3"><span>{error}</span><button type="button" className="font-bold" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div></div> : null}
     </WorkspaceFrame>
   );

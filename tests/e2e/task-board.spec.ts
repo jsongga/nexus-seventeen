@@ -511,7 +511,7 @@ test('the default app reads real board state and assignment is an explicit human
   });
 });
 
-test('creating a task records one durable automatic work item with priority', async ({ page }) => {
+test('creating a task requires and records one explicit project with priority', async ({ page }) => {
   let createdRequest: Record<string, unknown> | null = null;
   let createdIdempotencyKey: string | undefined;
   let workItems: Record<string, unknown>[] = [];
@@ -530,7 +530,7 @@ test('creating a task records one durable automatic work item with priority', as
         workItemId: 'work-item-invoice-clarity',
         ...createdRequest,
         refinedObjective: null,
-        resolvedProjectId: null,
+        resolvedProjectId: project.projectId,
         state: 'submitted',
         currentStage: 'refinement',
         createdBy: 'human:operator',
@@ -564,19 +564,24 @@ test('creating a task records one durable automatic work item with priority', as
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
   await expect(dialog.getByLabel('Priority')).toHaveValue('normal');
   await expect(dialog.getByLabel('Project')).toHaveValue('');
+  await expect(dialog.getByRole('option', { name: 'Auto' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Choose a project' })).toBeDisabled();
   await dialog.getByRole('textbox').fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
+  await expect(dialog.getByRole('button', { name: 'Choose a project' })).toBeDisabled();
+  await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
   await expect.poll(() => createdRequest).not.toBeNull();
 
   expect(createdRequest).toEqual({
     originalRequest: 'Make invoice recovery clear\nCustomers should know what to do after a failed payment.',
     priority: 'normal',
-    projectTarget: { mode: 'auto' },
+    projectTarget: { mode: 'explicit', projectId: project.projectId },
   });
   expect(createdIdempotencyKey).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u);
   await expect(page.getByRole('heading', { name: 'Automation intake' })).toBeVisible();
-  await expect(page.getByText('Submitted · Refinement pending', { exact: true })).toBeVisible();
-  await expect(page.getByText('Project: Auto', { exact: true })).toBeVisible();
+  const intakeRow = page.getByRole('article').filter({ hasText: 'Submitted · Refinement pending' });
+  await expect(intakeRow.getByText('Submitted · Refinement pending', { exact: true })).toBeVisible();
+  await expect(intakeRow.getByText(project.name, { exact: true })).toBeVisible();
 });
 
 test('task details stay concise while showing a long description, agent estimate, and parallel phases', async ({ page }) => {
