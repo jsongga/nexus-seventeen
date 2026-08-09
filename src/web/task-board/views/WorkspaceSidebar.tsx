@@ -12,15 +12,18 @@ import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
 
 export type BoardPage =
   | { kind: 'tasks' }
+  | { kind: 'intake'; workItemId: string }
   | { kind: 'automation' }
   | { kind: 'documents'; documentId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'agent'; agentId: string };
 
 function pageIs(page: BoardPage, kind: BoardPage['kind'], id?: string): boolean {
+  if (kind === 'tasks' && page.kind === 'intake') return true;
   if (page.kind !== kind) return false;
   if (page.kind === 'project') return page.projectId === id;
   if (page.kind === 'agent') return page.agentId === id;
+  if (page.kind === 'intake') return page.workItemId === id;
   return true;
 }
 

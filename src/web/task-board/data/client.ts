@@ -193,6 +193,7 @@ export class BoardApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code: string | null = null,
   ) {
     super(message);
     this.name = 'BoardApiError';
@@ -231,6 +232,8 @@ export interface TaskBoardClient {
   }): Promise<void>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
   createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItem>;
+  cancelWorkItem(workItemId: string, input: { version: number; reason: string }): Promise<BoardWorkItem>;
+  archiveWorkItem(workItemId: string, input: { version: number }): Promise<BoardWorkItem>;
   createAgent(input: CreateAgentInput): Promise<void>;
   createTask(input: CreateTaskInput): Promise<void>;
   createAgentQuery(input: {
@@ -260,21 +263,19 @@ export interface TaskBoardClient {
     onEvent: (event: WorkflowEvent) => void;
   }): Promise<void>;
   getArtifactBlob(artifactId: string, signal?: AbortSignal): Promise<Blob>;
-  uploadArtifact(projectId: string, input: {
-    mediaType: string;
-    caption: string;
-    contentBase64: string;
-  }): Promise<ProjectArtifact>;
 }
 
-async function errorMessage(response: Response): Promise<string> {
+async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;
   try {
     const value = record(await response.json(), 'error response');
     const error = record(value.error, 'error response.error');
-    return typeof error.message === 'string' && error.message.length > 0 ? error.message : fallback;
+    return {
+      message: typeof error.message === 'string' && error.message.length > 0 ? error.message : fallback,
+      code: typeof error.code === 'string' && error.code.length > 0 ? error.code : null,
+    };
   } catch {
-    return fallback;
+    return { message: fallback, code: null };
   }
 }
 
@@ -519,7 +520,10 @@ export function createTaskBoardClient(options: {
         ...init?.headers,
       },
     });
-    if (!response.ok) throw new BoardApiError(await errorMessage(response), response.status);
+    if (!response.ok) {
+      const error = await errorDetails(response);
+      throw new BoardApiError(error.message, response.status, error.code);
+    }
     return response;
   }
 
@@ -662,13 +666,6 @@ export function createTaskBoardClient(options: {
     async getArtifactBlob(artifactId, signal) {
       return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
     },
-    async uploadArtifact(projectId, input) {
-      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, {
-        method: 'POST',
-        body: JSON.stringify({ nodeId: null, taskId: null, ...input }),
-      }), 'upload artifact response');
-      return parseProjectArtifact(envelope.artifact, 'upload artifact response.artifact');
-    },
     async getSnapshot(signal) {
       const [projectsValue, workItemsValue] = await Promise.all([
         json('/v1/projects', { signal }),
@@ -804,6 +801,34 @@ export function createTaskBoardClient(options: {
           headers: { 'idempotency-key': idempotencyKey },
         }),
         'create work item response',
+      );
+    },
+    async cancelWorkItem(workItemId, input) {
+      const reason = input.reason.trim();
+      if (reason.length === 0) throw new Error('A cancellation reason is required');
+      if (reason.length > 16_000) throw new Error('Cancellation reasons cannot exceed 16,000 characters');
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            version: integer(input.version, 'work item cancellation.version', 1),
+            action: 'cancel',
+            reason,
+          }),
+        }),
+        'cancel work item response',
+      );
+    },
+    async archiveWorkItem(workItemId, input) {
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            version: integer(input.version, 'work item archive.version', 1),
+            action: 'archive',
+          }),
+        }),
+        'archive work item response',
       );
     },
     async createAgent(input) {

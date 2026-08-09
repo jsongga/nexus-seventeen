@@ -442,15 +442,32 @@ export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest {
 }
 
 export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest {
-  const item = allowed(value, ["version", "priority", "projectTarget"], ["version"], "Work item update");
+  const item = allowed(value, ["version", "priority", "projectTarget", "action", "reason"], ["version"], "Work item update");
   if (Object.keys(item).length === 1) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Work item update contains no changes");
   }
+  const version = positiveVersion(item.version);
+  if ("action" in item) {
+    if (item.action === "cancel") {
+      if (Object.keys(item).length !== 3 || !("reason" in item)) {
+        throw new TaskBoardError(400, "INVALID_REQUEST", "Work item cancellation requires only version, action, and reason");
+      }
+      return Object.freeze({ version, action: "cancel", reason: text(item.reason, "reason", 16_000) });
+    }
+    if (item.action === "archive") {
+      if (Object.keys(item).length !== 2) {
+        throw new TaskBoardError(400, "INVALID_REQUEST", "Work item archive requires only version and action");
+      }
+      return Object.freeze({ version, action: "archive" });
+    }
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Work item action is invalid");
+  }
+  if ("reason" in item) throw new TaskBoardError(400, "INVALID_REQUEST", "reason is only valid for cancellation");
   const result: {
     version: number;
     priority?: WorkItemPriority;
     projectTarget?: WorkItemProjectTarget;
-  } = { version: positiveVersion(item.version) };
+  } = { version };
   if ("priority" in item) result.priority = workItemPriority(item.priority);
   if ("projectTarget" in item) result.projectTarget = workItemProjectTarget(item.projectTarget);
   return Object.freeze(result);

@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AnswerHumanQuestionRequest,
-  CreateHumanQuestionRequest,
-  CreateHumanTaskMessageRequest,
-  CreateTaskMessageRequest,
-  HumanQuestion,
-  TaskMessage,
-  Wakeup,
+import {
+  TASK_BOARD_ERROR_CODES,
+  isHardTerminalTaskStatus,
+  type AnswerHumanQuestionRequest,
+  type CreateHumanQuestionRequest,
+  type CreateHumanTaskMessageRequest,
+  type CreateTaskMessageRequest,
+  type HumanQuestion,
+  type TaskMessage,
+  type Wakeup,
 } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
@@ -92,6 +94,10 @@ export class MessagesCollaborator {
     const currentRow = this.runtime.store.db.prepare("SELECT * FROM questions WHERE question_id = ?").get(questionId);
     if (!currentRow) throw new TaskBoardError(404, "QUESTION_NOT_FOUND", "Question was not found");
     const current = questionFromRow(currentRow);
+    const task = this.runtime.requireTask(current.taskId);
+    if (isHardTerminalTaskStatus(task.status)) {
+      throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot accept answers");
+    }
     if (current.status === "answered") {
       if (current.answer !== request.answer || current.version !== request.version + 1) {
         throw conflict("QUESTION_ALREADY_ANSWERED", "Question already has another answer");

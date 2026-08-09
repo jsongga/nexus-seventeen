@@ -97,6 +97,7 @@ export function workItemFromRow(row: Row): WorkItem {
     priority: stringValue(row, "priority") as WorkItemPriority,
     projectTarget,
     resolvedProjectId: nullableString(row, "resolved_project_id"),
+    planningTaskId: nullableString(row, "planning_task_id"),
     state: stringValue(row, "state") as WorkItemState,
     currentStage: nullableString(row, "current_stage") as WorkItemStage | null,
     createdBy: stringValue(row, "created_by"),
@@ -104,6 +105,8 @@ export function workItemFromRow(row: Row): WorkItem {
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
     endedAt: nullableString(row, "ended_at"),
+    cancelledReason: nullableString(row, "cancelled_reason"),
+    archivedAt: nullableString(row, "archived_at"),
   });
 }
 

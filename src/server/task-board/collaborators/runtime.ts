@@ -115,7 +115,12 @@ export class TaskBoardRuntime {
   }
 
   requireWorkItem(workItemId: string) {
-    const row = this.store.db.prepare("SELECT * FROM work_items WHERE work_item_id = ?").get(workItemId);
+    const row = this.store.db.prepare(`
+      SELECT work_item.*,
+        (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id
+      FROM work_items work_item
+      WHERE work_item.work_item_id = ?
+    `).get(workItemId);
     if (!row) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
     return workItemFromRow(row);
   }

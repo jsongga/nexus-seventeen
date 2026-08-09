@@ -101,6 +101,11 @@ export class TransparentWorkflow {
     for (const id of ids) visit(id);
     const createdAt = this.now().toISOString();
     const apply = (): void => {
+      const workItem = this.db.prepare("SELECT ended_at FROM work_items WHERE work_item_id=?").get(workItemId);
+      if (workItem === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+      if (workItem.ended_at !== null) {
+        throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+      }
       if (this.db.prepare("SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state='confirmed'").get(workItemId)) {
         throw new TaskBoardError(409, "PLAN_REVISION_UNSUPPORTED", "Confirmed workflows cannot be revised in this version");
       }

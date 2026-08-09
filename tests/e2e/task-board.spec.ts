@@ -531,6 +531,7 @@ test('creating a task requires and records one explicit project with priority', 
         ...createdRequest,
         refinedObjective: null,
         resolvedProjectId: project.projectId,
+        planningTaskId: null,
         state: 'submitted',
         currentStage: 'refinement',
         createdBy: 'human:operator',
@@ -538,6 +539,8 @@ test('creating a task requires and records one explicit project with priority', 
         createdAt: '2026-07-19T18:16:00.000Z',
         updatedAt: '2026-07-19T18:16:00.000Z',
         endedAt: null,
+        cancelledReason: null,
+        archivedAt: null,
       };
       workItems = [createdWorkItem];
       await route.fulfill({ status: 201, json: { workItem: createdWorkItem } });
@@ -559,7 +562,8 @@ test('creating a task requires and records one explicit project with priority', 
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Add task' }).click();
+  const taskListActions = page.getByRole('group', { name: 'Task list actions' });
+  await taskListActions.getByRole('button', { name: 'Add task' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
   await expect(dialog.getByLabel('Priority')).toHaveValue('normal');
@@ -579,9 +583,354 @@ test('creating a task requires and records one explicit project with priority', 
   });
   expect(createdIdempotencyKey).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u);
   await expect(page.getByRole('heading', { name: 'Automation intake' })).toBeVisible();
-  const intakeRow = page.getByRole('article').filter({ hasText: 'Submitted · Refinement pending' });
+  const intakeRow = page.getByRole('button', { name: /Make invoice recovery clear/u });
   await expect(intakeRow.getByText('Submitted · Refinement pending', { exact: true })).toBeVisible();
   await expect(intakeRow.getByText(project.name, { exact: true })).toBeVisible();
+});
+
+test('work-item detail resolves planning input, confirms a workflow, archives completion, and cancels another intake', async ({ page }) => {
+  const planningTaskId = 'task-plan-work-item-detail';
+  const questionId = 'question-plan-work-item-detail';
+  const planRevisionId = 'plan-work-item-detail';
+  let primaryWorkItem: Record<string, unknown> | null = null;
+  let cancellableWorkItem: Record<string, unknown> | null = null;
+  let createCount = 0;
+  let planningAnswered = false;
+  let planConfirmed = false;
+  let workflowCompleted = false;
+  let answerAttempts = 0;
+  let confirmAttempts = 0;
+  let workItemListRequests = 0;
+  let answerRequest: Record<string, unknown> | null = null;
+  let confirmRequest: Record<string, unknown> | null = null;
+  let archiveRequest: Record<string, unknown> | null = null;
+  let cancelRequest: Record<string, unknown> | null = null;
+
+  const planningTask = () => ({
+    ...task,
+    taskId: planningTaskId,
+    title: 'Plan workflow: Prepare a customer recovery workflow',
+    objective: 'Prepare a customer recovery workflow with an operator-approved plan.',
+    acceptanceCriteria: 'Return a concise workflow plan with explicit dependencies.',
+    requiresReview: false,
+    status: planningAnswered ? 'completed' : 'blocked',
+    assignedAgentId: manager.agentId,
+    assignedRole: 'manager',
+    expectedAgentMinutes: 15,
+    estimateRecordedAt: '2026-07-19T18:17:00.000Z',
+    orderKey: 1_000,
+    startedAt: '2026-07-19T18:17:00.000Z',
+    expectedCompletedAt: null,
+    endedAt: planningAnswered ? '2026-07-19T18:19:00.000Z' : null,
+    result: planningAnswered ? 'Proposed a two-node customer recovery workflow.' : null,
+    version: planningAnswered ? 3 : 2,
+    createdAt: '2026-07-19T18:17:00.000Z',
+    updatedAt: planningAnswered ? '2026-07-19T18:19:00.000Z' : '2026-07-19T18:18:00.000Z',
+  });
+  const question = () => ({
+    apiVersion,
+    questionId,
+    projectId: project.projectId,
+    taskId: planningTaskId,
+    agentId: manager.agentId,
+    runId: 'run-plan-work-item-detail',
+    question: 'Should the recovery workflow preserve the current customer-facing retry copy?',
+    status: planningAnswered ? 'answered' : 'open',
+    answer: planningAnswered ? 'Yes, preserve the current retry copy.' : null,
+    askedAt: '2026-07-19T18:18:00.000Z',
+    answeredAt: planningAnswered ? '2026-07-19T18:19:00.000Z' : null,
+    answeredBy: planningAnswered ? 'human:operator' : null,
+    version: planningAnswered ? 2 : 1,
+  });
+  const plan = () => ({
+    apiVersion,
+    planRevisionId,
+    workItemId: String(primaryWorkItem?.workItemId),
+    revision: 1,
+    objective: 'Preserve retry copy while making recovery observable.',
+    assumptions: ['The existing retry copy remains approved.'],
+    acceptanceCriteria: ['Recovery behavior is tested and independently verified.'],
+    projectId: project.projectId,
+    skillDigests: {},
+    state: planConfirmed ? 'confirmed' : 'proposed',
+    createdBy: manager.agentId,
+    confirmedBy: planConfirmed ? 'human:operator' : null,
+    createdAt: '2026-07-19T18:19:00.000Z',
+    confirmedAt: planConfirmed ? '2026-07-19T18:20:00.000Z' : null,
+  });
+  const workflowNodes = () => [{
+    apiVersion,
+    nodeId: 'node-research-recovery',
+    planRevisionId,
+    projectId: project.projectId,
+    title: 'Research recovery failures',
+    objective: 'Trace the failed-payment recovery path.',
+    acceptanceCriteria: ['The failure path is documented.'],
+    dependencyNodeIds: [],
+    stageTemplate: ['research', 'verification'],
+    currentStage: planConfirmed ? 'research' : null,
+    state: planConfirmed ? 'active' : 'pending',
+    version: planConfirmed ? 2 : 1,
+    createdAt: '2026-07-19T18:19:00.000Z',
+    updatedAt: planConfirmed ? '2026-07-19T18:20:00.000Z' : '2026-07-19T18:19:00.000Z',
+  }, {
+    apiVersion,
+    nodeId: 'node-implement-recovery',
+    planRevisionId,
+    projectId: project.projectId,
+    title: 'Implement recovery guidance',
+    objective: 'Make the retry path clear and observable.',
+    acceptanceCriteria: ['Focused checks pass.'],
+    dependencyNodeIds: ['node-research-recovery'],
+    stageTemplate: ['implementation', 'testing', 'verification'],
+    currentStage: null,
+    state: 'pending',
+    version: 1,
+    createdAt: '2026-07-19T18:19:00.000Z',
+    updatedAt: '2026-07-19T18:19:00.000Z',
+  }];
+  const workflow = () => ({ plans: [plan()], nodes: workflowNodes(), handoffs: [], events: [] });
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const method = request.method();
+    if (url.pathname === '/board-api/v1/work-items' && method === 'GET') {
+      workItemListRequests += 1;
+      if (workflowCompleted && primaryWorkItem && primaryWorkItem.archivedAt === null) {
+        primaryWorkItem = {
+          ...primaryWorkItem,
+          state: 'completed',
+          currentStage: null,
+          version: 5,
+          updatedAt: '2026-07-19T18:30:00.000Z',
+          endedAt: '2026-07-19T18:30:00.000Z',
+        };
+      }
+      const workItems = [primaryWorkItem, cancellableWorkItem]
+        .filter((item): item is Record<string, unknown> => item !== null && item.archivedAt === null);
+      await route.fulfill({ json: { workItems } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/work-items' && method === 'POST') {
+      createCount += 1;
+      const input = request.postDataJSON() as Record<string, unknown>;
+      const common = {
+        apiVersion,
+        originalRequest: input.originalRequest,
+        refinedObjective: null,
+        priority: input.priority,
+        projectTarget: input.projectTarget,
+        resolvedProjectId: project.projectId,
+        currentStage: 'planning',
+        createdBy: 'human:operator',
+        createdAt: '2026-07-19T18:16:00.000Z',
+        updatedAt: '2026-07-19T18:18:00.000Z',
+        endedAt: null,
+        cancelledReason: null,
+        archivedAt: null,
+      };
+      if (createCount === 1) {
+        primaryWorkItem = {
+          ...common,
+          workItemId: 'work-item-detail-primary',
+          planningTaskId,
+          refinedObjective: 'Preserve retry copy while making recovery observable.',
+          state: 'needs_input',
+          version: 2,
+        };
+        await route.fulfill({ status: 201, json: { workItem: primaryWorkItem } });
+      } else {
+        cancellableWorkItem = {
+          ...common,
+          workItemId: 'work-item-detail-cancel',
+          planningTaskId: null,
+          state: 'submitted',
+          currentStage: 'refinement',
+          version: 1,
+          updatedAt: '2026-07-19T18:32:00.000Z',
+        };
+        await route.fulfill({ status: 201, json: { workItem: cancellableWorkItem } });
+      }
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/work-item-detail-primary` && method === 'PATCH') {
+      archiveRequest = request.postDataJSON() as Record<string, unknown>;
+      primaryWorkItem = {
+        ...primaryWorkItem!,
+        version: 6,
+        updatedAt: '2026-07-19T18:31:00.000Z',
+        archivedAt: '2026-07-19T18:31:00.000Z',
+      };
+      await route.fulfill({ json: { workItem: primaryWorkItem } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/work-item-detail-cancel` && method === 'PATCH') {
+      cancelRequest = request.postDataJSON() as Record<string, unknown>;
+      cancellableWorkItem = {
+        ...cancellableWorkItem!,
+        state: 'cancelled',
+        currentStage: null,
+        version: 2,
+        updatedAt: '2026-07-19T18:34:00.000Z',
+        endedAt: '2026-07-19T18:34:00.000Z',
+        cancelledReason: String(cancelRequest.reason),
+      };
+      await route.fulfill({ json: { workItem: cancellableWorkItem } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/questions/${questionId}/answer` && method === 'POST') {
+      answerAttempts += 1;
+      answerRequest = request.postDataJSON() as Record<string, unknown>;
+      if (answerAttempts === 1) {
+        await route.fulfill({
+          status: 503,
+          json: { error: { code: 'BOARD_UNAVAILABLE', message: 'The planning answer could not be saved.' } },
+        });
+        return;
+      }
+      planningAnswered = true;
+      primaryWorkItem = {
+        ...primaryWorkItem!,
+        state: 'waiting_for_human_review',
+        currentStage: 'human_review',
+        version: 3,
+        updatedAt: '2026-07-19T18:19:00.000Z',
+      };
+      await route.fulfill({ json: { question: question(), duplicate: false } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/workflow` && method === 'GET') {
+      await route.fulfill({ json: { workflow: workflow() } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/plans/${planRevisionId}/confirm` && method === 'POST') {
+      confirmAttempts += 1;
+      confirmRequest = request.postDataJSON() as Record<string, unknown>;
+      if (confirmAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'WORK_ITEM_ENDED', message: 'Work item has ended' } },
+        });
+        return;
+      }
+      planConfirmed = true;
+      primaryWorkItem = {
+        ...primaryWorkItem!,
+        state: 'processing',
+        currentStage: 'research',
+        version: 4,
+        updatedAt: '2026-07-19T18:20:00.000Z',
+      };
+      await route.fulfill({ json: { workflow: workflow() } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      const openQuestions = planningAnswered ? [] : primaryWorkItem ? [question()] : [];
+      await route.fulfill({
+        json: {
+          ...board(),
+          agents: [agent, manager],
+          tasks: primaryWorkItem ? [planningTask()] : [],
+          openQuestions,
+          recentQuestions: planningAnswered ? [question()] : [],
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/messages')) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  const taskListActions = page.getByRole('group', { name: 'Task list actions' });
+  await taskListActions.getByRole('button', { name: 'Add task' }).click();
+  let dialog = page.getByRole('dialog', { name: 'Add a task' });
+  await dialog.getByLabel('Task').fill('Prepare a customer recovery workflow');
+  await dialog.getByLabel('Project').selectOption(project.projectId);
+  await dialog.getByRole('button', { name: 'Submit task' }).click();
+
+  const primaryRow = page.getByRole('article', { name: 'Work item: Preserve retry copy while making recovery observable.' });
+  const primaryRowButton = primaryRow.getByRole('button', { name: /Needs input/u });
+  await primaryRowButton.click();
+  await expect(page).toHaveURL(/#\/intake\/work-item-detail-primary$/u);
+  const pane = page.getByRole('region', { name: 'Work-item details' });
+  const paneHeading = pane.getByRole('heading', { name: 'Work-item details' });
+  const belowXl = (page.viewportSize()?.width ?? 1_280) < 1_280;
+  if (belowXl) await expect(paneHeading).toBeFocused();
+  else await expect(primaryRowButton).toBeFocused();
+  await expect(paneHeading).toBeVisible();
+  await expect(pane.getByText('Should the recovery workflow preserve the current customer-facing retry copy?', { exact: true })).toBeVisible();
+  await expect(pane.getByText(project.name, { exact: true })).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(page.getByRole('heading', { name: 'Task List' })).toBeVisible();
+  if (belowXl) await expect(primaryRowButton).toBeFocused();
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/intake\/work-item-detail-primary$/u);
+
+  const answer = pane.getByLabel('Your answer');
+  await answer.fill('Yes, preserve the current retry copy.');
+  await pane.getByRole('button', { name: 'Answer and resume planning' }).click();
+  await expect(pane.getByRole('alert').filter({ hasText: 'The planning answer could not be saved.' })).toBeVisible();
+  await expect(answer).toHaveValue('Yes, preserve the current retry copy.');
+  await pane.getByRole('button', { name: 'Answer and resume planning' }).click();
+  await expect.poll(() => answerRequest).toEqual({ answer: 'Yes, preserve the current retry copy.', version: 1 });
+  await expect.poll(() => answerAttempts).toBe(2);
+  await expect(answer).toHaveCount(0);
+  await expect(pane.getByRole('heading', { name: 'Proposed plan' })).toBeVisible();
+  const researchNode = pane.getByRole('article', { name: 'Research recovery failures' });
+  const implementationNode = pane.getByRole('article', { name: 'Implement recovery guidance' });
+  await expect(researchNode.getByText('Research recovery failures', { exact: true })).toBeVisible();
+  await expect(implementationNode.getByText('Implement recovery guidance', { exact: true })).toBeVisible();
+  await expect(implementationNode.getByText('Research recovery failures', { exact: true })).toBeVisible();
+
+  const requestsBeforeConflict = workItemListRequests;
+  await pane.getByRole('button', { name: 'Confirm plan' }).click();
+  await expect(pane.getByRole('alert').filter({ hasText: 'This work item ended before the plan could be confirmed.' })).toBeVisible();
+  await expect.poll(() => workItemListRequests).toBeGreaterThan(requestsBeforeConflict);
+  await pane.getByRole('button', { name: 'Confirm plan' }).click();
+  await expect.poll(() => confirmRequest).toEqual({ expectedState: 'proposed' });
+  await expect.poll(() => confirmAttempts).toBe(2);
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Processing · Researching', { exact: true })).toBeVisible();
+
+  workflowCompleted = true;
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('completed', { exact: true })).toBeVisible();
+  await pane.getByRole('button', { name: 'Archive', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Archive work item' });
+  await dialog.getByRole('button', { name: 'Archive work item' }).click();
+  await expect.poll(() => archiveRequest).toEqual({ version: 5, action: 'archive' });
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(primaryRow).toHaveCount(0);
+
+  await taskListActions.getByRole('button', { name: 'Add task' }).click();
+  dialog = page.getByRole('dialog', { name: 'Add a task' });
+  await dialog.getByLabel('Task').fill('Cancel this superseded intake');
+  await dialog.getByLabel('Project').selectOption(project.projectId);
+  await dialog.getByRole('button', { name: 'Submit task' }).click();
+  const cancellableRow = page.getByRole('article', { name: 'Work item: Cancel this superseded intake' });
+  await cancellableRow.getByRole('button', { name: /Submitted/u }).click();
+  await pane.getByRole('button', { name: 'Cancel work item' }).click();
+  dialog = page.getByRole('dialog', { name: 'Cancel work item' });
+  await dialog.getByLabel('Reason').fill('A newer request supersedes this intake.');
+  await dialog.getByRole('button', { name: 'Cancel work item' }).click();
+  await expect.poll(() => cancelRequest).toEqual({
+    version: 1,
+    action: 'cancel',
+    reason: 'A newer request supersedes this intake.',
+  });
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('cancelled', { exact: true })).toBeVisible();
+  await expect(pane.getByRole('heading', { name: 'Cancellation reason' })).toBeVisible();
+  await expect(pane.getByText('A newer request supersedes this intake.', { exact: true })).toBeVisible();
 });
 
 test('task details stay concise while showing a long description, agent estimate, and parallel phases', async ({ page }) => {

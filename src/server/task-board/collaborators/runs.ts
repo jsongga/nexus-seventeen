@@ -361,34 +361,45 @@ export class RunsCollaborator {
           throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
         }
         const workItemId = String(planning.work_item_id);
-        const existingPlan = this.runtime.store.db.prepare(
-          "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
-        ).get(workItemId);
-        if (!existingPlan) {
-          const configured = this.automation.getConfiguration();
-          const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
-          for (const stage of requiredStages) {
-            const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
-            const agentType = executor?.kind === "agent_type"
-              ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
-              : undefined;
-            if (agentType === undefined) {
-              throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
+        if (planning.ended_at !== null) {
+          this.runtime.insertEvent(
+            current.projectId,
+            current.taskId,
+            { type: "agent", id: agentId },
+            "work_item_plan_discarded",
+            { workItemId, runId, reason: "work_item_ended" },
+            now,
+          );
+        } else {
+          const existingPlan = this.runtime.store.db.prepare(
+            "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
+          ).get(workItemId);
+          if (!existingPlan) {
+            const configured = this.automation.getConfiguration();
+            const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
+            for (const stage of requiredStages) {
+              const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
+              const agentType = executor?.kind === "agent_type"
+                ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
+                : undefined;
+              if (agentType === undefined) {
+                throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
+              }
             }
+            const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
+              requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
+            const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
+              agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
+            workflowProposal = {
+              workItemId,
+              projectId: String(planning.resolved_project_id),
+              objective: request.workflowPlan.objective,
+              assumptions: request.workflowPlan.assumptions,
+              acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
+              skillIds,
+              nodes: request.workflowPlan.nodes,
+            };
           }
-          const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
-            requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
-          const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
-            agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
-          workflowProposal = {
-            workItemId,
-            projectId: String(planning.resolved_project_id),
-            objective: request.workflowPlan.objective,
-            assumptions: request.workflowPlan.assumptions,
-            acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
-            skillIds,
-            nodes: request.workflowPlan.nodes,
-          };
         }
       } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");

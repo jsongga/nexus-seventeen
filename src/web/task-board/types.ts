@@ -132,6 +132,7 @@ export interface BoardWorkItem {
   priority: WorkItemPriority;
   projectTarget: WorkItemProjectTarget;
   resolvedProjectId: string | null;
+  planningTaskId: string | null;
   state: WorkItemState;
   currentStage: WorkItemStage | null;
   createdBy: string;
@@ -139,6 +140,8 @@ export interface BoardWorkItem {
   createdAt: string;
   updatedAt: string;
   endedAt: string | null;
+  cancelledReason: string | null;
+  archivedAt: string | null;
 }
 
 export interface BoardProject {
@@ -283,6 +286,7 @@ export interface BoardSnapshot {
 
 export interface WorkflowPlan {
   planRevisionId: string;
+  workItemId: string;
   revision: number;
   objective: string;
   assumptions: string[];

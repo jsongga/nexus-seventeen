@@ -24,10 +24,16 @@ import { DocumentsPage } from './views/DocumentsPage';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
+import { WorkItemDetail, type WorkItemDetailMutationResult } from './views/WorkItemDetail';
 import {
   isExplicitPointOfContact,
   selectPointOfContact,
 } from './model/workspace-model';
+import {
+  prettyStatus,
+  workItemStateTone,
+  workItemStatusLabel,
+} from './model/work-item-labels';
 import type {
   BoardAgent,
   BoardQuestion,
@@ -41,8 +47,6 @@ import type {
   TaskKind,
   TaskStatus,
   WorkItemPriority,
-  WorkItemStage,
-  WorkItemState,
 } from './types';
 
 const dateTime = new Intl.DateTimeFormat(undefined, {
@@ -64,16 +68,6 @@ const statusTone: Record<TaskStatus, 'neutral' | 'green' | 'amber' | 'red' | 'bl
   interrupted: 'red',
 };
 
-const workItemStateTone: Record<WorkItemState, 'neutral' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
-  submitted: 'blue',
-  processing: 'green',
-  needs_input: 'amber',
-  waiting_for_human_review: 'amber',
-  completed: 'green',
-  failed: 'red',
-  cancelled: 'neutral',
-};
-
 const workItemPriorityTone: Record<WorkItemPriority, 'neutral' | 'amber' | 'red' | 'blue' | 'purple'> = {
   urgent: 'red',
   high: 'amber',
@@ -82,23 +76,7 @@ const workItemPriorityTone: Record<WorkItemPriority, 'neutral' | 'amber' | 'red'
   opportunistic: 'purple',
 };
 
-const workItemStageLabel: Record<WorkItemStage, string> = {
-  refinement: 'Improving task',
-  project_resolution: 'Resolving project',
-  research: 'Researching',
-  planning: 'Planning',
-  implementation: 'Implementing',
-  testing: 'Testing',
-  verification: 'Verifying',
-  human_review: 'Preparing human review',
-  deployment: 'Deploying',
-};
-
 type DialogName = 'project' | 'task' | null;
-
-function prettyStatus(value: string): string {
-  return value.replaceAll('_', ' ');
-}
 
 /**
  * The board sits behind staff SSO, which the app never sees succeed -- it only
@@ -162,32 +140,45 @@ function TaskKindPill({ kind }: { kind: TaskKind }) {
   return <Pill tone={tone}>{taskKindLabel[kind]}</Pill>;
 }
 
-function workItemStatusLabel(workItem: BoardWorkItem): string {
-  if (workItem.state === 'submitted') return 'Submitted · Refinement pending';
-  if (workItem.state === 'processing') {
-    return workItem.currentStage ? `Processing · ${workItemStageLabel[workItem.currentStage]}` : 'Processing';
-  }
-  if (workItem.state === 'needs_input') return 'Needs input';
-  if (workItem.state === 'waiting_for_human_review') return 'Waiting for human review';
-  return prettyStatus(workItem.state);
-}
-
-function WorkItemRow({ workItem, projects }: { workItem: BoardWorkItem; projects: BoardSnapshot['projects'] }) {
+function WorkItemRow({
+  workItem,
+  projects,
+  selected,
+  onSelect,
+  buttonRef,
+}: {
+  workItem: BoardWorkItem;
+  projects: BoardSnapshot['projects'];
+  selected: boolean;
+  onSelect: () => void;
+  buttonRef: (element: HTMLButtonElement | null) => void;
+}) {
   const projectId = workItem.resolvedProjectId
     ?? (workItem.projectTarget.mode === 'explicit' ? workItem.projectTarget.projectId : null);
   const projectName = projectId === null
     ? 'Project: Auto'
     : projects.find((project) => project.id === projectId)?.name ?? projectId;
   const displayRequest = workItem.refinedObjective?.trim() || workItem.originalRequest;
+  const rowTitle = taskTitleFromPrompt(displayRequest);
   return (
-    <article className="mx-2 rounded-md border-b border-line px-3 py-4 last:border-b-0">
-      <div className="flex items-start gap-4">
+    <article aria-label={`Work item: ${rowTitle}`} className="last:[&>button]:border-b-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={`${rowTitle} ${workItemStatusLabel(workItem)}`}
+        onClick={onSelect}
+        className={cn(
+          'group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-paper/75 motion-safe:active:scale-[0.995]',
+          selected && 'bg-paper hover:bg-paper',
+        )}
+      >
+        <div className="flex items-start gap-4">
         <span className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-taupe" aria-hidden="true">
           <Activity size={12} strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{taskTitleFromPrompt(displayRequest)}</h3>
+            <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{rowTitle}</h3>
             <Pill tone={workItemPriorityTone[workItem.priority]}>{workItem.priority} priority</Pill>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
@@ -195,7 +186,11 @@ function WorkItemRow({ workItem, projects }: { workItem: BoardWorkItem; projects
             <span>{projectName}</span>
           </div>
         </div>
-      </div>
+        <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
+          <ChevronRight size={12} strokeWidth={2} />
+        </span>
+        </div>
+      </button>
     </article>
   );
 }
@@ -641,6 +636,7 @@ function WorkItemForm({
 }
 
 function missingRouteFallback(page: BoardPage, snapshot: BoardSnapshot): BoardPage | null {
+  if (page.kind === 'intake' && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId)) return { kind: 'tasks' };
   if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
   if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
   if (page.kind === 'documents' && page.documentId && !snapshot.documents.some((document) => document.id === page.documentId)) return { kind: 'documents' };
@@ -664,6 +660,9 @@ export function BoardApp() {
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
+  const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const lastOpenWorkItemId = useRef<string | null>(null);
+  const workItemDetailWasOpen = useRef(false);
 
   const refresh = useCallback(async (quiet = false): Promise<boolean> => {
     const sequence = ++refreshSequence.current;
@@ -740,8 +739,35 @@ export function BoardApp() {
     }
   }, [connected, refresh]);
 
+  const mutateWorkItemDetail = useCallback(async (operation: () => Promise<unknown>): Promise<WorkItemDetailMutationResult> => {
+    if (!connected) return { saved: false, error: 'The board service is not reachable. Reconnect before saving this change.' };
+    setBusy(true);
+    try {
+      await operation();
+      await refresh(true);
+      return { saved: true };
+    } catch (caught) {
+      if (caught instanceof BoardApiError) {
+        if (caught.code === 'WORK_ITEM_ENDED') {
+          await refresh(true);
+          return { saved: false, error: 'This work item ended before the plan could be confirmed. Refresh to see its current state.' };
+        }
+        if (caught.code === 'WORK_ITEM_VERSION_CONFLICT' || caught.code === 'PLAN_NOT_PROPOSED') {
+          await refresh(true);
+          return { saved: false, error: 'This work item or plan changed in another session. Refresh before trying again.' };
+        }
+      }
+      return { saved: false, error: caught instanceof Error ? caught.message : 'The change could not be saved.' };
+    } finally {
+      setBusy(false);
+    }
+  }, [connected, refresh]);
+
   const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id)), [snapshot]);
   const allWorkItems = snapshot?.workItems ?? [];
+  const selectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
+  const workItemDetailOpen = selectedWorkItem !== undefined;
+  const anyDetailOpen = taskDetailOpen || workItemDetailOpen;
   const activeTasks = allTasks.filter((task) => task.status !== 'completed');
   const completedTasks = allTasks.filter((task) => task.status === 'completed');
   const selectedTask = allTasks.find((task) => task.id === selectedTaskId) ?? allTasks[0];
@@ -753,10 +779,34 @@ export function BoardApp() {
   const pageProject = page.kind === 'project' ? snapshot?.projects.find((project) => project.id === page.projectId) : undefined;
   const pageAgent = page.kind === 'agent' ? snapshot?.agents.find((agent) => agent.id === page.agentId) : undefined;
   const dialogProject = snapshot?.projects.find((project) => project.id === dialogProjectId);
+
+  useEffect(() => {
+    const belowXl = typeof window.matchMedia === 'function'
+      && window.matchMedia('(max-width: 1279px)').matches;
+    if (workItemDetailOpen && selectedWorkItem) {
+      lastOpenWorkItemId.current = selectedWorkItem.id;
+    } else if (workItemDetailWasOpen.current && belowXl) {
+      const workItemId = lastOpenWorkItemId.current;
+      window.requestAnimationFrame(() => {
+        if (workItemId) workItemRowRefs.current.get(workItemId)?.focus();
+      });
+    }
+    workItemDetailWasOpen.current = workItemDetailOpen;
+  }, [selectedWorkItem, workItemDetailOpen]);
+
   function openTask(taskId: string) {
     setSelectedTaskId(taskId);
     navigate({ kind: 'tasks' });
     setTaskDetailOpen(true);
+  }
+
+  function openWorkItem(workItemId: string) {
+    setTaskDetailOpen(false);
+    navigate({ kind: 'intake', workItemId });
+  }
+
+  function closeWorkItem() {
+    navigate({ kind: 'tasks' }, 'replace');
   }
 
   function openDialog(name: Exclude<DialogName, null>, projectId?: string) {
@@ -810,17 +860,17 @@ export function BoardApp() {
   } else {
     content = (
       <>
-        <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', taskDetailOpen ? 'hidden xl:grid' : 'grid')}>
+        <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', anyDetailOpen ? 'hidden xl:grid' : 'grid')}>
           <div><h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
-          <div className="flex flex-wrap gap-2.5">
+          <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task')} />
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
-            {taskDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
+            {anyDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
           </div>
         </header>
         <main className="w-full max-w-[1600px] p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8">
-          <div className={cn('grid items-start gap-8', taskDetailOpen ? 'xl:grid-cols-[minmax(360px,.92fr)_minmax(420px,1.08fr)] xl:gap-10' : 'max-w-5xl')}>
-            <div className={cn('min-w-0', taskDetailOpen ? 'hidden xl:block' : 'block')}>
+          <div className={cn('grid items-start gap-8', anyDetailOpen ? 'xl:grid-cols-[minmax(360px,.92fr)_minmax(420px,1.08fr)] xl:gap-10' : 'max-w-5xl')}>
+            <div className={cn('min-w-0', anyDetailOpen ? 'hidden xl:block' : 'block')}>
               <div className="space-y-8">
                 {allWorkItems.length > 0 ? (
                   <section aria-labelledby="automation-intake-heading">
@@ -828,7 +878,17 @@ export function BoardApp() {
                       <h2 id="automation-intake-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">Automation intake</h2>
                       <span className="text-xs text-muted">{allWorkItems.length}</span>
                     </div>
-                    <div>{allWorkItems.map((workItem) => <WorkItemRow key={workItem.id} workItem={workItem} projects={snapshot.projects} />)}</div>
+                    <div>{allWorkItems.map((workItem) => <WorkItemRow
+                      key={workItem.id}
+                      workItem={workItem}
+                      projects={snapshot.projects}
+                      selected={workItemDetailOpen && workItem.id === selectedWorkItem.id}
+                      onSelect={() => openWorkItem(workItem.id)}
+                      buttonRef={(element) => {
+                        if (element) workItemRowRefs.current.set(workItem.id, element);
+                        else workItemRowRefs.current.delete(workItem.id);
+                      }}
+                    />)}</div>
                   </section>
                 ) : null}
                 {allTasks.length > 0 ? (
@@ -854,9 +914,26 @@ export function BoardApp() {
                 {allWorkItems.length === 0 && allTasks.length === 0 ? <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button size="sm" variant="primary" onClick={() => openDialog('task')}>Add task</Button>} /> : null}
               </div>
             </div>
-            <div className={cn(taskDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
-              {taskDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={() => setTaskDetailOpen(false)}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button></div> : null}
-              {selectedTask ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={async (agentId) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version })); }} onReturnToBacklog={async () => { await mutate(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version })); }} onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }} onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }} onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }} onDecideHumanCheck={async (status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
+            <div className={cn(anyDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
+              {anyDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={workItemDetailOpen ? closeWorkItem : () => setTaskDetailOpen(false)}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button></div> : null}
+              {selectedWorkItem ? <WorkItemDetail
+                key={selectedWorkItem.id}
+                workItem={selectedWorkItem}
+                projectName={snapshot.projects.find((project) => project.id === selectedWorkItem.resolvedProjectId)?.name ?? null}
+                planningTask={snapshot.tasks.find((task) => task.id === selectedWorkItem.planningTaskId) ?? null}
+                openQuestion={snapshot.questions.find((question) => question.taskId === selectedWorkItem.planningTaskId && question.status === 'open') ?? null}
+                client={client}
+                busy={busy || !connected}
+                onClose={closeWorkItem}
+                onAnswer={(questionId, answer) => mutateWorkItemDetail(() => client.answerQuestion(questionId, { answer }))}
+                onConfirm={(planRevisionId) => mutateWorkItemDetail(() => client.confirmWorkflow(planRevisionId))}
+                onCancel={(reason) => mutateWorkItemDetail(() => client.cancelWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version, reason }))}
+                onArchive={async () => {
+                  const result = await mutateWorkItemDetail(() => client.archiveWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version }));
+                  if (result.saved) closeWorkItem();
+                  return result;
+                }}
+              /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={async (agentId) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version })); }} onReturnToBacklog={async () => { await mutate(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version })); }} onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }} onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }} onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }} onDecideHumanCheck={async (status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
             </div>
           </div>
         </main>
@@ -868,6 +945,8 @@ export function BoardApp() {
     ? `project-${page.projectId}`
     : page.kind === 'agent'
       ? `agent-${page.agentId}`
+    : page.kind === 'intake'
+        ? 'tasks'
       : page.kind === 'documents'
         ? 'documents'
         : page.kind === 'automation'

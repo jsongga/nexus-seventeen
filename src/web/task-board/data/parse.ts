@@ -83,6 +83,7 @@ export interface RawWorkItem {
   priority: WorkItemPriority;
   projectTarget: WorkItemProjectTarget;
   resolvedProjectId: string | null;
+  planningTaskId: string | null;
   state: WorkItemState;
   currentStage: WorkItemStage | null;
   createdBy: string;
@@ -90,6 +91,8 @@ export interface RawWorkItem {
   createdAt: string;
   updatedAt: string;
   endedAt: string | null;
+  cancelledReason: string | null;
+  archivedAt: string | null;
 }
 
 export interface RawAgent {
@@ -363,8 +366,12 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   const resolvedProjectId = nullableString(item.resolvedProjectId, `${path}.resolvedProjectId`);
   const state = member(item.state, workItemStates, `${path}.state`);
   const endedAt = nullableTimestamp(item.endedAt, `${path}.endedAt`);
+  const cancelledReason = nullableString(item.cancelledReason, `${path}.cancelledReason`);
+  const archivedAt = nullableTimestamp(item.archivedAt, `${path}.archivedAt`);
   const terminal = state === 'completed' || state === 'failed' || state === 'cancelled';
   if (terminal !== (endedAt !== null)) throw new Error(`${path}.endedAt does not match its state`);
+  if (archivedAt !== null && !terminal) throw new Error(`${path}.archivedAt requires a terminal state`);
+  if (cancelledReason !== null && state !== 'cancelled') throw new Error(`${path}.cancelledReason requires a cancelled state`);
   if (projectTarget.mode === 'explicit' && resolvedProjectId !== projectTarget.projectId) {
     throw new Error(`${path}.resolvedProjectId must match its explicit project target`);
   }
@@ -375,6 +382,7 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
     priority: member(item.priority, workItemPriorities, `${path}.priority`),
     projectTarget,
     resolvedProjectId,
+    planningTaskId: nullableString(item.planningTaskId, `${path}.planningTaskId`),
     state,
     currentStage: item.currentStage === null
       ? null
@@ -384,6 +392,8 @@ export function parseWorkItem(value: unknown, path: string): RawWorkItem {
     createdAt: timestamp(item.createdAt, `${path}.createdAt`),
     updatedAt: timestamp(item.updatedAt, `${path}.updatedAt`),
     endedAt,
+    cancelledReason,
+    archivedAt,
   };
 }
 
@@ -394,13 +404,14 @@ function validateStringRecord(value: unknown, path: string): void {
 
 export function parseWorkflowPlan(value: unknown, path: string): WorkflowPlan {
   const item = apiEntity(value, path);
-  string(item.workItemId, `${path}.workItemId`);
+  const workItemId = string(item.workItemId, `${path}.workItemId`);
   string(item.projectId, `${path}.projectId`);
   validateStringRecord(item.skillDigests, `${path}.skillDigests`);
   string(item.createdBy, `${path}.createdBy`);
   nullableString(item.confirmedBy, `${path}.confirmedBy`);
   return {
     planRevisionId: string(item.planRevisionId, `${path}.planRevisionId`),
+    workItemId,
     revision: integer(item.revision, `${path}.revision`, 1),
     objective: string(item.objective, `${path}.objective`),
     assumptions: array(item.assumptions, `${path}.assumptions`, string),

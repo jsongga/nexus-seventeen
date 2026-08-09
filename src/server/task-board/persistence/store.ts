@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -241,6 +241,8 @@ CREATE TABLE work_items (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   ended_at TEXT,
+  cancelled_reason TEXT,
+  archived_at TEXT,
   UNIQUE(created_by, idempotency_key),
   CHECK (
     (project_target_mode = 'auto' AND target_project_id IS NULL) OR
@@ -265,6 +267,18 @@ CREATE INDEX work_items_display_order ON work_items(
   created_at,
   work_item_id
 );
+CREATE INDEX work_items_unarchived_display_order ON work_items(
+  (ended_at IS NOT NULL),
+  CASE priority
+    WHEN 'urgent' THEN 0
+    WHEN 'high' THEN 1
+    WHEN 'normal' THEN 2
+    WHEN 'low' THEN 3
+    WHEN 'opportunistic' THEN 4
+  END,
+  created_at,
+  work_item_id
+) WHERE archived_at IS NULL;
 CREATE TRIGGER work_items_original_request_immutable
 BEFORE UPDATE OF original_request ON work_items
 WHEN NEW.original_request IS NOT OLD.original_request
@@ -615,6 +629,38 @@ function migrateVersion14To15(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE; ${addLastError} PRAGMA user_version = 15; COMMIT;`);
 }
 
+function migrateVersion15To16(db: DatabaseSync): void {
+  const hasWorkItems = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'").get() !== undefined;
+  if (!hasWorkItems) {
+    db.exec("PRAGMA user_version = 16;");
+    return;
+  }
+  const addArchivedAt = hasColumns(db, "work_items", ["archived_at"])
+    ? ""
+    : "ALTER TABLE work_items ADD COLUMN archived_at TEXT;";
+  const addCancelledReason = hasColumns(db, "work_items", ["cancelled_reason"])
+    ? ""
+    : "ALTER TABLE work_items ADD COLUMN cancelled_reason TEXT;";
+  db.exec(`BEGIN IMMEDIATE;
+    ${addCancelledReason}
+    ${addArchivedAt}
+    CREATE INDEX IF NOT EXISTS work_items_unarchived_display_order ON work_items(
+      (ended_at IS NOT NULL),
+      CASE priority
+        WHEN 'urgent' THEN 0
+        WHEN 'high' THEN 1
+        WHEN 'normal' THEN 2
+        WHEN 'low' THEN 3
+        WHEN 'opportunistic' THEN 4
+      END,
+      created_at,
+      work_item_id
+    ) WHERE archived_at IS NULL;
+    PRAGMA user_version = 16;
+    COMMIT;
+  `);
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -897,6 +943,8 @@ export class TaskBoardStore {
         // Recovery task states and wakeup reasons are added below.
       } else if (version === 14) {
         // Durable fleet lane errors are added below.
+      } else if (version === 15) {
+        // Terminal work-item archival is added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -913,6 +961,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 12) migrateVersion12To13(db);
       if (version >= 1 && version <= 13) migrateVersion13To14(db);
       if (version >= 1 && version <= 14) migrateVersion14To15(db);
+      if (version >= 1 && version <= 15) migrateVersion15To16(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

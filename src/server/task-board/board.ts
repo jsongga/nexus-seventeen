@@ -158,12 +158,12 @@ export class TaskBoard {
     return this.#automation.updateConfiguration(request);
   }
 
-  listWorkItemsPage(cursor?: string): WorkItemPage {
-    return this.#workItems.listWorkItemsPage(cursor);
+  listWorkItemsPage(cursor?: string, includeArchived = false): WorkItemPage {
+    return this.#workItems.listWorkItemsPage(cursor, includeArchived);
   }
 
-  listWorkItems(): readonly WorkItem[] {
-    return this.#workItems.listWorkItems();
+  listWorkItems(includeArchived = false): readonly WorkItem[] {
+    return this.#workItems.listWorkItems(includeArchived);
   }
 
   requireWorkItem(workItemId: string): WorkItem {

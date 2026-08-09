@@ -29,6 +29,7 @@ function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
       return segmentCount === 1 || segmentCount === 2;
     case 'project':
     case 'agent':
+    case 'intake':
       return segmentCount === 2;
     default:
       return false;
@@ -47,7 +48,7 @@ function decodeId(value: string | undefined): string | null | undefined {
   }
 }
 
-function pageHashWithId(kind: 'documents' | 'project' | 'agent', id: string): string {
+function pageHashWithId(kind: 'documents' | 'project' | 'agent' | 'intake', id: string): string {
   try {
     return `#/${kind}/${encodeURIComponent(id)}`;
   } catch {
@@ -61,6 +62,8 @@ export function pageToHash(page: BoardPage): string {
   switch (page.kind) {
     case 'tasks':
       return '#/tasks';
+    case 'intake':
+      return pageHashWithId('intake', page.workItemId);
     case 'automation':
       return '#/automation';
     case 'documents':
@@ -92,6 +95,8 @@ export function hashToPage(hash: string): BoardPage {
       return typeof id === 'string' ? { kind: 'project', projectId: id } : tasksPage;
     case 'agent':
       return typeof id === 'string' ? { kind: 'agent', agentId: id } : tasksPage;
+    case 'intake':
+      return typeof id === 'string' ? { kind: 'intake', workItemId: id } : tasksPage;
     default:
       return tasksPage;
   }

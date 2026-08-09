@@ -12,6 +12,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_WORKFLOW_ATTEMPT_SUPERSEDED: "TASK_WORKFLOW_ATTEMPT_SUPERSEDED",
   WORK_NODE_VERSION_CONFLICT: "WORK_NODE_VERSION_CONFLICT",
   WORK_ITEM_ENDED: "WORK_ITEM_ENDED",
+  WORK_ITEM_NOT_TERMINAL: "WORK_ITEM_NOT_TERMINAL",
 } as const);
 export type TaskBoardErrorCode = typeof TASK_BOARD_ERROR_CODES[keyof typeof TASK_BOARD_ERROR_CODES];
 /** Maximum persisted UTF-8 JSON size of the { agentTypes, stages } automation aggregate. */
@@ -158,6 +159,8 @@ export interface WorkItem {
   readonly priority: WorkItemPriority;
   readonly projectTarget: WorkItemProjectTarget;
   readonly resolvedProjectId: string | null;
+  /** Durable link to the manager task that refines and proposes this work item's workflow. */
+  readonly planningTaskId: string | null;
   readonly state: WorkItemState;
   readonly currentStage: WorkItemStage | null;
   readonly createdBy: string;
@@ -165,6 +168,9 @@ export interface WorkItem {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly endedAt: string | null;
+  /** Human-supplied reason recorded uniformly when the item is cancelled. */
+  readonly cancelledReason: string | null;
+  readonly archivedAt: string | null;
 }
 
 export interface WorkItemPage {
@@ -580,11 +586,28 @@ export interface CreateWorkItemRequest {
   readonly projectTarget?: WorkItemProjectTarget;
 }
 
-export interface UpdateWorkItemRequest {
-  readonly version: number;
-  readonly priority?: WorkItemPriority;
-  readonly projectTarget?: WorkItemProjectTarget;
-}
+export type UpdateWorkItemRequest =
+  | Readonly<{
+      version: number;
+      priority?: WorkItemPriority;
+      projectTarget?: WorkItemProjectTarget;
+      action?: never;
+      reason?: never;
+    }>
+  | Readonly<{
+      version: number;
+      action: "cancel";
+      reason: string;
+      priority?: never;
+      projectTarget?: never;
+    }>
+  | Readonly<{
+      version: number;
+      action: "archive";
+      reason?: never;
+      priority?: never;
+      projectTarget?: never;
+    }>;
 
 export interface UpdateAutomationConfigurationRequest {
   readonly version: number;

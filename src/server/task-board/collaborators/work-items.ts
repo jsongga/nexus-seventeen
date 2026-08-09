@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
+  TASK_BOARD_ERROR_CODES,
   WORK_ITEM_PAGE_SIZE,
+  isHardTerminalTaskStatus,
   type BoardTask,
   type CreateWorkItemRequest,
   type UpdateWorkItemRequest,
@@ -37,13 +39,14 @@ export class WorkItemsCollaborator {
     private readonly tasks: TasksCollaborator,
   ) {}
 
-  listWorkItemsPage(cursor?: string): WorkItemPage {
+  listWorkItemsPage(cursor?: string, includeArchived = false): WorkItemPage {
     const tuple = cursor === undefined ? null : decodeWorkItemCursor(cursor);
     const select = `
-      SELECT *,
+      SELECT work_item.*,
+        (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id,
         ${WORK_ITEM_TERMINAL_RANK_SQL} AS work_item_terminal_rank,
         ${WORK_ITEM_PRIORITY_RANK_SQL} AS work_item_priority_rank
-      FROM work_items
+      FROM work_items work_item
     `;
     const orderAndLimit = `
       ORDER BY
@@ -54,10 +57,10 @@ export class WorkItemsCollaborator {
       LIMIT ${WORK_ITEM_PAGE_SIZE + 1}
     `;
     const rows = tuple === null
-      ? this.runtime.store.db.prepare(`${select} ${orderAndLimit}`).all()
+      ? this.runtime.store.db.prepare(`${select} WHERE ${includeArchived ? "1=1" : "archived_at IS NULL"} ${orderAndLimit}`).all()
       : this.runtime.store.db.prepare(`
           ${select}
-          WHERE (
+          WHERE ${includeArchived ? "1=1" : "archived_at IS NULL"} AND (
             ${WORK_ITEM_TERMINAL_RANK_SQL},
             ${WORK_ITEM_PRIORITY_RANK_SQL},
             created_at,
@@ -73,8 +76,8 @@ export class WorkItemsCollaborator {
     return Object.freeze({ workItems, nextCursor: encodeWorkItemCursor(last) });
   }
 
-  listWorkItems(): readonly WorkItem[] {
-    return this.listWorkItemsPage().workItems;
+  listWorkItems(includeArchived = false): readonly WorkItem[] {
+    return this.listWorkItemsPage(undefined, includeArchived).workItems;
   }
 
   requireWorkItem(workItemId: string): WorkItem {
@@ -121,7 +124,9 @@ export class WorkItemsCollaborator {
     const targetProjectId = projectTarget.mode === "explicit" ? projectTarget.projectId : null;
     const apply = (): CreateWorkItemResult => {
       const prior = this.runtime.store.db.prepare(`
-        SELECT * FROM work_items WHERE created_by = ? AND idempotency_key = ?
+        SELECT work_item.*,
+          (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id
+        FROM work_items work_item WHERE created_by = ? AND idempotency_key = ?
       `).get(createdBy, idempotencyKey);
       if (prior) {
         if (stringValue(prior, "request_hash") !== requestHash) {
@@ -254,6 +259,8 @@ export class WorkItemsCollaborator {
   }
 
   updateWorkItem(workItemId: string, request: UpdateWorkItemRequest): WorkItem {
+    if (request.action === "cancel") return this.cancelWorkItem(workItemId, request.version, request.reason);
+    if (request.action === "archive") return this.archiveWorkItem(workItemId, request.version);
     return this.runtime.store.transaction(() => {
       if (request.priority === undefined && request.projectTarget === undefined) {
         throw new TaskBoardError(400, "INVALID_REQUEST", "Work item update contains no changes");
@@ -287,6 +294,121 @@ export class WorkItemsCollaborator {
         workItemId,
         current.version,
       );
+      if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      return this.runtime.requireWorkItem(workItemId);
+    });
+  }
+
+  private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
+    return this.runtime.store.transaction(() => {
+      const current = this.runtime.requireWorkItem(workItemId);
+      if (current.state === "cancelled") {
+        if (current.version === version + 1 && current.cancelledReason === reason) return current;
+        throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      }
+      if (current.version !== version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
+      const now = exactNow(this.runtime.config.now);
+      let planningProjectId: string | null = current.resolvedProjectId;
+      if (current.planningTaskId !== null) {
+        const planningTask = this.runtime.requireTask(current.planningTaskId);
+        planningProjectId = planningTask.projectId;
+        if (!isHardTerminalTaskStatus(planningTask.status)) {
+          const taskUpdate = this.runtime.store.db.prepare(`
+            UPDATE tasks
+            SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result=?,version=version+1,updated_at=?
+            WHERE task_id=? AND version=? AND status NOT IN ('completed','cancelled')
+          `).run(now, now, reason, now, planningTask.taskId, planningTask.version);
+          if (Number(taskUpdate.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Planning task version changed");
+          this.runtime.reconcileTaskPhasesForTerminal(
+            planningTask,
+            "cancelled",
+            { type: "human", id: this.runtime.config.humanPrincipal },
+            now,
+          );
+          this.runtime.retirePendingWakeupsForTask(planningTask.taskId, "task_cancelled", now);
+          this.runtime.insertEvent(
+            planningTask.projectId,
+            planningTask.taskId,
+            { type: "human", id: this.runtime.config.humanPrincipal },
+            "task_updated",
+            {
+              kind: planningTask.kind,
+              requiredRole: planningTask.requiredRole,
+              previousVersion: planningTask.version,
+              version: planningTask.version + 1,
+              status: "cancelled",
+              assignedAgentId: planningTask.assignedAgentId,
+              result: reason,
+            },
+            now,
+          );
+        }
+        const openQuestions = this.runtime.store.db.prepare(
+          "SELECT question_id FROM questions WHERE task_id=? AND status='open' ORDER BY asked_at,question_id",
+        ).all(planningTask.taskId);
+        const closedAnswer = `Closed because the work item was cancelled: ${reason}`;
+        const closedQuestions = this.runtime.store.db.prepare(`
+          UPDATE questions
+          SET status='answered',answer=?,answered_at=?,answered_by=?,version=version+1
+          WHERE task_id=? AND status='open'
+        `).run(closedAnswer, now, this.runtime.config.humanPrincipal, planningTask.taskId);
+        if (Number(closedQuestions.changes) !== openQuestions.length) {
+          throw conflict("QUESTION_VERSION_CONFLICT", "Planning questions changed while the work item was cancelled");
+        }
+        for (const question of openQuestions) {
+          this.runtime.insertEvent(
+            planningTask.projectId,
+            planningTask.taskId,
+            { type: "human", id: this.runtime.config.humanPrincipal },
+            "human_question_closed",
+            {
+              questionId: stringValue(question, "question_id"),
+              workItemId,
+              reason: "work_item_cancelled",
+            },
+            now,
+          );
+        }
+      }
+      if (planningProjectId !== null) {
+        this.runtime.insertEvent(
+          planningProjectId,
+          current.planningTaskId,
+          { type: "human", id: this.runtime.config.humanPrincipal },
+          "work_item_cancelled",
+          {
+            workItemId,
+            previousState: current.state,
+            previousVersion: current.version,
+            reason,
+          },
+          now,
+        );
+      }
+      const nextVersion = current.version + 1;
+      const update = this.runtime.store.db.prepare(`
+        UPDATE work_items SET state='cancelled',current_stage=NULL,ended_at=?,cancelled_reason=?,version=?,updated_at=?
+        WHERE work_item_id=? AND version=? AND ended_at IS NULL
+      `).run(now, reason, nextVersion, now, workItemId, current.version);
+      if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      return this.runtime.requireWorkItem(workItemId);
+    });
+  }
+
+  private archiveWorkItem(workItemId: string, version: number): WorkItem {
+    return this.runtime.store.transaction(() => {
+      const current = this.runtime.requireWorkItem(workItemId);
+      if (current.archivedAt !== null) return current;
+      if (current.endedAt === null) {
+        throw conflict(TASK_BOARD_ERROR_CODES.WORK_ITEM_NOT_TERMINAL, "Only terminal work items can be archived");
+      }
+      if (current.version !== version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      const now = exactNow(this.runtime.config.now);
+      const update = this.runtime.store.db.prepare(`
+        UPDATE work_items SET archived_at=?,version=version+1,updated_at=?
+        WHERE work_item_id=? AND version=? AND ended_at IS NOT NULL AND archived_at IS NULL
+      `).run(now, now, workItemId, current.version);
       if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       return this.runtime.requireWorkItem(workItemId);
     });

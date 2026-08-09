@@ -127,6 +127,7 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     priority: raw.priority,
     projectTarget: { ...raw.projectTarget },
     resolvedProjectId: raw.resolvedProjectId,
+    planningTaskId: raw.planningTaskId,
     state: raw.state,
     currentStage: raw.currentStage,
     createdBy: raw.createdBy,
@@ -134,6 +135,8 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
     endedAt: raw.endedAt,
+    cancelledReason: raw.cancelledReason,
+    archivedAt: raw.archivedAt,
   };
 }
 

@@ -434,6 +434,29 @@ test("confirming a plan for a cancelled work item returns WORK_ITEM_ENDED withou
 
     const before = fixture.board.requireWorkItem(proposed.workItem.workItemId);
     assert.throws(
+      () => fixture.board.proposeWorkflow({
+        workItemId: proposed.workItem.workItemId,
+        projectId: fixture.project.projectId,
+        objective: "Do not propose another workflow for ended intake.",
+        assumptions: [],
+        acceptanceCriteria: ["Ended intake has no new workflow rows."],
+        skillIds: [],
+        nodes: [{
+          nodeId: "cancelled-item-second-plan",
+          title: "Cancelled item second plan",
+          objective: "Exercise the proposal fence.",
+          acceptanceCriteria: ["The proposal is rejected."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "WORK_ITEM_ENDED"
+      ),
+    );
+    assert.throws(
       () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
       (error: unknown) => (
         error instanceof TaskBoardError &&
@@ -1790,7 +1813,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
         .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 16);
   } finally {
     direct.close();
   }
@@ -1801,6 +1824,455 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
     assert.equal(restarted.listWorkItems().length, 2);
   } finally {
     restarted.close();
+  }
+});
+
+test("cancelling a work item atomically ends its planning task and retires pending wakeups", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Cancel this intake and every pending planning continuation together.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-atomic-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const request = {
+      version: created.version,
+      action: "cancel" as const,
+      reason: "The operator rejected the proposed direction.",
+    };
+
+    const cancelled = fixture.board.updateWorkItem(created.workItemId, request);
+    assert.equal(cancelled.state, "cancelled");
+    assert.ok(cancelled.endedAt);
+    assert.equal(cancelled.currentStage, null);
+    assert.equal(cancelled.version, created.version + 1);
+    assert.equal(cancelled.cancelledReason, request.reason);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const planning = inspected.prepare(`
+        SELECT task.status,task.ended_at,task.result,task.version
+        FROM work_item_planning_tasks link
+        JOIN tasks task ON task.task_id=link.task_id
+        WHERE link.work_item_id=?
+      `).get(created.workItemId);
+      assert.equal(planning?.status, "cancelled");
+      assert.ok(planning?.ended_at);
+      assert.equal(planning?.result, request.reason);
+      assert.equal(planning?.version, 2);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        JOIN work_item_planning_tasks link ON link.task_id=wakeup.task_id
+        JOIN task_events event ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
+        WHERE link.work_item_id=? AND wakeup.claimed_at IS NULL
+      `).get(created.workItemId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+
+    const replay = fixture.board.updateWorkItem(created.workItemId, request);
+    assert.deepEqual(replay, cancelled);
+    assert.throws(
+      () => fixture.board.updateWorkItem(created.workItemId, {
+        ...request,
+        reason: "A different cancellation reason must not replay.",
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+    );
+    assert.throws(
+      () => fixture.board.updateWorkItem(created.workItemId, {
+        ...request,
+        version: cancelled.version,
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+    );
+    const afterReplay = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(afterReplay.prepare(`
+        SELECT COUNT(*) AS count
+        FROM task_events event
+        JOIN work_item_planning_tasks link ON link.task_id=event.task_id
+        WHERE link.work_item_id=? AND event.event_type='task_updated'
+      `).get(created.workItemId)?.count, 1);
+    } finally {
+      afterReplay.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a completed planning settlement discards its proposal after the work item is cancelled", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "late-proposal-verifier",
+      role: "verifier",
+      area: "late-proposal",
+      mission: "Verify plans that settle near work-item cancellation.",
+      model: "codex-mini",
+      token: "late-proposal-verifier-token-0123456789",
+    });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "late-proposal-verifier",
+        name: "Late proposal verifier",
+        description: "Verifies a planning proposal when it remains live.",
+        role: "verifier",
+        supplementalInstructions: "Verify the proposed workflow.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "late-proposal-verifier" },
+      }),
+    }));
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Discard a proposal if cancellation wins the race.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-discard-late-proposal-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-discard-late-proposal-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    fixture.board.updateWorkItem(created.workItemId, {
+      version: created.version,
+      action: "cancel",
+      reason: "The request was withdrawn while planning was still running.",
+    });
+
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "A valid plan was completed just after cancellation.",
+      workflowPlan: {
+        objective: "Verify the late planning result without activating it.",
+        assumptions: [],
+        acceptanceCriteria: ["No workflow rows survive for cancelled intake."],
+        nodes: [{
+          nodeId: "verify-late-proposal",
+          title: "Verify late proposal",
+          objective: "Prove the ended-item fence.",
+          acceptanceCriteria: ["The proposal is durably discarded."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireTask(created.planningTaskId).status, "cancelled");
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(
+        "SELECT COUNT(*) AS count FROM plan_revisions WHERE work_item_id=?",
+      ).get(created.workItemId)?.count, 0);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM work_nodes node
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=?
+      `).get(created.workItemId)?.count, 0);
+      const discarded = inspected.prepare(`
+        SELECT data_json FROM task_events
+        WHERE task_id=? AND event_type='work_item_plan_discarded'
+      `).get(created.planningTaskId);
+      assert.ok(discarded);
+      assert.deepEqual(JSON.parse(String(discarded.data_json)), {
+        workItemId: created.workItemId,
+        runId: claim.run.runId,
+        reason: "work_item_ended",
+      });
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("cancelling a work item hard-terminates a failed planning task against retry and resume", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Do not let failed planning resume after intake cancellation.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-failed-planning-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-cancel-failed-planning-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "failed",
+      result: "Planning failed with recoverable evidence.",
+    });
+    const failed = fixture.board.requireTask(created.planningTaskId);
+    assert.equal(failed.status, "failed");
+    const needsInput = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(needsInput.state, "needs_input");
+
+    fixture.board.updateWorkItem(created.workItemId, {
+      version: needsInput.version,
+      action: "cancel",
+      reason: "This intake must stay stopped after the planning failure.",
+    });
+    const cancelledTask = fixture.board.requireTask(created.planningTaskId);
+    assert.equal(cancelledTask.status, "cancelled");
+    assert.throws(
+      () => fixture.board.retryTask(cancelledTask.taskId, { version: cancelledTask.version }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+    );
+    assert.throws(
+      () => fixture.board.resumeAgent(fixture.manager.agentId, {
+        reason: "Attempt to resume cancelled planning.",
+        taskId: cancelledTask.taskId,
+      }, "resume-cancelled-planning-0001"),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+    );
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM wakeups wakeup
+        WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS(
+            SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          )
+      `).get(cancelledTask.taskId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("cancelling a work item closes its planning question and fences later answers", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Close the planning question if this intake is cancelled.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-open-question-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-cancel-open-question-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const question = fixture.board.askQuestion(created.planningTaskId, fixture.manager.agentId, {
+      clientEventId: "question-cancel-open-question-0001",
+      question: "Should the proposed recovery retain the old behavior?",
+      runId: claim.run.runId,
+    });
+    const reason = "The underlying customer request was withdrawn.";
+    fixture.board.updateWorkItem(created.workItemId, {
+      version: created.version,
+      action: "cancel",
+      reason,
+    });
+
+    const snapshot = fixture.board.snapshot(fixture.project.projectId);
+    assert.equal(snapshot.openQuestions.some((candidate) => candidate.questionId === question.questionId), false);
+    const closed = snapshot.recentQuestions.find((candidate) => candidate.questionId === question.questionId);
+    assert.equal(closed?.status, "answered");
+    assert.equal(closed?.answer, `Closed because the work item was cancelled: ${reason}`);
+    assert.throws(
+      () => fixture.board.answerQuestion(question.questionId, {
+        answer: "This answer must not create a wakeup.",
+        version: question.version,
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+    );
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(
+        "SELECT COUNT(*) AS count FROM wakeups WHERE question_id=? AND reason='human_answer'",
+      ).get(question.questionId)?.count, 0);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM task_events
+        WHERE task_id=? AND event_type='human_question_closed'
+      `).get(created.planningTaskId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a failure after planning-task cancellation rolls the whole work-item cancellation back", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Prove cancellation has no partial commit window.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-rollback-0001").workItem;
+    assert.ok(created.planningTaskId);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    DatabaseSync.prototype.prepare = function failWorkItemCancellation(this: DatabaseSyncType, sql: string) {
+      if (/^\s*UPDATE work_items SET state='cancelled'/u.test(sql)) {
+        throw new Error("injected work-item cancellation failure");
+      }
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      assert.throws(
+        () => fixture.board.updateWorkItem(created.workItemId, {
+          version: created.version,
+          action: "cancel",
+          reason: "This write is deliberately interrupted.",
+        }),
+        /injected work-item cancellation failure/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(created.workItemId)?.state, "processing");
+      assert.equal(inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(created.planningTaskId)?.status, "queued");
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM task_events
+        WHERE task_id=? AND event_type IN ('task_updated','agent_wakeup_retired','work_item_cancelled')
+      `).get(created.planningTaskId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("rejecting a proposed plan records its reason without rewriting the completed planning result", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "rejection-audit-verifier",
+      role: "verifier",
+      area: "rejection-audit",
+      mission: "Verify rejected workflow audit evidence.",
+      model: "codex-mini",
+      token: "rejection-audit-verifier-token-0123456789",
+    });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "rejection-audit-verifier",
+        name: "Rejection audit verifier",
+        description: "Verifies the rejected workflow audit path.",
+        role: "verifier",
+        supplementalInstructions: "Inspect the rejection reason and report evidence.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "rejection-audit-verifier" },
+      }),
+    }));
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Propose a plan that the operator can reject with an audit reason.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-reject-reason-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-work-item-reject-reason-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const planningResult = "Planning completed with a proposed verification workflow.";
+    fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: planningResult,
+      workflowPlan: {
+        objective: "Verify the proposed cancellation audit path.",
+        assumptions: [],
+        acceptanceCriteria: ["The rejection reason remains durable."],
+        nodes: [{
+          nodeId: "verify-rejection-audit",
+          title: "Verify rejection audit",
+          objective: "Inspect the cancellation event.",
+          acceptanceCriteria: ["The human reason is recorded."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    const reviewItem = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(reviewItem.state, "waiting_for_human_review");
+    assert.equal(fixture.board.requireTask(created.planningTaskId).status, "completed");
+    const reason = "The proposed verification scope misses the customer rollback path.";
+
+    fixture.board.updateWorkItem(created.workItemId, {
+      version: reviewItem.version,
+      action: "cancel",
+      reason,
+    });
+
+    assert.equal(fixture.board.requireTask(created.planningTaskId).status, "completed");
+    assert.equal(fixture.board.requireTask(created.planningTaskId).result, planningResult);
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const event = inspected.prepare(`
+        SELECT data_json FROM task_events
+        WHERE task_id=? AND event_type='work_item_cancelled'
+      `).get(created.planningTaskId);
+      assert.ok(event);
+      assert.equal((JSON.parse(String(event.data_json)) as { reason: string }).reason, reason);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("archive is terminal-only, idempotent, and excluded from default work-item listing", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Archive this intake only after it ends.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-archive-0001").workItem;
+    assert.throws(
+      () => fixture.board.updateWorkItem(created.workItemId, { version: created.version, action: "archive" }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_NOT_TERMINAL",
+    );
+
+    const cancelled = fixture.board.updateWorkItem(created.workItemId, {
+      version: created.version,
+      action: "cancel",
+      reason: "No longer needed.",
+    });
+    const archived = fixture.board.updateWorkItem(created.workItemId, {
+      version: cancelled.version,
+      action: "archive",
+    });
+    assert.ok(archived.archivedAt);
+    assert.equal(archived.version, cancelled.version + 1);
+    assert.equal(fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId), false);
+    assert.equal(fixture.board.listWorkItems(true).find((item) => item.workItemId === created.workItemId)?.archivedAt, archived.archivedAt);
+
+    const replay = fixture.board.updateWorkItem(created.workItemId, {
+      version: cancelled.version,
+      action: "archive",
+    });
+    assert.deepEqual(replay, archived);
+  } finally {
+    fixture.board.close();
   }
 });
 
@@ -1825,6 +2297,14 @@ test("duplicate intake leaves a legacy null-resolved submitted item inert and ca
     assert.equal(replay.workItem.endedAt, null);
     assert.ok(fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId));
 
+    const reason = "This unresolved request is no longer needed.";
+    const cancelled = fixture.board.updateWorkItem(created.workItemId, {
+      version: created.version,
+      action: "cancel",
+      reason,
+    });
+    assert.equal(cancelled.cancelledReason, reason);
+
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -1834,6 +2314,9 @@ test("duplicate intake leaves a legacy null-resolved submitted item inert and ca
       assert.equal(inspected.prepare(
         "SELECT COUNT(*) AS count FROM tasks WHERE objective=?",
       ).get(legacyRequest.originalRequest)?.count, 0);
+      assert.equal(inspected.prepare(
+        "SELECT cancelled_reason FROM work_items WHERE work_item_id=?",
+      ).get(created.workItemId)?.cancelled_reason, reason);
     } finally {
       inspected.close();
     }
@@ -5076,7 +5559,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -5116,7 +5599,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -5156,7 +5639,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -5246,7 +5729,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -5317,7 +5800,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -5356,7 +5839,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -5391,7 +5874,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -5439,7 +5922,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -5489,7 +5972,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -5528,7 +6011,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -5574,7 +6057,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
@@ -5604,7 +6087,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 15);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error",
@@ -5613,6 +6096,51 @@ test("schema version 14 adds nullable agent lane errors without changing existin
       verified.prepare("SELECT last_error FROM agents WHERE agent_id=?").get(fixture.engineer.agentId)?.last_error,
       null,
     );
+  } finally {
+    verified.close();
+  }
+});
+
+test("schema version 16 adds nullable work-item cancellation and archival fields without hiding existing intake", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: "Preserve this visible intake through the archive migration.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), "migration-v16-work-item-0001").workItem;
+  fixture.board.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec(`
+    DROP INDEX work_items_unarchived_display_order;
+    ALTER TABLE work_items DROP COLUMN archived_at;
+    ALTER TABLE work_items DROP COLUMN cancelled_reason;
+    PRAGMA user_version = 15;
+  `);
+  legacy.close();
+
+  const upgraded = await TaskBoard.open(config(path));
+  try {
+    assert.equal(upgraded.requireWorkItem(workItem.workItemId).archivedAt, null);
+    assert.ok(upgraded.listWorkItems().some((item) => item.workItemId === workItem.workItemId));
+  } finally {
+    upgraded.close();
+  }
+
+  const verified = new DatabaseSync(path);
+  try {
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 16);
+    assert.equal(
+      verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
+      "archived_at",
+    );
+    assert.equal(
+      verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'cancelled_reason'").get()?.name,
+      "cancelled_reason",
+    );
+    assert.equal(verified.prepare("SELECT archived_at FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.archived_at, null);
+    assert.equal(verified.prepare("SELECT cancelled_reason FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.cancelled_reason, null);
   } finally {
     verified.close();
   }

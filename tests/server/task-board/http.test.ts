@@ -279,7 +279,10 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
         resolvedProjectId: string | null;
         state: string;
         currentStage: string | null;
+        planningTaskId: string | null;
         version: number;
+        endedAt: string | null;
+        archivedAt: string | null;
       };
     }).workItem;
     assert.equal(created.originalRequest, body.originalRequest);
@@ -288,7 +291,10 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
     assert.equal(created.resolvedProjectId, project.projectId);
     assert.equal(created.state, "submitted");
     assert.equal(created.currentStage, "refinement");
+    assert.equal(created.planningTaskId, null);
     assert.equal(created.version, 1);
+    assert.equal(created.endedAt, null);
+    assert.equal(created.archivedAt, null);
 
     const replayResponse = await request(
       address.url,
@@ -334,6 +340,67 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       originalRequest: "Overwrite the accepted request.",
     })).status, 400);
 
+    const prematureArchive = await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
+      version: updated.version,
+      action: "archive",
+    });
+    assert.equal(prematureArchive.status, 409);
+    assert.deepEqual(await prematureArchive.json(), {
+      error: { code: "WORK_ITEM_NOT_TERMINAL", message: "Only terminal work items can be archived" },
+    });
+
+    const cancelRequest = {
+      version: updated.version,
+      action: "cancel",
+      reason: "The operator no longer needs this intake.",
+    };
+    const cancelledResponse = await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      cancelRequest,
+    );
+    assert.equal(cancelledResponse.status, 200);
+    const cancelled = (await cancelledResponse.json() as {
+      workItem: {
+        state: string;
+        version: number;
+        endedAt: string | null;
+        cancelledReason: string | null;
+        archivedAt: string | null;
+      };
+    }).workItem;
+    assert.equal(cancelled.state, "cancelled");
+    assert.equal(cancelled.version, 3);
+    assert.ok(cancelled.endedAt);
+    assert.equal(cancelled.cancelledReason, cancelRequest.reason);
+    assert.equal(cancelled.archivedAt, null);
+
+    const cancelReplay = await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      cancelRequest,
+    );
+    assert.equal(cancelReplay.status, 200);
+    assert.deepEqual((await cancelReplay.json() as { workItem: unknown }).workItem, cancelled);
+    assert.equal((await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      { ...cancelRequest, reason: "A different reason cannot replay the cancellation." },
+    )).status, 409);
+    assert.equal((await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      { ...cancelRequest, version: cancelled.version },
+    )).status, 409);
+
     const listed = await request(address.url, "/v1/work-items", "GET", HUMAN_TOKEN);
     assert.equal(listed.status, 200);
     const listedBody = await listed.json() as { workItems: Array<{ workItemId: string }>; nextCursor?: string };
@@ -342,9 +409,43 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       [created.workItemId],
     );
     assert.equal(listedBody.nextCursor, undefined);
+
+    const archiveRequest = { version: cancelled.version, action: "archive" };
+    const archiveResponse = await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      archiveRequest,
+    );
+    assert.equal(archiveResponse.status, 200);
+    const archived = (await archiveResponse.json() as {
+      workItem: { version: number; archivedAt: string | null };
+    }).workItem;
+    assert.equal(archived.version, 4);
+    assert.ok(archived.archivedAt);
+    const archiveReplay = await request(
+      address.url,
+      `/v1/work-items/${created.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      archiveRequest,
+    );
+    assert.equal(archiveReplay.status, 200);
+    assert.deepEqual((await archiveReplay.json() as { workItem: unknown }).workItem, archived);
+
+    const defaultAfterArchive = await request(address.url, "/v1/work-items", "GET", HUMAN_TOKEN);
+    assert.deepEqual((await defaultAfterArchive.json() as { workItems: unknown[] }).workItems, []);
+    const withArchived = await request(address.url, "/v1/work-items?includeArchived=1", "GET", HUMAN_TOKEN);
+    const archivedItems = (await withArchived.json() as {
+      workItems: Array<{ workItemId: string; archivedAt: string | null }>;
+    }).workItems;
+    assert.equal(archivedItems.length, 1);
+    assert.equal(archivedItems[0]?.workItemId, created.workItemId);
+    assert.equal(archivedItems[0]?.archivedAt, archived.archivedAt);
     const fetched = await request(address.url, `/v1/work-items/${created.workItemId}`, "GET", HUMAN_TOKEN);
     assert.equal(fetched.status, 200);
-    assert.equal((await fetched.json() as { workItem: { version: number } }).workItem.version, 2);
+    assert.equal((await fetched.json() as { workItem: { version: number } }).workItem.version, 4);
     assert.equal((await request(address.url, "/v1/work-items/missing", "GET", HUMAN_TOKEN)).status, 404);
     assert.equal((await request(address.url, "/v1/work-items", "GET", AGENT_ONE_TOKEN)).status, 401);
   } finally {
@@ -598,6 +699,8 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
     assert.equal(initialIds.size + continuation.workItems.length, 201);
 
     assert.equal((await request(address.url, "/v1/work-items?unknown=value", "GET", HUMAN_TOKEN)).status, 400);
+    assert.equal((await request(address.url, "/v1/work-items?includeArchived=0", "GET", HUMAN_TOKEN)).status, 400);
+    assert.equal((await request(address.url, "/v1/work-items?includeArchived=1&includeArchived=1", "GET", HUMAN_TOKEN)).status, 400);
     assert.equal((await request(
       address.url,
       `/v1/work-items?cursor=${initial.nextCursor}&cursor=${initial.nextCursor}`,

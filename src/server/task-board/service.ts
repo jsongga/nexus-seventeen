@@ -94,17 +94,22 @@ function noQuery(url: URL): void {
   if (url.search.length > 0) throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are not accepted");
 }
 
-function optionalWorkItemCursorQuery(url: URL): string | undefined {
+function workItemListQuery(url: URL): { cursor: string | undefined; includeArchived: boolean } {
   const values = url.searchParams.getAll("cursor");
-  if ([...url.searchParams.keys()].some((key) => key !== "cursor") || values.length > 1) {
+  const archivedValues = url.searchParams.getAll("includeArchived");
+  if (
+    [...url.searchParams.keys()].some((key) => key !== "cursor" && key !== "includeArchived")
+    || values.length > 1
+    || archivedValues.length > 1
+    || (archivedValues[0] !== undefined && archivedValues[0] !== "1")
+  ) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
   }
   const cursor = values[0];
-  if (cursor === undefined) return undefined;
-  if (cursor.length < 1 || Buffer.byteLength(cursor, "utf8") > WORK_ITEM_CURSOR_MAX_BYTES) {
+  if (cursor !== undefined && (cursor.length < 1 || Buffer.byteLength(cursor, "utf8") > WORK_ITEM_CURSOR_MAX_BYTES)) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "cursor is invalid");
   }
-  return cursor;
+  return { cursor, includeArchived: archivedValues[0] === "1" };
 }
 
 function exactIntegerQuery(url: URL, keys: readonly string[], field: string, fallback: number, maximum: number): number {
@@ -180,9 +185,9 @@ export class TaskBoardService {
       return;
     }
     if (url.pathname === "/v1/work-items" && request.method === "GET") {
-      const cursor = optionalWorkItemCursorQuery(url);
+      const { cursor, includeArchived } = workItemListQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, this.#board.listWorkItemsPage(cursor));
+      sendJson(response, 200, this.#board.listWorkItemsPage(cursor, includeArchived));
       return;
     }
     if (url.pathname === "/v1/work-items" && request.method === "POST") {

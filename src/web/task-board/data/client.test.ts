@@ -3,6 +3,7 @@ import {
   agentQueryConversationContextMarker,
   agentQueryRoutingContextMarker,
   createTaskBoardClient,
+  BoardApiError,
   DocumentStreamError,
   parseBoardDocument,
   parseBoardSnapshot,
@@ -96,6 +97,7 @@ const workItem = {
   priority: 'normal',
   projectTarget: { mode: 'auto' },
   resolvedProjectId: null,
+  planningTaskId: null,
   state: 'submitted',
   currentStage: 'refinement',
   createdBy: 'human:operator',
@@ -103,6 +105,8 @@ const workItem = {
   createdAt: '2026-07-19T10:09:00.000Z',
   updatedAt: '2026-07-19T10:09:00.000Z',
   endedAt: null,
+  cancelledReason: null,
+  archivedAt: null,
 };
 const automationConfiguration = {
   apiVersion,
@@ -621,6 +625,7 @@ describe('task-board HTTP client', () => {
     await expect(client.getProjectWorkflow(project.projectId)).resolves.toEqual({
       plans: [{
         planRevisionId: workflowPlan.planRevisionId,
+        workItemId: workflowPlan.workItemId,
         revision: 1,
         objective: workflowPlan.objective,
         assumptions: workflowPlan.assumptions,
@@ -902,6 +907,71 @@ describe('task-board HTTP client', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('sends exact cancel and archive work-item actions and parses their updated snapshots', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push([String(url), init]);
+      const body = JSON.parse(String(init?.body)) as { action: string };
+      const cancelled = {
+        ...workItem,
+        state: 'cancelled',
+        currentStage: null,
+        version: 2,
+        endedAt: '2026-07-19T10:10:00.000Z',
+        cancelledReason: 'The request is no longer needed.',
+      };
+      return new Response(JSON.stringify({
+        workItem: body.action === 'archive'
+          ? { ...cancelled, version: 3, archivedAt: '2026-07-19T10:11:00.000Z' }
+          : cancelled,
+      }));
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.cancelWorkItem(workItem.workItemId, {
+      version: 1,
+      reason: '  The request is no longer needed.  ',
+    })).resolves.toMatchObject({
+      state: 'cancelled',
+      version: 2,
+      cancelledReason: 'The request is no longer needed.',
+    });
+    await expect(client.archiveWorkItem(workItem.workItemId, { version: 2 })).resolves.toMatchObject({
+      archivedAt: '2026-07-19T10:11:00.000Z',
+      version: 3,
+    });
+
+    expect(calls.map(([url, init]) => [url, init?.method, JSON.parse(String(init?.body))])).toEqual([
+      [
+        'https://board.example.test/v1/work-items/work-item-one',
+        'PATCH',
+        { version: 1, action: 'cancel', reason: 'The request is no longer needed.' },
+      ],
+      [
+        'https://board.example.test/v1/work-items/work-item-one',
+        'PATCH',
+        { version: 2, action: 'archive' },
+      ],
+    ]);
+  });
+
+  it('preserves a structured board error code for inline work-item conflict handling', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      error: { code: 'WORK_ITEM_ENDED', message: 'Work item has ended' },
+    }), { status: 409 }));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.confirmWorkflow('plan-one')).rejects.toEqual(expect.objectContaining({
+      name: 'BoardApiError',
+      status: 409,
+      code: 'WORK_ITEM_ENDED',
+      message: 'Work item has ended',
+    } satisfies Partial<BoardApiError>));
+  });
+
   it('loads and validates global work items independently of projects', async () => {
     const load = async (item: unknown) => {
       const request = vi.fn(async (url: string | URL | Request) => {
@@ -936,6 +1006,23 @@ describe('task-board HTTP client', () => {
     });
     await expect(load({ ...workItem, projectTarget: { mode: 'auto', unexpected: true } })).rejects.toThrow(/unsupported fields/iu);
     await expect(load({ ...workItem, state: 'completed', endedAt: null })).rejects.toThrow(/endedAt/iu);
+    await expect(load({ ...workItem, archivedAt: '2026-07-19T10:10:00.000Z' })).rejects.toThrow(/terminal state/iu);
+    await expect(load({ ...workItem, cancelledReason: 'Not cancelled.' })).rejects.toThrow(/cancelled state/iu);
+    await expect(load({
+      ...workItem,
+      planningTaskId: 'planning-task-one',
+      state: 'cancelled',
+      currentStage: null,
+      endedAt: '2026-07-19T10:10:00.000Z',
+      cancelledReason: 'The request was cancelled.',
+      archivedAt: '2026-07-19T10:11:00.000Z',
+    })).resolves.toMatchObject({
+      workItems: [expect.objectContaining({
+        planningTaskId: 'planning-task-one',
+        cancelledReason: 'The request was cancelled.',
+        archivedAt: '2026-07-19T10:11:00.000Z',
+      })],
+    });
     await expect(load({
       ...workItem,
       projectTarget: { mode: 'explicit', projectId: project.projectId },
