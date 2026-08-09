@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from '../components/ui';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
-import { createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
+import { BoardApiError, createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
 import { DocumentsPage } from './views/DocumentsPage';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
@@ -98,6 +98,32 @@ type DialogName = 'project' | 'task' | null;
 
 function prettyStatus(value: string): string {
   return value.replaceAll('_', ' ');
+}
+
+/**
+ * The board sits behind staff SSO, which the app never sees succeed -- it only
+ * ever notices the failure. A 401 means the session lapsed while the page
+ * stayed open; reloading re-runs the document request, which IS allowed to
+ * redirect to the identity provider, so the session renews and the user lands
+ * back here. Reload once per page load, so a persistent 401 shows a message
+ * instead of spinning.
+ *
+ * A 403 is different and must NOT reload: the session is valid but the account
+ * lacks the operator group, and no amount of reloading grants it.
+ */
+let signInReloadAttempted = false;
+
+function signInMessage(caught: unknown): string | null {
+  if (!(caught instanceof BoardApiError)) return null;
+  if (caught.status === 403) {
+    return 'Your account is signed in but is not a board operator. Ask an administrator to add you to the nexus-operator group.';
+  }
+  if (caught.status !== 401) return null;
+  if (!signInReloadAttempted && typeof globalThis.location?.reload === 'function') {
+    signInReloadAttempted = true;
+    globalThis.location.reload();
+  }
+  return 'Your sign-in expired. Reloading to sign in again — if this message stays, reload the page.';
 }
 
 const taskKindLabel: Record<TaskKind, string> = {
@@ -644,7 +670,7 @@ export function BoardApp() {
     } catch (caught) {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return false;
       setConnected(false);
-      setError(caught instanceof Error ? caught.message : 'Could not connect to the task board');
+      setError(signInMessage(caught) ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
       return false;
     } finally {
       if (sequence === refreshSequence.current) setLoading(false);
