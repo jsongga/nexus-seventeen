@@ -27,6 +27,10 @@ export function workerAssignmentHint(connection: AgentWorkerConnection): string 
   return 'Worker not detected — assignment stays queued until it reconnects.';
 }
 
+export function assignmentAgentOptionLabel(agent: BoardAgent): string {
+  return `${agent.name} — ${agent.area} — ${workerConnectionLabel(agent.workerConnection)}`;
+}
+
 const activeTaskStatuses = new Set<BoardTask['status']>(['running', 'waiting_for_human', 'blocked', 'queued']);
 const phaseStageOrder: Record<Exclude<BoardTaskPhase['stage'], 'done'>, number> = {
   research: 0,
@@ -120,17 +124,17 @@ export interface ProjectUpdate {
   createdAt: string;
 }
 
+export function isExplicitPointOfContact(agent: BoardAgent): boolean {
+  return pointOfContactTerms.test(`${agent.id} ${agent.name} ${agent.area} ${agent.mission}`);
+}
+
 export function selectPointOfContact(agents: BoardAgent[]): BoardAgent | null {
   if (agents.length === 0) return null;
   const ordered = [...agents].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
-  return ordered.find((agent) => pointOfContactTerms.test(`${agent.id} ${agent.name} ${agent.area} ${agent.mission}`))
+  return ordered.find(isExplicitPointOfContact)
     ?? ordered.find((agent) => agent.role === 'engineer')
     ?? ordered[0]
     ?? null;
-}
-
-export function isExplicitPointOfContact(agent: BoardAgent): boolean {
-  return agent.id === 'steward-poc' || pointOfContactTerms.test(`${agent.name} ${agent.area} ${agent.mission}`);
 }
 
 export function taskNeedsHumanAction(task: BoardTask): boolean {

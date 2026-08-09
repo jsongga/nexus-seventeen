@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, InlineActionErrors, Modal, Pill, cn } from '../../components/ui';
 import { ActivityFeed, type ActivityFeedUpdate } from '../project/ActivityFeed';
 import { agentQueryPromptFromObjective } from '../data/client';
-import type { TaskBoardClient } from '../data/client';
+import type { InterruptRunResult, TaskBoardClient } from '../data/client';
 import { ContextSidebar, type ContextDocument } from '../project/ContextSidebar';
 import { parseProjectMetadata, type ProjectMetadataEntry } from '../model/project-metadata';
 import { ThreadPipelineTable } from '../project/ThreadPipelineTable';
@@ -99,6 +99,36 @@ function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArtifact[])
   ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+export interface InterruptAllOutcome {
+  handledRunIds: string[];
+  interruptedCount: number;
+  alreadyFinishedCount: number;
+  failedCount: number;
+}
+
+export function deriveInterruptAllOutcome(
+  runIds: readonly string[],
+  results: readonly PromiseSettledResult<InterruptRunResult>[],
+): InterruptAllOutcome {
+  const outcome: InterruptAllOutcome = {
+    handledRunIds: [],
+    interruptedCount: 0,
+    alreadyFinishedCount: 0,
+    failedCount: 0,
+  };
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'rejected') {
+      outcome.failedCount += 1;
+      continue;
+    }
+    const runId = runIds[index];
+    if (runId !== undefined) outcome.handledRunIds.push(runId);
+    if (result.value.runId === null) outcome.alreadyFinishedCount += 1;
+    else outcome.interruptedCount += 1;
+  }
+  return outcome;
+}
+
 export function ProjectPage({
   project,
   snapshot,
@@ -118,9 +148,11 @@ export function ProjectPage({
 }) {
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
   const [artifactUrls, setArtifactUrls] = useState<Record<string, string>>({});
-  const [pausing, setPausing] = useState(false);
-  const [pausedRunIds, setPausedRunIds] = useState<Set<string>>(() => new Set());
-  const [pauseError, setPauseError] = useState<string | null>(null);
+  const [interruptingAll, setInterruptingAll] = useState(false);
+  const [interruptConfirmationOpen, setInterruptConfirmationOpen] = useState(false);
+  const [handledRunIds, setHandledRunIds] = useState<Set<string>>(() => new Set());
+  const [interruptOutcome, setInterruptOutcome] = useState<Pick<InterruptAllOutcome, 'interruptedCount' | 'alreadyFinishedCount'> | null>(null);
+  const [interruptError, setInterruptError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -170,21 +202,38 @@ export function ProjectPage({
     run.projectId === project.id
       && (run.status === 'running' || run.status === 'queued')
       && run.interruptRequestedAt === null
-      && !pausedRunIds.has(run.id)
+      && !handledRunIds.has(run.id)
   ));
 
-  const pauseAgents = async () => {
-    setPausing(true);
-    setPauseError(null);
-    const results = await Promise.allSettled(activeRuns.map((run) => client.interruptRun(run.id)));
-    const pausedIds = activeRuns.flatMap((run, index) => results[index]?.status === 'fulfilled' ? [run.id] : []);
-    if (pausedIds.length > 0) {
-      setPausedRunIds((current) => new Set([...current, ...pausedIds]));
+  const interruptAllAgents = async () => {
+    const runsToInterrupt = activeRuns;
+    if (runsToInterrupt.length === 0) {
+      setInterruptConfirmationOpen(false);
+      return;
     }
-    if (results.some((result) => result.status === 'rejected')) {
-      setPauseError('Some active agents could not be paused. Refresh and try again.');
+    setInterruptingAll(true);
+    setInterruptOutcome(null);
+    setInterruptError(null);
+    const results = await Promise.allSettled(runsToInterrupt.map((run) => client.interruptRun(run.id)));
+    const outcome = deriveInterruptAllOutcome(runsToInterrupt.map((run) => run.id), results);
+    if (outcome.handledRunIds.length > 0) {
+      setHandledRunIds((current) => new Set([...current, ...outcome.handledRunIds]));
+      setInterruptOutcome({
+        interruptedCount: outcome.interruptedCount,
+        alreadyFinishedCount: outcome.alreadyFinishedCount,
+      });
     }
-    setPausing(false);
+    if (outcome.failedCount > 0) {
+      setInterruptError('Some active agents could not be interrupted. Refresh and try again.');
+    }
+    setInterruptingAll(false);
+    setInterruptConfirmationOpen(false);
+  };
+
+  const openInterruptConfirmation = () => {
+    setInterruptOutcome(null);
+    setInterruptError(null);
+    setInterruptConfirmationOpen(true);
   };
 
   const openArtifact = (artifactId: string) => {
@@ -193,7 +242,8 @@ export function ProjectPage({
   };
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-w-0 flex-col overflow-hidden bg-canvas lg:h-dvh">
+    <>
+      <div className="flex h-[calc(100dvh-3.5rem)] min-w-0 flex-col overflow-hidden bg-canvas lg:h-dvh">
       <WorkspaceHeader
         eyebrow="Workspace, Project Overview"
         title={project.name}
@@ -221,17 +271,24 @@ export function ProjectPage({
           <ThreadPipelineTable tasks={tasks} agentById={agentById} onTask={onTask} />
           <div className="flex min-h-0 flex-1 flex-col">
             <ActivityFeed updates={feedUpdates} artifactUrls={artifactUrls} onOpenArtifact={openArtifact} />
-            {pauseError ? <p className="pt-2 text-right text-[11px] text-urgent" role="alert">{pauseError}</p> : null}
+            {interruptOutcome !== null ? (
+              <p className="pt-2 text-right text-[11px] text-success" role="status" aria-live="polite">
+                {`Interrupted ${interruptOutcome.interruptedCount} ${interruptOutcome.interruptedCount === 1 ? 'agent' : 'agents'}${interruptOutcome.alreadyFinishedCount > 0
+                  ? `; ${interruptOutcome.alreadyFinishedCount} had already finished.`
+                  : '.'}`}
+              </p>
+            ) : null}
+            {interruptError ? <p className="pt-2 text-right text-[11px] text-urgent" role="alert">{interruptError}</p> : null}
             <div className="mt-auto flex justify-end gap-2 pt-4">
               <Button
-                variant="secondary"
+                variant="danger"
                 size="sm"
-                className="!min-h-0 !border-0 !bg-muted-surface !px-4 !py-2"
-                disabled={!connected || activeRuns.length === 0 || pausing}
-                title={!connected ? 'Reconnect the task board to pause agents' : activeRuns.length === 0 ? 'No active agents to pause' : undefined}
-                onClick={() => void pauseAgents()}
+                className="!min-h-0 !px-4 !py-2"
+                disabled={!connected || activeRuns.length === 0 || interruptingAll}
+                title={!connected ? 'Reconnect the task board to interrupt agents' : activeRuns.length === 0 ? 'No active agents to interrupt' : undefined}
+                onClick={openInterruptConfirmation}
               >
-                {pausing ? 'Pausing…' : 'Pause Agents'}
+                {interruptingAll ? 'Interrupting…' : 'Interrupt all agents'}
               </Button>
               {/* Compile reporting stays disabled because no report endpoint exists. */}
               <Button
@@ -247,7 +304,26 @@ export function ProjectPage({
           </div>
         </section>
       </main>
-    </div>
+      </div>
+      <Modal
+        open={interruptConfirmationOpen}
+        onClose={() => { if (!interruptingAll) setInterruptConfirmationOpen(false); }}
+        title={`Interrupt ${activeRuns.length} ${activeRuns.length === 1 ? 'agent' : 'agents'}?`}
+        description={`This will interrupt ${activeRuns.length} active ${activeRuns.length === 1 ? 'agent' : 'agents'} in ${project.name}.`}
+      >
+        <div className="space-y-4 p-5 sm:p-6">
+          <p className="text-sm leading-6 text-muted">
+            Interrupted tasks are recoverable via Retry from their task details.
+          </p>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button data-dialog-initial-focus disabled={interruptingAll} onClick={() => setInterruptConfirmationOpen(false)}>Cancel</Button>
+            <Button variant="danger" disabled={interruptingAll} onClick={() => void interruptAllAgents()}>
+              {interruptingAll ? 'Interrupting…' : 'Interrupt all agents'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
 
@@ -273,6 +349,10 @@ interface AgentChatEntry {
   sender: 'human' | 'agent' | 'system';
   contextRole: AgentQueryConversationTurn['role'] | null;
   order: number;
+}
+
+export function agentPageUsesPointOfContactMode(isPointOfContact: boolean, explicitPointOfContact: boolean): boolean {
+  return isPointOfContact && explicitPointOfContact;
 }
 
 function agentChatTasks(agent: BoardAgent, snapshot: BoardSnapshot, pointOfContactOnly: boolean) {
@@ -591,5 +671,6 @@ function AgentChat({
 }
 
 export function AgentPage(props: AgentPageProps) {
-  return <AgentChat agent={props.agent} snapshot={props.snapshot} isPointOfContact={props.isPointOfContact} busy={props.busy} rotationErrors={props.rotationErrors} onDismissActionError={props.onDismissActionError} onTask={props.onTask} onSend={props.onSend} onAnswer={props.onAnswer} onRotateToken={props.onRotateToken} />;
+  const pointOfContactMode = agentPageUsesPointOfContactMode(props.isPointOfContact, props.explicitPointOfContact);
+  return <AgentChat agent={props.agent} snapshot={props.snapshot} isPointOfContact={pointOfContactMode} busy={props.busy} rotationErrors={props.rotationErrors} onDismissActionError={props.onDismissActionError} onTask={props.onTask} onSend={props.onSend} onAnswer={props.onAnswer} onRotateToken={props.onRotateToken} />;
 }

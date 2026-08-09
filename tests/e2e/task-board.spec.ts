@@ -356,6 +356,173 @@ async function discardDirtyDialog(page: Page): Promise<void> {
   await expect(confirmation).toHaveCount(0);
 }
 
+test('the first-run board leads with project creation in the board and project rail', async ({ page }) => {
+  await page.route('**/board-api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [] } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  const taskList = page.getByRole('main');
+  await expect(taskList.getByRole('heading', { name: 'Start with a project', exact: true })).toBeVisible();
+  await expect(taskList).toContainText('Agents arrive on demand for that project; then submit work.');
+  await taskList.getByRole('button', { name: 'Add project', exact: true }).click();
+
+  let projectDialog = page.getByRole('dialog', { name: 'Add project from disk', exact: true });
+  const projectFolder = projectDialog.getByLabel('Project folder', { exact: true });
+  await projectFolder.fill('relative/project');
+  await expect(projectDialog.getByText('Must be an absolute path, e.g. /Users/you/project', { exact: true })).toBeVisible();
+  await expect(projectDialog.getByRole('button', { name: 'Add project', exact: true })).toBeDisabled();
+  await projectDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await discardDirtyDialog(page);
+
+  const companyRail = await openCompanyRail(page);
+  const projectNavigation = companyRail.getByRole('navigation', { name: 'Projects and agents', exact: true });
+  await expect(projectNavigation.getByText('No projects yet', { exact: true })).toBeVisible();
+  await projectNavigation.getByRole('button', { name: 'Add project', exact: true }).click();
+  projectDialog = page.getByRole('dialog', { name: 'Add project from disk', exact: true });
+  await expect(projectDialog).toBeVisible();
+  if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
+    await expect(projectDialog.getByLabel('Project folder', { exact: true })).toBeFocused();
+  }
+});
+
+test('interrupting every active project agent confirms the count and preserves runs on cancel', async ({ page }) => {
+  const secondAgent = {
+    ...manager,
+    agentId: 'operations-manager',
+    status: 'running',
+    workerConnection: 'watching_run',
+  };
+  const firstActiveTask = {
+    ...task,
+    status: 'in_progress',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    startedAt: '2026-07-19T18:12:00.000Z',
+  };
+  const secondActiveTask = {
+    ...task,
+    taskId: 'task-operations-review',
+    kind: 'manager_review',
+    requiredRole: 'manager',
+    requiresReview: false,
+    title: 'Review operations readiness',
+    status: 'queued',
+    assignedAgentId: secondAgent.agentId,
+    assignedRole: 'manager',
+    orderKey: 3_000,
+  };
+  const activeRuns = [
+    {
+      apiVersion,
+      runId: 'run-invoice-recovery',
+      claimId: 'claim-invoice-recovery',
+      projectId: project.projectId,
+      agentId: agent.agentId,
+      wakeupId: 'wakeup-invoice-recovery',
+      taskId: firstActiveTask.taskId,
+      status: 'active',
+      startedAt: '2026-07-19T18:12:00.000Z',
+      endedAt: null,
+      result: null,
+    },
+    {
+      apiVersion,
+      runId: 'run-operations-review',
+      claimId: 'claim-operations-review',
+      projectId: project.projectId,
+      agentId: secondAgent.agentId,
+      wakeupId: 'wakeup-operations-review',
+      taskId: secondActiveTask.taskId,
+      status: 'active',
+      startedAt: '2026-07-19T18:13:00.000Z',
+      endedAt: null,
+      result: null,
+    },
+  ];
+  const interruptRequests: string[] = [];
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({
+        json: {
+          ...board(),
+          agents: [{ ...agent, status: 'running', workerConnection: 'watching_run' }, secondAgent],
+          tasks: [firstActiveTask, secondActiveTask],
+          recentRuns: activeRuns,
+        },
+      });
+      return;
+    }
+    if (/^\/board-api\/v1\/agents\/[^/]+\/interrupt$/u.test(url.pathname) && request.method() === 'POST') {
+      interruptRequests.push(url.pathname);
+      const requestedAgentId = decodeURIComponent(url.pathname.split('/')[4] ?? '');
+      const requestedRun = activeRuns.find((run) => run.agentId === requestedAgentId);
+      await route.fulfill({
+        json: {
+          interrupt: {
+            apiVersion,
+            sequence: interruptRequests.length,
+            agentId: requestedAgentId,
+            runId: requestedAgentId === secondAgent.agentId ? null : requestedRun?.runId ?? null,
+            requestedAt: '2026-07-19T18:14:00.000Z',
+          },
+          duplicate: false,
+        },
+      });
+      return;
+    }
+    if (/^\/board-api\/v1\/tasks\/[^/]+\/messages$/u.test(url.pathname)) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents', exact: true })
+    .getByRole('button', { name: project.name, exact: true }).click();
+
+  const interruptAll = page.getByRole('button', { name: 'Interrupt all agents', exact: true });
+  await expect(interruptAll).toBeEnabled();
+  await interruptAll.click();
+  let confirmation = page.getByRole('dialog', { name: 'Interrupt 2 agents?', exact: true });
+  await expect(confirmation).toContainText('2 active agents');
+  await expect(confirmation).toContainText('recoverable via Retry');
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(interruptRequests).toEqual([]);
+  await expect(interruptAll).toBeEnabled();
+
+  await interruptAll.click();
+  confirmation = page.getByRole('dialog', { name: 'Interrupt 2 agents?', exact: true });
+  await confirmation.getByRole('button', { name: 'Interrupt all agents', exact: true }).click();
+  await expect.poll(() => interruptRequests).toHaveLength(2);
+  await expect(page.getByRole('status')).toHaveText('Interrupted 1 agent; 1 had already finished.');
+  await expect(confirmation).toHaveCount(0);
+  await expect(interruptAll).toBeDisabled();
+});
+
 test('a project deep link survives a reload and the back button returns to it', async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto('/');
@@ -535,10 +702,16 @@ test('task routes preserve operator context across polling, removal, and dirty-d
   await expect(taskHeading).toBeVisible();
   await expect(answerDraft).toHaveValue('Retain the focused test results and the customer-impact review.');
 
-  await page.getByRole('button', { name: 'Back to task list', exact: true }).click();
+  if (belowXl) {
+    await page.getByRole('button', { name: 'Back to task list', exact: true }).click();
+  } else {
+    await page.goBack();
+  }
   await expect(page).toHaveURL(/#\/tasks$/u);
 
-  await page.getByRole('group', { name: 'Task list actions' }).getByRole('button', { name: 'Add task' }).click();
+  const addTask = page.getByRole('button', { name: 'Add task', exact: true });
+  await expect(addTask).toHaveCount(1);
+  await addTask.click();
   const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
   const prompt = taskDialog.getByLabel('Task', { exact: true });
   await prompt.fill('Keep this draft through the discard decision.');
@@ -2220,6 +2393,10 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
 });
 
 test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wake', async ({ page }, testInfo) => {
+  const explicitPointOfContactAgent = {
+    ...agent,
+    mission: 'Act as the point of contact for every project.',
+  };
   const projectWithResources = {
     ...project,
     description: 'Summary: Agents own defined parts of the system and improve customer outcomes.\nGitHub: https://github.com/acme/cicada\nDocs: https://docs.example.com/cicada\nWorkspace: /workspace/billing',
@@ -2281,7 +2458,7 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [agent, manager], tasks: projectTasks, documents: [documentSummary(editableDocument)] } });
+      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [explicitPointOfContactAgent, manager], tasks: projectTasks, documents: [documentSummary(editableDocument)] } });
       return;
     }
     if (url.pathname.startsWith('/board-api/v1/tasks/') && url.pathname.endsWith('/messages')) {
@@ -2344,8 +2521,8 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole('heading', { name: 'Team' })).toHaveCount(0);
   const threadPipeline = page.getByRole('table', { name: 'Active Thread Pipeline' });
   await expect(threadPipeline.getByRole('columnheader', { name: 'Task Objective' })).toBeVisible();
-  await expect(threadPipeline.getByText('Merged', { exact: true }).first()).toBeVisible();
-  await expect(threadPipeline.getByText('Queued', { exact: true }).first()).toBeVisible();
+  await expect(threadPipeline.getByText('completed', { exact: true }).first()).toBeVisible();
+  await expect(threadPipeline.getByText('backlog', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project setup' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Docs & links' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Important Documents' })).toBeVisible();
@@ -2361,7 +2538,7 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   const pipelineRows = page.getByRole('region', { name: 'Active thread pipeline rows' });
   await expect(pipelineRows).toBeVisible();
   expect(await pipelineRows.evaluate((element) => element.scrollHeight)).toBeGreaterThan(await pipelineRows.evaluate((element) => element.clientHeight));
-  await expect(page.getByRole('button', { name: 'Pause Agents' })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('button', { name: 'Interrupt all agents' })).toBeInViewport({ ratio: 1 });
   await expect(page.getByRole('button', { name: 'Compile Report' })).toBeInViewport({ ratio: 1 });
   const projectViewport = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
@@ -2414,6 +2591,10 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
 });
 
 test('the POC chat answers its current task question before starting another query', async ({ page }) => {
+  const explicitPointOfContactAgent = {
+    ...agent,
+    mission: 'Act as the point of contact for every project.',
+  };
   const answeredPrompt = 'Confirm who should review the customer wording.';
   const answeredQuery = {
     ...task,
@@ -2489,7 +2670,7 @@ test('the POC chat answers its current task question before starting another que
       await route.fulfill({
         json: {
           ...board(),
-          agents: [{ ...agent, status: 'waiting_for_human' }],
+          agents: [{ ...explicitPointOfContactAgent, status: 'waiting_for_human' }],
           tasks: [answeredQuery, currentQuery],
           openQuestions: currentQuestion.status === 'open' ? [currentQuestion] : [],
           recentQuestions: [currentQuestion, answeredQuestion],
@@ -2853,8 +3034,10 @@ test('an automatic manager review can only be assigned to a manager by a human',
   await expect(page.getByRole('heading', { name: 'Manager review: Improve invoice recovery', exact: true })).toBeVisible();
   await expect(page.getByText('Current status', { exact: true })).toBeVisible();
   const managerSelect = page.getByLabel('Assign manager');
-  await expect(managerSelect.locator('option')).toHaveCount(1);
-  await expect(managerSelect.locator('option')).toHaveText('release-manager — Release review');
+  const managerOption = managerSelect.locator('option');
+  await expect(managerOption).toHaveCount(1);
+  await expect(managerOption).toHaveText('release-manager — Release review — Worker not detected');
+  await expect(managerOption).toHaveText(/ — Worker (?:ready|connected|not detected)$/u);
   await expect(managerSelect).not.toContainText('billing-engineer');
   await page.getByRole('button', { name: 'Assign manager and wake' }).click();
   await expect.poll(() => assignment).not.toBeNull();

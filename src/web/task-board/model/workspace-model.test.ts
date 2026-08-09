@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assignmentAgentOptionLabel,
   agentPipelineFocus,
   agentWorkLabel,
   isExplicitPointOfContact,
@@ -76,6 +77,15 @@ describe('workspace view model', () => {
     expect(workerConnectionLabel(null)).toBe('Worker not detected');
     expect(workerAssignmentHint(null)).toContain('stays queued');
     expect(workerAssignmentHint(null)).not.toContain('offline');
+  });
+
+  it('includes worker connection state in assignment option labels', () => {
+    expect(assignmentAgentOptionLabel(agent({ workerConnection: 'waiting_for_wake' })))
+      .toBe('Engineer — Platform — Worker ready');
+    expect(assignmentAgentOptionLabel(agent({ workerConnection: 'watching_run' })))
+      .toBe('Engineer — Platform — Worker connected');
+    expect(assignmentAgentOptionLabel(agent({ workerConnection: null })))
+      .toBe('Engineer — Platform — Worker not detected');
   });
 
   it('derives implementation, review, and repeated-phase loops for an agent focus', () => {
@@ -207,16 +217,21 @@ describe('workspace view model', () => {
     });
   });
 
-  it('selects exactly one explicit POC before engineer or oldest-agent fallbacks', () => {
-    const agents = [
-      agent({ id: 'first', name: 'First' }),
-      agent({ id: 'manager', name: 'Manager', role: 'manager' }),
-      agent({ id: 'steward-poc', name: 'Steward', mission: 'Act as the company point of contact.' }),
-    ];
-    expect(selectPointOfContact(agents)?.id).toBe('steward-poc');
-    expect(isExplicitPointOfContact(agents[2]!)).toBe(true);
-    expect(isExplicitPointOfContact(agents[0]!)).toBe(false);
-    expect(selectPointOfContact(agents.filter((item) => item.id !== 'steward-poc'))?.id).toBe('first');
+  it('uses the same explicit POC signals for selection and framing', () => {
+    const plainEngineer = agent({ id: 'first', name: 'First' });
+    const idSignaledPoc = agent({ id: 'billing-poc', name: 'Billing liaison' });
+    const missionSignaledPoc = agent({
+      id: 'customer-liaison',
+      name: 'Customer liaison',
+      mission: 'Act as the company point of contact.',
+    });
+
+    expect(isExplicitPointOfContact(idSignaledPoc)).toBe(true);
+    expect(isExplicitPointOfContact(missionSignaledPoc)).toBe(true);
+    expect(isExplicitPointOfContact(plainEngineer)).toBe(false);
+    expect(selectPointOfContact([plainEngineer, idSignaledPoc])?.id).toBe('billing-poc');
+    expect(selectPointOfContact([plainEngineer, missionSignaledPoc])?.id).toBe('customer-liaison');
+    expect(selectPointOfContact([plainEngineer])?.id).toBe('first');
   });
 
   it('surfaces unassigned manager review and human release work as human attention', () => {

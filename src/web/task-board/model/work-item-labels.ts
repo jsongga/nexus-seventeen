@@ -1,4 +1,4 @@
-import type { BoardWorkItem, WorkItemStage, WorkItemState } from '../types';
+import type { BoardWorkItem, TaskStatus, WorkItemStage, WorkItemState } from '../types';
 
 export type WorkItemTone = 'neutral' | 'green' | 'amber' | 'red' | 'blue' | 'purple';
 
@@ -9,6 +9,19 @@ export const workItemStateTone: Record<WorkItemState, WorkItemTone> = {
   waiting_for_human_review: 'amber',
   completed: 'green',
   failed: 'red',
+  cancelled: 'neutral',
+};
+
+export const taskStatusTone: Record<TaskStatus, WorkItemTone> = {
+  proposed: 'purple',
+  backlog: 'neutral',
+  queued: 'blue',
+  running: 'green',
+  waiting_for_human: 'amber',
+  blocked: 'amber',
+  completed: 'green',
+  failed: 'red',
+  interrupted: 'red',
   cancelled: 'neutral',
 };
 

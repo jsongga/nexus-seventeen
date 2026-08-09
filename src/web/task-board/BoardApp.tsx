@@ -40,11 +40,13 @@ import {
   type ActionResult,
 } from './model/action-errors';
 import {
+  assignmentAgentOptionLabel,
   isExplicitPointOfContact,
   selectPointOfContact,
 } from './model/workspace-model';
 import {
   prettyStatus,
+  taskStatusTone,
   workItemStateTone,
   workItemStatusLabel,
 } from './model/work-item-labels';
@@ -65,7 +67,6 @@ import type {
   CreateProjectInput,
   CreateWorkItemInput,
   TaskKind,
-  TaskStatus,
   WorkItemPriority,
 } from './types';
 
@@ -75,19 +76,6 @@ const dateTime = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 });
-
-const statusTone: Record<TaskStatus, 'neutral' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
-  proposed: 'purple',
-  backlog: 'neutral',
-  queued: 'blue',
-  running: 'green',
-  waiting_for_human: 'amber',
-  blocked: 'amber',
-  completed: 'green',
-  failed: 'red',
-  interrupted: 'red',
-  cancelled: 'neutral',
-};
 
 const workItemPriorityTone: Record<WorkItemPriority, 'neutral' | 'amber' | 'red' | 'blue' | 'purple'> = {
   urgent: 'red',
@@ -154,7 +142,7 @@ function taskIsTerminal(task: BoardTask): boolean {
 }
 
 function StatusPill({ task }: { task: BoardTask }) {
-  return <Pill tone={statusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
+  return <Pill tone={taskStatusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
 }
 
 function TaskKindPill({ kind }: { kind: TaskKind }) {
@@ -446,6 +434,14 @@ function TaskDetail({
     ? task.assignedAgentId ?? eligibleAgents[0]?.id ?? ''
     : recovery.reassign.eligibleAgentIds[0] ?? '';
   const [agentId, setAgentId] = useState(defaultAgentId);
+  const selectedAgent = eligibleAgents.find((agent) => agent.id === agentId);
+  const selectedWorkerOffline = selectedAgent?.workerConnection === null;
+  const offlineNoticeId = `assignment-worker-${task.id}`;
+  const recoveryHelpId = `recovery-help-${task.id}`;
+  const recoveryDescribedBy = [
+    busy || recovery?.reassign.disabledReason ? recoveryHelpId : null,
+    selectedWorkerOffline ? offlineNoticeId : null,
+  ].filter((value): value is string => value !== null).join(' ') || undefined;
   const actionErrors = useActionErrors();
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
@@ -569,19 +565,20 @@ function TaskDetail({
               className={inputClass}
               value={agentId}
               disabled={busy || recoveryAgents.length === 0}
-              aria-describedby={busy || recovery.reassign.disabledReason ? `recovery-help-${task.id}` : undefined}
+              aria-describedby={recoveryDescribedBy}
               onChange={(event) => setAgentId(event.target.value)}
             >
               {recoveryAgents.length === 0 ? <option value="">No eligible agents</option> : null}
-              {recoveryAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
+              {recoveryAgents.map((agent) => <option key={agent.id} value={agent.id}>{assignmentAgentOptionLabel(agent)}</option>)}
             </select>
+            {selectedWorkerOffline ? <p id={offlineNoticeId} className="mt-2 text-xs leading-5 text-caution" role="status">Worker offline — the task will wait until its lane connects</p> : null}
           </div>
           <Button
             className="w-full"
             variant={recovery.reassign.primary ? 'primary' : 'secondary'}
             icon={<UserRoundCheck size={16} />}
             disabled={busy || recovery.reassign.disabledReason !== null || agentId.length === 0}
-            aria-describedby={busy || recovery.reassign.disabledReason ? `recovery-help-${task.id}` : undefined}
+            aria-describedby={recoveryDescribedBy}
             onClick={() => void runAction(actionErrorContexts.taskRecoveryReassign(task.id), () => onAssign(agentId))}
           >
             Reassign
@@ -592,7 +589,7 @@ function TaskDetail({
             </Button>
           ) : null}
           {busy || recovery.reassign.disabledReason ? (
-            <p id={`recovery-help-${task.id}`} className="text-xs leading-5 text-muted">
+            <p id={recoveryHelpId} className="text-xs leading-5 text-muted">
               {busy ? 'Recovery actions are temporarily unavailable while a board change is in progress.' : recovery.reassign.disabledReason}
             </p>
           ) : null}
@@ -601,11 +598,14 @@ function TaskDetail({
         <section className="px-4 py-4 sm:px-5">
             <div className="space-y-3">
               {eligibleAgents.length > 0 ? (
-                <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                  {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
-                </select>
+                <div>
+                  <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} aria-describedby={selectedWorkerOffline ? offlineNoticeId : undefined} value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                    {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{assignmentAgentOptionLabel(agent)}</option>)}
+                  </select>
+                  {selectedWorkerOffline ? <p id={offlineNoticeId} className="mt-2 text-xs leading-5 text-caution" role="status">Worker offline — the task will wait until its lane connects</p> : null}
+                </div>
               ) : <p className="text-sm text-muted">No {task.requiredRole ?? 'eligible'} agent is available.</p>}
-              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void runAction(actionErrorContexts.taskAssign(task.id), () => onAssign(agentId))}>
+              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} aria-describedby={selectedWorkerOffline ? offlineNoticeId : undefined} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void runAction(actionErrorContexts.taskAssign(task.id), () => onAssign(agentId))}>
                 {queuedUnclaimed ? task.kind === 'manager_review' ? 'Reassign manager and wake' : 'Reassign and wake agent' : task.kind === 'manager_review' ? 'Assign manager and wake' : 'Assign and wake agent'}
               </Button>
               {queuedUnclaimed ? <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskReturnToBacklog(task.id), onReturnToBacklog)}>Return to backlog</Button> : null}
@@ -645,14 +645,17 @@ function ProjectForm({
   const normalizedPath = workspacePath.trim().replace(/[\\/]+$/u, '');
   const projectName = normalizedPath.split(/[\\/]/u).at(-1)?.trim() ?? '';
   const validPath = projectName.length > 0 && projectName.length <= 160 && taskWorkspaceRefs(normalizedPath).length === 1;
+  const showPathError = workspacePath.trim().length > 0 && !validPath;
+  const pathErrorId = 'project-folder-error';
   return (
     <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); if (validPath) void onSubmit({ name: projectName, description: normalizedPath }); }}>
       <div>
         <FieldLabel htmlFor="project-folder">Project folder</FieldLabel>
-        <input id="project-folder" className={cn(inputClass, 'font-mono text-xs')} autoFocus required value={workspacePath} onChange={(event) => {
+        <input id="project-folder" className={cn(inputClass, 'font-mono text-xs')} autoFocus required aria-invalid={showPathError || undefined} aria-describedby={showPathError ? pathErrorId : undefined} value={workspacePath} onChange={(event) => {
           setWorkspacePath(event.target.value);
           onDirtyChange(fieldsAreDirty([event.target.value]));
         }} placeholder="/absolute/path/to/project" />
+        {showPathError ? <p id={pathErrorId} className="mt-1.5 text-xs leading-5 text-urgent">Must be an absolute path, e.g. /Users/you/project</p> : null}
       </div>
       <InlineActionErrors errors={errors} onDismiss={onDismissError} />
       <div className="grid gap-2 sm:grid-cols-2">
@@ -1092,7 +1095,7 @@ export function BoardApp() {
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorState} />;
   } else if (page.kind === 'project' && pageProject) {
-    content = <ProjectPage project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
+    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
   } else if (page.kind === 'agent' && pageAgent) {
     content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} rotationErrors={tokenRotationErrors} onDismissActionError={dismissActionError} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(actionErrorContexts.agentSend(pageAgent.id), () => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(actionErrorContexts.questionAnswer(questionId), () => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
       let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
@@ -1179,7 +1182,10 @@ export function BoardApp() {
                   ) : null}
                   </>
                 ) : null}
-                {allWorkItems.length === 0 && allTasks.length === 0 ? <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button size="sm" variant="primary" onClick={() => openDialog('task')}>Add task</Button>} /> : null}
+                {allWorkItems.length === 0 && allTasks.length === 0 ? snapshot.projects.length === 0
+                  ? <EmptyState icon={<FolderKanban size={19} />} title="Start with a project" body="Add a project folder first. Agents arrive on demand for that project; then submit work." action={<Button size="sm" variant="primary" disabled={!connected} onClick={() => openDialog('project')}>Add project</Button>} />
+                  : <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button size="sm" variant="primary" disabled={!connected} onClick={() => openDialog('task')}>Add task</Button>} />
+                : null}
               </div>
             </div>
             <div className={cn(anyDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
@@ -1222,7 +1228,7 @@ export function BoardApp() {
           : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected}>
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 

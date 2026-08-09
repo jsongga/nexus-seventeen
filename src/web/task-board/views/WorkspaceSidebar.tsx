@@ -3,6 +3,7 @@ import {
   CircleAlert,
   CircleX,
   Menu,
+  Plus,
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -51,11 +52,15 @@ function RailContent({
   page,
   pointOfContact,
   onNavigate,
+  onAddProject,
+  canAddProject,
 }: {
   snapshot: BoardSnapshot | null;
   page: BoardPage;
   pointOfContact: BoardAgent | null;
   onNavigate: (page: BoardPage) => void;
+  onAddProject: () => void;
+  canAddProject: boolean;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
@@ -186,7 +191,20 @@ function RailContent({
                 </div>
               );
             })}
-            {snapshot && snapshot.projects.length === 0 ? <p className="px-4 py-2 text-[12px] text-muted">No projects yet</p> : null}
+            {snapshot && snapshot.projects.length === 0 ? (
+              <div className="px-3 py-2">
+                <p className="px-1 text-[12px] text-muted">No projects yet</p>
+                <button
+                  type="button"
+                  className="mt-2 flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={!canAddProject}
+                  onClick={onAddProject}
+                >
+                  <Plus size={14} aria-hidden="true" />
+                  Add project
+                </button>
+              </div>
+            ) : null}
           </nav>
         </section>
       </div>
@@ -201,6 +219,8 @@ export function WorkspaceFrame({
   drawerOpen,
   onDrawerChange,
   onNavigate,
+  onAddProject,
+  canAddProject,
   children,
 }: {
   snapshot: BoardSnapshot | null;
@@ -209,6 +229,8 @@ export function WorkspaceFrame({
   drawerOpen: boolean;
   onDrawerChange: (open: boolean) => void;
   onNavigate: (page: BoardPage) => void;
+  onAddProject: () => void;
+  canAddProject: boolean;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
@@ -253,14 +275,19 @@ export function WorkspaceFrame({
     };
   }, [drawerOpen, onDrawerChange]);
 
-  const closeDrawer = () => {
+  const closeDrawer = (restoreFocus = true) => {
     onDrawerChange(false);
-    window.setTimeout(() => openerRef.current?.focus(), 0);
+    if (restoreFocus) window.setTimeout(() => openerRef.current?.focus(), 0);
   };
 
   const navigate = (next: BoardPage) => {
     onNavigate(next);
     closeDrawer();
+  };
+
+  const addProjectFromDrawer = () => {
+    closeDrawer(false);
+    onAddProject();
   };
 
   return (
@@ -271,15 +298,15 @@ export function WorkspaceFrame({
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} />
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} />
       </aside>
 
       {drawerOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={closeDrawer} />
+          <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
-            <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={closeDrawer}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} />
+            <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} />
           </aside>
         </div>
       ) : null}

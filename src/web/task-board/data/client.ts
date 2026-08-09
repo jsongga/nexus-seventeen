@@ -33,6 +33,7 @@ import {
   parseAutomationStage,
   parseAgent,
   parseDocument,
+  parseInterrupt,
   parseMessage,
   parseProjectArtifact,
   parseProjectWorkflow,
@@ -179,6 +180,12 @@ function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTok
   return { agentId: agent.agentId, version: agent.version, token };
 }
 
+function interruptRunFromEnvelope(value: unknown, path: string): InterruptRunResult {
+  const envelope = record(value, path);
+  const interrupt = parseInterrupt(envelope.interrupt, `${path}.interrupt`);
+  return { runId: interrupt.runId };
+}
+
 function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
   const envelope = record(value, path);
   return parseProjectWorkflow(envelope.workflow, `${path}.workflow`);
@@ -221,6 +228,10 @@ export class DocumentStreamError extends Error {
     super(message);
     this.name = 'DocumentStreamError';
   }
+}
+
+export interface InterruptRunResult {
+  readonly runId: string | null;
 }
 
 export interface TaskBoardClient {
@@ -270,7 +281,7 @@ export interface TaskBoardClient {
   answerQuestion(questionId: string, input: { answer: string }): Promise<void>;
   resumeTask(taskId: string, input: { version: number }): Promise<void>;
   decideHumanCheck(taskId: string, input: { version: number; status: 'completed' | 'failed'; result: string }): Promise<void>;
-  interruptRun(runId: string): Promise<void>;
+  interruptRun(runId: string): Promise<InterruptRunResult>;
   getProjectWorkflow(projectId: string, signal?: AbortSignal): Promise<ProjectWorkflow>;
   getProjectArtifacts(projectId: string, signal?: AbortSignal): Promise<ProjectArtifact[]>;
   confirmWorkflow(planRevisionId: string): Promise<ProjectWorkflow>;
@@ -982,10 +993,13 @@ export function createTaskBoardClient(options: {
     async interruptRun(runId) {
       const agentId = runAgents.get(runId);
       if (!agentId) throw new Error('Refresh the board before interrupting this run');
-      await post(
-        `/v1/agents/${encodeURIComponent(agentId)}/interrupt`,
-        { reason: 'Human interrupted this agent from the task board' },
-        `interrupt:${runId}`,
+      return interruptRunFromEnvelope(
+        await json(`/v1/agents/${encodeURIComponent(agentId)}/interrupt`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'Human interrupted this agent from the task board' }),
+          headers: { 'idempotency-key': `interrupt:${runId}` },
+        }),
+        'interrupt response',
       );
     },
   };

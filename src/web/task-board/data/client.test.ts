@@ -1644,6 +1644,22 @@ describe('task-board HTTP client', () => {
           createdAt: '2026-07-19T10:18:00.000Z',
         }], cursor: 1 }));
       }
+      if (path.endsWith('/v1/agents/billing-engineer/interrupt')) {
+        return new Response(JSON.stringify({
+          interrupt: {
+            apiVersion,
+            sequence: 1,
+            interruptId: 'interrupt-one',
+            projectId: 'project-one',
+            agentId: 'billing-engineer',
+            runId: null,
+            reason: 'Human interrupted this agent from the task board',
+            requestedBy: 'human',
+            requestedAt: '2026-07-19T10:19:00.000Z',
+          },
+          duplicate: false,
+        }));
+      }
       return new Response('{}');
     });
     const client = createTaskBoardClient({
@@ -1657,7 +1673,7 @@ describe('task-board HTTP client', () => {
     await client.addMessage('task-one', { body: 'Preserve the existing payment method.', version: 2 });
     await client.answerQuestion('question-one', { answer: 'Yes, preserve it.' });
     await client.resumeTask('task-one', { version: 2 });
-    await client.interruptRun('run-one');
+    const interruptResult = await client.interruptRun('run-one');
 
     const assignment = calls.find(([url, init]) => url.endsWith('/v1/tasks/task-one') && init?.method === 'PATCH');
     expect(JSON.parse(String(assignment?.[1]?.body))).toEqual({
@@ -1671,6 +1687,7 @@ describe('task-board HTTP client', () => {
     expect(calls.some(([url]) => url.endsWith('/v1/questions/question-one/answer'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/resume'))).toBe(true);
     expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/interrupt'))).toBe(true);
+    expect(interruptResult).toEqual({ runId: null });
     expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)).toBe(true);
     expect(calls.every(([, init]) => init?.credentials === 'omit' && init.redirect === 'error')).toBe(true);
   });
