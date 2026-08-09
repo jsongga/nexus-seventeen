@@ -1,10 +1,13 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
+  useState,
   useSyncExternalStore,
   type RefObject,
 } from 'react';
+import { dialogDismissalDecision } from './dialog-discard';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -66,6 +69,45 @@ export interface DialogLayerOptions {
   open: boolean;
   onClose: () => void;
   containerRef: RefObject<HTMLElement | null>;
+}
+
+export interface ConfirmBeforeDiscardOptions {
+  open: boolean;
+  isDirty?: () => boolean;
+  onDiscard: () => void;
+}
+
+/** Routes every opt-in dismissal through the same dirty-state decision. */
+export function useConfirmBeforeDiscard({
+  open,
+  isDirty,
+  onDiscard,
+}: ConfirmBeforeDiscardOptions) {
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const isDirtyRef = useRef(isDirty);
+  const onDiscardRef = useRef(onDiscard);
+  isDirtyRef.current = isDirty;
+  onDiscardRef.current = onDiscard;
+
+  useEffect(() => {
+    if (!open) setConfirmationOpen(false);
+  }, [open]);
+
+  const requestClose = useCallback(() => {
+    if (dialogDismissalDecision(isDirtyRef.current) === 'confirm') {
+      setConfirmationOpen(true);
+      return;
+    }
+    onDiscardRef.current();
+  }, []);
+
+  const keepEditing = useCallback(() => setConfirmationOpen(false), []);
+  const discard = useCallback(() => {
+    setConfirmationOpen(false);
+    onDiscardRef.current();
+  }, []);
+
+  return { confirmationOpen, requestClose, keepEditing, discard };
 }
 
 /** Shared keyboard, focus, and stacking behavior for sibling/stacked dialogs. */

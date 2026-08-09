@@ -11,7 +11,7 @@ import type { BoardAgent, BoardSnapshot } from '../types';
 import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
 
 export type BoardPage =
-  | { kind: 'tasks' }
+  | { kind: 'tasks'; taskId?: string }
   | { kind: 'intake'; workItemId: string }
   | { kind: 'automation' }
   | { kind: 'documents'; documentId?: string }

@@ -15,15 +15,17 @@ import {
   Square,
   UserRoundCheck,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch, type ReactNode } from 'react';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, Toast, cn, inputClass } from '../components/ui';
+import { fieldsAreDirty } from '../components/dialog-discard';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, randomUuid, type TaskBoardClient } from './data/client';
 import { DocumentsPage } from './views/DocumentsPage';
+import { missingRouteFallback } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
-import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
+import { WorkspaceFrame } from './views/WorkspaceSidebar';
 import { WorkItemDetail } from './views/WorkItemDetail';
 import {
   actionErrorContexts,
@@ -47,6 +49,12 @@ import {
   workItemStatusLabel,
 } from './model/work-item-labels';
 import { recoveryAffordances } from './model/task-recovery';
+import {
+  createTaskDetailDraftState,
+  taskDetailDraftReducer,
+  type TaskDetailDraftAction,
+  type TaskDetailDraftState,
+} from './model/task-detail-drafts';
 import type {
   BoardAgent,
   BoardQuestion,
@@ -232,6 +240,30 @@ function EmptyState({
   );
 }
 
+function RemovedTaskDetail({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    if (window.matchMedia('(max-width: 1279px)').matches) headingRef.current?.focus();
+  }, [taskId]);
+
+  return (
+    <Card>
+      <div className="flex min-h-52 flex-col items-center justify-center px-5 py-10 text-center" role="status">
+        <div className="mb-4 flex size-11 items-center justify-center rounded-[99px] bg-caution-soft text-caution">
+          <CircleAlert size={19} />
+        </div>
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-lg font-light tracking-[0.01em] text-ink">Task removed</h2>
+        <p className="mt-1 max-w-md text-sm leading-6 text-muted">
+          Task <span className="break-all font-mono text-xs text-ink">{taskId}</span> is no longer in the board snapshot. Your view has not switched to another task.
+        </p>
+        <div className="mt-5"><Button size="sm" onClick={onClose}>Close</Button></div>
+      </div>
+    </Card>
+  );
+}
+
 function FormError({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent">
@@ -247,6 +279,7 @@ function TaskRow({
   projectName,
   openQuestion,
   onSelect,
+  buttonRef,
 }: {
   task: BoardTask;
   selected: boolean;
@@ -254,6 +287,7 @@ function TaskRow({
   projectName?: string;
   openQuestion: boolean;
   onSelect: () => void;
+  buttonRef: (element: HTMLButtonElement | null) => void;
 }) {
   const completed = task.status === 'completed';
   const statusDot = task.status === 'running'
@@ -263,6 +297,7 @@ function TaskRow({
       : 'bg-muted/55';
   return (
     <button
+      ref={buttonRef}
       type="button"
       aria-label={`${task.title} ${task.status}`}
       onClick={onSelect}
@@ -363,6 +398,8 @@ function TaskDetail({
   agents,
   questions,
   runs,
+  drafts,
+  dispatchDraft,
   busy,
   onAssign,
   onReturnToBacklog,
@@ -376,6 +413,8 @@ function TaskDetail({
   agents: BoardAgent[];
   questions: BoardQuestion[];
   runs: BoardRun[];
+  drafts: TaskDetailDraftState;
+  dispatchDraft: Dispatch<TaskDetailDraftAction>;
   busy: boolean;
   onAssign: (agentId: string) => Promise<ActionResult>;
   onReturnToBacklog: () => Promise<ActionResult>;
@@ -407,19 +446,21 @@ function TaskDetail({
     ? task.assignedAgentId ?? eligibleAgents[0]?.id ?? ''
     : recovery.reassign.eligibleAgentIds[0] ?? '';
   const [agentId, setAgentId] = useState(defaultAgentId);
-  const [answer, setAnswer] = useState('');
-  const [decisionRationale, setDecisionRationale] = useState('');
   const actionErrors = useActionErrors();
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
   const queuedUnclaimed = task.status === 'queued' && !activeRun;
   const assigneeChanged = agentId !== task.assignedAgentId;
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     setAgentId(defaultAgentId);
-    setAnswer('');
-    setDecisionRationale('');
   }, [defaultAgentId, task.id]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    if (window.matchMedia('(max-width: 1279px)').matches) detailHeadingRef.current?.focus();
+  }, [task.id]);
 
   async function runAction(context: string, operation: () => Promise<ActionResult>): Promise<boolean> {
     actionErrors.start(context);
@@ -440,7 +481,7 @@ function TaskDetail({
           </div>
           {task.expectedAgentMinutes !== null ? <span className="text-[11px] text-muted">About {task.expectedAgentMinutes} agent min</span> : null}
         </div>
-        <h2 className="mt-4 break-words font-display text-xl font-light tracking-[0.01em] text-ink">{task.title}</h2>
+        <h2 ref={detailHeadingRef} tabIndex={-1} className="mt-4 break-words font-display text-xl font-light tracking-[0.01em] text-ink">{task.title}</h2>
         <div className="mt-4">
           <p className="text-xs font-medium text-muted">Description</p>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">{task.objective}</p>
@@ -456,18 +497,22 @@ function TaskDetail({
             <h3 className="text-xs font-semibold">Waiting for your answer</h3>
           </div>
           <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-6 text-ink">{openQuestion.prompt}</p>
-          <textarea
-            className={cn(inputClass, 'mt-3 min-h-24 resize-y py-3')}
-            placeholder="Give the missing context…"
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-          />
+          <div className="mt-3">
+            <FieldLabel htmlFor={`task-answer-${task.id}`}>Your answer</FieldLabel>
+            <textarea
+              id={`task-answer-${task.id}`}
+              className={cn(inputClass, 'min-h-24 resize-y py-3')}
+              placeholder="Give the missing context…"
+              value={drafts.answer}
+              onChange={(event) => dispatchDraft({ type: 'answer-changed', value: event.target.value })}
+            />
+          </div>
           <Button
             className="mt-3 w-full"
             variant="primary"
             icon={<Send size={16} />}
-            disabled={busy || answer.trim().length === 0}
-            onClick={() => void runAction(actionErrorContexts.taskAnswer(task.id, openQuestion.id), () => onAnswer(openQuestion.id, answer.trim())).then((saved) => { if (saved) setAnswer(''); })}
+            disabled={busy || drafts.answer.trim().length === 0}
+            onClick={() => void runAction(actionErrorContexts.taskAnswer(task.id, openQuestion.id), () => onAnswer(openQuestion.id, drafts.answer.trim())).then((saved) => { if (saved) dispatchDraft({ type: 'answer-changed', value: '' }); })}
           >
             Answer and wake agent
           </Button>
@@ -482,23 +527,23 @@ function TaskDetail({
             id={'human-decision-' + task.id}
             className={cn(inputClass, 'min-h-24 resize-y py-3')}
             placeholder="Why is this ready, or what must change?"
-            value={decisionRationale}
-            onChange={(event) => setDecisionRationale(event.target.value)}
+            value={drafts.decisionRationale}
+            onChange={(event) => dispatchDraft({ type: 'rationale-changed', value: event.target.value })}
           />
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <Button
               variant="mint"
               icon={<CheckCircle2 size={16} />}
-              disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void runAction(actionErrorContexts.taskHumanCheckApprove(task.id), () => onDecideHumanCheck('completed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
+              disabled={busy || drafts.decisionRationale.trim().length === 0}
+              onClick={() => void runAction(actionErrorContexts.taskHumanCheckApprove(task.id), () => onDecideHumanCheck('completed', drafts.decisionRationale.trim())).then((saved) => { if (saved) dispatchDraft({ type: 'rationale-changed', value: '' }); })}
             >
               Approve
             </Button>
             <Button
               variant="danger"
               icon={<CircleAlert size={16} />}
-              disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void runAction(actionErrorContexts.taskHumanCheckRequestChanges(task.id), () => onDecideHumanCheck('failed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
+              disabled={busy || drafts.decisionRationale.trim().length === 0}
+              onClick={() => void runAction(actionErrorContexts.taskHumanCheckRequestChanges(task.id), () => onDecideHumanCheck('failed', drafts.decisionRationale.trim())).then((saved) => { if (saved) dispatchDraft({ type: 'rationale-changed', value: '' }); })}
             >
               Request changes
             </Button>
@@ -586,11 +631,15 @@ function ProjectForm({
   errors,
   onDismissError,
   onSubmit,
+  onCancel,
+  onDirtyChange,
 }: {
   busy: boolean;
   errors: readonly ActionError[];
   onDismissError: (context: string) => void;
   onSubmit: (input: CreateProjectInput) => Promise<ActionResult>;
+  onCancel: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const [workspacePath, setWorkspacePath] = useState('');
   const normalizedPath = workspacePath.trim().replace(/[\\/]+$/u, '');
@@ -600,10 +649,16 @@ function ProjectForm({
     <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); if (validPath) void onSubmit({ name: projectName, description: normalizedPath }); }}>
       <div>
         <FieldLabel htmlFor="project-folder">Project folder</FieldLabel>
-        <input id="project-folder" className={cn(inputClass, 'font-mono text-xs')} autoFocus required value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder="/absolute/path/to/project" />
+        <input id="project-folder" className={cn(inputClass, 'font-mono text-xs')} autoFocus required value={workspacePath} onChange={(event) => {
+          setWorkspacePath(event.target.value);
+          onDirtyChange(fieldsAreDirty([event.target.value]));
+        }} placeholder="/absolute/path/to/project" />
       </div>
       <InlineActionErrors errors={errors} onDismiss={onDismissError} />
-      <Button className="w-full" type="submit" variant="primary" disabled={busy || !validPath}>Add project</Button>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="submit" variant="primary" disabled={busy || !validPath}>Add project</Button>
+        <Button disabled={busy} onClick={onCancel}>Cancel</Button>
+      </div>
     </form>
   );
 }
@@ -631,6 +686,8 @@ function WorkItemForm({
   errors,
   onDismissError,
   onSubmit,
+  onCancel,
+  onDirtyChange,
 }: {
   projects: BoardSnapshot['projects'];
   defaultProjectId: string | null;
@@ -638,6 +695,8 @@ function WorkItemForm({
   errors: readonly ActionError[];
   onDismissError: (context: string) => void;
   onSubmit: (input: CreateWorkItemInput) => Promise<ActionResult>;
+  onCancel: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const [prompt, setPrompt] = useState('');
   const [priority, setPriority] = useState<CreateWorkItemInput['priority']>('normal');
@@ -646,6 +705,18 @@ function WorkItemForm({
   const normalizedPrompt = prompt.trim();
   const projectChosen = projects.some((project) => project.id === projectId);
   const regenerateIdempotencyKey = () => setIdempotencyKey(randomUuid());
+  const initialProjectId = defaultProjectId ?? '';
+  const reportDirty = (next: {
+    prompt?: string;
+    priority?: CreateWorkItemInput['priority'];
+    projectId?: string;
+  }) => {
+    onDirtyChange(
+      fieldsAreDirty([next.prompt ?? prompt])
+      || (next.priority ?? priority) !== 'normal'
+      || (next.projectId ?? projectId) !== initialProjectId,
+    );
+  };
   return (
     <form
       className="space-y-4 p-5 sm:p-6"
@@ -671,6 +742,7 @@ function WorkItemForm({
           value={prompt}
           onChange={(event) => {
             setPrompt(event.target.value);
+            reportDirty({ prompt: event.target.value });
             regenerateIdempotencyKey();
           }}
           placeholder="What should be done?"
@@ -684,7 +756,9 @@ function WorkItemForm({
             className={inputClass}
             value={priority}
             onChange={(event) => {
-              setPriority(event.target.value as CreateWorkItemInput['priority']);
+              const nextPriority = event.target.value as CreateWorkItemInput['priority'];
+              setPriority(nextPriority);
+              reportDirty({ priority: nextPriority });
               regenerateIdempotencyKey();
             }}
           >
@@ -705,6 +779,7 @@ function WorkItemForm({
             value={projectChosen ? projectId : ''}
             onChange={(event) => {
               setProjectId(event.target.value);
+              reportDirty({ projectId: event.target.value });
               regenerateIdempotencyKey();
             }}
           >
@@ -719,27 +794,26 @@ function WorkItemForm({
         </div>
       </div>
       <InlineActionErrors errors={errors} onDismiss={onDismissError} />
-      <Button className="w-full" type="submit" variant="primary" disabled={busy || !normalizedPrompt || !projectChosen}>
-        {projectChosen ? 'Submit task' : 'Choose a project'}
-      </Button>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="submit" variant="primary" disabled={busy || !normalizedPrompt || !projectChosen}>
+          {projectChosen ? 'Submit task' : 'Choose a project'}
+        </Button>
+        <Button disabled={busy} onClick={onCancel}>Cancel</Button>
+      </div>
     </form>
   );
-}
-
-function missingRouteFallback(page: BoardPage, snapshot: BoardSnapshot): BoardPage | null {
-  if (page.kind === 'intake' && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId)) return { kind: 'tasks' };
-  if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
-  if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
-  if (page.kind === 'documents' && page.documentId && !snapshot.documents.some((document) => document.id === page.documentId)) return { kind: 'documents' };
-  return null;
 }
 
 export function BoardApp() {
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: '/board-api' }), []);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
   const [page, navigate] = useHashRoute();
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [taskDetailOpen, setTaskDetailOpen] = useState(false);
+  const routedTaskId = page.kind === 'tasks' ? page.taskId : undefined;
+  const [taskDetailDrafts, dispatchTaskDetailDraft] = useReducer(
+    taskDetailDraftReducer,
+    routedTaskId ?? '',
+    createTaskDetailDraftState,
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogName>(null);
   const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
@@ -751,9 +825,15 @@ export function BoardApp() {
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
+  const observedTaskIds = useRef(new Set<string>());
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const taskRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastOpenWorkItemId = useRef<string | null>(null);
+  const lastOpenTaskId = useRef<string | null>(null);
   const workItemDetailWasOpen = useRef(false);
+  const taskDetailWasOpen = useRef(false);
+  const projectFormDirty = useRef(false);
+  const workItemFormDirty = useRef(false);
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
 
   const refresh = useCallback(async (quiet = false): Promise<boolean> => {
@@ -765,11 +845,11 @@ export function BoardApp() {
     try {
       const next = await client.getSnapshot(controller.signal);
       if (sequence !== refreshSequence.current) return false;
+      for (const task of next.tasks) observedTaskIds.current.add(task.id);
       setSnapshot(next);
       dispatchErrorPipeline({ type: 'snapshot-succeeded' });
       setConnectivityError(null);
       setSignInExpired(false);
-      setSelectedTaskId((current) => current && next.tasks.some((task) => task.id === current) ? current : null);
       return true;
     } catch (caught) {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return false;
@@ -786,8 +866,6 @@ export function BoardApp() {
   useEffect(() => {
     refreshController.current?.abort();
     setSnapshot(null);
-    setSelectedTaskId(null);
-    setTaskDetailOpen(false);
     void refresh();
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh(true);
@@ -806,7 +884,7 @@ export function BoardApp() {
 
   useEffect(() => {
     if (snapshot === null) return;
-    const fallback = missingRouteFallback(page, snapshot);
+    const fallback = missingRouteFallback(page, snapshot, observedTaskIds.current);
     if (fallback !== null) navigate(fallback, 'replace');
   }, [navigate, page, snapshot]);
 
@@ -877,10 +955,12 @@ export function BoardApp() {
   const allWorkItems = snapshot?.workItems ?? [];
   const selectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
   const workItemDetailOpen = selectedWorkItem !== undefined;
+  const selectedTaskId = routedTaskId;
+  const taskDetailOpen = selectedTaskId !== undefined;
   const anyDetailOpen = taskDetailOpen || workItemDetailOpen;
   const activeTasks = allTasks.filter((task) => task.status !== 'completed');
   const completedTasks = allTasks.filter((task) => task.status === 'completed');
-  const selectedTask = allTasks.find((task) => task.id === selectedTaskId) ?? allTasks[0];
+  const selectedTask = allTasks.find((task) => task.id === selectedTaskId);
   const selectedTaskAgents = snapshot?.agents.filter((agent) => agent.projectId === selectedTask?.projectId) ?? [];
   const taskQuestions = snapshot?.questions.filter((question) => question.taskId === selectedTask?.id) ?? [];
   const taskRuns = snapshot?.runs.filter((run) => run.taskId === selectedTask?.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt)) ?? [];
@@ -903,6 +983,10 @@ export function BoardApp() {
   }
 
   useEffect(() => {
+    dispatchTaskDetailDraft({ type: 'task-synced', taskId: selectedTaskId ?? '' });
+  }, [selectedTaskId]);
+
+  useEffect(() => {
     const belowXl = typeof window.matchMedia === 'function'
       && window.matchMedia('(max-width: 1279px)').matches;
     if (workItemDetailOpen && selectedWorkItem) {
@@ -916,18 +1000,42 @@ export function BoardApp() {
     workItemDetailWasOpen.current = workItemDetailOpen;
   }, [selectedWorkItem, workItemDetailOpen]);
 
+  useEffect(() => {
+    const belowXl = typeof window.matchMedia === 'function'
+      && window.matchMedia('(max-width: 1279px)').matches;
+    if (taskDetailOpen && selectedTaskId) {
+      lastOpenTaskId.current = selectedTaskId;
+    } else if (taskDetailWasOpen.current && belowXl) {
+      const taskId = lastOpenTaskId.current;
+      window.requestAnimationFrame(() => {
+        const taskRow = taskId ? taskRowRefs.current.get(taskId) : undefined;
+        if (taskRow?.isConnected) {
+          taskRow.focus();
+          return;
+        }
+        document.querySelector<HTMLElement>('[data-page-heading]')?.focus();
+      });
+    }
+    taskDetailWasOpen.current = taskDetailOpen;
+  }, [selectedTaskId, taskDetailOpen]);
+
   function openTask(taskId: string) {
-    setSelectedTaskId(taskId);
-    navigate({ kind: 'tasks' });
-    setTaskDetailOpen(true);
+    // Eager reset: the hoisted single-slot draft reducer would otherwise
+    // paint the previous task's draft for one frame on direct A->B clicks
+    // (the corrective effect runs post-commit).
+    dispatchTaskDetailDraft({ type: 'task-synced', taskId });
+    navigate({ kind: 'tasks', taskId });
   }
 
   function openWorkItem(workItemId: string) {
-    setTaskDetailOpen(false);
     navigate({ kind: 'intake', workItemId });
   }
 
   function closeWorkItem() {
+    navigate({ kind: 'tasks' }, 'replace');
+  }
+
+  function closeTask() {
     navigate({ kind: 'tasks' }, 'replace');
   }
 
@@ -936,24 +1044,34 @@ export function BoardApp() {
       ? actionErrorContexts.projectCreate
       : actionErrorContexts.workItemCreate);
     setDialogProjectId(projectId ?? null);
+    if (name === 'project') projectFormDirty.current = false;
+    else workItemFormDirty.current = false;
     setDialog(name);
   }
 
   function closeDialog() {
     if (dialog === 'project') dismissActionError(actionErrorContexts.projectCreate);
     if (dialog === 'task') dismissActionError(actionErrorContexts.workItemCreate);
+    projectFormDirty.current = false;
+    workItemFormDirty.current = false;
     setDialog(null);
   }
 
   async function createProject(input: CreateProjectInput): Promise<ActionResult> {
     const result = await mutate(actionErrorContexts.projectCreate, () => client.createProject(input));
-    if (result.ok) setDialog(null);
+    if (result.ok) {
+      projectFormDirty.current = false;
+      setDialog(null);
+    }
     return result;
   }
 
   async function createWorkItem(input: CreateWorkItemInput): Promise<ActionResult> {
     const result = await mutate(actionErrorContexts.workItemCreate, () => client.createWorkItem(input));
-    if (result.ok) setDialog(null);
+    if (result.ok) {
+      workItemFormDirty.current = false;
+      setDialog(null);
+    }
     return result;
   }
 
@@ -987,7 +1105,7 @@ export function BoardApp() {
     content = (
       <>
         <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', anyDetailOpen ? 'hidden xl:grid' : 'grid')}>
-          <div><h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
+          <div><h1 data-page-heading tabIndex={-1} className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
           <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task')} />
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
@@ -1024,7 +1142,19 @@ export function BoardApp() {
                         <h2 id="active-work-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">Board tasks</h2>
                         <span className="text-xs text-muted">{activeTasks.length}</span>
                       </div>
-                      <div>{activeTasks.length > 0 ? activeTasks.map((task) => <TaskRow key={task.id} task={task} selected={taskDetailOpen && task.id === selectedTask?.id} agent={snapshot.agents.find((agent) => agent.id === task.assignedAgentId)} projectName={snapshot.projects.find((project) => project.id === task.projectId)?.name} openQuestion={openQuestionIds.has(task.id)} onSelect={() => openTask(task.id)} />) : <p className="border-b border-line px-1 py-5 text-sm text-muted">No active board tasks.</p>}</div>
+                      <div>{activeTasks.length > 0 ? activeTasks.map((task) => <TaskRow
+                        key={task.id}
+                        task={task}
+                        selected={taskDetailOpen && task.id === selectedTaskId}
+                        agent={snapshot.agents.find((agent) => agent.id === task.assignedAgentId)}
+                        projectName={snapshot.projects.find((project) => project.id === task.projectId)?.name}
+                        openQuestion={openQuestionIds.has(task.id)}
+                        onSelect={() => openTask(task.id)}
+                        buttonRef={(element) => {
+                          if (element) taskRowRefs.current.set(task.id, element);
+                          else taskRowRefs.current.delete(task.id);
+                        }}
+                      />) : <p className="border-b border-line px-1 py-5 text-sm text-muted">No active board tasks.</p>}</div>
                     </section>
                   {completedTasks.length > 0 ? (
                     <section aria-labelledby="completed-work-heading">
@@ -1032,7 +1162,19 @@ export function BoardApp() {
                         <h2 id="completed-work-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">Completed board tasks</h2>
                         <span className="text-xs text-muted">{completedTasks.length}</span>
                       </div>
-                      <div>{completedTasks.map((task) => <TaskRow key={task.id} task={task} selected={taskDetailOpen && task.id === selectedTask?.id} agent={snapshot.agents.find((agent) => agent.id === task.assignedAgentId)} projectName={snapshot.projects.find((project) => project.id === task.projectId)?.name} openQuestion={openQuestionIds.has(task.id)} onSelect={() => openTask(task.id)} />)}</div>
+                      <div>{completedTasks.map((task) => <TaskRow
+                        key={task.id}
+                        task={task}
+                        selected={taskDetailOpen && task.id === selectedTaskId}
+                        agent={snapshot.agents.find((agent) => agent.id === task.assignedAgentId)}
+                        projectName={snapshot.projects.find((project) => project.id === task.projectId)?.name}
+                        openQuestion={openQuestionIds.has(task.id)}
+                        onSelect={() => openTask(task.id)}
+                        buttonRef={(element) => {
+                          if (element) taskRowRefs.current.set(task.id, element);
+                          else taskRowRefs.current.delete(task.id);
+                        }}
+                      />)}</div>
                     </section>
                   ) : null}
                   </>
@@ -1041,7 +1183,7 @@ export function BoardApp() {
               </div>
             </div>
             <div className={cn(anyDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
-              {anyDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={workItemDetailOpen ? closeWorkItem : () => setTaskDetailOpen(false)}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button></div> : null}
+              {anyDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={workItemDetailOpen ? closeWorkItem : closeTask}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button></div> : null}
               {selectedWorkItem ? <WorkItemDetail
                 key={selectedWorkItem.id}
                 workItem={selectedWorkItem}
@@ -1059,7 +1201,7 @@ export function BoardApp() {
                   if (result.ok) closeWorkItem();
                   return result;
                 }}
-              /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={(agentId) => mutateTaskDetail(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version }))} onReturnToBacklog={() => mutateTaskDetail(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version }))} onRetry={() => mutateTaskDetail(() => client.retryTask(selectedTask.id, selectedTask.version))} onRecoveryBacklog={() => mutateTaskDetail(() => client.backlogTask(selectedTask.id, selectedTask.version))} onAnswer={(questionId, answer) => mutateTaskDetail(() => client.answerQuestion(questionId, { answer }))} onInterrupt={(runId) => mutateTaskDetail(() => client.interruptRun(runId))} onDecideHumanCheck={(status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutateTaskDetail(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
+              /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} drafts={taskDetailDrafts} dispatchDraft={dispatchTaskDetailDraft} busy={busy || !connected} onAssign={(agentId) => mutateTaskDetail(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version }))} onReturnToBacklog={() => mutateTaskDetail(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version }))} onRetry={() => mutateTaskDetail(() => client.retryTask(selectedTask.id, selectedTask.version))} onRecoveryBacklog={() => mutateTaskDetail(() => client.backlogTask(selectedTask.id, selectedTask.version))} onAnswer={(questionId, answer) => mutateTaskDetail(() => client.answerQuestion(questionId, { answer }))} onInterrupt={(runId) => mutateTaskDetail(() => client.interruptRun(runId))} onDecideHumanCheck={(status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutateTaskDetail(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : taskDetailOpen && selectedTaskId ? <RemovedTaskDetail key={selectedTaskId} taskId={selectedTaskId} onClose={closeTask} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
             </div>
           </div>
         </main>
@@ -1080,12 +1222,45 @@ export function BoardApp() {
           : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next) => { navigate(next); setTaskDetailOpen(false); }}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate}>
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
-      <Modal open={dialog === 'project'} onClose={closeDialog} title="Add project from disk" description="Enter the project folder. Agent identities are created when the project receives work."><ProjectForm busy={busy || !connected} errors={projectCreateErrors} onDismissError={dismissActionError} onSubmit={createProject} /></Modal>
-      <Modal open={dialog === 'task'} onClose={closeDialog} title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'} description="Records a durable intake request. This step does not wake an agent yet."><WorkItemForm key={dialogProject?.id ?? 'unselected'} projects={snapshot?.projects ?? []} defaultProjectId={dialogProject?.id ?? null} busy={busy || !connected} errors={workItemCreateErrors} onDismissError={dismissActionError} onSubmit={createWorkItem} /></Modal>
+      <Modal
+        open={dialog === 'project'}
+        onClose={closeDialog}
+        isDirty={() => projectFormDirty.current}
+        title="Add project from disk"
+        description="Enter the project folder. Agent identities are created when the project receives work."
+      >
+        {(requestClose) => <ProjectForm
+          busy={busy || !connected}
+          errors={projectCreateErrors}
+          onDismissError={dismissActionError}
+          onSubmit={createProject}
+          onCancel={requestClose}
+          onDirtyChange={(dirty) => { projectFormDirty.current = dirty; }}
+        />}
+      </Modal>
+      <Modal
+        open={dialog === 'task'}
+        onClose={closeDialog}
+        isDirty={() => workItemFormDirty.current}
+        title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'}
+        description="Records a durable intake request. This step does not wake an agent yet."
+      >
+        {(requestClose) => <WorkItemForm
+          key={dialogProject?.id ?? 'unselected'}
+          projects={snapshot?.projects ?? []}
+          defaultProjectId={dialogProject?.id ?? null}
+          busy={busy || !connected}
+          errors={workItemCreateErrors}
+          onDismissError={dismissActionError}
+          onSubmit={createWorkItem}
+          onCancel={requestClose}
+          onDirtyChange={(dirty) => { workItemFormDirty.current = dirty; }}
+        />}
+      </Modal>
       {unanchoredActionErrors.length > 0 ? (
         <div className="fixed bottom-4 left-4 right-4 z-[70] mx-auto flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col gap-2 overflow-y-auto overscroll-contain" role="region" aria-label="Action errors">
           {unanchoredActionErrors.map((entry) => (

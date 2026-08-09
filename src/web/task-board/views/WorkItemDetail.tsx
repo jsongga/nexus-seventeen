@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
+import { fieldsAreDirty } from '../../components/dialog-discard';
 import type { TaskBoardClient } from '../data/client';
 import {
   deriveWorkItemDetailAffordances,
@@ -389,12 +390,13 @@ export function WorkItemDetail({
       <Modal
         open={confirmation === 'cancel' || confirmation === 'reject'}
         onClose={closeConfirmation}
+        isDirty={() => fieldsAreDirty([cancelReason])}
         title={confirmation === 'reject' ? 'Reject proposed plan' : 'Cancel work item'}
         description={confirmation === 'reject'
           ? 'Rejecting the plan cancels this work item and records your reason on its planning task.'
           : 'This stops the intake and its live planning task. This action cannot be undone.'}
       >
-        <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); void submitCancellation(); }}>
+        {(requestClose) => <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); void submitCancellation(); }}>
           <div>
             <FieldLabel htmlFor={`work-item-cancel-reason-${workItem.id}`}>Reason</FieldLabel>
             <textarea
@@ -411,9 +413,9 @@ export function WorkItemDetail({
           <InlineActionErrors errors={actionErrors.errors.filter((entry) => entry.context === cancellationContext)} onDismiss={actionErrors.dismiss} />
           <div className="grid gap-2 sm:grid-cols-2">
             <Button type="submit" variant="danger" disabled={busy || cancelReason.trim().length === 0}>{confirmation === 'reject' ? 'Reject and cancel' : 'Cancel work item'}</Button>
-            <Button disabled={busy} onClick={closeConfirmation}>Keep work item</Button>
+            <Button disabled={busy} onClick={requestClose}>Keep work item</Button>
           </div>
-        </form>
+        </form>}
       </Modal>
 
       <Modal

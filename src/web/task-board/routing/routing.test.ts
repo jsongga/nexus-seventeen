@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardPage } from '../views/WorkspaceSidebar';
-import { hashToPage, pageToHash } from './routing';
+import { hashToPage, missingRouteFallback, pageToHash } from './routing';
 
 const pages: BoardPage[] = [
   { kind: 'tasks' },
+  { kind: 'tasks', taskId: 'task-1' },
   { kind: 'intake', workItemId: 'work-item-1' },
   { kind: 'automation' },
   { kind: 'documents' },
@@ -15,6 +16,7 @@ const pages: BoardPage[] = [
 describe('pageToHash', () => {
   it('writes the documented form for every page kind', () => {
     expect(pageToHash({ kind: 'tasks' })).toBe('#/tasks');
+    expect(pageToHash({ kind: 'tasks', taskId: 'task-1' })).toBe('#/tasks/task-1');
     expect(pageToHash({ kind: 'intake', workItemId: 'work-item-1' })).toBe('#/intake/work-item-1');
     expect(pageToHash({ kind: 'automation' })).toBe('#/automation');
     expect(pageToHash({ kind: 'documents' })).toBe('#/documents');
@@ -29,6 +31,7 @@ describe('pageToHash', () => {
     expect(pageToHash({ kind: 'project', projectId: 'acme/web' })).toBe('#/project/acme%2Fweb');
     expect(pageToHash({ kind: 'agent', agentId: 'bot@host' })).toBe('#/agent/bot%40host');
     expect(pageToHash({ kind: 'intake', workItemId: 'intake/acme' })).toBe('#/intake/intake%2Facme');
+    expect(pageToHash({ kind: 'tasks', taskId: 'task/acme' })).toBe('#/tasks/task%2Facme');
   });
 
   it('never throws when encoding an id it cannot represent', () => {
@@ -61,6 +64,7 @@ describe('hashToPage', () => {
     expect(hashToPage('#/project')).toEqual({ kind: 'tasks' });   // id required
     expect(hashToPage('#/agent')).toEqual({ kind: 'tasks' });     // id required
     expect(hashToPage('#/intake')).toEqual({ kind: 'tasks' });    // id required
+    expect(hashToPage('#/tasks/')).toEqual({ kind: 'tasks' });    // empty optional id
     expect(hashToPage('#/project/')).toEqual({ kind: 'tasks' });  // empty id
     expect(hashToPage('not-a-hash')).toEqual({ kind: 'tasks' });
   });
@@ -76,7 +80,7 @@ describe('hashToPage', () => {
     expect(hashToPage('#/agent/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/intake/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/automation/ignored')).toEqual({ kind: 'tasks' });
-    expect(hashToPage('#/tasks/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/tasks/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/documents/doc-1/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/tasks/')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/documents/')).toEqual({ kind: 'tasks' });
@@ -86,6 +90,7 @@ describe('hashToPage', () => {
     expect(hashToPage('#/project/%')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/agent/%')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/intake/%')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/tasks/%')).toEqual({ kind: 'tasks' });
     // Regression: this previously resolved to the documents index page.
     expect(hashToPage('#/documents/%')).toEqual({ kind: 'tasks' });
   });
@@ -94,5 +99,40 @@ describe('hashToPage', () => {
     expect(hashToPage('/tasks')).toEqual({ kind: 'tasks' });
     expect(hashToPage('/agent/agent-1')).toEqual({ kind: 'agent', agentId: 'agent-1' });
     expect(hashToPage('/intake/work-item-1')).toEqual({ kind: 'intake', workItemId: 'work-item-1' });
+    expect(hashToPage('/tasks/task-1')).toEqual({ kind: 'tasks', taskId: 'task-1' });
+  });
+});
+
+describe('missingRouteFallback', () => {
+  const snapshotIds = {
+    tasks: [{ id: 'task-present' }],
+    workItems: [],
+    projects: [],
+    agents: [],
+    documents: [],
+  };
+
+  it('canonicalizes a task id that has never appeared in an authoritative snapshot', () => {
+    expect(missingRouteFallback(
+      { kind: 'tasks', taskId: 'task-never-observed' },
+      snapshotIds,
+      new Set(),
+    )).toEqual({ kind: 'tasks' });
+  });
+
+  it('keeps the routed placeholder for a task that was observed before removal', () => {
+    expect(missingRouteFallback(
+      { kind: 'tasks', taskId: 'task-observed-then-removed' },
+      snapshotIds,
+      new Set(['task-observed-then-removed']),
+    )).toBeNull();
+  });
+
+  it('keeps a task route when the current snapshot contains the task', () => {
+    expect(missingRouteFallback(
+      { kind: 'tasks', taskId: 'task-present' },
+      snapshotIds,
+      new Set(),
+    )).toBeNull();
   });
 });

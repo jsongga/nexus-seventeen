@@ -462,13 +462,13 @@ function AgentChat({
           {isPointOfContact ? (
             <header className="shrink-0 border-b border-line py-4 sm:py-5 lg:py-7">
               <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">Point of contact</p>
-              <h1 id="agent-chat-heading" className="mt-1.5 font-display text-2xl font-light tracking-[0.01em] text-ink sm:text-[28px]">Chat with {agent.name}</h1>
+              <h1 id="agent-chat-heading" data-page-heading tabIndex={-1} className="mt-1.5 font-display text-2xl font-light tracking-[0.01em] text-ink sm:text-[28px]">Chat with {agent.name}</h1>
             </header>
           ) : (
             <header aria-label={`${agent.name} current focus`} className="shrink-0 border-b border-line py-4 sm:py-5 lg:py-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
               <div className="min-w-0">
-                <h1 id="agent-chat-heading" className="font-display text-xl font-light tracking-[0.01em] text-ink sm:text-2xl">{agent.name}</h1>
+                <h1 id="agent-chat-heading" data-page-heading tabIndex={-1} className="font-display text-xl font-light tracking-[0.01em] text-ink sm:text-2xl">{agent.name}</h1>
                 <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Current focus</p>
                 {focus.task ? (
                   <button

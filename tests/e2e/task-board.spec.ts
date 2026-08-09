@@ -349,6 +349,13 @@ async function openCompanyRail(page: Page): Promise<Locator> {
   return companyNavigation.locator('../..');
 }
 
+async function discardDirtyDialog(page: Page): Promise<void> {
+  const confirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+}
+
 test('a project deep link survives a reload and the back button returns to it', async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto('/');
@@ -402,6 +409,169 @@ test('a deep link to a project missing from the snapshot does not trap Back', as
   await expect(page).toHaveURL(/\/outside-board$/u);
   await expect(page.getByRole('heading', { name: 'Outside board' })).toBeVisible();
   expect(historyLengthAfterReconciliation).toBe(historyLengthBeforeBoard + 1);
+});
+
+test('a cold task deep link that was never observed canonicalizes to the task list', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/#/tasks/task-never-observed');
+
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await expect(page.getByRole('heading', { name: 'Task List', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Task removed', exact: true })).toHaveCount(0);
+});
+
+test('task routes preserve operator context across polling, removal, and dirty-dialog dismissal', async ({ page }) => {
+  const routedTask = {
+    ...task,
+    taskId: 'task-c6-question',
+    title: 'Preserve operator context',
+    objective: 'An operator supplies context without polling destroying the draft.',
+    status: 'blocked',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    orderKey: 1_000,
+  };
+  const routedQuestion = {
+    apiVersion,
+    questionId: 'question-c6-context',
+    projectId: project.projectId,
+    taskId: routedTask.taskId,
+    agentId: agent.agentId,
+    runId: 'run-c6-context',
+    question: 'Which release evidence should the agent retain?',
+    status: 'open',
+    answer: null,
+    askedAt: '2026-07-19T18:20:00.000Z',
+    answeredAt: null,
+    answeredBy: null,
+    version: 1,
+  };
+  let reassigned = false;
+  let removed = false;
+  let projectReads = 0;
+  await page.clock.install({ time: new Date('2026-07-19T18:30:00.000Z') });
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      projectReads += 1;
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      const currentRoutedTask = reassigned
+        ? { ...routedTask, assignedAgentId: manager.agentId, assignedRole: 'manager', version: 2 }
+        : routedTask;
+      await route.fulfill({
+        json: {
+          ...board(),
+          agents: [agent, manager],
+          tasks: removed ? [completedReferenceTask] : [currentRoutedTask, completedReferenceTask],
+          openQuestions: removed ? [] : [routedQuestion],
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/messages')) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/#/tasks/task-c6-question');
+  await expect(page).toHaveURL(/#\/tasks\/task-c6-question$/u);
+  const taskPane = page.getByRole('region', { name: 'Task details: Preserve operator context' });
+  const taskHeading = taskPane.getByRole('heading', { name: 'Preserve operator context', exact: true });
+  const belowXl = (page.viewportSize()?.width ?? 1_280) < 1_280;
+  await expect(taskHeading).toBeVisible();
+  if (belowXl) await expect(taskHeading).toBeFocused();
+
+  const deepLink = page.url();
+  await page.reload();
+  await expect(page).toHaveURL(deepLink);
+  await expect(taskHeading).toBeVisible();
+  await page.evaluate(() => {
+    window.location.hash = '#/tasks';
+  });
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  const routedRow = page.getByRole('button', { name: /Preserve operator context/u });
+  await routedRow.click();
+  await expect(page).toHaveURL(/#\/tasks\/task-c6-question$/u);
+  if (belowXl) await expect(taskHeading).toBeFocused();
+  else await expect(routedRow).toBeFocused();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  if (belowXl) await expect(routedRow).toBeFocused();
+  await page.goForward();
+  await expect(page).toHaveURL(deepLink);
+
+  const answerDraft = taskPane.getByLabel('Your answer', { exact: true });
+  await answerDraft.fill('Retain the focused test results and the customer-impact review.');
+  const readsBeforeReassignment = projectReads;
+  reassigned = true;
+  await page.clock.runFor(5_100);
+  await expect.poll(() => projectReads).toBeGreaterThan(readsBeforeReassignment);
+  await expect(answerDraft).toHaveValue('Retain the focused test results and the customer-impact review.');
+
+  const readsBeforeRemoval = projectReads;
+  removed = true;
+  await page.clock.runFor(5_100);
+  await expect.poll(() => projectReads).toBeGreaterThan(readsBeforeRemoval);
+  const removedState = page.getByRole('status').filter({ has: page.getByRole('heading', { name: 'Task removed', exact: true }) });
+  await expect(removedState).toContainText('Your view has not switched to another task.');
+  await expect(page).toHaveURL(/#\/tasks\/task-c6-question$/u);
+  await expect(page.getByRole('region', { name: `Task details: ${completedReferenceTask.title}` })).toHaveCount(0);
+
+  const readsBeforeRestoration = projectReads;
+  removed = false;
+  await page.clock.runFor(5_100);
+  await expect.poll(() => projectReads).toBeGreaterThan(readsBeforeRestoration);
+  await expect(taskHeading).toBeVisible();
+  await expect(answerDraft).toHaveValue('Retain the focused test results and the customer-impact review.');
+
+  await page.getByRole('button', { name: 'Back to task list', exact: true }).click();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+
+  await page.getByRole('group', { name: 'Task list actions' }).getByRole('button', { name: 'Add task' }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  const prompt = taskDialog.getByLabel('Task', { exact: true });
+  await prompt.fill('Keep this draft through the discard decision.');
+  await page.keyboard.press('Escape');
+  const discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(discardConfirmation).toHaveCount(0);
+  await expect(prompt).toHaveValue('Keep this draft through the discard decision.');
+  await expect(prompt).toBeFocused();
+  await page.keyboard.press('Escape');
+  await discardDirtyDialog(page);
+  await expect(taskDialog).toHaveCount(0);
+});
+
+test('mobile Back from a task opened on a project focuses the project heading', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 1_280) >= 1_280, 'below-xl focus behavior');
+  await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents' })
+    .getByRole('button', { name: project.name, exact: true }).click();
+  const projectHeading = page.getByRole('heading', { name: project.name, exact: true });
+  await expect(projectHeading).toBeVisible();
+
+  await page.getByRole('table', { name: 'Active Thread Pipeline' })
+    .getByRole('button', { name: task.title, exact: true }).click();
+  await expect(page).toHaveURL(/#\/tasks\/task-recovery$/u);
+  await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeFocused();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/project\/project-cicada$/u);
+  await expect(projectHeading).toBeFocused();
 });
 
 test('editing the hash directly updates the view', async ({ page }) => {
@@ -642,6 +812,7 @@ test('creating a task requires and records one explicit project with priority', 
   await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await discardDirtyDialog(page);
   await expect(page.getByRole('alert').filter({ hasText: 'Check this change: Choose the project again.' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
 
@@ -1004,6 +1175,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
   await expect.poll(() => rejectAttempts).toBe(1);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await discardDirtyDialog(page);
   await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Reject plan' }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
@@ -1047,6 +1219,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await dialog.getByRole('button', { name: 'Cancel work item' }).click();
   await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await discardDirtyDialog(page);
   await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Cancel work item' }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
@@ -1387,6 +1560,7 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await discardDirtyDialog(page);
   await expect(page.getByRole('alert').filter({ hasText: 'The board changed in another session. Refresh before trying again.' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
 

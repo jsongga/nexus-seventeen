@@ -1,6 +1,6 @@
 import { useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import { useDialogLayer } from './dialog-stack';
+import { useConfirmBeforeDiscard, useDialogLayer } from './dialog-stack';
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -118,25 +118,33 @@ export function Modal({
   description,
   children,
   className,
+  isDirty,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   description?: string;
-  children: ReactNode;
+  children: ReactNode | ((requestClose: () => void) => ReactNode);
   className?: string;
+  isDirty?: () => boolean;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
+  const { confirmationOpen, requestClose, keepEditing, discard } = useConfirmBeforeDiscard({
+    open,
+    isDirty,
+    onDiscard: onClose,
+  });
   const { isTopmost, layerId } = useDialogLayer({
     open,
-    onClose,
+    onClose: requestClose,
     containerRef: dialogRef,
   });
 
   if (!open) return null;
 
   return (
-    <div
+    <>
+      <div
       className={cn(
         'cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
         !isTopmost && 'pointer-events-none',
@@ -144,7 +152,7 @@ export function Modal({
       role="presentation"
       aria-hidden={isTopmost ? undefined : true}
       onMouseDown={(event) => {
-        if (isTopmost && event.target === event.currentTarget) onClose();
+        if (isTopmost && event.target === event.currentTarget) requestClose();
       }}
     >
       <section
@@ -167,16 +175,28 @@ export function Modal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="flex size-10 shrink-0 items-center justify-center rounded-[99px] text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95"
             aria-label="Close dialog"
           >
             <X size={19} />
           </button>
         </header>
-        {children}
+        {typeof children === 'function' ? children(requestClose) : children}
       </section>
-    </div>
+      </div>
+      <Modal
+        open={confirmationOpen}
+        onClose={keepEditing}
+        title="Discard draft?"
+        description="Your unsaved text will be lost."
+      >
+        <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
+          <Button variant="danger" onClick={discard}>Discard</Button>
+          <Button data-dialog-initial-focus onClick={keepEditing}>Keep editing</Button>
+        </div>
+      </Modal>
+    </>
   );
 }
 

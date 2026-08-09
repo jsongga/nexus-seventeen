@@ -1,5 +1,13 @@
 import type { BoardPage } from '../views/WorkspaceSidebar';
 
+interface RouteSnapshotIds {
+  tasks: readonly { id: string }[];
+  workItems: readonly { id: string }[];
+  projects: readonly { id: string }[];
+  agents: readonly { id: string }[];
+  documents: readonly { id: string }[];
+}
+
 /**
  * BoardPage <-> URL hash conversion.
  *
@@ -23,6 +31,7 @@ function hashSegments(hash: string): string[] {
 function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
   switch (kind) {
     case 'tasks':
+      return segmentCount === 1 || segmentCount === 2;
     case 'automation':
       return segmentCount === 1;
     case 'documents':
@@ -48,7 +57,7 @@ function decodeId(value: string | undefined): string | null | undefined {
   }
 }
 
-function pageHashWithId(kind: 'documents' | 'project' | 'agent' | 'intake', id: string): string {
+function pageHashWithId(kind: 'tasks' | 'documents' | 'project' | 'agent' | 'intake', id: string): string {
   try {
     return `#/${kind}/${encodeURIComponent(id)}`;
   } catch {
@@ -61,7 +70,7 @@ function pageHashWithId(kind: 'documents' | 'project' | 'agent' | 'intake', id: 
 export function pageToHash(page: BoardPage): string {
   switch (page.kind) {
     case 'tasks':
-      return '#/tasks';
+      return page.taskId ? pageHashWithId('tasks', page.taskId) : '#/tasks';
     case 'intake':
       return pageHashWithId('intake', page.workItemId);
     case 'automation':
@@ -83,7 +92,8 @@ export function hashToPage(hash: string): BoardPage {
   const id = decodeId(rawId);
   switch (kind) {
     case 'tasks':
-      return tasksPage;
+      if (id === null) return tasksPage;
+      return id === undefined ? tasksPage : { kind: 'tasks', taskId: id };
     case 'automation':
       return { kind: 'automation' };
     case 'documents':
@@ -100,4 +110,23 @@ export function hashToPage(hash: string): BoardPage {
     default:
       return tasksPage;
   }
+}
+
+/** Reconciles entity routes only after an authoritative snapshot is available. */
+export function missingRouteFallback(
+  page: BoardPage,
+  snapshot: RouteSnapshotIds,
+  observedTaskIds: ReadonlySet<string>,
+): BoardPage | null {
+  if (
+    page.kind === 'tasks'
+    && page.taskId
+    && !snapshot.tasks.some((task) => task.id === page.taskId)
+    && !observedTaskIds.has(page.taskId)
+  ) return { kind: 'tasks' };
+  if (page.kind === 'intake' && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId)) return { kind: 'tasks' };
+  if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
+  if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
+  if (page.kind === 'documents' && page.documentId && !snapshot.documents.some((document) => document.id === page.documentId)) return { kind: 'documents' };
+  return null;
 }
