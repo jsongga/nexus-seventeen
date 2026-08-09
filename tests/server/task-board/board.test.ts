@@ -22,6 +22,14 @@ import {
   workItemRequest,
 } from "./helpers.js";
 
+function postWorkItem(
+  board: TaskBoard,
+  request: Parameters<TaskBoard["createWorkItem"]>[0],
+  idempotencyKey: string,
+): ReturnType<TaskBoard["createWorkItem"]> {
+  return board.createWorkItemAndStartPlanning(request, idempotencyKey);
+}
+
 function completeAssignedTask(
   board: TaskBoard,
   projectId: string,
@@ -910,6 +918,535 @@ test("work items preserve original intake, resolve explicit projects, and enforc
     assert.equal(restarted.listWorkItems().length, 2);
   } finally {
     restarted.close();
+  }
+});
+
+test("duplicate work-item intake repairs a legacy linkless planning task and makes its run settleable", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const request = workItemRequest({
+    originalRequest: "Repair a planning task orphaned before its work-item link committed.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  });
+  const idempotencyKey = "work-item-planning-legacy-repair-0001";
+  let board: TaskBoard | null = fixture.board;
+  try {
+    board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "planning-repair-verifier",
+        name: "Planning repair verifier",
+        description: "Verifies the workflow proposed by the repaired planning task.",
+        role: "verifier",
+        supplementalInstructions: "Verify the repaired planning workflow.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "planning-repair-verifier" },
+      }),
+    }));
+    const created = board.createWorkItem(request, idempotencyKey).workItem;
+    const legacyPlanningTask = board.startWorkItemPlanning(created.workItemId);
+    assert.ok(legacyPlanningTask);
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      const removedLink = partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?")
+        .run(created.workItemId);
+      assert.equal(Number(removedLink.changes), 1);
+      const restoredSubmittedItem = partial.prepare(`
+        UPDATE work_items
+        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        WHERE work_item_id=?
+      `).run(created.version, created.updatedAt, created.workItemId);
+      assert.equal(Number(restoredSubmittedItem.changes), 1);
+      assert.equal(
+        partial.prepare("SELECT COUNT(*) AS count FROM tasks WHERE task_id=?").get(legacyPlanningTask.taskId)?.count,
+        1,
+      );
+      assert.equal(
+        partial.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND claimed_at IS NULL").get(legacyPlanningTask.taskId)?.count,
+        1,
+      );
+    } finally {
+      partial.close();
+    }
+
+    board = await TaskBoard.open(config(path));
+    const replay = postWorkItem(board, request, idempotencyKey);
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.workItem.workItemId, created.workItemId);
+    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.currentStage, "planning");
+
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      const link = inspected.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
+        .get(created.workItemId);
+      assert.equal(link?.task_id, legacyPlanningTask.taskId);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 1);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(legacyPlanningTask.taskId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+
+    const claim = board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-work-item-planning-legacy-repair-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assert.equal(claim.task?.taskId, legacyPlanningTask.taskId);
+    board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The repaired planning task returned a valid workflow.",
+      workflowPlan: {
+        objective: "Keep planning-task creation and linkage atomic.",
+        assumptions: [],
+        acceptanceCriteria: ["A planning run always has its durable work-item link."],
+        nodes: [{
+          nodeId: "verify-repaired-planning-link",
+          title: "Verify repaired planning link",
+          objective: "Confirm the legacy planning task can settle with a workflow plan.",
+          acceptanceCriteria: ["Settlement proposes the workflow without a link error."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    assert.equal(board.requireWorkItem(created.workItemId).state, "waiting_for_human_review");
+  } finally {
+    board?.close();
+  }
+});
+
+test("duplicate work-item intake replaces a settled legacy planning orphan", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const request = workItemRequest({
+    originalRequest: "Replace a planning orphan that already settled as ordinary work.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  });
+  const idempotencyKey = "work-item-planning-settled-orphan-0001";
+  let board: TaskBoard | null = fixture.board;
+  try {
+    board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "settled-orphan-verifier",
+        name: "Settled orphan verifier",
+        description: "Verifies the replacement workflow from a fresh planning task.",
+        role: "verifier",
+        supplementalInstructions: "Verify the replacement planning workflow.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "settled-orphan-verifier" },
+      }),
+    }));
+    const created = board.createWorkItem(request, idempotencyKey).workItem;
+    const legacyPlanningTask = board.startWorkItemPlanning(created.workItemId);
+    assert.ok(legacyPlanningTask);
+    const legacyClaim = board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-work-item-planning-settled-orphan-0001",
+      messageCursor: null,
+    });
+    assert.ok(legacyClaim);
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      assert.equal(
+        Number(partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes),
+        1,
+      );
+      assert.equal(Number(partial.prepare(`
+        UPDATE work_items
+        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        WHERE work_item_id=?
+      `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
+    } finally {
+      partial.close();
+    }
+
+    board = await TaskBoard.open(config(path));
+    const originalExec = DatabaseSync.prototype.exec;
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let settleTransactionOpen = false;
+    let planningReadInSettleTransaction: boolean | null = null;
+    DatabaseSync.prototype.exec = function trackingSettleTransaction(this: DatabaseSyncType, sql: string): void {
+      const statement = sql.trim().replace(/;$/u, "").toUpperCase();
+      originalExec.call(this, sql);
+      if (statement === "BEGIN IMMEDIATE") settleTransactionOpen = true;
+      if (statement === "COMMIT" || statement === "ROLLBACK") settleTransactionOpen = false;
+    };
+    DatabaseSync.prototype.prepare = function trackingPlanningRead(this: DatabaseSyncType, sql: string) {
+      if (planningReadInSettleTransaction === null && /FROM work_item_planning_tasks link[\s\S]*WHERE link\.task_id=\?/u.test(sql)) {
+        planningReadInSettleTransaction = settleTransactionOpen;
+      }
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      const settled = board.settleRun(legacyClaim.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The unlinked orphan settled as ordinary completed work.",
+      });
+      assert.equal(settled.run.status, "completed");
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+      DatabaseSync.prototype.exec = originalExec;
+    }
+    assert.equal(planningReadInSettleTransaction, true);
+    assert.equal(board.requireTask(legacyPlanningTask.taskId).status, "completed");
+    assert.ok(board.requireTask(legacyPlanningTask.taskId).endedAt);
+
+    const replay = postWorkItem(board, request, idempotencyKey);
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.currentStage, "planning");
+
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    let replacementTaskId = "";
+    try {
+      const replacement = inspected.prepare(`
+        SELECT link.task_id,task.status,task.ended_at,wakeup.claimed_at
+        FROM work_item_planning_tasks link
+        JOIN tasks task ON task.task_id=link.task_id
+        JOIN wakeups wakeup ON wakeup.task_id=task.task_id
+        WHERE link.work_item_id=?
+      `).get(created.workItemId);
+      assert.ok(replacement);
+      replacementTaskId = String(replacement.task_id);
+      assert.notEqual(replacementTaskId, legacyPlanningTask.taskId);
+      assert.equal(replacement.status, "queued");
+      assert.equal(replacement.ended_at, null);
+      assert.equal(replacement.claimed_at, null);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 2);
+    } finally {
+      inspected.close();
+    }
+
+    const replacementClaim = board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-work-item-planning-replacement-0001",
+      messageCursor: null,
+    });
+    assert.ok(replacementClaim);
+    assert.equal(replacementClaim.task?.taskId, replacementTaskId);
+    board.settleRun(replacementClaim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The replacement task returned a valid workflow.",
+      workflowPlan: {
+        objective: "Replace a settled planning orphan safely.",
+        assumptions: [],
+        acceptanceCriteria: ["Only the fresh runnable planning task is linked."],
+        nodes: [{
+          nodeId: "verify-settled-orphan-replacement",
+          title: "Verify settled orphan replacement",
+          objective: "Confirm a fresh planning task supplied the workflow.",
+          acceptanceCriteria: ["The replacement plan reaches human review."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    assert.equal(board.requireWorkItem(created.workItemId).state, "waiting_for_human_review");
+  } finally {
+    board?.close();
+  }
+});
+
+test("duplicate work-item intake ignores a legacy planning orphan with only a retired wakeup", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const request = workItemRequest({
+    originalRequest: "Replace a planning orphan whose only wakeup was retired.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  });
+  const idempotencyKey = "work-item-planning-retired-orphan-0001";
+  let board: TaskBoard | null = fixture.board;
+  try {
+    const created = board.createWorkItem(request, idempotencyKey).workItem;
+    const legacyPlanningTask = board.startWorkItemPlanning(created.workItemId);
+    assert.ok(legacyPlanningTask);
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      const wakeup = partial.prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
+        .get(legacyPlanningTask.taskId);
+      assert.ok(wakeup);
+      assert.equal(
+        Number(partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes),
+        1,
+      );
+      assert.equal(Number(partial.prepare(`
+        UPDATE work_items
+        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        WHERE work_item_id=?
+      `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
+      partial.prepare(`
+        INSERT INTO task_events(
+          event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at
+        ) VALUES (?, ?, ?, 'system', 'test:wakeup-retirement', 'agent_wakeup_retired', '{}', ?)
+      `).run(
+        `retired-wakeup:${String(wakeup.wakeup_id)}`,
+        fixture.project.projectId,
+        legacyPlanningTask.taskId,
+        created.updatedAt,
+      );
+    } finally {
+      partial.close();
+    }
+
+    board = await TaskBoard.open(config(path));
+    const replay = postWorkItem(board, request, idempotencyKey);
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.workItem.state, "processing");
+
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      const link = inspected.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
+        .get(created.workItemId);
+      assert.ok(link);
+      assert.notEqual(link.task_id, legacyPlanningTask.taskId);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 2);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        WHERE wakeup.task_id=?
+          AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS(
+            SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          )
+      `).get(String(link.task_id))?.count, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    board?.close();
+  }
+});
+
+test("planning-start failure rolls back its task, link, wakeup, and work-item mutation", async () => {
+  const fixture = await boardFixture();
+  try {
+    const request = workItemRequest({
+      originalRequest: "Roll back every planning-start write when the link insert fails.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    });
+    const submitted = fixture.board.createWorkItem(request, "work-item-planning-rollback-0001").workItem;
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let injected = false;
+    DatabaseSync.prototype.prepare = function failingPlanningLink(this: DatabaseSyncType, sql: string) {
+      if (/^\s*INSERT INTO work_item_planning_tasks/u.test(sql)) {
+        injected = true;
+        throw new Error("INJECTED_PLANNING_LINK_FAILURE");
+      }
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      assert.throws(
+        () => fixture.board.startWorkItemPlanning(submitted.workItemId),
+        /INJECTED_PLANNING_LINK_FAILURE/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+    assert.equal(injected, true);
+    assert.deepEqual(fixture.board.requireWorkItem(submitted.workItemId), submitted);
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?").get(submitted.workItemId)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 0);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        JOIN tasks task ON task.task_id=wakeup.task_id
+        WHERE task.objective=?
+      `).get(request.originalRequest)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("fresh work-item intake failure rolls back the item with all planning state", async () => {
+  const fixture = await boardFixture();
+  try {
+    const request = workItemRequest({
+      originalRequest: "Roll back fresh intake when its planning link cannot be inserted.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    });
+    const idempotencyKey = "work-item-planning-fresh-rollback-0001";
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let injected = false;
+    DatabaseSync.prototype.prepare = function failingFreshPlanningLink(this: DatabaseSyncType, sql: string) {
+      if (/^\s*INSERT INTO work_item_planning_tasks/u.test(sql)) {
+        injected = true;
+        throw new Error("INJECTED_PLANNING_LINK_FAILURE");
+      }
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      assert.throws(
+        () => postWorkItem(fixture.board, request, idempotencyKey),
+        /INJECTED_PLANNING_LINK_FAILURE/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+    assert.equal(injected, true);
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_items WHERE idempotency_key=?").get(idempotencyKey)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks").get()?.count, 0);
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        JOIN tasks task ON task.task_id=wakeup.task_id
+        WHERE task.objective=?
+      `).get(request.originalRequest)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("duplicate work-item intake on a healthy processing item is a pure no-op", async () => {
+  const fixture = await boardFixture();
+  try {
+    const request = workItemRequest({
+      originalRequest: "Keep a healthy planning intake unchanged on duplicate POST.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    });
+    const created = postWorkItem(fixture.board, request, "work-item-planning-healthy-duplicate-0001");
+    assert.equal(created.duplicate, false);
+    assert.equal(created.workItem.state, "processing");
+    const beforeItem = fixture.board.requireWorkItem(created.workItem.workItemId);
+    const beforeSnapshot = fixture.board.snapshot(fixture.project.projectId);
+
+    const replay = postWorkItem(fixture.board, request, "work-item-planning-healthy-duplicate-0001");
+    assert.equal(replay.duplicate, true);
+    assert.deepEqual(replay.workItem, beforeItem);
+    assert.deepEqual(fixture.board.requireWorkItem(created.workItem.workItemId), beforeItem);
+    assert.deepEqual(fixture.board.snapshot(fixture.project.projectId), beforeSnapshot);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("work-item POST atomically queues and links planning before the plan is settled", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "atomic-planning-verifier",
+        name: "Atomic planning verifier",
+        description: "Verifies a plan produced by atomic work-item intake.",
+        role: "verifier",
+        supplementalInstructions: "Verify the atomic planning workflow.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "atomic-planning-verifier" },
+      }),
+    }));
+    const request = workItemRequest({
+      originalRequest: "Create and link this planning task in one transaction.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    });
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalExec = DatabaseSync.prototype.exec;
+    let begins = 0;
+    let commits = 0;
+    let rollbacks = 0;
+    DatabaseSync.prototype.exec = function trackingPlanningTransaction(this: DatabaseSyncType, sql: string): void {
+      const statement = sql.trim().replace(/;$/u, "").toUpperCase();
+      originalExec.call(this, sql);
+      if (statement === "BEGIN IMMEDIATE") begins += 1;
+      if (statement === "COMMIT") commits += 1;
+      if (statement === "ROLLBACK") rollbacks += 1;
+    };
+    let created: ReturnType<TaskBoard["createWorkItem"]>;
+    try {
+      created = postWorkItem(fixture.board, request, "work-item-planning-atomic-happy-0001");
+    } finally {
+      DatabaseSync.prototype.exec = originalExec;
+    }
+    assert.equal(begins, 1);
+    assert.equal(commits, 1);
+    assert.equal(rollbacks, 0);
+    assert.equal(created.duplicate, false);
+    assert.equal(created.workItem.state, "processing");
+    assert.equal(created.workItem.currentStage, "planning");
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    let planningTaskId = "";
+    try {
+      const planning = inspected.prepare(`
+        SELECT link.task_id,task.status,wakeup.claimed_at,wakeup.run_id
+        FROM work_item_planning_tasks link
+        JOIN tasks task ON task.task_id=link.task_id
+        JOIN wakeups wakeup ON wakeup.task_id=task.task_id
+        WHERE link.work_item_id=?
+      `).get(created.workItem.workItemId);
+      assert.ok(planning);
+      planningTaskId = String(planning.task_id);
+      assert.equal(planning.status, "queued");
+      assert.equal(planning.claimed_at, null);
+      assert.equal(planning.run_id, null);
+    } finally {
+      inspected.close();
+    }
+
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-work-item-planning-atomic-happy-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assert.equal(claim.task?.taskId, planningTaskId);
+    fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "Atomic work-item planning produced a valid plan.",
+      workflowPlan: {
+        objective: "Create work-item planning state atomically.",
+        assumptions: [],
+        acceptanceCriteria: ["The work item, task, wakeup, and link commit together."],
+        nodes: [{
+          nodeId: "verify-atomic-planning-intake",
+          title: "Verify atomic planning intake",
+          objective: "Inspect the committed planning state.",
+          acceptanceCriteria: ["Every planning row is present and consistent."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "waiting_for_human_review");
+  } finally {
+    fixture.board.close();
   }
 });
 

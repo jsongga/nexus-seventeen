@@ -17,6 +17,14 @@ export class TasksCollaborator {
   constructor(private readonly runtime: TaskBoardRuntime) {}
 
   createTask(projectId: string, request: CreateTaskRequest): BoardTask {
+    return this.createTaskInternal(projectId, request, false);
+  }
+
+  createTaskInTransaction(projectId: string, request: CreateTaskRequest): BoardTask {
+    return this.createTaskInternal(projectId, request, true);
+  }
+
+  private createTaskInternal(projectId: string, request: CreateTaskRequest, inTransaction: boolean): BoardTask {
     this.runtime.requireProject(projectId);
     if (request.parentTaskId !== null) {
       const parent = this.runtime.requireTask(request.parentTaskId);
@@ -28,7 +36,7 @@ export class TasksCollaborator {
     const taskId = randomUUID();
     const now = exactNow(this.runtime.config.now);
     const status: TaskStatus = request.assignedAgentId === null ? "backlog" : "queued";
-    this.runtime.store.transaction(() => {
+    const apply = (): BoardTask => {
       const orderKey = this.runtime.nextTaskOrderKey();
       this.runtime.store.db.prepare(`
         INSERT INTO tasks(
@@ -74,9 +82,11 @@ export class TasksCollaborator {
           now,
         );
       }
-    });
-    if (request.assignedAgentId !== null) this.runtime.wakeupEvents.emit(request.assignedAgentId);
-    return this.runtime.requireTask(taskId);
+      return this.runtime.requireTask(taskId);
+    };
+    const task = inTransaction ? apply() : this.runtime.store.transaction(apply);
+    if (!inTransaction && request.assignedAgentId !== null) this.runtime.wakeupEvents.emit(request.assignedAgentId);
+    return task;
   }
 
   updateTask(taskId: string, request: UpdateTaskRequest, actor: Actor): BoardTask {

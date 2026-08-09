@@ -164,6 +164,10 @@ export class TaskBoard {
     return this.#workItems.createWorkItem(request, idempotencyKey);
   }
 
+  createWorkItemAndStartPlanning(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {
+    return this.#workItems.createWorkItemAndStartPlanning(request, idempotencyKey);
+  }
+
   startWorkItemPlanning(workItemId: string): BoardTask | null {
     return this.#workItems.startWorkItemPlanning(workItemId);
   }

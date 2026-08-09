@@ -170,11 +170,10 @@ export class TaskBoardService {
     if (url.pathname === "/v1/work-items" && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const result = this.#board.createWorkItem(
+      const result = this.#board.createWorkItemAndStartPlanning(
         parseCreateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
-      if (!result.duplicate) this.#board.startWorkItemPlanning(result.workItem.workItemId);
       sendJson(response, result.duplicate ? 200 : 201, {
         workItem: this.#board.requireWorkItem(result.workItem.workItemId),
       });
