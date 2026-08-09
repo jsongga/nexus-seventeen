@@ -58,4 +58,10 @@ export class AgentsCollaborator {
     this.projects.reconcileWorkflowsBestEffort(projectId);
     return created;
   }
+
+  setLaneError(agentId: string, detail: string | null): void {
+    if (this.runtime.store.db.prepare("UPDATE agents SET last_error=? WHERE agent_id=?").run(detail, agentId).changes !== 1) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:agent_lane_error");
+    }
+  }
 }

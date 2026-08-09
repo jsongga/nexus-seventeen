@@ -429,6 +429,79 @@ test("encoded agent route identifiers claim runs and malformed encoding is rejec
   }
 });
 
+test("lane-error is worker-token authenticated, exact, scrubbed, bounded, and clearable", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+    corsOrigins: ["https://app.cicada.build"],
+    now: () => new Date("2026-08-09T20:00:00.000Z"),
+  });
+  const address = await service.start();
+  try {
+    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "Fleet lane health",
+      description: "Surface durable fleet failures to operators.",
+    });
+    assert.equal(projectResponse.status, 201);
+    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+      agentId: "engineer-one",
+      role: "engineer",
+      area: "fleet-runtime",
+      mission: "Keep the task lane recoverable.",
+      model: "codex-mini",
+      token: AGENT_ONE_TOKEN,
+    })).status, 201);
+    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+      agentId: "manager-one",
+      role: "manager",
+      area: "fleet-runtime",
+      mission: "Keep the manager lane recoverable.",
+      model: "claude-haiku",
+      token: AGENT_TWO_TOKEN,
+    })).status, 201);
+
+    const route = "/v1/agents/engineer-one/lane-error";
+    assert.equal((await request(address.url, route, "POST", HUMAN_TOKEN, { detail: "not an agent" })).status, 401);
+    assert.equal((await request(address.url, route, "POST", AGENT_TWO_TOKEN, { detail: "wrong agent" })).status, 401);
+    for (const invalid of [null, {}, { detail: 7 }, { detail: "" }, { detail: null, extra: true }]) {
+      assert.equal((await request(address.url, route, "POST", AGENT_ONE_TOKEN, invalid)).status, 400);
+    }
+    assert.equal((await request(
+      address.url,
+      route,
+      "POST",
+      AGENT_ONE_TOKEN,
+      { detail: "x".repeat(2_001) },
+    )).status, 400);
+
+    const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+    assert.equal((await request(
+      address.url,
+      route,
+      "POST",
+      AGENT_ONE_TOKEN,
+      { detail: `Board rejected Bearer ${secret}` },
+    )).status, 204);
+    const failedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    assert.equal(failedBoard.status, 200);
+    const failedAgent = (await failedBoard.json() as { agents: Array<{ agentId: string; lastError: string | null }> })
+      .agents.find((agent) => agent.agentId === "engineer-one");
+    assert.equal(failedAgent?.lastError, "Board rejected Bearer [redacted]");
+
+    assert.equal((await request(address.url, route, "POST", AGENT_ONE_TOKEN, { detail: null })).status, 204);
+    const clearedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
+    const clearedAgent = (await clearedBoard.json() as { agents: Array<{ agentId: string; lastError: string | null }> })
+      .agents.find((agent) => agent.agentId === "engineer-one");
+    assert.equal(clearedAgent?.lastError, null);
+  } finally {
+    await service.close();
+  }
+});
+
 test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical queries", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);

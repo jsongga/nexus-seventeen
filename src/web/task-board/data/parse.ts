@@ -101,6 +101,7 @@ export interface RawAgent {
   model: string;
   status: WireAgentStatus;
   workerConnection: WireWorkerConnection;
+  lastError: string | null;
   createdAt: string;
 }
 
@@ -666,6 +667,9 @@ export function parseAgent(value: unknown, path: string): RawAgent {
   const workerConnection = item.workerConnection === undefined || item.workerConnection === null
     ? null
     : member(item.workerConnection, rawWorkerConnections, `${path}.workerConnection`);
+  const lastError = item.lastError === undefined || item.lastError === null
+    ? null
+    : boundedText(item.lastError, `${path}.lastError`, 2_000);
   return {
     agentId: string(item.agentId, `${path}.agentId`),
     projectId: string(item.projectId, `${path}.projectId`),
@@ -675,6 +679,7 @@ export function parseAgent(value: unknown, path: string): RawAgent {
     model: string(item.model, `${path}.model`),
     status: member(item.status, rawAgentStatuses, `${path}.status`),
     workerConnection,
+    lastError,
     createdAt: timestamp(item.createdAt, `${path}.createdAt`),
   };
 }

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { safeErrorDetail } from "../../shared/safe-error-detail.js";
 import { TaskWorkerJournalStore } from "./journal.js";
 import {
   estimateMinutesFromActivity,
@@ -13,7 +14,9 @@ import {
   parseTaskWakeClaim,
 } from "./schema.js";
 import {
+  POISONED_CLAIM_REASON,
   TASK_WAKE_REASONS,
+  TaskBoardClaimResponseError,
   type AgentRunHandle,
   type AgentRunOutcome,
   type AgentTaskPhase,
@@ -24,6 +27,7 @@ import {
   type TaskWakeReason,
   type TaskBoardClient,
   type TaskWorkerJournal,
+  type TaskWorkerLogger,
   type TaskWorkerOptions,
 } from "./types.js";
 
@@ -55,19 +59,12 @@ function exactNow(now: () => Date): string {
   return value.toISOString();
 }
 
-function safeDetail(error: unknown, fallback: string): string {
-  const source = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
-  // Reporting intentionally uses a superset of the launcher's rejection patterns:
-  // over-redaction is safe, while a missed credential could enter the journal or board.
-  const redacted = source
-    .replace(/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/giu, "[redacted]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [redacted]")
-    .replace(/\b(?:(?:sk|xox)_|sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[baprs]-)[A-Za-z0-9._~+/-]+/gu, "[redacted]")
-    .replace(/\bAKIA[0-9A-Z]{16}\b/gu, "[redacted]")
-    .replace(/\bhttps?:\/\/[^\s/:@]{1,128}:[^\s/@]{4,256}@/giu, "[redacted]")
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
-    .trim();
-  return (redacted || fallback).slice(0, 2_000);
+const safeDetail = safeErrorDetail;
+
+function defaultLogger(event: Parameters<TaskWorkerLogger>[0]): void {
+  process.stderr.write(
+    `[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId} error=${JSON.stringify(event.error)}\n`,
+  );
 }
 
 function normalizeCarriageReturns<T>(value: T): T {
@@ -91,6 +88,7 @@ function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
     updateTaskPhase: (request, signal) => board.updateTaskPhase(normalizeCarriageReturns(request), signal),
     appendRunOutput: (request, signal) => board.appendRunOutput(normalizeCarriageReturns(request), signal),
     settleAgentRun: (request, signal) => board.settleAgentRun(normalizeCarriageReturns(request), signal),
+    reportLaneError: (request, signal) => board.reportLaneError(normalizeCarriageReturns(request), signal),
   };
   return Object.freeze(normalized);
 }
@@ -269,6 +267,7 @@ export class TaskWorker {
   readonly #options: TaskWorkerOptions & { readonly longPollMs: number; readonly now: () => Date };
   readonly #store: TaskWorkerJournalStore;
   readonly #serial = new SerialExecutor();
+  readonly #logger: TaskWorkerLogger;
   #state: TaskWorkerJournal;
   #started = false;
   #dispatchInFlight = false;
@@ -291,11 +290,19 @@ export class TaskWorker {
     };
     this.#store = store;
     this.#state = store.current;
+    this.#logger = options.logger ?? defaultLogger;
   }
 
   static async create(options: TaskWorkerOptions): Promise<TaskWorker> {
     const store = await TaskWorkerJournalStore.open(options.statePath, options.identity);
     return new TaskWorker(options, store);
+  }
+
+  async #saveState(next: TaskWorkerJournal): Promise<void> {
+    // Durable state leads observable memory: a failed save leaves the worker at
+    // the last persisted transition, so retries cannot skip required board guards.
+    await this.#store.save(next);
+    this.#state = next;
   }
 
   get snapshot(): TaskWorkerSnapshot {
@@ -308,6 +315,72 @@ export class TaskWorker {
       messageCursors: structuredClone(this.#state.messageCursors),
       completedRuns: this.#state.completed.length,
     };
+  }
+
+  hasActiveClaim(): boolean {
+    return this.#state.active !== null;
+  }
+
+  reportLaneError(detail: string | null, signal?: AbortSignal): Promise<void> {
+    return this.#options.board.reportLaneError({
+      agentId: this.#options.identity.agentId,
+      detail: detail === null ? null : safeDetail(detail, "Task fleet lane failed"),
+    }, signal);
+  }
+
+  async #clearLaneErrorBestEffort(signal?: AbortSignal): Promise<void> {
+    try {
+      await this.reportLaneError(null, signal);
+    } catch (error) {
+      if (signal?.aborted) return;
+      this.#logger({
+        type: "lane_error_report_failed",
+        agentId: this.#options.identity.agentId,
+        workerId: this.#options.identity.workerId,
+        error: safeDetail(error, "Lane error could not be cleared"),
+      });
+    }
+  }
+
+  async quarantineActiveClaim(detailInput: string, signal?: AbortSignal): Promise<void> {
+    const active = this.#state.active;
+    if (active === null) return;
+    const outcome = failedOutcome(detailInput, "Task fleet quarantined the claimed run.");
+    const result = settlementResult(outcome);
+    // Pending outputs are intentionally discarded: quarantine fails the run
+    // regardless, and replaying a partial success narrative would be misleading.
+    await this.#options.board.settleAgentRun({
+      claim: active.claim,
+      outcome: "failed",
+      result,
+      handoff: null,
+      workflowPlan: null,
+      idempotencyKey: settlementIdempotency(active.claim, outcome, result),
+    }, signal);
+    await this.#finishQuarantinedClaim(outcome);
+  }
+
+  async dropActiveClaim(detailInput: string): Promise<void> {
+    if (this.#state.active === null) return;
+    await this.#finishQuarantinedClaim(failedOutcome(detailInput, "Task fleet dropped the claimed run."));
+  }
+
+  async #finishQuarantinedClaim(outcome: AgentRunOutcome): Promise<void> {
+    await this.#serial.run(async () => {
+      const current = this.#state.active;
+      if (current === null) return;
+      const completed = [...this.#state.completed, Object.freeze({
+        runId: current.claim.runId,
+        wakeId: current.claim.wakeupId,
+        taskId: current.claim.taskId,
+        outcome: "failed" as const,
+        detail: outcome.detail,
+        startedAt: current.claim.claimedAt,
+        endedAt: exactNow(this.#options.now),
+      })].slice(-MAX_HISTORY);
+      const next: TaskWorkerJournal = { ...this.#state, active: null, completed };
+      await this.#saveState(next);
+    });
   }
 
   async start(): Promise<void> {
@@ -325,23 +398,37 @@ export class TaskWorker {
     try {
       if (this.#state.active !== null) return await this.#recoverOrContinueActive(signal);
       const pending = await this.#ensurePendingClaim();
-      const claimed = await this.#options.board.claimNextWake({
-        agentId: this.#options.identity.agentId,
-        claimId: pending.claimId,
-        messageCursors: pending.messageCursors,
-        longPollMs: this.#options.longPollMs,
-      }, signal);
+      let claimed: ClaimedAgentRun | null;
+      try {
+        claimed = await this.#options.board.claimNextWake({
+          agentId: this.#options.identity.agentId,
+          claimId: pending.claimId,
+          messageCursors: pending.messageCursors,
+          longPollMs: this.#options.longPollMs,
+        }, signal);
+      } catch (error) {
+        if (error instanceof TaskBoardClaimResponseError && error.claim !== null) {
+          await this.#recordPoisonedClaim(error.claim, pending);
+        }
+        throw error;
+      }
       if (claimed === null) {
         await this.#serial.run(async () => {
           if (this.#state.pendingClaim?.claimId !== pending.claimId) return;
           const next = { ...this.#state, pendingClaim: null };
-          this.#state = next;
-          await this.#store.save(next);
+          await this.#saveState(next);
         });
         return false;
       }
-      const parsed = assertClaimBinding(claimed, this.#options.identity.agentId, pending.claimId, pending.messageCursors);
+      let parsed: ClaimedAgentRun;
+      try {
+        parsed = assertClaimBinding(claimed, this.#options.identity.agentId, pending.claimId, pending.messageCursors);
+      } catch (error) {
+        await this.#recordPoisonedClaim(claimed.claim, pending);
+        throw error;
+      }
       await this.#recordClaim(parsed);
+      await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
         await this.#flushAndFinish();
@@ -375,8 +462,7 @@ export class TaskWorker {
         messageCursors: Object.freeze({ ...this.#state.messageCursors }),
       });
       const next = { ...this.#state, pendingClaim };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
       return pendingClaim;
     });
   }
@@ -402,9 +488,23 @@ export class TaskWorker {
         pendingClaim: null,
         active,
       };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
     });
+  }
+
+  async #recordPoisonedClaim(
+    claimInput: TaskWakeClaim,
+    pending: NonNullable<TaskWorkerJournal["pendingClaim"]>,
+  ): Promise<void> {
+    const claim = parseTaskWakeClaim({ ...claimInput, reason: POISONED_CLAIM_REASON });
+    const requestedCursor = claim.taskId === null ? null : pending.messageCursors[claim.taskId] ?? null;
+    if (
+      claim.agentId !== this.#options.identity.agentId || claim.claimId !== pending.claimId ||
+      claim.requestedMessageCursor !== requestedCursor
+    ) {
+      return;
+    }
+    await this.#recordClaim(Object.freeze({ claim, context: null }));
   }
 
   async #recoverOrContinueActive(signal?: AbortSignal): Promise<boolean> {
@@ -435,6 +535,7 @@ export class TaskWorker {
       if (parsed.claim.runId !== active.claim.runId || parsed.claim.wakeupId !== active.claim.wakeupId) {
         throw new Error("Task board replayed another run for the active claim");
       }
+      await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
         await this.#flushAndFinish();
@@ -550,8 +651,7 @@ export class TaskWorker {
             launchStartedAt: exactNow(this.#options.now),
           },
         };
-        this.#state = next;
-        await this.#store.save(next);
+        await this.#saveState(next);
       });
 
       let outcome: AgentRunOutcome;
@@ -570,8 +670,7 @@ export class TaskWorker {
           const current = this.#state.active;
           if (current === null || current.claim.runId !== active.claim.runId) throw new Error("Active run changed during launch");
           const next: TaskWorkerJournal = { ...this.#state, active: { ...current, phase: "running" } };
-          this.#state = next;
-          await this.#store.save(next);
+          await this.#saveState(next);
         });
 
         const activityForwarding = this.#forwardActivity(active.claim, handle.activity, liveTask).then(
@@ -922,8 +1021,7 @@ export class TaskWorker {
         ...this.#state,
         active: { ...active, phase: "outputs_pending", outcome, nextOutputIndex: 0 },
       };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
     });
   }
 
@@ -953,8 +1051,7 @@ export class TaskWorker {
           ...this.#state,
           active: { ...current, nextOutputIndex: Math.max(current.nextOutputIndex, index + 1) },
         };
-        this.#state = next;
-        await this.#store.save(next);
+        await this.#saveState(next);
       });
       active = this.#state.active;
       if (active === null) throw new Error("Active run disappeared while outputs were pending");
@@ -982,8 +1079,7 @@ export class TaskWorker {
         endedAt: exactNow(this.#options.now),
       })].slice(-MAX_HISTORY);
       const next: TaskWorkerJournal = { ...this.#state, active: null, completed };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
     });
   }
 
@@ -1002,8 +1098,7 @@ export class TaskWorker {
       if (current === null || current.phase === "outputs_pending") return null;
       if (current.interruptReason !== null) return current;
       const next: TaskWorkerJournal = { ...this.#state, active: { ...current, interruptReason: detail } };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
       return next.active;
     });
 
@@ -1038,8 +1133,7 @@ export class TaskWorker {
       const current = this.#state.active;
       if (current === null || current.phase === "outputs_pending" || current.interruptReason === detail) return;
       const next: TaskWorkerJournal = { ...this.#state, active: { ...current, interruptReason: detail } };
-      this.#state = next;
-      await this.#store.save(next);
+      await this.#saveState(next);
     });
   }
 

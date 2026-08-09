@@ -222,6 +222,10 @@ export class TaskBoard {
     return this.#agents.createAgent(projectId, request);
   }
 
+  setAgentLaneError(agentId: string, detail: string | null): void {
+    this.#agents.setLaneError(agentId, detail);
+  }
+
   createTask(projectId: string, request: CreateTaskRequest): BoardTask {
     return this.#tasks.createTask(projectId, request);
   }

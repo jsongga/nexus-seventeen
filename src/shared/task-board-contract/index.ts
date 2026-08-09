@@ -367,6 +367,8 @@ export interface AgentProfile {
   readonly status: AgentStatus;
   /** Instance-local observation from an authenticated held request; never durable health state. */
   readonly workerConnection: WorkerConnection;
+  /** Most recent fleet fatal-class error; cleared after the lane next claims work successfully. */
+  readonly lastError: string | null;
   readonly createdAt: string;
 }
 

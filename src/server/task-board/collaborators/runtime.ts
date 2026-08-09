@@ -103,6 +103,7 @@ export class TaskBoardRuntime {
       model: stringValue(row, "model"),
       status,
       workerConnection: this.workerConnection(agentId),
+      lastError: nullableString(row, "last_error"),
       createdAt: stringValue(row, "created_at"),
     });
   }

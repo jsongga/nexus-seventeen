@@ -234,6 +234,7 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       model: raw.model,
       status: agentStatus(raw.status),
       workerConnection: raw.workerConnection,
+      lastError: raw.lastError,
       currentTaskId: current?.taskId ?? null,
       lastEventAt: newest(activity, raw.createdAt),
       createdAt: raw.createdAt,

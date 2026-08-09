@@ -30,6 +30,7 @@ const agent = (overrides: Partial<BoardAgent>): BoardAgent => ({
   model: null,
   status: 'sleeping',
   workerConnection: null,
+  lastError: null,
   currentTaskId: null,
   lastEventAt: null,
   createdAt: '2026-07-19T10:00:00.000Z',

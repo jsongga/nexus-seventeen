@@ -1,3 +1,4 @@
+import { safeErrorDetail } from "../../shared/safe-error-detail.js";
 import type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,
@@ -10,6 +11,9 @@ import type {
   TaskFleetTransientClassifier,
   TaskFleetWorkerFactory,
 } from "./types.js";
+
+const QUARANTINE_SETTLE_ATTEMPTS = 5;
+const MAXIMUM_BACKOFF_MS = 60_000;
 
 interface Lane {
   readonly config: TaskFleetAgentConfig;
@@ -26,19 +30,23 @@ export interface TaskFleetOptions {
   readonly isTransient: TaskFleetTransientClassifier;
   readonly logger?: TaskFleetLogger;
   readonly sleeper?: TaskFleetSleeper;
-}
-
-function errorMessage(error: unknown): string {
-  const source = error instanceof Error ? error.message : typeof error === "string" ? error : "Task worker failed";
-  return source.replace(/[\u0000-\u001f\u007f]/gu, " ").trim().slice(0, 2_000) || "Task worker failed";
+  readonly random?: () => number;
 }
 
 function defaultLogger(event: TaskFleetEvent): void {
-  const detail = event.type === "lane_retrying"
-    ? ` retry=${event.restartCount} delayMs=${event.delayMs} error=${JSON.stringify(event.error)}`
-    : event.type === "lane_stopped"
-      ? ` error=${JSON.stringify(event.error)}`
-      : "";
+  let detail = "";
+  if (event.type === "lane_retrying") {
+    detail = ` retry=${event.restartCount} delayMs=${event.delayMs} error=${JSON.stringify(event.error)}`;
+  } else if (event.type === "claim_quarantine_retrying") {
+    detail = ` attempt=${event.attempt} delayMs=${event.delayMs} error=${JSON.stringify(event.error)}`;
+  } else if (event.type === "claim_dropped") {
+    detail = ` error=${JSON.stringify(event.error)} settleError=${JSON.stringify(event.settleError)}`;
+  } else if (
+    event.type === "claim_quarantined" || event.type === "claim_drop_failed" ||
+    event.type === "lane_error_report_failed"
+  ) {
+    detail = ` error=${JSON.stringify(event.error)}`;
+  }
   process.stderr.write(`[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId}${detail}\n`);
 }
 
@@ -46,7 +54,6 @@ function abortableSleep(delayMs: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, delayMs);
-    // A retrying fleet must stay alive while the board is unavailable; this backoff never launches a model.
     function done(): void {
       clearTimeout(timer);
       signal.removeEventListener("abort", done);
@@ -62,6 +69,7 @@ export class TaskFleet {
   readonly #isTransient: TaskFleetTransientClassifier;
   readonly #logger: TaskFleetLogger;
   readonly #sleeper: TaskFleetSleeper;
+  readonly #random: () => number;
   #lanes: Lane[] = [];
   #started = false;
   #stopping = false;
@@ -75,6 +83,7 @@ export class TaskFleet {
     this.#isTransient = options.isTransient;
     this.#logger = options.logger ?? defaultLogger;
     this.#sleeper = options.sleeper ?? abortableSleep;
+    this.#random = options.random ?? Math.random;
   }
 
   get snapshot(): TaskFleetSnapshot {
@@ -127,10 +136,6 @@ export class TaskFleet {
         return;
       }
       await Promise.all(workers.map((lane) => this.#runLane(lane, signal)));
-      if (!signal.aborted) {
-        const stopped = workers.filter((lane) => lane.status === "stopped");
-        throw new AggregateError(stopped.map((lane) => new Error(`${lane.config.agentId}: ${lane.lastError ?? "stopped"}`)), "All task-fleet lanes stopped");
-      }
     } finally {
       this.#stopping = true;
       await this.close();
@@ -138,45 +143,127 @@ export class TaskFleet {
   }
 
   async #runLane(lane: Lane, signal: AbortSignal): Promise<void> {
+    this.#logger({ type: "lane_started", agentId: lane.config.agentId, workerId: lane.config.workerId });
     while (!signal.aborted) {
       lane.status = "running";
       lane.retryDelayMs = null;
-      this.#logger({ type: "lane_started", agentId: lane.config.agentId, workerId: lane.config.workerId });
       try {
-        await lane.worker.run(signal);
+        const claimed = await lane.worker.run(signal);
         if (signal.aborted) return;
-        const error = new Error("Task worker stopped without fleet shutdown");
-        lane.lastError = error.message;
-        lane.status = "stopped";
-        this.#logger({ type: "lane_stopped", agentId: lane.config.agentId, workerId: lane.config.workerId, error: error.message });
+        lane.restartCount = 0;
+        if (claimed) {
+          await this.#reportLaneError(lane, null, signal);
+          lane.lastError = null;
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        const detail = safeErrorDetail(error);
+        lane.lastError = detail;
+        if (this.#isTransient(error)) {
+          await this.#retryLane(lane, detail, signal);
+          continue;
+        }
+
+        await this.#reportLaneError(lane, detail, signal);
+        if (!lane.worker.hasActiveClaim()) {
+          await this.#retryLane(lane, detail, signal);
+          continue;
+        }
+
+        await this.#quarantineClaim(lane, detail, signal);
+        lane.restartCount = 0;
+        lane.retryDelayMs = null;
+      }
+    }
+  }
+
+  #delayForAttempt(attempt: number): number {
+    const ceiling = Math.min(
+      MAXIMUM_BACKOFF_MS,
+      this.#config.retry.maximumDelayMs,
+      this.#config.retry.initialDelayMs * 2 ** Math.min(30, Math.max(0, attempt - 1)),
+    );
+    const sampled = this.#random();
+    const unit = Number.isFinite(sampled) ? Math.max(0, Math.min(0.999_999_999, sampled)) : 0.5;
+    return Math.floor(ceiling * unit);
+  }
+
+  async #retryLane(lane: Lane, detail: string, signal: AbortSignal): Promise<void> {
+    lane.restartCount += 1;
+    const delayMs = this.#delayForAttempt(lane.restartCount);
+    lane.status = "retrying";
+    lane.retryDelayMs = delayMs;
+    this.#logger({
+      type: "lane_retrying",
+      agentId: lane.config.agentId,
+      workerId: lane.config.workerId,
+      restartCount: lane.restartCount,
+      delayMs,
+      error: detail,
+    });
+    await this.#sleeper(delayMs, signal);
+  }
+
+  async #reportLaneError(lane: Lane, detail: string | null, signal: AbortSignal): Promise<void> {
+    try {
+      await lane.worker.reportLaneError(detail, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      this.#logger({
+        type: "lane_error_report_failed",
+        agentId: lane.config.agentId,
+        workerId: lane.config.workerId,
+        error: safeErrorDetail(error, "Lane error could not be reported"),
+      });
+    }
+  }
+
+  async #quarantineClaim(lane: Lane, detail: string, signal: AbortSignal): Promise<void> {
+    let settleError = "Quarantine settlement failed";
+    for (let attempt = 1; attempt <= QUARANTINE_SETTLE_ATTEMPTS && !signal.aborted; attempt += 1) {
+      try {
+        await lane.worker.quarantineActiveClaim(detail, signal);
+        this.#logger({
+          type: "claim_quarantined",
+          agentId: lane.config.agentId,
+          workerId: lane.config.workerId,
+          error: detail,
+        });
         return;
       } catch (error) {
-        const detail = errorMessage(error);
-        lane.lastError = detail;
-        if (!this.#isTransient(error) || signal.aborted) {
-          lane.status = signal.aborted ? "closed" : "stopped";
-          if (!signal.aborted) {
-            this.#logger({ type: "lane_stopped", agentId: lane.config.agentId, workerId: lane.config.workerId, error: detail });
-          }
-          return;
-        }
-        lane.restartCount += 1;
-        const delayMs = Math.min(
-          this.#config.retry.maximumDelayMs,
-          this.#config.retry.initialDelayMs * 2 ** Math.min(30, lane.restartCount - 1),
-        );
+        settleError = safeErrorDetail(error, settleError);
+        if (attempt === QUARANTINE_SETTLE_ATTEMPTS) break;
+        const delayMs = this.#delayForAttempt(attempt);
         lane.status = "retrying";
         lane.retryDelayMs = delayMs;
         this.#logger({
-          type: "lane_retrying",
+          type: "claim_quarantine_retrying",
           agentId: lane.config.agentId,
           workerId: lane.config.workerId,
-          restartCount: lane.restartCount,
+          attempt,
           delayMs,
-          error: detail,
+          error: settleError,
         });
         await this.#sleeper(delayMs, signal);
       }
+    }
+    if (signal.aborted) return;
+    try {
+      await lane.worker.dropActiveClaim(detail);
+      this.#logger({
+        type: "claim_dropped",
+        agentId: lane.config.agentId,
+        workerId: lane.config.workerId,
+        error: detail,
+        settleError,
+      });
+    } catch (error) {
+      this.#logger({
+        type: "claim_drop_failed",
+        agentId: lane.config.agentId,
+        workerId: lane.config.workerId,
+        error: safeErrorDetail(error, "Failed to drop quarantined claim"),
+      });
     }
   }
 

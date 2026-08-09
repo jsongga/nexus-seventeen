@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
 import { TaskFleet } from "#server/agents/task-fleet/fleet";
+import { isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
 import type {
   ManagedTaskWorker,
-  TaskFleetAgentConfig,
   TaskFleetEvent,
   TaskFleetWorkerFactory,
 } from "#server/agents/task-fleet/types";
-
-class TransientFailure extends Error {}
+import { TaskBoardHttpError } from "#server/agents/task-worker";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -22,7 +21,7 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-function fleetConfig() {
+function fleetConfig(agentCount = 1) {
   return parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
@@ -37,22 +36,34 @@ function fleetConfig() {
         workingDirectory: "/work/one",
         statePath: "/state/one.json",
       },
-      {
+      ...(agentCount === 1 ? [] : [{
         workerId: "worker-two",
         agentId: "manager-one",
         token: "agent-two-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-        provider: "claude",
+        provider: "claude" as const,
         model: "claude-model",
         workingDirectory: "/work/two",
         statePath: "/state/two.json",
-      },
+      }]),
     ],
   });
 }
 
-function idleRun(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+function idleRun(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(false), { once: true }));
+}
+
+function managed(overrides: Partial<ManagedTaskWorker> = {}): ManagedTaskWorker {
+  return {
+    run: idleRun,
+    hasActiveClaim: () => false,
+    quarantineActiveClaim: async () => undefined,
+    dropActiveClaim: async () => undefined,
+    reportLaneError: async () => undefined,
+    close: async () => undefined,
+    ...overrides,
+  };
 }
 
 async function eventually(predicate: () => boolean): Promise<void> {
@@ -63,130 +74,277 @@ async function eventually(predicate: () => boolean): Promise<void> {
   assert.fail("condition did not become true");
 }
 
-test("starts every configured lane concurrently and stays model-free while held workers are idle", async () => {
+test("two claim 503s back off, a successful claim resets the delay, and the lane keeps claiming", async () => {
+  const delays: number[] = [];
+  const reports: Array<string | null> = [];
+  let attempts = 0;
+  const fifthAttempt = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        attempts += 1;
+        if (attempts === 1 || attempts === 2 || attempts === 4) {
+          throw new TaskBoardHttpError("claim unavailable", 503, "TEMPORARY");
+        }
+        if (attempts === 3) return true;
+        fifthAttempt.resolve();
+        return idleRun(signal);
+      },
+      reportLaneError: async (detail) => { reports.push(detail); },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: () => undefined,
+    random: () => 0.5,
+    sleeper: async (delay) => { delays.push(delay); },
+  });
+
+  const running = fleet.run(controller.signal);
+  await fifthAttempt.promise;
+  assert.equal(attempts, 5);
+  assert.deepEqual(delays, [5, 10, 5]);
+  assert.deepEqual(reports, [null]);
+  assert.equal(fleet.snapshot.lanes[0]?.restartCount, 1);
+
+  controller.abort();
+  await running;
+});
+
+test("a non-transient settle failure quarantines its held claim with a scrubbed summary and continues", async () => {
+  const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+  const reports: Array<string | null> = [];
+  const quarantines: string[] = [];
+  let active = true;
+  let attempts = 0;
+  const nextClaim = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        attempts += 1;
+        if (attempts === 1) throw new TaskBoardHttpError(`settle rejected Bearer ${secret}`, 400, "INVALID_REQUEST");
+        if (attempts === 2) {
+          nextClaim.resolve();
+          return true;
+        }
+        return idleRun(signal);
+      },
+      hasActiveClaim: () => active,
+      quarantineActiveClaim: async (detail) => {
+        quarantines.push(detail);
+        active = false;
+      },
+      reportLaneError: async (detail) => { reports.push(detail); },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: () => undefined,
+    random: () => 0.5,
+    sleeper: async () => undefined,
+  });
+
+  const running = fleet.run(controller.signal);
+  await nextClaim.promise;
+  await eventually(() => reports.length === 2);
+  assert.equal(quarantines.length, 1);
+  assert.match(quarantines[0] ?? "", /Bearer \[redacted\]/u);
+  assert.doesNotMatch(quarantines[0] ?? "", /sk-proj/u);
+  assert.deepEqual(reports, [quarantines[0], null]);
+  assert.equal(attempts, 3);
+
+  controller.abort();
+  await running;
+});
+
+test("journal EIO is transient: it backs off and retries without quarantine", async () => {
+  const delays: number[] = [];
+  let quarantines = 0;
+  let attempts = 0;
+  const retried = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error("journal write failed"), { code: "EIO" });
+        retried.resolve();
+        return idleRun(signal);
+      },
+      hasActiveClaim: () => true,
+      quarantineActiveClaim: async () => { quarantines += 1; },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: () => undefined,
+    random: () => 0.5,
+    sleeper: async (delay) => { delays.push(delay); },
+  });
+
+  const running = fleet.run(controller.signal);
+  await retried.promise;
+  assert.deepEqual(delays, [5]);
+  assert.equal(quarantines, 0);
+  assert.equal(attempts, 2);
+
+  controller.abort();
+  await running;
+});
+
+test("a claim 400 with no held claim reports the error and retries at capped backoff without parking", async () => {
+  const delays: number[] = [];
+  const reports: Array<string | null> = [];
+  let attempts = 0;
+  const fourthRetry = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        attempts += 1;
+        if (attempts <= 4) throw new TaskBoardHttpError("claim rejected", 400, "INVALID_REQUEST");
+        fourthRetry.resolve();
+        return idleRun(signal);
+      },
+      reportLaneError: async (detail) => { reports.push(detail); },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: () => undefined,
+    random: () => 0.5,
+    sleeper: async (delay) => { delays.push(delay); },
+  });
+
+  const running = fleet.run(controller.signal);
+  await fourthRetry.promise;
+  assert.deepEqual(delays, [5, 10, 12, 12]);
+  assert.equal(reports.length, 4);
+  assert.equal(fleet.snapshot.lanes[0]?.status, "running");
+  assert.equal(fleet.snapshot.lanes[0]?.restartCount, 4);
+
+  controller.abort();
+  await running;
+});
+
+test("five failed quarantine settlements drop the local claim and keep the lane alive", async () => {
+  const events: TaskFleetEvent[] = [];
+  const quarantineDelays: number[] = [];
+  let localClaimActive = true;
+  let quarantineAttempts = 0;
+  let drops = 0;
+  let operations = 0;
+  const continued = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        operations += 1;
+        if (operations === 1) throw new TaskBoardHttpError("settle rejected", 400, "INVALID_REQUEST");
+        continued.resolve();
+        return idleRun(signal);
+      },
+      hasActiveClaim: () => localClaimActive,
+      quarantineActiveClaim: async () => {
+        quarantineAttempts += 1;
+        throw new TaskBoardHttpError("quarantine settle unavailable", 503, "TEMPORARY");
+      },
+      dropActiveClaim: async () => {
+        drops += 1;
+        localClaimActive = false;
+      },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: (event) => events.push(event),
+    random: () => 0.5,
+    sleeper: async (delay) => { quarantineDelays.push(delay); },
+  });
+
+  const running = fleet.run(controller.signal);
+  await continued.promise;
+  assert.equal(quarantineAttempts, 5);
+  assert.equal(drops, 1);
+  assert.equal(operations, 2);
+  assert.equal(fleet.snapshot.lanes[0]?.status, "running");
+  assert.deepEqual(quarantineDelays, [5, 10, 12, 12]);
+  assert.equal(events.filter((event) => event.type === "claim_dropped").length, 1);
+
+  controller.abort();
+  await running;
+});
+
+test("a successful claim clears the durable lane error", async () => {
+  const reports: Array<string | null> = [];
+  let attempts = 0;
+  const cleared = deferred<void>();
+  const controller = new AbortController();
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async (signal) => {
+        attempts += 1;
+        if (attempts === 1) throw new TaskBoardHttpError("bad claim", 400, "INVALID_REQUEST");
+        if (attempts === 2) return true;
+        cleared.resolve();
+        return idleRun(signal);
+      },
+      reportLaneError: async (detail) => { reports.push(detail); },
+    }),
+    isTransient: isTransientTaskFleetError,
+    logger: () => undefined,
+    random: () => 0.5,
+    sleeper: async () => undefined,
+  });
+
+  const running = fleet.run(controller.signal);
+  await cleared.promise;
+  assert.deepEqual(reports, ["bad claim", null]);
+  assert.equal(fleet.snapshot.lanes[0]?.lastError, null);
+
+  controller.abort();
+  await running;
+});
+
+test("starts every configured lane concurrently and closes held workers once", async () => {
   const starts: string[] = [];
   const closes: string[] = [];
-  const sleeps: number[] = [];
-  const factory: TaskFleetWorkerFactory = async (config) => ({
-    run: async (signal) => { starts.push(config.agentId); await idleRun(signal); },
+  const factory: TaskFleetWorkerFactory = async (config) => managed({
+    run: async (signal) => { starts.push(config.agentId); return idleRun(signal); },
     close: async () => { closes.push(config.agentId); },
   });
   const controller = new AbortController();
   const fleet = new TaskFleet({
-    config: fleetConfig(),
+    config: fleetConfig(2),
     workerFactory: factory,
-    isTransient: () => false,
+    isTransient: isTransientTaskFleetError,
     logger: () => undefined,
-    sleeper: async (delay) => { sleeps.push(delay); },
   });
 
   const running = fleet.run(controller.signal);
   await eventually(() => starts.length === 2);
   assert.deepEqual(new Set(starts), new Set(["engineer-one", "manager-one"]));
-  assert.deepEqual(sleeps, []);
-  assert.deepEqual(fleet.snapshot.lanes.map((lane) => lane.status), ["running", "running"]);
 
   controller.abort();
   await running;
+  await fleet.close();
   assert.deepEqual(new Set(closes), new Set(["engineer-one", "manager-one"]));
   assert.deepEqual(fleet.snapshot.lanes.map((lane) => lane.status), ["closed", "closed"]);
 });
 
-test("re-enters a failed worker with exponential bounded backoff and preserves other lanes", async () => {
-  const attempts = new Map<string, number>();
-  const delays: number[] = [];
-  const events: TaskFleetEvent[] = [];
-  const thirdStart = deferred<void>();
-  const factory: TaskFleetWorkerFactory = async (config) => ({
-    run: async (signal) => {
-      const attempt = (attempts.get(config.agentId) ?? 0) + 1;
-      attempts.set(config.agentId, attempt);
-      if (config.agentId === "engineer-one" && attempt <= 3) throw new TransientFailure(`offline ${attempt}`);
-      if (config.agentId === "engineer-one") thirdStart.resolve();
-      await idleRun(signal);
-    },
-    close: async () => undefined,
-  });
-  const controller = new AbortController();
-  const fleet = new TaskFleet({
-    config: fleetConfig(),
-    workerFactory: factory,
-    isTransient: (error) => error instanceof TransientFailure,
-    logger: (event) => events.push(event),
-    sleeper: async (delay, signal) => { delays.push(delay); if (signal.aborted) return; },
-  });
-
-  const running = fleet.run(controller.signal);
-  await thirdStart.promise;
-  assert.deepEqual(delays, [10, 20, 25]);
-  assert.equal(attempts.get("engineer-one"), 4);
-  assert.equal(attempts.get("manager-one"), 1);
-  assert.deepEqual(
-    events.filter((event) => event.type === "lane_retrying").map((event) => event.type === "lane_retrying" ? event.delayMs : 0),
-    [10, 20, 25],
-  );
-
-  controller.abort();
-  await running;
-});
-
-test("stops only the lane with a non-transient error and keeps another agent waiting", async () => {
-  const events: TaskFleetEvent[] = [];
-  const managerStarted = deferred<void>();
-  const factory: TaskFleetWorkerFactory = async (config) => ({
-    run: async (signal) => {
-      if (config.agentId === "engineer-one") throw new Error("credential rejected");
-      managerStarted.resolve();
-      await idleRun(signal);
-    },
-    close: async () => undefined,
-  });
-  const controller = new AbortController();
-  const fleet = new TaskFleet({
-    config: fleetConfig(),
-    workerFactory: factory,
-    isTransient: () => false,
-    logger: (event) => events.push(event),
-  });
-
-  const running = fleet.run(controller.signal);
-  await managerStarted.promise;
-  await eventually(() => fleet.snapshot.lanes.some((lane) => lane.agentId === "engineer-one" && lane.status === "stopped"));
-  assert.equal(fleet.snapshot.lanes.find((lane) => lane.agentId === "manager-one")?.status, "running");
-  assert.equal(events.filter((event) => event.type === "lane_stopped").length, 1);
-
-  controller.abort();
-  await running;
-});
-
-test("aborting during retry backoff prevents another worker run and closes once", async () => {
+test("aborting during retry backoff prevents another operation", async () => {
   let attempts = 0;
-  let closes = 0;
   const sleeping = deferred<void>();
   const controller = new AbortController();
-  const worker: ManagedTaskWorker = {
-    run: async () => { attempts += 1; throw new TransientFailure("board unavailable"); },
-    close: async () => { closes += 1; },
-  };
-  const factory: TaskFleetWorkerFactory = async (_config: TaskFleetAgentConfig) => worker;
-  const config = parseTaskFleetConfig({
-    version: 1,
-    boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-one",
-      agentId: "engineer-one",
-      token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      model: "codex-model",
-      workingDirectory: "/work/one",
-      statePath: "/state/one.json",
-    }],
-  });
   const fleet = new TaskFleet({
-    config,
-    workerFactory: factory,
-    isTransient: (error) => error instanceof TransientFailure,
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async () => {
+        attempts += 1;
+        throw new TaskBoardHttpError("board unavailable", 503, "TEMPORARY");
+      },
+    }),
+    isTransient: isTransientTaskFleetError,
     logger: () => undefined,
+    random: () => 0.5,
     sleeper: async (_delay, signal) => {
       sleeping.resolve();
       await idleRun(signal);
@@ -197,82 +355,38 @@ test("aborting during retry backoff prevents another worker run and closes once"
   await sleeping.promise;
   controller.abort();
   await running;
-  await fleet.close();
   assert.equal(attempts, 1);
-  assert.equal(closes, 1);
 });
 
-test("close itself aborts held lanes and partial factory failure closes workers already created", async () => {
-  let heldClosed = 0;
-  const heldStarted = deferred<void>();
-  const heldFleet = new TaskFleet({
-    config: parseTaskFleetConfig({
-      version: 1,
-      boardUrl: "http://127.0.0.1:4318",
-      agents: [{
-        workerId: "worker-held",
-        agentId: "engineer-held",
-        token: "agent-held-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-        provider: "codex",
-        model: "codex-model",
-        workingDirectory: "/work/held",
-        statePath: "/state/held.json",
-      }],
-    }),
-    workerFactory: async () => ({
-      run: async (signal) => { heldStarted.resolve(); await idleRun(signal); },
-      close: async () => { heldClosed += 1; },
-    }),
-    isTransient: () => false,
-    logger: () => undefined,
-  });
-  const running = heldFleet.run(new AbortController().signal);
-  await heldStarted.promise;
-  await heldFleet.close();
-  await running;
-  assert.equal(heldClosed, 1);
-
+test("partial factory failure closes workers already created", async () => {
   const closed: string[] = [];
-  const failingFleet = new TaskFleet({
-    config: fleetConfig(),
+  const fleet = new TaskFleet({
+    config: fleetConfig(2),
     workerFactory: async (config) => {
       if (config.agentId === "manager-one") throw new Error("invalid manager configuration");
-      return { run: idleRun, close: async () => { closed.push(config.agentId); } };
+      return managed({ close: async () => { closed.push(config.agentId); } });
     },
-    isTransient: () => false,
+    isTransient: isTransientTaskFleetError,
     logger: () => undefined,
   });
-  await assert.rejects(failingFleet.run(new AbortController().signal), /worker creation failed/u);
+  await assert.rejects(fleet.run(new AbortController().signal), /worker creation failed/u);
   assert.deepEqual(closed, ["engineer-one"]);
 });
 
-test("closing during asynchronous worker creation still closes the late worker without running it", async () => {
+test("closing during asynchronous worker creation closes the late worker without running it", async () => {
   const releaseFactory = deferred<void>();
   let runs = 0;
   let closes = 0;
-  const config = parseTaskFleetConfig({
-    version: 1,
-    boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-late",
-      agentId: "engineer-late",
-      token: "agent-late-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      model: "codex-model",
-      workingDirectory: "/work/late",
-      statePath: "/state/late.json",
-    }],
-  });
   const fleet = new TaskFleet({
-    config,
+    config: fleetConfig(),
     workerFactory: async () => {
       await releaseFactory.promise;
-      return {
-        run: async () => { runs += 1; },
+      return managed({
+        run: async () => { runs += 1; return false; },
         close: async () => { closes += 1; },
-      };
+      });
     },
-    isTransient: () => false,
+    isTransient: isTransientTaskFleetError,
     logger: () => undefined,
   });
 

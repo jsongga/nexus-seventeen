@@ -21,7 +21,19 @@ import {
   until,
 } from "./helpers.js";
 
-async function worker(root: string, board: FakeBoard, launcher: FakeLauncher): Promise<TaskWorker> {
+interface WorkerDiagnostic {
+  readonly type: "lane_error_report_failed";
+  readonly agentId: string;
+  readonly workerId: string;
+  readonly error: string;
+}
+
+async function worker(
+  root: string,
+  board: FakeBoard,
+  launcher: FakeLauncher,
+  logger?: (event: WorkerDiagnostic) => void,
+): Promise<TaskWorker> {
   return TaskWorker.create({
     identity: { workerId: "worker-one", agentId: AGENT },
     statePath: join(root, "state", "journal.json"),
@@ -29,6 +41,7 @@ async function worker(root: string, board: FakeBoard, launcher: FakeLauncher): P
     launcher,
     longPollMs: 30_000,
     now: () => new Date(NOW),
+    ...(logger === undefined ? {} : { logger }),
   });
 }
 
@@ -73,6 +86,78 @@ test("idle dispatch long-polls the board without starting a model process", asyn
     assert.equal(board.settlements.length, 0);
   } finally {
     await taskWorker.close();
+  }
+});
+
+test("a pending-claim EIO rolls memory back and the retry persists before board claim I/O", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const persistedClaimIds = new Set<string>();
+  const originalSave = TaskWorkerJournalStore.prototype.save;
+  let failedPendingSave = false;
+  TaskWorkerJournalStore.prototype.save = async function saveWithOneEio(value) {
+    const isPendingIntent = value.pendingClaim !== null && value.active === null;
+    if (isPendingIntent && !failedPendingSave) {
+      failedPendingSave = true;
+      throw Object.assign(new Error("Simulated pending-claim journal EIO"), { code: "EIO" });
+    }
+    await originalSave.call(this, value);
+    if (isPendingIntent && value.pendingClaim !== null) persistedClaimIds.add(value.pendingClaim.claimId);
+  };
+  board.onClaim = (request) => {
+    assert.equal(persistedClaimIds.has(request.claimId), true, "claim intent must be durable before board I/O");
+  };
+
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /pending-claim journal EIO/u);
+    assert.equal(board.claimRequests.length, 0);
+    assert.equal(taskWorker.hasActiveClaim(), false);
+
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(board.claimRequests.length, 1);
+    assert.equal(launcher.requests.length, 1);
+  } finally {
+    TaskWorkerJournalStore.prototype.save = originalSave;
+    await taskWorker.close();
+  }
+});
+
+test("restart after a pending-claim EIO cannot inherit an orphaned board-side claim", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const originalSave = TaskWorkerJournalStore.prototype.save;
+  let failedPendingSave = false;
+  TaskWorkerJournalStore.prototype.save = async function saveWithOneEio(value) {
+    if (value.pendingClaim !== null && value.active === null && !failedPendingSave) {
+      failedPendingSave = true;
+      throw Object.assign(new Error("Simulated pending-claim journal EIO"), { code: "EIO" });
+    }
+    await originalSave.call(this, value);
+  };
+
+  const first = await worker(root, board, new FakeLauncher());
+  try {
+    await assert.rejects(first.dispatchOnce(), /pending-claim journal EIO/u);
+    assert.equal(board.claimRequests.length, 0, "the failed process never created a board-side claim");
+  } finally {
+    TaskWorkerJournalStore.prototype.save = originalSave;
+    await first.close();
+  }
+
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const restarted = await worker(root, board, launcher);
+  try {
+    assert.equal(await restarted.dispatchOnce(), true);
+    assert.equal(board.claimRequests.length, 1);
+    assert.equal(launcher.requests.length, 1);
+  } finally {
+    await restarted.close();
   }
 });
 
@@ -850,6 +935,52 @@ test("retries the exact durable claim ID and cursor after a lost response", asyn
   }
 });
 
+test("recovery clears last_error only after the durable claim replay validates", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = {
+    agentId: AGENT,
+    claimId: "claim-recovery-clear",
+    messageCursors: { [TASK]: 2 },
+    longPollMs: 0,
+  };
+  const activeClaim = claimed(request).claim;
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    messageCursors: { [TASK]: 2 },
+    active: {
+      claim: activeClaim,
+      phase: "claimed",
+      contextDigest: null,
+      launchStartedAt: null,
+      interruptReason: null,
+      outcome: null,
+      nextOutputIndex: 0,
+    },
+  });
+  await store.close();
+
+  const board = new FakeBoard();
+  board.claimFailures = 1;
+  board.queued.push((replayRequest) => claimed(replayRequest));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const restarted = await worker(root, board, launcher);
+  try {
+    await assert.rejects(restarted.dispatchOnce(), /lost claim response/u);
+    assert.equal(board.laneErrors.length, 0, "a failed replay must preserve the real lane error");
+    assert.equal(launcher.requests.length, 0);
+
+    assert.equal(await restarted.dispatchOnce(), true);
+    assert.deepEqual(board.laneErrors.map((entry) => entry.detail), [null]);
+    assert.equal(launcher.requests.length, 1);
+  } finally {
+    await restarted.close();
+  }
+});
+
 test("replays pending outputs after restart without launching the model again", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -1134,6 +1265,118 @@ test("launcher receives only the bounded contract fields", async () => {
     ]);
     assert.equal("token" in (launcher.requests[0]?.context ?? {}), false);
     assert.equal("boardUrl" in (launcher.requests[0]?.context ?? {}), false);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a successful claim still launches when clearing last_error returns 404 and logs loudly", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.laneErrorFailures = 1;
+  board.laneErrorFailure = Object.assign(new Error("lane-error endpoint returned 404"), { status: 404 });
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const diagnostics: WorkerDiagnostic[] = [];
+  const taskWorker = await worker(root, board, launcher, (event) => diagnostics.push(event));
+  try {
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(launcher.requests.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "completed");
+    assert.equal(diagnostics.length, 1);
+    assert.equal(diagnostics[0]?.type, "lane_error_report_failed");
+    assert.match(diagnostics[0]?.error ?? "", /404/u);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("quarantine replaces a rejected terminal settlement with a scrubbed failed outcome and drops local ownership", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.settleFailures = 1;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const taskWorker = await worker(root, board, launcher);
+  const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /settlement rejection/u);
+    assert.equal(taskWorker.hasActiveClaim(), true);
+
+    await taskWorker.reportLaneError(`Settle rejected Bearer ${secret}`);
+    await taskWorker.quarantineActiveClaim(`Settle rejected Bearer ${secret}`);
+
+    assert.equal(board.settlementAttempts.length, 2);
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.equal(board.settlements[0]?.result, "Settle rejected Bearer [redacted]");
+    assert.equal(board.laneErrors.find((entry) => entry.detail !== null)?.detail, "Settle rejected Bearer [redacted]");
+    assert.equal(taskWorker.hasActiveClaim(), false);
+    assert.equal(taskWorker.snapshot.completedRuns, 1);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("dropActiveClaim only updates the journal and makes zero board calls", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.settleFailures = 1;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /settlement rejection/u);
+    const boardCallsBefore = {
+      claims: board.claimRequests.length,
+      appendAttempts: board.appendAttempts.length,
+      settlementAttempts: board.settlementAttempts.length,
+      estimateUpdates: board.estimateUpdates.length,
+      phaseCreates: board.phaseCreates.length,
+      phaseUpdates: board.phaseUpdates.length,
+      laneErrors: board.laneErrors.length,
+    };
+
+    await taskWorker.dropActiveClaim("Quarantine settlement retries were exhausted");
+
+    assert.deepEqual({
+      claims: board.claimRequests.length,
+      appendAttempts: board.appendAttempts.length,
+      settlementAttempts: board.settlementAttempts.length,
+      estimateUpdates: board.estimateUpdates.length,
+      phaseCreates: board.phaseCreates.length,
+      phaseUpdates: board.phaseUpdates.length,
+      laneErrors: board.laneErrors.length,
+    }, boardCallsBefore);
+    assert.equal(taskWorker.hasActiveClaim(), false);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a poisoned claim response journals its validated claim handle so the fleet can quarantine it", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.poisonedClaimFailures = 1;
+  board.poisonedClaimReason = "human_assignment\u0000 sk-proj-board-secret-0123456789";
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /context is invalid/u);
+    assert.equal(taskWorker.hasActiveClaim(), true);
+    assert.equal(launcher.requests.length, 0);
+    const journal = await readFile(join(root, "state", "journal.json"), "utf8");
+    assert.doesNotMatch(journal, /sk-proj-board-secret/u);
+    assert.match(journal, /poisoned_claim/u);
+
+    await taskWorker.quarantineActiveClaim("Claim response context is invalid");
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.equal(board.settlements[0]?.result, "Claim response context is invalid");
+    assert.equal(taskWorker.hasActiveClaim(), false);
   } finally {
     await taskWorker.close();
   }

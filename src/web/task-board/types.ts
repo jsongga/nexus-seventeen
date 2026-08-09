@@ -159,6 +159,7 @@ export interface BoardAgent {
   model: string | null;
   status: AgentStatus;
   workerConnection: AgentWorkerConnection;
+  lastError: string | null;
   currentTaskId: string | null;
   lastEventAt: string | null;
   createdAt: string;

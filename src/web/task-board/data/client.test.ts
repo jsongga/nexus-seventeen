@@ -177,6 +177,7 @@ const agent = {
   model: 'economy-coding-model',
   status: 'running',
   workerConnection: 'watching_run',
+  lastError: 'Board rejected the prior claim.',
   createdAt: '2026-07-19T10:01:00.000Z',
 };
 const manager = {
@@ -398,6 +399,7 @@ describe('task-board protocol projection', () => {
       id: 'billing-engineer',
       status: 'running',
       workerConnection: 'watching_run',
+      lastError: 'Board rejected the prior claim.',
       currentTaskId: 'task-one',
     });
     expect(snapshot.tasks[0]).toMatchObject({ id: 'task-one', status: 'waiting_for_human', expectedAgentMinutes: 30 });
@@ -515,9 +517,9 @@ describe('task-board protocol projection', () => {
   });
 
   it('treats a missing worker connection as not detected for rolling compatibility', () => {
-    const { workerConnection: _workerConnection, ...legacyAgent } = agent;
+    const { workerConnection: _workerConnection, lastError: _lastError, ...legacyAgent } = agent;
     const snapshot = parseBoardSnapshot({ ...boardSnapshot(), agents: [legacyAgent] });
-    expect(snapshot.agents[0]).toMatchObject({ status: 'running', workerConnection: null });
+    expect(snapshot.agents[0]).toMatchObject({ status: 'running', workerConnection: null, lastError: null });
   });
 
   it('projects nullable estimates and parallel phase progress with legacy fallbacks', () => {

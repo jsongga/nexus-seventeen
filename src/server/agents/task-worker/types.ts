@@ -18,6 +18,7 @@ export const TASK_WAKE_REASONS = Object.freeze([
   "assigned",
   "resumed",
 ] as const);
+export const POISONED_CLAIM_REASON = "poisoned_claim";
 
 export type TaskWakeReason = typeof TASK_WAKE_REASONS[number];
 export type AgentRunTerminalStatus = "completed" | "failed" | "interrupted" | "waiting_for_human";
@@ -204,6 +205,14 @@ export interface ClaimedAgentRun {
   readonly context: BoundedAgentContext | null;
 }
 
+/** A successful board claim whose full response could not be accepted safely. */
+export class TaskBoardClaimResponseError extends Error {
+  constructor(message: string, readonly claim: TaskWakeClaim | null, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "TaskBoardClaimResponseError";
+  }
+}
+
 export interface AppendRunOutputRequest {
   readonly claim: TaskWakeClaim;
   readonly output: AgentRunOutput;
@@ -218,6 +227,11 @@ export interface SettleAgentRunRequest {
   readonly idempotencyKey: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
+}
+
+export interface ReportAgentLaneErrorRequest {
+  readonly agentId: string;
+  readonly detail: string | null;
 }
 
 export interface UpdateTaskEstimateRequest {
@@ -262,12 +276,22 @@ export interface TaskBoardClient {
   updateTaskPhase(request: UpdateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase>;
   appendRunOutput(request: AppendRunOutputRequest, signal?: AbortSignal): Promise<void>;
   settleAgentRun(request: SettleAgentRunRequest, signal?: AbortSignal): Promise<void>;
+  reportLaneError(request: ReportAgentLaneErrorRequest, signal?: AbortSignal): Promise<void>;
 }
 
 export interface TaskWorkerIdentity {
   readonly workerId: string;
   readonly agentId: string;
 }
+
+export interface TaskWorkerDiagnosticEvent {
+  readonly type: "lane_error_report_failed";
+  readonly agentId: string;
+  readonly workerId: string;
+  readonly error: string;
+}
+
+export type TaskWorkerLogger = (event: TaskWorkerDiagnosticEvent) => void;
 
 export interface TaskWorkerOptions {
   readonly identity: TaskWorkerIdentity;
@@ -276,6 +300,7 @@ export interface TaskWorkerOptions {
   readonly launcher: AgentLauncher;
   readonly longPollMs?: number;
   readonly now?: () => Date;
+  readonly logger?: TaskWorkerLogger;
 }
 
 export interface CompletedRunJournalEntry {

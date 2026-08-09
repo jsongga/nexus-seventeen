@@ -37,6 +37,7 @@ import type {
   WorkItemStage,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "./errors.js";
+import { MAX_SAFE_ERROR_DETAIL_CHARACTERS, safeErrorDetail } from "../shared/safe-error-detail.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -719,6 +720,13 @@ export function parseResume(value: unknown): ResumeAgentRequest {
 export function parseInterrupt(value: unknown): InterruptAgentRequest {
   const item = exact(value, ["reason"], "Agent interrupt");
   return Object.freeze({ reason: text(item.reason, "reason", 2_000) });
+}
+
+export function parseLaneError(value: unknown): Readonly<{ detail: string | null }> {
+  const item = exact(value, ["detail"], "Agent lane error");
+  if (item.detail === null) return Object.freeze({ detail: null });
+  const detail = text(item.detail, "detail", MAX_SAFE_ERROR_DETAIL_CHARACTERS);
+  return Object.freeze({ detail: safeErrorDetail(detail, "Task fleet lane failed") });
 }
 
 export function parseClaim(value: unknown): ClaimRunRequest {

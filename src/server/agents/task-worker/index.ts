@@ -12,7 +12,7 @@ export {
   parseTaskWakeClaim,
   parseTaskWorkerJournal,
 } from "./schema.js";
-export { TASK_WAKE_REASONS } from "./types.js";
+export { TASK_WAKE_REASONS, TaskBoardClaimResponseError } from "./types.js";
 export type {
   AgentLaunchRequest,
   AgentLauncher,
@@ -31,12 +31,15 @@ export type {
   ClaimedAgentRun,
   ClaimNextWakeRequest,
   CreateAgentTaskPhaseRequest,
+  ReportAgentLaneErrorRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
   TaskContextMessage,
   TaskWakeClaim,
   TaskWakeReason,
   TaskWorkerIdentity,
+  TaskWorkerDiagnosticEvent,
+  TaskWorkerLogger,
   TaskWorkerOptions,
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,

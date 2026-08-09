@@ -6,7 +6,7 @@ import type { TaskFleetAgentConfig, TaskFleetConfig, TaskFleetRetryConfig } from
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const DEFAULT_LONG_POLL_MS = 30_000;
-const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 250, maximumDelayMs: 10_000 });
+const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 1_000, maximumDelayMs: 60_000 });
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);

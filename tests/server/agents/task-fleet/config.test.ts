@@ -46,7 +46,7 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
 
   assert.equal(config.version, 1);
   assert.equal(config.boardUrl, "http://127.0.0.1:4318");
-  assert.deepEqual(config.retry, { initialDelayMs: 250, maximumDelayMs: 10_000 });
+  assert.deepEqual(config.retry, { initialDelayMs: 1_000, maximumDelayMs: 60_000 });
   assert.equal(config.agents[0]?.longPollMs, 30_000);
   assert.equal(config.agents[0]?.agentTimeoutMs, undefined);
   assert.equal(config.agents[1]?.longPollMs, 12_000);

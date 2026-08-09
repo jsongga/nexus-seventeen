@@ -13,4 +13,4 @@ The same command accepts `STEWARD_TASK_FLEET_CONFIG` instead of a positional pat
 
 Claude lanes use bare mode when `ANTHROPIC_API_KEY` is present. Without an explicit key, the launcher keeps OAuth/keychain authentication available under safe mode; project customizations, session persistence, MCP servers, and slash commands remain disabled in either case.
 
-The fleet retries only transport failures, throttling, and server errors. Authentication and invalid-state errors stop the affected lane while other agents continue. `SIGINT` and `SIGTERM` abort held claims, directly interrupt any active model process through the existing worker, and close every worker journal.
+The fleet retries transport failures, throttling, server errors, and journal I/O with capped exponential backoff. Authentication, invalid-state, and unexpected local errors quarantine a held claim as failed; without a held claim, they are reported and retried with the same backoff, so the lane stays available. `SIGINT` and `SIGTERM` abort held claims, directly interrupt any active model process through the existing worker, and close every worker journal.

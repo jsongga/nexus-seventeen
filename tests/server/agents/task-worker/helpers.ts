@@ -15,11 +15,13 @@ import type {
   ClaimNextWakeRequest,
   CreateAgentTaskPhaseRequest,
   SettleAgentRunRequest,
+  ReportAgentLaneErrorRequest,
   TaskBoardClient,
   TaskWakeClaim,
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,
 } from "#server/agents/task-worker/types";
+import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
 export const PROJECT = "project-one";
@@ -182,19 +184,28 @@ export class FakeBoard implements TaskBoardClient {
   readonly appendAttempts: AppendRunOutputRequest[] = [];
   readonly outputs: AppendRunOutputRequest[] = [];
   readonly settlements: SettleAgentRunRequest[] = [];
+  readonly settlementAttempts: SettleAgentRunRequest[] = [];
   readonly estimateUpdates: UpdateTaskEstimateRequest[] = [];
   readonly phaseCreates: CreateAgentTaskPhaseRequest[] = [];
   readonly phaseUpdates: UpdateAgentTaskPhaseRequest[] = [];
+  readonly laneErrors: ReportAgentLaneErrorRequest[] = [];
   readonly #claimed = new Map<string, ClaimedAgentRun>();
   readonly #waiters = new Map<string, (value: AgentRunInterrupt | null) => void>();
   readonly queued: Array<(request: ClaimNextWakeRequest) => ClaimedAgentRun> = [];
   claimFailures = 0;
+  poisonedClaimFailures = 0;
+  poisonedClaimReason: string | null = null;
   appendFailures = 0;
+  settleFailures = 0;
   estimateFailures = 0;
+  laneErrorFailures = 0;
+  laneErrorFailure: Error = new Error("Simulated lane-error endpoint rejection");
+  onClaim: ((request: ClaimNextWakeRequest) => void) | null = null;
   phaseCreateBarrier: Promise<void> | null = null;
   #phaseSequence = 0;
 
   claimNextWake(request: ClaimNextWakeRequest): Promise<ClaimedAgentRun | null> {
+    this.onClaim?.(structuredClone(request));
     this.claimRequests.push(structuredClone(request));
     let result = this.#claimed.get(request.claimId);
     if (result === undefined) {
@@ -206,6 +217,13 @@ export class FakeBoard implements TaskBoardClient {
     if (this.claimFailures > 0) {
       this.claimFailures -= 1;
       return Promise.reject(new Error("Simulated lost claim response"));
+    }
+    if (this.poisonedClaimFailures > 0) {
+      this.poisonedClaimFailures -= 1;
+      return Promise.reject(new TaskBoardClaimResponseError(
+        "Claim response context is invalid",
+        { ...structuredClone(result.claim), reason: this.poisonedClaimReason ?? result.claim.reason },
+      ));
     }
     return Promise.resolve(structuredClone(result));
   }
@@ -289,6 +307,11 @@ export class FakeBoard implements TaskBoardClient {
   }
 
   settleAgentRun(request: SettleAgentRunRequest): Promise<void> {
+    this.settlementAttempts.push(structuredClone(request));
+    if (this.settleFailures > 0) {
+      this.settleFailures -= 1;
+      return Promise.reject(new Error("Simulated settlement rejection"));
+    }
     if (containsCarriageReturn({
       result: request.result,
       handoff: request.handoff ?? null,
@@ -299,6 +322,15 @@ export class FakeBoard implements TaskBoardClient {
     const prior = this.settlements.find((item) => item.claim.runId === request.claim.runId);
     if (prior === undefined) this.settlements.push(structuredClone(request));
     else if (JSON.stringify(prior) !== JSON.stringify(request)) return Promise.reject(new Error("Settlement conflict"));
+    return Promise.resolve();
+  }
+
+  reportLaneError(request: ReportAgentLaneErrorRequest): Promise<void> {
+    this.laneErrors.push(structuredClone(request));
+    if (this.laneErrorFailures > 0) {
+      this.laneErrorFailures -= 1;
+      return Promise.reject(this.laneErrorFailure);
+    }
     return Promise.resolve();
   }
 }

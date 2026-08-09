@@ -34,6 +34,7 @@ import {
   parseIdentifier,
   parseIdempotencyKey,
   parseInterrupt,
+  parseLaneError,
   parseDocumentPenUpdate,
   parseDocumentUpdate,
   parseQuestion,
@@ -484,6 +485,16 @@ export class TaskBoardService {
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
       sendJson(response, result.duplicate ? 200 : 201, result);
+      return;
+    }
+    const laneErrorMatch = /^\/v1\/agents\/([^/]+)\/lane-error$/u.exec(url.pathname);
+    if (laneErrorMatch && request.method === "POST") {
+      noQuery(url);
+      const agentId = parseRouteIdentifier(laneErrorMatch[1], "agentId");
+      this.#board.authenticateAgent(bearerToken(request), agentId);
+      const { detail } = parseLaneError(await readJsonBody(request, this.config.maxBodyBytes));
+      this.#board.setAgentLaneError(agentId, detail);
+      sendEmpty(response, 204);
       return;
     }
     const interruptMatch = /^\/v1\/agents\/([^/]+)\/interrupt$/u.exec(url.pathname);

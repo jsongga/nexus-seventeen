@@ -1,5 +1,6 @@
 import { TASK_BOARD_API_VERSION, type ClaimRunResult } from "#shared/task-board-contract";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
+import { POISONED_CLAIM_REASON, TaskBoardClaimResponseError } from "./types.js";
 import type {
   AgentTaskPhase,
   AgentRunInterrupt,
@@ -8,6 +9,7 @@ import type {
   ClaimedAgentRun,
   ClaimNextWakeRequest,
   CreateAgentTaskPhaseRequest,
+  ReportAgentLaneErrorRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
   TaskWakeClaim,
@@ -328,6 +330,40 @@ function asClaimResult(value: unknown): ClaimRunResult {
   return value as ClaimRunResult;
 }
 
+function claimHandleFromResponse(value: unknown, request: ClaimNextWakeRequest): TaskWakeClaim | null {
+  try {
+    const envelope = object(value, "Claim result");
+    const run = object(envelope.run, "Claim run");
+    const wakeup = object(envelope.wakeup, "Claim wakeup");
+    if (
+      envelope.apiVersion !== TASK_BOARD_API_VERSION || run.apiVersion !== TASK_BOARD_API_VERSION ||
+      wakeup.apiVersion !== TASK_BOARD_API_VERSION || run.claimId !== request.claimId ||
+      run.agentId !== request.agentId || run.status !== "active" || run.endedAt !== null || run.result !== null ||
+      run.wakeupId !== wakeup.wakeupId || run.projectId !== wakeup.projectId || run.agentId !== wakeup.agentId ||
+      run.taskId !== wakeup.taskId || run.runId !== wakeup.runId || wakeup.claimedAt === null
+    ) {
+      return null;
+    }
+    const taskId = wakeup.taskId === null ? null : id(wakeup.taskId, "wakeup.taskId");
+    timestamp(wakeup.claimedAt, "wakeup.claimedAt");
+    const requestedMessageCursor = taskId === null ? null : request.messageCursors[taskId] ?? null;
+    return parseTaskWakeClaim({
+      apiVersion: 1,
+      claimId: id(run.claimId, "run.claimId"),
+      runId: id(run.runId, "run.runId"),
+      wakeupId: id(run.wakeupId, "run.wakeupId"),
+      projectId: id(run.projectId, "run.projectId"),
+      agentId: id(run.agentId, "run.agentId"),
+      taskId,
+      reason: POISONED_CLAIM_REASON,
+      requestedMessageCursor,
+      claimedAt: timestamp(run.startedAt, "run.startedAt"),
+    });
+  } catch {
+    return null;
+  }
+}
+
 function questionProjection(value: ClaimRunResult["context"]["triggerQuestion"], requireAnswer: boolean): BoundedAgentContext["triggerQuestion"] {
   if (value === null) return null;
   if (requireAnswer && (value.status !== "answered" || value.answer === null)) {
@@ -478,23 +514,39 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       request.longPollMs > 0,
     );
     if (result.status === 204) return null;
-    const claimed = asClaimResult(result.body);
-    const requestedMessageCursor = claimed.wakeup.taskId === null
-      ? null
-      : request.messageCursors[claimed.wakeup.taskId] ?? null;
-    const claim = parseTaskWakeClaim({
-      apiVersion: 1,
-      claimId: claimed.run.claimId,
-      runId: claimed.run.runId,
-      wakeupId: claimed.wakeup.wakeupId,
-      projectId: claimed.run.projectId,
-      agentId: claimed.run.agentId,
-      taskId: claimed.wakeup.taskId,
-      reason: claimed.wakeup.reason,
-      requestedMessageCursor,
-      claimedAt: claimed.run.startedAt,
-    });
-    return Object.freeze({ claim, context: mapContext(claimed, requestedMessageCursor) });
+    const claimHandle = claimHandleFromResponse(result.body, request);
+    try {
+      const claimed = asClaimResult(result.body);
+      const requestedMessageCursor = claimed.wakeup.taskId === null
+        ? null
+        : request.messageCursors[claimed.wakeup.taskId] ?? null;
+      const claim = parseTaskWakeClaim({
+        apiVersion: 1,
+        claimId: claimed.run.claimId,
+        runId: claimed.run.runId,
+        wakeupId: claimed.wakeup.wakeupId,
+        projectId: claimed.run.projectId,
+        agentId: claimed.run.agentId,
+        taskId: claimed.wakeup.taskId,
+        reason: claimed.wakeup.reason,
+        requestedMessageCursor,
+        claimedAt: claimed.run.startedAt,
+      });
+      return Object.freeze({ claim, context: mapContext(claimed, requestedMessageCursor) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Task-board claim response is invalid";
+      throw new TaskBoardClaimResponseError(message, claimHandle, error);
+    }
+  }
+
+  async reportLaneError(request: ReportAgentLaneErrorRequest, signal?: AbortSignal): Promise<void> {
+    const result = await this.#http.request(
+      "POST",
+      `/v1/agents/${encodeURIComponent(request.agentId)}/lane-error`,
+      { detail: request.detail },
+      signal,
+    );
+    if (result.status !== 204 || result.body !== null) throw new Error("Lane-error response is invalid");
   }
 
   async waitForRunInterrupt(claim: TaskWakeClaim, signal?: AbortSignal): Promise<AgentRunInterrupt | null> {

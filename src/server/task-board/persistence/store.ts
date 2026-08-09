@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
@@ -322,6 +322,7 @@ CREATE TABLE agents (
   mission TEXT NOT NULL,
   model TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
+  last_error TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX agents_project ON agents(project_id, created_at, agent_id);
@@ -598,6 +599,20 @@ function migrateVersion13To14(db: DatabaseSync): void {
   } finally {
     db.exec("PRAGMA foreign_keys = ON;");
   }
+}
+
+function migrateVersion14To15(db: DatabaseSync): void {
+  const hasAgents = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
+  // The v1/v2 regression fixtures intentionally contain only the tables needed
+  // to prove their historical column additions.
+  if (!hasAgents) {
+    db.exec("PRAGMA user_version = 15;");
+    return;
+  }
+  const addLastError = hasColumns(db, "agents", ["last_error"])
+    ? ""
+    : "ALTER TABLE agents ADD COLUMN last_error TEXT;";
+  db.exec(`BEGIN IMMEDIATE; ${addLastError} PRAGMA user_version = 15; COMMIT;`);
 }
 
 function migrateVersion9To10(db: DatabaseSync): void {
@@ -880,6 +895,8 @@ export class TaskBoardStore {
         // Durable claim results are added below.
       } else if (version === 13) {
         // Recovery task states and wakeup reasons are added below.
+      } else if (version === 14) {
+        // Durable fleet lane errors are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -895,6 +912,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 11) migrateVersion11To12(db);
       if (version >= 1 && version <= 12) migrateVersion12To13(db);
       if (version >= 1 && version <= 13) migrateVersion13To14(db);
+      if (version >= 1 && version <= 14) migrateVersion14To15(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");
