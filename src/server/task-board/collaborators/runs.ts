@@ -5,12 +5,14 @@ import {
   type AgentRun,
   type ClaimRunRequest,
   type ClaimRunResult,
+  type CreatePlanRevisionRequest,
   type InterruptAgentRequest,
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
   type TaskStatus,
   type Wakeup,
+  type WorkNode,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
@@ -297,7 +299,24 @@ export class RunsCollaborator {
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
     if (current.status !== "active") {
-      if (current.status === request.outcome && current.result === request.result) return { run: current, duplicate: true };
+      if (current.status === request.outcome && current.result === request.result) {
+        let repairedNodes: readonly WorkNode[] = Object.freeze([]);
+        const taskId = current.taskId;
+        if (taskId !== null) {
+          this.runtime.store.transaction(() => {
+            if (this.projects.attemptNeedsSettlementRepair(taskId, current.runId)) {
+              repairedNodes = this.projects.settleAttemptInTransaction(
+                taskId,
+                request.outcome,
+                request.result,
+                request.handoff,
+              );
+            }
+          });
+          this.projects.activateWorkflowNodes(repairedNodes);
+        }
+        return { run: current, duplicate: true };
+      }
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
     const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
@@ -305,6 +324,7 @@ export class RunsCollaborator {
       JOIN work_items w ON w.work_item_id=link.work_item_id
       WHERE link.task_id=?
     `).get(current.taskId);
+    let workflowProposal: CreatePlanRevisionRequest | null = null;
     if (planning && request.outcome === "completed") {
       if (request.workflowPlan === undefined || request.workflowPlan === null) {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
@@ -329,7 +349,7 @@ export class RunsCollaborator {
           requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
         const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
           agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
-        this.projects.proposeWorkflowForAgent({
+        workflowProposal = {
           workItemId,
           projectId: String(planning.resolved_project_id),
           objective: request.workflowPlan.objective,
@@ -337,14 +357,26 @@ export class RunsCollaborator {
           acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
           skillIds,
           nodes: request.workflowPlan.nodes,
-        }, agentId);
+        };
       }
     } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
       throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
     }
     const now = exactNow(this.runtime.config.now);
     let workflowWakeAgentId: string | null = null;
+    let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
     this.runtime.store.transaction(() => {
+      if (current.taskId !== null) {
+        settledWorkflowNodes = this.projects.settleAttemptInTransaction(
+          current.taskId,
+          request.outcome,
+          request.result,
+          request.handoff,
+        );
+      }
+      if (workflowProposal !== null) {
+        this.projects.proposeWorkflowForAgentInTransaction(workflowProposal, agentId);
+      }
       const update = this.runtime.store.db.prepare(`
         UPDATE runs SET status = ?, ended_at = ?, result = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
       `).run(request.outcome, now, request.result, runId, agentId);
@@ -385,23 +417,18 @@ export class RunsCollaborator {
           }
         }
       }
+      if (planning && request.outcome !== "completed") {
+        this.runtime.store.db.prepare(
+          "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+        ).run(now, String(planning.work_item_id));
+      }
       this.runtime.insertEvent(current.projectId, current.taskId, { type: "agent", id: agentId }, "agent_run_settled", {
         runId,
         outcome: request.outcome,
       }, now);
     });
     if (workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(workflowWakeAgentId);
-    if (planning && request.outcome !== "completed") {
-      const now = exactNow(this.runtime.config.now);
-      this.runtime.store.transaction(() => {
-        this.runtime.store.db.prepare(
-          "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-        ).run(now, String(planning.work_item_id));
-      });
-    }
-    if (current.taskId !== null) {
-      this.projects.settleAttempt(current.taskId, request.outcome, request.result, request.handoff);
-    }
+    this.projects.activateWorkflowNodes(settledWorkflowNodes);
     return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
   }
 

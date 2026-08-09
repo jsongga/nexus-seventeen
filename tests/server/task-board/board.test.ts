@@ -42,6 +42,79 @@ function completeAssignedTask(
   return board.requireTask(task.taskId);
 }
 
+async function activeSettlementWorkflow(suffix: string) {
+  const fixture = await boardFixture();
+  const verifier = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "settlement-verifier",
+    role: "verifier",
+    area: "atomic-settlement",
+    mission: "Verify run and workflow settlement behavior.",
+    model: "codex-mini",
+    token: "task-board-settlement-verifier-token-0123456789",
+  });
+  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: [{
+      agentTypeId: "settlement-verifier",
+      name: "Settlement verifier",
+      description: "Executes the workflow settlement regression fixture.",
+      role: "verifier",
+      supplementalInstructions: "Complete the confirmed verification node.",
+      skillIds: [],
+      evaluatorProfile: "tests",
+      enabled: true,
+    }],
+    stages: automationStages({
+      verification: { kind: "agent_type", agentTypeId: "settlement-verifier" },
+    }),
+  }));
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: `Verify atomic run settlement ${suffix}.`,
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `atomic-settlement-${suffix}`).workItem;
+  const proposed = fixture.board.proposeWorkflow({
+    workItemId: workItem.workItemId,
+    projectId: fixture.project.projectId,
+    objective: "Settle the run and its workflow node atomically.",
+    assumptions: [],
+    acceptanceCriteria: ["The run, task, and workflow node agree."],
+    skillIds: [],
+    nodes: [{
+      nodeId: `settlement-${suffix}`,
+      title: `Atomic settlement ${suffix}`,
+      objective: "Verify atomic settlement behavior.",
+      acceptanceCriteria: ["Settlement is durable and retry-safe."],
+      dependencyNodeIds: [],
+      stageTemplate: ["verification"],
+    }],
+  });
+  const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+  const node = confirmed.nodes[0]!;
+  assert.equal(node.state, "active");
+  const claim = fixture.board.claimRun(verifier.agentId, {
+    claimId: `claim-atomic-settlement-${suffix}`,
+    messageCursor: null,
+  });
+  assert.ok(claim);
+  assert.equal(claim.context.workflow?.nodeId, node.nodeId);
+  return { ...fixture, verifier, workItem, node, claim };
+}
+
+function settlementHandoff(outcome: "passed" | "failed") {
+  return {
+    outcome,
+    summary: outcome === "passed" ? "Atomic settlement verified." : "Atomic settlement could not be verified.",
+    evidence: ["The persisted run, task, and node states were inspected."],
+    artifactIds: [],
+    acceptanceCriteria: [{
+      criterion: "The run, task, and workflow node agree.",
+      passed: outcome === "passed",
+      evidence: outcome === "passed" ? "All terminal states agree." : "The verification run failed.",
+    }],
+    blockers: outcome === "passed" ? [] : ["Verification failed."],
+    recommendedReturnStage: null,
+  } as const;
+}
+
 function sizedAutomationConfiguration(targetBytes: number) {
   const agentTypes = Array.from({ length: 5 }, (_unused, index) => ({
     agentTypeId: `sized-type-${index}`,
@@ -207,6 +280,290 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     assert.equal(completed.state, "completed");
     assert.ok(completed.endedAt);
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("contradictory handoff validation leaves an active workflow run settleable", async () => {
+  const fixture = await activeSettlementWorkflow("handoff-mismatch");
+  try {
+    const initialNodeVersion = fixture.node.version;
+    assert.throws(
+      () => fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+        outcome: "failed",
+        result: "Verification failed before settlement.",
+        handoff: settlementHandoff("passed"),
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "HANDOFF_OUTCOME_MISMATCH"
+      ),
+    );
+
+    const rejectedSnapshot = fixture.board.snapshot(fixture.project.projectId);
+    assert.equal(rejectedSnapshot.recentRuns.find((run) => run.runId === fixture.claim.run.runId)?.status, "active");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "in_progress");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.version, initialNodeVersion);
+
+    assert.throws(
+      () => fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+        outcome: "failed",
+        result: "Verification failed before settlement.",
+        handoff: { ...settlementHandoff("failed"), artifactIds: ["missing-settlement-artifact"] },
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "HANDOFF_ARTIFACT_INVALID"
+      ),
+    );
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === fixture.claim.run.runId)?.status, "active");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "in_progress");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+
+    const settled = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Verification failed before settlement.",
+      handoff: settlementHandoff("failed"),
+    });
+    assert.equal(settled.duplicate, false);
+    assert.equal(settled.run.status, "failed");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "blocked");
+    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "blocked");
+    assert.equal(workflow.handoffs[0]?.outcome, "failed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a completed planning run missing workflowPlan remains active and accepts a corrected retry", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "planning-verifier",
+        name: "Planning verifier",
+        description: "Executes planned verification nodes.",
+        role: "verifier",
+        supplementalInstructions: "Verify the confirmed workflow node.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "planning-verifier" },
+      }),
+    }));
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Plan an atomic settlement verification.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "atomic-settlement-planning-required").workItem;
+    const planningTask = fixture.board.startWorkItemPlanning(workItem.workItemId);
+    assert.ok(planningTask);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-atomic-settlement-planning-required",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const pendingWakeup = fixture.board.resumeAgent(fixture.manager.agentId, {
+      reason: "Retry planning after the active run finishes.",
+      taskId: planningTask.taskId,
+    }, "atomic-settlement-planning-pending-wakeup").wakeup;
+    assert.equal(pendingWakeup.claimedAt, null);
+    assert.equal(pendingWakeup.runId, null);
+
+    assert.throws(
+      () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The plan is complete but was omitted from this request.",
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "WORKFLOW_PLAN_REQUIRED"
+      ),
+    );
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status, "active");
+    assert.equal(fixture.board.requireTask(planningTask.taskId).status, "in_progress");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "processing");
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const persistedWakeup = inspected.prepare(
+        "SELECT claimed_at,run_id FROM wakeups WHERE wakeup_id=?",
+      ).get(pendingWakeup.wakeupId);
+      assert.ok(persistedWakeup);
+      assert.equal(persistedWakeup.claimed_at, null);
+      assert.equal(persistedWakeup.run_id, null);
+    } finally {
+      inspected.close();
+    }
+
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The corrected request includes the completed plan.",
+      workflowPlan: {
+        objective: "Verify atomic run settlement.",
+        assumptions: [],
+        acceptanceCriteria: ["Run and workflow states settle together."],
+        nodes: [{
+          nodeId: "verify-atomic-settlement",
+          title: "Verify atomic settlement",
+          objective: "Inspect the terminal run, task, and workflow state.",
+          acceptanceCriteria: ["All persisted states agree."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        }],
+      },
+    });
+    assert.equal(settled.duplicate, false);
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireTask(planningTask.taskId).status, "completed");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "waiting_for_human_review");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a duplicate settle repairs a terminal run whose workflow node is still active", async () => {
+  const fixture = await activeSettlementWorkflow("retry-repair");
+  const result = "Atomic settlement completed before the worker crashed.";
+  const taskId = fixture.claim.task!.taskId;
+  fixture.board.close();
+
+  const { DatabaseSync } = await import("node:sqlite");
+  const partial = new DatabaseSync(fixture.path);
+  try {
+    partial.exec("PRAGMA foreign_keys = ON");
+    partial.prepare("UPDATE runs SET status='completed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+      .run("2026-07-19T20:05:00.000Z", result, fixture.claim.run.runId);
+    partial.prepare(`
+      UPDATE tasks
+      SET status='completed',ended_at=?,result=?,version=version+1,updated_at=?
+      WHERE task_id=? AND ended_at IS NULL
+    `).run("2026-07-19T20:05:00.000Z", result, "2026-07-19T20:05:00.000Z", taskId);
+  } finally {
+    partial.close();
+  }
+
+  const restarted = await TaskBoard.open(config(fixture.path));
+  try {
+    assert.equal(restarted.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    const replay = restarted.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result,
+      handoff: settlementHandoff("passed"),
+    });
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.run.status, "completed");
+    const repaired = restarted.projectWorkflow(fixture.project.projectId);
+    assert.equal(repaired.nodes[0]?.state, "completed");
+    assert.equal(repaired.handoffs.length, 1);
+    assert.equal(repaired.handoffs[0]?.taskId, taskId);
+  } finally {
+    restarted.close();
+  }
+});
+
+test("an old duplicate settle does not repair a workflow after the task has resumed", async () => {
+  const fixture = await activeSettlementWorkflow("moved-on-retry");
+  const oldResult = "The first verification run failed before workflow settlement.";
+  const taskId = fixture.claim.task!.taskId;
+  fixture.board.close();
+
+  const { DatabaseSync } = await import("node:sqlite");
+  const partial = new DatabaseSync(fixture.path);
+  try {
+    partial.exec("PRAGMA foreign_keys = ON");
+    partial.prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+      .run("2026-07-19T20:05:00.000Z", oldResult, fixture.claim.run.runId);
+    partial.prepare(`
+      UPDATE tasks
+      SET status='blocked',ended_at=NULL,result=NULL,version=version+1,updated_at=?
+      WHERE task_id=? AND ended_at IS NULL
+    `).run("2026-07-19T20:05:00.000Z", taskId);
+  } finally {
+    partial.close();
+  }
+
+  const restarted = await TaskBoard.open(config(fixture.path));
+  try {
+    const beforeResume = restarted.projectWorkflow(fixture.project.projectId).nodes[0]!;
+    assert.equal(beforeResume.state, "active");
+    restarted.resumeAgent(fixture.verifier.agentId, {
+      reason: "Retry the failed verification task.",
+      taskId,
+    }, "resume-atomic-settlement-moved-on-retry");
+    const newer = restarted.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-atomic-settlement-moved-on-retry-newer",
+      messageCursor: null,
+    });
+    assert.ok(newer);
+    assert.equal(newer.task?.taskId, taskId);
+    assert.equal(newer.task.status, "in_progress");
+
+    const replay = restarted.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: oldResult,
+      handoff: settlementHandoff("failed"),
+    });
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.run.status, "failed");
+    const afterReplay = restarted.projectWorkflow(fixture.project.projectId);
+    assert.equal(afterReplay.nodes[0]?.state, "active");
+    assert.equal(afterReplay.nodes[0]?.version, beforeResume.version);
+    assert.equal(afterReplay.handoffs.length, 0);
+    assert.equal(restarted.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === newer.run.runId)?.status, "active");
+    assert.equal(restarted.requireTask(taskId).status, "in_progress");
+
+    const settled = restarted.settleRun(newer.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "The resumed verification completed successfully.",
+      handoff: settlementHandoff("passed"),
+    });
+    assert.equal(settled.duplicate, false);
+    assert.equal(settled.run.status, "completed");
+    assert.equal(restarted.requireTask(taskId).status, "completed");
+    const completed = restarted.projectWorkflow(fixture.project.projectId);
+    assert.equal(completed.nodes[0]?.state, "completed");
+    assert.equal(completed.handoffs.length, 1);
+    assert.equal(completed.handoffs[0]?.outcome, "passed");
+  } finally {
+    restarted.close();
+  }
+});
+
+test("a completed run with a valid handoff settles its workflow node", async () => {
+  const fixture = await activeSettlementWorkflow("happy-path");
+  try {
+    const settled = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Atomic settlement behavior is verified.",
+      handoff: settlementHandoff("passed"),
+    });
+    assert.equal(settled.duplicate, false);
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "completed");
+    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "completed");
+    assert.equal(workflow.handoffs.length, 1);
+    assert.equal(workflow.handoffs[0]?.outcome, "passed");
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "completed");
+
+    const replay = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Atomic settlement behavior is verified.",
+      handoff: settlementHandoff("passed"),
+    });
+    assert.equal(replay.duplicate, true);
+    const replayedWorkflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(replayedWorkflow.nodes[0]?.version, workflow.nodes[0]?.version);
+    assert.equal(replayedWorkflow.handoffs.length, 1);
   } finally {
     fixture.board.close();
   }

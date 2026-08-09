@@ -53,6 +53,10 @@ export class ProjectsCollaborator {
     return this.#workflow.propose(request, agentId);
   }
 
+  proposeWorkflowForAgentInTransaction(request: CreatePlanRevisionRequest, agentId: string): ProjectWorkflowSnapshot {
+    return this.#workflow.proposeInTransaction(request, agentId);
+  }
+
   projectWorkflow(projectId: string): ProjectWorkflowSnapshot {
     this.runtime.requireProject(projectId);
     return this.#workflow.snapshot(projectId);
@@ -123,7 +127,24 @@ export class ProjectsCollaborator {
   }
 
   settleAttempt(taskId: string, outcome: SettleRunRequest["outcome"], result: string, handoff: SettleRunRequest["handoff"]): void {
-    for (const node of this.#workflow.settleAttempt(taskId, outcome, result, handoff)) this.activateWorkflowNode(node);
+    this.activateWorkflowNodes(this.#workflow.settleAttempt(taskId, outcome, result, handoff));
+  }
+
+  settleAttemptInTransaction(
+    taskId: string,
+    outcome: SettleRunRequest["outcome"],
+    result: string,
+    handoff: SettleRunRequest["handoff"],
+  ): readonly WorkNode[] {
+    return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff);
+  }
+
+  attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {
+    return this.#workflow.attemptNeedsSettlementRepair(taskId, settledRunId);
+  }
+
+  activateWorkflowNodes(nodes: readonly WorkNode[]): void {
+    for (const node of nodes) this.activateWorkflowNode(node);
   }
 
   private activateWorkflowNode(node: WorkNode): void {

@@ -60,6 +60,14 @@ export class TransparentWorkflow {
   ) {}
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
+    return this.proposeInternal(raw, actor, false);
+  }
+
+  proposeInTransaction(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
+    return this.proposeInternal(raw, actor, true);
+  }
+
+  private proposeInternal(raw: CreatePlanRevisionRequest, actor: string, inTransaction: boolean): ProjectWorkflowSnapshot {
     const workItemId = text(raw.workItemId, "workItemId", 128);
     const projectId = text(raw.projectId, "projectId", 128);
     const objective = text(raw.objective, "objective");
@@ -91,7 +99,7 @@ export class TransparentWorkflow {
     const visit = (id: string) => { if (visiting.has(id)) throw new TaskBoardError(400, "WORKFLOW_CYCLE", "Task dependencies contain a cycle"); if (visited.has(id)) return; visiting.add(id); for (const dep of byId.get(id)!.dependencyNodeIds) visit(dep); visiting.delete(id); visited.add(id); };
     for (const id of ids) visit(id);
     const createdAt = this.now().toISOString();
-    this.transaction(() => {
+    const apply = (): void => {
       if (this.db.prepare("SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state='confirmed'").get(workItemId)) {
         throw new TaskBoardError(409, "PLAN_REVISION_UNSUPPORTED", "Confirmed workflows cannot be revised in this version");
       }
@@ -111,7 +119,9 @@ export class TransparentWorkflow {
         "UPDATE work_items SET refined_objective=?,state='waiting_for_human_review',current_stage='human_review',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
       ).run(objective, createdAt, workItemId);
       this.event(projectId, null, null, "plan_proposed", `Plan revision ${revision} proposed`, createdAt);
-    });
+    };
+    if (inTransaction) apply();
+    else this.transaction(apply);
     return this.snapshot(projectId);
   }
 
@@ -158,11 +168,50 @@ export class TransparentWorkflow {
   }
 
   settleAttempt(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
+    return this.settleAttemptInternal(taskId, outcome, result, draft, false);
+  }
+
+  settleAttemptInTransaction(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
+    return this.settleAttemptInternal(taskId, outcome, result, draft, true);
+  }
+
+  attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {
+    return this.db.prepare(`
+      SELECT 1
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN tasks task ON task.task_id=attempt.task_id
+      JOIN runs settled_run ON settled_run.run_id=? AND settled_run.task_id=attempt.task_id
+      WHERE attempt.task_id=?
+        AND node.state='active'
+        AND node.current_stage=attempt.stage
+        AND NOT EXISTS(SELECT 1 FROM stage_handoffs handoff WHERE handoff.task_id=attempt.task_id)
+        AND (
+          (settled_run.status='completed' AND task.status='completed')
+          OR (settled_run.status IN ('failed','interrupted') AND task.status='blocked')
+        )
+        AND NOT EXISTS(
+          SELECT 1
+          FROM runs newer_run
+          WHERE newer_run.task_id=attempt.task_id
+            AND newer_run.run_id<>settled_run.run_id
+            AND newer_run.status='active'
+        )
+    `).get(settledRunId, taskId) !== undefined;
+  }
+
+  private settleAttemptInternal(
+    taskId: string,
+    outcome: "completed" | "failed" | "interrupted",
+    result: string,
+    draft: StageHandoffDraft | null | undefined,
+    inTransaction: boolean,
+  ): readonly WorkNode[] {
     const attempt = this.db.prepare(`SELECT a.*,n.project_id,n.plan_revision_id,n.stage_template_json,n.current_stage FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
     if (!attempt) return Object.freeze([]);
     const now = this.now().toISOString();
-    return this.transaction(() => {
+    const apply = (): readonly WorkNode[] => {
       const nodeId = String(attempt.node_id); const projectId = String(attempt.project_id);
       const stage = String(attempt.stage) as WorkflowStage;
       const passed = outcome === "completed";
@@ -237,7 +286,8 @@ export class TransparentWorkflow {
         this.event(projectId, null, taskId, "workflow_completed", `Completed: ${String(plan.objective).slice(0, 240)}`, now);
       }
       return Object.freeze(this.nodesForIds(newlyReady));
-    });
+    };
+    return inTransaction ? apply() : this.transaction(apply);
   }
 
   nodesForIds(ids: readonly string[]): WorkNode[] {
