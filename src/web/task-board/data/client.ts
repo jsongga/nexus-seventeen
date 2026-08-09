@@ -58,6 +58,7 @@ import {
   workItemProjection,
 } from '../model/project';
 import { workItemPageSize } from './wire';
+import { SseFrameParser, type SseEvent } from './sse';
 
 const maximumAgentQueryObjectiveCharacters = 8_000;
 const maximumAgentQueryConversationCharacters = 2_400;
@@ -448,31 +449,18 @@ async function mapWithConcurrency<T, R>(
 const maximumDocumentEventBytes = 2 * 1024 * 1024;
 
 function dispatchDocumentEvent(
-  frame: string,
+  event: SseEvent,
   onDocument: (document: BoardDocument) => void,
 ): void {
-  let eventName = 'message';
-  let eventId: string | null = null;
-  const data: string[] = [];
-  for (const line of frame.split(/\r?\n/u)) {
-    if (line === '' || line.startsWith(':')) continue;
-    const separator = line.indexOf(':');
-    const field = separator === -1 ? line : line.slice(0, separator);
-    let value = separator === -1 ? '' : line.slice(separator + 1);
-    if (value.startsWith(' ')) value = value.slice(1);
-    if (field === 'event') eventName = value;
-    else if (field === 'id') eventId = value;
-    else if (field === 'data') data.push(value);
-  }
-  if (eventName !== 'document') return;
-  if (eventId === null || !/^(?:0|[1-9]\d*)$/u.test(eventId)) {
+  if (event.event !== 'document') return;
+  if (event.id === null || !/^(?:0|[1-9]\d*)$/u.test(event.id)) {
     throw new DocumentStreamError('The document stream returned an invalid event cursor.');
   }
-  const sequence = Number(eventId);
+  const sequence = Number(event.id);
   if (!Number.isSafeInteger(sequence)) throw new DocumentStreamError('The document stream cursor is too large.');
   let decoded: unknown;
   try {
-    decoded = JSON.parse(data.join('\n')) as unknown;
+    decoded = JSON.parse(event.data) as unknown;
   } catch {
     throw new DocumentStreamError('The document stream returned invalid JSON.');
   }
@@ -495,27 +483,18 @@ async function consumeDocumentStream(
   if (!response.body) throw new DocumentStreamError('The document stream returned no body.');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let pending = '';
+  const parser = new SseFrameParser({
+    maximumFrameLength: maximumDocumentEventBytes,
+    onEvent: (event) => dispatchDocumentEvent(event, onDocument),
+    sizeLimitError: () => new DocumentStreamError('A document stream event exceeded the size limit.'),
+  });
   try {
     while (true) {
       const next = await reader.read();
-      pending += decoder.decode(next.value, { stream: !next.done });
-      let boundary = /\r?\n\r?\n/u.exec(pending);
-      while (boundary) {
-        const frame = pending.slice(0, boundary.index);
-        pending = pending.slice(boundary.index + boundary[0].length);
-        if (frame.length > maximumDocumentEventBytes) {
-          throw new DocumentStreamError('A document stream event exceeded the size limit.');
-        }
-        if (frame.trim().length > 0) dispatchDocumentEvent(frame, onDocument);
-        boundary = /\r?\n\r?\n/u.exec(pending);
-      }
-      if (pending.length > maximumDocumentEventBytes) {
-        throw new DocumentStreamError('A document stream event exceeded the size limit.');
-      }
+      parser.push(decoder.decode(next.value, { stream: !next.done }));
       if (next.done) break;
     }
-    if (pending.trim().length > 0) dispatchDocumentEvent(pending, onDocument);
+    parser.finish();
   } finally {
     reader.releaseLock();
   }
@@ -667,24 +646,23 @@ export function createTaskBoardClient(options: {
       if (!response.body) throw new Error('The workflow event stream returned no body');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let pending = '';
+      const parser = new SseFrameParser({
+        maximumFrameLength: 64 * 1_024,
+        onEvent: (event) => {
+          if (!event.data) return;
+          const envelope = record(JSON.parse(event.data) as unknown, 'workflow event');
+          input.onEvent(parseWorkflowEvent(envelope.event, 'workflow event.event'));
+        },
+        sizeLimitError: () => new Error('A workflow event exceeded the size limit'),
+      });
       try {
         while (true) {
           const chunk = await reader.read();
-          pending += decoder.decode(chunk.value, { stream: !chunk.done });
-          let boundary = pending.indexOf('\n\n');
-          while (boundary >= 0) {
-            const frame = pending.slice(0, boundary);
-            pending = pending.slice(boundary + 2);
-            const data = frame.split(/\r?\n/u).filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n');
-            if (data) {
-              const envelope = record(JSON.parse(data) as unknown, 'workflow event');
-              input.onEvent(parseWorkflowEvent(envelope.event, 'workflow event.event'));
-            }
-            boundary = pending.indexOf('\n\n');
+          parser.push(decoder.decode(chunk.value, { stream: !chunk.done }));
+          if (chunk.done) {
+            parser.finish();
+            return;
           }
-          if (pending.length > 64 * 1_024) throw new Error('A workflow event exceeded the size limit');
-          if (chunk.done) return;
         }
       } finally {
         reader.releaseLock();

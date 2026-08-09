@@ -179,7 +179,7 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     version: question.version,
   })));
   const openQuestionTasks = new Set(questions.filter((question) => question.status === 'open').map((question) => question.taskId));
-  for (const [index, raw] of allRawTasks.entries()) {
+  for (const raw of allRawTasks) {
     const phases: BoardTaskPhase[] = raw.phases.map((phase) => ({
       id: phase.phaseId,
       title: phase.title,
@@ -216,7 +216,7 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       estimateRecordedAtMs: raw.estimateRecordedAtMs,
       expectedCompletedAt: raw.expectedCompletedAt,
       expectedCompletedAtMs: raw.expectedCompletedAtMs,
-      orderKey: raw.orderKey ?? index * 1024,
+      orderKey: raw.orderKey,
       phases,
       startedAt: raw.startedAt,
       startedAtMs: raw.startedAtMs,
@@ -233,11 +233,27 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
 
   const runs: BoardRun[] = [];
   for (const board of boards) {
-    const runEvents = new Map(board.events.map((event) => [eventRunId(event), event]));
+    const runEvents = new Map<string, RawEvent>();
+    for (const event of board.events) {
+      const runId = eventRunId(event);
+      if (runId === null) continue;
+      const current = runEvents.get(runId);
+      const information = Number(event.taskId !== null) + Number(eventWakeReason(event) !== null);
+      const currentInformation = current === undefined
+        ? -1
+        : Number(current.taskId !== null) + Number(eventWakeReason(current) !== null);
+      if (
+        current === undefined
+        || information > currentInformation
+        || information === currentInformation && (
+          event.createdAtMs > current.createdAtMs
+          || event.createdAtMs === current.createdAtMs && event.eventId.localeCompare(current.eventId) > 0
+        )
+      ) runEvents.set(runId, event);
+    }
     for (const raw of board.runs) {
       const event = runEvents.get(raw.runId);
       const taskId = raw.taskId ?? event?.taskId ?? null;
-      if (!taskId) continue;
       const interrupt = board.interrupts.find((item) => item.runId === raw.runId);
       runs.push({
         id: raw.runId,

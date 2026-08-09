@@ -160,7 +160,7 @@ export interface RawTask {
   expectedAgentMinutes: number | null;
   estimateRecordedAt: string | null;
   estimateRecordedAtMs: number | null;
-  orderKey: number | null;
+  orderKey: number;
   phases: RawTaskPhase[];
   startedAt: string | null;
   startedAtMs: number | null;
@@ -825,7 +825,7 @@ export function parseTask(value: unknown, path: string): RawTask {
     assignedRole,
     expectedAgentMinutes,
     ...estimateRecordedAt,
-    orderKey: item.orderKey === undefined ? null : integer(item.orderKey, `${path}.orderKey`),
+    orderKey: integer(item.orderKey, `${path}.orderKey`),
     phases,
     ...nullableTimestampFields('startedAt', item.startedAt, `${path}.startedAt`),
     ...(status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'cancelled'

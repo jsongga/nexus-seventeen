@@ -263,7 +263,7 @@ export interface BoardQuestion {
 export interface BoardRun {
   id: string;
   projectId: string;
-  taskId: string;
+  taskId: string | null;
   agentId: string;
   status: RunStatus;
   wakeReason: WakeReason | null;

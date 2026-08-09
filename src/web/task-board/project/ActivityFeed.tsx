@@ -33,7 +33,7 @@ export function ActivityFeed({
   onOpenArtifact,
 }: {
   updates: ActivityFeedUpdate[];
-  artifactUrls: Record<string, string>;
+  artifactUrls: Record<string, string | null>;
   onOpenArtifact: (artifactId: string) => void;
 }) {
   return (
@@ -52,7 +52,20 @@ export function ActivityFeed({
                 <p className="whitespace-pre-wrap break-words leading-[1.5] text-ink"><span className="font-semibold text-taupe">{update.author}</span> {update.body}</p>
                 {update.artifacts.map((artifact) => {
                   const url = artifactUrls[artifact.artifactId];
-                  if (!url) return null;
+                  if (url === undefined) return null;
+                  if (url === null) return (
+                    <div
+                      key={artifact.artifactId}
+                      className="mt-1 flex min-h-14 w-full items-center gap-3 rounded-[6px] border border-line bg-muted-surface p-4 text-xs text-muted"
+                      aria-label={`Visual artifact unavailable: ${artifact.caption}`}
+                    >
+                      <FileText size={18} strokeWidth={1.5} aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block break-words font-medium text-ink">{artifact.caption}</span>
+                        <span className="mt-1 block text-[11px] text-muted">Preview unavailable · {artifact.mediaType}</span>
+                      </span>
+                    </div>
+                  );
                   const image = artifact.mediaType.startsWith('image/');
                   return (
                     <button

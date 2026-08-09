@@ -21,6 +21,7 @@ import {
 } from '../model/workspace-model';
 import { laneConfigurationState } from '../model/lane-config';
 import { actionErrorContexts, type ActionError, type ActionResult } from '../model/action-errors';
+import { beginArtifactPreviewLoad } from '../model/artifact-previews';
 
 const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -153,7 +154,7 @@ export function ProjectPage({
   connected: boolean;
 }) {
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
-  const [artifactUrls, setArtifactUrls] = useState<Record<string, string>>({});
+  const [artifactUrls, setArtifactUrls] = useState<Record<string, string | null>>({});
   const [interruptingAll, setInterruptingAll] = useState(false);
   const [interruptConfirmationOpen, setInterruptConfirmationOpen] = useState(false);
   const [handledRunIds, setHandledRunIds] = useState<Set<string>>(() => new Set());
@@ -174,22 +175,13 @@ export function ProjectPage({
   }, [client, project.id, snapshot.generatedAt]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const created: string[] = [];
-    let disposed = false;
     setArtifactUrls({});
-    void Promise.all(artifacts.map(async (artifact) => {
-      const url = URL.createObjectURL(await client.getArtifactBlob(artifact.artifactId, controller.signal));
-      created.push(url);
-      return [artifact.artifactId, url] as const;
-    })).then((entries) => {
-      if (!disposed) setArtifactUrls(Object.fromEntries(entries));
-    }).catch(() => undefined);
-    return () => {
-      disposed = true;
-      controller.abort();
-      for (const url of created) URL.revokeObjectURL(url);
-    };
+    const load = beginArtifactPreviewLoad({
+      artifactIds: artifacts.map((artifact) => artifact.artifactId),
+      getBlob: (artifactId, signal) => client.getArtifactBlob(artifactId, signal),
+      onPreview: (artifactId, url) => setArtifactUrls((current) => ({ ...current, [artifactId]: url })),
+    });
+    return () => load.dispose();
   }, [artifacts, client]);
 
   const updates = updatesForProject(snapshot, project.id);

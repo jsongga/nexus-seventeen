@@ -603,12 +603,20 @@ describe('task-board protocol projection', () => {
       phases: [expect.objectContaining({ id: 'phase-api', stage: 'execution', parallelGroup: 'implementation' })],
     });
 
-    const { orderKey: _orderKey, phases: _phases, estimateRecordedAt: _recorded, ...legacyTask } = task;
+    const { phases: _phases, estimateRecordedAt: _recorded, ...legacyTask } = task;
     expect(parseBoardSnapshot({ ...boardSnapshot(), tasks: [legacyTask] }).tasks[0]).toMatchObject({
-      orderKey: 0,
+      orderKey: 1024,
       phases: [],
       estimateRecordedAt: null,
     });
+  });
+
+  it('rejects a task that omits its required order key', () => {
+    const { orderKey: _orderKey, ...missingOrderKey } = task;
+    expect(() => parseBoardSnapshot({
+      ...boardSnapshot(),
+      tasks: [missingOrderKey],
+    })).toThrow(/board\.tasks\[0\]\.orderKey/u);
   });
 
   it('accepts completed semantic phases and restricts the legacy done stage to completion', () => {
@@ -650,6 +658,27 @@ describe('task-board protocol projection', () => {
 });
 
 describe('task-board HTTP client', () => {
+  it('consumes CRLF workflow events with optional data-field spacing', async () => {
+    const request = vi.fn(async () => new Response(
+      `event: workflow\r\ndata:${JSON.stringify({ event: workflowEvent })}\r\n\r\n`,
+      { headers: { 'content-type': 'text/event-stream' } },
+    ));
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+    const received: string[] = [];
+
+    await client.subscribeProjectEvents({
+      projectId: project.projectId,
+      after: 0,
+      signal: new AbortController().signal,
+      onEvent: (receivedEvent) => received.push(`${receivedEvent.sequence}:${receivedEvent.summary}`),
+    });
+
+    expect(received).toEqual([`1:${workflowEvent.summary}`]);
+  });
+
   it('parses valid workflow and artifact payloads into the web projection', async () => {
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
