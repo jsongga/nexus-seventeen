@@ -11,6 +11,7 @@ import {
   WORK_ITEM_PAGE_SIZE,
   type AgentRole,
 } from "#server/task-board";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   AGENT_ONE_TOKEN,
   automationConfigurationRequest,
@@ -411,6 +412,182 @@ test("workflow activation rolls back its task and wakeup when attempt linkage fa
       agent.agentId === "activation-atomic-verifier")?.status, "idle");
   } finally {
     fixture.board.close();
+  }
+});
+
+test("confirming a plan for a cancelled work item returns WORK_ITEM_ENDED without changing it", async () => {
+  const fixture = await boardFixture();
+  try {
+    const proposed = await proposedActivationWorkflow(fixture, "cancelled-item", ["verification"]);
+    const { DatabaseSync } = await import("node:sqlite");
+    const cancellation = new DatabaseSync(fixture.path);
+    try {
+      const endedAt = "2026-07-19T20:01:00.000Z";
+      assert.equal(Number(cancellation.prepare(`
+        UPDATE work_items
+        SET state='cancelled',current_stage=NULL,ended_at=?,version=version+1,updated_at=?
+        WHERE work_item_id=? AND ended_at IS NULL
+      `).run(endedAt, endedAt, proposed.workItem.workItemId).changes), 1);
+    } finally {
+      cancellation.close();
+    }
+
+    const before = fixture.board.requireWorkItem(proposed.workItem.workItemId);
+    assert.throws(
+      () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "WORK_ITEM_ENDED"
+      ),
+    );
+    assert.deepEqual(fixture.board.requireWorkItem(proposed.workItem.workItemId), before);
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("workflow project events are not published when confirmation rolls back", async () => {
+  const fixture = await boardFixture();
+  try {
+    const proposed = await proposedActivationWorkflow(fixture, "event-rollback", ["verification"]);
+    const published: string[] = [];
+    const unsubscribe = fixture.board.subscribeProjectEvents(fixture.project.projectId, (event) => {
+      published.push(event.eventType);
+    });
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let injected = false;
+    DatabaseSync.prototype.prepare = function failAfterQueuedConfirmationEvent(this: DatabaseSyncType, sql: string) {
+      const statement = originalPrepare.call(this, sql);
+      if (!injected && /^SELECT n\.\*, COALESCE\(json_group_array/u.test(sql)) {
+        const originalAll = statement.all.bind(statement);
+        statement.all = ((..._values: SQLInputValue[]) => {
+          injected = true;
+          throw new Error("INJECTED_POST_EVENT_CONFIRM_FAILURE");
+        }) as unknown as typeof statement.all;
+        void originalAll;
+      }
+      return statement;
+    };
+    try {
+      assert.throws(
+        () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
+        /INJECTED_POST_EVENT_CONFIRM_FAILURE/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+      unsubscribe();
+    }
+
+    assert.equal(injected, true);
+    assert.deepEqual(published, []);
+    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.plans[0]?.state, "proposed");
+    assert.equal(workflow.events.some((event) => event.eventType === "plan_confirmed"), false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("committed workflow events preserve order and isolate throwing listeners", async () => {
+  const fixture = await boardFixture();
+  const originalConsoleError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    const proposed = await proposedActivationWorkflow(fixture, "event-order", ["verification"]);
+    const beforeThrow: string[] = [];
+    const afterThrow: string[] = [];
+    const unsubscribeBefore = fixture.board.subscribeProjectEvents(fixture.project.projectId, (event) => {
+      beforeThrow.push(event.eventType);
+    });
+    const unsubscribeThrow = fixture.board.subscribeProjectEvents(fixture.project.projectId, () => {
+      throw new Error("INJECTED_PROJECT_EVENT_LISTENER_FAILURE");
+    });
+    const unsubscribeAfter = fixture.board.subscribeProjectEvents(fixture.project.projectId, (event) => {
+      afterThrow.push(event.eventType);
+    });
+    console.error = (...values: unknown[]) => { logged.push(values); };
+    try {
+      const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+      assert.equal(confirmed.plans[0]?.state, "confirmed");
+      assert.equal(confirmed.nodes[0]?.state, "blocked");
+    } finally {
+      console.error = originalConsoleError;
+      unsubscribeBefore();
+      unsubscribeThrow();
+      unsubscribeAfter();
+    }
+
+    assert.deepEqual(beforeThrow, ["plan_confirmed", "node_blocked"]);
+    assert.deepEqual(afterThrow, beforeThrow);
+    assert.equal(logged.length, 2);
+    assert.ok(logged.every((entry) => String(entry[0]).includes("project event listener failed")));
+  } finally {
+    console.error = originalConsoleError;
+    fixture.board.close();
+  }
+});
+
+test("after-commit delivery preserves FIFO order across listener-initiated transactions", async () => {
+  const store = await TaskBoardStore.open(await databasePath());
+  try {
+    const delivered: string[] = [];
+    let reentered = false;
+    const listeners: Array<(event: string) => void> = [
+      (event) => delivered.push(event),
+      (event) => {
+        if (event === "event1" && !reentered) {
+          reentered = true;
+          store.transaction(() => {
+            store.afterCommit(() => dispatch("X"));
+          });
+        }
+      },
+    ];
+    const dispatch = (event: string): void => {
+      for (const listener of listeners) listener(event);
+    };
+
+    store.transaction(() => {
+      store.afterCommit(() => dispatch("event1"));
+      store.afterCommit(() => dispatch("event2"));
+    });
+
+    assert.deepEqual(delivered, ["event1", "event2", "X"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("after-commit delivery logs callback failures without failing the commit or skipping callbacks", async () => {
+  const store = await TaskBoardStore.open(await databasePath());
+  const originalConsoleError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    const delivered: string[] = [];
+    console.error = (...values: unknown[]) => { logged.push(values); };
+
+    let result: string | undefined;
+    assert.doesNotThrow(() => {
+      result = store.transaction(() => {
+        store.afterCommit(() => {
+          throw new Error("INJECTED_AFTER_COMMIT_FAILURE");
+        });
+        store.afterCommit(() => delivered.push("second"));
+        return "committed";
+      });
+    });
+
+    assert.equal(result, "committed");
+    assert.deepEqual(delivered, ["second"]);
+    assert.equal(logged.length, 1);
+    assert.match(String(logged[0]?.[0]), /after-commit callback failed/u);
+    assert.match(String(logged[0]?.[1]), /INJECTED_AFTER_COMMIT_FAILURE/u);
+  } finally {
+    console.error = originalConsoleError;
+    store.close();
   }
 });
 

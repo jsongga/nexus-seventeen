@@ -39,7 +39,7 @@ export class ProjectsCollaborator {
       new SkillRegistry(resolve("skills")),
       runtime.config.now,
       (operation) => runtime.store.transaction(operation),
-      (event) => runtime.projectEvents.emit(event.projectId, event),
+      (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
   }
@@ -50,10 +50,6 @@ export class ProjectsCollaborator {
 
   proposeWorkflow(request: CreatePlanRevisionRequest): ProjectWorkflowSnapshot {
     return this.#workflow.propose(request, this.runtime.config.humanPrincipal);
-  }
-
-  proposeWorkflowForAgent(request: CreatePlanRevisionRequest, agentId: string): ProjectWorkflowSnapshot {
-    return this.#workflow.propose(request, agentId);
   }
 
   proposeWorkflowForAgentInTransaction(request: CreatePlanRevisionRequest, agentId: string): ProjectWorkflowSnapshot {
@@ -130,10 +126,6 @@ export class ProjectsCollaborator {
 
   claimContext(taskId: string): ClaimRunResult["context"]["workflow"] {
     return this.#workflow.claimContext(taskId);
-  }
-
-  settleAttempt(taskId: string, outcome: SettleRunRequest["outcome"], result: string, handoff: SettleRunRequest["handoff"]): void {
-    this.activateWorkflowNodes(this.#workflow.settleAttempt(taskId, outcome, result, handoff));
   }
 
   settleAttemptInTransaction(
@@ -346,5 +338,15 @@ export class ProjectsCollaborator {
       if (orphan === undefined) wakeAgentId = String(agent.agent_id);
     });
     if (wakeAgentId !== null) this.runtime.wakeupEvents.emit(wakeAgentId);
+  }
+
+  private emitProjectEvent(event: ProjectEvent): void {
+    for (const candidate of this.runtime.projectEvents.listeners(event.projectId)) {
+      try {
+        (candidate as (item: ProjectEvent) => void)(event);
+      } catch (error) {
+        console.error("[task-board] project event listener failed", error);
+      }
+    }
   }
 }

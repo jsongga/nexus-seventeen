@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type {
-  ConfirmPlanRevisionRequest,
-  ClaimRunResult,
-  CreatePlanRevisionRequest,
-  PlanRevision,
-  ProjectEvent,
-  StageHandoff,
-  StageHandoffDraft,
-  WorkNode,
-  WorkflowStage,
+import {
+  TASK_BOARD_ERROR_CODES,
+  type ClaimRunResult,
+  type ConfirmPlanRevisionRequest,
+  type CreatePlanRevisionRequest,
+  type PlanRevision,
+  type ProjectEvent,
+  type StageHandoff,
+  type StageHandoffDraft,
+  type WorkNode,
+  type WorkflowStage,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
 import { SkillRegistry } from "../skills.js";
@@ -56,7 +57,7 @@ export class TransparentWorkflow {
     readonly skills: SkillRegistry,
     readonly now: () => Date,
     readonly transaction: <T>(operation: () => T) => T,
-    readonly onEvent?: (event: ProjectEvent) => void,
+    readonly queueEvent?: (event: ProjectEvent) => void,
   ) {}
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
@@ -153,7 +154,12 @@ export class TransparentWorkflow {
       const firstStage = this.db.prepare(
         "SELECT current_stage FROM work_nodes WHERE plan_revision_id=? AND state='ready' ORDER BY created_at,node_id LIMIT 1",
       ).get(planId)?.current_stage;
-      this.db.prepare("UPDATE work_items SET state='processing',resolved_project_id=?,current_stage=?,version=version+1,updated_at=? WHERE work_item_id=?").run(String(row.project_id), String(firstStage), now, String(row.work_item_id));
+      const workItemUpdate = this.db.prepare(
+        "UPDATE work_items SET state='processing',resolved_project_id=?,current_stage=?,version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+      ).run(String(row.project_id), String(firstStage), now, String(row.work_item_id));
+      if (Number(workItemUpdate.changes) !== 1) {
+        throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+      }
       this.event(String(row.project_id), null, null, "plan_confirmed", `Plan revision ${row.revision} confirmed`, now);
       return this.nodes(planId).filter((node) => node.state === "ready");
     });
@@ -195,12 +201,8 @@ export class TransparentWorkflow {
     return true;
   }
 
-  settleAttempt(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
-    return this.settleAttemptInternal(taskId, outcome, result, draft, false);
-  }
-
   settleAttemptInTransaction(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
-    return this.settleAttemptInternal(taskId, outcome, result, draft, true);
+    return this.settleAttemptInternal(taskId, outcome, result, draft);
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {
@@ -233,7 +235,6 @@ export class TransparentWorkflow {
     outcome: "completed" | "failed" | "interrupted",
     result: string,
     draft: StageHandoffDraft | null | undefined,
-    inTransaction: boolean,
   ): readonly WorkNode[] {
     const attempt = this.db.prepare(`SELECT a.*,n.project_id,n.plan_revision_id,n.stage_template_json,n.current_stage FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
@@ -315,7 +316,7 @@ export class TransparentWorkflow {
       }
       return Object.freeze(this.nodesForIds(newlyReady));
     };
-    return inTransaction ? apply() : this.transaction(apply);
+    return apply();
   }
 
   nodesForIds(ids: readonly string[]): WorkNode[] {
@@ -360,7 +361,7 @@ export class TransparentWorkflow {
     const eventId = `event_${randomUUID()}`;
     this.db.prepare("INSERT INTO project_events(event_id,project_id,node_id,task_id,event_type,summary,created_at) VALUES(?,?,?,?,?,?,?)").run(eventId, projectId, nodeId, taskId, type, summary, createdAt);
     const sequence = Number((this.db.prepare("SELECT sequence FROM project_events WHERE event_id=?").get(eventId) as Row).sequence);
-    this.onEvent?.(Object.freeze({
+    this.queueEvent?.(Object.freeze({
       apiVersion: "steward.task-board/v1", sequence, eventId, projectId, nodeId, taskId,
       eventType: type, summary, createdAt,
     }));

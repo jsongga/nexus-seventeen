@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+  TASK_BOARD_ERROR_CODES,
   WORK_ITEM_CURSOR_MAX_BYTES,
-  type ConfirmPlanRevisionRequest,
   type CreateProjectArtifactRequest,
 } from "#shared/task-board-contract";
 import { TaskBoard } from "./board.js";
@@ -22,6 +22,7 @@ import {
   parseAgentMessage,
   parseAnswer,
   parseClaim,
+  parseConfirmPlanRevisionRequest,
   parseCreateAgent,
   parseCreateDocument,
   parseCreateProject,
@@ -70,6 +71,20 @@ function routeUrl(value: string | undefined): URL {
   } catch {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Request URL is invalid");
   }
+}
+
+function parseRouteIdentifier(value: string, field: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new TaskBoardError(
+      400,
+      TASK_BOARD_ERROR_CODES.INVALID_IDENTIFIER,
+      `${field} has malformed percent-encoding`,
+    );
+  }
+  return parseIdentifier(decoded, field);
 }
 
 function noQuery(url: URL): void {
@@ -184,8 +199,8 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const workflow = this.#board.confirmWorkflow(
-        parseIdentifier(confirmPlanMatch[1], "planRevisionId"),
-        await readJsonBody(request, this.config.maxBodyBytes) as ConfirmPlanRevisionRequest,
+        parseRouteIdentifier(confirmPlanMatch[1], "planRevisionId"),
+        parseConfirmPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, 200, { workflow });
       return;
@@ -194,14 +209,14 @@ export class TaskBoardService {
     if (workItemMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { workItem: this.#board.requireWorkItem(parseIdentifier(workItemMatch[1], "workItemId")) });
+      sendJson(response, 200, { workItem: this.#board.requireWorkItem(parseRouteIdentifier(workItemMatch[1], "workItemId")) });
       return;
     }
     if (workItemMatch && request.method === "PATCH") {
       noQuery(url);
       requireHuman(request, this.config);
       const workItem = this.#board.updateWorkItem(
-        parseIdentifier(workItemMatch[1], "workItemId"),
+        parseRouteIdentifier(workItemMatch[1], "workItemId"),
         parseUpdateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       this.#board.startWorkItemPlanning(workItem.workItemId);
@@ -224,20 +239,20 @@ export class TaskBoardService {
     if (boardMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, this.#board.snapshot(parseIdentifier(boardMatch[1], "projectId")));
+      sendJson(response, 200, this.#board.snapshot(parseRouteIdentifier(boardMatch[1], "projectId")));
       return;
     }
     const workflowMatch = /^\/v1\/projects\/([^/]+)\/workflow$/u.exec(url.pathname);
     if (workflowMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { workflow: this.#board.projectWorkflow(parseIdentifier(workflowMatch[1], "projectId")) });
+      sendJson(response, 200, { workflow: this.#board.projectWorkflow(parseRouteIdentifier(workflowMatch[1], "projectId")) });
       return;
     }
     const workflowEventsMatch = /^\/v1\/projects\/([^/]+)\/workflow\/events$/u.exec(url.pathname);
     if (workflowEventsMatch && request.method === "GET") {
       requireHuman(request, this.config);
-      const projectId = parseIdentifier(workflowEventsMatch[1], "projectId");
+      const projectId = parseRouteIdentifier(workflowEventsMatch[1], "projectId");
       const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
       this.#openProjectStream(request, response, projectId, after);
       return;
@@ -246,14 +261,14 @@ export class TaskBoardService {
     if (artifactsMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { artifacts: this.#board.listArtifacts(parseIdentifier(artifactsMatch[1], "projectId")) });
+      sendJson(response, 200, { artifacts: this.#board.listArtifacts(parseRouteIdentifier(artifactsMatch[1], "projectId")) });
       return;
     }
     if (artifactsMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
       const artifact = await this.#board.createArtifact(
-        parseIdentifier(artifactsMatch[1], "projectId"),
+        parseRouteIdentifier(artifactsMatch[1], "projectId"),
         parseArtifact(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, 201, { artifact });
@@ -263,7 +278,7 @@ export class TaskBoardService {
     if (artifactMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      const { artifact, bytes } = await this.#board.artifactContent(parseIdentifier(artifactMatch[1], "artifactId"));
+      const { artifact, bytes } = await this.#board.artifactContent(parseRouteIdentifier(artifactMatch[1], "artifactId"));
       response.statusCode = 200;
       response.setHeader("Content-Type", artifact.mediaType);
       response.setHeader("Content-Length", String(bytes.length));
@@ -277,7 +292,7 @@ export class TaskBoardService {
     if (documentCreateMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const projectId = parseIdentifier(documentCreateMatch[1], "projectId");
+      const projectId = parseRouteIdentifier(documentCreateMatch[1], "projectId");
       const document = this.#board.createDocument(
         projectId,
         parseCreateDocument(await readJsonBody(request, this.config.maxBodyBytes)),
@@ -288,7 +303,7 @@ export class TaskBoardService {
     const documentMatch = /^\/v1\/documents\/([^/]+)$/u.exec(url.pathname);
     if (documentMatch && request.method === "GET") {
       noQuery(url);
-      const documentId = parseIdentifier(documentMatch[1], "documentId");
+      const documentId = parseRouteIdentifier(documentMatch[1], "documentId");
       const document = this.#board.getDocument(documentId);
       this.#documentActor(request, document.projectId);
       sendJson(response, 200, { document });
@@ -297,7 +312,7 @@ export class TaskBoardService {
     const documentPenMatch = /^\/v1\/documents\/([^/]+)\/pen$/u.exec(url.pathname);
     if (documentPenMatch && request.method === "POST") {
       noQuery(url);
-      const documentId = parseIdentifier(documentPenMatch[1], "documentId");
+      const documentId = parseRouteIdentifier(documentPenMatch[1], "documentId");
       const current = this.#board.getDocument(documentId);
       const actor = this.#documentActor(request, current.projectId);
       const document = this.#board.updateDocumentPen(
@@ -310,7 +325,7 @@ export class TaskBoardService {
     }
     if (documentMatch && request.method === "PATCH") {
       noQuery(url);
-      const documentId = parseIdentifier(documentMatch[1], "documentId");
+      const documentId = parseRouteIdentifier(documentMatch[1], "documentId");
       const current = this.#board.getDocument(documentId);
       const actor = this.#documentActor(request, current.projectId);
       const document = this.#board.updateDocument(
@@ -323,7 +338,7 @@ export class TaskBoardService {
     }
     const documentEventsMatch = /^\/v1\/documents\/([^/]+)\/events$/u.exec(url.pathname);
     if (documentEventsMatch && request.method === "GET") {
-      const documentId = parseIdentifier(documentEventsMatch[1], "documentId");
+      const documentId = parseRouteIdentifier(documentEventsMatch[1], "documentId");
       const document = this.#board.getDocument(documentId);
       this.#documentActor(request, document.projectId);
       const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
@@ -334,7 +349,7 @@ export class TaskBoardService {
     if (agentCreateMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const projectId = parseIdentifier(agentCreateMatch[1], "projectId");
+      const projectId = parseRouteIdentifier(agentCreateMatch[1], "projectId");
       const agent = this.#board.createAgent(projectId, parseCreateAgent(await readJsonBody(request, this.config.maxBodyBytes)));
       sendJson(response, 201, { agent });
       return;
@@ -343,7 +358,7 @@ export class TaskBoardService {
     if (taskCreateMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const projectId = parseIdentifier(taskCreateMatch[1], "projectId");
+      const projectId = parseRouteIdentifier(taskCreateMatch[1], "projectId");
       const task = this.#board.createTask(projectId, parseCreateTask(await readJsonBody(request, this.config.maxBodyBytes)));
       sendJson(response, 201, { task });
       return;
@@ -351,7 +366,7 @@ export class TaskBoardService {
     const taskMatch = /^\/v1\/tasks\/([^/]+)$/u.exec(url.pathname);
     if (taskMatch && request.method === "PATCH") {
       noQuery(url);
-      const taskId = parseIdentifier(taskMatch[1], "taskId");
+      const taskId = parseRouteIdentifier(taskMatch[1], "taskId");
       const update = parseUpdateTask(await readJsonBody(request, this.config.maxBodyBytes));
       const actor = isHuman(request, this.config)
         ? { type: "human" as const, id: this.config.humanPrincipal }
@@ -365,7 +380,7 @@ export class TaskBoardService {
     const phaseCreateMatch = /^\/v1\/tasks\/([^/]+)\/phases$/u.exec(url.pathname);
     if (phaseCreateMatch && request.method === "POST") {
       noQuery(url);
-      const taskId = parseIdentifier(phaseCreateMatch[1], "taskId");
+      const taskId = parseRouteIdentifier(phaseCreateMatch[1], "taskId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const phase = this.#board.createTaskPhase(
         taskId,
@@ -378,7 +393,7 @@ export class TaskBoardService {
     const phaseMatch = /^\/v1\/task-phases\/([^/]+)$/u.exec(url.pathname);
     if (phaseMatch && request.method === "PATCH") {
       noQuery(url);
-      const phaseId = parseIdentifier(phaseMatch[1], "phaseId");
+      const phaseId = parseRouteIdentifier(phaseMatch[1], "phaseId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const phase = this.#board.updateTaskPhase(
         phaseId,
@@ -391,7 +406,7 @@ export class TaskBoardService {
     const messageMatch = /^\/v1\/tasks\/([^/]+)\/messages$/u.exec(url.pathname);
     if (messageMatch && request.method === "POST") {
       noQuery(url);
-      const taskId = parseIdentifier(messageMatch[1], "taskId");
+      const taskId = parseRouteIdentifier(messageMatch[1], "taskId");
       const body = await readJsonBody(request, this.config.maxBodyBytes);
       const message = isHuman(request, this.config)
         ? this.#board.appendHumanMessage(taskId, parseHumanMessage(body))
@@ -403,7 +418,7 @@ export class TaskBoardService {
       return;
     }
     if (messageMatch && request.method === "GET") {
-      const taskId = parseIdentifier(messageMatch[1], "taskId");
+      const taskId = parseRouteIdentifier(messageMatch[1], "taskId");
       const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
       if (!isHuman(request, this.config)) {
         const agent = this.#board.authenticateAgent(bearerToken(request));
@@ -418,7 +433,7 @@ export class TaskBoardService {
     const questionMatch = /^\/v1\/tasks\/([^/]+)\/questions$/u.exec(url.pathname);
     if (questionMatch && request.method === "POST") {
       noQuery(url);
-      const taskId = parseIdentifier(questionMatch[1], "taskId");
+      const taskId = parseRouteIdentifier(questionMatch[1], "taskId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const question = this.#board.askQuestion(taskId, agent.agentId, parseQuestion(await readJsonBody(request, this.config.maxBodyBytes)));
       sendJson(response, 201, { question });
@@ -429,7 +444,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.answerQuestion(
-        parseIdentifier(answerMatch[1], "questionId"),
+        parseRouteIdentifier(answerMatch[1], "questionId"),
         parseAnswer(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, result.duplicate ? 200 : 201, result);
@@ -440,7 +455,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.resumeAgent(
-        parseIdentifier(resumeMatch[1], "agentId"),
+        parseRouteIdentifier(resumeMatch[1], "agentId"),
         parseResume(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -452,7 +467,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const result = this.#board.interruptAgent(
-        parseIdentifier(interruptMatch[1], "agentId"),
+        parseRouteIdentifier(interruptMatch[1], "agentId"),
         parseInterrupt(await readJsonBody(request, this.config.maxBodyBytes)),
         parseIdempotencyKey(request.headers["idempotency-key"]),
       );
@@ -461,7 +476,7 @@ export class TaskBoardService {
     }
     const claimMatch = /^\/v1\/agents\/([^/]+)\/runs\/claim$/u.exec(url.pathname);
     if (claimMatch && request.method === "POST") {
-      const agentId = parseIdentifier(claimMatch[1], "agentId");
+      const agentId = parseRouteIdentifier(claimMatch[1], "agentId");
       this.#board.authenticateAgent(bearerToken(request), agentId);
       const waitMs = exactIntegerQuery(url, ["waitMs"], "waitMs", 0, 30_000);
       const claim = parseClaim(await readJsonBody(request, this.config.maxBodyBytes));
@@ -487,7 +502,7 @@ export class TaskBoardService {
     const settleMatch = /^\/v1\/runs\/([^/]+)\/settle$/u.exec(url.pathname);
     if (settleMatch && request.method === "POST") {
       noQuery(url);
-      const runId = parseIdentifier(settleMatch[1], "runId");
+      const runId = parseRouteIdentifier(settleMatch[1], "runId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const result = this.#board.settleRun(runId, agent.agentId, parseSettle(await readJsonBody(request, this.config.maxBodyBytes)));
       sendJson(response, 200, result);
@@ -495,7 +510,7 @@ export class TaskBoardService {
     }
     const interruptWaitMatch = /^\/v1\/runs\/([^/]+)\/interrupts$/u.exec(url.pathname);
     if (interruptWaitMatch && request.method === "GET") {
-      const runId = parseIdentifier(interruptWaitMatch[1], "runId");
+      const runId = parseRouteIdentifier(interruptWaitMatch[1], "runId");
       const after = exactIntegerQuery(url, ["after", "waitMs"], "after", 0, Number.MAX_SAFE_INTEGER);
       const waitMs = exactIntegerQuery(url, ["after", "waitMs"], "waitMs", 30_000, 30_000);
       const agent = this.#board.authenticateAgent(bearerToken(request));

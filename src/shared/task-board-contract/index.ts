@@ -1,4 +1,10 @@
 export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
+/** Stable error codes introduced for clients that branch on board HTTP hygiene failures. */
+export const TASK_BOARD_ERROR_CODES = Object.freeze({
+  INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  WORK_ITEM_ENDED: "WORK_ITEM_ENDED",
+} as const);
+export type TaskBoardErrorCode = typeof TASK_BOARD_ERROR_CODES[keyof typeof TASK_BOARD_ERROR_CODES];
 /** Maximum persisted UTF-8 JSON size of the { agentTypes, stages } automation aggregate. */
 export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
 /**

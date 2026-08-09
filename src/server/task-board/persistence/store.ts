@@ -683,6 +683,9 @@ async function assertOwnerOnlyFile(path: string): Promise<void> {
 export class TaskBoardStore {
   readonly db: DatabaseSync;
   #closed = false;
+  #transactionAfterCommitOperations: Array<() => void> | null = null;
+  readonly #pendingAfterCommitOperations: Array<() => void> = [];
+  #drainingAfterCommitOperations = false;
 
   private constructor(db: DatabaseSync) {
     this.db = db;
@@ -778,18 +781,53 @@ export class TaskBoardStore {
 
   transaction<T>(operation: () => T): T {
     if (this.#closed) throw new Error("TASK_BOARD_STORE_CLOSED");
+    if (this.#transactionAfterCommitOperations !== null) throw new Error("TASK_BOARD_TRANSACTION_NESTED");
     this.db.exec("BEGIN IMMEDIATE");
+    const afterCommitOperations: Array<() => void> = [];
+    this.#transactionAfterCommitOperations = afterCommitOperations;
+    let value: T;
     try {
-      const value = operation();
+      value = operation();
       this.db.exec("COMMIT");
-      return value;
     } catch (error) {
+      this.#transactionAfterCommitOperations = null;
       try {
         this.db.exec("ROLLBACK");
       } catch {
         // Preserve the original failure. SQLite will reject subsequent unsafe work.
       }
       throw error;
+    }
+    this.#transactionAfterCommitOperations = null;
+    this.#pendingAfterCommitOperations.push(...afterCommitOperations);
+    this.drainAfterCommitOperations();
+    return value;
+  }
+
+  afterCommit(operation: () => void): void {
+    if (this.#closed) throw new Error("TASK_BOARD_STORE_CLOSED");
+    if (this.#transactionAfterCommitOperations !== null) {
+      this.#transactionAfterCommitOperations.push(operation);
+      return;
+    }
+    this.#pendingAfterCommitOperations.push(operation);
+    this.drainAfterCommitOperations();
+  }
+
+  private drainAfterCommitOperations(): void {
+    if (this.#drainingAfterCommitOperations) return;
+    this.#drainingAfterCommitOperations = true;
+    try {
+      while (this.#pendingAfterCommitOperations.length > 0) {
+        const operation = this.#pendingAfterCommitOperations.shift()!;
+        try {
+          operation();
+        } catch (error) {
+          console.error("[task-board] after-commit callback failed", error);
+        }
+      }
+    } finally {
+      this.#drainingAfterCommitOperations = false;
     }
   }
 

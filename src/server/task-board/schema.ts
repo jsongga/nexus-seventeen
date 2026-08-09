@@ -7,6 +7,7 @@ import type {
   AutomationStageExecutor,
   AnswerHumanQuestionRequest,
   ClaimRunRequest,
+  ConfirmPlanRevisionRequest,
   CreateAgentRequest,
   CreateDocumentRequest,
   CreateHumanQuestionRequest,
@@ -47,6 +48,20 @@ function exact(value: unknown, keys: readonly string[], label: string): Record<s
   const expected = [...keys].sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new TaskBoardError(400, "INVALID_REQUEST", `${label} has unexpected or missing fields`);
+  }
+  return value;
+}
+
+function exactWithNamedFields(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new TaskBoardError(400, "INVALID_REQUEST", `${label} must be an object`);
+  const permitted = new Set(keys);
+  const unexpected = Object.keys(value).find((key) => !permitted.has(key));
+  if (unexpected !== undefined) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${label} has unexpected field ${unexpected}`);
+  }
+  const missing = keys.find((key) => !(key in value));
+  if (missing !== undefined) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${label} is missing field ${missing}`);
   }
   return value;
 }
@@ -396,6 +411,14 @@ function refs(value: unknown): readonly string[] {
 export function parseCreateProject(value: unknown): CreateProjectRequest {
   const item = exact(value, ["name", "description"], "Project");
   return Object.freeze({ name: text(item.name, "name", 160), description: text(item.description, "description", 8_000) });
+}
+
+export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest {
+  const item = exactWithNamedFields(value, ["expectedState"], "Plan confirmation");
+  if (item.expectedState !== "proposed") {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "expectedState must be proposed");
+  }
+  return Object.freeze({ expectedState: item.expectedState });
 }
 
 export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest {

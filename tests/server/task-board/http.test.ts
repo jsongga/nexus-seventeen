@@ -10,6 +10,7 @@ import {
   boardFixture,
   databasePath,
   taskRequest,
+  workItemRequest,
 } from "./helpers.js";
 
 async function readSseFrame(reader: ReadableStreamDefaultReader<Uint8Array>, prior = ""): Promise<{ frame: string; rest: string }> {
@@ -302,6 +303,127 @@ test("global work-item intake is human-only, idempotent, and CAS controlled", as
     assert.equal((await fetched.json() as { workItem: { version: number } }).workItem.version, 2);
     assert.equal((await request(address.url, "/v1/work-items/missing", "GET", HUMAN_TOKEN)).status, 404);
     assert.equal((await request(address.url, "/v1/work-items", "GET", AGENT_ONE_TOKEN)).status, 401);
+  } finally {
+    await service.close();
+  }
+});
+
+test("plan confirmation rejects null and non-exact request bodies with field-specific errors", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), "http-confirm-validation-0001").workItem;
+  const proposed = fixture.board.proposeWorkflow({
+    workItemId: workItem.workItemId,
+    projectId: fixture.project.projectId,
+    objective: "Validate the plan confirmation request at the HTTP boundary.",
+    assumptions: [],
+    acceptanceCriteria: ["Invalid request bodies return structured client errors."],
+    skillIds: [],
+    nodes: [{
+      nodeId: "http-confirm-validation",
+      title: "Validate confirmation",
+      objective: "Reject malformed confirmation bodies.",
+      acceptanceCriteria: ["The workflow remains proposed."],
+      dependencyNodeIds: [],
+      stageTemplate: ["verification"],
+    }],
+  });
+  const planRevisionId = proposed.plans[0]!.planRevisionId;
+  fixture.board.close();
+
+  const service = await createTaskBoardService({
+    dbPath: path,
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+    corsOrigins: ["https://app.cicada.build"],
+    now: () => new Date("2026-07-20T20:00:00.000Z"),
+  });
+  const address = await service.start();
+  try {
+    const cases = [
+      { body: null, field: "Plan confirmation" },
+      { body: {}, field: "expectedState" },
+      { body: { expectedState: "proposed", unexpected: true }, field: "unexpected" },
+      { body: { expectedState: 7 }, field: "expectedState" },
+    ];
+    for (const item of cases) {
+      const response = await request(
+        address.url,
+        `/v1/plans/${planRevisionId}/confirm`,
+        "POST",
+        HUMAN_TOKEN,
+        item.body,
+      );
+      assert.equal(response.status, 400);
+      const failure = await response.json() as { error: { code: string; message: string } };
+      assert.equal(failure.error.code, "INVALID_REQUEST");
+      assert.match(failure.error.message, new RegExp(item.field, "u"));
+    }
+  } finally {
+    await service.close();
+  }
+});
+
+test("encoded agent route identifiers claim runs and malformed encoding is rejected", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    host: "127.0.0.1",
+    port: 0,
+    corsOrigins: ["https://app.cicada.build"],
+    now: () => new Date("2026-07-20T20:00:00.000Z"),
+  });
+  const address = await service.start();
+  const agentId = "bot@host";
+  try {
+    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "Encoded route identifiers",
+      description: "Exercise encoded worker route parameters.",
+    });
+    assert.equal(projectResponse.status, 201);
+    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+      agentId,
+      role: "engineer",
+      area: "http-routing",
+      mission: "Claim work through an encoded route identifier.",
+      model: "codex-mini",
+      token: AGENT_ONE_TOKEN,
+    })).status, 201);
+    assert.equal((await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
+      assignedAgentId: agentId,
+      assignedRole: "engineer",
+    }))).status, 201);
+
+    const malformed = await request(
+      address.url,
+      "/v1/agents/%GZ/runs/claim?waitMs=0",
+      "POST",
+      AGENT_ONE_TOKEN,
+      { claimId: "http-malformed-agent-route-0001", messageCursor: null },
+    );
+    assert.equal(malformed.status, 400);
+    assert.equal(
+      (await malformed.json() as { error: { code: string } }).error.code,
+      "INVALID_IDENTIFIER",
+    );
+
+    const claimResponse = await request(
+      address.url,
+      `/v1/agents/${encodeURIComponent(agentId)}/runs/claim?waitMs=0`,
+      "POST",
+      AGENT_ONE_TOKEN,
+      { claimId: "http-encoded-agent-claim-0001", messageCursor: null },
+    );
+    assert.equal(claimResponse.status, 201);
+    const claim = await claimResponse.json() as { run: { agentId: string }; task: { assignedAgentId: string } };
+    assert.equal(claim.run.agentId, agentId);
+    assert.equal(claim.task.assignedAgentId, agentId);
   } finally {
     await service.close();
   }
