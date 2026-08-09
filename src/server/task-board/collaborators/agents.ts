@@ -3,12 +3,14 @@ import { sha256 } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
+import type { ProjectsCollaborator } from "./projects.js";
 import type { WorkItemsCollaborator } from "./work-items.js";
 
 export class AgentsCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly workItems: WorkItemsCollaborator,
+    private readonly projects: ProjectsCollaborator,
   ) {}
 
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {
@@ -53,6 +55,7 @@ export class AgentsCollaborator {
       ).all(projectId);
       for (const row of pending) this.workItems.startWorkItemPlanning(String(row.work_item_id));
     }
+    this.projects.reconcileWorkflowsBestEffort(projectId);
     return created;
   }
 }

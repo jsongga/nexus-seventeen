@@ -160,11 +160,39 @@ export class TransparentWorkflow {
   }
 
   linkAttempt(nodeId: string, taskId: string, stage: WorkflowStage, skillDigests: Readonly<Record<string, string>>): void {
-    this.transaction(() => {
+    this.linkAttemptInternal(nodeId, taskId, stage, skillDigests, false);
+  }
+
+  linkAttemptInTransaction(nodeId: string, taskId: string, stage: WorkflowStage, skillDigests: Readonly<Record<string, string>>): void {
+    this.linkAttemptInternal(nodeId, taskId, stage, skillDigests, true);
+  }
+
+  private linkAttemptInternal(
+    nodeId: string,
+    taskId: string,
+    stage: WorkflowStage,
+    skillDigests: Readonly<Record<string, string>>,
+    inTransaction: boolean,
+  ): void {
+    const apply = (): void => {
       const attempt = Number(this.db.prepare("SELECT COALESCE(MAX(attempt),0)+1 AS n FROM stage_attempts WHERE node_id=? AND stage=?").get(nodeId, stage)?.n);
       this.db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(`attempt_${randomUUID()}`, nodeId, taskId, stage, attempt, JSON.stringify(skillDigests));
       this.db.prepare("UPDATE work_nodes SET state='active',version=version+1,updated_at=? WHERE node_id=?").run(this.now().toISOString(), nodeId);
-    });
+    };
+    if (inTransaction) apply();
+    else this.transaction(apply);
+  }
+
+  blockNodeInTransaction(nodeId: string, summary: string): boolean {
+    const row = this.db.prepare("SELECT project_id,title FROM work_nodes WHERE node_id=? AND state='ready'").get(nodeId) as Row | undefined;
+    if (row === undefined) return false;
+    const now = this.now().toISOString();
+    const update = this.db.prepare(
+      "UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=? AND state='ready'",
+    ).run(now, nodeId);
+    if (Number(update.changes) !== 1) return false;
+    this.event(String(row.project_id), nodeId, null, "node_blocked", summary, now);
+    return true;
   }
 
   settleAttempt(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {

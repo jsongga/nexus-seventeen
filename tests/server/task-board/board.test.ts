@@ -207,6 +207,80 @@ function settlementHandoff(outcome: "passed" | "failed") {
   } as const;
 }
 
+async function proposedActivationWorkflow(
+  fixture: Awaited<ReturnType<typeof boardFixture>>,
+  suffix: string,
+  stageTemplate: readonly ("research" | "verification")[],
+) {
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: `Reconcile workflow activation ${suffix}.`,
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `workflow-activation-${suffix}`).workItem;
+  const proposed = fixture.board.proposeWorkflow({
+    workItemId: workItem.workItemId,
+    projectId: fixture.project.projectId,
+    objective: `Keep workflow activation ${suffix} crash-safe.`,
+    assumptions: [],
+    acceptanceCriteria: ["Every ready node has one coherent active attempt."],
+    skillIds: [],
+    nodes: [{
+      nodeId: `workflow-activation-${suffix}`,
+      title: `Workflow activation ${suffix}`,
+      objective: "Create and link the stage task without a crash window.",
+      acceptanceCriteria: ["The task has claim context and can settle the node."],
+      dependencyNodeIds: [],
+      stageTemplate,
+    }],
+  });
+  return { workItem, plan: proposed.plans[0]!, node: proposed.nodes[0]! };
+}
+
+function stageWorkflowForReconciliation(
+  db: DatabaseSyncType,
+  workflow: Awaited<ReturnType<typeof proposedActivationWorkflow>>,
+  stage: "research" | "verification",
+): void {
+  const confirmedAt = "2026-07-19T20:01:00.000Z";
+  assert.equal(Number(db.prepare(`
+    UPDATE plan_revisions
+    SET state='confirmed',confirmed_by='human:alice',confirmed_at=?
+    WHERE plan_revision_id=? AND state='proposed'
+  `).run(confirmedAt, workflow.plan.planRevisionId).changes), 1);
+  assert.equal(Number(db.prepare(`
+    UPDATE work_nodes
+    SET state='ready',current_stage=?,version=version+1,updated_at=?
+    WHERE node_id=? AND state='pending'
+  `).run(stage, confirmedAt, workflow.node.nodeId).changes), 1);
+  assert.equal(Number(db.prepare(`
+    UPDATE work_items
+    SET state='processing',current_stage=?,version=version+1,updated_at=?
+    WHERE work_item_id=?
+  `).run(stage, confirmedAt, workflow.workItem.workItemId).changes), 1);
+}
+
+function configureActivationStages(
+  board: TaskBoard,
+  stages: Readonly<Partial<Record<"research" | "verification", string>>>,
+): void {
+  const types = Object.entries(stages).map(([stage, agentTypeId]) => ({
+    agentTypeId,
+    name: `${stage} activation executor`,
+    description: `Executes reconciled ${stage} workflow stages.`,
+    role: stage === "verification" ? "verifier" as const : "engineer" as const,
+    supplementalInstructions: "Exercise crash-safe workflow activation.",
+    skillIds: [],
+    evaluatorProfile: "tests" as const,
+    enabled: true,
+  }));
+  board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: types,
+    stages: automationStages(Object.fromEntries(Object.entries(stages).map(([stage, agentTypeId]) => [
+      stage,
+      { kind: "agent_type" as const, agentTypeId },
+    ]))),
+  }));
+}
+
 function sizedAutomationConfiguration(targetBytes: number) {
   const agentTypes = Array.from({ length: 5 }, (_unused, index) => ({
     agentTypeId: `sized-type-${index}`,
@@ -242,6 +316,589 @@ function sizedAutomationConfiguration(targetBytes: number) {
   assert.equal(Buffer.byteLength(JSON.stringify({ agentTypes, stages }), "utf8"), targetBytes);
   return automationConfigurationRequest({ agentTypes, stages });
 }
+
+test("startup reconciles confirmed ready workflow nodes left before activation", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  let board: TaskBoard | null = fixture.board;
+  try {
+    const verifier = board.createAgent(fixture.project.projectId, {
+      agentId: "activation-startup-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify startup activation repair.",
+      model: "codex-mini",
+      token: "activation-startup-verifier-token-0123456789",
+    });
+    configureActivationStages(board, { verification: "activation-startup-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "startup", ["verification"]);
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      const confirmedAt = "2026-07-19T20:01:00.000Z";
+      assert.equal(Number(partial.prepare(`
+        UPDATE plan_revisions
+        SET state='confirmed',confirmed_by='human:alice',confirmed_at=?
+        WHERE plan_revision_id=? AND state='proposed'
+      `).run(confirmedAt, proposed.plan.planRevisionId).changes), 1);
+      assert.equal(Number(partial.prepare(`
+        UPDATE work_nodes
+        SET state='ready',current_stage='verification',version=version+1,updated_at=?
+        WHERE node_id=? AND state='pending'
+      `).run(confirmedAt, proposed.node.nodeId).changes), 1);
+      assert.equal(Number(partial.prepare(`
+        UPDATE work_items
+        SET state='processing',current_stage='verification',version=version+1,updated_at=?
+        WHERE work_item_id=?
+      `).run(confirmedAt, proposed.workItem.workItemId).changes), 1);
+      assert.equal(partial.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 0);
+    } finally {
+      partial.close();
+    }
+
+    board = await TaskBoard.open(config(path));
+    const repaired = board.projectWorkflow(fixture.project.projectId);
+    assert.equal(repaired.nodes[0]?.state, "active");
+    const tasks = board.snapshot(fixture.project.projectId).tasks;
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0]?.assignedAgentId, verifier.agentId);
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+        .get(repaired.nodes[0]!.nodeId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    board?.close();
+  }
+});
+
+test("workflow activation rolls back its task and wakeup when attempt linkage fails", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "activation-atomic-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify atomic activation.",
+      model: "codex-mini",
+      token: "activation-atomic-verifier-token-012345678901",
+    });
+    configureActivationStages(fixture.board, { verification: "activation-atomic-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "atomic", ["verification"]);
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    DatabaseSync.prototype.prepare = function failingAttemptLink(this: DatabaseSyncType, sql: string) {
+      if (/^\s*INSERT INTO stage_attempts/u.test(sql)) throw new Error("INJECTED_ATTEMPT_LINK_FAILURE");
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      assert.throws(
+        () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
+        /INJECTED_ATTEMPT_LINK_FAILURE/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "ready");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.find((agent) =>
+      agent.agentId === "activation-atomic-verifier")?.status, "idle");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("reconciler links a coherent half-created activation task and makes it settleable", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  let board: TaskBoard | null = fixture.board;
+  try {
+    const verifier = board.createAgent(fixture.project.projectId, {
+      agentId: "activation-link-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify half-created activation repair.",
+      model: "codex-mini",
+      token: "activation-link-verifier-token-0123456789012",
+    });
+    configureActivationStages(board, { verification: "activation-link-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "link", ["verification"]);
+    const confirmed = board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    const node = confirmed.nodes[0]!;
+    const task = board.snapshot(fixture.project.projectId).tasks[0]!;
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?").run(task.taskId).changes), 1);
+      assert.equal(Number(partial.prepare(
+        "DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'",
+      ).run(node.nodeId, task.taskId).changes), 1);
+      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?")
+        .run(node.nodeId).changes), 1);
+    } finally {
+      partial.close();
+    }
+
+    board = await TaskBoard.open(config(path));
+    board.reconcileWorkflows(fixture.project.projectId);
+    const repaired = board.projectWorkflow(fixture.project.projectId).nodes[0]!;
+    assert.equal(repaired.state, "active");
+    assert.equal(board.snapshot(fixture.project.projectId).tasks.length, 1);
+    assert.equal(board.projectWorkflow(fixture.project.projectId).events.filter((event) =>
+      event.nodeId === node.nodeId && event.taskId === task.taskId && event.eventType === "stage_started").length, 1);
+    const claim = board.claimRun(verifier.agentId, {
+      claimId: "claim-reconciled-half-activation",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assert.equal(claim.task?.taskId, task.taskId);
+    assert.equal(claim.context.workflow?.nodeId, node.nodeId);
+    board.settleRun(claim.run.runId, verifier.agentId, {
+      outcome: "completed",
+      result: "The repaired activation task settled with workflow context.",
+      handoff: settlementHandoff("passed"),
+    });
+    assert.equal(board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
+  } finally {
+    board?.close();
+  }
+});
+
+test("creating a compatible agent activates a workflow node persisted as blocked", async () => {
+  const fixture = await boardFixture();
+  try {
+    configureActivationStages(fixture.board, { verification: "activation-blocked-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "blocked", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    assert.equal(confirmed.nodes[0]?.state, "blocked");
+    assert.ok(confirmed.events.some((event) => event.eventType === "node_blocked"));
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+
+    const verifier = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "activation-blocked-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Unblock a waiting workflow node.",
+      model: "codex-mini",
+      token: "activation-blocked-verifier-token-0123456789",
+    });
+    const activated = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(activated.nodes[0]?.state, "active");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks[0]?.assignedAgentId, verifier.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("startup repairs a ready next stage after post-settlement activation crashes", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  let board: TaskBoard | null = fixture.board;
+  try {
+    const verifier = board.createAgent(fixture.project.projectId, {
+      agentId: "activation-handoff-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify post-settlement activation repair.",
+      model: "codex-mini",
+      token: "activation-handoff-verifier-token-0123456789",
+    });
+    configureActivationStages(board, {
+      research: "activation-handoff-researcher",
+      verification: "activation-handoff-verifier-type",
+    });
+    const proposed = await proposedActivationWorkflow(fixture, "handoff", ["research", "verification"]);
+    const confirmed = board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    const researchTask = board.snapshot(fixture.project.projectId).tasks[0]!;
+    const researchClaim = board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-post-settlement-activation-research",
+      messageCursor: null,
+    });
+    assert.ok(researchClaim);
+    const { DatabaseSync } = await import("node:sqlite");
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    DatabaseSync.prototype.prepare = function failingNextStageCreate(this: DatabaseSyncType, sql: string) {
+      if (/^\s*INSERT INTO tasks\(/u.test(sql)) throw new Error("INJECTED_POST_SETTLEMENT_ACTIVATION_CRASH");
+      return originalPrepare.call(this, sql);
+    };
+    try {
+      assert.throws(
+        () => board!.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
+          outcome: "completed",
+          result: "Research completed before next-stage activation crashed.",
+          handoff: settlementHandoff("passed"),
+        }),
+        /INJECTED_POST_SETTLEMENT_ACTIVATION_CRASH/u,
+      );
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+    const stalled = board.projectWorkflow(fixture.project.projectId);
+    assert.equal(stalled.nodes[0]?.state, "ready");
+    assert.equal(stalled.nodes[0]?.currentStage, "verification");
+    assert.equal(stalled.handoffs.length, 1);
+    assert.equal(board.snapshot(fixture.project.projectId).tasks.length, 1);
+    assert.equal(board.requireTask(researchTask.taskId).status, "completed");
+    assert.equal(confirmed.nodes[0]?.nodeId, stalled.nodes[0]?.nodeId);
+    board.close();
+    board = null;
+
+    board = await TaskBoard.open(config(path));
+    const repaired = board.projectWorkflow(fixture.project.projectId);
+    assert.equal(repaired.nodes[0]?.state, "active");
+    assert.equal(repaired.nodes[0]?.currentStage, "verification");
+    assert.equal(board.snapshot(fixture.project.projectId).tasks.length, 2);
+    const verificationClaim = board.claimRun(verifier.agentId, {
+      claimId: "claim-post-settlement-activation-verification",
+      messageCursor: null,
+    });
+    assert.ok(verificationClaim);
+    assert.equal(verificationClaim.context.workflow?.stage, "verification");
+    assert.equal(verificationClaim.context.workflow?.dependencyHandoffs.length, 0);
+  } finally {
+    board?.close();
+  }
+});
+
+test("workflow reconciliation is idempotent on a healthy board", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "activation-idempotent-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify reconciliation idempotency.",
+      model: "codex-mini",
+      token: "activation-idempotent-verifier-token-01234567",
+    });
+    configureActivationStages(fixture.board, { verification: "activation-idempotent-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "idempotent", ["verification"]);
+    fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const afterFirst = {
+      workflow: fixture.board.projectWorkflow(fixture.project.projectId),
+      tasks: fixture.board.snapshot(fixture.project.projectId).tasks,
+    };
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const afterSecond = {
+      workflow: fixture.board.projectWorkflow(fixture.project.projectId),
+      tasks: fixture.board.snapshot(fixture.project.projectId).tasks,
+    };
+    assert.deepEqual(afterSecond, afterFirst);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("startup isolates a corrupt workflow candidate and repairs candidates in other projects", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  let board: TaskBoard | null = fixture.board;
+  const originalConsoleError = console.error;
+  const reconciliationErrors: string[] = [];
+  try {
+    const otherProject = board.createProject({
+      name: "Inventory reliability",
+      description: "Keep inventory workflow repair independent from corrupt checkout data.",
+    });
+    const otherVerifier = board.createAgent(otherProject.projectId, {
+      agentId: "activation-isolation-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify isolated workflow reconciliation.",
+      model: "codex-mini",
+      token: "activation-isolation-verifier-token-0123456789",
+    });
+    board.createAgent(fixture.project.projectId, {
+      agentId: "activation-corrupt-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Reach corrupt workflow candidate data during reconciliation.",
+      model: "codex-mini",
+      token: "activation-corrupt-verifier-token-0123456789",
+    });
+    configureActivationStages(board, { verification: "activation-isolation-type" });
+    const corrupt = await proposedActivationWorkflow(fixture, "corrupt-candidate", ["verification"]);
+    const repairable = await proposedActivationWorkflow(
+      { ...fixture, project: otherProject },
+      "other-project",
+      ["verification"],
+    );
+    board.close();
+    board = null;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(path);
+    let corruptVersion = 0;
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      stageWorkflowForReconciliation(partial, corrupt, "verification");
+      stageWorkflowForReconciliation(partial, repairable, "verification");
+      assert.equal(Number(partial.prepare(
+        "UPDATE work_nodes SET acceptance_criteria_json='null' WHERE node_id=?",
+      ).run(corrupt.node.nodeId).changes), 1);
+      corruptVersion = Number(partial.prepare("SELECT version FROM work_nodes WHERE node_id=?")
+        .get(corrupt.node.nodeId)?.version);
+    } finally {
+      partial.close();
+    }
+
+    console.error = (...values: unknown[]): void => {
+      reconciliationErrors.push(values.map(String).join(" "));
+    };
+    try {
+      board = await TaskBoard.open(config(path));
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    assert.equal(board.projectWorkflow(otherProject.projectId).nodes[0]?.state, "active");
+    assert.equal(board.snapshot(otherProject.projectId).tasks[0]?.assignedAgentId, otherVerifier.agentId);
+    assert.ok(reconciliationErrors.some((message) => message.includes(corrupt.node.nodeId)));
+    const inspected = new DatabaseSync(path, { readOnly: true });
+    try {
+      const untouched = inspected.prepare("SELECT state,version FROM work_nodes WHERE node_id=?")
+        .get(corrupt.node.nodeId);
+      assert.equal(untouched?.state, "ready");
+      assert.equal(Number(untouched?.version), corruptVersion);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+        .get(corrupt.node.nodeId)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE project_id=?")
+        .get(fixture.project.projectId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    console.error = originalConsoleError;
+    board?.close();
+  }
+});
+
+test("reconciler skips a claimed activation orphan and creates a fresh linked task", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "activation-claimed-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify claimed activation orphans remain ordinary work.",
+      model: "codex-mini",
+      token: "activation-claimed-verifier-token-0123456789",
+    });
+    configureActivationStages(fixture.board, { verification: "activation-claimed-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "claimed-orphan", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    const node = confirmed.nodes[0]!;
+    const orphan = fixture.board.snapshot(fixture.project.projectId).tasks[0]!;
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(fixture.path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?")
+        .run(orphan.taskId).changes), 1);
+      assert.equal(Number(partial.prepare(
+        "DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'",
+      ).run(node.nodeId, orphan.taskId).changes), 1);
+      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?")
+        .run(node.nodeId).changes), 1);
+    } finally {
+      partial.close();
+    }
+
+    const orphanClaim = fixture.board.claimRun("activation-claimed-verifier", {
+      claimId: "claim-activation-claimed-orphan",
+      messageCursor: null,
+    });
+    assert.ok(orphanClaim);
+    assert.equal(orphanClaim.task?.taskId, orphan.taskId);
+    assert.equal(orphanClaim.context.workflow, null);
+
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const tasks = fixture.board.snapshot(fixture.project.projectId).tasks.filter((task) =>
+      task.objective === proposed.node.objective);
+    assert.equal(tasks.length, 2);
+    const replacement = tasks.find((task) => task.taskId !== orphan.taskId);
+    assert.ok(replacement);
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?")
+        .get(orphan.taskId)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
+        .get(replacement.taskId, node.nodeId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+
+    const settled = fixture.board.settleRun(orphanClaim.run.runId, "activation-claimed-verifier", {
+      outcome: "completed",
+      result: "The claimed orphan completed as ordinary work without workflow context.",
+    });
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("reconciler skips a dead blocked activation orphan and creates a fresh task", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "activation-dead-verifier",
+      role: "verifier",
+      area: "workflow-activation",
+      mission: "Verify dead activation orphans are not adopted.",
+      model: "codex-mini",
+      token: "activation-dead-verifier-token-0123456789",
+    });
+    configureActivationStages(fixture.board, { verification: "activation-dead-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "dead-orphan", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    const node = confirmed.nodes[0]!;
+    const orphan = fixture.board.snapshot(fixture.project.projectId).tasks[0]!;
+    const orphanClaim = fixture.board.claimRun("activation-dead-verifier", {
+      claimId: "claim-activation-dead-orphan",
+      messageCursor: null,
+    });
+    assert.ok(orphanClaim);
+    fixture.board.settleRun(orphanClaim.run.runId, "activation-dead-verifier", {
+      outcome: "failed",
+      result: "The legacy activation task failed before its link was lost.",
+      handoff: settlementHandoff("failed"),
+    });
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const partial = new DatabaseSync(fixture.path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?")
+        .run(orphan.taskId).changes), 1);
+      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version+1 WHERE node_id=?")
+        .run(node.nodeId).changes), 1);
+      assert.equal(partial.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        WHERE wakeup.task_id=?
+          AND wakeup.claimed_at IS NULL
+          AND NOT EXISTS(
+            SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          )
+      `).get(orphan.taskId)?.count, 0);
+    } finally {
+      partial.close();
+    }
+
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const tasks = fixture.board.snapshot(fixture.project.projectId).tasks.filter((task) =>
+      task.objective === proposed.node.objective);
+    assert.equal(tasks.length, 2);
+    const replacement = tasks.find((task) => task.taskId !== orphan.taskId);
+    assert.ok(replacement);
+    assert.equal(fixture.board.requireTask(orphan.taskId).status, "blocked");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?")
+        .get(orphan.taskId)?.count, 0);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
+        .get(replacement.taskId, node.nodeId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("stale capacity-blocked candidates are not resurrected after becoming failure-blocked", async () => {
+  const fixture = await boardFixture();
+  try {
+    configureActivationStages(fixture.board, { verification: "activation-stale-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "stale-blocked", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    const blocked = confirmed.nodes[0]!;
+    assert.equal(blocked.state, "blocked");
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const capacity = new DatabaseSync(fixture.path);
+    try {
+      capacity.prepare(`
+        INSERT INTO agents(agent_id,project_id,role,area,mission,model,token_hash,created_at)
+        VALUES ('activation-stale-verifier', ?, 'verifier', 'workflow-activation',
+          'Verify stale blocked candidates remain failed.', 'codex-mini',
+          'activation-stale-verifier-direct-token-hash', ?)
+      `).run(fixture.project.projectId, blocked.updatedAt);
+    } finally {
+      capacity.close();
+    }
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let interleaved = false;
+    DatabaseSync.prototype.prepare = function interleaveFailureBlocking(this: DatabaseSyncType, sql: string) {
+      const statement = originalPrepare.call(this, sql);
+      if (!interleaved && /SELECT node\.node_id[\s\S]*FROM work_nodes node[\s\S]*plan\.state='confirmed'/u.test(sql)) {
+        const originalAll = statement.all.bind(statement) as (...values: SQLInputValue[]) => Record<string, unknown>[];
+        statement.all = ((...values: SQLInputValue[]) => {
+          const rows = originalAll(...values);
+          if (rows.some((row) => String(row.node_id) === blocked.nodeId)) {
+            originalPrepare.call(this, `
+              INSERT INTO project_events(event_id,project_id,node_id,task_id,event_type,summary,created_at)
+              VALUES ('event_stale_failure_block', ?, ?, NULL, 'stage_failed', 'Failure won the race.', ?)
+            `).run(fixture.project.projectId, blocked.nodeId, blocked.updatedAt);
+            interleaved = true;
+          }
+          return rows;
+        }) as typeof statement.all;
+      }
+      return statement;
+    };
+    try {
+      fixture.board.reconcileWorkflows(fixture.project.projectId);
+    } finally {
+      DatabaseSync.prototype.prepare = originalPrepare;
+    }
+
+    assert.equal(interleaved, true);
+    const afterRace = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(afterRace.nodes[0]?.state, "blocked");
+    assert.equal(afterRace.nodes[0]?.version, blocked.version);
+    assert.equal(afterRace.events[0]?.eventType, "stage_failed");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+    const beforeReplay = fixture.board.projectWorkflow(fixture.project.projectId);
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), beforeReplay);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("repeated reconciliation does not churn a still capacity-blocked node", async () => {
+  const fixture = await boardFixture();
+  try {
+    configureActivationStages(fixture.board, { verification: "activation-still-blocked-type" });
+    const proposed = await proposedActivationWorkflow(fixture, "still-blocked", ["verification"]);
+    const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
+    assert.equal(confirmed.nodes[0]?.state, "blocked");
+    const before = fixture.board.projectWorkflow(fixture.project.projectId);
+
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), before);
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
+  } finally {
+    fixture.board.close();
+  }
+});
 
 test("confirmed workflow persists an acyclic graph and activates only dependency roots", async () => {
   const fixture = await boardFixture();

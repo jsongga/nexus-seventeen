@@ -320,6 +320,7 @@ export class RunsCollaborator {
             }
           });
           this.projects.activateWorkflowNodes(repairedNodes);
+          this.projects.reconcileWorkflowsBestEffort(current.projectId);
         }
         return { run: current, duplicate: true };
       }
@@ -435,6 +436,7 @@ export class RunsCollaborator {
     });
     if (workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(workflowWakeAgentId);
     this.projects.activateWorkflowNodes(settledWorkflowNodes);
+    this.projects.reconcileWorkflowsBestEffort(current.projectId);
     return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
   }
 

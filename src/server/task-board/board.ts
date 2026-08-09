@@ -84,14 +84,16 @@ export class TaskBoard {
     this.#tasks = new TasksCollaborator(this.#runtime);
     this.#projects = new ProjectsCollaborator(this.#runtime, this.#automation, this.#tasks);
     this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
-    this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems);
+    this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects);
     this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);
     this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects);
   }
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {
-    return new TaskBoard(config, await TaskBoardStore.open(config.dbPath));
+    const board = new TaskBoard(config, await TaskBoardStore.open(config.dbPath));
+    board.#projects.reconcileWorkflowsBestEffort();
+    return board;
   }
 
   authenticateAgent(token: string | undefined, expectedAgentId?: string): AgentProfile {
@@ -114,6 +116,10 @@ export class TaskBoard {
 
   projectWorkflow(projectId: string): ProjectWorkflowSnapshot {
     return this.#projects.projectWorkflow(projectId);
+  }
+
+  reconcileWorkflows(projectId?: string): void {
+    this.#projects.reconcileWorkflows(projectId);
   }
 
   createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
