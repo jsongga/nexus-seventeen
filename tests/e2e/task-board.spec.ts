@@ -1,6 +1,11 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import type {
+  CreateAgentRequest,
+  HumanQuestion,
+  UpdateAutomationConfigurationRequest,
+} from '@shared/task-board-contract';
 
-const apiVersion = 'steward.task-board/v1';
+const apiVersion = 'steward.task-board/v1' as const;
 const pocConversationContextMarker = '\n\nRecent POC conversation (context only; newest request is above):\n';
 const pocRoutingContextMarker = '\n\nCompany routing map (use this only to identify the best project or agent):\n';
 const project = {
@@ -742,7 +747,7 @@ test('adding a project asks only for its folder and creates its engineer profile
     description: '/workspace/payment-tools',
   };
   let createdProject: Record<string, unknown> | null = null;
-  let createdAgent: Record<string, unknown> | null = null;
+  const createdAgent: { value: CreateAgentRequest | null } = { value: null };
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -756,7 +761,7 @@ test('adding a project asks only for its folder and creates its engineer profile
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/agents` && request.method() === 'POST') {
-      createdAgent = request.postDataJSON() as Record<string, unknown>;
+      createdAgent.value = request.postDataJSON() as CreateAgentRequest;
       await route.fulfill({ status: 204 });
       return;
     }
@@ -781,19 +786,19 @@ test('adding a project asks only for its folder and creates its engineer profile
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
   await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
-  await expect.poll(() => createdAgent).not.toBeNull();
+  await expect.poll(() => createdAgent.value).not.toBeNull();
 
   expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
-  expect(createdAgent).toMatchObject({
+  expect(createdAgent.value).toMatchObject({
     agentId: 'payment-tools-engineer',
     role: 'engineer',
     area: 'payment-tools',
     model: agent.model,
   });
-  expect(createdAgent?.mission).toContain('Research, plan, implement, test');
-  expect(typeof createdAgent?.token).toBe('string');
-  expect(String(createdAgent?.token)).toHaveLength(72);
-  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('cicada.pendingAgentToken.payment-tools-engineer'))).toBe(createdAgent?.token);
+  expect(createdAgent.value?.mission).toContain('Research, plan, implement, test');
+  expect(typeof createdAgent.value?.token).toBe('string');
+  expect(String(createdAgent.value?.token)).toHaveLength(72);
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('cicada.pendingAgentToken.payment-tools-engineer'))).toBe(createdAgent.value?.token);
 });
 
 test('agent pages stay chat-first while unavailable assignments remain durable', async ({ page }) => {
@@ -1498,7 +1503,7 @@ test('the POC chat answers its current task question before starting another que
     answeredBy: 'human:operator',
     version: 2,
   };
-  let currentQuestion = {
+  let currentQuestion: HumanQuestion = {
     ...answeredQuestion,
     questionId: 'question-current',
     taskId: currentQuery.taskId,
@@ -2013,7 +2018,7 @@ test('a human check records approval without exposing any agent wake or deployme
 
 test('automation configuration is edited as one dormant, versioned draft on desktop and mobile', async ({ page }) => {
   const automationRequests: string[] = [];
-  let savedPayload: Record<string, unknown> | null = null;
+  const savedPayload: { value: UpdateAutomationConfigurationRequest | null } = { value: null };
   let currentConfiguration: Record<string, unknown> = {
     apiVersion,
     configurationId: 'company-default',
@@ -2066,11 +2071,12 @@ test('automation configuration is edited as one dormant, versioned draft on desk
     if (url.pathname === '/board-api/v1/automation-configuration') {
       automationRequests.push(`${request.method()} ${url.pathname}`);
       if (request.method() === 'PATCH') {
-        savedPayload = request.postDataJSON() as Record<string, unknown>;
+        const payload = request.postDataJSON() as UpdateAutomationConfigurationRequest;
+        savedPayload.value = payload;
         currentConfiguration = {
           ...currentConfiguration,
-          agentTypes: savedPayload.agentTypes,
-          stages: savedPayload.stages,
+          agentTypes: payload.agentTypes,
+          stages: payload.stages,
           version: 2,
           updatedAt: '2026-07-19T18:40:00.000Z',
           updatedBy: 'human:operator',
@@ -2143,12 +2149,12 @@ test('automation configuration is edited as one dormant, versioned draft on desk
   await expect(deploymentOwner.locator('select')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Save configuration' }).click();
-  await expect.poll(() => savedPayload).not.toBeNull();
+  await expect.poll(() => savedPayload.value).not.toBeNull();
   await expect(page.getByText('Configuration saved. Runtime behavior remains unchanged until automation adopts it.', { exact: true })).toBeVisible();
 
-  expect(savedPayload).toMatchObject({ version: 1 });
-  expect(Object.keys(savedPayload ?? {}).sort()).toEqual(['agentTypes', 'stages', 'version']);
-  const savedAgentTypes = savedPayload?.agentTypes as Array<Record<string, unknown>>;
+  expect(savedPayload.value).toMatchObject({ version: 1 });
+  expect(Object.keys(savedPayload.value ?? {}).sort()).toEqual(['agentTypes', 'stages', 'version']);
+  const savedAgentTypes = savedPayload.value?.agentTypes ?? [];
   expect(savedAgentTypes.find((agentType) => agentType.agentTypeId === 'implementation-engineer')).toEqual({
     agentTypeId: 'implementation-engineer',
     name: 'Implementation engineer',
@@ -2159,7 +2165,7 @@ test('automation configuration is edited as one dormant, versioned draft on desk
     evaluatorProfile: 'tests',
     enabled: true,
   });
-  const savedStages = savedPayload?.stages as Array<Record<string, unknown>>;
+  const savedStages = savedPayload.value?.stages ?? [];
   expect(savedStages.find((entry) => entry.stage === 'implementation')).toEqual({
     stage: 'implementation',
     executor: { kind: 'agent_type', agentTypeId: 'implementation-engineer' },

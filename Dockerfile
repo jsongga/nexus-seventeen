@@ -6,7 +6,7 @@ WORKDIR /build
 COPY . .
 
 RUN npm ci --ignore-scripts \
-  && npm run build:all
+  && npm run build
 
 FROM caddy:2-alpine AS caddy
 
