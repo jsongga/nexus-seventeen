@@ -22,6 +22,7 @@ import {
   type ClaimedAgentRun,
   type TaskWakeClaim,
   type TaskWakeReason,
+  type TaskBoardClient,
   type TaskWorkerJournal,
   type TaskWorkerOptions,
 } from "./types.js";
@@ -56,12 +57,50 @@ function exactNow(now: () => Date): string {
 
 function safeDetail(error: unknown, fallback: string): string {
   const source = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  // Reporting intentionally uses a superset of the launcher's rejection patterns:
+  // over-redaction is safe, while a missed credential could enter the journal or board.
   const redacted = source
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+/giu, "Bearer [redacted]")
-    .replace(/\b(?:sk|xox|ghp|github_pat)_[A-Za-z0-9_-]+/giu, "[redacted]")
+    .replace(/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/giu, "[redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [redacted]")
+    .replace(/\b(?:(?:sk|xox)_|sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[baprs]-)[A-Za-z0-9._~+/-]+/gu, "[redacted]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/gu, "[redacted]")
+    .replace(/\bhttps?:\/\/[^\s/:@]{1,128}:[^\s/@]{4,256}@/giu, "[redacted]")
     .replace(/[\u0000-\u001f\u007f]/gu, " ")
     .trim();
   return (redacted || fallback).slice(0, 2_000);
+}
+
+function normalizeCarriageReturns<T>(value: T): T {
+  if (typeof value === "string") return value.replace(/\r\n?/gu, "\n") as T;
+  if (Array.isArray(value)) return Object.freeze(value.map(normalizeCarriageReturns)) as T;
+  if (value === null || typeof value !== "object") return value;
+  return Object.freeze(Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, normalizeCarriageReturns(entry)]),
+  )) as T;
+}
+
+function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
+  // This wrapper is the load-bearing normalization chokepoint for both fresh
+  // requests and pre-fix journal replays. Idempotency keys are derived before
+  // requests cross this seam, so normalization cannot change replay identity.
+  const normalized: TaskBoardClient = {
+    claimNextWake: (request, signal) => board.claimNextWake(request, signal),
+    waitForRunInterrupt: (claim, signal) => board.waitForRunInterrupt(claim, signal),
+    updateTaskEstimate: (request, signal) => board.updateTaskEstimate(normalizeCarriageReturns(request), signal),
+    createTaskPhase: (request, signal) => board.createTaskPhase(normalizeCarriageReturns(request), signal),
+    updateTaskPhase: (request, signal) => board.updateTaskPhase(normalizeCarriageReturns(request), signal),
+    appendRunOutput: (request, signal) => board.appendRunOutput(normalizeCarriageReturns(request), signal),
+    settleAgentRun: (request, signal) => board.settleAgentRun(normalizeCarriageReturns(request), signal),
+  };
+  return Object.freeze(normalized);
+}
+
+function interruptFailureDetail(reason: string, error: unknown): string {
+  const failure = safeDetail(error, "Process-group termination status is unknown");
+  return safeDetail(
+    `${reason} Process-group termination failed: ${failure}`,
+    "The agent run was interrupted, but process-group termination failed.",
+  );
 }
 
 function contextDigest(context: BoundedAgentContext): string {
@@ -236,13 +275,20 @@ export class TaskWorker {
   #activeHandle: AgentRunHandle | null = null;
   #interruptSettlement: Promise<void> | null = null;
   #interruptTerminalResolve: (() => void) | null = null;
+  #interruptTerminalReached = false;
+  #interruptRequestReason: string | null = null;
 
   private constructor(options: TaskWorkerOptions, store: TaskWorkerJournalStore) {
     const longPollMs = options.longPollMs ?? 30_000;
     if (!Number.isSafeInteger(longPollMs) || longPollMs < 1 || longPollMs > 30_000) {
       throw new Error("longPollMs must be an integer between 1 and 30000");
     }
-    this.#options = { ...options, longPollMs, now: options.now ?? (() => new Date()) };
+    this.#options = {
+      ...options,
+      board: normalizedOutboundBoard(options.board),
+      longPollMs,
+      now: options.now ?? (() => new Date()),
+    };
     this.#store = store;
     this.#state = store.current;
   }
@@ -447,7 +493,18 @@ export class TaskWorker {
       phaseTracking: true,
       estimateTracking: true,
     };
-    const onAbort = () => { void this.interrupt("Task worker shutdown requested"); };
+    let shutdownInterrupt: Promise<unknown | null> | null = null;
+    const onAbort = () => {
+      shutdownInterrupt ??= this.interrupt("Task worker shutdown requested").then(
+        () => null,
+        (error: unknown) => {
+          // A failed kill must end the dispatch during shutdown; the scrubbed
+          // failure has already been journaled by interrupt().
+          this.#reachInterruptTerminal();
+          return error;
+        },
+      );
+    };
     signal?.addEventListener("abort", onAbort, { once: true });
     const watch = this.#options.board.waitForRunInterrupt(active.claim, control.signal)
       .then(async (interrupt) => {
@@ -525,7 +582,16 @@ export class TaskWorker {
         let resolveInterrupted!: () => void;
         const interrupted = new Promise<void>((resolve) => { resolveInterrupted = resolve; });
         this.#interruptTerminalResolve = resolveInterrupted;
-        await this.#settleActiveInterrupt();
+        if (this.#interruptTerminalReached) resolveInterrupted();
+        const pendingInterruptReason = this.#state.active?.interruptReason;
+        if (pendingInterruptReason !== null && pendingInterruptReason !== undefined) {
+          try {
+            await this.#settleActiveInterrupt(this.#interruptRequestReason ?? pendingInterruptReason);
+          } catch (error) {
+            await this.#recordInterruptFailure(this.#interruptRequestReason ?? pendingInterruptReason, error);
+            throw error;
+          }
+        }
         const completion = handle.completion.then(
           (value) => ({ type: "completed" as const, value }),
           (error: unknown) => ({ type: "failed" as const, error }),
@@ -534,13 +600,15 @@ export class TaskWorker {
           completion,
           interrupted.then(() => ({ type: "interrupted" as const })),
         ]);
+        const shutdownError = shutdownInterrupt === null ? null : await shutdownInterrupt;
         // The launcher closes activity with the provider stream. Drain all safe
         // updates before any terminal output or settlement can make the run inactive.
-        await activityForwarding;
+        // A failed shutdown kill can leave that stream open indefinitely, so its
+        // recorded terminal path must not wait for process completion.
+        if (shutdownError === null) await activityForwarding;
         control.abort();
         await watch;
         if (this.#state.active?.interruptReason !== null || terminal.type === "interrupted") {
-          await this.#settleActiveInterrupt();
           outcome = interruptedOutcome(this.#state.active?.interruptReason ?? "The agent run was interrupted.");
         } else if (terminal.type === "failed") {
           outcome = failedOutcome(terminal.error, "The one-shot agent process failed.");
@@ -563,6 +631,8 @@ export class TaskWorker {
       this.#activeHandle = null;
       this.#interruptSettlement = null;
       this.#interruptTerminalResolve = null;
+      this.#interruptTerminalReached = false;
+      this.#interruptRequestReason = null;
     }
   }
 
@@ -919,8 +989,15 @@ export class TaskWorker {
 
   /** Directly reaches the launcher handle; no heartbeat or model turn mediates interruption. */
   async interrupt(reason: string): Promise<boolean> {
-    const detail = safeDetail(reason, "Human interruption requested");
-    const active = await this.#serial.run(async () => {
+    const current = this.#state.active;
+    if (current === null || current.phase === "outputs_pending") return false;
+    const detail = this.#interruptRequestReason ?? safeDetail(reason, "Human interruption requested");
+    this.#interruptRequestReason ??= detail;
+
+    // Start termination before journal I/O. A stalled or rejected save may
+    // affect reporting, but it cannot prevent the process-group signal.
+    const termination = this.#settleActiveInterrupt(detail);
+    const reporting = this.#serial.run(async () => {
       const current = this.#state.active;
       if (current === null || current.phase === "outputs_pending") return null;
       if (current.interruptReason !== null) return current;
@@ -929,21 +1006,69 @@ export class TaskWorker {
       await this.#store.save(next);
       return next.active;
     });
-    if (active === null) return false;
-    await this.#settleActiveInterrupt();
+
+    const [terminationResult, reportingResult] = await Promise.allSettled([termination, reporting]);
+    if (terminationResult.status === "rejected") {
+      let failureReportingError: unknown = null;
+      try {
+        await this.#recordInterruptFailure(detail, terminationResult.reason);
+      } catch (error) {
+        failureReportingError = error;
+      }
+      const additional = [
+        ...(reportingResult.status === "rejected" ? [reportingResult.reason] : []),
+        ...(failureReportingError === null ? [] : [failureReportingError]),
+      ];
+      if (additional.length > 0) {
+        throw new AggregateError(
+          [terminationResult.reason, ...additional],
+          safeDetail(terminationResult.reason, "Process-group termination failed"),
+        );
+      }
+      throw terminationResult.reason;
+    }
+    if (reportingResult.status === "rejected") throw reportingResult.reason;
+    if (reportingResult.value === null) return false;
     return true;
   }
 
-  async #settleActiveInterrupt(): Promise<void> {
-    const reason = this.#state.active?.interruptReason;
+  async #recordInterruptFailure(reason: string, error: unknown): Promise<void> {
+    const detail = interruptFailureDetail(reason, error);
+    await this.#serial.run(async () => {
+      const current = this.#state.active;
+      if (current === null || current.phase === "outputs_pending" || current.interruptReason === detail) return;
+      const next: TaskWorkerJournal = { ...this.#state, active: { ...current, interruptReason: detail } };
+      this.#state = next;
+      await this.#store.save(next);
+    });
+  }
+
+  async #settleActiveInterrupt(reason: string): Promise<void> {
     const handle = this.#activeHandle;
-    if (reason === null || reason === undefined || handle === null) return;
+    if (handle === null) return;
     if (this.#interruptSettlement === null) {
-      this.#interruptSettlement = handle.interrupt(reason).then(() => {
-        this.#interruptTerminalResolve?.();
-      });
+      let attempt: Promise<void>;
+      try {
+        attempt = handle.interrupt(reason);
+      } catch (error) {
+        attempt = Promise.reject(error);
+      }
+      let settlement!: Promise<void>;
+      settlement = attempt.then(
+        () => { this.#reachInterruptTerminal(); },
+        (error: unknown) => {
+          if (this.#interruptSettlement === settlement) this.#interruptSettlement = null;
+          throw error;
+        },
+      );
+      this.#interruptSettlement = settlement;
     }
     await this.#interruptSettlement;
+  }
+
+  #reachInterruptTerminal(): void {
+    this.#interruptTerminalReached = true;
+    this.#interruptTerminalResolve?.();
   }
 
   async close(): Promise<void> {

@@ -259,3 +259,107 @@ setInterval(() => {}, 1000);
   await assert.rejects(completion, /interrupted/u);
   assert.throws(() => process.kill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
 });
+
+test("direct interrupt cannot let a credential-like reason prevent process-group termination", async () => {
+  const root = await tempRoot();
+  const fixture = await fakeCodex(root, `
+const fs = require("node:fs");
+const path = require("node:path");
+const {spawn} = require("node:child_process");
+fs.writeFileSync(path.join(process.env.TMPDIR, "pid.txt"), String(process.pid));
+spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {stdio:"ignore"});
+process.on("SIGTERM", () => {});
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`);
+  const launcher = new ContainedCliAgentLauncher({
+    provider: "codex",
+    model: "codex-test-model",
+    workingDirectory: fixture.working,
+    environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
+    timeoutMs: 10_000,
+    terminationGraceMs: 20,
+    groupAbsenceTimeoutMs: 2_000,
+  });
+  const handle = await launcher.launch({
+    runId: "run-interrupt-secret",
+    wakeReason: "human_assignment",
+    context: context(),
+  });
+  const completion = handle.completion;
+  void completion.catch(() => undefined);
+  const marker = join(fixture.scratch, "pid.txt");
+  await until(() => existsSync(marker), "fake agent process");
+  const groupId = Number(await readFile(marker, "utf8"));
+  try {
+    await handle.interrupt("Human reported sk-proj-0123456789abcdef in the interrupt reason");
+    await assert.rejects(completion, /interrupted/u);
+    assert.throws(() => process.kill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
+  } finally {
+    try { process.kill(-groupId, "SIGKILL"); } catch {}
+  }
+});
+
+test("direct interrupt shares an in-flight termination but clears a rejected launcher attempt for retry", async () => {
+  const root = await tempRoot();
+  const fixture = await fakeCodex(root, `
+const fs = require("node:fs");
+const path = require("node:path");
+fs.writeFileSync(path.join(process.env.TMPDIR, "pid.txt"), String(process.pid));
+process.on("SIGTERM", () => {});
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`);
+  const launcher = new ContainedCliAgentLauncher({
+    provider: "codex",
+    model: "codex-test-model",
+    workingDirectory: fixture.working,
+    environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
+    timeoutMs: 10_000,
+    terminationGraceMs: 20,
+    groupAbsenceTimeoutMs: 2_000,
+  });
+  const handle = await launcher.launch({
+    runId: "run-interrupt-retry",
+    wakeReason: "human_assignment",
+    context: context(),
+  });
+  const completion = handle.completion;
+  void completion.catch(() => undefined);
+  const marker = join(fixture.scratch, "pid.txt");
+  await until(() => existsSync(marker), "fake agent process");
+  const groupId = Number(await readFile(marker, "utf8"));
+  const originalKill = process.kill;
+  let sigtermAttempts = 0;
+  Object.defineProperty(process, "kill", {
+    configurable: true,
+    value: ((pid: number, signal?: NodeJS.Signals | number): true => {
+      if (pid === -groupId && signal === "SIGTERM") {
+        sigtermAttempts += 1;
+        if (sigtermAttempts === 1) {
+          const error = new Error("Simulated first signal failure") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+      }
+      return originalKill(pid, signal);
+    }) satisfies typeof process.kill,
+  });
+  try {
+    const first = handle.interrupt("Human interrupted this agent run");
+    const concurrent = handle.interrupt("Human interrupted this agent run");
+    await Promise.all([
+      assert.rejects(first, /first signal failure/u),
+      assert.rejects(concurrent, /first signal failure/u),
+    ]);
+    assert.equal(sigtermAttempts, 1);
+
+    await handle.interrupt("Human retried the interrupt");
+    assert.equal(sigtermAttempts, 2);
+    await assert.rejects(completion, /interrupted/u);
+    assert.throws(() => originalKill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
+  } finally {
+    Object.defineProperty(process, "kill", { configurable: true, value: originalKill });
+    try { originalKill(-groupId, "SIGKILL"); } catch {}
+  }
+});

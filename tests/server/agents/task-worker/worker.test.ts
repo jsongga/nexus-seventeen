@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
 import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskWorker } from "#server/agents/task-worker/worker";
-import type { AgentRunOutcome, TaskWorkerJournal } from "#server/agents/task-worker/types";
+import type { AgentRunOutcome, AgentRunOutput, TaskWakeClaim, TaskWorkerJournal } from "#server/agents/task-worker/types";
 import {
   AGENT,
   FakeBoard,
@@ -29,6 +30,32 @@ async function worker(root: string, board: FakeBoard, launcher: FakeLauncher): P
     longPollMs: 30_000,
     now: () => new Date(NOW),
   });
+}
+
+function outputIdempotency(claim: TaskWakeClaim, index: number, output: AgentRunOutput): string {
+  const digest = createHash("sha256").update(JSON.stringify({
+    action: "append_task_worker_output",
+    runId: claim.runId,
+    wakeupId: claim.wakeupId,
+    taskId: claim.taskId,
+    localSequence: index + 1,
+    output,
+  })).digest("hex");
+  return `twe_${digest}`;
+}
+
+async function completesWithin<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Timed out waiting for completion")), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 test("idle dispatch long-polls the board without starting a model process", async () => {
@@ -482,6 +509,79 @@ test("a human question is the last output and atomically ends the run without ge
   }
 });
 
+test("normalizes every provider-authored carriage return before board writes", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({
+    status: "completed",
+    outputs: [
+      { type: "progress", body: "First check passed.\r\nSecond check passed.\rThird check passed." },
+      {
+        type: "proposed_child_task",
+        title: "Observe retries\r\nin production",
+        objective: "Confirm the retry rate.\rConfirm customer impact.",
+        acceptanceCriteria: ["Retry rate is visible.\r\nAlerts are configured."],
+      },
+      { type: "result", body: "Checkout is safe.\r\nFocused tests pass.\rReady for review." },
+    ],
+    expectedAgentMinutes: null,
+    phases: [{
+      phaseId: null,
+      title: "Verify retries\r\nunder load",
+      stage: "testing",
+      status: "completed",
+      parallelGroup: null,
+      orderKey: 100,
+    }],
+    detail: "Checkout is safe.\r\nFocused tests pass.",
+    handoff: {
+      outcome: "passed",
+      summary: "Implementation passed.\r\nEvidence follows.",
+      evidence: ["Unit tests pass.\rRuntime tests pass."],
+      artifactIds: [],
+      acceptanceCriteria: [{
+        criterion: "Retries are safe.\r\nCustomers are protected.",
+        passed: true,
+        evidence: "The focused tests pass.\rNo duplicate charge was observed.",
+      }],
+      blockers: ["Release still requires\r\nhuman approval."],
+      recommendedReturnStage: null,
+    },
+    workflowPlan: {
+      objective: "Keep checkout safe.\r\nWatch retries.",
+      assumptions: ["Operators can view metrics.\rAlerts are enabled."],
+      acceptanceCriteria: ["No duplicate charges.\r\nRetries remain observable."],
+      nodes: [{
+        nodeId: "observe-retries",
+        title: "Observe retries\r\nafter release",
+        objective: "Watch customer impact.\rEscalate regressions.",
+        acceptanceCriteria: ["Retry health stays visible.\r\nNo regression is found."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      }],
+    },
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    const outbound = JSON.stringify({
+      outputs: board.outputs,
+      phaseCreates: board.phaseCreates,
+      phaseUpdates: board.phaseUpdates,
+      settlements: board.settlements,
+    });
+    assert.doesNotMatch(outbound, /\\r/u);
+    assert.equal(
+      board.settlements[0]?.result,
+      "Checkout is safe.\nFocused tests pass.\nReady for review.",
+    );
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("a human answer is included in the next bounded one-shot context", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -527,6 +627,152 @@ test("durable board interrupt reaches the process directly and settles interrupt
     assert.equal(board.settlements[0]?.outcome, "interrupted");
     assert.equal(taskWorker.snapshot.activeRunId, null);
   } finally {
+    await taskWorker.close();
+  }
+});
+
+test("redacts credentials from a durable interrupt reason while still terminating the run", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const claim = board.claimRequests[0];
+    assert.ok(claim);
+    board.requestInterrupt(claimed(claim).claim, "Stop after exposing sk-proj-0123456789abcdef in diagnostics");
+    await dispatch;
+    assert.deepEqual(
+      launcher.handles[0]?.interruptReasons,
+      ["Stop after exposing [redacted] in diagnostics"],
+    );
+    assert.equal(board.settlements[0]?.result, "Stop after exposing [redacted] in diagnostics");
+    const journal = await readFile(join(root, "state", "journal.json"), "utf8");
+    assert.doesNotMatch(journal, /sk-proj-0123456789abcdef/u);
+    assert.match(journal, /\[redacted\]/u);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("starts process-group termination before an interrupt journal write can reject", async () => {
+  const root = await tempRoot();
+  const stateDirectory = join(root, "state");
+  const movedStateDirectory = join(root, "state-before-journal-failure");
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  let releaseInterrupt: (() => void) | undefined;
+  let dispatch: Promise<boolean> | undefined;
+  try {
+    dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    handle.emitActivity("Agent process started.");
+    await until(() => board.outputs.length === 1, "live activity forwarding");
+    handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+
+    await rename(stateDirectory, movedStateDirectory);
+    await writeFile(stateDirectory, "This file makes journal child paths fail with ENOTDIR.");
+    const interruption = taskWorker.interrupt("Human stopped the run").then(
+      () => ({ status: "fulfilled" as const, error: null }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await until(() => handle.interruptReasons.length === 1, "termination independent of journal persistence");
+    await unlink(stateDirectory);
+    await rename(movedStateDirectory, stateDirectory);
+    assert.ok(releaseInterrupt);
+    releaseInterrupt();
+
+    const result = await interruption;
+    assert.equal(result.status, "rejected");
+    assert.match(result.error instanceof Error ? result.error.message : "", /directory|ENOTDIR/u);
+    await dispatch;
+    assert.equal(board.settlements[0]?.outcome, "interrupted");
+  } finally {
+    await unlink(stateDirectory).catch(() => undefined);
+    await rename(movedStateDirectory, stateDirectory).catch(() => undefined);
+    releaseInterrupt?.();
+    launcher.handles[0]?.reject(new Error("Test cleanup stopped the simulated child"));
+    await dispatch?.catch(() => undefined);
+    await taskWorker.close();
+  }
+});
+
+test("shares concurrent interrupt settlement and retries only after the in-flight attempt rejects", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    handle.emitActivity("Agent process started.");
+    await until(() => board.outputs.length === 1, "live activity forwarding");
+    let releaseInterrupt!: () => void;
+    handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+    handle.interruptFailures = 1;
+
+    const first = taskWorker.interrupt("Human stopped the run");
+    const concurrent = taskWorker.interrupt("Human stopped the run");
+    await until(() => handle.interruptReasons.length === 1, "one in-flight termination attempt");
+    releaseInterrupt();
+    await Promise.all([
+      assert.rejects(first, /termination failure/u),
+      assert.rejects(concurrent, /termination failure/u),
+    ]);
+    assert.deepEqual(handle.interruptReasons, ["Human stopped the run"]);
+
+    handle.interruptBarrier = null;
+    assert.equal(await taskWorker.interrupt("Human stopped the run"), true);
+    await dispatch;
+
+    assert.deepEqual(handle.interruptReasons, ["Human stopped the run", "Human stopped the run"]);
+    assert.equal(board.settlements[0]?.outcome, "interrupted");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("shutdown records a rejected termination and completes while the child remains non-exiting", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  const controller = new AbortController();
+  try {
+    const running = taskWorker.run(controller.signal);
+    await until(() => launcher.handles.length === 1, "agent launch");
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    handle.emitActivity("Agent process started.");
+    await until(() => board.outputs.length === 1, "live activity forwarding");
+    handle.interruptFailures = 1;
+    handle.interruptFailureMessage = "Simulated process-group termination failure after Bearer abc123def456";
+
+    controller.abort();
+    await until(() => handle.interruptReasons.length === 1, "shutdown interrupt attempt");
+    await completesWithin(running, 500);
+    assert.equal(board.settlements[0]?.outcome, "interrupted");
+    assert.match(board.settlements[0]?.result ?? "", /process-group termination failed.*simulated/iu);
+    assert.match(board.settlements[0]?.result ?? "", /Bearer \[redacted\]/u);
+    const journal = await readFile(join(root, "state", "journal.json"), "utf8");
+    assert.match(journal, /process-group termination failed.*simulated/iu);
+    assert.doesNotMatch(journal, /abc123def456/u);
+    assert.doesNotMatch(journal, /\r/u);
+  } finally {
+    launcher.handles[0]?.reject(new Error("Test cleanup stopped the simulated child"));
     await taskWorker.close();
   }
 });
@@ -623,6 +869,63 @@ test("replays pending outputs after restart without launching the model again", 
     assert.equal(board.appendAttempts.length, 4);
     assert.equal(board.appendAttempts[1]?.idempotencyKey, board.appendAttempts[0]?.idempotencyKey);
     assert.equal(board.settlements.length, 1);
+  } finally {
+    await restarted.close();
+  }
+});
+
+test("replays a CR-bearing journal with its pre-normalization identity without duplicating the board event", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = { agentId: AGENT, claimId: "claim-poison-pill", messageCursors: {}, longPollMs: 0 };
+  const activeClaim = claimed(request).claim;
+  const proposal = {
+    type: "proposed_child_task" as const,
+    title: "Observe retries\r\nin production",
+    objective: "Confirm retry behavior.\rEscalate regressions.",
+    acceptanceCriteria: ["The board records one proposal.\r\nThe event identity is stable."],
+  };
+  const outcome: AgentRunOutcome = {
+    status: "completed",
+    outputs: [proposal, { type: "result", body: "Recovered result can settle." }],
+    expectedAgentMinutes: null,
+    phases: [],
+    detail: "Recovered result can settle.",
+  };
+  const expectedClientEventId = outputIdempotency(activeClaim, 0, proposal);
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    active: {
+      claim: activeClaim,
+      phase: "outputs_pending",
+      contextDigest: `sha256:${"b".repeat(64)}`,
+      launchStartedAt: NOW,
+      interruptReason: null,
+      outcome,
+      nextOutputIndex: 0,
+    },
+  });
+  await store.close();
+
+  const board = new FakeBoard();
+  const launcher = new FakeLauncher();
+  board.appendFailures = 1;
+  const firstReplay = await worker(root, board, launcher);
+  await assert.rejects(firstReplay.dispatchOnce(), /lost output response/u);
+  await firstReplay.close();
+
+  const restarted = await worker(root, board, launcher);
+  try {
+    await restarted.dispatchOnce();
+    assert.equal(launcher.requests.length, 0);
+    const proposalAttempts = board.appendAttempts.filter((attempt) => attempt.output.type === "proposed_child_task");
+    assert.equal(proposalAttempts.length, 2);
+    assert.ok(proposalAttempts.every((attempt) => attempt.idempotencyKey === expectedClientEventId));
+    assert.equal(board.outputs.filter((item) => item.output.type === "proposed_child_task").length, 1);
+    assert.equal(board.settlements[0]?.result, "Recovered result can settle.");
+    assert.doesNotMatch(JSON.stringify({ outputs: board.outputs, settlements: board.settlements }), /\\r/u);
   } finally {
     await restarted.close();
   }

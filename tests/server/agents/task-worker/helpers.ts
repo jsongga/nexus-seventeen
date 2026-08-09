@@ -7,6 +7,7 @@ import type {
   AgentRunHandle,
   AgentRunInterrupt,
   AgentRunOutcome,
+  AgentRunOutput,
   AgentTaskPhase,
   AppendRunOutputRequest,
   BoundedAgentContext,
@@ -157,6 +158,25 @@ export function completedOutcome(label = "Customers can retry checkout safely.")
   };
 }
 
+function containsCarriageReturn(value: unknown): boolean {
+  if (typeof value === "string") return value.includes("\r");
+  if (Array.isArray(value)) return value.some(containsCarriageReturn);
+  if (value === null || typeof value !== "object") return false;
+  return Object.values(value).some(containsCarriageReturn);
+}
+
+function boardOutputText(output: AgentRunOutput): string {
+  if (output.type === "human_question") return output.question;
+  if (output.type === "proposed_child_task") {
+    return JSON.stringify({
+      title: output.title,
+      objective: output.objective,
+      acceptanceCriteria: output.acceptanceCriteria,
+    });
+  }
+  return output.body;
+}
+
 export class FakeBoard implements TaskBoardClient {
   readonly claimRequests: ClaimNextWakeRequest[] = [];
   readonly appendAttempts: AppendRunOutputRequest[] = [];
@@ -255,17 +275,27 @@ export class FakeBoard implements TaskBoardClient {
 
   appendRunOutput(request: AppendRunOutputRequest): Promise<void> {
     this.appendAttempts.push(structuredClone(request));
-    if (this.appendFailures > 0) {
-      this.appendFailures -= 1;
-      return Promise.reject(new Error("Simulated lost output response"));
+    if (boardOutputText(request.output).includes("\r")) {
+      return Promise.reject(new Error("Board text validation rejected a carriage return"));
     }
     const prior = this.outputs.find((item) => item.idempotencyKey === request.idempotencyKey);
     if (prior === undefined) this.outputs.push(structuredClone(request));
     else if (JSON.stringify(prior) !== JSON.stringify(request)) return Promise.reject(new Error("Output idempotency conflict"));
+    if (this.appendFailures > 0) {
+      this.appendFailures -= 1;
+      return Promise.reject(new Error("Simulated lost output response"));
+    }
     return Promise.resolve();
   }
 
   settleAgentRun(request: SettleAgentRunRequest): Promise<void> {
+    if (containsCarriageReturn({
+      result: request.result,
+      handoff: request.handoff ?? null,
+      workflowPlan: request.workflowPlan ?? null,
+    })) {
+      return Promise.reject(new Error("Board text validation rejected a carriage return"));
+    }
     const prior = this.settlements.find((item) => item.claim.runId === request.claim.runId);
     if (prior === undefined) this.settlements.push(structuredClone(request));
     else if (JSON.stringify(prior) !== JSON.stringify(request)) return Promise.reject(new Error("Settlement conflict"));
@@ -277,6 +307,9 @@ export class DeferredRunHandle implements AgentRunHandle {
   readonly completion: Promise<AgentRunOutcome>;
   readonly activity: AsyncIterable<string>;
   interruptReasons: string[] = [];
+  interruptFailures = 0;
+  interruptFailureMessage = "Simulated process-group termination failure";
+  interruptBarrier: Promise<void> | null = null;
   readonly #activityQueued: string[] = [];
   readonly #activityWaiters: Array<(result: IteratorResult<string>) => void> = [];
   #activityClosed = false;
@@ -309,10 +342,14 @@ export class DeferredRunHandle implements AgentRunHandle {
   resolve(value: AgentRunOutcome): void { this.closeActivity(); this.#resolve(value); }
   reject(error: unknown): void { this.closeActivity(); this.#reject(error); }
 
-  interrupt(reason: string): Promise<void> {
+  async interrupt(reason: string): Promise<void> {
     this.interruptReasons.push(reason);
+    await this.interruptBarrier;
+    if (this.interruptFailures > 0) {
+      this.interruptFailures -= 1;
+      throw new Error(this.interruptFailureMessage);
+    }
     this.closeActivity();
-    return Promise.resolve();
   }
 
   #nextActivity(): Promise<IteratorResult<string>> {

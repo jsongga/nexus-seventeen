@@ -583,7 +583,13 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     };
     let termination: Promise<void> | null = null;
     const terminate = (): Promise<void> => {
-      termination ??= terminateGroup(groupId, this.#options.terminationGraceMs, this.#options.groupAbsenceTimeoutMs);
+      if (termination === null) {
+        const attempt = terminateGroup(groupId, this.#options.terminationGraceMs, this.#options.groupAbsenceTimeoutMs);
+        termination = attempt;
+        void attempt.catch(() => {
+          if (termination === attempt) termination = null;
+        });
+      }
       return termination;
     };
     const timeout = setTimeout(() => {
@@ -648,8 +654,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     return Object.freeze({
       completion,
       activity,
-      interrupt: async (reason: string): Promise<void> => {
-        assertCredentialSafe(reason, "Interrupt reason");
+      interrupt: async (_reason: string): Promise<void> => {
         failure ??= new AgentProcessError("Agent process was interrupted directly");
         await terminate();
       },
