@@ -51,7 +51,7 @@ export function taskStatus(status: WireTaskStatus, hasOpenQuestion: boolean): Ta
     completed: 'completed',
     failed: 'failed',
     interrupted: 'interrupted',
-    cancelled: 'interrupted',
+    cancelled: 'cancelled',
   };
   return statuses[status];
 }

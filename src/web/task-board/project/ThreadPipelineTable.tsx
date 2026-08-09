@@ -16,6 +16,7 @@ const pipelineStageByStatus: Record<TaskStatus, PipelineStage> = {
   failed: { label: 'Changes Requested', tone: 'red' },
   interrupted: { label: 'Changes Requested', tone: 'red' },
   completed: { label: 'Merged', tone: 'green' },
+  cancelled: { label: 'Changes Requested', tone: 'red' },
 };
 
 const updatedDateTime = new Intl.DateTimeFormat(undefined, {

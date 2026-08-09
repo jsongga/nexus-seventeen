@@ -65,6 +65,12 @@ const maximumAgentQueryConversationCharacters = 2_400;
 const maximumAgentQueryConversationTurns = 12;
 const maximumAgentQueryTurnCharacters = 480;
 
+function taskCommandVersion(value: unknown, path: string): number {
+  const version = integer(value, path);
+  if (version < 1) throw new Error(`${path} must be a positive safe integer`);
+  return version;
+}
+
 export const agentQueryConversationContextMarker = '\n\nRecent POC conversation (context only; newest request is above):\n';
 export const agentQueryRoutingContextMarker = '\n\nCompany routing map (use this only to identify the best project or agent):\n';
 
@@ -256,6 +262,8 @@ export interface TaskBoardClient {
     recentConversation?: AgentQueryConversationTurn[];
   }): Promise<void>;
   assignTask(taskId: string, input: { agentId: string; version: number }): Promise<void>;
+  retryTask(taskId: string, version: number): Promise<void>;
+  backlogTask(taskId: string, version: number): Promise<void>;
   reorderTask(taskId: string, input: { orderKey: number; version: number }): Promise<void>;
   returnTaskToBacklog(taskId: string, input: { version: number }): Promise<void>;
   addMessage(taskId: string, input: { body: string; version: number }): Promise<void>;
@@ -906,6 +914,18 @@ export function createTaskBoardClient(options: {
           status: 'queued',
         }),
       });
+    },
+    async retryTask(taskId, version) {
+      await post(
+        `/v1/tasks/${encodeURIComponent(taskId)}/retry`,
+        { version: taskCommandVersion(version, 'task retry.version') },
+      );
+    },
+    async backlogTask(taskId, version) {
+      await post(
+        `/v1/tasks/${encodeURIComponent(taskId)}/backlog`,
+        { version: taskCommandVersion(version, 'task backlog.version') },
+      );
     },
     async reorderTask(taskId, input) {
       if (!Number.isSafeInteger(input.orderKey) || input.orderKey < 0) {

@@ -418,7 +418,7 @@ describe('task-board protocol projection', () => {
     const terminalStatuses = [
       ['completed', 'completed'],
       ['failed', 'failed'],
-      ['cancelled', 'interrupted'],
+      ['cancelled', 'cancelled'],
     ] as const;
 
     for (const [rawStatus, projectedStatus] of terminalStatuses) {
@@ -1514,6 +1514,91 @@ describe('task-board HTTP client', () => {
       status: 'backlog',
     });
     expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
+  });
+
+  it('sends version-checked retry and backlog recovery commands to their dedicated endpoints', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push([String(url), init]);
+      return new Response(JSON.stringify({ task: { taskId: 'task-one' } }));
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.retryTask('task one', 4)).resolves.toBeUndefined();
+    await expect(client.backlogTask('task one', 5)).resolves.toBeUndefined();
+
+    expect(calls.map(([url, init]) => [url, init?.method, JSON.parse(String(init?.body))])).toEqual([
+      ['https://board.example.test/v1/tasks/task%20one/retry', 'POST', { version: 4 }],
+      ['https://board.example.test/v1/tasks/task%20one/backlog', 'POST', { version: 5 }],
+    ]);
+
+    await expect(client.retryTask('task-one', 0)).rejects.toThrow(/positive/iu);
+    await expect(client.backlogTask('task-one', Number.NaN)).rejects.toThrow(/integer/iu);
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([
+    ['retryTask', 'retry', 'TASK_TERMINAL', 'Completed tasks cannot be retried'],
+    ['backlogTask', 'backlog', 'TASK_WORKFLOW_BOUND', 'Workflow stage tasks cannot return to backlog'],
+    ['retryTask', 'retry', 'TASK_VERSION_CONFLICT', 'Task version changed'],
+  ] as const)('preserves %s 409 code %s', async (method, endpoint, code, message) => {
+    const request = vi.fn(async () => new Response(JSON.stringify({ error: { code, message } }), { status: 409 }));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client[method]('task-one', 2)).rejects.toEqual(expect.objectContaining({
+      name: 'BoardApiError',
+      status: 409,
+      code,
+      message,
+    } satisfies Partial<BoardApiError>));
+    expect(request).toHaveBeenCalledWith(`/v1/tasks/task-one/${endpoint}`, expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('uses the extended assignment PATCH to recover onto a different eligible agent', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const replacement = { ...agent, agentId: 'replacement-engineer', status: 'idle' };
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      calls.push([path, init]);
+      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith('/v1/projects/project-one/board')) {
+        return new Response(JSON.stringify({
+          ...boardSnapshot(),
+          agents: [agent, replacement],
+          tasks: [{
+            ...task,
+            status: 'failed',
+            assignedAgentId: agent.agentId,
+            assignedRole: 'engineer',
+            endedAt: '2026-07-19T10:30:00.000Z',
+            result: 'The first attempt failed.',
+            version: 3,
+          }],
+          openQuestions: [],
+        }));
+      }
+      if (path.includes('/messages?after=0')) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      return new Response('{}');
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await client.getSnapshot();
+    await client.assignTask(task.taskId, { agentId: replacement.agentId, version: 3 });
+
+    const assignment = calls.find(([url, init]) => url.endsWith(`/v1/tasks/${task.taskId}`) && init?.method === 'PATCH');
+    expect(JSON.parse(String(assignment?.[1]?.body))).toEqual({
+      version: 3,
+      assignedAgentId: replacement.agentId,
+      assignedRole: 'engineer',
+      status: 'queued',
+    });
   });
 
   it('exposes the durable task order key without coupling it to assignment', async () => {

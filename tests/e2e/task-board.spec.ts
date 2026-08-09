@@ -1738,6 +1738,130 @@ test('queued work can be reassigned or returned to backlog before claim without 
   expect(runCommands).toEqual([]);
 });
 
+test('a failed task offers retry, reassign, and an explained backlog rejection', async ({ page }) => {
+  const alternateAgent = {
+    ...agent,
+    agentId: 'recovery-engineer',
+    area: 'Invoice recovery',
+    mission: 'Keep failed invoice recovery clear and dependable.',
+  };
+  let currentTask = {
+    ...task,
+    status: 'failed',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    version: 4,
+    updatedAt: '2026-07-19T18:12:00.000Z',
+  };
+  let reassignTask = {
+    ...task,
+    taskId: 'task-reassign-me',
+    title: 'Restore webhook retries',
+    status: 'failed',
+    assignedAgentId: agent.agentId,
+    assignedRole: 'engineer',
+    version: 6,
+    updatedAt: '2026-07-19T18:12:00.000Z',
+  };
+  const retryPosts: Record<string, unknown>[] = [];
+  const backlogPosts: Record<string, unknown>[] = [];
+  const reassignPatches: Record<string, unknown>[] = [];
+  let backlogRejections = 0;
+
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/work-items') {
+      await route.fulfill({ json: { workItems: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({
+        json: {
+          ...board(),
+          agents: [
+            { ...agent, status: 'idle' },
+            { ...alternateAgent, status: 'idle' },
+          ],
+          tasks: [currentTask, reassignTask],
+          recentRuns: [],
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/messages')) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${reassignTask.taskId}` && request.method() === 'PATCH') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      reassignPatches.push(body);
+      reassignTask = {
+        ...reassignTask,
+        ...body,
+        version: reassignTask.version + 1,
+        updatedAt: '2026-07-19T18:14:00.000Z',
+      };
+      await route.fulfill({ json: { task: reassignTask } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${currentTask.taskId}/retry` && request.method() === 'POST') {
+      retryPosts.push(request.postDataJSON() as Record<string, unknown>);
+      currentTask = { ...currentTask, status: 'queued', version: currentTask.version + 1, updatedAt: '2026-07-19T18:13:00.000Z' };
+      await route.fulfill({ json: { task: currentTask } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${currentTask.taskId}/backlog` && request.method() === 'POST') {
+      backlogPosts.push(request.postDataJSON() as Record<string, unknown>);
+      backlogRejections += 1;
+      await route.fulfill({
+        status: 409,
+        json: { error: { code: 'TASK_WORKFLOW_BOUND', message: 'Workflow stage tasks cannot return to the backlog.' } },
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: /Improve invoice recovery failed/u }).click();
+  const recovery = page.getByRole('region', { name: 'Task recovery actions' });
+  await expect(recovery.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Reassign', exact: true })).toBeVisible();
+
+  await recovery.getByRole('button', { name: 'Return to backlog' }).click();
+  await expect.poll(() => backlogRejections).toBe(1);
+  expect(backlogPosts[0]).toEqual({ version: 4 });
+  await expect(page.getByText('Workflow stage tasks cannot return to backlog. Retry or reassign this task instead.')).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+
+  await recovery.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => retryPosts).toHaveLength(1);
+  expect(retryPosts[0]).toEqual({ version: 4 });
+  await expect(page.getByRole('region', { name: 'Task recovery actions' })).toHaveCount(0);
+  const belowXl = (page.viewportSize()?.width ?? 1_280) < 1_280;
+  if (belowXl) await page.getByRole('button', { name: 'Back to task list' }).click();
+  await expect(page.getByRole('button', { name: /Improve invoice recovery queued/u })).toBeVisible();
+
+  await page.getByRole('button', { name: /Restore webhook retries failed/u }).click();
+  const reassignRecovery = page.getByRole('region', { name: 'Task recovery actions' });
+  await reassignRecovery.getByLabel('Replacement agent').selectOption(alternateAgent.agentId);
+  await reassignRecovery.getByRole('button', { name: 'Reassign', exact: true }).click();
+  await expect.poll(() => reassignPatches).toHaveLength(1);
+  expect(reassignPatches[0]).toEqual({
+    version: 6,
+    assignedAgentId: alternateAgent.agentId,
+    assignedRole: 'engineer',
+    status: 'queued',
+  });
+  if (belowXl) await page.getByRole('button', { name: 'Back to task list' }).click();
+  await expect(page.getByRole('button', { name: /Restore webhook retries queued/u })).toBeVisible();
+});
+
 test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wake', async ({ page }, testInfo) => {
   const projectWithResources = {
     ...project,

@@ -38,6 +38,8 @@ import {
   WORK_ITEM_STATES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
+  isHardTerminalTaskStatus,
+  isRecoverableTaskStatus,
   type AgentStatus,
   type RunStatus,
   type TaskStatus,
@@ -56,6 +58,7 @@ export type WireWorkerConnection = WorkerConnection;
 // Renamed to the vocabulary the web app already uses.
 export type WakeReason = WakeupReason;
 export type { WorkflowStage };
+export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 
 export const apiVersion = TASK_BOARD_API_VERSION;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;

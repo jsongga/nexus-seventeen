@@ -24,7 +24,8 @@ export type TaskStatus =
   | 'blocked'
   | 'completed'
   | 'failed'
-  | 'interrupted';
+  | 'interrupted'
+  | 'cancelled';
 
 export type TaskPhaseStage = 'research' | 'planning' | 'execution' | 'testing' | 'review' | 'done';
 export type TaskPhaseStatus = 'pending' | 'in_progress' | 'blocked' | 'completed' | 'failed';

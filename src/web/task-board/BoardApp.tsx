@@ -34,6 +34,7 @@ import {
   workItemStateTone,
   workItemStatusLabel,
 } from './model/work-item-labels';
+import { recoveryAffordances } from './model/task-recovery';
 import type {
   BoardAgent,
   BoardQuestion,
@@ -65,6 +66,7 @@ const statusTone: Record<TaskStatus, 'neutral' | 'green' | 'amber' | 'red' | 'bl
   completed: 'green',
   failed: 'red',
   interrupted: 'red',
+  cancelled: 'neutral',
 };
 
 const workItemPriorityTone: Record<WorkItemPriority, 'neutral' | 'amber' | 'red' | 'blue' | 'purple'> = {
@@ -127,7 +129,8 @@ function taskIsTerminal(task: BoardTask): boolean {
   return task.endedAt !== null
     || task.status === 'completed'
     || task.status === 'failed'
-    || task.status === 'interrupted';
+    || task.status === 'interrupted'
+    || task.status === 'cancelled';
 }
 
 function StatusPill({ task }: { task: BoardTask }) {
@@ -343,6 +346,30 @@ function TaskPhases({ task }: { task: BoardTask }) {
   );
 }
 
+interface TaskDetailMutationResult {
+  saved: boolean;
+  error?: string;
+}
+
+function taskDetailMutationError(caught: unknown): string {
+  if (!(caught instanceof BoardApiError)) {
+    return caught instanceof Error ? caught.message : 'The change could not be saved.';
+  }
+  if (caught.code === 'TASK_TERMINAL') {
+    return 'This task is already completed or cancelled and cannot be recovered. Refresh to see its current state.';
+  }
+  if (caught.code === 'TASK_WORKFLOW_BOUND') {
+    return 'Workflow stage tasks cannot return to backlog. Retry or reassign this task instead.';
+  }
+  if (caught.code === 'TASK_UNASSIGNED') {
+    return 'This task has no assigned agent. Reassign it before retrying.';
+  }
+  if (caught.code === 'TASK_VERSION_CONFLICT' || caught.code === 'WORK_NODE_VERSION_CONFLICT') {
+    return 'This task changed in another session. Refresh before trying again.';
+  }
+  return caught.message;
+}
+
 function TaskDetail({
   task,
   agents,
@@ -351,8 +378,9 @@ function TaskDetail({
   busy,
   onAssign,
   onReturnToBacklog,
+  onRetry,
+  onRecoveryBacklog,
   onAnswer,
-  onResume,
   onInterrupt,
   onDecideHumanCheck,
 }: {
@@ -361,21 +389,39 @@ function TaskDetail({
   questions: BoardQuestion[];
   runs: BoardRun[];
   busy: boolean;
-  onAssign: (agentId: string) => Promise<void>;
-  onReturnToBacklog: () => Promise<void>;
-  onAnswer: (questionId: string, answer: string) => Promise<void>;
-  onResume: () => Promise<void>;
-  onInterrupt: (runId: string) => Promise<void>;
-  onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<boolean>;
+  onAssign: (agentId: string) => Promise<TaskDetailMutationResult>;
+  onReturnToBacklog: () => Promise<TaskDetailMutationResult>;
+  onRetry: () => Promise<TaskDetailMutationResult>;
+  onRecoveryBacklog: () => Promise<TaskDetailMutationResult>;
+  onAnswer: (questionId: string, answer: string) => Promise<TaskDetailMutationResult>;
+  onInterrupt: (runId: string) => Promise<TaskDetailMutationResult>;
+  onDecideHumanCheck: (status: 'completed' | 'failed', rationale: string) => Promise<TaskDetailMutationResult>;
 }) {
   const eligibleAgents = useMemo(
     () => task.requiredRole === null ? agents : agents.filter((agent) => agent.role === task.requiredRole),
     [agents, task.requiredRole],
   );
-  const defaultAgentId = task.assignedAgentId ?? eligibleAgents[0]?.id ?? '';
+  const recovery = useMemo(() => recoveryAffordances({
+    status: task.status,
+    assignedAgentId: task.assignedAgentId,
+    // The board snapshot does not expose stage-attempt linkage. The dedicated
+    // backlog endpoint remains authoritative and returns TASK_WORKFLOW_BOUND.
+    workflowBound: null,
+    eligibleAgentIds: eligibleAgents.map((agent) => agent.id),
+  }), [eligibleAgents, task.assignedAgentId, task.status]);
+  const recoveryAgents = useMemo(() => recovery === null
+    ? []
+    : recovery.reassign.eligibleAgentIds.flatMap((eligibleId) => {
+      const eligible = eligibleAgents.find((agent) => agent.id === eligibleId);
+      return eligible ? [eligible] : [];
+    }), [eligibleAgents, recovery]);
+  const defaultAgentId = recovery === null
+    ? task.assignedAgentId ?? eligibleAgents[0]?.id ?? ''
+    : recovery.reassign.eligibleAgentIds[0] ?? '';
   const [agentId, setAgentId] = useState(defaultAgentId);
   const [answer, setAnswer] = useState('');
   const [decisionRationale, setDecisionRationale] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
   const queuedUnclaimed = task.status === 'queued' && !activeRun;
@@ -385,10 +431,20 @@ function TaskDetail({
     setAgentId(defaultAgentId);
     setAnswer('');
     setDecisionRationale('');
+    setActionError(null);
   }, [defaultAgentId, task.id]);
 
+  async function runAction(operation: () => Promise<TaskDetailMutationResult>): Promise<boolean> {
+    setActionError(null);
+    const result = await operation();
+    if (result.saved) return true;
+    setActionError(result.error ?? 'The change could not be saved. Refresh and try again.');
+    return false;
+  }
+
   return (
-    <Card className="overflow-hidden">
+    <section aria-label={`Task details: ${task.title}`}>
+      <Card className="overflow-hidden">
       <header className="border-b border-line px-4 py-5 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -424,7 +480,7 @@ function TaskDetail({
             variant="primary"
             icon={<Send size={16} />}
             disabled={busy || answer.trim().length === 0}
-            onClick={() => void onAnswer(openQuestion.id, answer.trim()).then(() => setAnswer(''))}
+            onClick={() => void runAction(() => onAnswer(openQuestion.id, answer.trim())).then((saved) => { if (saved) setAnswer(''); })}
           >
             Answer and wake agent
           </Button>
@@ -447,7 +503,7 @@ function TaskDetail({
               variant="mint"
               icon={<CheckCircle2 size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void onDecideHumanCheck('completed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void runAction(() => onDecideHumanCheck('completed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
             >
               Approve
             </Button>
@@ -455,7 +511,7 @@ function TaskDetail({
               variant="danger"
               icon={<CircleAlert size={16} />}
               disabled={busy || decisionRationale.trim().length === 0}
-              onClick={() => void onDecideHumanCheck('failed', decisionRationale.trim()).then((saved) => { if (saved) setDecisionRationale(''); })}
+              onClick={() => void runAction(() => onDecideHumanCheck('failed', decisionRationale.trim())).then((saved) => { if (saved) setDecisionRationale(''); })}
             >
               Request changes
             </Button>
@@ -463,35 +519,78 @@ function TaskDetail({
         </section>
       ) : null}
 
-      {task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed' || queuedUnclaimed) && !openQuestion ? (
-        <section className="px-4 py-4 sm:px-5">
-          {task.status === 'blocked' || task.status === 'interrupted' || task.status === 'failed' ? (
-            <Button className="w-full" variant="mint" icon={<Activity size={16} />} disabled={busy || !task.assignedAgentId} onClick={() => void onResume()}>
-              Resume agent
+      {task.kind !== 'human_check' && recovery !== null && !openQuestion ? (
+        <section className="space-y-3 px-4 py-4 sm:px-5" aria-label="Task recovery actions">
+          <div>
+            <h3 className="text-xs font-semibold text-ink">Recover task</h3>
+            <p className="mt-1 text-xs leading-5 text-muted">Retry the same assignment, choose another eligible agent, or return standalone work to the backlog.</p>
+          </div>
+          {recovery.retry ? (
+            <Button className="w-full" variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => void runAction(onRetry)}>
+              Retry
             </Button>
-          ) : (
+          ) : null}
+          <div>
+            <FieldLabel htmlFor={`recovery-agent-${task.id}`}>Replacement agent</FieldLabel>
+            <select
+              id={`recovery-agent-${task.id}`}
+              className={inputClass}
+              value={agentId}
+              disabled={busy || recoveryAgents.length === 0}
+              aria-describedby={busy || recovery.reassign.disabledReason ? `recovery-help-${task.id}` : undefined}
+              onChange={(event) => setAgentId(event.target.value)}
+            >
+              {recoveryAgents.length === 0 ? <option value="">No eligible agents</option> : null}
+              {recoveryAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
+            </select>
+          </div>
+          <Button
+            className="w-full"
+            variant={recovery.reassign.primary ? 'primary' : 'secondary'}
+            icon={<UserRoundCheck size={16} />}
+            disabled={busy || recovery.reassign.disabledReason !== null || agentId.length === 0}
+            aria-describedby={busy || recovery.reassign.disabledReason ? `recovery-help-${task.id}` : undefined}
+            onClick={() => void runAction(() => onAssign(agentId))}
+          >
+            Reassign
+          </Button>
+          {recovery.backlog ? (
+            <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(onRecoveryBacklog)}>
+              Return to backlog
+            </Button>
+          ) : null}
+          {busy || recovery.reassign.disabledReason ? (
+            <p id={`recovery-help-${task.id}`} className="text-xs leading-5 text-muted">
+              {busy ? 'Recovery actions are temporarily unavailable while a board change is in progress.' : recovery.reassign.disabledReason}
+            </p>
+          ) : null}
+        </section>
+      ) : task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || queuedUnclaimed) && !openQuestion ? (
+        <section className="px-4 py-4 sm:px-5">
             <div className="space-y-3">
               {eligibleAgents.length > 0 ? (
                 <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                   {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} — {agent.area}</option>)}
                 </select>
               ) : <p className="text-sm text-muted">No {task.requiredRole ?? 'eligible'} agent is available.</p>}
-              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void onAssign(agentId)}>
+              <Button className="w-full" variant="primary" icon={<UserRoundCheck size={16} />} disabled={busy || agentId.length === 0 || (queuedUnclaimed && !assigneeChanged)} onClick={() => void runAction(() => onAssign(agentId))}>
                 {queuedUnclaimed ? task.kind === 'manager_review' ? 'Reassign manager and wake' : 'Reassign and wake agent' : task.kind === 'manager_review' ? 'Assign manager and wake' : 'Assign and wake agent'}
               </Button>
-              {queuedUnclaimed ? <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void onReturnToBacklog()}>Return to backlog</Button> : null}
+              {queuedUnclaimed ? <Button className="w-full" icon={<ArrowLeft size={16} />} disabled={busy} onClick={() => void runAction(onReturnToBacklog)}>Return to backlog</Button> : null}
             </div>
-          )}
         </section>
       ) : null}
+
+      {actionError ? <div className="border-t border-line px-4 py-4 sm:px-5"><FormError>{actionError}</FormError></div> : null}
 
       {task.kind !== 'human_check' && activeRun ? (
         <section className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
           <span className="text-sm text-muted">Agent is working on this task.</span>
-          <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void onInterrupt(activeRun.id)}>Interrupt</Button>
+          <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void runAction(() => onInterrupt(activeRun.id))}>Interrupt</Button>
         </section>
       ) : null}
-    </Card>
+      </Card>
+    </section>
   );
 }
 
@@ -752,6 +851,27 @@ export function BoardApp() {
     }
   }, [connected, refresh]);
 
+  const mutateTaskDetail = useCallback(async (operation: () => Promise<unknown>): Promise<TaskDetailMutationResult> => {
+    if (!connected) return { saved: false, error: 'The board service is not reachable. Reconnect before changing this task.' };
+    setBusy(true);
+    try {
+      await operation();
+      await refresh(true);
+      return { saved: true };
+    } catch (caught) {
+      if (caught instanceof BoardApiError && (
+        caught.code === 'TASK_TERMINAL'
+        || caught.code === 'TASK_VERSION_CONFLICT'
+        || caught.code === 'WORK_NODE_VERSION_CONFLICT'
+      )) {
+        await refresh(true);
+      }
+      return { saved: false, error: taskDetailMutationError(caught) };
+    } finally {
+      setBusy(false);
+    }
+  }, [connected, refresh]);
+
   const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id)), [snapshot]);
   const allWorkItems = snapshot?.workItems ?? [];
   const selectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
@@ -913,7 +1033,7 @@ export function BoardApp() {
                   if (result.saved) closeWorkItem();
                   return result;
                 }}
-              /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={async (agentId) => { await mutate(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version })); }} onReturnToBacklog={async () => { await mutate(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version })); }} onAnswer={async (questionId, answer) => { await mutate(() => client.answerQuestion(questionId, { answer })); }} onResume={async () => { await mutate(() => client.resumeTask(selectedTask.id, { version: selectedTask.version })); }} onInterrupt={async (runId) => { await mutate(() => client.interruptRun(runId)); }} onDecideHumanCheck={async (status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutate(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
+              /> : selectedTask && taskDetailOpen ? <TaskDetail key={selectedTask.id} task={selectedTask} agents={selectedTaskAgents} questions={taskQuestions} runs={taskRuns} busy={busy || !connected} onAssign={(agentId) => mutateTaskDetail(() => client.assignTask(selectedTask.id, { agentId, version: selectedTask.version }))} onReturnToBacklog={() => mutateTaskDetail(() => client.returnTaskToBacklog(selectedTask.id, { version: selectedTask.version }))} onRetry={() => mutateTaskDetail(() => client.retryTask(selectedTask.id, selectedTask.version))} onRecoveryBacklog={() => mutateTaskDetail(() => client.backlogTask(selectedTask.id, selectedTask.version))} onAnswer={(questionId, answer) => mutateTaskDetail(() => client.answerQuestion(questionId, { answer }))} onInterrupt={(runId) => mutateTaskDetail(() => client.interruptRun(runId))} onDecideHumanCheck={(status, rationale) => { const result = status === 'completed' ? `Approved for an external human-controlled release step.\n\nRationale: ${rationale}` : `Changes requested by human.\n\nRationale: ${rationale}`; return mutateTaskDetail(() => client.decideHumanCheck(selectedTask.id, { version: selectedTask.version, status, result })); }} /> : <Card><EmptyState icon={<CirclePause size={19} />} title="Nothing selected" body="Choose a task to see its description, status, and phases." /></Card>}
             </div>
           </div>
         </main>
