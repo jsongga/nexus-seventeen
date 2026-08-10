@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { taskPhasesByOrder, taskRunsByCreatedAt } from './BoardApp';
+import { taskPhasesByOrder, taskRunsByCreatedAt } from './views/TaskDetail';
 import type { BoardRun, BoardTaskPhase } from './types';
 
 describe('board timestamp ordering', () => {

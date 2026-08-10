@@ -58,6 +58,9 @@ import {
 } from '../model/project';
 import { taskMessagePageSize, workItemPageSize } from './wire';
 import { SseFrameParser, type SseEvent } from './sse';
+import { mapWithConcurrency } from './concurrency';
+import { stableDocumentClientId } from './storage-lease';
+import { randomUuid } from './uuid';
 
 const maximumAgentQueryObjectiveCharacters = 8_000;
 const maximumAgentQueryConversationCharacters = 2_400;
@@ -306,19 +309,6 @@ async function errorDetails(response: Response): Promise<{ message: string; code
   }
 }
 
-export function randomUuid(): string {
-  const source = globalThis.crypto;
-  if (typeof source?.randomUUID === 'function') return source.randomUUID();
-  if (typeof source?.getRandomValues !== 'function') {
-    throw new Error('This browser cannot generate secure random identifiers');
-  }
-  const bytes = source.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
-}
-
 function clientEventId(): string {
   return `ui-${randomUuid()}`;
 }
@@ -338,111 +328,6 @@ function safeBaseUrl(value: string): string {
   }
   if (parsed.search || parsed.hash) throw new Error('Task board URL cannot include a query or fragment');
   return trimmed;
-}
-
-const documentClientStorageKey = 'cicada.documentClientId';
-const documentClientOwnerStoragePrefix = 'cicada.documentClientOwner.';
-const documentClientRuntimeNonce = `document-runtime-${randomUuid()}`;
-let runtimeDocumentClientId: string | null = null;
-let runtimeDocumentClientOwnerKey: string | null = null;
-let documentClientCleanupRegistered = false;
-
-function newDocumentClientId(): string {
-  return `document-ui-${randomUuid()}`;
-}
-
-function documentClientOwnerKey(clientId: string): string {
-  return `${documentClientOwnerStoragePrefix}${clientId}`;
-}
-
-function registerDocumentClientCleanup(): void {
-  if (documentClientCleanupRegistered || typeof globalThis.addEventListener !== 'function') return;
-  documentClientCleanupRegistered = true;
-  globalThis.addEventListener('pagehide', (event) => {
-    if ('persisted' in event && event.persisted === true) return;
-    const ownerKey = runtimeDocumentClientOwnerKey;
-    if (!ownerKey) return;
-    try {
-      if (globalThis.localStorage?.getItem(ownerKey) === documentClientRuntimeNonce) {
-        globalThis.localStorage.removeItem(ownerKey);
-      }
-    } catch {
-      // A storage policy change must not make page navigation fail.
-    }
-  });
-}
-
-function claimDocumentClientId(clientId: string, storage: Storage): boolean {
-  const ownerKey = documentClientOwnerKey(clientId);
-  const currentOwner = storage.getItem(ownerKey);
-  if (currentOwner && currentOwner !== documentClientRuntimeNonce) return false;
-  storage.setItem(ownerKey, documentClientRuntimeNonce);
-  if (storage.getItem(ownerKey) !== documentClientRuntimeNonce) return false;
-  runtimeDocumentClientOwnerKey = ownerKey;
-  registerDocumentClientCleanup();
-  return true;
-}
-
-function stableDocumentClientId(configured?: string): string {
-  const supplied = configured?.trim();
-  if (supplied) return supplied;
-  if (runtimeDocumentClientId) return runtimeDocumentClientId;
-
-  let session: Storage | undefined;
-  try {
-    session = globalThis.sessionStorage;
-    const local = globalThis.localStorage;
-    if (!session || !local) throw new Error('Browser storage is unavailable');
-
-    const stored = session.getItem(documentClientStorageKey)?.trim();
-    let selected: string | null = null;
-    if (stored && claimDocumentClientId(stored, local)) {
-      selected = stored;
-    } else {
-      for (let attempt = 0; attempt < 3 && !selected; attempt += 1) {
-        const candidate = newDocumentClientId();
-        if (claimDocumentClientId(candidate, local)) selected = candidate;
-      }
-    }
-    if (!selected) throw new Error('Document client ownership could not be claimed');
-    session.setItem(documentClientStorageKey, selected);
-    runtimeDocumentClientId = selected;
-  } catch {
-    // Without a shared ownership claim, reusing copied session storage is unsafe.
-    const claimedOwnerKey = runtimeDocumentClientOwnerKey;
-    try {
-      if (claimedOwnerKey && globalThis.localStorage?.getItem(claimedOwnerKey) === documentClientRuntimeNonce) {
-        globalThis.localStorage.removeItem(claimedOwnerKey);
-      }
-    } catch {
-      // Storage is already known to be unreliable; continue with runtime state.
-    }
-    runtimeDocumentClientOwnerKey = null;
-    runtimeDocumentClientId = newDocumentClientId();
-    try {
-      session?.setItem(documentClientStorageKey, runtimeDocumentClientId);
-    } catch {
-      // The runtime-scoped value still keeps repeated client creation stable.
-    }
-  }
-  return runtimeDocumentClientId;
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let nextIndex = 0;
-  async function worker(): Promise<void> {
-    while (nextIndex < values.length) {
-      const index = nextIndex++;
-      result[index] = await operation(values[index]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
-  return result;
 }
 
 const maximumDocumentEventBytes = 2 * 1024 * 1024;

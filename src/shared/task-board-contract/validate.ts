@@ -376,23 +376,25 @@ function nullableString(value: unknown, label: string): string | null {
   return value === null ? null : stringValue(value, label);
 }
 
-function expectedMinutes(
-  value: unknown,
-  label: string,
-  webMessage = false,
-  scalarMessages?: ScalarMessageProfile,
-): number | null {
-  if (value === null || (webMessage && value === undefined)) return null;
-  if (scalarMessages !== undefined && (!Number.isSafeInteger(value) || Number(value) < 15)) {
-    throw new ContractValidationError(scalarMessages.integerAtLeast(label, 15));
+interface ExpectedMinutesOptions {
+  readonly nullable?: boolean;
+  readonly undefinedIsNull?: boolean;
+  readonly maximum?: number;
+  readonly message: (label: string) => string;
+  readonly code?: string;
+  readonly scalarMessages?: ScalarMessageProfile;
+}
+
+function expectedMinutes(value: unknown, label: string, options: ExpectedMinutesOptions): number | null {
+  if ((options.nullable && value === null) || (options.undefinedIsNull && value === undefined)) return null;
+  if (options.scalarMessages !== undefined && (!Number.isSafeInteger(value) || Number(value) < 15)) {
+    throw new ContractValidationError(options.scalarMessages.integerAtLeast(label, 15), options.code);
   }
   if (
     !Number.isSafeInteger(value) || Number(value) < 15 || Number(value) % 15 !== 0 ||
-    (!webMessage && Number(value) > 10_080)
+    (options.maximum !== undefined && Number(value) > options.maximum)
   ) {
-    throw new ContractValidationError(webMessage
-      ? `${label} must use a 15-minute interval`
-      : `${label} must be a 15-minute interval between 15 and 10080`);
+    throw new ContractValidationError(options.message(label), options.code);
   }
   return Number(value);
 }
@@ -604,12 +606,15 @@ export function parseTaskEntity(value: unknown, label: string, options: ShapePar
     status,
     assignedAgentId,
     assignedRole,
-    expectedAgentMinutes: expectedMinutes(
-      item.expectedAgentMinutes,
-      `${label}.expectedAgentMinutes`,
-      options.projection === "browser",
-      options.scalarMessages,
-    ),
+    expectedAgentMinutes: expectedMinutes(item.expectedAgentMinutes, `${label}.expectedAgentMinutes`, {
+      nullable: true,
+      undefinedIsNull: options.projection === "browser",
+      maximum: options.projection === "browser" ? undefined : 10_080,
+      message: (field) => options.projection === "browser"
+        ? `${field} must use a 15-minute interval`
+        : `${field} must be a 15-minute interval between 15 and 10080`,
+      scalarMessages: options.scalarMessages,
+    }),
     estimateRecordedAt: nullableTimestamp(item.estimateRecordedAt ?? null, `${label}.estimateRecordedAt`, options),
     orderKey: integer(item.orderKey, `${label}.orderKey`),
     phases: Object.freeze(phases),
@@ -1343,10 +1348,6 @@ function workerPositive(value: unknown, label: string): number {
   return integer(value, label, 1, `${label} is invalid`);
 }
 
-function workerExpectedMinutes(value: unknown, label: string): number | null {
-  return expectedMinutes(value, label);
-}
-
 function workerNullableTimestamp(value: unknown, label: string): string | null {
   return value === null ? null : workerTimestamp(value, label);
 }
@@ -1632,7 +1633,10 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       requiredRole: task.requiredRole === null ? null : contractMember(task.requiredRole, AGENT_ROLES, "task.requiredRole") as AgentRole,
       title: workerProse(task.title, "task.title", 512), objective: workerProse(task.objective, "task.objective", 8_000),
       acceptanceCriteria: workerProse(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000), version: workerPositive(task.version, "task.version"),
-      expectedAgentMinutes: workerExpectedMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes"), phases: Object.freeze(phases),
+      expectedAgentMinutes: expectedMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes", {
+        nullable: true, maximum: 10_080,
+        message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+      }), phases: Object.freeze(phases),
     }),
     areaMemory: Object.freeze(areaMemory), parentEvidence, messagesSinceCursor: since, nextMessageCursor: next,
     messages: Object.freeze(messages), triggerQuestion, openQuestions: Object.freeze(openQuestions),
@@ -1665,53 +1669,170 @@ export function parseWorkerAgentRunOutput(value: unknown): ValidatedAgentRunOutp
   throw new ContractValidationError("Agent output type is invalid");
 }
 
-function workerStringList(value: unknown, label: string, maximum = 32, minimum = 0): readonly string[] {
-  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) throw new ContractValidationError(`${label} is invalid`);
-  return Object.freeze(value.map((entry, index) => workerProse(entry, `${label}[${index}]`, 2_000)));
+interface DraftMessageMap {
+  readonly handoffLabel: string;
+  readonly handoffObjectInvalid?: string;
+  readonly handoffCriteriaInvalid: string;
+  readonly handoffCriterionLabel: (index: number) => string;
+  readonly handoffCriterionResultInvalid: (index: number) => string;
+  readonly criterionLabel: string;
+  readonly criterionEvidenceLabel: string;
+  readonly handoffOutcomeLabel: string;
+  readonly handoffReturnStageLabel: string;
+  readonly workflowPlanLabel: string;
+  readonly workflowNodesInvalid: string;
+  readonly workflowNodeLabel: (index: number) => string;
+  readonly workflowNodeStagesInvalid: (index: number) => string;
+  readonly workflowNodeStageLabel: (index: number, stageIndex: number) => string;
+  readonly workflowNodeStageOrderInvalid: (index: number) => string;
 }
 
-function parseWorkerHandoffDraft(value: unknown): StageHandoffDraft {
-  const item = exact(value, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], "Stage handoff");
+interface DraftParserPolicy {
+  readonly exactMessages: ExactMessageMap;
+  readonly textKind: "prose" | "text";
+  readonly stageListKind: "members" | "strings";
+  readonly messages: DraftMessageMap;
+}
+
+const WORKER_DRAFT_POLICY: DraftParserPolicy = Object.freeze({
+  exactMessages: GENERIC_EXACT_MESSAGES,
+  textKind: "prose",
+  stageListKind: "members",
+  messages: Object.freeze({
+    handoffLabel: "Stage handoff",
+    handoffCriteriaInvalid: "Stage handoff criteria are invalid",
+    handoffCriterionLabel: (index: number) => `Stage handoff criterion ${index}`,
+    handoffCriterionResultInvalid: (index: number) => `Stage handoff criterion ${index} result is invalid`,
+    criterionLabel: "criterion",
+    criterionEvidenceLabel: "criterion evidence",
+    handoffOutcomeLabel: "Stage handoff outcome",
+    handoffReturnStageLabel: "Stage handoff return stage",
+    workflowPlanLabel: "Workflow plan",
+    workflowNodesInvalid: "Workflow plan nodes are invalid",
+    workflowNodeLabel: (index: number) => `Workflow plan node ${index}`,
+    workflowNodeStagesInvalid: (index: number) => `Workflow plan node ${index} stages are invalid`,
+    workflowNodeStageLabel: (index: number, stageIndex: number) => `Workflow plan node ${index} stage ${stageIndex}`,
+    workflowNodeStageOrderInvalid: (index: number) => `Workflow plan node ${index} stage order is invalid`,
+  }),
+});
+
+const BOARD_DRAFT_POLICY: DraftParserPolicy = Object.freeze({
+  exactMessages: GENERIC_EXACT_MESSAGES,
+  textKind: "text",
+  stageListKind: "strings",
+  messages: Object.freeze({
+    handoffLabel: "handoff",
+    handoffObjectInvalid: "handoff is invalid",
+    handoffCriteriaInvalid: "handoff criteria are invalid",
+    handoffCriterionLabel: (index: number) => `handoff criterion ${index}`,
+    handoffCriterionResultInvalid: () => "handoff criterion result is invalid",
+    criterionLabel: "criterion",
+    criterionEvidenceLabel: "evidence",
+    handoffOutcomeLabel: "handoff outcome",
+    handoffReturnStageLabel: "handoff return stage",
+    workflowPlanLabel: "workflowPlan",
+    workflowNodesInvalid: "workflowPlan.nodes is invalid",
+    workflowNodeLabel: (index: number) => `workflowPlan.nodes[${index}]`,
+    workflowNodeStagesInvalid: (index: number) => `workflowPlan.nodes[${index}].stageTemplate is invalid`,
+    workflowNodeStageLabel: (index: number, stageIndex: number) => `workflowPlan.nodes[${index}].stageTemplate[${stageIndex}]`,
+    workflowNodeStageOrderInvalid: (index: number) => `workflowPlan.nodes[${index}].stageTemplate is invalid`,
+  }),
+});
+
+function draftExact(value: unknown, fields: readonly string[], label: string, policy: DraftParserPolicy): JsonRecord {
+  return exact(value, fields, label, { messages: policy.exactMessages });
+}
+
+function draftText(value: unknown, label: string, maximum: number, policy: DraftParserPolicy): string {
+  return policy.textKind === "prose"
+    ? prose(value, label, { maximum, carriageReturns: "preserve" })
+    : text(value, label, { maximum, message: `${label} is invalid` });
+}
+
+function draftStringList(
+  value: unknown,
+  label: string,
+  policy: DraftParserPolicy,
+  maximum = 32,
+  minimum = 0,
+): readonly string[] {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  return Object.freeze(value.map((entry, index) => draftText(entry, `${label}[${index}]`, 2_000, policy)));
+}
+
+function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHandoffDraft {
+  const messages = policy.messages;
+  if (messages.handoffObjectInvalid !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) {
+    throw new ContractValidationError(messages.handoffObjectInvalid);
+  }
+  const item = draftExact(value, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], messages.handoffLabel, policy);
   if (!Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.length > 32) {
-    throw new ContractValidationError("Stage handoff criteria are invalid");
+    throw new ContractValidationError(messages.handoffCriteriaInvalid);
   }
   const criteria = item.acceptanceCriteria.map((entry, index) => {
-    const criterion = exact(entry, ["criterion", "passed", "evidence"], `Stage handoff criterion ${index}`);
-    if (typeof criterion.passed !== "boolean") throw new ContractValidationError(`Stage handoff criterion ${index} result is invalid`);
-    return Object.freeze({ criterion: workerProse(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: workerProse(criterion.evidence, "criterion evidence", 2_000) });
+    const criterion = draftExact(entry, ["criterion", "passed", "evidence"], messages.handoffCriterionLabel(index), policy);
+    if (typeof criterion.passed !== "boolean") throw new ContractValidationError(messages.handoffCriterionResultInvalid(index));
+    return Object.freeze({
+      criterion: draftText(criterion.criterion, messages.criterionLabel, 1_000, policy),
+      passed: criterion.passed,
+      evidence: draftText(criterion.evidence, messages.criterionEvidenceLabel, 2_000, policy),
+    });
   });
   return Object.freeze({
-    outcome: contractMember(item.outcome, STAGE_HANDOFF_OUTCOMES, "Stage handoff outcome"),
-    summary: workerProse(item.summary, "handoff.summary", 4_000), evidence: workerStringList(item.evidence, "handoff.evidence"),
-    artifactIds: workerStringList(item.artifactIds, "handoff.artifactIds"), acceptanceCriteria: Object.freeze(criteria),
-    blockers: workerStringList(item.blockers, "handoff.blockers"),
-    recommendedReturnStage: item.recommendedReturnStage === null ? null : contractMember(item.recommendedReturnStage, WORKFLOW_STAGES, "Stage handoff return stage"),
+    outcome: contractMember(item.outcome, STAGE_HANDOFF_OUTCOMES, messages.handoffOutcomeLabel),
+    summary: draftText(item.summary, "handoff.summary", 4_000, policy),
+    evidence: draftStringList(item.evidence, "handoff.evidence", policy),
+    artifactIds: draftStringList(item.artifactIds, "handoff.artifactIds", policy),
+    acceptanceCriteria: Object.freeze(criteria),
+    blockers: draftStringList(item.blockers, "handoff.blockers", policy),
+    recommendedReturnStage: item.recommendedReturnStage === null
+      ? null
+      : contractMember(item.recommendedReturnStage, WORKFLOW_STAGES, messages.handoffReturnStageLabel),
   });
 }
 
-function parseWorkerWorkflowPlan(value: unknown): WorkflowPlanDraft {
-  const item = exact(value, ["objective", "assumptions", "acceptanceCriteria", "nodes"], "Workflow plan");
-  if (!Array.isArray(item.nodes) || item.nodes.length < 1 || item.nodes.length > 64) throw new ContractValidationError("Workflow plan nodes are invalid");
+function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowPlanDraft {
+  const messages = policy.messages;
+  const item = draftExact(value, ["objective", "assumptions", "acceptanceCriteria", "nodes"], messages.workflowPlanLabel, policy);
+  if (!Array.isArray(item.nodes) || item.nodes.length < 1 || item.nodes.length > 64) {
+    throw new ContractValidationError(messages.workflowNodesInvalid);
+  }
   const nodes = item.nodes.map((entry, index) => {
-    const node = exact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], `Workflow plan node ${index}`);
-    if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) {
-      throw new ContractValidationError(`Workflow plan node ${index} stages are invalid`);
-    }
-    const stageTemplate = node.stageTemplate.map((stage, stageIndex) => contractMember(stage, WORKFLOW_STAGES, `Workflow plan node ${index} stage ${stageIndex}`));
-    if (new Set(stageTemplate).size !== stageTemplate.length || stageTemplate.at(-1) !== "verification") {
-      throw new ContractValidationError(`Workflow plan node ${index} stage order is invalid`);
+    const node = draftExact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], messages.workflowNodeLabel(index), policy);
+    let stageTemplate: readonly WorkflowStage[];
+    if (policy.stageListKind === "members") {
+      if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) {
+        throw new ContractValidationError(messages.workflowNodeStagesInvalid(index));
+      }
+      stageTemplate = node.stageTemplate.map((stage, stageIndex) =>
+        contractMember(stage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex)));
+      if (new Set(stageTemplate).size !== stageTemplate.length || stageTemplate.at(-1) !== "verification") {
+        throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
+      }
+    } else {
+      const stages = draftStringList(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, policy, 64, 1);
+      if (stages.length > 5 || new Set(stages).size !== stages.length || stages.at(-1) !== "verification" ||
+        stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))) {
+        throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
+      }
+      stageTemplate = stages as readonly WorkflowStage[];
     }
     return Object.freeze({
-      nodeId: identifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`), title: workerProse(node.title, `workflowPlan.nodes[${index}].title`, 512),
-      objective: workerProse(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000),
-      acceptanceCriteria: workerStringList(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, 64, 1),
-      dependencyNodeIds: workerStringList(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`, 64),
+      nodeId: identifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),
+      title: draftText(node.title, `workflowPlan.nodes[${index}].title`, 512, policy),
+      objective: draftText(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000, policy),
+      acceptanceCriteria: draftStringList(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, policy, 64, 1),
+      dependencyNodeIds: draftStringList(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`, policy, 64),
       stageTemplate: Object.freeze(stageTemplate),
     });
   });
   return Object.freeze({
-    objective: workerProse(item.objective, "workflowPlan.objective", 8_000), assumptions: workerStringList(item.assumptions, "workflowPlan.assumptions", 64),
-    acceptanceCriteria: workerStringList(item.acceptanceCriteria, "workflowPlan.acceptanceCriteria", 64, 1), nodes: Object.freeze(nodes),
+    objective: draftText(item.objective, "workflowPlan.objective", 8_000, policy),
+    assumptions: draftStringList(item.assumptions, "workflowPlan.assumptions", policy, 64),
+    acceptanceCriteria: draftStringList(item.acceptanceCriteria, "workflowPlan.acceptanceCriteria", policy, 64, 1),
+    nodes: Object.freeze(nodes),
   });
 }
 
@@ -1743,10 +1864,13 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
     throw new ContractValidationError("A human question must be the final output because it ends the run");
   }
   return Object.freeze({
-    status: item.status, outputs: Object.freeze(outputs), expectedAgentMinutes: workerExpectedMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes"),
+    status: item.status, outputs: Object.freeze(outputs), expectedAgentMinutes: expectedMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes", {
+      nullable: true, maximum: 10_080,
+      message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+    }),
     phases: Object.freeze(phases), detail: workerProse(item.detail, "outcome.detail", 2_000),
-    handoff: item.handoff === undefined || item.handoff === null ? null : parseWorkerHandoffDraft(item.handoff),
-    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkerWorkflowPlan(item.workflowPlan),
+    handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, WORKER_DRAFT_POLICY),
+    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
   });
 }
 
@@ -1788,17 +1912,6 @@ function boardNullableIdentifier(value: unknown, field: string): string | null {
 
 function boardNullableRole(value: unknown, field: string): AgentRole | null {
   return value === null ? null : boardRole(value, field);
-}
-
-function boardExpectedMinutes(value: unknown): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
-    boardFailure("expectedAgentMinutes must be a 15-minute interval between 15 and 10080", "INVALID_EXPECTED_AGENT_MINUTES");
-  }
-  return Number(value);
-}
-
-function boardNullableExpectedMinutes(value: unknown): number | null {
-  return value === null ? null : boardExpectedMinutes(value);
 }
 
 function boardRefs(value: unknown): readonly string[] {
@@ -1964,7 +2077,11 @@ export function parseBoardCreateTask(value: unknown): CreateTaskRequest {
   if ((assignedAgentId === null) !== (assignedRole === null)) {
     boardFailure("assignedAgentId and assignedRole must both be set or both be null", "INVALID_ASSIGNMENT");
   }
-  if ("expectedAgentMinutes" in item) boardExpectedMinutes(item.expectedAgentMinutes);
+  if ("expectedAgentMinutes" in item) expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
+    maximum: 10_080,
+    message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+    code: "INVALID_EXPECTED_AGENT_MINUTES",
+  });
   if ("requiresReview" in item && typeof item.requiresReview !== "boolean") boardFailure("requiresReview must be a boolean");
   return Object.freeze({ parentTaskId: boardNullableIdentifier(item.parentTaskId, "parentTaskId"), title: boardText(item.title, "title", 240),
     objective: boardText(item.objective, "objective", 8_000), acceptanceCriteria: boardText(item.acceptanceCriteria, "acceptanceCriteria", 8_000),
@@ -2037,7 +2154,11 @@ export function parseBoardUpdateTask(value: unknown): UpdateTaskRequest {
       boardFailure("Assignment fields must both be set or both be null", "INVALID_ASSIGNMENT");
     }
   }
-  if ("expectedAgentMinutes" in item) result.expectedAgentMinutes = boardNullableExpectedMinutes(item.expectedAgentMinutes);
+  if ("expectedAgentMinutes" in item) result.expectedAgentMinutes = expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
+    nullable: true, maximum: 10_080,
+    message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+    code: "INVALID_EXPECTED_AGENT_MINUTES",
+  });
   if ("orderKey" in item) result.orderKey = boardNonNegative(item.orderKey, "orderKey");
   if ("status" in item) result.status = contractMember(item.status, TASK_STATUSES, "status", "status is invalid");
   if ("result" in item) result.result = item.result === null ? null : boardText(item.result, "result", 16_000);
@@ -2117,54 +2238,13 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
   return Object.freeze({ claimId, messageCursors: Object.freeze(messageCursors) });
 }
 
-function boardStringList(value: unknown, field: string, maximum = 32, minimum = 0): readonly string[] {
-  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) boardFailure(`${field} is invalid`);
-  return Object.freeze(value.map((entry, index) => boardText(entry, `${field}[${index}]`, 2_000)));
-}
-
-function parseBoardHandoffDraft(value: unknown): StageHandoffDraft {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) boardFailure("handoff is invalid");
-  const raw = boardExact(value, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], "handoff");
-  if (!Array.isArray(raw.acceptanceCriteria) || raw.acceptanceCriteria.length > 32) boardFailure("handoff criteria are invalid");
-  const criteria = raw.acceptanceCriteria.map((entry, index) => {
-    const criterion = boardExact(entry, ["criterion", "passed", "evidence"], `handoff criterion ${index}`);
-    if (typeof criterion.passed !== "boolean") boardFailure("handoff criterion result is invalid");
-    return Object.freeze({ criterion: boardText(criterion.criterion, "criterion", 1_000), passed: criterion.passed, evidence: boardText(criterion.evidence, "evidence", 2_000) });
-  });
-  return Object.freeze({ outcome: contractMember(raw.outcome, STAGE_HANDOFF_OUTCOMES, "handoff outcome", "handoff outcome is invalid"),
-    summary: boardText(raw.summary, "handoff.summary", 4_000), evidence: boardStringList(raw.evidence, "handoff.evidence"),
-    artifactIds: boardStringList(raw.artifactIds, "handoff.artifactIds"), acceptanceCriteria: Object.freeze(criteria),
-    blockers: boardStringList(raw.blockers, "handoff.blockers"), recommendedReturnStage: raw.recommendedReturnStage === null ? null :
-      contractMember(raw.recommendedReturnStage, WORKFLOW_STAGES, "handoff return stage", "handoff return stage is invalid") });
-}
-
-function parseBoardWorkflowPlan(value: unknown): WorkflowPlanDraft {
-  const plan = boardExact(value, ["objective", "assumptions", "acceptanceCriteria", "nodes"], "workflowPlan");
-  if (!Array.isArray(plan.nodes) || plan.nodes.length < 1 || plan.nodes.length > 64) boardFailure("workflowPlan.nodes is invalid");
-  const nodes = plan.nodes.map((entry, index) => {
-    const node = boardExact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], `workflowPlan.nodes[${index}]`);
-    const stages = boardStringList(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, 64, 1);
-    if (stages.length > 5 || new Set(stages).size !== stages.length || stages.at(-1) !== "verification" ||
-      stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))) {
-      boardFailure(`workflowPlan.nodes[${index}].stageTemplate is invalid`);
-    }
-    return Object.freeze({ nodeId: parseBoardIdentifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),
-      title: boardText(node.title, `workflowPlan.nodes[${index}].title`, 512), objective: boardText(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000),
-      acceptanceCriteria: boardStringList(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, 64, 1),
-      dependencyNodeIds: boardStringList(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`, 64),
-      stageTemplate: Object.freeze(stages as WorkflowStage[]) });
-  });
-  return Object.freeze({ objective: boardText(plan.objective, "workflowPlan.objective", 8_000), assumptions: boardStringList(plan.assumptions, "workflowPlan.assumptions", 64),
-    acceptanceCriteria: boardStringList(plan.acceptanceCriteria, "workflowPlan.acceptanceCriteria", 64, 1), nodes: Object.freeze(nodes) });
-}
-
 export function parseBoardSettle(value: unknown): SettleRunRequest {
   const raw = record(value, "Run settlement");
   const item = boardExact(value, ["outcome", "result", ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : [])], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") boardFailure("Run outcome is invalid");
   return Object.freeze({ outcome: item.outcome, result: boardText(item.result, "result", 16_000),
-    handoff: item.handoff === undefined || item.handoff === null ? null : parseBoardHandoffDraft(item.handoff),
-    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseBoardWorkflowPlan(item.workflowPlan) });
+    handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, BOARD_DRAFT_POLICY),
+    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY) });
 }
 
 export function parseBoardIdempotencyKey(value: string | string[] | undefined): string {
