@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { recoveryAffordances } from './task-recovery';
+import {
+  explicitAgentPickerSelection,
+  initialAgentPickerSelection,
+  recoveryAffordances,
+  syncAgentPickerSelection,
+} from './task-recovery';
 
 const recoverableStatuses = ['failed', 'blocked', 'interrupted'] as const;
 
@@ -66,4 +71,43 @@ describe('task recovery affordances', () => {
       eligibleAgentIds: ['current-agent'],
     })?.backlog).toEqual({ primary: false });
   });
+});
+
+describe('task agent picker selection', () => {
+  it('tracks changing defaults until the operator makes an explicit selection', () => {
+    const initial = initialAgentPickerSelection('task-one', 'agent-one');
+
+    expect(syncAgentPickerSelection(initial, 'task-one', 'agent-two')).toEqual({
+      taskId: 'task-one',
+      agentId: 'agent-two',
+      explicit: false,
+    });
+  });
+
+  it('preserves an explicit selection across polls and clears it for another task', () => {
+    const selected = explicitAgentPickerSelection(
+      initialAgentPickerSelection('task-one', 'agent-one'),
+      'agent-three',
+    );
+
+    expect(syncAgentPickerSelection(selected, 'task-one', 'agent-two')).toBe(selected);
+    expect(syncAgentPickerSelection(selected, 'task-two', 'agent-four')).toEqual({
+      taskId: 'task-two',
+      agentId: 'agent-four',
+      explicit: false,
+    });
+  });
+});
+
+it('drops an explicit selection when the agent leaves the eligible set', () => {
+  const selected = explicitAgentPickerSelection(
+    initialAgentPickerSelection('task-one', 'agent-one'),
+    'agent-two',
+  );
+  expect(
+    syncAgentPickerSelection(selected, 'task-one', 'agent-one', ['agent-one', 'agent-three']),
+  ).toEqual({ taskId: 'task-one', agentId: 'agent-one', explicit: false });
+  expect(
+    syncAgentPickerSelection(selected, 'task-one', 'agent-one', ['agent-one', 'agent-two']),
+  ).toBe(selected);
 });

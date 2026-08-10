@@ -74,17 +74,26 @@ export function actionErrorReducer(
 export interface ErrorPipelineState {
   connectivityDown: boolean;
   actionErrors: ActionErrorState;
+  actionStatus: string | null;
 }
 
 export const initialErrorPipelineState: ErrorPipelineState = {
   connectivityDown: false,
   actionErrors: [],
+  actionStatus: null,
 };
+
+export const MUTATION_REFRESH_PENDING_NOTICE = 'Saved — the view is catching up';
+
+export function mutationActionStatus(refreshCommitted: boolean): string | null {
+  return refreshCommitted ? null : MUTATION_REFRESH_PENDING_NOTICE;
+}
 
 export type ErrorPipelineEvent =
   | { type: 'snapshot-succeeded' }
   | { type: 'snapshot-failed' }
   | { type: 'action-started'; context: string }
+  | { type: 'action-succeeded'; refreshCommitted: boolean }
   | { type: 'action-failed'; context: string; error: string }
   | { type: 'action-dismissed'; context: string };
 
@@ -93,10 +102,16 @@ export function errorPipelineReducer(
   event: ErrorPipelineEvent,
 ): ErrorPipelineState {
   if (event.type === 'snapshot-succeeded') {
-    return state.connectivityDown ? { ...state, connectivityDown: false } : state;
+    return state.connectivityDown || state.actionStatus !== null
+      ? { ...state, connectivityDown: false, actionStatus: null }
+      : state;
   }
   if (event.type === 'snapshot-failed') {
     return state.connectivityDown ? state : { ...state, connectivityDown: true };
+  }
+  if (event.type === 'action-succeeded') {
+    const actionStatus = mutationActionStatus(event.refreshCommitted);
+    return actionStatus === state.actionStatus ? state : { ...state, actionStatus };
   }
   const actionEvent: ActionErrorEvent = event.type === 'action-started'
     ? { type: 'started', context: event.context }

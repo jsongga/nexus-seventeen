@@ -39,8 +39,15 @@ import {
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { ProjectsCollaborator } from "./projects.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { Actor, TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+
+type SettlementEffects = Readonly<{
+  workflowWakeAgentId: string | null;
+  settledWorkflowNodes: readonly WorkNode[];
+}>;
+
+export const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
 
 export class RunsCollaborator {
   constructor(
@@ -119,23 +126,63 @@ export class RunsCollaborator {
     const active = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     const runId = active ? stringValue(active, "run_id") : null;
     const now = exactNow(this.runtime.config.now);
-    const interruptId = randomUUID();
+    let interrupt!: AgentInterrupt;
     this.runtime.store.transaction(() => {
-      this.runtime.store.db.prepare(`
-        INSERT INTO interrupts(
-          interrupt_id, project_id, agent_id, run_id, idempotency_key, request_hash, reason, requested_by, requested_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(interruptId, agent.projectId, agentId, runId, idempotencyKey, hash, request.reason, this.runtime.config.humanPrincipal, now);
-      this.runtime.insertEvent(agent.projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_interrupt_requested", {
-        interruptId,
-        agentId,
-        runId,
-        reason: request.reason,
-      }, now);
+      interrupt = this.insertInterruptInTransaction(agent.projectId, agentId, runId, idempotencyKey, hash, request.reason, now);
     });
-    const interrupt = interruptFromRow(this.runtime.store.db.prepare("SELECT * FROM interrupts WHERE interrupt_id = ?").get(interruptId)!);
     if (runId !== null) this.runtime.interruptEvents.emit(runId);
     return { interrupt, duplicate: false };
+  }
+
+  interruptActiveRunForTokenRotationInTransaction(agentId: string, version: number): void {
+    const agent = this.runtime.requireAgent(agentId);
+    const active = this.runtime.store.db.prepare(
+      "SELECT * FROM runs WHERE agent_id = ? AND status = 'active'",
+    ).get(agentId);
+    if (active === undefined) return;
+    const current = runFromRow(active);
+    const now = exactNow(this.runtime.config.now);
+    const idempotencyKey = `token-rotation:${version}`;
+    const reason = TOKEN_ROTATION_INTERRUPT_REASON;
+    const hash = sha256({ action: "token_rotation_interrupt", agentId, version, reason });
+    this.insertInterruptInTransaction(agent.projectId, agentId, current.runId, idempotencyKey, hash, reason, now);
+    const effects = this.settleActiveRunInTransaction(
+      current,
+      agentId,
+      { outcome: "interrupted", result: reason },
+      now,
+      { type: "human", id: this.runtime.config.humanPrincipal },
+    );
+    this.runtime.store.afterCommit(() => {
+      this.runtime.interruptEvents.emit(current.runId);
+      if (effects.workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(effects.workflowWakeAgentId);
+      this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
+      this.projects.reconcileWorkflowsBestEffort(current.projectId);
+    });
+  }
+
+  private insertInterruptInTransaction(
+    projectId: string,
+    agentId: string,
+    runId: string | null,
+    idempotencyKey: string,
+    hash: string,
+    reason: string,
+    now: string,
+  ): AgentInterrupt {
+    const interruptId = randomUUID();
+    this.runtime.store.db.prepare(`
+      INSERT INTO interrupts(
+        interrupt_id, project_id, agent_id, run_id, idempotency_key, request_hash, reason, requested_by, requested_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(interruptId, projectId, agentId, runId, idempotencyKey, hash, reason, this.runtime.config.humanPrincipal, now);
+    this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_interrupt_requested", {
+      interruptId,
+      agentId,
+      runId,
+      reason,
+    }, now);
+    return interruptFromRow(this.runtime.store.db.prepare("SELECT * FROM interrupts WHERE interrupt_id = ?").get(interruptId)!);
   }
 
   async waitForRunInterrupts(
@@ -352,132 +399,147 @@ export class RunsCollaborator {
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
     const now = exactNow(this.runtime.config.now);
-    let workflowWakeAgentId: string | null = null;
-    let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
-    this.runtime.store.transaction(() => {
-      const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
-        SELECT w.* FROM work_item_planning_tasks link
-        JOIN work_items w ON w.work_item_id=link.work_item_id
-        WHERE link.task_id=?
-      `).get(current.taskId);
-      let workflowProposal: CreatePlanRevisionRequest | null = null;
-      if (planning && request.outcome === "completed") {
-        if (request.workflowPlan === undefined || request.workflowPlan === null) {
-          throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
-        }
-        const workItemId = String(planning.work_item_id);
-        if (planning.ended_at !== null) {
-          this.runtime.insertEvent(
-            current.projectId,
-            current.taskId,
-            { type: "agent", id: agentId },
-            "work_item_plan_discarded",
-            { workItemId, runId, reason: "work_item_ended" },
-            now,
-          );
-        } else {
-          const existingPlan = this.runtime.store.db.prepare(
-            "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
-          ).get(workItemId);
-          if (!existingPlan) {
-            const configured = this.automation.getConfiguration();
-            const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
-            for (const stage of requiredStages) {
-              const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
-              const agentType = executor?.kind === "agent_type"
-                ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
-                : undefined;
-              if (agentType === undefined) {
-                throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
-              }
-            }
-            const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
-              requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
-            const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
-              agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
-            workflowProposal = {
-              workItemId,
-              projectId: String(planning.resolved_project_id),
-              objective: request.workflowPlan.objective,
-              assumptions: request.workflowPlan.assumptions,
-              acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
-              skillIds,
-              nodes: request.workflowPlan.nodes,
-            };
-          }
-        }
-      } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
-        throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
-      }
-      if (current.taskId !== null) {
-        settledWorkflowNodes = this.projects.settleAttemptInTransaction(
-          current.taskId,
-          request.outcome,
-          request.result,
-          request.handoff,
-        );
-      }
-      if (workflowProposal !== null) {
-        this.projects.proposeWorkflowForAgentInTransaction(workflowProposal, agentId);
-      }
-      const update = this.runtime.store.db.prepare(`
-        UPDATE runs SET status = ?, ended_at = ?, result = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
-      `).run(request.outcome, now, request.result, runId, agentId);
-      if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
-      if (current.taskId !== null) {
-        const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(current.taskId);
-        if (!taskRow) throw new Error("TASK_BOARD_DATABASE_CORRUPT:run_task");
-        const task = this.runtime.requireTask(current.taskId);
-        if (task.assignedAgentId === agentId && task.endedAt === null) {
-          const nextStatus: TaskStatus = request.outcome;
-          if (task.status !== nextStatus || request.outcome === "completed") {
-            const lifecycle = request.outcome === "completed"
-              ? this.runtime.store.db.prepare(`
-                  UPDATE tasks
-                  SET status = 'completed', ended_at = ?, result = ?, version = version + 1, updated_at = ?
-                  WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-                `).run(now, request.result, now, task.taskId, agentId, task.version)
-              : this.runtime.store.db.prepare(`
-                  UPDATE tasks
-                  SET status = ?, ended_at = ?, result = ?, version = version + 1, updated_at = ?
-                  WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-                `).run(request.outcome, now, request.result, now, task.taskId, agentId, task.version);
-            if (Number(lifecycle.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
-            this.runtime.insertEvent(task.projectId, task.taskId, { type: "agent", id: agentId }, "task_run_settled", {
-              kind: task.kind,
-              requiredRole: task.requiredRole,
-              runId,
-              outcome: request.outcome,
-              previousStatus: task.status,
-              status: nextStatus,
-              version: task.version + 1,
-            }, now);
-            if (request.outcome === "completed") {
-              this.runtime.reconcileTaskPhasesForTerminal(task, "completed", { type: "agent", id: agentId }, now);
-              workflowWakeAgentId = this.runtime.createReviewFollowup(task, now)?.wakeAgentId ?? null;
-            }
-            this.runtime.retirePendingWakeupsForTask(
-              task.taskId,
-              request.outcome === "completed" ? "task_terminal" : "task_recovery_required",
-              now,
-            );
-          }
-        }
-      }
-      if (planning && request.outcome !== "completed") {
-        this.runtime.store.db.prepare(
-          "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-        ).run(now, String(planning.work_item_id));
-      }
-      this.runtime.insertEvent(current.projectId, current.taskId, { type: "agent", id: agentId }, "agent_run_settled", {
-        runId,
-        outcome: request.outcome,
-      }, now);
-    });
-    if (workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(workflowWakeAgentId);
-    this.projects.activateWorkflowNodes(settledWorkflowNodes);
+    const effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
+      current,
+      agentId,
+      request,
+      now,
+      { type: "agent", id: agentId },
+    ));
+    if (effects.workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(effects.workflowWakeAgentId);
+    this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
     this.projects.reconcileWorkflowsBestEffort(current.projectId);
     return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
+  }
+
+  private settleActiveRunInTransaction(
+    current: AgentRun,
+    agentId: string,
+    request: SettleRunRequest,
+    now: string,
+    actor: Actor,
+  ): SettlementEffects {
+    let workflowWakeAgentId: string | null = null;
+    let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
+    const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+      SELECT w.* FROM work_item_planning_tasks link
+      JOIN work_items w ON w.work_item_id=link.work_item_id
+      WHERE link.task_id=?
+    `).get(current.taskId);
+    let workflowProposal: CreatePlanRevisionRequest | null = null;
+    if (planning && request.outcome === "completed") {
+      if (request.workflowPlan === undefined || request.workflowPlan === null) {
+        throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
+      }
+      const workItemId = String(planning.work_item_id);
+      if (planning.ended_at !== null) {
+        this.runtime.insertEvent(
+          current.projectId,
+          current.taskId,
+          actor,
+          "work_item_plan_discarded",
+          { workItemId, runId: current.runId, reason: "work_item_ended" },
+          now,
+        );
+      } else {
+        const existingPlan = this.runtime.store.db.prepare(
+          "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
+        ).get(workItemId);
+        if (!existingPlan) {
+          const configured = this.automation.getConfiguration();
+          const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
+          for (const stage of requiredStages) {
+            const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
+            const agentType = executor?.kind === "agent_type"
+              ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
+              : undefined;
+            if (agentType === undefined) {
+              throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
+            }
+          }
+          const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
+            requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
+          const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
+            agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
+          workflowProposal = {
+            workItemId,
+            projectId: String(planning.resolved_project_id),
+            objective: request.workflowPlan.objective,
+            assumptions: request.workflowPlan.assumptions,
+            acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
+            skillIds,
+            nodes: request.workflowPlan.nodes,
+          };
+        }
+      }
+    } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
+      throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
+    }
+    if (current.taskId !== null) {
+      settledWorkflowNodes = this.projects.settleAttemptInTransaction(
+        current.taskId,
+        request.outcome,
+        request.result,
+        request.handoff,
+      );
+    }
+    if (workflowProposal !== null) {
+      this.projects.proposeWorkflowForAgentInTransaction(workflowProposal, agentId);
+    }
+    const update = this.runtime.store.db.prepare(`
+      UPDATE runs SET status = ?, ended_at = ?, result = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
+    `).run(request.outcome, now, request.result, current.runId, agentId);
+    if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+    if (current.taskId !== null) {
+      const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(current.taskId);
+      if (!taskRow) throw new Error("TASK_BOARD_DATABASE_CORRUPT:run_task");
+      const task = this.runtime.requireTask(current.taskId);
+      if (task.assignedAgentId === agentId && task.endedAt === null) {
+        const nextStatus: TaskStatus = request.outcome;
+        if (task.status !== nextStatus || request.outcome === "completed") {
+          const lifecycle = request.outcome === "completed"
+            ? this.runtime.store.db.prepare(`
+                UPDATE tasks
+                SET status = 'completed', ended_at = ?, result = ?, version = version + 1, updated_at = ?
+                WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
+              `).run(now, request.result, now, task.taskId, agentId, task.version)
+            : this.runtime.store.db.prepare(`
+                UPDATE tasks
+                SET status = ?, ended_at = ?, result = ?, version = version + 1, updated_at = ?
+                WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
+              `).run(request.outcome, now, request.result, now, task.taskId, agentId, task.version);
+          if (Number(lifecycle.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
+          this.runtime.insertEvent(task.projectId, task.taskId, actor, "task_run_settled", {
+            kind: task.kind,
+            requiredRole: task.requiredRole,
+            runId: current.runId,
+            outcome: request.outcome,
+            previousStatus: task.status,
+            status: nextStatus,
+            version: task.version + 1,
+          }, now);
+          if (request.outcome === "completed") {
+            this.runtime.reconcileTaskPhasesForTerminal(task, "completed", actor, now);
+            workflowWakeAgentId = this.runtime.createReviewFollowup(task, now)?.wakeAgentId ?? null;
+          }
+          this.runtime.retirePendingWakeupsForTask(
+            task.taskId,
+            request.outcome === "completed" ? "task_terminal" : "task_recovery_required",
+            now,
+          );
+        }
+      }
+    }
+    if (planning && request.outcome !== "completed") {
+      this.runtime.store.db.prepare(
+        "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+      ).run(now, String(planning.work_item_id));
+    }
+    this.runtime.insertEvent(current.projectId, current.taskId, actor, "agent_run_settled", {
+      runId: current.runId,
+      outcome: request.outcome,
+    }, now);
+    return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes });
   }
 
   private claimResult(run: AgentRun, cursor: number): ClaimRunResult {

@@ -128,7 +128,8 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh('mutation');
+      const refreshCommitted = await refresh('mutation');
+      dispatchErrorPipeline({ type: 'action-succeeded', refreshCommitted });
       return { ok: true };
     } catch (caught) {
       const error = actionErrorMessage(caught);
@@ -144,7 +145,8 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh('mutation');
+      const refreshCommitted = await refresh('mutation');
+      dispatchErrorPipeline({ type: 'action-succeeded', refreshCommitted });
       return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError) {
@@ -166,7 +168,8 @@ export function BoardApp() {
     setBusy(true);
     try {
       await operation();
-      await refresh('mutation');
+      const refreshCommitted = await refresh('mutation');
+      dispatchErrorPipeline({ type: 'action-succeeded', refreshCommitted });
       return { ok: true };
     } catch (caught) {
       if (caught instanceof BoardApiError && (
@@ -458,6 +461,7 @@ export function BoardApp() {
   return (
     <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected}>
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
+      {errorPipeline.actionStatus ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><div role="status" aria-live="polite" className="rounded-md border border-success-fill/50 bg-success-soft px-4 py-3 text-sm text-success">{errorPipeline.actionStatus}</div></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <CreateDialogs

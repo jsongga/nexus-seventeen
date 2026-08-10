@@ -24,6 +24,42 @@ export interface RecoveryAffordances {
   backlog: Readonly<{ primary: false }> | null;
 }
 
+export interface AgentPickerSelection {
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly explicit: boolean;
+}
+
+export function initialAgentPickerSelection(taskId: string, defaultAgentId: string): AgentPickerSelection {
+  return { taskId, agentId: defaultAgentId, explicit: false };
+}
+
+export function explicitAgentPickerSelection(
+  current: AgentPickerSelection,
+  agentId: string,
+): AgentPickerSelection {
+  return { ...current, agentId, explicit: true };
+}
+
+export function syncAgentPickerSelection(
+  current: AgentPickerSelection,
+  taskId: string,
+  defaultAgentId: string,
+  eligibleAgentIds?: readonly string[],
+): AgentPickerSelection {
+  if (current.taskId !== taskId) return initialAgentPickerSelection(taskId, defaultAgentId);
+  if (current.explicit) {
+    // A poll can remove the explicitly chosen agent from the eligible set;
+    // keeping the stale id would post a doomed reassignment.
+    if (eligibleAgentIds !== undefined && !eligibleAgentIds.includes(current.agentId)) {
+      return initialAgentPickerSelection(taskId, defaultAgentId);
+    }
+    return current;
+  }
+  if (current.agentId === defaultAgentId) return current;
+  return { ...current, agentId: defaultAgentId };
+}
+
 function contractStatus(status: TaskStatus): WireTaskStatus | null {
   if (!rawTaskStatuses.has(status as WireTaskStatus)) return null;
   return status as WireTaskStatus;

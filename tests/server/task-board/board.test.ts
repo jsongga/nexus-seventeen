@@ -1890,7 +1890,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
         .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 18);
   } finally {
     direct.close();
   }
@@ -2353,47 +2353,34 @@ test("archive is terminal-only, idempotent, and excluded from default work-item 
   }
 });
 
-test("duplicate intake leaves a legacy null-resolved submitted item inert and cancellable", async () => {
+test("internal work-item creation rejects missing and automatic project targets", async () => {
   const fixture = await boardFixture();
   try {
-    const legacyRequest = workItemRequest({
-      originalRequest: "Preserve this legacy automatic intake until an operator cancels it.",
-      projectTarget: { mode: "auto" },
-    });
-    const idempotencyKey = "work-item-legacy-auto-inert-0001";
-    const created = fixture.board.createWorkItem(legacyRequest, idempotencyKey).workItem;
-    const before = fixture.board.requireWorkItem(created.workItemId);
-
-    const replay = postWorkItem(fixture.board, legacyRequest, idempotencyKey);
-
-    assert.equal(replay.duplicate, true);
-    assert.deepEqual(replay.workItem, before);
-    assert.equal(replay.workItem.state, "submitted");
-    assert.equal(replay.workItem.currentStage, "refinement");
-    assert.equal(replay.workItem.resolvedProjectId, null);
-    assert.equal(replay.workItem.endedAt, null);
-    assert.ok(fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId));
-
-    const reason = "This unresolved request is no longer needed.";
-    const cancelled = fixture.board.updateWorkItem(created.workItemId, {
-      version: created.version,
-      action: "cancel",
-      reason,
-    });
-    assert.equal(cancelled.cancelledReason, reason);
+    const invalid = [
+      { originalRequest: "A target was omitted." },
+      { originalRequest: "Automatic targeting is no longer supported.", projectTarget: { mode: "auto" as const } },
+    ];
+    for (const [index, request] of invalid.entries()) {
+      assert.throws(
+        () => fixture.board.createWorkItem(request, `work-item-invalid-target-${index}`),
+        (error: unknown) => error instanceof TaskBoardError
+          && error.status === 400
+          && error.code === "PROJECT_REQUIRED"
+          && error.message === "Choose a project",
+      );
+      assert.throws(
+        () => fixture.board.createWorkItemAndStartPlanning(request, `work-item-invalid-planning-target-${index}`),
+        (error: unknown) => error instanceof TaskBoardError
+          && error.status === 400
+          && error.code === "PROJECT_REQUIRED"
+          && error.message === "Choose a project",
+      );
+    }
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(
-        "SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?",
-      ).get(created.workItemId)?.count, 0);
-      assert.equal(inspected.prepare(
-        "SELECT COUNT(*) AS count FROM tasks WHERE objective=?",
-      ).get(legacyRequest.originalRequest)?.count, 0);
-      assert.equal(inspected.prepare(
-        "SELECT cancelled_reason FROM work_items WHERE work_item_id=?",
-      ).get(created.workItemId)?.cancelled_reason, reason);
+      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 0);
     } finally {
       inspected.close();
     }
@@ -3112,7 +3099,10 @@ test("work-item CAS readback stays bound to its mutation while another connectio
   const competingBoard = await TaskBoard.open(config(path));
   try {
     const created = fixture.board.createWorkItem(
-      { originalRequest: "Keep a successful work-item PATCH response transaction-bound." },
+      {
+        originalRequest: "Keep a successful work-item PATCH response transaction-bound.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
       "work-item-transaction-bound-0001",
     ).workItem;
     const { DatabaseSync } = await import("node:sqlite");
@@ -3636,6 +3626,44 @@ test("rotating an agent token invalidates the old credential and fences stale ve
   }
 });
 
+test("rotating a token interrupts the active run atomically and leaves its task recoverable by the new lane", async () => {
+  const fixture = await boardFixture();
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Recover work after credential rotation",
+      requiresReview: false,
+    }));
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-active-during-token-rotation-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
+
+    const committed = fixture.board.snapshot(fixture.project.projectId);
+    const interruptedRun = committed.recentRuns.find((run) => run.runId === claim.run.runId);
+    const interruptedTask = committed.tasks.find((candidate) => candidate.taskId === task.taskId);
+    const implicitInterrupt = committed.recentInterrupts.find((interrupt) => interrupt.runId === claim.run.runId);
+    assert.equal(interruptedRun?.status, "interrupted");
+    assert.match(interruptedRun?.result ?? "", /token rotated/iu);
+    assert.equal(interruptedTask?.status, "interrupted");
+    assert.match(interruptedTask?.result ?? "", /token rotated/iu);
+    assert.match(implicitInterrupt?.reason ?? "", /token rotated/iu);
+
+    assert.ok(interruptedTask);
+    fixture.board.retryTask(task.taskId, { version: interruptedTask.version });
+    const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
+    const replacement = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-new-token-after-active-rotation-0001",
+      messageCursor: null,
+    }, authenticated.version);
+    assert.equal(replacement?.task?.taskId, task.taskId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("rotation fences a held claim before it can consume a newly queued wakeup", async () => {
   const fixture = await boardFixture();
   try {
@@ -3699,11 +3727,6 @@ test("rotation fences a held interrupt watch before it returns newly requested i
     );
 
     const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
-    fixture.board.interruptAgent(
-      fixture.engineer.agentId,
-      { reason: "Stop the worker whose credential was rotated." },
-      "interrupt-held-across-rotation-0001",
-    );
 
     await assert.rejects(
       waiting,
@@ -3718,7 +3741,7 @@ test("rotation fences a held interrupt watch before it returns newly requested i
       new AbortController().signal,
       authenticated.version,
     );
-    assert.equal(batch?.items[0]?.reason, "Stop the worker whose credential was rotated.");
+    assert.match(batch?.items[0]?.reason ?? "", /token rotated/iu);
   } finally {
     fixture.board.close();
   }
@@ -5952,7 +5975,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -5992,7 +6015,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -6032,7 +6055,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -6122,7 +6145,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -6193,7 +6216,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -6232,7 +6255,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -6267,7 +6290,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -6315,7 +6338,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -6365,7 +6388,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -6404,7 +6427,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -6450,7 +6473,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
@@ -6480,7 +6503,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error",
@@ -6523,7 +6546,7 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
       "archived_at",
@@ -6560,7 +6583,7 @@ test("schema version 17 adds agent credential versions without changing existing
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 17);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
       "version",

@@ -18,7 +18,12 @@ import {
 import {
   assignmentAgentOptionLabel,
 } from '../model/workspace-model';
-import { recoveryAffordances } from '../model/task-recovery';
+import {
+  explicitAgentPickerSelection,
+  initialAgentPickerSelection,
+  recoveryAffordances,
+  syncAgentPickerSelection,
+} from '../model/task-recovery';
 import type {
   TaskDetailDraftAction,
   TaskDetailDraftState,
@@ -142,7 +147,8 @@ export function TaskDetail({
   const defaultAgentId = recovery === null
     ? task.assignedAgentId ?? eligibleAgents[0]?.id ?? ''
     : recovery.reassign.eligibleAgentIds[0] ?? '';
-  const [agentId, setAgentId] = useState(defaultAgentId);
+  const [agentSelection, setAgentSelection] = useState(() => initialAgentPickerSelection(task.id, defaultAgentId));
+  const agentId = agentSelection.taskId === task.id ? agentSelection.agentId : defaultAgentId;
   const selectedAgent = eligibleAgents.find((agent) => agent.id === agentId);
   const selectedWorkerOffline = selectedAgent?.workerConnection === null;
   const offlineNoticeId = `assignment-worker-${task.id}`;
@@ -158,9 +164,20 @@ export function TaskDetail({
   const assigneeChanged = agentId !== task.assignedAgentId;
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
 
+  const eligiblePickerIds = useMemo(
+    () => (recovery === null ? eligibleAgents.map((agent) => agent.id) : recovery.reassign.eligibleAgentIds),
+    [eligibleAgents, recovery],
+  );
   useEffect(() => {
-    setAgentId(defaultAgentId);
-  }, [defaultAgentId, task.id]);
+    setAgentSelection((current) => syncAgentPickerSelection(current, task.id, defaultAgentId, eligiblePickerIds));
+  }, [defaultAgentId, task.id, eligiblePickerIds]);
+
+  function selectAgent(nextAgentId: string): void {
+    setAgentSelection((current) => explicitAgentPickerSelection(
+      syncAgentPickerSelection(current, task.id, defaultAgentId),
+      nextAgentId,
+    ));
+  }
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -275,7 +292,7 @@ export function TaskDetail({
               value={agentId}
               disabled={busy || recoveryAgents.length === 0}
               aria-describedby={recoveryDescribedBy}
-              onChange={(event) => setAgentId(event.target.value)}
+              onChange={(event) => selectAgent(event.target.value)}
             >
               {recoveryAgents.length === 0 ? <option value="">No eligible agents</option> : null}
               {recoveryAgents.map((agent) => <option key={agent.id} value={agent.id}>{assignmentAgentOptionLabel(agent)}</option>)}
@@ -308,7 +325,7 @@ export function TaskDetail({
             <div className="space-y-3">
               {eligibleAgents.length > 0 ? (
                 <div>
-                  <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} aria-describedby={selectedWorkerOffline ? offlineNoticeId : undefined} value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                  <select className={inputClass} aria-label={task.kind === 'manager_review' ? 'Assign manager' : 'Assign agent'} aria-describedby={selectedWorkerOffline ? offlineNoticeId : undefined} value={agentId} onChange={(event) => selectAgent(event.target.value)}>
                     {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{assignmentAgentOptionLabel(agent)}</option>)}
                   </select>
                   {selectedWorkerOffline ? <p id={offlineNoticeId} className="mt-2 text-xs leading-5 text-caution" role="status">Worker offline — the task will wait until its lane connects</p> : null}

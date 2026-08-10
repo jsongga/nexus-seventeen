@@ -2301,6 +2301,12 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
     area: 'Invoice recovery',
     mission: 'Keep failed invoice recovery clear and dependable.',
   };
+  const selectedAfterPollAgent = {
+    ...agent,
+    agentId: 'poll-safe-recovery-engineer',
+    area: 'Webhook recovery',
+    mission: 'Preserve explicit recovery choices while the board refreshes.',
+  };
   let currentTask = {
     ...task,
     status: 'failed',
@@ -2323,7 +2329,10 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
   const backlogPosts: Record<string, unknown>[] = [];
   const reassignPatches: Record<string, unknown>[] = [];
   let backlogRejections = 0;
+  let reorderAgentsOnPoll = false;
+  let projectReads = 0;
 
+  await page.clock.install({ time: new Date('2026-07-19T18:30:00.000Z') });
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -2332,6 +2341,7 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
       return;
     }
     if (url.pathname === '/board-api/v1/projects') {
+      projectReads += 1;
       await route.fulfill({ json: { projects: [project] } });
       return;
     }
@@ -2339,10 +2349,17 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
       await route.fulfill({
         json: {
           ...board(),
-          agents: [
-            { ...agent, status: 'idle' },
-            { ...alternateAgent, status: 'idle' },
-          ],
+          agents: reorderAgentsOnPoll
+            ? [
+                { ...agent, status: 'idle' },
+                { ...selectedAfterPollAgent, status: 'idle' },
+                { ...alternateAgent, status: 'idle' },
+              ]
+            : [
+                { ...agent, status: 'idle' },
+                { ...alternateAgent, status: 'idle' },
+                { ...selectedAfterPollAgent, status: 'idle' },
+              ],
           tasks: [currentTask, reassignTask],
           recentRuns: [],
         },
@@ -2405,12 +2422,18 @@ test('a failed task offers retry, reassign, and an explained backlog rejection',
 
   await page.getByRole('button', { name: /Restore webhook retries failed/u }).click();
   const reassignRecovery = page.getByRole('region', { name: 'Task recovery actions' });
-  await reassignRecovery.getByLabel('Replacement agent').selectOption(alternateAgent.agentId);
+  const replacementPicker = reassignRecovery.getByLabel('Replacement agent');
+  await replacementPicker.selectOption(selectedAfterPollAgent.agentId);
+  const readsBeforePoll = projectReads;
+  reorderAgentsOnPoll = true;
+  await page.clock.runFor(5_100);
+  await expect.poll(() => projectReads).toBeGreaterThan(readsBeforePoll);
+  await expect(replacementPicker).toHaveValue(selectedAfterPollAgent.agentId);
   await reassignRecovery.getByRole('button', { name: 'Reassign', exact: true }).click();
   await expect.poll(() => reassignPatches).toHaveLength(1);
   expect(reassignPatches[0]).toEqual({
     version: 6,
-    assignedAgentId: alternateAgent.agentId,
+    assignedAgentId: selectedAfterPollAgent.agentId,
     assignedRole: 'engineer',
     status: 'queued',
   });

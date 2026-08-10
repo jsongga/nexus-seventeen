@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TaskBoardHttpError } from "#server/agents/task-worker";
-import { isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
+import { classifyTaskFleetError, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
 
 test("retries transport, throttling, server, and journal I/O failures", () => {
   for (const status of [null, 408, 425, 429, 500, 503]) {
@@ -14,4 +14,10 @@ test("retries transport, throttling, server, and journal I/O failures", () => {
     assert.equal(isTransientTaskFleetError(Object.assign(new Error("journal I/O failed"), { code })), true, code);
   }
   assert.equal(isTransientTaskFleetError(new Error("programming error")), false);
+});
+
+test("classifies a revoked lane credential separately from transient and poisoned failures", () => {
+  assert.equal(classifyTaskFleetError(new TaskBoardHttpError("rotated", 401, "UNAUTHORIZED")), "CREDENTIAL_REVOKED");
+  assert.equal(classifyTaskFleetError(new TaskBoardHttpError("temporary", 503, "TEMPORARY")), "TRANSIENT");
+  assert.equal(classifyTaskFleetError(new TaskBoardHttpError("invalid", 400, "INVALID_REQUEST")), "POISONED");
 });

@@ -89,10 +89,10 @@ export class TaskBoard {
     this.#tasks = new TasksCollaborator(this.#runtime);
     this.#projects = new ProjectsCollaborator(this.#runtime, this.#automation, this.#tasks);
     this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
-    this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects);
+    this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects, this.#tasks);
+    this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);
-    this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects, this.#tasks);
   }
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {

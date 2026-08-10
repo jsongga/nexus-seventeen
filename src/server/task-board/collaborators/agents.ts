@@ -4,6 +4,7 @@ import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { ProjectsCollaborator } from "./projects.js";
+import type { RunsCollaborator } from "./runs.js";
 import type { WorkItemsCollaborator } from "./work-items.js";
 import { generatedToken, insertAgentIdentityInTransaction } from "./agent-identities.js";
 
@@ -12,6 +13,7 @@ export class AgentsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly workItems: WorkItemsCollaborator,
     private readonly projects: ProjectsCollaborator,
+    private readonly runs: RunsCollaborator,
   ) {}
 
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {
@@ -52,6 +54,7 @@ export class AgentsCollaborator {
       if (current.version !== version) {
         throw conflict(TASK_BOARD_ERROR_CODES.AGENT_VERSION_CONFLICT, "Agent credential version changed");
       }
+      this.runs.interruptActiveRunForTokenRotationInTransaction(agentId, version);
       const token = generatedToken(this.runtime);
       const tokenHash = sha256(token);
       const update = this.runtime.store.db.prepare(`

@@ -25,7 +25,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS project_events (
   event_type TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS project_events_project ON project_events(project_id, sequence);
+CREATE INDEX IF NOT EXISTS project_events_node ON project_events(node_id, sequence);
 `;
 
 const WORK_ITEM_PLANNING_SCHEMA = `
@@ -693,6 +694,21 @@ function migrateVersion16To17(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE; ${addVersion} PRAGMA user_version = 17; COMMIT;`);
 }
 
+function migrateVersion17To18(db: DatabaseSync): void {
+  const hasProjectEvents = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_events'",
+  ).get() !== undefined;
+  if (!hasProjectEvents) {
+    db.exec("PRAGMA user_version = 18;");
+    return;
+  }
+  db.exec(`BEGIN IMMEDIATE;
+    CREATE INDEX IF NOT EXISTS project_events_node ON project_events(node_id, sequence);
+    PRAGMA user_version = 18;
+    COMMIT;
+  `);
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -979,6 +995,8 @@ export class TaskBoardStore {
         // Terminal work-item archival is added below.
       } else if (version === 16) {
         // Agent credential versions are added below.
+      } else if (version === 17) {
+        // Workflow node event lookups are indexed below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -997,6 +1015,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 14) migrateVersion14To15(db);
       if (version >= 1 && version <= 15) migrateVersion15To16(db);
       if (version >= 1 && version <= 16) migrateVersion16To17(db);
+      if (version >= 1 && version <= 17) migrateVersion17To18(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

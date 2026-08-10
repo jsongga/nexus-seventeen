@@ -3,6 +3,7 @@ import type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,
   TaskFleetConfig,
+  TaskFleetErrorClassifier,
   TaskFleetEvent,
   TaskFleetLaneSnapshot,
   TaskFleetLogger,
@@ -27,13 +28,21 @@ interface Lane {
 export interface TaskFleetOptions {
   readonly config: TaskFleetConfig;
   readonly workerFactory: TaskFleetWorkerFactory;
-  readonly isTransient: TaskFleetTransientClassifier;
+  readonly classifyError?: TaskFleetErrorClassifier;
+  /** Compatibility adapter for custom embedders; production uses classifyError. */
+  readonly isTransient?: TaskFleetTransientClassifier;
   readonly logger?: TaskFleetLogger;
   readonly sleeper?: TaskFleetSleeper;
   readonly random?: () => number;
 }
 
+export const CREDENTIAL_REVOKED_MESSAGE = "lane credential revoked — update the fleet config with the rotated token";
+
 function defaultLogger(event: TaskFleetEvent): void {
+  if (event.type === "lane_credential_revoked") {
+    process.stderr.write(`[task-fleet] ${CREDENTIAL_REVOKED_MESSAGE} agent=${event.agentId} worker=${event.workerId}\n`);
+    return;
+  }
   let detail = "";
   if (event.type === "lane_retrying") {
     detail = ` retry=${event.restartCount} delayMs=${event.delayMs} error=${JSON.stringify(event.error)}`;
@@ -66,7 +75,7 @@ function abortableSleep(delayMs: number, signal: AbortSignal): Promise<void> {
 export class TaskFleet {
   readonly #config: TaskFleetConfig;
   readonly #workerFactory: TaskFleetWorkerFactory;
-  readonly #isTransient: TaskFleetTransientClassifier;
+  readonly #classifyError: TaskFleetErrorClassifier;
   readonly #logger: TaskFleetLogger;
   readonly #sleeper: TaskFleetSleeper;
   readonly #random: () => number;
@@ -80,7 +89,10 @@ export class TaskFleet {
   constructor(options: TaskFleetOptions) {
     this.#config = options.config;
     this.#workerFactory = options.workerFactory;
-    this.#isTransient = options.isTransient;
+    if (options.classifyError === undefined && options.isTransient === undefined) {
+      throw new Error("Task fleet requires an error classifier");
+    }
+    this.#classifyError = options.classifyError ?? ((error) => options.isTransient!(error) ? "TRANSIENT" : "POISONED");
     this.#logger = options.logger ?? defaultLogger;
     this.#sleeper = options.sleeper ?? abortableSleep;
     this.#random = options.random ?? Math.random;
@@ -159,7 +171,20 @@ export class TaskFleet {
         if (signal.aborted) return;
         const detail = safeErrorDetail(error);
         lane.lastError = detail;
-        if (this.#isTransient(error)) {
+        const classification = this.#classifyError(error);
+        if (classification === "CREDENTIAL_REVOKED") {
+          lane.status = "closed";
+          lane.retryDelayMs = null;
+          lane.lastError = CREDENTIAL_REVOKED_MESSAGE;
+          this.#logger({
+            type: "lane_credential_revoked",
+            agentId: lane.config.agentId,
+            workerId: lane.config.workerId,
+            error: CREDENTIAL_REVOKED_MESSAGE,
+          });
+          return;
+        }
+        if (classification === "TRANSIENT") {
           await this.#retryLane(lane, detail, signal);
           continue;
         }

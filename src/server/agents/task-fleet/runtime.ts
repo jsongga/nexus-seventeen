@@ -4,7 +4,11 @@ import {
   TaskBoardHttpError,
   TaskWorker,
 } from "#server/agents/task-worker";
-import type { TaskFleetTransientClassifier, TaskFleetWorkerFactory } from "./types.js";
+import type {
+  TaskFleetErrorClassifier,
+  TaskFleetTransientClassifier,
+  TaskFleetWorkerFactory,
+} from "./types.js";
 
 export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boardUrl) => {
   const worker = await TaskWorker.create({
@@ -34,10 +38,19 @@ export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boar
   });
 };
 
-export const isTransientTaskFleetError: TaskFleetTransientClassifier = (error) => {
+export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
   if (error instanceof TaskBoardHttpError) {
-    return error.status === null || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+    if (error.status === 401) return "CREDENTIAL_REVOKED";
+    return error.status === null || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500
+      ? "TRANSIENT"
+      : "POISONED";
   }
   const code = error !== null && typeof error === "object" && "code" in error ? error.code : null;
-  return code === "EIO" || code === "ENOSPC" || code === "EMFILE" || code === "ENFILE" || code === "EBUSY";
+  return code === "EIO" || code === "ENOSPC" || code === "EMFILE" || code === "ENFILE" || code === "EBUSY"
+    ? "TRANSIENT"
+    : "POISONED";
 };
+
+export const isTransientTaskFleetError: TaskFleetTransientClassifier = (error) => (
+  classifyTaskFleetError(error) === "TRANSIENT"
+);

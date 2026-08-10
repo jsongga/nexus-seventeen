@@ -108,8 +108,11 @@ export class WorkItemsCollaborator {
     inTransaction: boolean,
   ): CreateWorkItemResult {
     const priority = request.priority ?? "normal";
-    const projectTarget = request.projectTarget ?? Object.freeze({ mode: "auto" as const });
-    if (projectTarget.mode === "explicit") this.runtime.requireProject(projectTarget.projectId);
+    const projectTarget = request.projectTarget;
+    if (projectTarget === undefined || projectTarget.mode !== "explicit") {
+      throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, "Choose a project");
+    }
+    this.runtime.requireProject(projectTarget.projectId);
     const createdBy = this.runtime.config.humanPrincipal;
     const requestHash = sha256({
       action: "create_work_item",
@@ -119,7 +122,7 @@ export class WorkItemsCollaborator {
       projectTarget,
     });
     const workItemId = randomUUID();
-    const targetProjectId = projectTarget.mode === "explicit" ? projectTarget.projectId : null;
+    const targetProjectId = projectTarget.projectId;
     const apply = (): CreateWorkItemResult => {
       const prior = this.runtime.store.db.prepare(`
         SELECT work_item.*,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   ACTOR_TYPES,
@@ -78,18 +78,18 @@ function frozenSchema(store: TaskBoardStore): string {
   return `${rows.map((row) => `-- ${row.type}: ${row.name}\n${row.sql};`).join("\n\n")}\n`;
 }
 
-test("fresh v17 DDL remains byte-identical to the frozen schema", async () => {
+test("fresh v18 DDL remains byte-identical to the frozen schema", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 17);
-    const golden = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v17-schema.sql"), "utf8");
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 18);
+    const golden = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v18-schema.sql"), "utf8");
     assert.equal(frozenSchema(store), golden);
   } finally {
     store.close();
   }
 });
 
-test("v17 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
+test("v18 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
     const tableSql = (name: string): string => {
@@ -126,5 +126,38 @@ test("v17 table CHECK clauses contain byte-identical contract-derived enum lists
     for (const [table, fragment] of expected) assert.ok(tableSql(table).includes(fragment), `${table}: ${fragment}`);
   } finally {
     store.close();
+  }
+});
+
+test("v17 migrates additively to the node-event lookup index", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const legacy = new DatabaseSync(path);
+  try {
+    const frozenV17 = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v17-schema.sql"), "utf8");
+    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
+    const executableV17 = frozenV17
+      .split(/(?=^-- (?:index|table|trigger): )/m)
+      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
+        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .join("");
+    legacy.exec(executableV17);
+    legacy.exec("PRAGMA user_version = 17;");
+  } finally {
+    legacy.close();
+  }
+  await chmod(path, 0o600);
+
+  const upgraded = await TaskBoardStore.open(path);
+  try {
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 18);
+    assert.equal(
+      upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
+      "CREATE INDEX project_events_node ON project_events(node_id, sequence)",
+    );
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    upgraded.close();
   }
 });

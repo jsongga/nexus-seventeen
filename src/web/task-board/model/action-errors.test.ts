@@ -7,10 +7,26 @@ import {
   errorPipelineReducer,
   initialErrorPipelineState,
   isDialogAnchoredActionContext,
+  mutationActionStatus,
   newestActionErrors,
 } from './action-errors';
 
 describe('action error lifecycle', () => {
+  it('derives a transient non-error notice only when a saved mutation lacks a committed refresh', () => {
+    expect(mutationActionStatus(true)).toBeNull();
+    expect(mutationActionStatus(false)).toBe('Saved — the view is catching up');
+
+    const catchingUp = errorPipelineReducer(initialErrorPipelineState, {
+      type: 'action-succeeded',
+      refreshCommitted: false,
+    });
+    expect(catchingUp.actionStatus).toBe('Saved — the view is catching up');
+    expect(catchingUp.actionErrors).toEqual([]);
+
+    const caughtUp = errorPipelineReducer(catchingUp, { type: 'snapshot-succeeded' });
+    expect(caughtUp.actionStatus).toBeNull();
+  });
+
   it('sets, dismisses, and replaces an error only when the same action retries', () => {
     const assigned = actionErrorReducer([], {
       type: 'failed',

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
-import { TaskFleet } from "#server/agents/task-fleet/fleet";
-import { isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
+import { CREDENTIAL_REVOKED_MESSAGE, TaskFleet } from "#server/agents/task-fleet/fleet";
+import { classifyTaskFleetError, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
 import type {
   ManagedTaskWorker,
   TaskFleetEvent,
@@ -155,6 +155,43 @@ test("a non-transient settle failure quarantines its held claim with a scrubbed 
 
   controller.abort();
   await running;
+});
+
+test("a revoked credential logs one operator action and exits without quarantine or retry", async () => {
+  const events: TaskFleetEvent[] = [];
+  let operations = 0;
+  let quarantines = 0;
+  let drops = 0;
+  let reports = 0;
+  let sleeps = 0;
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async () => managed({
+      run: async () => {
+        operations += 1;
+        throw new TaskBoardHttpError("Agent authentication is required", 401, "UNAUTHORIZED");
+      },
+      hasActiveClaim: () => true,
+      quarantineActiveClaim: async () => { quarantines += 1; },
+      dropActiveClaim: async () => { drops += 1; },
+      reportLaneError: async () => { reports += 1; },
+    }),
+    classifyError: classifyTaskFleetError,
+    logger: (event) => events.push(event),
+    sleeper: async () => { sleeps += 1; },
+  });
+
+  await fleet.run(new AbortController().signal);
+
+  assert.equal(operations, 1);
+  assert.equal(quarantines, 0);
+  assert.equal(drops, 0);
+  assert.equal(reports, 0);
+  assert.equal(sleeps, 0);
+  assert.equal(fleet.snapshot.lanes[0]?.status, "closed");
+  const revoked = events.filter((event) => event.type === "lane_credential_revoked");
+  assert.equal(revoked.length, 1);
+  assert.equal(revoked[0]?.error, CREDENTIAL_REVOKED_MESSAGE);
 });
 
 test("journal EIO is transient: it backs off and retries without quarantine", async () => {

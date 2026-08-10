@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { loadTaskFleetConfig } from "./config.js";
 import { TaskFleet } from "./fleet.js";
-import { createTaskFleetWorker, isTransientTaskFleetError } from "./runtime.js";
+import { classifyTaskFleetError, createTaskFleetWorker } from "./runtime.js";
 
 function configPath(): string {
   const arguments_ = process.argv.slice(2);
@@ -14,7 +14,7 @@ function configPath(): string {
 }
 
 const config = await loadTaskFleetConfig(configPath());
-const fleet = new TaskFleet({ config, workerFactory: createTaskFleetWorker, isTransient: isTransientTaskFleetError });
+const fleet = new TaskFleet({ config, workerFactory: createTaskFleetWorker, classifyError: classifyTaskFleetError });
 const stop = new AbortController();
 process.once("SIGINT", () => stop.abort());
 process.once("SIGTERM", () => stop.abort());
