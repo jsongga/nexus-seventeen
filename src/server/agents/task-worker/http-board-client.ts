@@ -1,10 +1,16 @@
 import {
-  IDENTIFIER_PATTERN,
   TASK_BOARD_API_VERSION,
-  TASK_PHASE_STAGES,
-  TASK_PHASE_STATUSES,
   type ClaimRunResult,
 } from "#shared/task-board-contract";
+import {
+  exact,
+  identifier,
+  integer as contractInteger,
+  parseAgentTaskPhaseResponse,
+  parseClaimRunResult,
+  record,
+  timestamp as contractTimestamp,
+} from "#shared/task-board-contract/validate";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
 import { POISONED_CLAIM_REASON, TaskBoardClaimResponseError } from "./types.js";
 import type {
@@ -24,7 +30,6 @@ import type {
 } from "./types.js";
 
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
-const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 
 export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
@@ -72,39 +77,16 @@ function integer(value: number | undefined, fallback: number, minimum: number, m
   return parsed;
 }
 
-function object(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function exact(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
-  const item = object(value, label);
-  const actual = Object.keys(item).sort();
-  const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-    throw new Error(`${label} has unexpected or missing fields`);
-  }
-  return item;
-}
-
 function id(value: unknown, label: string): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  return identifier(value, label);
 }
 
 function timestamp(value: unknown, label: string): string {
-  const parsed = new Date(typeof value === "string" ? value : Number.NaN);
-  if (typeof value !== "string" || Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  return contractTimestamp(value, label, `${label} is invalid`, true);
 }
 
 function nonNegative(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`${label} is invalid`);
-  return Number(value);
+  return contractInteger(value, label, 0, `${label} is invalid`);
 }
 
 function positive(value: unknown, label: string): number {
@@ -121,44 +103,16 @@ function estimateMinutes(value: unknown, label: string): number | null {
   return Number(value);
 }
 
-function phaseStage(value: unknown, label: string): AgentTaskPhase["stage"] {
-  if (typeof value !== "string" || !(TASK_PHASE_STAGES as readonly string[]).includes(value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value as AgentTaskPhase["stage"];
-}
-
-function phaseStatus(value: unknown, label: string): AgentTaskPhase["status"] {
-  if (typeof value !== "string" || !(TASK_PHASE_STATUSES as readonly string[]).includes(value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value as AgentTaskPhase["status"];
-}
-
 function taskPhase(value: unknown, projectId: string, taskId: string, label: string): AgentTaskPhase {
-  const item = exact(value, [
-    "apiVersion", "phaseId", "projectId", "taskId", "title", "stage", "status", "parallelGroup", "orderKey",
-    "startedAt", "endedAt", "version", "createdAt", "updatedAt",
-  ], label);
-  if (item.apiVersion !== TASK_BOARD_API_VERSION || item.projectId !== projectId || item.taskId !== taskId) {
-    throw new Error(`${label} binding is invalid`);
-  }
-  const stage = phaseStage(item.stage, `${label}.stage`);
-  const status = phaseStatus(item.status, `${label}.status`);
-  if (stage === "done" && status !== "completed") throw new Error(`${label} completion state is invalid`);
-  if (item.parallelGroup !== null) id(item.parallelGroup, `${label}.parallelGroup`);
-  if (item.startedAt !== null) timestamp(item.startedAt, `${label}.startedAt`);
-  if (item.endedAt !== null) timestamp(item.endedAt, `${label}.endedAt`);
-  timestamp(item.createdAt, `${label}.createdAt`);
-  timestamp(item.updatedAt, `${label}.updatedAt`);
+  const item = parseAgentTaskPhaseResponse(value, projectId, taskId, label);
   return Object.freeze({
-    phaseId: id(item.phaseId, `${label}.phaseId`),
+    phaseId: item.phaseId,
     title: bounded(item.title, `${label}.title`, 240),
-    stage,
-    status,
-    parallelGroup: item.parallelGroup as string | null,
-    orderKey: nonNegative(item.orderKey, `${label}.orderKey`),
-    version: positive(item.version, `${label}.version`),
+    stage: item.stage,
+    status: item.status,
+    parallelGroup: item.parallelGroup,
+    orderKey: item.orderKey,
+    version: item.version,
   });
 }
 
@@ -176,7 +130,7 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 
 function errorCode(value: unknown): string | null {
   try {
-    const error = object(object(value, "response").error, "error");
+    const error = record(record(value, "response").error, "error");
     return typeof error.code === "string" ? error.code : null;
   } catch {
     return null;
@@ -277,65 +231,14 @@ class JsonClient {
   }
 }
 
-function asClaimResult(value: unknown): ClaimRunResult {
-  const result = exact(value, ["apiVersion", "run", "wakeup", "task", "context"], "Claim result");
-  if (result.apiVersion !== TASK_BOARD_API_VERSION) throw new Error("Claim result API version is invalid");
-  const run = exact(result.run, [
-    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "endedAt", "result",
-  ], "Claim run");
-  const wakeup = exact(result.wakeup, [
-    "apiVersion", "wakeupId", "projectId", "agentId", "reason", "taskId", "questionId", "detail", "createdBy",
-    "createdAt", "claimedAt", "runId",
-  ], "Claim wakeup");
-  const context = exact(result.context, [
-    "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
-    "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
-  ], "Claim context");
-  if (
-    run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
-    run.status !== "active" || run.endedAt !== null || run.result !== null ||
-    wakeup.reason !== "human_assignment" && wakeup.reason !== "human_answer" &&
-    wakeup.reason !== "human_resume" && wakeup.reason !== "workflow_handoff" &&
-    wakeup.reason !== "assigned" && wakeup.reason !== "resumed"
-  ) {
-    throw new Error("Claim run or wakeup state is invalid");
-  }
-  id(run.runId, "run.runId");
-  id(run.claimId, "run.claimId");
-  id(run.projectId, "run.projectId");
-  id(run.agentId, "run.agentId");
-  id(run.wakeupId, "run.wakeupId");
-  if (run.taskId !== null) id(run.taskId, "run.taskId");
-  timestamp(run.startedAt, "run.startedAt");
-  id(wakeup.wakeupId, "wakeup.wakeupId");
-  id(wakeup.projectId, "wakeup.projectId");
-  id(wakeup.agentId, "wakeup.agentId");
-  if (wakeup.taskId !== null) id(wakeup.taskId, "wakeup.taskId");
-  if (wakeup.questionId !== null) id(wakeup.questionId, "wakeup.questionId");
-  timestamp(wakeup.createdAt, "wakeup.createdAt");
-  timestamp(wakeup.claimedAt, "wakeup.claimedAt");
-  if (
-    run.wakeupId !== wakeup.wakeupId || run.projectId !== wakeup.projectId || run.agentId !== wakeup.agentId ||
-    run.taskId !== wakeup.taskId ||
-    wakeup.runId !== run.runId || wakeup.claimedAt === null
-  ) {
-    throw new Error("Claim run and wakeup binding is invalid");
-  }
-  if (
-    !Array.isArray(context.workspaceRefs) || !Array.isArray(context.areaMemory) || !Array.isArray(context.messages) ||
-    !Array.isArray(context.parentMessages) || !Array.isArray(context.openQuestions)
-  ) {
-    throw new Error("Claim context collections are invalid");
-  }
-  nonNegative(context.messageCursor, "context.messageCursor");
-  return value as ClaimRunResult;
-}
-
 function claimHandleFromResponse(value: unknown, request: ClaimNextWakeRequest): TaskWakeClaim | null {
+  // Deliberately minimal: a poisoned full claim still has to retain enough
+  // identity to quarantine the durable run. Requiring the full parser here
+  // would discard the recovery handle for the malformed response it protects.
   try {
-    const envelope = object(value, "Claim result");
-    const run = object(envelope.run, "Claim run");
-    const wakeup = object(envelope.wakeup, "Claim wakeup");
+    const envelope = record(value, "Claim result");
+    const run = record(envelope.run, "Claim run");
+    const wakeup = record(envelope.wakeup, "Claim wakeup");
     if (
       envelope.apiVersion !== TASK_BOARD_API_VERSION || run.apiVersion !== TASK_BOARD_API_VERSION ||
       wakeup.apiVersion !== TASK_BOARD_API_VERSION || run.claimId !== request.claimId ||
@@ -517,7 +420,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     if (result.status === 204) return null;
     const claimHandle = claimHandleFromResponse(result.body, request);
     try {
-      const claimed = asClaimResult(result.body);
+      const claimed = parseClaimRunResult(result.body);
       const requestedMessageCursor = claimed.wakeup.taskId === null
         ? null
         : request.messageCursors[claimed.wakeup.taskId] ?? null;
@@ -598,7 +501,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       signal,
     );
     const envelope = exact(result.body, ["task"], "Estimate response");
-    const task = object(envelope.task, "Estimated task");
+    const task = record(envelope.task, "Estimated task");
     if (
       task.taskId !== taskId || task.projectId !== request.claim.projectId ||
       task.assignedAgentId !== request.claim.agentId || task.expectedAgentMinutes !== minutes
@@ -684,7 +587,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         };
     const result = await this.#http.request("POST", path, body, signal);
     const envelope = exact(result.body, [output.type === "human_question" ? "question" : "message"], "Output response");
-    const value = object(envelope[output.type === "human_question" ? "question" : "message"], "Output record");
+    const value = record(envelope[output.type === "human_question" ? "question" : "message"], "Output record");
     if (value.runId !== request.claim.runId || value.taskId !== request.claim.taskId) {
       throw new Error("Task-board output response belongs to another run or task");
     }
@@ -704,7 +607,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       signal,
     );
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
-    const run = object(envelope.run, "Settled run");
+    const run = record(envelope.run, "Settled run");
     if (
       typeof envelope.duplicate !== "boolean" || run.runId !== request.claim.runId || run.agentId !== request.claim.agentId ||
       run.status !== request.outcome || run.result !== request.result

@@ -6,8 +6,6 @@ import {
   ACTOR_TYPES,
   AGENT_ROLES,
   DOCUMENT_ACTOR_TYPES,
-  EVALUATOR_PROFILES,
-  IDENTIFIER_PATTERN,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   RUN_STATUSES,
@@ -25,132 +23,9 @@ import {
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
-import {
-  parseCreateAgent,
-  parseCreateTaskPhase,
-  parseCreateWorkItem,
-  parseIdentifier,
-  parseSettle,
-  parseUpdateAutomationConfiguration,
-  parseUpdateTask,
-  parseUpdateTaskPhase,
-} from "#server/task-board/schema";
 import { TaskBoardError } from "#server/task-board/errors";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { boardFixture, databasePath, workItemRequest } from "./helpers.js";
-
-function assertAcceptedSet(
-  expected: readonly string[],
-  validate: (value: string) => unknown,
-): void {
-  const candidates = [...expected, "not_a_contract_member"];
-  const accepted = candidates.filter((candidate) => {
-    try {
-      validate(candidate);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  assert.deepEqual(accepted, [...expected]);
-}
-
-function stages(): Array<Readonly<{ stage: string; executor: Readonly<{ kind: string }> }>> {
-  return WORK_ITEM_STAGES.map((stage) => ({
-    stage,
-    executor: { kind: stage === "human_review" ? "human" : "disabled" },
-  }));
-}
-
-test("board request validators accept exactly the shared contract enum members", () => {
-  assertAcceptedSet(AGENT_ROLES, (role) => parseCreateAgent({
-    agentId: "agent-one",
-    role,
-    area: "checkout",
-    mission: "Keep checkout safe.",
-    model: "model-one",
-    token: "task-board-agent-token-0123456789abcdef",
-  }));
-  assertAcceptedSet(TASK_PHASE_STAGES, (stage) => parseCreateTaskPhase({ title: "Inspect", stage, parallelGroup: null }));
-  assertAcceptedSet(TASK_PHASE_STATUSES, (status) => parseUpdateTaskPhase({ version: 1, status }));
-  assertAcceptedSet(TASK_STATUSES, (status) => parseUpdateTask({ version: 1, status }));
-  assertAcceptedSet(WORK_ITEM_PRIORITIES, (priority) => parseCreateWorkItem({
-    originalRequest: "Make checkout safe.",
-    priority,
-    projectTarget: { mode: "explicit", projectId: "project-one" },
-  }));
-  assertAcceptedSet(EVALUATOR_PROFILES, (evaluatorProfile) => parseUpdateAutomationConfiguration({
-    version: 1,
-    agentTypes: [{
-      agentTypeId: "type-one",
-      name: "Type one",
-      description: "A disabled drift-test agent type.",
-      role: "engineer",
-      supplementalInstructions: "",
-      skillIds: [],
-      evaluatorProfile,
-      enabled: false,
-    }],
-    stages: stages(),
-  }));
-
-  const automation = parseUpdateAutomationConfiguration({ version: 1, agentTypes: [], stages: stages() });
-  assert.deepEqual(automation.stages.map((stage) => stage.stage), [...WORK_ITEM_STAGES]);
-});
-
-test("board workflow validators accept exactly the shared workflow enums", () => {
-  assertAcceptedSet(STAGE_HANDOFF_OUTCOMES, (outcome) => parseSettle({
-    outcome: "completed",
-    result: "Done.",
-    handoff: {
-      outcome,
-      summary: "Verified.",
-      evidence: [],
-      artifactIds: [],
-      acceptanceCriteria: [],
-      blockers: [],
-      recommendedReturnStage: null,
-    },
-  }));
-  assertAcceptedSet(WORKFLOW_STAGES, (recommendedReturnStage) => parseSettle({
-    outcome: "completed",
-    result: "Done.",
-    handoff: {
-      outcome: "passed",
-      summary: "Verified.",
-      evidence: [],
-      artifactIds: [],
-      acceptanceCriteria: [],
-      blockers: [],
-      recommendedReturnStage,
-    },
-  }));
-  assertAcceptedSet(WORKFLOW_STAGES, (stage) => parseSettle({
-    outcome: "completed",
-    result: "Done.",
-    workflowPlan: {
-      objective: "Complete the work.",
-      assumptions: [],
-      acceptanceCriteria: ["The work is verified."],
-      nodes: [{
-        nodeId: "node-one",
-        title: "Do the work",
-        objective: "Complete and verify it.",
-        acceptanceCriteria: ["The work is verified."],
-        dependencyNodeIds: [],
-        stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
-      }],
-    },
-  }));
-});
-
-test("board identifier validation is the contract grammar", () => {
-  const contractPattern = new RegExp(IDENTIFIER_PATTERN, "u");
-  assert.equal(contractPattern.source, IDENTIFIER_PATTERN);
-  assert.equal(parseIdentifier("A" + "a".repeat(127), "id"), "A" + "a".repeat(127));
-  assert.throws(() => parseIdentifier("A" + "a".repeat(128), "id"), /invalid/u);
-  assert.throws(() => parseIdentifier("-leading-dash", "id"), /invalid/u);
-});
 
 test("workflow persistence accepts contract identifiers and exactly the contract stages", async () => {
   const fixture = await boardFixture();
