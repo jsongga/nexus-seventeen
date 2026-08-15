@@ -1,6 +1,9 @@
 # Cross-project coordinator design
 
-Status: Approved
+Status: Superseded by `orchestrator-design.md` (repo root) — its §2 access rule
+(a task on project A reads only project B's `interface.md`) and §9 cross-repo
+phases (expand/migrate/contract as parent/child tasks) replace the coordinator
+role, cross-project reads, and wake-on-settle designed here.
 Author: John Song + Claude (design)
 Date: 2026-08-11
 Scope: Let one work item span multiple projects — a coordinator agent reads
