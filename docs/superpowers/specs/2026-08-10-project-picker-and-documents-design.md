@@ -1,10 +1,15 @@
 # Project picker and instant documents design
 
-Status: Approved
+Status: Approved (Stream 1 only). Amended 2026-08-15: Stream 2 (instant
+documents / Milkdown) is withdrawn — `orchestrator-design.md` (repo root) is
+now the source of truth, and human-facing documents move to a self-hosted
+Outline instance per its §2; the board's pen-document editor gets no further
+investment. Stream 1 (project picker) remains approved and becomes the
+registration front door for §6 project onboarding.
 Author: John Song + Claude (design)
 Date: 2026-08-10
-Scope: Two operator-UX features — a real project picker for "Add project", and
-Google-Docs-style document creation/editing on the Documents page
+Scope: A real project picker for "Add project" (Stream 2 withdrawn, see
+Status)
 
 ## Summary
 
@@ -86,7 +91,10 @@ Creation payload is unchanged (`name`, `description` = path), so project
 metadata parsing, lane-config prefills, and everything downstream keep
 working.
 
-## Stream 2 — Instant documents and the Milkdown editor
+## Stream 2 — Instant documents and the Milkdown editor (withdrawn 2026-08-15)
+
+> Withdrawn, kept for the record. Documents move to self-hosted Outline per
+> `orchestrator-design.md` §2; nothing below will be built.
 
 **Server: two small additions to the existing document API.**
 
