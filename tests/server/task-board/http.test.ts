@@ -286,7 +286,7 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
     assert.equal(created.priority, "normal");
     assert.deepEqual(created.projectTarget, body.projectTarget);
     assert.equal(created.resolvedProjectId, project.projectId);
-    assert.equal(created.state, "processing");
+    assert.equal(created.state, "planning");
     assert.equal(created.currentStage, "planning");
     assert.ok(created.planningTaskId);
     assert.equal(created.version, 2);
@@ -385,7 +385,7 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
         archivedAt: string | null;
       };
     }).workItem;
-    assert.equal(cancelled.state, "cancelled");
+    assert.equal(cancelled.state, "abandoned");
     assert.equal(cancelled.version, 4);
     assert.ok(cancelled.endedAt);
     assert.equal(cancelled.cancelledReason, cancelRequest.reason);

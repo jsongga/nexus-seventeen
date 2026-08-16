@@ -90,7 +90,7 @@ export class WorkItemsCollaborator {
     let planning: PlanningStartResult = Object.freeze({ task: null, wakeAgentId: null });
     const result = this.runtime.store.transaction(() => {
       const created = this.createWorkItemInternal(request, idempotencyKey, true);
-      if (created.workItem.state === "submitted") {
+      if (created.workItem.state === "queued") {
         planning = this.startWorkItemPlanningInTransaction(created.workItem.workItemId, created.duplicate);
       }
       return Object.freeze({
@@ -142,7 +142,7 @@ export class WorkItemsCollaborator {
           project_target_mode, target_project_id, resolved_project_id,
           state, current_stage, created_by, idempotency_key, request_hash,
           version, created_at, updated_at, ended_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, 'submitted', 'refinement', ?, ?, ?, 1, ?, ?, NULL)
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, 'queued', 'refinement', ?, ?, ?, 1, ?, ?, NULL)
       `).run(
         workItemId,
         request.originalRequest,
@@ -258,7 +258,7 @@ export class WorkItemsCollaborator {
     const now = exactNow(this.runtime.config.now);
     this.runtime.store.db.prepare("INSERT INTO work_item_planning_tasks VALUES(?,?,?)").run(workItemId, task.taskId, now);
     this.runtime.store.db.prepare(
-      "UPDATE work_items SET state='processing',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
+      "UPDATE work_items SET state='planning',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
     ).run(now, workItemId);
     return Object.freeze({ task, wakeAgentId: orphan ? null : managerId });
   }
@@ -273,7 +273,7 @@ export class WorkItemsCollaborator {
       const current = this.runtime.requireWorkItem(workItemId);
       if (current.version !== request.version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
-      if (request.projectTarget !== undefined && current.state !== "submitted") {
+      if (request.projectTarget !== undefined && current.state !== "queued") {
         throw conflict("WORK_ITEM_TARGET_LOCKED", "Project target cannot change after intake begins processing");
       }
       const projectTarget = request.projectTarget ?? current.projectTarget;
@@ -307,7 +307,7 @@ export class WorkItemsCollaborator {
   private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
     return this.runtime.store.transaction(() => {
       const current = this.runtime.requireWorkItem(workItemId);
-      if (current.state === "cancelled") {
+      if (current.state === "abandoned") {
         if (current.version === version + 1 && current.cancelledReason === reason) return current;
         throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       }
@@ -393,7 +393,7 @@ export class WorkItemsCollaborator {
       }
       const nextVersion = current.version + 1;
       const update = this.runtime.store.db.prepare(`
-        UPDATE work_items SET state='cancelled',current_stage=NULL,ended_at=?,cancelled_reason=?,version=?,updated_at=?
+        UPDATE work_items SET state='abandoned',current_stage=NULL,ended_at=?,cancelled_reason=?,version=?,updated_at=?
         WHERE work_item_id=? AND version=? AND ended_at IS NULL
       `).run(now, reason, nextVersion, now, workItemId, current.version);
       if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");

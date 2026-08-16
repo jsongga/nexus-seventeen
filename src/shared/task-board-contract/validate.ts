@@ -25,6 +25,7 @@ import {
   WORK_ITEM_STATES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
+  isTerminalWorkItemState,
   type AgentInterrupt,
   type AgentProfile,
   type AgentRole,
@@ -451,11 +452,11 @@ export function parseWorkItemEntity(value: unknown, label: string, options: Shap
   const endedAt = nullableTimestamp(item.endedAt, `${label}.endedAt`, options);
   const archivedAt = nullableTimestamp(item.archivedAt, `${label}.archivedAt`, options);
   const cancelledReason = nullableString(item.cancelledReason, `${label}.cancelledReason`);
-  const terminal = state === "completed" || state === "failed" || state === "cancelled";
+  const terminal = isTerminalWorkItemState(state);
   if (terminal !== (endedAt !== null)) throw new ContractValidationError(`${label}.endedAt does not match its state`);
   if (archivedAt !== null && !terminal) throw new ContractValidationError(`${label}.archivedAt requires a terminal state`);
-  if (cancelledReason !== null && state !== "cancelled") {
-    throw new ContractValidationError(`${label}.cancelledReason requires a cancelled state`);
+  if (cancelledReason !== null && state !== "abandoned") {
+    throw new ContractValidationError(`${label}.cancelledReason requires an abandoned state`);
   }
   if (projectTarget.mode === "explicit" && resolvedProjectId !== projectTarget.projectId) {
     throw new ContractValidationError(`${label}.resolvedProjectId must match its explicit project target`);

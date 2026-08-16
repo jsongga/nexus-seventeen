@@ -19,13 +19,14 @@ import {
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
+  WORK_ITEM_TERMINAL_STATES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -282,8 +283,8 @@ CREATE TABLE work_items (
   ),
   CHECK (project_target_mode = 'auto' OR resolved_project_id IS target_project_id),
   CHECK (
-    (state IN ('completed', 'failed', 'cancelled') AND ended_at IS NOT NULL) OR
-    (state NOT IN ('completed', 'failed', 'cancelled') AND ended_at IS NULL)
+    (state IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NOT NULL) OR
+    (state NOT IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NULL)
   )
 ) STRICT;
 CREATE INDEX work_items_updated ON work_items(updated_at DESC, work_item_id);
@@ -309,6 +310,19 @@ WHEN NEW.original_request IS NOT OLD.original_request
 BEGIN
   SELECT RAISE(ABORT, 'WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE');
 END;
+`;
+
+const WORK_ITEM_TRANSITIONS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS work_item_transitions (
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  from_state TEXT CHECK (from_state IS NULL OR from_state IN (${sqlStringList(WORK_ITEM_STATES)})),
+  to_state TEXT NOT NULL CHECK (to_state IN (${sqlStringList(WORK_ITEM_STATES)})),
+  actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent', 'system')),
+  actor_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (work_item_id, sequence)
+) STRICT;
 `;
 
 const AUTOMATION_CONFIGURATION_SCHEMA = `
@@ -347,6 +361,7 @@ CREATE TABLE projects (
 ) STRICT;
 
 ${WORK_ITEM_SCHEMA}
+${WORK_ITEM_TRANSITIONS_SCHEMA}
 
 ${AUTOMATION_CONFIGURATION_SCHEMA}
 ${WORKFLOW_SCHEMA}
@@ -479,6 +494,11 @@ CREATE TABLE runs (
   started_at TEXT NOT NULL,
   ended_at TEXT,
   result TEXT,
+  heartbeat_at TEXT,
+  runtime TEXT,
+  runtime_version TEXT,
+  model TEXT,
+  prompts_sha TEXT,
   UNIQUE(agent_id, claim_id),
   CHECK ((status = 'active' AND ended_at IS NULL AND result IS NULL) OR
          (status <> 'active' AND ended_at IS NOT NULL AND result IS NOT NULL))
@@ -707,6 +727,148 @@ function migrateVersion17To18(db: DatabaseSync): void {
     PRAGMA user_version = 18;
     COMMIT;
   `);
+}
+
+function migrateVersion18To19(db: DatabaseSync): void {
+  const workItemsSchema = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
+  ).get() as Readonly<{ sql: string }> | undefined;
+  if (workItemsSchema === undefined || !workItemsSchema.sql.includes("'submitted'")) {
+    db.exec("PRAGMA user_version = 19;");
+    return;
+  }
+  const hasRuns = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'",
+  ).get() !== undefined;
+  const addHeartbeatAt = !hasRuns || hasColumns(db, "runs", ["heartbeat_at"])
+    ? ""
+    : "ALTER TABLE runs ADD COLUMN heartbeat_at TEXT;";
+  const addRuntime = !hasRuns || hasColumns(db, "runs", ["runtime"])
+    ? ""
+    : "ALTER TABLE runs ADD COLUMN runtime TEXT;";
+  const addRuntimeVersion = !hasRuns || hasColumns(db, "runs", ["runtime_version"])
+    ? ""
+    : "ALTER TABLE runs ADD COLUMN runtime_version TEXT;";
+  const addModel = !hasRuns || hasColumns(db, "runs", ["model"])
+    ? ""
+    : "ALTER TABLE runs ADD COLUMN model TEXT;";
+  const addPromptsSha = !hasRuns || hasColumns(db, "runs", ["prompts_sha"])
+    ? ""
+    : "ALTER TABLE runs ADD COLUMN prompts_sha TEXT;";
+  db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      CREATE TABLE work_items_v19 (
+        work_item_id TEXT PRIMARY KEY,
+        original_request TEXT NOT NULL,
+        refined_objective TEXT,
+        priority TEXT NOT NULL CHECK (priority IN (${sqlStringList(WORK_ITEM_PRIORITIES)})),
+        project_target_mode TEXT NOT NULL CHECK (project_target_mode IN ('auto', 'explicit')),
+        target_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+        resolved_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+        state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_ITEM_STATES)})),
+        current_stage TEXT CHECK (current_stage IS NULL OR current_stage IN (${sqlStringList(WORK_ITEM_STAGES)})),
+        created_by TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        ended_at TEXT,
+        cancelled_reason TEXT,
+        archived_at TEXT,
+        UNIQUE(created_by, idempotency_key),
+        CHECK (
+          (project_target_mode = 'auto' AND target_project_id IS NULL) OR
+          (project_target_mode = 'explicit' AND target_project_id IS NOT NULL)
+        ),
+        CHECK (project_target_mode = 'auto' OR resolved_project_id IS target_project_id),
+        CHECK (
+          (state IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NOT NULL) OR
+          (state NOT IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NULL)
+        )
+      ) STRICT;
+      INSERT INTO work_items_v19(
+        work_item_id, original_request, refined_objective, priority,
+        project_target_mode, target_project_id, resolved_project_id,
+        state, current_stage, created_by, idempotency_key, request_hash,
+        version, created_at, updated_at, ended_at, cancelled_reason, archived_at
+      )
+      SELECT
+        work_item_id, original_request, refined_objective, priority,
+        project_target_mode, target_project_id, resolved_project_id,
+        CASE
+          WHEN state = 'submitted' THEN 'queued'
+          WHEN state = 'needs_input' THEN 'parked'
+          WHEN state = 'completed' THEN 'merged'
+          WHEN state = 'failed' THEN 'dead_letter'
+          WHEN state = 'cancelled' THEN 'abandoned'
+          WHEN state = 'waiting_for_human_review' AND current_stage = 'human_review' THEN 'final_approval'
+          WHEN state = 'waiting_for_human_review' THEN 'plan_approval'
+          WHEN state = 'processing' AND current_stage IN ('implementation', 'deployment') THEN 'implementing'
+          WHEN state = 'processing' AND current_stage = 'testing' THEN 'verifying'
+          WHEN state = 'processing' AND current_stage = 'verification' THEN 'reviewing'
+          WHEN state = 'processing' THEN 'planning'
+          ELSE 'planning'
+        END,
+        current_stage, created_by, idempotency_key, request_hash,
+        version, created_at, updated_at, ended_at, cancelled_reason, archived_at
+      FROM work_items
+      ORDER BY rowid;
+      DROP TABLE work_items;
+      ALTER TABLE work_items_v19 RENAME TO work_items;
+      CREATE INDEX work_items_updated ON work_items(updated_at DESC, work_item_id);
+      CREATE INDEX work_items_display_order ON work_items(
+        (ended_at IS NOT NULL),
+        CASE priority
+          ${workItemPriorityCases("          ")}
+        END,
+        created_at,
+        work_item_id
+      );
+      CREATE INDEX work_items_unarchived_display_order ON work_items(
+        (ended_at IS NOT NULL),
+        CASE priority
+          ${workItemPriorityCases("          ")}
+        END,
+        created_at,
+        work_item_id
+      ) WHERE archived_at IS NULL;
+      CREATE TRIGGER work_items_original_request_immutable
+      BEFORE UPDATE OF original_request ON work_items
+      WHEN NEW.original_request IS NOT OLD.original_request
+      BEGIN
+        SELECT RAISE(ABORT, 'WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE');
+      END;
+
+      ${WORK_ITEM_TRANSITIONS_SCHEMA}
+      INSERT INTO work_item_transitions(
+        work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
+      )
+      SELECT work_item_id, 1, NULL, state, 'system', 'system:migration', updated_at
+      FROM work_items;
+
+      ${addHeartbeatAt}
+      ${addRuntime}
+      ${addRuntimeVersion}
+      ${addModel}
+      ${addPromptsSha}
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 19; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON;");
+  }
 }
 
 function migrateVersion9To10(db: DatabaseSync): void {
@@ -997,6 +1159,8 @@ export class TaskBoardStore {
         // Agent credential versions are added below.
       } else if (version === 17) {
         // Workflow node event lookups are indexed below.
+      } else if (version === 18) {
+        // Work-item pipeline states, transition history, and run identity columns are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1016,6 +1180,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 15) migrateVersion15To16(db);
       if (version >= 1 && version <= 16) migrateVersion16To17(db);
       if (version >= 1 && version <= 17) migrateVersion17To18(db);
+      if (version >= 1 && version <= 18) migrateVersion18To19(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

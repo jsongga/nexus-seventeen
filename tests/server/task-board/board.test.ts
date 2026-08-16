@@ -244,6 +244,7 @@ function stageWorkflowForReconciliation(
   stage: "research" | "verification",
 ): void {
   const confirmedAt = "2026-07-19T20:01:00.000Z";
+  const workItemState = stage === "verification" ? "reviewing" : "planning";
   assert.equal(Number(db.prepare(`
     UPDATE plan_revisions
     SET state='confirmed',confirmed_by='human:alice',confirmed_at=?
@@ -256,9 +257,9 @@ function stageWorkflowForReconciliation(
   `).run(stage, confirmedAt, workflow.node.nodeId).changes), 1);
   assert.equal(Number(db.prepare(`
     UPDATE work_items
-    SET state='processing',current_stage=?,version=version+1,updated_at=?
+    SET state=?,current_stage=?,version=version+1,updated_at=?
     WHERE work_item_id=?
-  `).run(stage, confirmedAt, workflow.workItem.workItemId).changes), 1);
+  `).run(workItemState, stage, confirmedAt, workflow.workItem.workItemId).changes), 1);
 }
 
 function configureActivationStages(
@@ -355,7 +356,7 @@ test("startup reconciles confirmed ready workflow nodes left before activation",
       `).run(confirmedAt, proposed.node.nodeId).changes), 1);
       assert.equal(Number(partial.prepare(`
         UPDATE work_items
-        SET state='processing',current_stage='verification',version=version+1,updated_at=?
+        SET state='reviewing',current_stage='verification',version=version+1,updated_at=?
         WHERE work_item_id=?
       `).run(confirmedAt, proposed.workItem.workItemId).changes), 1);
       assert.equal(partial.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 0);
@@ -509,7 +510,7 @@ test("confirming a plan for a cancelled work item returns WORK_ITEM_ENDED withou
       const endedAt = "2026-07-19T20:01:00.000Z";
       assert.equal(Number(cancellation.prepare(`
         UPDATE work_items
-        SET state='cancelled',current_stage=NULL,ended_at=?,version=version+1,updated_at=?
+        SET state='abandoned',current_stage=NULL,ended_at=?,version=version+1,updated_at=?
         WHERE work_item_id=? AND ended_at IS NULL
       `).run(endedAt, endedAt, proposed.workItem.workItemId).changes), 1);
     } finally {
@@ -1458,7 +1459,7 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     });
     const proposed = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(proposed.plans[0]?.state, "proposed");
-    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "waiting_for_human_review");
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "final_approval");
     fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
 
     const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -1485,7 +1486,7 @@ test("explicit work-item intake plans, confirms, executes, and completes without
       result: "The focused evidence satisfies the confirmed criterion.",
     });
     const completed = fixture.board.requireWorkItem(created.workItem.workItemId);
-    assert.equal(completed.state, "completed");
+    assert.equal(completed.state, "merged");
     assert.ok(completed.endedAt);
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
   } finally {
@@ -1597,7 +1598,7 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     );
     assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status, "active");
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "in_progress");
-    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "processing");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "planning");
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -1631,7 +1632,7 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     assert.equal(settled.duplicate, false);
     assert.equal(settled.run.status, "completed");
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "completed");
-    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "waiting_for_human_review");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "final_approval");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
   } finally {
     fixture.board.close();
@@ -1803,7 +1804,7 @@ test("a completed run with a valid handoff settles its workflow node", async () 
     assert.equal(workflow.nodes[0]?.state, "completed");
     assert.equal(workflow.handoffs.length, 1);
     assert.equal(workflow.handoffs[0]?.outcome, "passed");
-    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "completed");
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "merged");
 
     const replay = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
       outcome: "completed",
@@ -1831,7 +1832,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
   assert.equal(created.workItem.priority, "normal");
   assert.deepEqual(created.workItem.projectTarget, explicitRequest.projectTarget);
   assert.equal(created.workItem.resolvedProjectId, fixture.project.projectId);
-  assert.equal(created.workItem.state, "submitted");
+  assert.equal(created.workItem.state, "queued");
   assert.equal(created.workItem.currentStage, "refinement");
   assert.equal(created.workItem.refinedObjective, null);
   assert.equal(created.workItem.createdBy, "human:alice");
@@ -1890,7 +1891,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
         .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 19);
   } finally {
     direct.close();
   }
@@ -1919,7 +1920,7 @@ test("cancelling a work item atomically ends its planning task and retires pendi
     };
 
     const cancelled = fixture.board.updateWorkItem(created.workItemId, request);
-    assert.equal(cancelled.state, "cancelled");
+    assert.equal(cancelled.state, "abandoned");
     assert.ok(cancelled.endedAt);
     assert.equal(cancelled.currentStage, null);
     assert.equal(cancelled.version, created.version + 1);
@@ -2092,7 +2093,7 @@ test("cancelling a work item hard-terminates a failed planning task against retr
     const failed = fixture.board.requireTask(created.planningTaskId);
     assert.equal(failed.status, "failed");
     const needsInput = fixture.board.requireWorkItem(created.workItemId);
-    assert.equal(needsInput.state, "needs_input");
+    assert.equal(needsInput.state, "parked");
 
     fixture.board.updateWorkItem(created.workItemId, {
       version: needsInput.version,
@@ -2199,7 +2200,7 @@ test("a failure after planning-task cancellation rolls the whole work-item cance
     const { DatabaseSync } = await import("node:sqlite");
     const originalPrepare = DatabaseSync.prototype.prepare;
     DatabaseSync.prototype.prepare = function failWorkItemCancellation(this: DatabaseSyncType, sql: string) {
-      if (/^\s*UPDATE work_items SET state='cancelled'/u.test(sql)) {
+      if (/^\s*UPDATE work_items SET state='abandoned'/u.test(sql)) {
         throw new Error("injected work-item cancellation failure");
       }
       return originalPrepare.call(this, sql);
@@ -2219,7 +2220,7 @@ test("a failure after planning-task cancellation rolls the whole work-item cance
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(created.workItemId)?.state, "processing");
+      assert.equal(inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(created.workItemId)?.state, "planning");
       assert.equal(inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(created.planningTaskId)?.status, "queued");
       assert.equal(inspected.prepare(`
         SELECT COUNT(*) AS count FROM task_events
@@ -2288,7 +2289,7 @@ test("rejecting a proposed plan records its reason without rewriting the complet
       },
     });
     const reviewItem = fixture.board.requireWorkItem(created.workItemId);
-    assert.equal(reviewItem.state, "waiting_for_human_review");
+    assert.equal(reviewItem.state, "final_approval");
     assert.equal(fixture.board.requireTask(created.planningTaskId).status, "completed");
     const reason = "The proposed verification scope misses the customer rollback path.";
 
@@ -2429,7 +2430,7 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
       assert.equal(Number(removedLink.changes), 1);
       const restoredSubmittedItem = partial.prepare(`
         UPDATE work_items
-        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
       `).run(created.version, created.updatedAt, created.workItemId);
       assert.equal(Number(restoredSubmittedItem.changes), 1);
@@ -2449,7 +2450,7 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
     const replay = postWorkItem(board, request, idempotencyKey);
     assert.equal(replay.duplicate, true);
     assert.equal(replay.workItem.workItemId, created.workItemId);
-    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.state, "planning");
     assert.equal(replay.workItem.currentStage, "planning");
 
     const inspected = new DatabaseSync(path, { readOnly: true });
@@ -2486,7 +2487,7 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
         }],
       },
     });
-    assert.equal(board.requireWorkItem(created.workItemId).state, "waiting_for_human_review");
+    assert.equal(board.requireWorkItem(created.workItemId).state, "final_approval");
   } finally {
     board?.close();
   }
@@ -2538,7 +2539,7 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
       );
       assert.equal(Number(partial.prepare(`
         UPDATE work_items
-        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
       `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
     } finally {
@@ -2578,7 +2579,7 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
 
     const replay = postWorkItem(board, request, idempotencyKey);
     assert.equal(replay.duplicate, true);
-    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.state, "planning");
     assert.equal(replay.workItem.currentStage, "planning");
 
     const inspected = new DatabaseSync(path, { readOnly: true });
@@ -2625,7 +2626,7 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
         }],
       },
     });
-    assert.equal(board.requireWorkItem(created.workItemId).state, "waiting_for_human_review");
+    assert.equal(board.requireWorkItem(created.workItemId).state, "final_approval");
   } finally {
     board?.close();
   }
@@ -2660,7 +2661,7 @@ test("duplicate work-item intake ignores a legacy planning orphan with only a re
       );
       assert.equal(Number(partial.prepare(`
         UPDATE work_items
-        SET state='submitted',current_stage='refinement',version=?,updated_at=?
+        SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
       `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
       partial.prepare(`
@@ -2680,7 +2681,7 @@ test("duplicate work-item intake ignores a legacy planning orphan with only a re
     board = await TaskBoard.open(config(path));
     const replay = postWorkItem(board, request, idempotencyKey);
     assert.equal(replay.duplicate, true);
-    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.state, "planning");
 
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
@@ -2809,7 +2810,7 @@ test("duplicate work-item intake on a healthy processing item is a pure no-op", 
     });
     const created = postWorkItem(fixture.board, request, "work-item-planning-healthy-duplicate-0001");
     assert.equal(created.duplicate, false);
-    assert.equal(created.workItem.state, "processing");
+    assert.equal(created.workItem.state, "planning");
     const beforeItem = fixture.board.requireWorkItem(created.workItem.workItemId);
     const beforeSnapshot = fixture.board.snapshot(fixture.project.projectId);
 
@@ -2867,7 +2868,7 @@ test("work-item POST atomically queues and links planning before the plan is set
     assert.equal(commits, 1);
     assert.equal(rollbacks, 0);
     assert.equal(created.duplicate, false);
-    assert.equal(created.workItem.state, "processing");
+    assert.equal(created.workItem.state, "planning");
     assert.equal(created.workItem.currentStage, "planning");
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
@@ -2912,7 +2913,7 @@ test("work-item POST atomically queues and links planning before the plan is set
         }],
       },
     });
-    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "waiting_for_human_review");
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "final_approval");
   } finally {
     fixture.board.close();
   }
@@ -2949,7 +2950,7 @@ test("a first work-item POST creates the manager, planning task, link, and proce
 
     assert.equal(begins, 1);
     assert.equal(commits, 1);
-    assert.equal(created.workItem.state, "processing");
+    assert.equal(created.workItem.state, "planning");
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
       const manager = inspected.prepare("SELECT agent_id,role,token_hash FROM agents WHERE project_id=? AND role='manager'")
@@ -2967,7 +2968,7 @@ test("a first work-item POST creates the manager, planning task, link, and proce
       assert.equal(planning?.assigned_agent_id, manager?.agent_id);
       assert.equal(planning?.assigned_role, "manager");
       assert.equal(planning?.status, "queued");
-      assert.equal(planning?.state, "processing");
+      assert.equal(planning?.state, "planning");
       assert.equal(planning?.current_stage, "planning");
     } finally {
       inspected.close();
@@ -2988,12 +2989,12 @@ test("duplicate work-item intake repairs a missing manager before starting plann
     });
     const idempotencyKey = "lazy-manager-duplicate-repair-0001";
     const created = board.createWorkItem(request, idempotencyKey);
-    assert.equal(created.workItem.state, "submitted");
+    assert.equal(created.workItem.state, "queued");
 
     const replay = postWorkItem(board, request, idempotencyKey);
 
     assert.equal(replay.duplicate, true);
-    assert.equal(replay.workItem.state, "processing");
+    assert.equal(replay.workItem.state, "planning");
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
@@ -3041,7 +3042,7 @@ test("existing and concurrent first intake create exactly one manager per projec
       worker.on("message", (message: unknown) => {
         const result = message as { type?: string; message?: string; state?: string };
         if (result.type === "complete") {
-          assert.equal(result.state, "processing");
+          assert.equal(result.state, "planning");
           resolve();
         } else if (result.type === "error") {
           reject(new Error(result.message));
@@ -3205,7 +3206,7 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
         .run("2026-07-18T20:00:00.000Z", active[0]!.workItemId);
       ordering.prepare("UPDATE work_items SET created_at = ? WHERE work_item_id = ?")
         .run("2026-07-20T20:00:00.000Z", active[1]!.workItemId);
-      ordering.prepare("UPDATE work_items SET state = 'completed', ended_at = ? WHERE work_item_id = ?")
+      ordering.prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
         .run("2026-07-21T20:00:00.000Z", terminalUrgent.workItemId);
     } finally {
       ordering.close();
@@ -3233,7 +3234,7 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
     }, "pagination-terminal-low").workItem;
     const terminal = new DatabaseSync(path);
     try {
-      terminal.prepare("UPDATE work_items SET state = 'completed', ended_at = ? WHERE work_item_id = ?")
+      terminal.prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
         .run("2026-07-21T20:01:00.000Z", terminalLow.workItemId);
     } finally {
       terminal.close();
@@ -5975,7 +5976,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -6007,7 +6008,7 @@ test("schema version 8 migration adds global work-item intake without changing e
       originalRequest: "Refine this request after the v9 migration.",
       projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }, "migration-v9-work-item-0001");
-    assert.equal(created.workItem.state, "submitted");
+    assert.equal(created.workItem.state, "queued");
     assert.equal(created.workItem.priority, "normal");
   } finally {
     upgraded.close();
@@ -6015,7 +6016,7 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
   } finally {
@@ -6055,7 +6056,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -6145,7 +6146,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -6216,7 +6217,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -6255,7 +6256,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -6290,7 +6291,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -6338,7 +6339,7 @@ test("schema version 3 upgrades in place, preserves existing board data, and ena
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM documents").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM document_events").get()?.count, 1);
   } finally {
@@ -6388,7 +6389,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -6427,7 +6428,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -6473,7 +6474,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
@@ -6503,7 +6504,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error",
@@ -6546,7 +6547,7 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
       "archived_at",
@@ -6583,7 +6584,7 @@ test("schema version 17 adds agent credential versions without changing existing
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 18);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
       "version",
