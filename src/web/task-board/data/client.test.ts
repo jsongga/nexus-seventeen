@@ -658,6 +658,104 @@ describe('task-board protocol projection', () => {
 });
 
 describe('task-board HTTP client', () => {
+  it('loads and validates host project roots', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      roots: [{
+        name: 'WebstormProjects',
+        path: '/home/x/WebstormProjects',
+        projects: [{
+          name: 'nexus-seventeen',
+          path: '/home/x/WebstormProjects/nexus-seventeen',
+          hasGit: true,
+          modifiedAtMs: 1_786_742_400_000,
+        }],
+        truncated: false,
+      }],
+    })));
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.getHostProjectRoots()).resolves.toEqual([{
+      name: 'WebstormProjects',
+      path: '/home/x/WebstormProjects',
+      projects: [{
+        name: 'nexus-seventeen',
+        path: '/home/x/WebstormProjects/nexus-seventeen',
+        hasGit: true,
+        modifiedAtMs: 1_786_742_400_000,
+      }],
+      truncated: false,
+    }]);
+    expect(request).toHaveBeenCalledWith(
+      'https://board.example.test/v1/host/project-roots',
+      expect.objectContaining({ cache: 'no-store' }),
+    );
+  });
+
+  it('rejects malformed host project roots', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      roots: [{
+        name: 'WebstormProjects',
+        path: '/home/x/WebstormProjects',
+        projects: {},
+        truncated: false,
+      }],
+    })));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.getHostProjectRoots()).rejects.toThrow(
+      'host roots response.roots[0].projects must be an array',
+    );
+  });
+
+  it('loads host directories with an encoded path or the bare endpoint', async () => {
+    const request = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify({
+      listing: {
+        path: String(url).includes('?path=') ? '/home/x' : '/home',
+        parent: String(url).includes('?path=') ? '/home' : null,
+        entries: [{ name: 'x', path: '/home/x', hasGit: false }],
+        truncated: false,
+      },
+    })));
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.getHostDirectories('/home/x')).resolves.toEqual({
+      path: '/home/x',
+      parent: '/home',
+      entries: [{ name: 'x', path: '/home/x', hasGit: false }],
+      truncated: false,
+    });
+    await expect(client.getHostDirectories()).resolves.toEqual({
+      path: '/home',
+      parent: null,
+      entries: [{ name: 'x', path: '/home/x', hasGit: false }],
+      truncated: false,
+    });
+    expect(request.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://board.example.test/v1/host/directories?path=%2Fhome%2Fx',
+      'https://board.example.test/v1/host/directories',
+    ]);
+  });
+
+  it('preserves host directory error codes', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      error: { code: 'HOST_PATH_OUTSIDE_ROOTS', message: 'Path is outside configured roots' },
+    }), { status: 403 }));
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await expect(client.getHostDirectories('/etc')).rejects.toEqual(expect.objectContaining({
+      name: 'BoardApiError',
+      status: 403,
+      code: 'HOST_PATH_OUTSIDE_ROOTS',
+      message: 'Path is outside configured roots',
+    } satisfies Partial<BoardApiError>));
+  });
+
   it('consumes CRLF workflow events with optional data-field spacing', async () => {
     const request = vi.fn(async () => new Response(
       `event: workflow\r\ndata:${JSON.stringify({ event: workflowEvent })}\r\n\r\n`,

@@ -10,6 +10,9 @@ import type {
   CreateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
+  HostDirectoryListing,
+  HostProjectEntry,
+  HostProjectRoot,
   ProjectArtifact,
   ProjectWorkflow,
   RotateAgentTokenResult,
@@ -21,6 +24,7 @@ import {
   array,
   automationAgentTypeWire,
   automationStageWire,
+  boolean,
   boundedText,
   exactRecord,
   integer,
@@ -168,6 +172,38 @@ function projectFromEnvelope(value: unknown, path: string): BoardProject {
   return projectProjection(parseProject(envelope.project, `${path}.project`));
 }
 
+function parseHostProjectEntry(value: unknown, path: string): HostProjectEntry {
+  const item = record(value, path);
+  const modifiedAtMs = item.modifiedAtMs;
+  if (typeof modifiedAtMs !== 'number' || !Number.isFinite(modifiedAtMs)) throw new Error(`${path}.modifiedAtMs must be a finite number`);
+  return { name: string(item.name, `${path}.name`), path: string(item.path, `${path}.path`), hasGit: boolean(item.hasGit, `${path}.hasGit`), modifiedAtMs };
+}
+
+function parseHostProjectRoot(value: unknown, path: string): HostProjectRoot {
+  const item = record(value, path);
+  return {
+    name: string(item.name, `${path}.name`),
+    path: string(item.path, `${path}.path`),
+    projects: array(item.projects, `${path}.projects`, parseHostProjectEntry),
+    truncated: boolean(item.truncated, `${path}.truncated`),
+  };
+}
+
+function parseHostDirectoryListing(value: unknown, path: string): HostDirectoryListing {
+  const item = record(value, path);
+  const parent = item.parent;
+  if (parent !== null && typeof parent !== 'string') throw new Error(`${path}.parent must be a string or null`);
+  return {
+    path: string(item.path, `${path}.path`),
+    parent,
+    entries: array(item.entries, `${path}.entries`, (entry, entryPath) => {
+      const node = record(entry, entryPath);
+      return { name: string(node.name, `${entryPath}.name`), path: string(node.path, `${entryPath}.path`), hasGit: boolean(node.hasGit, `${entryPath}.hasGit`) };
+    }),
+    truncated: boolean(item.truncated, `${path}.truncated`),
+  };
+}
+
 function workItemFromEnvelope(value: unknown, path: string): BoardWorkItem {
   const envelope = record(value, path);
   return workItemProjection(parseWorkItem(envelope.workItem, `${path}.workItem`));
@@ -259,6 +295,8 @@ export interface TaskBoardClient {
     onDocument: (document: BoardDocument) => void;
   }): Promise<void>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
+  getHostProjectRoots(signal?: AbortSignal): Promise<HostProjectRoot[]>;
+  getHostDirectories(path?: string, signal?: AbortSignal): Promise<HostDirectoryListing>;
   createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItem>;
   cancelWorkItem(workItemId: string, input: { version: number; reason: string }): Promise<BoardWorkItem>;
   archiveWorkItem(workItemId: string, input: { version: number }): Promise<BoardWorkItem>;
@@ -671,6 +709,15 @@ export function createTaskBoardClient(options: {
         }),
         'create project response',
       );
+    },
+    async getHostProjectRoots(signal) {
+      const envelope = record(await json('/v1/host/project-roots', { signal }), 'host roots response');
+      return array(envelope.roots, 'host roots response.roots', parseHostProjectRoot);
+    },
+    async getHostDirectories(path, signal) {
+      const query = path === undefined ? '' : `?path=${encodeURIComponent(path)}`;
+      const envelope = record(await json(`/v1/host/directories${query}`, { signal }), 'host directories response');
+      return parseHostDirectoryListing(envelope.listing, 'host directories response.listing');
     },
     async createWorkItem(input) {
       const originalRequest = input.originalRequest.trim();

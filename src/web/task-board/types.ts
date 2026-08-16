@@ -381,6 +381,33 @@ export interface ProjectArtifact {
   createdAtMs: number;
 }
 
+export interface HostProjectEntry {
+  name: string;
+  path: string;
+  hasGit: boolean;
+  modifiedAtMs: number;
+}
+
+export interface HostProjectRoot {
+  name: string;
+  path: string;
+  projects: HostProjectEntry[];
+  truncated: boolean;
+}
+
+export interface HostDirectoryEntry {
+  name: string;
+  path: string;
+  hasGit: boolean;
+}
+
+export interface HostDirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: HostDirectoryEntry[];
+  truncated: boolean;
+}
+
 export interface CreateProjectInput {
   name: string;
   description: string;
