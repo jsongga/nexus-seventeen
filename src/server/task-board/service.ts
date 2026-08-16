@@ -8,6 +8,7 @@ import {
 import { TaskBoard } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
+import { listDirectories, listProjectRoots } from "./host.js";
 import {
   applyCors,
   bearerToken,
@@ -111,6 +112,19 @@ function workItemListQuery(url: URL): { cursor: string | undefined; includeArchi
     throw new TaskBoardError(400, "INVALID_REQUEST", "cursor is invalid");
   }
   return { cursor, includeArchived: archivedValues[0] === "1" };
+}
+
+function hostDirectoriesQuery(url: URL): string | undefined {
+  const values = url.searchParams.getAll("path");
+  if ([...url.searchParams.keys()].some((key) => key !== "path") || values.length > 1) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
+  }
+  const path = values[0];
+  if (path === undefined) return undefined;
+  if (path.length < 1 || path.length > 512 || !path.startsWith("/") || /[\u0000\r\n]/u.test(path)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "path must be an absolute path of at most 512 characters");
+  }
+  return path;
 }
 
 function exactIntegerQuery(url: URL, keys: readonly string[], field: string, fallback: number, maximum: number): number {
@@ -236,6 +250,18 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, { projects: this.#board.listProjects() });
+      return;
+    }
+    if (url.pathname === "/v1/host/project-roots" && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { roots: await listProjectRoots(this.config.host) });
+      return;
+    }
+    if (url.pathname === "/v1/host/directories" && request.method === "GET") {
+      const path = hostDirectoriesQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { listing: await listDirectories(this.config.host, path ?? this.config.host.homeDir) });
       return;
     }
     if (url.pathname === "/v1/projects" && request.method === "POST") {
@@ -714,7 +740,7 @@ export class TaskBoardService {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => reject(error);
       this.#server.once("error", onError);
-      this.#server.listen(this.config.port, this.config.host, () => {
+      this.#server.listen(this.config.port, this.config.listenHost, () => {
         this.#server.off("error", onError);
         resolve();
       });

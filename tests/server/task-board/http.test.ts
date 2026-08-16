@@ -82,7 +82,6 @@ test("dormant automation configuration is human-only and CAS controlled", async 
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -195,7 +194,6 @@ test("automatic work-item intake is rejected without creating a row", async () =
     dbPath: path,
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -235,7 +233,6 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -499,7 +496,6 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
     dbPath: path,
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -535,7 +531,6 @@ test("encoded agent route identifiers claim runs and malformed encoding is rejec
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -596,7 +591,6 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-08-09T20:00:00.000Z"),
@@ -720,7 +714,6 @@ test("lane-error is worker-token authenticated, exact, scrubbed, bounded, and cl
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-08-09T20:00:00.000Z"),
@@ -806,7 +799,6 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
     dbPath: path,
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-20T20:00:00.000Z"),
@@ -884,7 +876,6 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now: () => new Date("2026-07-19T20:00:00.000Z"),
@@ -1100,7 +1091,6 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
   });
   const address = await service.start();
@@ -1250,7 +1240,6 @@ test("new task recovery routes reject malformed request bodies", async () => {
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
   });
   const address = await service.start();
@@ -1278,7 +1267,6 @@ test("held HTTP worker requests expose transient connections and service close r
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
   });
   const address = await service.start();
@@ -1365,7 +1353,6 @@ test("document HTTP auth and full-snapshot SSE replay remain ordered across rest
     dbPath: path,
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1" as const,
     port: 0,
     now: () => new Date("2026-07-19T20:00:00.000Z"),
   };

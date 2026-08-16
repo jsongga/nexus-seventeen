@@ -64,7 +64,6 @@ async function fixture(longPollMs = 1): Promise<Fixture> {
     dbPath: join(root, "board", "task-board.sqlite"),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:integration-reviewer",
-    host: "127.0.0.1",
     port: 0,
   });
   const address = await service.start();
@@ -369,7 +368,6 @@ test("worker receives persistent area memory without crossing agent or project b
       dbPath: join(item.root, "board", "task-board.sqlite"),
       humanToken: HUMAN_TOKEN,
       humanPrincipal: "human:integration-reviewer",
-      host: "127.0.0.1",
       port: 0,
     });
     const restartedAddress = await restartedService.start();

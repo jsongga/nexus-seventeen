@@ -26,7 +26,6 @@ export function config(path: string, now: () => Date = () => new Date("2026-07-1
     dbPath: path,
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
-    host: "127.0.0.1",
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now,

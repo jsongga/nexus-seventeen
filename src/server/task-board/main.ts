@@ -13,6 +13,8 @@ function optionalInteger(name: string, fallback: number): number {
   return Number(value);
 }
 
+const projectRootsRaw = process.env.STEWARD_PROJECT_ROOTS;
+
 const service = await createTaskBoardService({
   dbPath: required("STEWARD_TASK_BOARD_DB_PATH"),
   humanToken: required("STEWARD_TASK_BOARD_HUMAN_TOKEN"),
@@ -21,8 +23,11 @@ const service = await createTaskBoardService({
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0),
-  host: (process.env.STEWARD_TASK_BOARD_HOST ?? "127.0.0.1") as "127.0.0.1" | "::1",
+  listenHost: (process.env.STEWARD_TASK_BOARD_HOST ?? "127.0.0.1") as "127.0.0.1" | "::1",
   port: optionalInteger("STEWARD_TASK_BOARD_PORT", 4_318),
+  host: projectRootsRaw === undefined ? undefined : {
+    projectRoots: projectRootsRaw.split(":").map((value) => value.trim()).filter((value) => value.length > 0),
+  },
 });
 
 const address = await service.start();
