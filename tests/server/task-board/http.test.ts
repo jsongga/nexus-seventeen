@@ -467,6 +467,88 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
   }
 });
 
+test("work-item detail exposes ordered creation and state-transition history", async () => {
+  const path = await databasePath();
+  const fixture = await boardFixture(path);
+  const seeded = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: "Expose work-item transition history through the detail route.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), "http-work-item-transition-detail-0001").workItem;
+  assert.equal(seeded.state, "queued");
+  fixture.board.close();
+
+  const service = await createTaskBoardService({
+    dbPath: path,
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    corsOrigins: ["https://app.cicada.build"],
+    now: () => new Date("2026-07-20T20:00:00.000Z"),
+  });
+  const address = await service.start();
+  try {
+    type Transition = Readonly<{
+      fromState: string | null;
+      toState: string;
+      actorType: string;
+      actorId: string;
+      createdAt: string;
+    }>;
+    type Detail = Readonly<{
+      state: string;
+      version: number;
+      transitions: Transition[];
+    }>;
+    const initialTransition: Transition = {
+      fromState: null,
+      toState: "queued",
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: seeded.createdAt,
+    };
+
+    const initialResponse = await request(
+      address.url,
+      `/v1/work-items/${seeded.workItemId}`,
+      "GET",
+      HUMAN_TOKEN,
+    );
+    assert.equal(initialResponse.status, 200);
+    const initial = (await initialResponse.json() as { workItem: Detail }).workItem;
+    assert.equal(initial.state, "queued");
+    assert.deepEqual(initial.transitions, [initialTransition]);
+
+    const cancellationReason = "The transition-envelope assertion has completed.";
+    const cancelledResponse = await request(
+      address.url,
+      `/v1/work-items/${seeded.workItemId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      { version: initial.version, action: "cancel", reason: cancellationReason },
+    );
+    assert.equal(cancelledResponse.status, 200);
+
+    const transitionedResponse = await request(
+      address.url,
+      `/v1/work-items/${seeded.workItemId}`,
+      "GET",
+      HUMAN_TOKEN,
+    );
+    assert.equal(transitionedResponse.status, 200);
+    const transitioned = (await transitionedResponse.json() as { workItem: Detail }).workItem;
+    assert.equal(transitioned.state, "abandoned");
+    assert.deepEqual(transitioned.transitions, [initialTransition, {
+      fromState: "queued",
+      toState: "abandoned",
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: "2026-07-20T20:00:00.000Z",
+    }]);
+  } finally {
+    await service.close();
+  }
+});
+
 test("plan confirmation rejects null and non-exact request bodies with field-specific errors", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);

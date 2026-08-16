@@ -446,6 +446,11 @@ test('interrupting every active project agent confirms the count and preserves r
       startedAt: '2026-07-19T18:12:00.000Z',
       endedAt: null,
       result: null,
+      heartbeatAt: null,
+      runtime: null,
+      runtimeVersion: null,
+      model: null,
+      promptsSha: null,
     },
     {
       apiVersion,
@@ -459,6 +464,11 @@ test('interrupting every active project agent confirms the count and preserves r
       startedAt: '2026-07-19T18:13:00.000Z',
       endedAt: null,
       result: null,
+      heartbeatAt: null,
+      runtime: null,
+      runtimeVersion: null,
+      model: null,
+      promptsSha: null,
     },
   ];
   const interruptRequests: string[] = [];
@@ -965,7 +975,7 @@ test('creating a task requires and records one explicit project with priority', 
         refinedObjective: null,
         resolvedProjectId: project.projectId,
         planningTaskId: null,
-        state: 'submitted',
+        state: 'queued',
         currentStage: 'refinement',
         createdBy: 'human:operator',
         version: 1,
@@ -974,6 +984,13 @@ test('creating a task requires and records one explicit project with priority', 
         endedAt: null,
         cancelledReason: null,
         archivedAt: null,
+        transitions: [{
+          fromState: null,
+          toState: 'queued',
+          actorType: 'human',
+          actorId: 'human:operator',
+          createdAt: '2026-07-19T18:16:00.000Z',
+        }],
       };
       workItems = [createdWorkItem];
       await route.fulfill({ status: 201, json: { workItem: createdWorkItem } });
@@ -1030,7 +1047,7 @@ test('creating a task requires and records one explicit project with priority', 
   expect(createdIdempotencyKey).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u);
   await expect(page.getByRole('heading', { name: 'Automation intake' })).toBeVisible();
   const intakeRow = page.getByRole('button', { name: /Make invoice recovery clear/u });
-  await expect(intakeRow.getByText('Submitted · Refinement pending', { exact: true })).toBeVisible();
+  await expect(intakeRow.getByText('Queued', { exact: true })).toBeVisible();
   await expect(intakeRow.getByText(project.name, { exact: true })).toBeVisible();
 });
 
@@ -1054,6 +1071,8 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   let rejectAttempts = 0;
   let archiveAttempts = 0;
   let cancelAttempts = 0;
+  let primaryTransitions: Record<string, unknown>[] = [];
+  let cancellableTransitions: Record<string, unknown>[] = [];
 
   const planningTask = () => ({
     ...task,
@@ -1146,14 +1165,51 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
     const method = request.method();
     if (url.pathname === '/board-api/v1/work-items' && method === 'GET') {
       workItemListRequests += 1;
-      if (workflowCompleted && primaryWorkItem && primaryWorkItem.archivedAt === null) {
+      if (
+        workflowCompleted
+        && primaryWorkItem
+        && primaryWorkItem.archivedAt === null
+        && primaryWorkItem.state !== 'merged'
+      ) {
+        primaryTransitions = [...primaryTransitions, {
+          fromState: 'planning',
+          toState: 'plan_approval',
+          actorType: 'agent',
+          actorId: manager.agentId,
+          createdAt: '2026-07-19T18:25:00.000Z',
+        }, {
+          fromState: 'plan_approval',
+          toState: 'implementing',
+          actorType: 'system',
+          actorId: 'system:workflow',
+          createdAt: '2026-07-19T18:26:00.000Z',
+        }, {
+          fromState: 'implementing',
+          toState: 'verifying',
+          actorType: 'system',
+          actorId: 'system:workflow',
+          createdAt: '2026-07-19T18:27:00.000Z',
+        }, {
+          fromState: 'verifying',
+          toState: 'reviewing',
+          actorType: 'system',
+          actorId: 'system:workflow',
+          createdAt: '2026-07-19T18:28:00.000Z',
+        }, {
+          fromState: 'reviewing',
+          toState: 'merged',
+          actorType: 'system',
+          actorId: 'system:workflow',
+          createdAt: '2026-07-19T18:30:00.000Z',
+        }];
         primaryWorkItem = {
           ...primaryWorkItem,
-          state: 'completed',
+          state: 'merged',
           currentStage: null,
-          version: 5,
+          version: 11,
           updatedAt: '2026-07-19T18:30:00.000Z',
           endedAt: '2026-07-19T18:30:00.000Z',
+          transitions: primaryTransitions,
         };
       }
       const workItems = [primaryWorkItem, cancellableWorkItem]
@@ -1180,24 +1236,53 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
         archivedAt: null,
       };
       if (createCount === 1) {
+        primaryTransitions = [{
+          fromState: null,
+          toState: 'queued',
+          actorType: 'human',
+          actorId: 'human:operator',
+          createdAt: '2026-07-19T18:16:00.000Z',
+        }, {
+          fromState: 'queued',
+          toState: 'planning',
+          actorType: 'system',
+          actorId: 'system:planning',
+          createdAt: '2026-07-19T18:17:00.000Z',
+        }, {
+          fromState: 'planning',
+          toState: 'parked',
+          actorType: 'agent',
+          actorId: manager.agentId,
+          createdAt: '2026-07-19T18:18:00.000Z',
+        }];
         primaryWorkItem = {
           ...common,
           workItemId: 'work-item-detail-primary',
           planningTaskId,
           refinedObjective: 'Preserve retry copy while making recovery observable.',
-          state: 'needs_input',
-          version: 2,
+          state: 'parked',
+          version: 3,
+          transitions: primaryTransitions,
         };
         await route.fulfill({ status: 201, json: { workItem: primaryWorkItem } });
       } else {
+        cancellableTransitions = [{
+          fromState: null,
+          toState: 'queued',
+          actorType: 'human',
+          actorId: 'human:operator',
+          createdAt: '2026-07-19T18:32:00.000Z',
+        }];
         cancellableWorkItem = {
           ...common,
           workItemId: 'work-item-detail-cancel',
           planningTaskId: null,
-          state: 'submitted',
+          state: 'queued',
           currentStage: 'refinement',
           version: 1,
+          createdAt: '2026-07-19T18:32:00.000Z',
           updatedAt: '2026-07-19T18:32:00.000Z',
+          transitions: cancellableTransitions,
         };
         await route.fulfill({ status: 201, json: { workItem: cancellableWorkItem } });
       }
@@ -1224,7 +1309,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
       archiveRequest = input;
       primaryWorkItem = {
         ...primaryWorkItem!,
-        version: 6,
+        version: 12,
         updatedAt: '2026-07-19T18:31:00.000Z',
         archivedAt: '2026-07-19T18:31:00.000Z',
       };
@@ -1241,14 +1326,22 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
         return;
       }
       cancelRequest = request.postDataJSON() as Record<string, unknown>;
+      cancellableTransitions = [...cancellableTransitions, {
+        fromState: 'queued',
+        toState: 'abandoned',
+        actorType: 'human',
+        actorId: 'human:operator',
+        createdAt: '2026-07-19T18:34:00.000Z',
+      }];
       cancellableWorkItem = {
         ...cancellableWorkItem!,
-        state: 'cancelled',
+        state: 'abandoned',
         currentStage: null,
         version: 2,
         updatedAt: '2026-07-19T18:34:00.000Z',
         endedAt: '2026-07-19T18:34:00.000Z',
         cancelledReason: String(cancelRequest.reason),
+        transitions: cancellableTransitions,
       };
       await route.fulfill({ json: { workItem: cancellableWorkItem } });
       return;
@@ -1264,12 +1357,26 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
         return;
       }
       planningAnswered = true;
+      primaryTransitions = [...primaryTransitions, {
+        fromState: 'parked',
+        toState: 'planning',
+        actorType: 'human',
+        actorId: 'human:operator',
+        createdAt: '2026-07-19T18:19:00.000Z',
+      }, {
+        fromState: 'planning',
+        toState: 'plan_approval',
+        actorType: 'agent',
+        actorId: manager.agentId,
+        createdAt: '2026-07-19T18:19:00.000Z',
+      }];
       primaryWorkItem = {
         ...primaryWorkItem!,
-        state: 'waiting_for_human_review',
-        currentStage: 'human_review',
-        version: 3,
+        state: 'plan_approval',
+        currentStage: 'planning',
+        version: 5,
         updatedAt: '2026-07-19T18:19:00.000Z',
+        transitions: primaryTransitions,
       };
       await route.fulfill({ json: { question: question(), duplicate: false } });
       return;
@@ -1289,12 +1396,15 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
         return;
       }
       planConfirmed = true;
+      // Research-first confirmation keeps plan_approval (server's collapse rule):
+      // stage/version move, no state transition row is recorded.
       primaryWorkItem = {
         ...primaryWorkItem!,
-        state: 'processing',
+        state: 'plan_approval',
         currentStage: 'research',
-        version: 4,
+        version: 6,
         updatedAt: '2026-07-19T18:20:00.000Z',
+        transitions: primaryTransitions,
       };
       await route.fulfill({ json: { workflow: workflow() } });
       return;
@@ -1332,7 +1442,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await dialog.getByRole('button', { name: 'Submit task' }).click();
 
   const primaryRow = page.getByRole('article', { name: 'Work item: Preserve retry copy while making recovery observable.' });
-  const primaryRowButton = primaryRow.getByRole('button', { name: /Needs input/u });
+  const primaryRowButton = primaryRow.getByRole('button', { name: /Parked/u });
   await primaryRowButton.click();
   await expect(page).toHaveURL(/#\/intake\/work-item-detail-primary$/u);
   const pane = page.getByRole('region', { name: 'Work-item details' });
@@ -1387,11 +1497,11 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await pane.getByRole('button', { name: 'Confirm plan' }).click();
   await expect.poll(() => confirmRequest).toEqual({ expectedState: 'proposed' });
   await expect.poll(() => confirmAttempts).toBe(2);
-  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Processing · Researching', { exact: true })).toBeVisible();
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Plan review', { exact: true })).toBeVisible();
 
   workflowCompleted = true;
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('completed', { exact: true })).toBeVisible();
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Done', { exact: true })).toBeVisible();
   await pane.getByRole('button', { name: 'Archive', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Archive work item' });
   await dialog.getByRole('button', { name: 'Archive work item' }).click();
@@ -1401,7 +1511,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await pane.getByRole('button', { name: 'Archive', exact: true }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Archive work item' }).click();
-  await expect.poll(() => archiveRequest).toEqual({ version: 5, action: 'archive' });
+  await expect.poll(() => archiveRequest).toEqual({ version: 11, action: 'archive' });
   await expect(page).toHaveURL(/#\/tasks$/u);
   await expect(primaryRow).toHaveCount(0);
 
@@ -1411,7 +1521,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
   const cancellableRow = page.getByRole('article', { name: 'Work item: Cancel this superseded intake' });
-  await cancellableRow.getByRole('button', { name: /Submitted/u }).click();
+  await cancellableRow.getByRole('button', { name: /Queued/u }).click();
   await pane.getByRole('button', { name: 'Cancel work item' }).click();
   dialog = page.getByRole('dialog', { name: 'Cancel work item' });
   await dialog.getByLabel('Reason').fill('A newer request supersedes this intake.');
@@ -1429,7 +1539,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
     action: 'cancel',
     reason: 'A newer request supersedes this intake.',
   });
-  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('cancelled', { exact: true })).toBeVisible();
+  await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Cancelled', { exact: true })).toBeVisible();
   await expect(pane.getByRole('heading', { name: 'Cancellation reason' })).toBeVisible();
   await expect(pane.getByText('A newer request supersedes this intake.', { exact: true })).toBeVisible();
 });
@@ -1649,7 +1759,7 @@ test('project intake lazily creates a manager whose lane token can be rotated an
     projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
     resolvedProjectId: importedProject.projectId,
     planningTaskId: planningTask.taskId,
-    state: 'processing',
+    state: 'planning',
     currentStage: 'planning',
     createdBy: 'human:operator',
     version: 2,
@@ -1658,6 +1768,19 @@ test('project intake lazily creates a manager whose lane token can be rotated an
     endedAt: null,
     cancelledReason: null,
     archivedAt: null,
+    transitions: [{
+      fromState: null,
+      toState: 'queued',
+      actorType: 'human',
+      actorId: 'human:operator',
+      createdAt: '2026-08-09T20:01:00.000Z',
+    }, {
+      fromState: 'queued',
+      toState: 'planning',
+      actorType: 'system',
+      actorId: 'system:planning',
+      createdAt: '2026-08-09T20:01:00.000Z',
+    }],
   };
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
@@ -1939,6 +2062,11 @@ test('agent pages stay chat-first while unavailable assignments remain durable',
             startedAt: workingTask.startedAt,
             endedAt: null,
             result: null,
+            heartbeatAt: null,
+            runtime: null,
+            runtimeVersion: null,
+            model: null,
+            promptsSha: null,
           }],
         },
       });
