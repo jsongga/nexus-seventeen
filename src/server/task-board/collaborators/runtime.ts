@@ -4,6 +4,7 @@ import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
   isHardTerminalTaskStatus,
+  isTerminalWorkItemState,
   type AgentProfile,
   type AgentRole,
   type AgentRun,
@@ -15,6 +16,8 @@ import {
   type TaskStatus,
   type Wakeup,
   type WorkerConnection,
+  type WorkItemStage,
+  type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
@@ -34,9 +37,15 @@ import {
   type Row,
 } from "../persistence/rows.js";
 import type { TaskBoardStore } from "../persistence/store.js";
+import {
+  registerWorkItemTransitionStore,
+  transitionWorkItemInTransaction,
+  workItemStateForStage,
+} from "./work-item-transitions.js";
 
 export type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
 export type ReviewFollowupResult = Readonly<{ taskId: string; wakeAgentId: string | null }>;
+type WorkItemTransitionActor = Readonly<{ type: "human" | "agent" | "system"; id: string }>;
 
 type ActiveWorkerConnection = Exclude<WorkerConnection, null>;
 type WorkerConnectionCounts = { waitingForWake: number; watchingRun: number };
@@ -53,6 +62,7 @@ export class TaskBoardRuntime {
     readonly config: TaskBoardConfig,
     readonly store: TaskBoardStore,
   ) {
+    registerWorkItemTransitionStore(store);
     this.interruptEvents.setMaxListeners(512);
     this.wakeupEvents.setMaxListeners(512);
     this.documentEvents.setMaxListeners(512);
@@ -217,6 +227,50 @@ export class TaskBoardRuntime {
     return this.store.db.prepare("SELECT 1 FROM stage_attempts WHERE task_id = ?").get(taskId) !== undefined;
   }
 
+  parkWorkItemForTaskInTransaction(taskId: string, actor: WorkItemTransitionActor, now: string): boolean {
+    const link = this.workItemLinkForTask(taskId);
+    if (link === undefined || isTerminalWorkItemState(link.currentState)) return false;
+    transitionWorkItemInTransaction(this.store, {
+      workItemId: link.workItemId,
+      to: "parked",
+      actorType: actor.type,
+      actorId: actor.id,
+      now,
+    });
+    return true;
+  }
+
+  recoverWorkItemForTaskInTransaction(taskId: string, actor: WorkItemTransitionActor, now: string): boolean {
+    const link = this.workItemLinkForTask(taskId);
+    if (link === undefined || isTerminalWorkItemState(link.currentState)) return false;
+    const recoveryStage = link.currentStage ?? link.taskStage;
+    transitionWorkItemInTransaction(this.store, {
+      workItemId: link.workItemId,
+      to: workItemStateForStage(recoveryStage),
+      actorType: actor.type,
+      actorId: actor.id,
+      now,
+      currentStage: recoveryStage,
+    });
+    return true;
+  }
+
+  workItemForTaskHasOpenQuestionsInTransaction(taskId: string): boolean {
+    const link = this.workItemLinkForTask(taskId);
+    if (link === undefined) return false;
+    return this.store.db.prepare(`
+      SELECT 1
+      FROM questions question
+      LEFT JOIN work_item_planning_tasks planning ON planning.task_id = question.task_id
+      LEFT JOIN stage_attempts attempt ON attempt.task_id = question.task_id
+      LEFT JOIN work_nodes node ON node.node_id = attempt.node_id
+      LEFT JOIN plan_revisions plan ON plan.plan_revision_id = node.plan_revision_id
+      WHERE question.status = 'open'
+        AND COALESCE(planning.work_item_id, plan.work_item_id) = ?
+      LIMIT 1
+    `).get(link.workItemId) !== undefined;
+  }
+
   recoverWorkflowTaskInTransaction(
     taskId: string,
     transition: "retry" | "reassign",
@@ -229,15 +283,28 @@ export class TaskBoardRuntime {
         attempt.attempt,
         node.project_id,
         node.plan_revision_id,
+        plan.work_item_id,
+        work_item.state AS work_item_state,
         node.title,
         node.state,
         node.current_stage,
         node.version
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id = attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id = node.plan_revision_id
+      JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
       WHERE attempt.task_id = ?
     `).get(taskId);
-    if (link === undefined) return false;
+    if (link === undefined) {
+      return this.recoverWorkItemForTaskInTransaction(
+        taskId,
+        {
+          type: "system",
+          id: transition === "retry" ? "system:planning-retry" : "system:planning-reassign",
+        },
+        now,
+      );
+    }
     const nodeId = stringValue(link, "node_id");
     const stage = stringValue(link, "stage") as WorkflowStage;
     const currentStage = nullableString(link, "current_stage");
@@ -268,13 +335,16 @@ export class TaskBoardRuntime {
     if (Number(update.changes) !== 1) {
       throw conflict(TASK_BOARD_ERROR_CODES.WORK_NODE_VERSION_CONFLICT, "Workflow node changed during task recovery");
     }
-    this.store.db.prepare(`
-      UPDATE work_items
-      SET state = 'processing', current_stage = ?, version = version + 1, updated_at = ?
-      WHERE work_item_id = (
-        SELECT work_item_id FROM plan_revisions WHERE plan_revision_id = ?
-      ) AND ended_at IS NULL
-    `).run(stage, now, stringValue(link, "plan_revision_id"));
+    if (!isTerminalWorkItemState(stringValue(link, "work_item_state") as WorkItemState)) {
+      transitionWorkItemInTransaction(this.store, {
+        workItemId: stringValue(link, "work_item_id"),
+        to: workItemStateForStage(stage),
+        actorType: "system",
+        actorId: transition === "retry" ? "system:workflow-retry" : "system:workflow-reassign",
+        now,
+        currentStage: stage,
+      });
+    }
     const projectId = stringValue(link, "project_id");
     const eventId = `event_${randomUUID()}`;
     const eventType = transition === "retry" ? "stage_task_retried" : "stage_task_reassigned";
@@ -307,6 +377,43 @@ export class TaskBoardRuntime {
       }
     });
     return true;
+  }
+
+  private workItemLinkForTask(taskId: string): Readonly<{
+    workItemId: string;
+    taskStage: WorkItemStage;
+    currentState: WorkItemState;
+    currentStage: WorkItemStage | null;
+  }> | undefined {
+    const row = this.store.db.prepare(`
+      SELECT
+        planning.work_item_id,
+        'planning' AS task_stage,
+        work_item.state AS work_item_state,
+        work_item.current_stage AS work_item_current_stage
+      FROM work_item_planning_tasks planning
+      JOIN work_items work_item ON work_item.work_item_id = planning.work_item_id
+      WHERE planning.task_id = ?
+      UNION ALL
+      SELECT
+        plan.work_item_id,
+        attempt.stage AS task_stage,
+        work_item.state AS work_item_state,
+        work_item.current_stage AS work_item_current_stage
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id = attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id = node.plan_revision_id
+      JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
+      WHERE attempt.task_id = ?
+      LIMIT 1
+    `).get(taskId, taskId);
+    if (row === undefined) return undefined;
+    return Object.freeze({
+      workItemId: stringValue(row, "work_item_id"),
+      taskStage: stringValue(row, "task_stage") as WorkItemStage,
+      currentState: stringValue(row, "work_item_state") as WorkItemState,
+      currentStage: nullableString(row, "work_item_current_stage") as WorkItemStage | null,
+    });
   }
 
   requireRun(runId: string, agentId: string, taskId: string | null, active: boolean): AgentRun {

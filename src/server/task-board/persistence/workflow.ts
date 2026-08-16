@@ -4,6 +4,7 @@ import {
   IDENTIFIER_PATTERN,
   TASK_BOARD_ERROR_CODES,
   WORKFLOW_STAGES,
+  isTerminalWorkItemState,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CreatePlanRevisionRequest,
@@ -12,10 +13,16 @@ import {
   type StageHandoff,
   type StageHandoffDraft,
   type WorkNode,
+  type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
 import { SkillRegistry } from "../skills.js";
+import {
+  transitionWorkItemInTransaction,
+  workItemStateForStage,
+  workItemTransitionStoreForDatabase,
+} from "../collaborators/work-item-transitions.js";
 
 type Row = Record<string, unknown>;
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
@@ -63,14 +70,19 @@ export class TransparentWorkflow {
   ) {}
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
-    return this.proposeInternal(raw, actor, false);
+    return this.proposeInternal(raw, "human", actor, false);
   }
 
   proposeInTransaction(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
-    return this.proposeInternal(raw, actor, true);
+    return this.proposeInternal(raw, "agent", actor, true);
   }
 
-  private proposeInternal(raw: CreatePlanRevisionRequest, actor: string, inTransaction: boolean): ProjectWorkflowSnapshot {
+  private proposeInternal(
+    raw: CreatePlanRevisionRequest,
+    actorType: "human" | "agent",
+    actor: string,
+    inTransaction: boolean,
+  ): ProjectWorkflowSnapshot {
     const workItemId = text(raw.workItemId, "workItemId", 128);
     const projectId = text(raw.projectId, "projectId", 128);
     const objective = text(raw.objective, "objective");
@@ -103,7 +115,9 @@ export class TransparentWorkflow {
     for (const id of ids) visit(id);
     const createdAt = this.now().toISOString();
     const apply = (): void => {
-      const workItem = this.db.prepare("SELECT ended_at FROM work_items WHERE work_item_id=?").get(workItemId);
+      const workItem = this.db.prepare(
+        "SELECT state,current_stage,ended_at FROM work_items WHERE work_item_id=?",
+      ).get(workItemId) as Row | undefined;
       if (workItem === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
       if (workItem.ended_at !== null) {
         throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
@@ -123,9 +137,24 @@ export class TransparentWorkflow {
           this.db.prepare("INSERT INTO work_node_dependencies VALUES(?,?)").run(storedId, storedIds.get(dependency)!);
         }
       }
-      this.db.prepare(
-        "UPDATE work_items SET refined_objective=?,state='waiting_for_human_review',current_stage='human_review',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-      ).run(objective, createdAt, workItemId);
+      const objectiveUpdate = this.db.prepare(`
+        UPDATE
+          work_items
+        SET refined_objective = ?
+        WHERE work_item_id = ? AND ended_at IS NULL
+      `).run(objective, workItemId);
+      if (Number(objectiveUpdate.changes) !== 1) {
+        throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+      }
+      transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+        workItemId,
+        to: "plan_approval",
+        actorType,
+        actorId: actor,
+        now: createdAt,
+        ...(workItem.current_stage === "human_review" ? {} : { currentStage: "human_review" as const }),
+        touch: true,
+      });
       this.event(projectId, null, null, "plan_proposed", `Plan revision ${revision} proposed`, createdAt);
     };
     if (inTransaction) apply();
@@ -161,12 +190,28 @@ export class TransparentWorkflow {
       const firstStage = this.db.prepare(
         "SELECT current_stage FROM work_nodes WHERE plan_revision_id=? AND state='ready' ORDER BY created_at,node_id LIMIT 1",
       ).get(planId)?.current_stage;
-      const workItemUpdate = this.db.prepare(
-        "UPDATE work_items SET state='processing',resolved_project_id=?,current_stage=?,version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-      ).run(String(row.project_id), String(firstStage), now, String(row.work_item_id));
-      if (Number(workItemUpdate.changes) !== 1) {
+      if (firstStage === undefined || firstStage === null) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_without_ready_stage");
+      }
+      const projectUpdate = this.db.prepare(`
+        UPDATE
+          work_items
+        SET resolved_project_id = ?
+        WHERE work_item_id = ? AND ended_at IS NULL
+      `).run(String(row.project_id), String(row.work_item_id));
+      if (Number(projectUpdate.changes) !== 1) {
         throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
       }
+      const firstWorkflowStage = String(firstStage) as WorkflowStage;
+      const firstWorkItemState = workItemStateForStage(firstWorkflowStage);
+      transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+        workItemId: String(row.work_item_id),
+        to: firstWorkItemState === "planning" ? "plan_approval" : firstWorkItemState,
+        actorType: "human",
+        actorId: actor,
+        now,
+        currentStage: firstWorkflowStage,
+      });
       this.event(String(row.project_id), null, null, "plan_confirmed", `Plan revision ${row.revision} confirmed`, now);
       return this.nodes(planId).filter((node) => node.state === "ready");
     });
@@ -286,6 +331,27 @@ export class TransparentWorkflow {
           return Object.freeze(this.nodesForIds([nodeId]));
         }
         this.db.prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?").run(now, nodeId);
+        if (attemptNumber >= 3) {
+          const plan = this.db.prepare(`
+            SELECT plan.work_item_id, work_item.state
+            FROM plan_revisions plan
+            JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
+            WHERE plan.plan_revision_id = ?
+          `
+          ).get(String(attempt.plan_revision_id)) as Row | undefined;
+          if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_work_item");
+          if (!isTerminalWorkItemState(String(plan.state) as WorkItemState)) {
+            transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+              workItemId: String(plan.work_item_id),
+              to: "dead_letter",
+              actorType: "system",
+              actorId: "system:workflow",
+              now,
+              endedAt: now,
+              currentStage: null,
+            });
+          }
+        }
         this.event(projectId, nodeId, taskId, "stage_failed", `${stage} failed: ${result.slice(0, 240)}`, now);
         return Object.freeze([]);
       }
@@ -318,9 +384,21 @@ export class TransparentWorkflow {
       ).get(planRevisionId);
       if (!unfinished) {
         const plan = this.db.prepare("SELECT work_item_id,objective FROM plan_revisions WHERE plan_revision_id=?").get(planRevisionId) as Row;
-        this.db.prepare(
-          "UPDATE work_items SET state='completed',current_stage=NULL,ended_at=?,version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-        ).run(now, now, String(plan.work_item_id));
+        const workItem = this.db.prepare(
+          "SELECT state,current_stage FROM work_items WHERE work_item_id = ?",
+        ).get(String(plan.work_item_id)) as Row | undefined;
+        if (workItem === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_work_item");
+        if (!isTerminalWorkItemState(String(workItem.state) as WorkItemState)) {
+          transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+            workItemId: String(plan.work_item_id),
+            to: "merged",
+            actorType: "system",
+            actorId: "system:workflow",
+            now,
+            endedAt: now,
+            ...(workItem.current_stage === null ? {} : { currentStage: null }),
+          });
+        }
         this.event(projectId, null, taskId, "workflow_completed", `Completed: ${String(plan.objective).slice(0, 240)}`, now);
       }
       return Object.freeze(this.nodesForIds(newlyReady));
@@ -335,9 +413,41 @@ export class TransparentWorkflow {
   }
 
   private setWorkItemStage(planRevisionId: string, stage: WorkflowStage, updatedAt: string): void {
-    this.db.prepare(`UPDATE work_items SET current_stage=?,version=version+1,updated_at=?
-      WHERE work_item_id=(SELECT work_item_id FROM plan_revisions WHERE plan_revision_id=?) AND ended_at IS NULL`)
-      .run(stage, updatedAt, planRevisionId);
+    const plan = this.db.prepare(`
+      SELECT plan.work_item_id, work_item.state
+      FROM plan_revisions plan
+      JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
+      WHERE plan.plan_revision_id = ?
+    `
+    ).get(planRevisionId) as Row | undefined;
+    if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_plan_work_item");
+    if (isTerminalWorkItemState(String(plan.state) as WorkItemState)) return;
+    const currentState = String(plan.state) as WorkItemState;
+    const mappedState = workItemStateForStage(stage);
+    const parkedWithOpenQuestions = currentState === "parked" && this.db.prepare(`
+      SELECT 1
+      FROM questions question
+      LEFT JOIN work_item_planning_tasks planning ON planning.task_id = question.task_id
+      LEFT JOIN stage_attempts attempt ON attempt.task_id = question.task_id
+      LEFT JOIN work_nodes node ON node.node_id = attempt.node_id
+      LEFT JOIN plan_revisions question_plan ON question_plan.plan_revision_id = node.plan_revision_id
+      WHERE question.status = 'open'
+        AND COALESCE(planning.work_item_id, question_plan.work_item_id) = ?
+      LIMIT 1
+    `).get(String(plan.work_item_id)) !== undefined;
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId: String(plan.work_item_id),
+      to: parkedWithOpenQuestions
+        ? currentState
+        : currentState === "plan_approval" && mappedState === "planning" ? currentState : mappedState,
+      actorType: "system",
+      actorId: "system:workflow",
+      now: updatedAt,
+      currentStage: stage,
+      // Touch only when the stage genuinely moved — an unchanged stage must
+      // not bump the version and spuriously invalidate concurrent CAS holders.
+      ...(parkedWithOpenQuestions && stage !== plan.current_stage ? { touch: true } : {}),
+    });
   }
 
   nodes(planId: string): readonly WorkNode[] {

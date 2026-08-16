@@ -33,6 +33,41 @@ function postWorkItem(
   return board.createWorkItemAndStartPlanning(request, idempotencyKey);
 }
 
+async function stageWorkItemForWorkflow(path: string, workItemId: string): Promise<void> {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path);
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const row = db.prepare("SELECT version FROM work_items WHERE work_item_id=? AND state='queued'").get(workItemId);
+    assert.ok(row);
+    const now = "2026-07-19T20:00:00.000Z";
+    assert.equal(Number(db.prepare(`
+      UPDATE work_items
+      SET state='planning',current_stage='planning',version=version+1,updated_at=?
+      WHERE work_item_id=? AND state='queued' AND version=?
+    `).run(now, workItemId, Number(row.version)).changes), 1);
+    db.prepare(`
+      INSERT INTO work_item_transitions(
+        work_item_id,sequence,from_state,to_state,actor_type,actor_id,created_at
+      ) VALUES (
+        ?,
+        1 + COALESCE((SELECT MAX(sequence) FROM work_item_transitions WHERE work_item_id=?), 0),
+        'queued','planning','system','system:test-workflow-setup',?
+      )
+    `).run(workItemId, workItemId, now);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the setup failure.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
 function completeAssignedTask(
   board: TaskBoard,
   projectId: string,
@@ -82,6 +117,7 @@ async function activeSettlementWorkflow(suffix: string) {
     originalRequest: `Verify atomic run settlement ${suffix}.`,
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   }), `atomic-settlement-${suffix}`).workItem;
+  await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
     projectId: fixture.project.projectId,
@@ -110,6 +146,91 @@ async function activeSettlementWorkflow(suffix: string) {
   return { ...fixture, verifier, workItem, node, claim };
 }
 
+async function parallelStageWorkflow(suffix: string, researchAdvancesThroughImplementation = false) {
+  const fixture = await boardFixture();
+  const verifier = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: `parallel-verifier-${suffix}`,
+    role: "verifier",
+    area: "parallel verification",
+    mission: "Verify one branch while research runs in another.",
+    model: "codex-mini",
+    token: `parallel-verifier-token-${suffix}-0123456789`,
+  });
+  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: [
+      {
+        agentTypeId: `parallel-research-${suffix}`,
+        name: "Parallel researcher",
+        description: "Executes a research node alongside verification.",
+        role: "engineer",
+        supplementalInstructions: "Research the workflow evidence.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      },
+      {
+        agentTypeId: `parallel-verification-${suffix}`,
+        name: "Parallel verifier",
+        description: "Executes a verification node alongside research.",
+        role: "verifier",
+        supplementalInstructions: "Verify the workflow evidence.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      },
+    ],
+    stages: automationStages({
+      research: { kind: "agent_type", agentTypeId: `parallel-research-${suffix}` },
+      ...(researchAdvancesThroughImplementation
+        ? { implementation: { kind: "agent_type" as const, agentTypeId: `parallel-research-${suffix}` } }
+        : {}),
+      verification: { kind: "agent_type", agentTypeId: `parallel-verification-${suffix}` },
+    }),
+  }));
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: `Exercise parallel workflow settlement ${suffix}.`,
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `parallel-workflow-${suffix}`).workItem;
+  await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
+  const researchTitle = `Parallel research ${suffix}`;
+  const verificationTitle = `Parallel verification ${suffix}`;
+  const proposed = fixture.board.proposeWorkflow({
+    workItemId: workItem.workItemId,
+    projectId: fixture.project.projectId,
+    objective: "Keep parallel workflow tasks independent after terminal work-item writes.",
+    assumptions: [],
+    acceptanceCriteria: ["Each task settles without reopening the work item."],
+    skillIds: [],
+    nodes: [
+      {
+        nodeId: `parallel-research-${suffix}`,
+        title: researchTitle,
+        objective: "Advance from research to verification.",
+        acceptanceCriteria: ["Research settlement schedules verification."],
+        dependencyNodeIds: [],
+        stageTemplate: researchAdvancesThroughImplementation
+          ? ["research", "implementation", "verification"]
+          : ["research", "verification"],
+      },
+      {
+        nodeId: `parallel-verification-${suffix}`,
+        title: verificationTitle,
+        objective: "Exercise a terminal verification settlement.",
+        acceptanceCriteria: ["Verification settlement is durable."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
+  });
+  fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+  const tasks = fixture.board.snapshot(fixture.project.projectId).tasks;
+  const researchTask = tasks.find((task) => task.title === `research: ${researchTitle}`);
+  const verificationTask = tasks.find((task) => task.title === `verification: ${verificationTitle}`);
+  assert.ok(researchTask);
+  assert.ok(verificationTask);
+  return { ...fixture, verifier, workItem, researchTask, verificationTask };
+}
+
 const CLAIM_CONTEXT_SKILL_ID = "cicada-evidence-research";
 
 async function claimContextWorkflow(suffix: string) {
@@ -136,6 +257,7 @@ async function claimContextWorkflow(suffix: string) {
     originalRequest: `Verify atomic claim context ${suffix}.`,
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   }), `claim-context-${suffix}`).workItem;
+  await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const title = `Claim context ${suffix}`;
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
@@ -219,6 +341,7 @@ async function proposedActivationWorkflow(
     originalRequest: `Reconcile workflow activation ${suffix}.`,
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   }), `workflow-activation-${suffix}`).workItem;
+  await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
     projectId: fixture.project.projectId,
@@ -1184,6 +1307,7 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
     const item = fixture.board.createWorkItem(workItemRequest({
       projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }), "workflow-intake-0001").workItem;
+    await stageWorkItemForWorkflow(fixture.path, item.workItemId);
     fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
       agentTypes: [{
         agentTypeId: "researcher", name: "Researcher", description: "Research", role: "engineer",
@@ -1215,6 +1339,67 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
         { nodeId: "cycle-b", title: "B", objective: "B", acceptanceCriteria: ["B"], dependencyNodeIds: ["cycle-a"], stageTemplate: ["research", "verification"] },
       ],
     }), (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("re-proposing an unconfirmed plan invalidates an older work-item CAS version", async () => {
+  const fixture = await boardFixture();
+  try {
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Revise an unconfirmed workflow without leaving stale CAS versions valid.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "workflow-reproposal-cas-0001").workItem;
+    await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
+    const first = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Draft the first unconfirmed workflow.",
+      assumptions: [],
+      acceptanceCriteria: ["The plan remains open for revision."],
+      skillIds: [],
+      nodes: [{
+        nodeId: "first-unconfirmed-plan",
+        title: "First unconfirmed plan",
+        objective: "Create the initial proposal.",
+        acceptanceCriteria: ["The proposal is stored."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      }],
+    });
+    const beforeRevision = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(beforeRevision.state, "plan_approval");
+
+    const second = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Draft the revised unconfirmed workflow.",
+      assumptions: ["The first draft needs correction."],
+      acceptanceCriteria: ["The revised plan supersedes the first."],
+      skillIds: [],
+      nodes: [{
+        nodeId: "second-unconfirmed-plan",
+        title: "Second unconfirmed plan",
+        objective: "Create the corrected proposal.",
+        acceptanceCriteria: ["The previous proposal is superseded."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      }],
+    });
+    const afterRevision = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(first.plans[0]?.state, "proposed");
+    assert.equal(second.plans[0]?.revision, 2);
+    assert.equal(afterRevision.version, beforeRevision.version + 1);
+    assert.equal(afterRevision.refinedObjective, "Draft the revised unconfirmed workflow.");
+    assert.equal(afterRevision.transitions.length, beforeRevision.transitions.length);
+    assert.throws(
+      () => fixture.board.updateWorkItem(workItem.workItemId, {
+        version: beforeRevision.version,
+        priority: "high",
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+    );
   } finally {
     fixture.board.close();
   }
@@ -1426,6 +1611,7 @@ test("explicit work-item intake plans, confirms, executes, and completes without
       ],
       stages: automationStages({
         implementation: { kind: "agent_type", agentTypeId: "implementer" },
+        testing: { kind: "agent_type", agentTypeId: "verifier" },
         verification: { kind: "agent_type", agentTypeId: "verifier" },
       }),
     }));
@@ -1453,13 +1639,13 @@ test("explicit work-item intake plans, confirms, executes, and completes without
           objective: "Prevent duplicate charges during retry.",
           acceptanceCriteria: ["Focused retry tests pass."],
           dependencyNodeIds: [],
-          stageTemplate: ["implementation", "verification"],
+          stageTemplate: ["implementation", "testing", "verification"],
         }],
       },
     });
     const proposed = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(proposed.plans[0]?.state, "proposed");
-    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "final_approval");
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "plan_approval");
     fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
 
     const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -1472,6 +1658,17 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     fixture.board.settleRun(implementation.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "Retry tests pass and duplicate charges are prevented.",
+    });
+
+    const testing = fixture.board.claimRun(verifier.agentId, {
+      claimId: "complete-workflow-testing-0001",
+      messageCursor: null,
+    });
+    assert.ok(testing);
+    assert.equal(testing.context.workflow?.stage, "testing");
+    fixture.board.settleRun(testing.run.runId, verifier.agentId, {
+      outcome: "completed",
+      result: "Focused tests pass before independent verification.",
     });
 
     const verification = fixture.board.claimRun(verifier.agentId, {
@@ -1544,6 +1741,222 @@ test("contradictory handoff validation leaves an active workflow run settleable"
     const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.nodes[0]?.state, "blocked");
     assert.equal(workflow.handoffs[0]?.outcome, "failed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("an exhausted workflow failure dead-letters the work item with transition history", async () => {
+  const fixture = await activeSettlementWorkflow("exhausted-failure");
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      const update = seeded.prepare(
+        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
+      ).run(fixture.claim.task!.taskId);
+      assert.equal(Number(update.changes), 1);
+    } finally {
+      seeded.close();
+    }
+
+    fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "The third verification attempt exhausted workflow recovery.",
+      handoff: settlementHandoff("failed"),
+    });
+
+    const failedItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(failedItem.state, "dead_letter");
+    assert.ok(failedItem.endedAt);
+    assert.deepEqual(failedItem.transitions.at(-1), {
+      fromState: "reviewing",
+      toState: "dead_letter",
+      actorType: "system",
+      actorId: "system:workflow",
+      createdAt: failedItem.endedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry and recoverable reassignment reactivate a node without reopening its dead-lettered work item", async () => {
+  const fixture = await activeSettlementWorkflow("dead-letter-recovery");
+  try {
+    const taskId = fixture.claim.task!.taskId;
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      assert.equal(Number(seeded.prepare(
+        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
+      ).run(taskId).changes), 1);
+    } finally {
+      seeded.close();
+    }
+    fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "The third verification attempt exhausted workflow recovery.",
+      handoff: settlementHandoff("failed"),
+    });
+    const deadLettered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(deadLettered.state, "dead_letter");
+    const failed = fixture.board.requireTask(taskId);
+    assert.equal(failed.status, "failed");
+
+    const retried = fixture.board.retryTask(taskId, { version: failed.version });
+    assert.equal(retried.task.status, "queued");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
+
+    const retryClaim = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-dead-letter-recovery-retry-0001",
+      messageCursor: null,
+    });
+    assert.ok(retryClaim);
+    fixture.board.settleRun(retryClaim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "The retried verification attempt remained blocked.",
+      handoff: settlementHandoff("failed"),
+    });
+    const failedAgain = fixture.board.requireTask(taskId);
+    assert.equal(failedAgain.status, "failed");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "blocked");
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
+
+    const replacement = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "dead-letter-recovery-verifier",
+      role: "verifier",
+      area: "dead-letter recovery",
+      mission: "Recover workflow nodes without reopening terminal work items.",
+      model: "codex-mini",
+      token: "dead-letter-recovery-verifier-token-0123456789",
+    });
+    const reassigned = fixture.board.updateTask(taskId, {
+      version: failedAgain.version,
+      assignedAgentId: replacement.agentId,
+      assignedRole: replacement.role,
+    }, { type: "human", id: "human:alice" });
+    assert.equal(reassigned.status, "queued");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a cancelled work item still allows its live final-stage run and node to settle", async () => {
+  const fixture = await activeSettlementWorkflow("cancelled-final-stage");
+  try {
+    const current = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    fixture.board.updateWorkItem(fixture.workItem.workItemId, {
+      version: current.version,
+      action: "cancel",
+      reason: "Cancellation won while final verification was still running.",
+    });
+    const cancelled = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+
+    const settled = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "The already-running verification completed after cancellation.",
+      handoff: settlementHandoff("passed"),
+    });
+
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "completed");
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a live workflow task can ask and receive an answer after its work item is cancelled", async () => {
+  const fixture = await activeSettlementWorkflow("cancelled-question");
+  try {
+    const taskId = fixture.claim.task!.taskId;
+    const current = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    fixture.board.updateWorkItem(fixture.workItem.workItemId, {
+      version: current.version,
+      action: "cancel",
+      reason: "The work item ended while its live workflow task still needed an answer.",
+    });
+    const cancelled = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+
+    const question = fixture.board.askQuestion(taskId, fixture.verifier.agentId, {
+      clientEventId: "question-after-work-item-cancel-0001",
+      question: "Should the live verification preserve its recorded evidence?",
+      runId: fixture.claim.run.runId,
+    });
+    assert.equal(question.status, "open");
+    assert.equal(fixture.board.requireTask(taskId).status, "blocked");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === fixture.claim.run.runId,
+    )?.status, "waiting_for_human");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).openQuestions.some(
+      (candidate) => candidate.questionId === question.questionId,
+    ), true);
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
+
+    const answered = fixture.board.answerQuestion(question.questionId, {
+      answer: "Yes. Preserve the evidence for the terminal work-item record.",
+      version: question.version,
+    });
+    assert.equal(answered.question.status, "answered");
+    assert.equal(answered.wakeup.reason, "human_answer");
+    assert.equal(answered.wakeup.taskId, taskId);
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a sibling node settles after another node dead-letters their work item", async () => {
+  const fixture = await parallelStageWorkflow("dead-letter-sibling");
+  try {
+    const failedClaim = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-dead-letter-sibling-verification-0001",
+      messageCursor: null,
+    });
+    assert.ok(failedClaim);
+    assert.equal(failedClaim.task?.taskId, fixture.verificationTask.taskId);
+    const { DatabaseSync } = await import("node:sqlite");
+    const seeded = new DatabaseSync(fixture.path);
+    try {
+      assert.equal(Number(seeded.prepare(
+        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
+      ).run(fixture.verificationTask.taskId).changes), 1);
+    } finally {
+      seeded.close();
+    }
+    fixture.board.settleRun(failedClaim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "The sibling verification exhausted recovery.",
+      handoff: settlementHandoff("failed"),
+    });
+    const deadLettered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(deadLettered.state, "dead_letter");
+
+    const siblingClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-dead-letter-sibling-research-0001",
+      messageCursor: null,
+    });
+    assert.ok(siblingClaim);
+    assert.equal(siblingClaim.task?.taskId, fixture.researchTask.taskId);
+    const settled = fixture.board.settleRun(siblingClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The sibling research stage completed independently.",
+      handoff: settlementHandoff("passed"),
+    });
+
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireTask(fixture.researchTask.taskId).status, "completed");
+    const researchNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find((node) => (
+      node.title === "Parallel research dead-letter-sibling"
+    ));
+    assert.equal(researchNode?.state, "active");
+    assert.equal(researchNode?.currentStage, "verification");
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
   } finally {
     fixture.board.close();
   }
@@ -1632,7 +2045,7 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     assert.equal(settled.duplicate, false);
     assert.equal(settled.run.status, "completed");
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "completed");
-    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "final_approval");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
   } finally {
     fixture.board.close();
@@ -2073,6 +2486,43 @@ test("a completed planning settlement discards its proposal after the work item 
   }
 });
 
+test("a failed planning settlement completes after cancellation without reopening the work item", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Let a failed planning run settle after cancellation wins the race.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-then-fail-planning-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-cancel-then-fail-planning-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    fixture.board.updateWorkItem(created.workItemId, {
+      version: created.version,
+      action: "cancel",
+      reason: "Cancellation completed before the planning failure arrived.",
+    });
+    const cancelled = fixture.board.requireWorkItem(created.workItemId);
+
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "failed",
+      result: "The in-flight planning attempt failed after cancellation.",
+    });
+
+    assert.equal(settled.run.status, "failed");
+    assert.equal(fixture.board.requireTask(created.planningTaskId).status, "cancelled");
+    assert.deepEqual(fixture.board.requireWorkItem(created.workItemId), cancelled);
+    const discarded = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (
+      event.eventType === "work_item_plan_discarded" && event.data.runId === claim.run.runId
+    ));
+    assert.equal(discarded?.data.reason, "work_item_ended");
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("cancelling a work item hard-terminates a failed planning task against retry and resume", async () => {
   const fixture = await boardFixture();
   try {
@@ -2132,6 +2582,210 @@ test("cancelling a work item hard-terminates a failed planning task against retr
   }
 });
 
+test("planning retry returns a parked work item to planning with transition history", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Resume planning after a recoverable manager failure.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-resume-failed-planning-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-resume-failed-planning-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "failed",
+      result: "Planning needs another bounded pass.",
+    });
+    const failed = fixture.board.requireTask(created.planningTaskId);
+    assert.equal(fixture.board.requireWorkItem(created.workItemId).state, "parked");
+
+    fixture.board.resumeAgent(fixture.manager.agentId, {
+      reason: "Retry the planning task with corrected constraints.",
+      taskId: failed.taskId,
+    }, "resume-failed-planning-work-item-0001");
+
+    const planning = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(planning.state, "planning");
+    assert.deepEqual(planning.transitions.at(-1), {
+      fromState: "parked",
+      toState: "planning",
+      actorType: "system",
+      actorId: "system:planning-retry",
+      createdAt: planning.updatedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a planning question parks its work item and the human answer resumes planning", async () => {
+  const fixture = await boardFixture();
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Ask for a missing planning constraint before proposing the workflow.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-question-planning-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-question-planning-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const question = fixture.board.askQuestion(created.planningTaskId, fixture.manager.agentId, {
+      clientEventId: "question-planning-work-item-0001",
+      question: "Which rollback constraint should the plan preserve?",
+      runId: claim.run.runId,
+    });
+
+    const parked = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(parked.state, "parked");
+    assert.deepEqual(parked.transitions.at(-1), {
+      fromState: "planning",
+      toState: "parked",
+      actorType: "agent",
+      actorId: fixture.manager.agentId,
+      createdAt: parked.updatedAt,
+    });
+
+    fixture.board.answerQuestion(question.questionId, {
+      answer: "Preserve rollback to the last confirmed deployment.",
+      version: question.version,
+    });
+    const planning = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(planning.state, "planning");
+    assert.deepEqual(planning.transitions.at(-1), {
+      fromState: "parked",
+      toState: "planning",
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: planning.updatedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a work item stays parked until every open question across its tasks is answered", async () => {
+  const fixture = await parallelStageWorkflow("multiple-questions");
+  try {
+    const researchClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-multiple-questions-research-0001",
+      messageCursor: null,
+    });
+    const verificationClaim = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-multiple-questions-verification-0001",
+      messageCursor: null,
+    });
+    assert.ok(researchClaim);
+    assert.ok(verificationClaim);
+    const researchQuestion = fixture.board.askQuestion(
+      fixture.researchTask.taskId,
+      fixture.engineer.agentId,
+      {
+        clientEventId: "question-multiple-research-0001",
+        question: "Which research constraint should the sibling preserve?",
+        runId: researchClaim.run.runId,
+      },
+    );
+    const verificationQuestion = fixture.board.askQuestion(
+      fixture.verificationTask.taskId,
+      fixture.verifier.agentId,
+      {
+        clientEventId: "question-multiple-verification-0001",
+        question: "Which verification evidence should the sibling preserve?",
+        runId: verificationClaim.run.runId,
+      },
+    );
+    const parked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(parked.state, "parked");
+
+    fixture.board.answerQuestion(researchQuestion.questionId, {
+      answer: "Preserve the bounded research evidence.",
+      version: researchQuestion.version,
+    });
+    const stillParked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(stillParked.state, "parked");
+    assert.equal(stillParked.version, parked.version);
+    assert.ok(stillParked.currentStage === "research" || stillParked.currentStage === "verification");
+    const expectedRecoveryState = stillParked.currentStage === "verification" ? "reviewing" : "planning";
+
+    fixture.board.answerQuestion(verificationQuestion.questionId, {
+      answer: "Preserve the final verification evidence.",
+      version: verificationQuestion.version,
+    });
+    const recovered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(recovered.state, expectedRecoveryState);
+    assert.equal(recovered.currentStage, stillParked.currentStage);
+    assert.deepEqual(recovered.transitions.at(-1), {
+      fromState: "parked",
+      toState: expectedRecoveryState,
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: recovered.updatedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("an open question keeps the work item parked while another node advances its recovery stage", async () => {
+  const fixture = await parallelStageWorkflow("parked-stage-advance", true);
+  try {
+    const researchClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-parked-stage-advance-research-0001",
+      messageCursor: null,
+    });
+    const verificationClaim = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-parked-stage-advance-verification-0001",
+      messageCursor: null,
+    });
+    assert.ok(researchClaim);
+    assert.ok(verificationClaim);
+    const question = fixture.board.askQuestion(
+      fixture.verificationTask.taskId,
+      fixture.verifier.agentId,
+      {
+        clientEventId: "question-parked-stage-advance-0001",
+        question: "Should verification wait while the sibling advances?",
+        runId: verificationClaim.run.runId,
+      },
+    );
+    const parked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(parked.state, "parked");
+
+    fixture.board.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Research completed and advanced the sibling branch to implementation.",
+      handoff: settlementHandoff("passed"),
+    });
+    const advanced = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(advanced.state, "parked");
+    assert.equal(advanced.currentStage, "implementation");
+    assert.equal(advanced.version, parked.version + 1);
+    assert.deepEqual(advanced.transitions, parked.transitions);
+
+    fixture.board.answerQuestion(question.questionId, {
+      answer: "Yes. Recover from the sibling's newer implementation stage.",
+      version: question.version,
+    });
+    const recovered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(recovered.state, "implementing");
+    assert.equal(recovered.currentStage, "implementation");
+    assert.deepEqual(recovered.transitions.at(-1), {
+      fromState: "parked",
+      toState: "implementing",
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: recovered.updatedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("cancelling a work item closes its planning question and fences later answers", async () => {
   const fixture = await boardFixture();
   try {
@@ -2150,9 +2804,11 @@ test("cancelling a work item closes its planning question and fences later answe
       question: "Should the proposed recovery retain the old behavior?",
       runId: claim.run.runId,
     });
+    const parked = fixture.board.requireWorkItem(created.workItemId);
+    assert.equal(parked.state, "parked");
     const reason = "The underlying customer request was withdrawn.";
     fixture.board.updateWorkItem(created.workItemId, {
-      version: created.version,
+      version: parked.version,
       action: "cancel",
       reason,
     });
@@ -2200,7 +2856,7 @@ test("a failure after planning-task cancellation rolls the whole work-item cance
     const { DatabaseSync } = await import("node:sqlite");
     const originalPrepare = DatabaseSync.prototype.prepare;
     DatabaseSync.prototype.prepare = function failWorkItemCancellation(this: DatabaseSyncType, sql: string) {
-      if (/^\s*UPDATE work_items SET state='abandoned'/u.test(sql)) {
+      if (/^\s*UPDATE work_items SET\s+state = \?/u.test(sql)) {
         throw new Error("injected work-item cancellation failure");
       }
       return originalPrepare.call(this, sql);
@@ -2289,7 +2945,7 @@ test("rejecting a proposed plan records its reason without rewriting the complet
       },
     });
     const reviewItem = fixture.board.requireWorkItem(created.workItemId);
-    assert.equal(reviewItem.state, "final_approval");
+    assert.equal(reviewItem.state, "plan_approval");
     assert.equal(fixture.board.requireTask(created.planningTaskId).status, "completed");
     const reason = "The proposed verification scope misses the customer rollback path.";
 
@@ -2487,7 +3143,7 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
         }],
       },
     });
-    assert.equal(board.requireWorkItem(created.workItemId).state, "final_approval");
+    assert.equal(board.requireWorkItem(created.workItemId).state, "plan_approval");
   } finally {
     board?.close();
   }
@@ -2626,7 +3282,7 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
         }],
       },
     });
-    assert.equal(board.requireWorkItem(created.workItemId).state, "final_approval");
+    assert.equal(board.requireWorkItem(created.workItemId).state, "plan_approval");
   } finally {
     board?.close();
   }
@@ -2734,7 +3390,12 @@ test("planning-start failure rolls back its task, link, wakeup, and work-item mu
       DatabaseSync.prototype.prepare = originalPrepare;
     }
     assert.equal(injected, true);
-    assert.deepEqual(fixture.board.requireWorkItem(submitted.workItemId), submitted);
+    const detail = fixture.board.requireWorkItem(submitted.workItemId);
+    const { transitions, ...persisted } = detail;
+    assert.deepEqual(persisted, submitted);
+    assert.deepEqual(transitions.map(({ fromState, toState }) => ({ fromState, toState })), [
+      { fromState: null, toState: "queued" },
+    ]);
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -2811,13 +3472,19 @@ test("duplicate work-item intake on a healthy processing item is a pure no-op", 
     const created = postWorkItem(fixture.board, request, "work-item-planning-healthy-duplicate-0001");
     assert.equal(created.duplicate, false);
     assert.equal(created.workItem.state, "planning");
-    const beforeItem = fixture.board.requireWorkItem(created.workItem.workItemId);
+    const beforeDetail = fixture.board.requireWorkItem(created.workItem.workItemId);
+    const { transitions: beforeTransitions, ...beforeItem } = beforeDetail;
     const beforeSnapshot = fixture.board.snapshot(fixture.project.projectId);
 
     const replay = postWorkItem(fixture.board, request, "work-item-planning-healthy-duplicate-0001");
     assert.equal(replay.duplicate, true);
     assert.deepEqual(replay.workItem, beforeItem);
-    assert.deepEqual(fixture.board.requireWorkItem(created.workItem.workItemId), beforeItem);
+    const afterDetail = fixture.board.requireWorkItem(created.workItem.workItemId);
+    assert.deepEqual(afterDetail, beforeDetail);
+    assert.deepEqual(beforeTransitions.map(({ fromState, toState }) => ({ fromState, toState })), [
+      { fromState: null, toState: "queued" },
+      { fromState: "queued", toState: "planning" },
+    ]);
     assert.deepEqual(fixture.board.snapshot(fixture.project.projectId), beforeSnapshot);
   } finally {
     fixture.board.close();
@@ -2913,7 +3580,7 @@ test("work-item POST atomically queues and links planning before the plan is set
         }],
       },
     });
-    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "final_approval");
+    assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "plan_approval");
   } finally {
     fixture.board.close();
   }
@@ -3005,6 +3672,61 @@ test("duplicate work-item intake repairs a missing manager before starting plann
     } finally {
       inspected.close();
     }
+  } finally {
+    board.close();
+  }
+});
+
+test("registering a manager drains queued work items that previously had no manager", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path));
+  try {
+    const project = board.createProject({
+      name: "Queued manager enrollment",
+      description: "/workspace/queued-manager-enrollment",
+    });
+    const created = board.createWorkItem(workItemRequest({
+      originalRequest: "Wait for an explicitly registered manager before planning.",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    }), "queued-manager-enrollment-0001").workItem;
+    assert.equal(created.state, "queued");
+    assert.equal(created.planningTaskId, null);
+
+    const manager = board.createAgent(project.projectId, {
+      agentId: "queued-enrollment-manager",
+      role: "manager",
+      area: "queued intake",
+      mission: "Drain queued work into durable planning tasks.",
+      model: "claude-haiku",
+      token: "queued-enrollment-manager-token-0123456789",
+    });
+
+    const planning = board.requireWorkItem(created.workItemId);
+    assert.equal(planning.state, "planning");
+    assert.ok(planning.planningTaskId);
+    assert.deepEqual(planning.transitions.map((transition) => ({
+      fromState: transition.fromState,
+      toState: transition.toState,
+      actorType: transition.actorType,
+      actorId: transition.actorId,
+    })), [
+      {
+        fromState: null,
+        toState: "queued",
+        actorType: "human",
+        actorId: "human:alice",
+      },
+      {
+        fromState: "queued",
+        toState: "planning",
+        actorType: "system",
+        actorId: "system:planning",
+      },
+    ]);
+    assert.ok(planning.transitions.every((transition) => transition.createdAt === "2026-07-19T20:00:00.000Z"));
+    const planningTask = board.requireTask(planning.planningTaskId);
+    assert.equal(planningTask.assignedAgentId, manager.agentId);
+    assert.equal(planningTask.assignedRole, "manager");
   } finally {
     board.close();
   }
@@ -3130,7 +3852,7 @@ test("work-item CAS readback stays bound to its mutation while another connectio
     };
     DatabaseSync.prototype.prepare = function interleavingPrepare(this: DatabaseSyncType, sql: string) {
       const statement = originalPrepare.call(this, sql);
-      if (!interceptedUpdate && /^\s*UPDATE work_items SET/u.test(sql)) {
+      if (!interceptedUpdate && /^\s*UPDATE\s+work_items\s+SET/u.test(sql)) {
         interceptedUpdate = true;
         const updateConnection = this;
         const originalRun = statement.run.bind(statement) as (

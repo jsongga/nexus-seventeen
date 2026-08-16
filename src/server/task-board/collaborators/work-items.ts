@@ -8,6 +8,7 @@ import {
   type UpdateWorkItemRequest,
   type WorkItem,
   type WorkItemPage,
+  type WorkItemState,
 } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
@@ -20,8 +21,21 @@ import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { createLazyManagerInTransaction } from "./agent-identities.js";
+import {
+  recordInitialWorkItemTransitionInTransaction,
+  transitionWorkItemInTransaction,
+} from "./work-item-transitions.js";
 
 export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
+export type WorkItemDetail = WorkItem & Readonly<{
+  transitions: readonly Readonly<{
+    fromState: WorkItemState | null;
+    toState: WorkItemState;
+    actorType: "human" | "agent" | "system";
+    actorId: string;
+    createdAt: string;
+  }>[];
+}>;
 type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and unique stage sequences ending in verification. Available automated stages: ";
@@ -78,8 +92,21 @@ export class WorkItemsCollaborator {
     return this.listWorkItemsPage(undefined, includeArchived).workItems;
   }
 
-  requireWorkItem(workItemId: string): WorkItem {
-    return this.runtime.requireWorkItem(workItemId);
+  requireWorkItem(workItemId: string): WorkItemDetail {
+    const workItem = this.runtime.requireWorkItem(workItemId);
+    const transitions = this.runtime.store.db.prepare(`
+      SELECT from_state, to_state, actor_type, actor_id, created_at
+      FROM work_item_transitions
+      WHERE work_item_id = ?
+      ORDER BY sequence
+    `).all(workItemId).map((row) => Object.freeze({
+      fromState: row.from_state === null ? null : String(row.from_state) as WorkItemState,
+      toState: String(row.to_state) as WorkItemState,
+      actorType: String(row.actor_type) as "human" | "agent" | "system",
+      actorId: String(row.actor_id),
+      createdAt: String(row.created_at),
+    }));
+    return Object.freeze({ ...workItem, transitions: Object.freeze(transitions) });
   }
 
   createWorkItem(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {
@@ -156,6 +183,12 @@ export class WorkItemsCollaborator {
         now,
         now,
       );
+      recordInitialWorkItemTransitionInTransaction(this.runtime.store, {
+        workItemId,
+        actorType: "human",
+        actorId: createdBy,
+        now,
+      });
       return Object.freeze({ workItem: this.runtime.requireWorkItem(workItemId), duplicate: false });
     };
     return inTransaction ? apply() : this.runtime.store.transaction(apply);
@@ -257,9 +290,14 @@ export class WorkItemsCollaborator {
       : this.tasks.createTaskInTransaction(workItem.resolvedProjectId, taskRequest);
     const now = exactNow(this.runtime.config.now);
     this.runtime.store.db.prepare("INSERT INTO work_item_planning_tasks VALUES(?,?,?)").run(workItemId, task.taskId, now);
-    this.runtime.store.db.prepare(
-      "UPDATE work_items SET state='planning',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-    ).run(now, workItemId);
+    transitionWorkItemInTransaction(this.runtime.store, {
+      workItemId,
+      to: "planning",
+      actorType: "system",
+      actorId: "system:planning",
+      now,
+      currentStage: "planning",
+    });
     return Object.freeze({ task, wakeAgentId: orphan ? null : managerId });
   }
 
@@ -285,7 +323,9 @@ export class WorkItemsCollaborator {
       const now = exactNow(this.runtime.config.now);
       const nextVersion = current.version + 1;
       const update = this.runtime.store.db.prepare(`
-        UPDATE work_items SET
+        UPDATE
+          work_items
+        SET
           priority = ?, project_target_mode = ?, target_project_id = ?, resolved_project_id = ?,
           version = ?, updated_at = ?
         WHERE work_item_id = ? AND version = ? AND ended_at IS NULL
@@ -391,12 +431,16 @@ export class WorkItemsCollaborator {
           now,
         );
       }
-      const nextVersion = current.version + 1;
-      const update = this.runtime.store.db.prepare(`
-        UPDATE work_items SET state='abandoned',current_stage=NULL,ended_at=?,cancelled_reason=?,version=?,updated_at=?
-        WHERE work_item_id=? AND version=? AND ended_at IS NULL
-      `).run(now, reason, nextVersion, now, workItemId, current.version);
-      if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      transitionWorkItemInTransaction(this.runtime.store, {
+        workItemId,
+        to: "abandoned",
+        actorType: "human",
+        actorId: this.runtime.config.humanPrincipal,
+        now,
+        endedAt: now,
+        cancelledReason: reason,
+        currentStage: null,
+      });
       return this.runtime.requireWorkItem(workItemId);
     });
   }
@@ -411,7 +455,9 @@ export class WorkItemsCollaborator {
       if (current.version !== version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       const now = exactNow(this.runtime.config.now);
       const update = this.runtime.store.db.prepare(`
-        UPDATE work_items SET archived_at=?,version=version+1,updated_at=?
+        UPDATE
+          work_items
+        SET archived_at=?,version=version+1,updated_at=?
         WHERE work_item_id=? AND version=? AND ended_at IS NOT NULL AND archived_at IS NULL
       `).run(now, now, workItemId, current.version);
       if (Number(update.changes) !== 1) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");

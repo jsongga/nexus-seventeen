@@ -1192,6 +1192,10 @@ export class TaskBoardStore {
     }
   }
 
+  get hasOpenTransaction(): boolean {
+    return this.#transactionAfterCommitOperations !== null;
+  }
+
   transaction<T>(operation: () => T): T {
     if (this.#closed) throw new Error("TASK_BOARD_STORE_CLOSED");
     if (this.#transactionAfterCommitOperations !== null) throw new Error("TASK_BOARD_TRANSACTION_NESTED");

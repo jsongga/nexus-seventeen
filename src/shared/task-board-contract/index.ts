@@ -142,7 +142,18 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
 > = {
   queued: ["planning", "parked", "abandoned", "dead_letter"],
   planning: ["plan_approval", "parked", "abandoned", "dead_letter"],
-  plan_approval: ["designing", "implementing", "planning", "parked", "abandoned", "dead_letter"],
+  plan_approval: [
+    "designing",
+    "implementing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "verifying",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "reviewing",
+    "planning",
+    "parked",
+    "abandoned",
+    "dead_letter",
+  ],
   designing: ["implementing", "parked", "abandoned", "dead_letter"],
   implementing: [
     "verifying",
@@ -152,10 +163,22 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "abandoned",
     "dead_letter",
   ],
-  verifying: ["reviewing", "fixing", "parked", "abandoned", "dead_letter"],
+  verifying: [
+    "reviewing",
+    "fixing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "implementing",
+    "parked",
+    "abandoned",
+    "dead_letter",
+  ],
   reviewing: [
     "fixing",
     "planning",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "implementing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "verifying",
     "final_approval",
     // legacy completion — removed when campaign 4's pipeline drives final_approval
     "merged",
@@ -166,7 +189,16 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
   fixing: ["verifying", "parked", "abandoned", "dead_letter"],
   final_approval: ["merged", "fixing", "implementing", "parked", "abandoned", "dead_letter"],
   merged: [],
-  parked: ["planning", "implementing", "abandoned", "dead_letter"],
+  parked: [
+    "planning",
+    "implementing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "verifying",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "reviewing",
+    "abandoned",
+    "dead_letter",
+  ],
   abandoned: [],
   dead_letter: [],
 };

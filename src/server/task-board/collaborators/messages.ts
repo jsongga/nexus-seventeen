@@ -83,6 +83,7 @@ export class MessagesCollaborator {
           version: task.version + 1,
         }, now);
       }
+      this.runtime.parkWorkItemForTaskInTransaction(taskId, { type: "agent", id: agentId }, now);
       this.runtime.insertEvent(task.projectId, taskId, { type: "agent", id: agentId }, "human_question_opened", {
         questionId,
         runId: request.runId,
@@ -126,6 +127,13 @@ export class MessagesCollaborator {
         `Human answered: ${request.answer}`,
         now,
       );
+      if (!this.runtime.workItemForTaskHasOpenQuestionsInTransaction(current.taskId)) {
+        this.runtime.recoverWorkItemForTaskInTransaction(
+          current.taskId,
+          { type: "human", id: this.runtime.config.humanPrincipal },
+          now,
+        );
+      }
       this.runtime.insertEvent(current.projectId, current.taskId, { type: "human", id: this.runtime.config.humanPrincipal }, "human_question_answered", {
         questionId,
         wakeupId,

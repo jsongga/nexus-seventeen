@@ -40,7 +40,7 @@ export class AgentsCollaborator {
     const created = this.runtime.requireAgent(request.agentId);
     if (created.role === "manager") {
       const pending = this.runtime.store.db.prepare(
-        "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='submitted' AND ended_at IS NULL ORDER BY created_at,work_item_id",
+        "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='queued' AND ended_at IS NULL ORDER BY created_at,work_item_id",
       ).all(projectId);
       for (const row of pending) this.workItems.startWorkItemPlanning(String(row.work_item_id));
     }

@@ -60,7 +60,11 @@ import { ProjectsCollaborator } from "./collaborators/projects.js";
 import { RunsCollaborator } from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
-import { WorkItemsCollaborator, type CreateWorkItemResult } from "./collaborators/work-items.js";
+import {
+  WorkItemsCollaborator,
+  type CreateWorkItemResult,
+  type WorkItemDetail,
+} from "./collaborators/work-items.js";
 import {
   eventFromRow,
   interruptFromRow,
@@ -120,6 +124,10 @@ export class TaskBoard {
   }
 
   proposeWorkflow(request: CreatePlanRevisionRequest): ProjectWorkflowSnapshot {
+    if (this.#workItems.requireWorkItem(request.workItemId).state === "queued") {
+      // Direct proposals are test-only (there is no HTTP route), so this bootstrap's separate commit is accepted.
+      this.#workItems.startWorkItemPlanning(request.workItemId);
+    }
     return this.#projects.proposeWorkflow(request);
   }
 
@@ -173,7 +181,7 @@ export class TaskBoard {
     return this.#workItems.listWorkItems(includeArchived);
   }
 
-  requireWorkItem(workItemId: string): WorkItem {
+  requireWorkItem(workItemId: string): WorkItemDetail {
     return this.#workItems.requireWorkItem(workItemId);
   }
 

@@ -4,6 +4,7 @@ import {
   TASK_BOARD_ERROR_CODES,
   isHardTerminalTaskStatus,
   isRecoverableTaskStatus,
+  isTerminalWorkItemState,
   type AgentInterrupt,
   type AgentRun,
   type BoardTask,
@@ -17,6 +18,7 @@ import {
   type TaskStatus,
   type Wakeup,
   type WorkNode,
+  type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
@@ -41,6 +43,7 @@ import type { AutomationCollaborator } from "./automation.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
 
 type SettlementEffects = Readonly<{
   workflowWakeAgentId: string | null;
@@ -421,6 +424,7 @@ export class RunsCollaborator {
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
+    // Keep this planning snapshot: its work-item state is reused after task and workflow settlement below.
     const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
       SELECT w.* FROM work_item_planning_tasks link
       JOIN work_items w ON w.work_item_id=link.work_item_id
@@ -432,7 +436,7 @@ export class RunsCollaborator {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
       }
       const workItemId = String(planning.work_item_id);
-      if (planning.ended_at !== null) {
+      if (isTerminalWorkItemState(String(planning.state) as WorkItemState)) {
         this.runtime.insertEvent(
           current.projectId,
           current.taskId,
@@ -531,9 +535,26 @@ export class RunsCollaborator {
       }
     }
     if (planning && request.outcome !== "completed") {
-      this.runtime.store.db.prepare(
-        "UPDATE work_items SET state='needs_input',current_stage='planning',version=version+1,updated_at=? WHERE work_item_id=? AND ended_at IS NULL",
-      ).run(now, String(planning.work_item_id));
+      const workItemId = String(planning.work_item_id);
+      if (isTerminalWorkItemState(String(planning.state) as WorkItemState)) {
+        this.runtime.insertEvent(
+          current.projectId,
+          current.taskId,
+          actor,
+          "work_item_plan_discarded",
+          { workItemId, runId: current.runId, reason: "work_item_ended" },
+          now,
+        );
+      } else {
+        transitionWorkItemInTransaction(this.runtime.store, {
+          workItemId,
+          to: "parked",
+          actorType: actor.type,
+          actorId: actor.id,
+          now,
+          currentStage: "planning",
+        });
+      }
     }
     this.runtime.insertEvent(current.projectId, current.taskId, actor, "agent_run_settled", {
       runId: current.runId,
