@@ -465,6 +465,7 @@ export function BoardApp() {
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>
 
       <CreateDialogs
+        client={client}
         dialog={dialog}
         closeDialog={closeDialog}
         projectFormDirty={projectFormDirty}

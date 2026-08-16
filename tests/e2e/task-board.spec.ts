@@ -1662,6 +1662,23 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   await page.route('**/board-api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/host/project-roots' && request.method() === 'GET') {
+      await route.fulfill({ json: { roots: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && !url.searchParams.has('path')) {
+      await route.fulfill({
+        json: { listing: { path: '/workspace', parent: null, entries: [], truncated: false } },
+      });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && url.searchParams.get('path') === '/workspace/payment-tools') {
+      await route.fulfill({
+        status: 403,
+        json: { error: { code: 'HOST_PATH_OUTSIDE_ROOTS', message: 'The folder is outside the browsable area' } },
+      });
+      return;
+    }
     if (url.pathname === '/board-api/v1/work-items' && request.method() === 'GET') {
       await route.fulfill({ json: { workItems: taskSubmitted ? [createdWorkItem] : [] } });
       return;
@@ -1752,9 +1769,9 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   await page.goto('/');
   await page.getByRole('button', { name: 'Add project' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('textbox')).toHaveCount(1);
-  await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
+  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
+  await dialog.getByRole('button', { name: 'Add anyway' }).click();
   await expect(dialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');
   await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
@@ -1765,8 +1782,9 @@ test('project intake lazily creates a manager whose lane token can be rotated an
 
   await page.getByRole('button', { name: 'Add project' }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
-  await dialog.getByRole('textbox').fill('/workspace/payment-tools/');
+  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
+  await dialog.getByRole('button', { name: 'Add anyway' }).click();
   await expect.poll(() => createdProject).not.toBeNull();
 
   expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
