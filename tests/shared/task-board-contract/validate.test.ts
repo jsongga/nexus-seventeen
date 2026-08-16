@@ -21,6 +21,7 @@ import {
   exact,
   identifier,
   parseBoardAutomationUpdate,
+  parseBoardClaim,
   parseBoardCreateAgent,
   parseBoardCreateTaskPhase,
   parseBoardCreateWorkItem,
@@ -100,6 +101,46 @@ test("prose exposes board-strict and worker-preserved carriage-return policies",
   assert.equal(prose("line one\r\nline two", "body", { maximum: 100, carriageReturns: "normalize" }), "line one\nline two");
 });
 
+test("claim pinning accepts an optional closed-world block of bounded single-line values", () => {
+  assert.deepEqual(
+    parseBoardClaim({ claimId: "claim-one", messageCursor: null }),
+    { claimId: "claim-one", messageCursor: null },
+  );
+  const perTask = parseBoardClaim({
+    claimId: "claim-one",
+    messageCursors: { "task-one": 4 },
+    pinned: {
+      runtime: " node ",
+      runtimeVersion: "22.18.0",
+      model: "gpt-5",
+      promptsSha: "a".repeat(128),
+    },
+  });
+  assert.deepEqual({ ...perTask.messageCursors }, { "task-one": 4 });
+  assert.deepEqual(perTask.pinned, {
+    runtime: " node ",
+    runtimeVersion: "22.18.0",
+    model: "gpt-5",
+    promptsSha: "a".repeat(128),
+  });
+  assert.throws(
+    () => parseBoardClaim({ claimId: "claim-one", messageCursor: null, pinned: { runtime: "node", extra: "no" } }),
+    /unexpected or missing fields/u,
+  );
+  assert.throws(
+    () => parseBoardClaim({ claimId: "claim-one", messageCursor: null, pinned: { runtime: "r".repeat(129) } }),
+    /runtime is invalid/u,
+  );
+  assert.throws(
+    () => parseBoardClaim({ claimId: "claim-one", messageCursor: null, pinned: { model: "gpt-5\npreview" } }),
+    /model is invalid/u,
+  );
+  assert.throws(
+    () => parseBoardClaim({ claimId: "claim-one", messageCursor: null, pinned: { runtime: "node\0runtime" } }),
+    /runtime is invalid/u,
+  );
+});
+
 test("claim result validation preserves canonical timestamps and the legacy projection boundary", () => {
   const claim = {
     apiVersion: TASK_BOARD_API_VERSION,
@@ -113,8 +154,13 @@ test("claim result validation preserves canonical timestamps and the legacy proj
       taskId: "task-one",
       status: "active",
       startedAt: NOW,
+      heartbeatAt: null,
       endedAt: null,
       result: null,
+      runtime: null,
+      runtimeVersion: null,
+      model: null,
+      promptsSha: null,
     },
     wakeup: {
       apiVersion: TASK_BOARD_API_VERSION,

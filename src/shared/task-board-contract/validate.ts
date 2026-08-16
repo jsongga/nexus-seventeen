@@ -686,7 +686,8 @@ export function parseQuestionEntity(value: unknown, label: string, options: Shap
 
 export function parseRunEntity(value: unknown, label: string, options: ShapeParserOptions = {}): AgentRun {
   const fields = [
-    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "endedAt", "result",
+    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "heartbeatAt",
+    "endedAt", "result", "runtime", "runtimeVersion", "model", "promptsSha",
   ];
   const item = entity(value, label, fields, fields, options);
   const browserProjection = options.projection === "browser";
@@ -700,8 +701,13 @@ export function parseRunEntity(value: unknown, label: string, options: ShapePars
     taskId: nullableIdentifier(item.taskId, `${label}.taskId`, options),
     status: entityMember(item.status, RUN_STATUSES, `${label}.status`, options),
     startedAt: entityTimestamp(item.startedAt, `${label}.startedAt`, options),
+    heartbeatAt: nullableTimestamp(item.heartbeatAt, `${label}.heartbeatAt`, options),
     endedAt: nullableTimestamp(item.endedAt, `${label}.endedAt`, options),
     result: browserProjection ? null : nullableString(item.result, `${label}.result`),
+    runtime: nullableString(item.runtime, `${label}.runtime`),
+    runtimeVersion: nullableString(item.runtimeVersion, `${label}.runtimeVersion`),
+    model: nullableString(item.model, `${label}.model`),
+    promptsSha: nullableString(item.promptsSha, `${label}.promptsSha`),
   });
 }
 
@@ -1161,7 +1167,8 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   const envelope = exact(value, ["apiVersion", "run", "wakeup", "task", "context"], "Claim result");
   if (envelope.apiVersion !== TASK_BOARD_API_VERSION) throw new ContractValidationError("Claim result API version is invalid");
   const run = exact(envelope.run, [
-    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "endedAt", "result",
+    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "heartbeatAt",
+    "endedAt", "result", "runtime", "runtimeVersion", "model", "promptsSha",
   ], "Claim run");
   const wakeup = exact(envelope.wakeup, [
     "apiVersion", "wakeupId", "projectId", "agentId", "reason", "taskId", "questionId", "detail", "createdBy",
@@ -1185,6 +1192,10 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   identifier(run.wakeupId, "run.wakeupId");
   if (run.taskId !== null) identifier(run.taskId, "run.taskId");
   timestamp(run.startedAt, "run.startedAt", "run.startedAt is invalid", true);
+  if (run.heartbeatAt !== null) timestamp(run.heartbeatAt, "run.heartbeatAt", "run.heartbeatAt is invalid", true);
+  for (const field of ["runtime", "runtimeVersion", "model", "promptsSha"] as const) {
+    if (run[field] !== null) stringValue(run[field], `run.${field}`);
+  }
   identifier(wakeup.wakeupId, "wakeup.wakeupId");
   identifier(wakeup.projectId, "wakeup.projectId");
   identifier(wakeup.agentId, "wakeup.agentId");
@@ -2214,16 +2225,41 @@ export function parseBoardLaneErrorDetail(value: unknown, maximum: number): stri
 
 export function parseBoardClaim(value: unknown): ClaimRunRequest {
   const item = record(value, "Run claim"); const keys = Object.keys(item).sort();
-  const legacy = keys.length === 2 && keys[0] === "claimId" && keys[1] === "messageCursor";
-  const perTask = keys.length === 2 && keys[0] === "claimId" && keys[1] === "messageCursors";
+  const requestKeys = keys.filter((key) => key !== "pinned");
+  const legacy = requestKeys.length === 2 && requestKeys[0] === "claimId" && requestKeys[1] === "messageCursor";
+  const perTask = requestKeys.length === 2 && requestKeys[0] === "claimId" && requestKeys[1] === "messageCursors";
+  const hasPinned = "pinned" in item;
   if (!legacy && !perTask) boardFailure("Run claim has unexpected or missing fields");
   const claimId = parseBoardIdentifier(item.claimId, "claimId");
+  let pinned: ClaimRunRequest["pinned"];
+  if (hasPinned) {
+    const rawPinned = boardAllowed(
+      item.pinned,
+      ["runtime", "runtimeVersion", "model", "promptsSha"],
+      [],
+      "Run claim pinned",
+    );
+    const parsed: { runtime?: string; runtimeVersion?: string; model?: string; promptsSha?: string } = {};
+    for (const field of ["runtime", "runtimeVersion", "model", "promptsSha"] as const) {
+      if (!(field in rawPinned)) continue;
+      const candidate = rawPinned[field];
+      if (typeof candidate !== "string" || candidate.length < 1 || candidate.length > 128 || /[\u0000-\u001f\u007f]/u.test(candidate)) {
+        boardFailure(`${field} is invalid`);
+      }
+      parsed[field] = candidate;
+    }
+    pinned = Object.freeze(parsed);
+  }
   if (legacy) {
     const cursor = item.messageCursor;
     if (cursor !== null && (!Number.isSafeInteger(cursor) || Number(cursor) < 0)) {
       boardFailure("messageCursor must be null or a non-negative safe integer");
     }
-    return Object.freeze({ claimId, messageCursor: cursor === null ? null : Number(cursor) });
+    return Object.freeze({
+      claimId,
+      messageCursor: cursor === null ? null : Number(cursor),
+      ...(pinned === undefined ? {} : { pinned }),
+    });
   }
   if (item.messageCursors === null || typeof item.messageCursors !== "object" || Array.isArray(item.messageCursors)) {
     boardFailure("messageCursors must be an object with at most 256 task entries");
@@ -2236,7 +2272,11 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
     if (!Number.isSafeInteger(cursor) || Number(cursor) < 0) boardFailure("messageCursors values must be non-negative safe integers");
     messageCursors[taskId] = Number(cursor);
   }
-  return Object.freeze({ claimId, messageCursors: Object.freeze(messageCursors) });
+  return Object.freeze({
+    claimId,
+    messageCursors: Object.freeze(messageCursors),
+    ...(pinned === undefined ? {} : { pinned }),
+  });
 }
 
 export function parseBoardSettle(value: unknown): SettleRunRequest {

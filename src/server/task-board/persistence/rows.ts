@@ -322,8 +322,13 @@ export function runFromRow(row: Row): AgentRun {
     taskId: nullableString(row, "task_id"),
     status: stringValue(row, "status") as AgentRun["status"],
     startedAt: stringValue(row, "started_at"),
+    heartbeatAt: nullableString(row, "heartbeat_at"),
     endedAt: nullableString(row, "ended_at"),
     result: nullableString(row, "result"),
+    runtime: nullableString(row, "runtime"),
+    runtimeVersion: nullableString(row, "runtime_version"),
+    model: nullableString(row, "model"),
+    promptsSha: nullableString(row, "prompts_sha"),
   });
 }
 

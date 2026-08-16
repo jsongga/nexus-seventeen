@@ -933,17 +933,50 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       "/v1/agents/engineer-one/runs/claim?waitMs=0",
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "http-claim-after-assignment-0001", messageCursor: null },
+      {
+        claimId: "http-claim-after-assignment-0001",
+        messageCursor: null,
+        pinned: {
+          runtime: "node",
+          runtimeVersion: "22.18.0",
+          model: "gpt-5",
+          promptsSha: "http-prompt-bundle-sha",
+        },
+      },
     );
     assert.equal(claimResponse.status, 201);
     const claim = await claimResponse.json() as {
-      run: { runId: string; taskId: string | null };
+      run: {
+        runId: string;
+        taskId: string | null;
+        heartbeatAt: string | null;
+        runtime: string | null;
+        runtimeVersion: string | null;
+        model: string | null;
+        promptsSha: string | null;
+      };
       wakeup: { reason: string };
       task: { status: string; version: number; startedAt: string | null };
       context: { acceptanceCriteria: string; agent: { role: string } };
     };
     assert.equal(claim.wakeup.reason, "human_assignment");
     assert.equal(claim.run.taskId, task.taskId);
+    assert.deepEqual(
+      {
+        heartbeatAt: claim.run.heartbeatAt,
+        runtime: claim.run.runtime,
+        runtimeVersion: claim.run.runtimeVersion,
+        model: claim.run.model,
+        promptsSha: claim.run.promptsSha,
+      },
+      {
+        heartbeatAt: null,
+        runtime: "node",
+        runtimeVersion: "22.18.0",
+        model: "gpt-5",
+        promptsSha: "http-prompt-bundle-sha",
+      },
+    );
     assert.equal(claim.task.status, "in_progress");
     assert.ok(claim.task.startedAt);
     assert.equal(claim.context.acceptanceCriteria, taskRequest().acceptanceCriteria);

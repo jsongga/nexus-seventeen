@@ -288,9 +288,25 @@ export class RunsCollaborator {
       const requestHash = claimRequestHash(agentId, request, wakeup.taskId);
       const runId = randomUUID();
       this.runtime.store.db.prepare(`
-        INSERT INTO runs(run_id, claim_id, claim_request_hash, project_id, agent_id, wakeup_id, task_id, status, started_at, ended_at, result)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL)
-      `).run(runId, request.claimId, requestHash, currentAgent.projectId, agentId, wakeup.wakeupId, wakeup.taskId, now);
+        INSERT INTO runs(
+          run_id, claim_id, claim_request_hash, project_id, agent_id, wakeup_id, task_id, status, started_at,
+          heartbeat_at, ended_at, result, runtime, runtime_version, model, prompts_sha
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, NULL, ?, ?, ?, ?)
+      `).run(
+        runId,
+        request.claimId,
+        requestHash,
+        currentAgent.projectId,
+        agentId,
+        wakeup.wakeupId,
+        wakeup.taskId,
+        now,
+        request.pinned?.runtime ?? null,
+        request.pinned?.runtimeVersion ?? null,
+        request.pinned?.model ?? null,
+        request.pinned?.promptsSha ?? null,
+      );
       const claim = this.runtime.store.db.prepare(`
         UPDATE wakeups SET claimed_at = ?, run_id = ? WHERE wakeup_id = ? AND claimed_at IS NULL
       `).run(now, runId, wakeup.wakeupId);
@@ -377,8 +393,8 @@ export class RunsCollaborator {
     return this.claimRun(agentId, request, credentialVersion);
   }
 
-  heartbeatRun(runId: string, agentId: string, credentialVersion: number): void {
-    this.runtime.store.transaction(() => {
+  heartbeatRun(runId: string, agentId: string, credentialVersion: number): AgentRun {
+    return this.runtime.store.transaction(() => {
       this.runtime.requireAgentCredentialVersion(agentId, credentialVersion);
       const row = this.runtime.store.db.prepare(
         "SELECT * FROM runs WHERE run_id = ? AND agent_id = ?",
@@ -391,6 +407,7 @@ export class RunsCollaborator {
         UPDATE runs SET heartbeat_at = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
       `).run(heartbeatAt, runId, agentId);
       if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+      return runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!);
     });
   }
 
@@ -697,13 +714,16 @@ export class RunsCollaborator {
     } catch {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
     }
-    if (
-      result === null ||
-      typeof result !== "object" ||
-      Array.isArray(result) ||
-      (result as { apiVersion?: unknown }).apiVersion !== TASK_BOARD_API_VERSION
-    ) {
+    if (result === null || typeof result !== "object" || Array.isArray(result)) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    }
+    const envelope = result as { apiVersion?: unknown; run?: unknown };
+    if (envelope.apiVersion !== TASK_BOARD_API_VERSION) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    if (envelope.run !== null && typeof envelope.run === "object" && !Array.isArray(envelope.run)) {
+      const run = envelope.run as Record<string, unknown>;
+      for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
+        if (!Object.hasOwn(run, field)) run[field] = null;
+      }
     }
     return result as ClaimRunResult;
   }

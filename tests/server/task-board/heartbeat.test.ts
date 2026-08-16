@@ -170,16 +170,18 @@ test("heartbeat fences run ownership and credential version while changing only 
     const before = runRow(fixture.path, claim.run.runId);
     const beforeTask = fixture.board.requireTask(task.taskId);
     const beforeEvents = eventCount(fixture.path);
-    fixture.board.heartbeatRun(claim.run.runId, engineerAuth);
+    const firstHeartbeat = fixture.board.heartbeatRun(claim.run.runId, engineerAuth);
+    assert.equal(firstHeartbeat.heartbeatAt, "2026-08-16T12:00:00.000Z");
     assert.equal(runRow(fixture.path, claim.run.runId).heartbeat_at, "2026-08-16T12:00:00.000Z");
 
     now = new Date("2026-08-16T12:00:30.000Z");
-    fixture.board.heartbeatRun(claim.run.runId, engineerAuth);
+    const secondHeartbeat = fixture.board.heartbeatRun(claim.run.runId, engineerAuth);
     const after = runRow(fixture.path, claim.run.runId);
     assert.deepEqual(
       { ...after, heartbeat_at: before.heartbeat_at },
       before,
     );
+    assert.equal(secondHeartbeat.heartbeatAt, "2026-08-16T12:00:30.000Z");
     assert.equal(after.heartbeat_at, "2026-08-16T12:00:30.000Z");
     assert.equal(fixture.board.requireTask(task.taskId).version, beforeTask.version);
     assert.equal(eventCount(fixture.path), beforeEvents);
@@ -219,7 +221,7 @@ test("heartbeat fences run ownership and credential version while changing only 
   }
 });
 
-test("heartbeat HTTP route mirrors settle authentication and returns the interim body-less envelope", async () => {
+test("heartbeat HTTP route mirrors settle authentication and returns the updated run envelope", async () => {
   const service = await createTaskBoardService({
     dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
@@ -282,7 +284,27 @@ test("heartbeat HTTP route mirrors settle authentication and returns the interim
     assert.equal((await request(address.url, `/v1/runs/${runId}/heartbeat`, "POST", AGENT_TWO_TOKEN)).status, 404);
     const heartbeat = await request(address.url, `/v1/runs/${runId}/heartbeat`, "POST", AGENT_ONE_TOKEN);
     assert.equal(heartbeat.status, 200);
-    assert.deepEqual(await heartbeat.json(), { ok: true });
+    const heartbeatBody = await heartbeat.json() as { run: Record<string, unknown> };
+    assert.deepEqual(
+      {
+        runId: heartbeatBody.run.runId,
+        status: heartbeatBody.run.status,
+        heartbeatAt: heartbeatBody.run.heartbeatAt,
+        runtime: heartbeatBody.run.runtime,
+        runtimeVersion: heartbeatBody.run.runtimeVersion,
+        model: heartbeatBody.run.model,
+        promptsSha: heartbeatBody.run.promptsSha,
+      },
+      {
+        runId,
+        status: "active",
+        heartbeatAt: "2026-08-16T12:00:00.000Z",
+        runtime: null,
+        runtimeVersion: null,
+        model: null,
+        promptsSha: null,
+      },
+    );
 
     assert.equal((await request(address.url, `/v1/runs/${runId}/settle`, "POST", AGENT_ONE_TOKEN, {
       outcome: "interrupted",

@@ -606,8 +606,8 @@ export class TaskBoardService {
       const runId = parseRouteIdentifier(heartbeatMatch[1], "runId");
       const agent = this.#board.authenticateAgent(bearerToken(request));
       this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
-      this.#board.heartbeatRun(runId, agent);
-      sendJson(response, 200, { ok: true });
+      const run = this.#board.heartbeatRun(runId, agent);
+      sendJson(response, 200, { run });
       return;
     }
     if (settleMatch && request.method === "POST") {

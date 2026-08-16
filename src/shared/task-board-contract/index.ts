@@ -622,8 +622,13 @@ export interface AgentRun {
   readonly taskId: string | null;
   readonly status: RunStatus;
   readonly startedAt: string;
+  readonly heartbeatAt: string | null;
   readonly endedAt: string | null;
   readonly result: string | null;
+  readonly runtime: string | null;
+  readonly runtimeVersion: string | null;
+  readonly model: string | null;
+  readonly promptsSha: string | null;
 }
 
 export interface AgentInterrupt {
@@ -862,18 +867,27 @@ export interface CreateHumanQuestionRequest {
   readonly runId: string;
 }
 
+export interface ClaimRunPinning {
+  readonly runtime?: string;
+  readonly runtimeVersion?: string;
+  readonly model?: string;
+  readonly promptsSha?: string;
+}
+
 export type ClaimRunRequest =
   | Readonly<{
       claimId: string;
       /** Legacy single-task cursor. New workers send `messageCursors` instead. */
       messageCursor: number | null;
       messageCursors?: never;
+      pinned?: ClaimRunPinning;
     }>
   | Readonly<{
       claimId: string;
       /** Per-task cursors prevent activity on one task from hiding older messages on another. */
       messageCursors: Readonly<Record<string, number>>;
       messageCursor?: never;
+      pinned?: ClaimRunPinning;
     }>;
 
 export interface AnswerHumanQuestionRequest {

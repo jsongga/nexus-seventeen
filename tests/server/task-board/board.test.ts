@@ -14,6 +14,7 @@ import {
   type AgentRole,
 } from "#server/task-board";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { parseClaimRunResult } from "#shared/task-board-contract/validate";
 import {
   AGENT_ONE_TOKEN,
   automationConfigurationRequest,
@@ -1511,6 +1512,162 @@ test("happy-path claim keeps the existing complete response shape", async () => 
   } finally {
     await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
     fixture.board.close();
+  }
+});
+
+test("claim pinning round-trips verbatim and replay echoes the original pinned values", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Pin the claim execution identity",
+    }));
+    const originalRequest = {
+      claimId: "claim-pinning-round-trip-0001",
+      messageCursor: null,
+      pinned: {
+        runtime: " node ",
+        runtimeVersion: "22.18.0",
+        model: "gpt-5",
+        promptsSha: "prompt-bundle-sha-original",
+      },
+    } as const;
+    const first = fixture.board.claimRun(fixture.engineer.agentId, originalRequest);
+    assert.ok(first);
+    assert.deepEqual(
+      {
+        runtime: first.run.runtime,
+        runtimeVersion: first.run.runtimeVersion,
+        model: first.run.model,
+        promptsSha: first.run.promptsSha,
+        heartbeatAt: first.run.heartbeatAt,
+      },
+      { ...originalRequest.pinned, heartbeatAt: null },
+    );
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.deepEqual(
+        { ...inspected.prepare(`
+          SELECT runtime,runtime_version,model,prompts_sha,heartbeat_at FROM runs WHERE run_id=?
+        `).get(first.run.runId) },
+        {
+          runtime: originalRequest.pinned.runtime,
+          runtime_version: originalRequest.pinned.runtimeVersion,
+          model: originalRequest.pinned.model,
+          prompts_sha: originalRequest.pinned.promptsSha,
+          heartbeat_at: null,
+        },
+      );
+    } finally {
+      inspected.close();
+    }
+
+    const replayRequest = {
+      ...originalRequest,
+      pinned: {
+        runtime: "bun",
+        runtimeVersion: "1.2.20",
+        model: "different-model",
+        promptsSha: "different-prompt-bundle",
+      },
+    } as const;
+    const replay = fixture.board.claimRun(fixture.engineer.agentId, replayRequest);
+    assert.ok(replay);
+    assert.deepEqual(replay, first);
+    assert.deepEqual(
+      {
+        runtime: replay.run.runtime,
+        runtimeVersion: replay.run.runtimeVersion,
+        model: replay.run.model,
+        promptsSha: replay.run.promptsSha,
+      },
+      originalRequest.pinned,
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("an unpinned claim emits null execution identity and heartbeat fields", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Claim without execution pinning" }));
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-pinning-null-envelope-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    assert.deepEqual(
+      {
+        runtime: claim.run.runtime,
+        runtimeVersion: claim.run.runtimeVersion,
+        model: claim.run.model,
+        promptsSha: claim.run.promptsSha,
+        heartbeatAt: claim.run.heartbeatAt,
+      },
+      { runtime: null, runtimeVersion: null, model: null, promptsSha: null, heartbeatAt: null },
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("legacy claim-result replay adds null run fields without changing claim identity", async () => {
+  const fixture = await boardFixture();
+  const request = { claimId: "claim-pinning-legacy-result-0001", messageCursor: null } as const;
+  let fixtureOpen = true;
+  let restarted: TaskBoard | null = null;
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Replay a legacy claim result" }));
+    const first = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(first);
+    fixture.board.close();
+    fixtureOpen = false;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const direct = new DatabaseSync(fixture.path);
+    try {
+      const row = direct.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(first.run.runId);
+      assert.equal(typeof row?.claim_result_json, "string");
+      const legacyResult = JSON.parse(String(row?.claim_result_json)) as { run: Record<string, unknown> };
+      for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
+        delete legacyResult.run[field];
+      }
+      const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
+        .run(JSON.stringify(legacyResult), first.run.runId);
+      assert.equal(Number(seeded.changes), 1);
+    } finally {
+      direct.close();
+    }
+
+    restarted = await TaskBoard.open(config(fixture.path));
+    const replay = restarted.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.equal(parseClaimRunResult(replay), replay);
+    assert.deepEqual(
+      {
+        runId: replay.run.runId,
+        claimId: replay.run.claimId,
+        heartbeatAt: replay.run.heartbeatAt,
+        runtime: replay.run.runtime,
+        runtimeVersion: replay.run.runtimeVersion,
+        model: replay.run.model,
+        promptsSha: replay.run.promptsSha,
+      },
+      {
+        runId: first.run.runId,
+        claimId: first.run.claimId,
+        heartbeatAt: null,
+        runtime: null,
+        runtimeVersion: null,
+        model: null,
+        promptsSha: null,
+      },
+    );
+  } finally {
+    if (fixtureOpen) fixture.board.close();
+    restarted?.close();
   }
 });
 

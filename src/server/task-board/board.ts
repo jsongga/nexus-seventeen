@@ -327,8 +327,8 @@ export class TaskBoard {
     return this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
   }
 
-  heartbeatRun(runId: string, agentAuth: Pick<AgentProfile, "agentId" | "version">): void {
-    this.#runs.heartbeatRun(runId, agentAuth.agentId, agentAuth.version);
+  heartbeatRun(runId: string, agentAuth: Pick<AgentProfile, "agentId" | "version">): AgentRun {
+    return this.#runs.heartbeatRun(runId, agentAuth.agentId, agentAuth.version);
   }
 
   reconcileStaleRuns(): number {
