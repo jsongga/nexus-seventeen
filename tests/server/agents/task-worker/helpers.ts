@@ -115,6 +115,7 @@ export function claimed(
     wakeupId?: string;
     taskId?: string | null;
     context?: BoundedAgentContext | null;
+    pinned?: ClaimedAgentRun["pinned"];
   }> = {},
 ): ClaimedAgentRun {
   const taskId = options.taskId === undefined ? TASK : options.taskId;
@@ -138,6 +139,11 @@ export function claimed(
       claimedAt: NOW,
     },
     context: boundedContext,
+    pinned: options.pinned ?? {
+      runtime: request.pinned?.runtime ?? null,
+      runtimeVersion: request.pinned?.runtimeVersion ?? null,
+      model: request.pinned?.model ?? null,
+    },
   };
 }
 
@@ -185,6 +191,7 @@ export class FakeBoard implements TaskBoardClient {
   readonly outputs: AppendRunOutputRequest[] = [];
   readonly settlements: SettleAgentRunRequest[] = [];
   readonly settlementAttempts: SettleAgentRunRequest[] = [];
+  readonly heartbeatAttempts: TaskWakeClaim[] = [];
   readonly estimateUpdates: UpdateTaskEstimateRequest[] = [];
   readonly phaseCreates: CreateAgentTaskPhaseRequest[] = [];
   readonly phaseUpdates: UpdateAgentTaskPhaseRequest[] = [];
@@ -197,6 +204,8 @@ export class FakeBoard implements TaskBoardClient {
   poisonedClaimReason: string | null = null;
   appendFailures = 0;
   settleFailures = 0;
+  heartbeatFailures = 0;
+  heartbeatFailure: Error = new Error("Simulated heartbeat rejection");
   estimateFailures = 0;
   laneErrorFailures = 0;
   laneErrorFailure: Error = new Error("Simulated lane-error endpoint rejection");
@@ -240,6 +249,15 @@ export class FakeBoard implements TaskBoardClient {
       signal?.addEventListener("abort", abort, { once: true });
       this.#waiters.set(claim.runId, finish);
     });
+  }
+
+  heartbeatRun(claim: TaskWakeClaim): Promise<void> {
+    this.heartbeatAttempts.push(structuredClone(claim));
+    if (this.heartbeatFailures > 0) {
+      this.heartbeatFailures -= 1;
+      return Promise.reject(this.heartbeatFailure);
+    }
+    return Promise.resolve();
   }
 
   requestInterrupt(claim: TaskWakeClaim, reason: string): void {

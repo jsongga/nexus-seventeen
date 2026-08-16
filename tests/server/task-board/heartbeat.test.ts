@@ -116,7 +116,7 @@ async function stageWorkItemForWorkflow(path: string, workItemId: string): Promi
   }
 }
 
-test("heartbeat configuration defaults and accepts only bounded non-negative integers", async () => {
+test("heartbeat configuration defaults, disables at zero, and stays above two worker intervals", async () => {
   const path = await databasePath();
   const defaults = taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"));
   assert.equal(defaults.heartbeatTimeoutSeconds, 300);
@@ -128,6 +128,16 @@ test("heartbeat configuration defaults and accepts only bounded non-negative int
   });
   assert.equal(disabled.heartbeatTimeoutSeconds, 0);
   assert.equal(disabled.reconcileIntervalSeconds, 0);
+
+  assert.throws(
+    () => taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+      heartbeatTimeoutSeconds: 59,
+    }),
+    errorIs(500, "INVALID_CONFIGURATION"),
+  );
+  assert.equal(taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+    heartbeatTimeoutSeconds: 60,
+  }).heartbeatTimeoutSeconds, 60);
 
   for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER]) {
     assert.throws(

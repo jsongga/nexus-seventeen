@@ -23,6 +23,7 @@ import {
   type AgentTaskPhaseUpdate,
   type BoundedAgentContext,
   type ClaimedAgentRun,
+  type ClaimedRunPinning,
   type TaskWakeClaim,
   type TaskWakeReason,
   type TaskBoardClient,
@@ -53,6 +54,7 @@ class SerialExecutor {
 const ALLOWED_WAKE_REASONS = new Set<string>(TASK_WAKE_REASONS);
 const MAX_HISTORY = 256;
 const MAX_MESSAGE_CURSORS = 256;
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 function exactNow(now: () => Date): string {
   const value = now();
@@ -63,8 +65,14 @@ function exactNow(now: () => Date): string {
 const safeDetail = safeErrorDetail;
 
 function defaultLogger(event: Parameters<TaskWorkerLogger>[0]): void {
+  const run = event.type === "run_heartbeat_failed" || event.type === "run_pinning_diverged"
+    ? ` run=${event.runId}`
+    : "";
+  const detail = event.type === "run_pinning_diverged"
+    ? ` replayedPinned=${JSON.stringify(event.replayedPinned)} workerPinned=${JSON.stringify(event.workerPinned)}`
+    : ` error=${JSON.stringify(event.error)}`;
   process.stderr.write(
-    `[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId} error=${JSON.stringify(event.error)}\n`,
+    `[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId}${run}${detail}\n`,
   );
 }
 
@@ -83,6 +91,7 @@ function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
   // requests cross this seam, so normalization cannot change replay identity.
   const normalized: TaskBoardClient = {
     claimNextWake: (request, signal) => board.claimNextWake(request, signal),
+    heartbeatRun: (claim, signal) => board.heartbeatRun(claim, signal),
     waitForRunInterrupt: (claim, signal) => board.waitForRunInterrupt(claim, signal),
     updateTaskEstimate: (request, signal) => board.updateTaskEstimate(normalizeCarriageReturns(request), signal),
     createTaskPhase: (request, signal) => board.createTaskPhase(normalizeCarriageReturns(request), signal),
@@ -251,7 +260,31 @@ function assertClaimBinding(
   ) {
     throw new Error("Task-board claim context does not match the requested agent, task, or cursor");
   }
-  return Object.freeze({ claim, context });
+  return Object.freeze({ claim, context, pinned: claimed.pinned });
+}
+
+function configuredRunPinning(pinned: TaskWorkerOptions["pinned"]): ClaimedRunPinning {
+  return Object.freeze({
+    runtime: pinned?.runtime ?? null,
+    runtimeVersion: pinned?.runtimeVersion ?? null,
+    model: pinned?.model ?? null,
+  });
+}
+
+function sameRunPinning(left: ClaimedRunPinning, right: ClaimedRunPinning): boolean {
+  return left.runtime === right.runtime &&
+    left.runtimeVersion === right.runtimeVersion &&
+    left.model === right.model;
+}
+
+function scrubRunPinning(pinned: ClaimedRunPinning): ClaimedRunPinning {
+  return Object.freeze({
+    runtime: pinned.runtime === null ? null : safeDetail(pinned.runtime, "Invalid runtime pin"),
+    runtimeVersion: pinned.runtimeVersion === null
+      ? null
+      : safeDetail(pinned.runtimeVersion, "Invalid runtime-version pin"),
+    model: pinned.model === null ? null : safeDetail(pinned.model, "Invalid model pin"),
+  });
 }
 
 export interface TaskWorkerSnapshot {
@@ -277,6 +310,8 @@ export class TaskWorker {
   #interruptTerminalResolve: (() => void) | null = null;
   #interruptTerminalReached = false;
   #interruptRequestReason: string | null = null;
+  #heartbeatTimer: NodeJS.Timeout | null = null;
+  #heartbeatInFlightRunId: string | null = null;
 
   private constructor(options: TaskWorkerOptions, store: TaskWorkerJournalStore) {
     const longPollMs = options.longPollMs ?? 30_000;
@@ -398,6 +433,7 @@ export class TaskWorker {
     this.#dispatchInFlight = true;
     try {
       if (this.#state.active !== null) return await this.#recoverOrContinueActive(signal);
+      const replayingPendingClaim = this.#state.pendingClaim !== null;
       const pending = await this.#ensurePendingClaim();
       let claimed: ClaimedAgentRun | null;
       try {
@@ -406,6 +442,7 @@ export class TaskWorker {
           claimId: pending.claimId,
           messageCursors: pending.messageCursors,
           longPollMs: this.#options.longPollMs,
+          ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
         }, signal);
       } catch (error) {
         if (error instanceof TaskBoardClaimResponseError && error.claim !== null) {
@@ -428,6 +465,7 @@ export class TaskWorker {
         await this.#recordPoisonedClaim(claimed.claim, pending);
         throw error;
       }
+      if (replayingPendingClaim) this.#logReplayPinningDivergence(parsed);
       await this.#recordClaim(parsed);
       await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
@@ -505,7 +543,11 @@ export class TaskWorker {
     ) {
       return;
     }
-    await this.#recordClaim(Object.freeze({ claim, context: null }));
+    await this.#recordClaim(Object.freeze({
+      claim,
+      context: null,
+      pinned: configuredRunPinning(undefined),
+    }));
   }
 
   async #recoverOrContinueActive(signal?: AbortSignal): Promise<boolean> {
@@ -523,6 +565,7 @@ export class TaskWorker {
           ? Object.freeze({})
           : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
         longPollMs: 0,
+        ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
       }, signal);
       if (replay === null) throw new Error("Task board did not replay the active durable claim");
       const parsed = assertClaimBinding(
@@ -536,6 +579,7 @@ export class TaskWorker {
       if (parsed.claim.runId !== active.claim.runId || parsed.claim.wakeupId !== active.claim.wakeupId) {
         throw new Error("Task board replayed another run for the active claim");
       }
+      this.#logReplayPinningDivergence(parsed);
       await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
@@ -564,10 +608,13 @@ export class TaskWorker {
         claimId: claim.claimId,
         messageCursors: cursors,
         longPollMs: 0,
+        ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
       }, signal);
       if (replay === null) return;
       const parsed = assertClaimBinding(replay, this.#options.identity.agentId, claim.claimId, cursors);
-      if (parsed.claim.runId !== claim.runId || parsed.claim.wakeupId !== claim.wakeupId || parsed.context === null) return;
+      if (parsed.claim.runId !== claim.runId || parsed.claim.wakeupId !== claim.wakeupId) return;
+      this.#logReplayPinningDivergence(parsed);
+      if (parsed.context === null) return;
       for (const phase of parsed.context.task.phases) {
         if (phase.status === "completed" || phase.status === "failed") continue;
         try {
@@ -579,6 +626,21 @@ export class TaskWorker {
     } catch {
       // Refusing a duplicate model launch is more important than phase cleanup.
     }
+  }
+
+  #logReplayPinningDivergence(replay: ClaimedAgentRun): void {
+    const workerPinned = configuredRunPinning(this.#options.pinned);
+    if (sameRunPinning(replay.pinned, workerPinned)) return;
+    // The run record is immutable claim identity. Recovery proceeds with that
+    // identity, but drift from the current worker must remain loudly visible.
+    this.#logger({
+      type: "run_pinning_diverged",
+      agentId: this.#options.identity.agentId,
+      workerId: this.#options.identity.workerId,
+      runId: replay.claim.runId,
+      replayedPinned: scrubRunPinning(replay.pinned),
+      workerPinned: scrubRunPinning(workerPinned),
+    });
   }
 
   async #executeActive(contextInput: BoundedAgentContext, signal?: AbortSignal): Promise<void> {
@@ -608,6 +670,7 @@ export class TaskWorker {
       );
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+    this.#startHeartbeat(active.claim);
     const watch = this.#options.board.waitForRunInterrupt(active.claim, control.signal)
       .then(async (interrupt) => {
         if (interrupt === null) return;
@@ -725,6 +788,7 @@ export class TaskWorker {
       await this.#recordOutcome(outcome);
       await this.#flushAndFinish();
     } finally {
+      this.#stopHeartbeat();
       control.abort();
       await watch;
       signal?.removeEventListener("abort", onAbort);
@@ -734,6 +798,35 @@ export class TaskWorker {
       this.#interruptTerminalReached = false;
       this.#interruptRequestReason = null;
     }
+  }
+
+  #startHeartbeat(claim: TaskWakeClaim): void {
+    this.#stopHeartbeat();
+    const timer = setInterval(() => {
+      if (this.#heartbeatInFlightRunId === claim.runId || this.#state.active?.claim.runId !== claim.runId) return;
+      this.#heartbeatInFlightRunId = claim.runId;
+      void Promise.resolve().then(() => this.#options.board.heartbeatRun(claim)).catch((error: unknown) => {
+        // Heartbeats are non-lethal by design. Credential revocation remains
+        // owned by the next claim or settlement path, as it was before heartbeats.
+        this.#logger({
+          type: "run_heartbeat_failed",
+          agentId: this.#options.identity.agentId,
+          workerId: this.#options.identity.workerId,
+          runId: claim.runId,
+          error: safeDetail(error, "Run heartbeat failed"),
+        });
+      }).finally(() => {
+        if (this.#heartbeatInFlightRunId === claim.runId) this.#heartbeatInFlightRunId = null;
+      });
+    }, HEARTBEAT_INTERVAL_MS);
+    timer.unref();
+    this.#heartbeatTimer = timer;
+  }
+
+  #stopHeartbeat(): void {
+    if (this.#heartbeatTimer === null) return;
+    clearInterval(this.#heartbeatTimer);
+    this.#heartbeatTimer = null;
   }
 
   async #startLivePhase(claim: TaskWakeClaim, liveTask: LiveTaskState): Promise<void> {
@@ -1088,6 +1181,7 @@ export class TaskWorker {
   async interrupt(reason: string): Promise<boolean> {
     const current = this.#state.active;
     if (current === null || current.phase === "outputs_pending") return false;
+    this.#stopHeartbeat();
     const detail = this.#interruptRequestReason ?? safeDetail(reason, "Human interruption requested");
     this.#interruptRequestReason ??= detail;
 
@@ -1167,6 +1261,7 @@ export class TaskWorker {
   }
 
   async close(): Promise<void> {
+    this.#stopHeartbeat();
     if (this.#state.active !== null && this.#state.active.phase !== "outputs_pending") {
       await this.interrupt("Task worker is shutting down");
     }

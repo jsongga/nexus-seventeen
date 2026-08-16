@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
   ContainedCliAgentLauncher,
   HttpTaskBoardClient,
@@ -6,11 +7,47 @@ import {
 } from "#server/agents/task-worker";
 import type {
   TaskFleetErrorClassifier,
+  TaskFleetProvider,
   TaskFleetTransientClassifier,
   TaskFleetWorkerFactory,
 } from "./types.js";
 
+const VERSION_COMMAND_TIMEOUT_MS = 5_000;
+const VERSION_COMMAND_MAX_BYTES = 16 * 1024;
+
+export type TaskFleetVersionRunner = (command: string, arguments_: readonly string[]) => Promise<string>;
+
+const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new Promise((resolve, reject) => {
+  execFile(command, [...arguments_], {
+    encoding: "utf8",
+    timeout: VERSION_COMMAND_TIMEOUT_MS,
+    maxBuffer: VERSION_COMMAND_MAX_BYTES,
+    windowsHide: true,
+  }, (error, stdout) => {
+    if (error !== null) {
+      reject(error);
+      return;
+    }
+    resolve(stdout);
+  });
+});
+
+export async function captureTaskFleetRuntimeVersion(
+  provider: TaskFleetProvider,
+  runner: TaskFleetVersionRunner = runVersionCommand,
+): Promise<string | null> {
+  try {
+    const output = await runner(provider, ["--version"]);
+    const firstLine = output.split(/\r?\n/u, 1)[0]?.trim() ?? "";
+    if (firstLine.length < 1 || firstLine.length > 128 || /[\u0000-\u001f\u007f]/u.test(firstLine)) return null;
+    return firstLine;
+  } catch {
+    return null;
+  }
+}
+
 export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boardUrl) => {
+  const runtimeVersion = await captureTaskFleetRuntimeVersion(config.provider);
   const worker = await TaskWorker.create({
     identity: { workerId: config.workerId, agentId: config.agentId },
     statePath: config.statePath,
@@ -22,6 +59,11 @@ export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boar
       ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
       ...(config.terminationGraceMs === undefined ? {} : { terminationGraceMs: config.terminationGraceMs }),
     }),
+    pinned: {
+      runtime: config.provider,
+      ...(runtimeVersion === null ? {} : { runtimeVersion }),
+      model: config.model,
+    },
     longPollMs: config.longPollMs,
   });
   return Object.freeze({

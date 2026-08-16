@@ -8,6 +8,7 @@ import {
   integer as contractInteger,
   parseAgentTaskPhaseResponse,
   parseClaimRunResult,
+  parseRunEntity,
   record,
   timestamp as contractTimestamp,
 } from "#shared/task-board-contract/validate";
@@ -413,7 +414,11 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const result = await this.#http.request(
       "POST",
       `/v1/agents/${encodeURIComponent(request.agentId)}/runs/claim?waitMs=${request.longPollMs}`,
-      { claimId: request.claimId, messageCursors: request.messageCursors },
+      {
+        claimId: request.claimId,
+        messageCursors: request.messageCursors,
+        ...(request.pinned === undefined ? {} : { pinned: request.pinned }),
+      },
       signal,
       request.longPollMs > 0,
     );
@@ -436,10 +441,36 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         requestedMessageCursor,
         claimedAt: claimed.run.startedAt,
       });
-      return Object.freeze({ claim, context: mapContext(claimed, requestedMessageCursor) });
+      return Object.freeze({
+        claim,
+        context: mapContext(claimed, requestedMessageCursor),
+        pinned: Object.freeze({
+          runtime: claimed.run.runtime,
+          runtimeVersion: claimed.run.runtimeVersion,
+          model: claimed.run.model,
+        }),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Task-board claim response is invalid";
       throw new TaskBoardClaimResponseError(message, claimHandle, error);
+    }
+  }
+
+  async heartbeatRun(claim: TaskWakeClaim, signal?: AbortSignal): Promise<void> {
+    const result = await this.#http.request(
+      "POST",
+      `/v1/runs/${encodeURIComponent(claim.runId)}/heartbeat`,
+      null,
+      signal,
+    );
+    const envelope = exact(result.body, ["run"], "Run heartbeat response");
+    const run = parseRunEntity(envelope.run, "Heartbeat run");
+    if (
+      run.runId !== claim.runId || run.claimId !== claim.claimId || run.projectId !== claim.projectId ||
+      run.agentId !== claim.agentId || run.wakeupId !== claim.wakeupId || run.taskId !== claim.taskId ||
+      run.status !== "active" || run.heartbeatAt === null || run.endedAt !== null || run.result !== null
+    ) {
+      throw new Error("Task-board heartbeat response does not match the active run");
     }
   }
 

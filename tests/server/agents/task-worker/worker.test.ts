@@ -3,17 +3,25 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { WAKEUP_REASONS } from "#shared/task-board-contract";
+import { WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
+import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
 import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskWorker } from "#server/agents/task-worker/worker";
-import type { AgentRunOutcome, AgentRunOutput, TaskWakeClaim, TaskWorkerJournal } from "#server/agents/task-worker/types";
+import type {
+  AgentRunOutcome,
+  AgentRunOutput,
+  TaskWakeClaim,
+  TaskWorkerDiagnosticEvent,
+  TaskWorkerJournal,
+} from "#server/agents/task-worker/types";
 import {
   AGENT,
   FakeBoard,
   FakeLauncher,
   NOW,
+  RUN,
   TASK,
   claimed,
   completedOutcome,
@@ -22,18 +30,14 @@ import {
   until,
 } from "./helpers.js";
 
-interface WorkerDiagnostic {
-  readonly type: "lane_error_report_failed";
-  readonly agentId: string;
-  readonly workerId: string;
-  readonly error: string;
-}
+type WorkerDiagnostic = TaskWorkerDiagnosticEvent;
 
 async function worker(
   root: string,
   board: FakeBoard,
   launcher: FakeLauncher,
   logger?: (event: WorkerDiagnostic) => void,
+  pinned?: ClaimRunPinning,
 ): Promise<TaskWorker> {
   return TaskWorker.create({
     identity: { workerId: "worker-one", agentId: AGENT },
@@ -43,6 +47,7 @@ async function worker(
     longPollMs: 30_000,
     now: () => new Date(NOW),
     ...(logger === undefined ? {} : { logger }),
+    ...(pinned === undefined ? {} : { pinned }),
   });
 }
 
@@ -85,6 +90,127 @@ test("idle dispatch long-polls the board without starting a model process", asyn
     assert.equal(launcher.requests.length, 0);
     assert.equal(board.outputs.length, 0);
     assert.equal(board.settlements.length, 0);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("claims pin the configured runtime identity and model", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  const taskWorker = await worker(root, board, new FakeLauncher(), undefined, {
+    runtime: "codex",
+    runtimeVersion: "codex-cli 1.2.3",
+    model: "gpt-5.6-codex",
+  });
+  try {
+    assert.equal(await taskWorker.dispatchOnce(), false);
+    assert.deepEqual(board.claimRequests[0]?.pinned, {
+      runtime: "codex",
+      runtimeVersion: "codex-cli 1.2.3",
+      model: "gpt-5.6-codex",
+    });
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("heartbeats recur every 30 seconds while a run is watched and stop after settlement", async (context_) => {
+  context_.mock.timers.enable({ apis: ["setInterval"] });
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+
+    context_.mock.timers.tick(30_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    context_.mock.timers.tick(30_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, 2);
+    assert.ok(board.heartbeatAttempts.every((claim) => claim.runId === RUN));
+
+    launcher.handles[0]!.resolve(completedOutcome());
+    assert.equal(await dispatch, true);
+    assert.equal(board.settlements.length, 1);
+    const settledCount = board.heartbeatAttempts.length;
+
+    context_.mock.timers.tick(60_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, settledCount);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a heartbeat 401 is logged without changing the active lane", async (context_) => {
+  context_.mock.timers.enable({ apis: ["setInterval"] });
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.heartbeatFailures = 1;
+  board.heartbeatFailure = new TaskBoardHttpError(
+    "Task-board request failed with HTTP 401",
+    401,
+    "AUTHENTICATION_REQUIRED",
+  );
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const diagnostics: WorkerDiagnostic[] = [];
+  const taskWorker = await worker(root, board, launcher, (event) => diagnostics.push(event));
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+    const laneBeforeHeartbeat = taskWorker.snapshot;
+
+    context_.mock.timers.tick(30_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, 1);
+    assert.deepEqual(taskWorker.snapshot, laneBeforeHeartbeat);
+    assert.deepEqual(diagnostics, [{
+      type: "run_heartbeat_failed",
+      agentId: AGENT,
+      workerId: "worker-one",
+      runId: RUN,
+      error: "Task-board request failed with HTTP 401",
+    }]);
+
+    context_.mock.timers.tick(30_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, 2);
+    launcher.handles[0]!.resolve(completedOutcome());
+    assert.equal(await dispatch, true);
+    assert.equal(board.settlements[0]?.outcome, "completed");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("interrupt stops the active run heartbeat timer", async (context_) => {
+  context_.mock.timers.enable({ apis: ["setInterval"] });
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+
+    context_.mock.timers.tick(30_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, 1);
+
+    assert.equal(await taskWorker.interrupt("Human stopped the run"), true);
+    await dispatch;
+    const interruptedCount = board.heartbeatAttempts.length;
+
+    context_.mock.timers.tick(60_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(board.heartbeatAttempts.length, interruptedCount);
   } finally {
     await taskWorker.close();
   }
@@ -977,6 +1103,73 @@ test("recovery clears last_error only after the durable claim replay validates",
     assert.equal(await restarted.dispatchOnce(), true);
     assert.deepEqual(board.laneErrors.map((entry) => entry.detail), [null]);
     assert.equal(launcher.requests.length, 1);
+  } finally {
+    await restarted.close();
+  }
+});
+
+test("recovery logs scrubbed pinning divergence and proceeds with the immutable replay", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = {
+    agentId: AGENT,
+    claimId: "claim-recovery-pinning",
+    messageCursors: { [TASK]: 2 },
+    longPollMs: 0,
+  };
+  const historicalPins = {
+    runtime: "codex",
+    runtimeVersion: "codex 1.2 Bearer abc123def456",
+    model: "gpt-5.6-old",
+  };
+  const activeClaim = claimed(request, { pinned: historicalPins }).claim;
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    messageCursors: { [TASK]: 2 },
+    active: {
+      claim: activeClaim,
+      phase: "claimed",
+      contextDigest: null,
+      launchStartedAt: null,
+      interruptReason: null,
+      outcome: null,
+      nextOutputIndex: 0,
+    },
+  });
+  await store.close();
+
+  const board = new FakeBoard();
+  board.queued.push((replayRequest) => claimed(replayRequest, { pinned: historicalPins }));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const diagnostics: WorkerDiagnostic[] = [];
+  const restarted = await worker(root, board, launcher, (event) => diagnostics.push(event), {
+    runtime: "codex",
+    runtimeVersion: historicalPins.runtimeVersion,
+    model: "gpt-5.6-new",
+  });
+  try {
+    assert.equal(await restarted.dispatchOnce(), true);
+    assert.equal(launcher.requests.length, 1);
+    assert.deepEqual(diagnostics, [{
+      type: "run_pinning_diverged",
+      agentId: AGENT,
+      workerId: "worker-one",
+      runId: RUN,
+      replayedPinned: {
+        runtime: "codex",
+        runtimeVersion: "codex 1.2 Bearer [redacted]",
+        model: "gpt-5.6-old",
+      },
+      workerPinned: {
+        runtime: "codex",
+        runtimeVersion: "codex 1.2 Bearer [redacted]",
+        model: "gpt-5.6-new",
+      },
+    }]);
+    assert.equal(board.settlements[0]?.outcome, "completed");
   } finally {
     await restarted.close();
   }

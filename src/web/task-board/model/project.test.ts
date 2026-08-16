@@ -21,8 +21,13 @@ const tasklessRun: RawRun = {
   status: 'completed',
   startedAt: '2026-08-09T10:01:00.000Z',
   startedAtMs: Date.parse('2026-08-09T10:01:00.000Z'),
+  heartbeatAt: null,
   endedAt: '2026-08-09T10:02:00.000Z',
   endedAtMs: Date.parse('2026-08-09T10:02:00.000Z'),
+  runtime: null,
+  runtimeVersion: null,
+  model: null,
+  promptsSha: null,
 };
 
 function runEvent(

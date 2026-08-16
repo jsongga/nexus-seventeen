@@ -1,6 +1,7 @@
 import {
   WAKEUP_REASONS,
   type AgentRole,
+  type ClaimRunPinning,
   type SkillSnapshot,
   type StageHandoff,
   type WorkflowStage,
@@ -196,11 +197,19 @@ export interface ClaimNextWakeRequest {
   readonly claimId: string;
   readonly messageCursors: Readonly<Record<string, number>>;
   readonly longPollMs: number;
+  readonly pinned?: ClaimRunPinning;
+}
+
+export interface ClaimedRunPinning {
+  readonly runtime: string | null;
+  readonly runtimeVersion: string | null;
+  readonly model: string | null;
 }
 
 export interface ClaimedAgentRun {
   readonly claim: TaskWakeClaim;
   readonly context: BoundedAgentContext | null;
+  readonly pinned: ClaimedRunPinning;
 }
 
 /** A successful board claim whose full response could not be accepted safely. */
@@ -268,6 +277,7 @@ export interface AgentRunInterrupt {
 /** Board credentials and transport details remain entirely outside the launcher. */
 export interface TaskBoardClient {
   claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<ClaimedAgentRun | null>;
+  heartbeatRun(claim: TaskWakeClaim, signal?: AbortSignal): Promise<void>;
   waitForRunInterrupt(claim: TaskWakeClaim, signal?: AbortSignal): Promise<AgentRunInterrupt | null>;
   updateTaskEstimate(request: UpdateTaskEstimateRequest, signal?: AbortSignal): Promise<number>;
   createTaskPhase(request: CreateAgentTaskPhaseRequest, signal?: AbortSignal): Promise<AgentTaskPhase>;
@@ -282,12 +292,28 @@ export interface TaskWorkerIdentity {
   readonly agentId: string;
 }
 
-export interface TaskWorkerDiagnosticEvent {
-  readonly type: "lane_error_report_failed";
-  readonly agentId: string;
-  readonly workerId: string;
-  readonly error: string;
-}
+export type TaskWorkerDiagnosticEvent =
+  | Readonly<{
+      type: "lane_error_report_failed";
+      agentId: string;
+      workerId: string;
+      error: string;
+    }>
+  | Readonly<{
+      type: "run_heartbeat_failed";
+      agentId: string;
+      workerId: string;
+      runId: string;
+      error: string;
+    }>
+  | Readonly<{
+      type: "run_pinning_diverged";
+      agentId: string;
+      workerId: string;
+      runId: string;
+      replayedPinned: ClaimedRunPinning;
+      workerPinned: ClaimedRunPinning;
+    }>;
 
 export type TaskWorkerLogger = (event: TaskWorkerDiagnosticEvent) => void;
 
@@ -296,6 +322,7 @@ export interface TaskWorkerOptions {
   readonly statePath: string;
   readonly board: TaskBoardClient;
   readonly launcher: AgentLauncher;
+  readonly pinned?: ClaimRunPinning;
   readonly longPollMs?: number;
   readonly now?: () => Date;
   readonly logger?: TaskWorkerLogger;

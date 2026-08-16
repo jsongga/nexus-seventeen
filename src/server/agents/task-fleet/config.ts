@@ -100,7 +100,7 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
     agentId: identifier(item.agentId, `${label}.agentId`),
     token,
     provider,
-    model: text(item.model, `${label}.model`, 256),
+    model: text(item.model, `${label}.model`, 128),
     workingDirectory: absolutePath(item.workingDirectory, `${label}.workingDirectory`),
     statePath: absolutePath(item.statePath, `${label}.statePath`),
     longPollMs: item.longPollMs === undefined

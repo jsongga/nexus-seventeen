@@ -271,8 +271,13 @@ const run = {
   taskId: 'task-one',
   status: 'active',
   startedAt: '2026-07-19T10:15:00.000Z',
+  heartbeatAt: null,
   endedAt: null,
   result: null,
+  runtime: null,
+  runtimeVersion: null,
+  model: null,
+  promptsSha: null,
 };
 const event = {
   apiVersion,

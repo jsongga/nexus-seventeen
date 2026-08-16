@@ -272,7 +272,12 @@ describe('browser task-board validator adapter', () => {
         taskId: 'task-one',
         status: 'active',
         startedAt: NOW,
+        heartbeatAt: null,
         endedAt: null,
+        runtime: null,
+        runtimeVersion: null,
+        model: null,
+        promptsSha: null,
       }],
       recentInterrupts: [{
         apiVersion: TASK_BOARD_API_VERSION,
@@ -330,7 +335,12 @@ describe('browser task-board validator adapter', () => {
       taskId: 'task-one',
       status: 'active',
       startedAt: NOW,
+      heartbeatAt: null,
       endedAt: null,
+      runtime: null,
+      runtimeVersion: null,
+      model: null,
+      promptsSha: null,
     }, 'run')).not.toHaveProperty('apiVersion');
   });
 

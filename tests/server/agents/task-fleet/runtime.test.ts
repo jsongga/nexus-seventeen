@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TaskBoardHttpError } from "#server/agents/task-worker";
-import { classifyTaskFleetError, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
+import {
+  captureTaskFleetRuntimeVersion,
+  classifyTaskFleetError,
+  isTransientTaskFleetError,
+} from "#server/agents/task-fleet/runtime";
+
+test("captures the first CLI version line once and treats failures or invalid output as unavailable", async () => {
+  const calls: Array<{ command: string; arguments_: readonly string[] }> = [];
+  const captured = await captureTaskFleetRuntimeVersion("codex", async (command, arguments_) => {
+    calls.push({ command, arguments_ });
+    return "codex-cli 1.2.3\nrelease metadata\n";
+  });
+  assert.equal(captured, "codex-cli 1.2.3");
+  assert.deepEqual(calls, [{ command: "codex", arguments_: ["--version"] }]);
+
+  assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => { throw new Error("missing"); }), null);
+  assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "\nsecond line"), null);
+  assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "v".repeat(129)), null);
+});
 
 test("retries transport, throttling, server, and journal I/O failures", () => {
   for (const status of [null, 408, 425, 429, 500, 503]) {

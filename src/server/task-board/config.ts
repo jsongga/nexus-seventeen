@@ -122,6 +122,17 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   if (!isAbsolute(artifactRoot) || artifactRoot === "/") {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "artifactRoot must be an absolute directory path");
   }
+  const heartbeatTimeoutSeconds = boundedInteger(
+    options.heartbeatTimeoutSeconds,
+    300,
+    0,
+    MAX_TIMER_SECONDS,
+    "heartbeatTimeoutSeconds",
+  );
+  // The non-zero floor is 2x the worker's fixed 30-second heartbeat cadence.
+  if (heartbeatTimeoutSeconds !== 0 && heartbeatTimeoutSeconds < 60) {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "heartbeatTimeoutSeconds is outside its safe range");
+  }
   return Object.freeze({
     dbPath,
     humanToken,
@@ -131,13 +142,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     listenHost,
     port: boundedInteger(options.port, 4_318, 0, 65_535, "port"),
     maxBodyBytes: boundedInteger(options.maxBodyBytes, 64 * 1_024, 1_024, 256 * 1_024, "maxBodyBytes"),
-    heartbeatTimeoutSeconds: boundedInteger(
-      options.heartbeatTimeoutSeconds,
-      300,
-      0,
-      MAX_TIMER_SECONDS,
-      "heartbeatTimeoutSeconds",
-    ),
+    heartbeatTimeoutSeconds,
     reconcileIntervalSeconds: boundedInteger(
       options.reconcileIntervalSeconds,
       60,
