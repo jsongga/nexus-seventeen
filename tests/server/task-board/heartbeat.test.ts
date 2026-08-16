@@ -360,6 +360,15 @@ test("stale-run sweep interrupts stale runs, leaves recent heartbeats alive, and
     assert.equal(staleRun?.status, "interrupted");
     assert.equal(staleRun?.result, "run heartbeat lost");
     assert.equal(board.requireTask(staleTask.taskId).status, "interrupted");
+    const replay = board.claimRun(engineer.agentId, {
+      claimId: "stale-sweep-claim-0001",
+      messageCursor: null,
+    });
+    assert.ok(replay);
+    assert.equal(replay.run.status, "interrupted");
+    assert.equal(replay.run.heartbeatAt, null);
+    assert.equal(replay.run.endedAt, "2026-08-16T12:00:00.000Z");
+    assert.equal(replay.run.result, "run heartbeat lost");
     assert.ok(snapshot.recentEvents.some((event) => event.taskId === staleTask.taskId
       && event.eventType === "agent_run_settled"
       && event.actorType === "system"));
@@ -476,6 +485,134 @@ test("sweeping a stale workflow run records the same workflow settlement effects
     assert.equal(workflow.handoffs[0]?.outcome, "failed");
     assert.equal(workflow.handoffs[0]?.summary, "run heartbeat lost");
     assert.ok(workflow.events.some((event) => event.taskId === claim.task?.taskId && event.eventType === "stage_failed"));
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a swept implementation retries through verification to merged with truthful transition history", async () => {
+  let now = new Date("2026-08-16T12:00:00.000Z");
+  const fixture = await boardFixture(undefined, () => now);
+  try {
+    const verifier = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "heartbeat-retry-verifier",
+      role: "verifier",
+      area: "workflow-retry",
+      mission: "Verify the retried implementation after its heartbeat is lost.",
+      model: "codex-mini",
+      token: "heartbeat-retry-verifier-token-0123456789",
+    });
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [
+        {
+          agentTypeId: "heartbeat-retry-implementer",
+          name: "Heartbeat retry implementer",
+          description: "Executes and retries the implementation stage.",
+          role: "engineer",
+          supplementalInstructions: "Complete the bounded implementation.",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+        {
+          agentTypeId: "heartbeat-retry-verifier",
+          name: "Heartbeat retry verifier",
+          description: "Verifies the retried implementation.",
+          role: "verifier",
+          supplementalInstructions: "Verify the implementation independently.",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+      ],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: "heartbeat-retry-implementer" },
+        verification: { kind: "agent_type", agentTypeId: "heartbeat-retry-verifier" },
+      }),
+    }));
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Retry a swept implementation and preserve truthful state history.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "heartbeat-retry-history-0001").workItem;
+    await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
+    const proposed = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Complete implementation and verification after a stale-run retry.",
+      assumptions: [],
+      acceptanceCriteria: ["The work item reaches merged with truthful transition history."],
+      skillIds: [],
+      nodes: [{
+        nodeId: "heartbeat-retry-history-node",
+        title: "Retry the stale implementation",
+        objective: "Recover the interrupted implementation before verification.",
+        acceptanceCriteria: ["Both stages complete after the retry."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "verification"],
+      }],
+    });
+    fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+
+    const transitionPairs = () => fixture.board.requireWorkItem(workItem.workItemId).transitions
+      .map((transition) => [transition.fromState, transition.toState]);
+    const implementingHistory = [
+      [null, "queued"],
+      ["queued", "planning"],
+      ["planning", "plan_approval"],
+      ["plan_approval", "implementing"],
+    ];
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "implementing");
+    assert.deepEqual(transitionPairs(), implementingHistory);
+
+    const staleClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "heartbeat-retry-stale-run-0001",
+      messageCursor: null,
+    });
+    assert.ok(staleClaim);
+    assert.equal(staleClaim.context.workflow?.stage, "implementation");
+    now = new Date("2026-08-16T12:05:01.000Z");
+    assert.equal(fixture.board.reconcileStaleRuns(), 1);
+    assert.equal(fixture.board.requireTask(staleClaim.task!.taskId).status, "interrupted");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "implementing");
+    assert.deepEqual(transitionPairs(), implementingHistory);
+
+    const interruptedTask = fixture.board.requireTask(staleClaim.task!.taskId);
+    fixture.board.retryTask(interruptedTask.taskId, { version: interruptedTask.version });
+    assert.deepEqual(transitionPairs(), implementingHistory);
+    const implementationRetry = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "heartbeat-retry-implementation-0002",
+      messageCursor: null,
+    });
+    assert.ok(implementationRetry);
+    assert.equal(implementationRetry.context.workflow?.stage, "implementation");
+    fixture.board.settleRun(implementationRetry.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The retried implementation completed successfully.",
+    });
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "reviewing");
+    assert.deepEqual(transitionPairs(), [
+      ...implementingHistory,
+      ["implementing", "reviewing"],
+    ]);
+
+    const verificationClaim = fixture.board.claimRun(verifier.agentId, {
+      claimId: "heartbeat-retry-verification-0001",
+      messageCursor: null,
+    });
+    assert.ok(verificationClaim);
+    assert.equal(verificationClaim.context.workflow?.stage, "verification");
+    fixture.board.settleRun(verificationClaim.run.runId, verifier.agentId, {
+      outcome: "completed",
+      result: "Independent verification passed after the retry.",
+    });
+    const merged = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(merged.state, "merged");
+    assert.ok(merged.endedAt);
+    assert.deepEqual(transitionPairs(), [
+      ...implementingHistory,
+      ["implementing", "reviewing"],
+      ["reviewing", "merged"],
+    ]);
   } finally {
     fixture.board.close();
   }

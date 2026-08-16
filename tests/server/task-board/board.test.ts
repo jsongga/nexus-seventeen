@@ -1768,7 +1768,6 @@ test("explicit work-item intake plans, confirms, executes, and completes without
       ],
       stages: automationStages({
         implementation: { kind: "agent_type", agentTypeId: "implementer" },
-        testing: { kind: "agent_type", agentTypeId: "verifier" },
         verification: { kind: "agent_type", agentTypeId: "verifier" },
       }),
     }));
@@ -1796,7 +1795,7 @@ test("explicit work-item intake plans, confirms, executes, and completes without
           objective: "Prevent duplicate charges during retry.",
           acceptanceCriteria: ["Focused retry tests pass."],
           dependencyNodeIds: [],
-          stageTemplate: ["implementation", "testing", "verification"],
+          stageTemplate: ["implementation", "verification"],
         }],
       },
     });
@@ -1815,17 +1814,6 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     fixture.board.settleRun(implementation.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "Retry tests pass and duplicate charges are prevented.",
-    });
-
-    const testing = fixture.board.claimRun(verifier.agentId, {
-      claimId: "complete-workflow-testing-0001",
-      messageCursor: null,
-    });
-    assert.ok(testing);
-    assert.equal(testing.context.workflow?.stage, "testing");
-    fixture.board.settleRun(testing.run.runId, verifier.agentId, {
-      outcome: "completed",
-      result: "Focused tests pass before independent verification.",
     });
 
     const verification = fixture.board.claimRun(verifier.agentId, {
@@ -2901,6 +2889,16 @@ test("an open question keeps the work item parked while another node advances it
     });
     assert.ok(researchClaim);
     assert.ok(verificationClaim);
+    fixture.board.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "Research must retry before the item is parked.",
+      handoff: { ...settlementHandoff("failed"), recommendedReturnStage: "research" },
+    });
+    const parkedStageClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-parked-stage-advance-research-parked-0001",
+      messageCursor: null,
+    });
+    assert.ok(parkedStageClaim);
     const question = fixture.board.askQuestion(
       fixture.verificationTask.taskId,
       fixture.verifier.agentId,
@@ -2912,8 +2910,25 @@ test("an open question keeps the work item parked while another node advances it
     );
     const parked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(parked.state, "parked");
+    assert.equal(parked.currentStage, "research");
 
-    fixture.board.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
+    fixture.board.settleRun(parkedStageClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "Research must retry from its current stage.",
+      handoff: { ...settlementHandoff("failed"), recommendedReturnStage: "research" },
+    });
+    const sameStage = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(sameStage.state, "parked");
+    assert.equal(sameStage.currentStage, "research");
+    assert.equal(sameStage.version, parked.version);
+    assert.deepEqual(sameStage.transitions, parked.transitions);
+
+    const retryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-parked-stage-advance-research-retry-0001",
+      messageCursor: null,
+    });
+    assert.ok(retryClaim);
+    fixture.board.settleRun(retryClaim.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "Research completed and advanced the sibling branch to implementation.",
       handoff: settlementHandoff("passed"),
@@ -2921,7 +2936,7 @@ test("an open question keeps the work item parked while another node advances it
     const advanced = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(advanced.state, "parked");
     assert.equal(advanced.currentStage, "implementation");
-    assert.equal(advanced.version, parked.version + 1);
+    assert.equal(advanced.version, sameStage.version + 1);
     assert.deepEqual(advanced.transitions, parked.transitions);
 
     fixture.board.answerQuestion(question.questionId, {
@@ -6866,7 +6881,7 @@ test("schema version 9 migration adds dormant automation configuration without c
   }
 });
 
-test("schema version 8 migration adds global work-item intake without changing existing board state", async () => {
+test("schema version 8 migration adds every v19 work-item and run dependency", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
   const existingTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
@@ -6877,7 +6892,17 @@ test("schema version 8 migration adds global work-item intake without changing e
 
   const { DatabaseSync } = await import("node:sqlite");
   const versionEight = new DatabaseSync(path);
-  versionEight.exec("DROP TABLE automation_configuration; DROP TABLE work_items; PRAGMA user_version = 8;");
+  versionEight.exec(`
+    DROP TABLE automation_configuration;
+    DROP TABLE work_item_transitions;
+    DROP TABLE work_items;
+    ALTER TABLE runs DROP COLUMN heartbeat_at;
+    ALTER TABLE runs DROP COLUMN runtime;
+    ALTER TABLE runs DROP COLUMN runtime_version;
+    ALTER TABLE runs DROP COLUMN model;
+    ALTER TABLE runs DROP COLUMN prompts_sha;
+    PRAGMA user_version = 8;
+  `);
   versionEight.close();
 
   const upgraded = await TaskBoard.open(config(path));
@@ -6889,6 +6914,13 @@ test("schema version 8 migration adds global work-item intake without changing e
     }, "migration-v9-work-item-0001");
     assert.equal(created.workItem.state, "queued");
     assert.equal(created.workItem.priority, "normal");
+    const runTask = upgraded.createTask(fixture.project.projectId, taskRequest());
+    const insertedRun = upgraded.claimRun(fixture.engineer.agentId, {
+      claimId: "migration-v8-run-insert-0001",
+      messageCursor: null,
+    });
+    assert.ok(insertedRun);
+    assert.equal(insertedRun.task?.taskId, runTask.taskId);
   } finally {
     upgraded.close();
   }
@@ -6898,6 +6930,17 @@ test("schema version 8 migration adds global work-item intake without changing e
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 19);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
+    assert.equal(
+      verified.prepare("SELECT COUNT(*) AS count FROM work_item_transitions").get()?.count,
+      1,
+    );
+    const runColumns = new Set(
+      verified.prepare("PRAGMA table_info(runs)").all().map((row) => String(row.name)),
+    );
+    for (const column of ["heartbeat_at", "runtime", "runtime_version", "model", "prompts_sha"]) {
+      assert.ok(runColumns.has(column), `runs.${column}`);
+    }
+    assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 1);
   } finally {
     verified.close();
   }

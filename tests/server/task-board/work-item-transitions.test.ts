@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WorkItemState } from "#shared/task-board-contract";
+import {
+  WORKFLOW_STAGES,
+  isWorkItemTransitionAllowed,
+  type WorkItemState,
+} from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board/errors";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
@@ -343,6 +347,27 @@ test("workflow stages map to the v19 work-item pipeline states", () => {
     "planning",
     "planning",
   ]);
+});
+
+test("every workflow stage move has a legal work-item state decision", () => {
+  for (const fromStage of WORKFLOW_STAGES) {
+    const mapA = workItemStateForStage(fromStage);
+    const possibleCurrentStates: readonly WorkItemState[] = mapA === "planning"
+      ? [mapA, "plan_approval"]
+      : [mapA];
+
+    for (const toStage of WORKFLOW_STAGES) {
+      const mapB = workItemStateForStage(toStage);
+      for (const currentState of possibleCurrentStates) {
+        const planApprovalCollapseApplies = currentState === "plan_approval" && mapB === "planning";
+        const decision = planApprovalCollapseApplies ? currentState : mapB;
+        assert.ok(
+          isWorkItemTransitionAllowed(currentState, decision) || currentState === decision,
+          `${fromStage} (${currentState}) -> ${toStage} (${decision}) is not covered`,
+        );
+      }
+    }
+  }
 });
 
 test("plan approval reaches reviewing in exactly one stage-mapped transition", async () => {

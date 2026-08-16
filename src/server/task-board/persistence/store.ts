@@ -733,10 +733,7 @@ function migrateVersion18To19(db: DatabaseSync): void {
   const workItemsSchema = db.prepare(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
   ).get() as Readonly<{ sql: string }> | undefined;
-  if (workItemsSchema === undefined || !workItemsSchema.sql.includes("'submitted'")) {
-    db.exec("PRAGMA user_version = 19;");
-    return;
-  }
+  const rebuildLegacyWorkItems = workItemsSchema?.sql.includes("'submitted'") ?? false;
   const hasRuns = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'",
   ).get() !== undefined;
@@ -755,10 +752,25 @@ function migrateVersion18To19(db: DatabaseSync): void {
   const addPromptsSha = !hasRuns || hasColumns(db, "runs", ["prompts_sha"])
     ? ""
     : "ALTER TABLE runs ADD COLUMN prompts_sha TEXT;";
+  const seedMissingTransitions = workItemsSchema === undefined
+    ? ""
+    : `
+      INSERT INTO work_item_transitions(
+        work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
+      )
+      SELECT work_item_id, 1, NULL, state, 'system', 'system:migration', updated_at
+      FROM work_items
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM work_item_transitions transition
+        WHERE transition.work_item_id = work_items.work_item_id
+      );
+    `;
   db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
   try {
-    db.exec(`
-      CREATE TABLE work_items_v19 (
+    if (rebuildLegacyWorkItems) {
+      db.exec(`
+        CREATE TABLE work_items_v19 (
         work_item_id TEXT PRIMARY KEY,
         original_request TEXT NOT NULL,
         refined_objective TEXT,
@@ -803,7 +815,6 @@ function migrateVersion18To19(db: DatabaseSync): void {
           WHEN state = 'completed' THEN 'merged'
           WHEN state = 'failed' THEN 'dead_letter'
           WHEN state = 'cancelled' THEN 'abandoned'
-          WHEN state = 'waiting_for_human_review' AND current_stage = 'human_review' THEN 'final_approval'
           WHEN state = 'waiting_for_human_review' THEN 'plan_approval'
           WHEN state = 'processing' AND current_stage IN ('implementation', 'deployment') THEN 'implementing'
           WHEN state = 'processing' AND current_stage = 'testing' THEN 'verifying'
@@ -834,19 +845,18 @@ function migrateVersion18To19(db: DatabaseSync): void {
         created_at,
         work_item_id
       ) WHERE archived_at IS NULL;
-      CREATE TRIGGER work_items_original_request_immutable
-      BEFORE UPDATE OF original_request ON work_items
-      WHEN NEW.original_request IS NOT OLD.original_request
-      BEGIN
-        SELECT RAISE(ABORT, 'WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE');
-      END;
+        CREATE TRIGGER work_items_original_request_immutable
+        BEFORE UPDATE OF original_request ON work_items
+        WHEN NEW.original_request IS NOT OLD.original_request
+        BEGIN
+          SELECT RAISE(ABORT, 'WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE');
+        END;
+      `);
+    }
 
+    db.exec(`
       ${WORK_ITEM_TRANSITIONS_SCHEMA}
-      INSERT INTO work_item_transitions(
-        work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
-      )
-      SELECT work_item_id, 1, NULL, state, 'system', 'system:migration', updated_at
-      FROM work_items;
+      ${seedMissingTransitions}
 
       ${addHeartbeatAt}
       ${addRuntime}

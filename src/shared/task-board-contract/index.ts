@@ -141,7 +141,18 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
   Record<WorkItemState, readonly WorkItemState[]>
 > = {
   queued: ["planning", "parked", "abandoned", "dead_letter"],
-  planning: ["plan_approval", "parked", "abandoned", "dead_letter"],
+  planning: [
+    "plan_approval",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "implementing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "verifying",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "reviewing",
+    "parked",
+    "abandoned",
+    "dead_letter",
+  ],
   plan_approval: [
     "designing",
     "implementing",
@@ -149,6 +160,7 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "verifying",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
     "reviewing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
     "planning",
     "parked",
     "abandoned",
@@ -157,6 +169,10 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
   designing: ["implementing", "parked", "abandoned", "dead_letter"],
   implementing: [
     "verifying",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "reviewing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "planning",
     // legacy completion — removed when campaign 4's pipeline drives final_approval
     "merged",
     "parked",
@@ -168,6 +184,8 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "fixing",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
     "implementing",
+    // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
+    "planning",
     "parked",
     "abandoned",
     "dead_letter",

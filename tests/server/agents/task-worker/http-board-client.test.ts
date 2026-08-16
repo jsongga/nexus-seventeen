@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TASK_BOARD_API_VERSION } from "#shared/task-board-contract";
-import { HttpTaskBoardClient } from "#server/agents/task-worker/http-board-client";
+import {
+  HttpTaskBoardClient,
+  InactiveClaimReplayError,
+} from "#server/agents/task-worker/http-board-client";
 import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
 import { boardFixture, taskRequest } from "../../task-board/helpers.js";
 
@@ -113,6 +116,53 @@ test("claim responses expose the immutable run pinning instead of the replay req
       runtimeVersion: "codex-cli 1.2.3",
       model: "gpt-5.6-old",
     });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a settled claim replay is reported as inactive before worker launch", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Reject an inactive replay" }));
+    const first = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-http-inactive-replay",
+      messageCursor: null,
+    });
+    assert.ok(first);
+    const endedAt = "2026-08-09T20:05:00.000Z";
+    const replay = {
+      ...first,
+      run: {
+        ...first.run,
+        status: "interrupted" as const,
+        endedAt,
+        result: "run heartbeat lost",
+      },
+    };
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1:4318",
+      token: TOKEN,
+      fetchImplementation: (async () => new Response(JSON.stringify(replay), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+    });
+
+    await assert.rejects(
+      client.claimNextWake({
+        agentId: fixture.engineer.agentId,
+        claimId: first.run.claimId,
+        messageCursors: {},
+        longPollMs: 0,
+      }),
+      (error: unknown) => (
+        error instanceof InactiveClaimReplayError &&
+        error.claim.runId === first.run.runId &&
+        error.status === "interrupted" &&
+        error.endedAt === endedAt
+      ),
+    );
   } finally {
     fixture.board.close();
   }

@@ -65,11 +65,13 @@ to `implementing`. Terminals: `merged | abandoned | dead_letter` — coupled to
 `submitted → queued`; `processing` × `refinement | project_resolution |
 research | planning | NULL → planning`, × `implementation | deployment →
 implementing`, × `testing → verifying`, × `verification → reviewing`;
-`needs_input → parked`; `waiting_for_human_review` × `human_review →
-final_approval`, × anything else → `plan_approval`; `completed → merged`;
+`needs_input → parked`; `waiting_for_human_review → plan_approval`;
+`completed → merged`;
 `failed → dead_letter`; `cancelled → abandoned` (`cancelled_reason`
 preserved). Table rebuild (v13→v14 pattern: FK off, rebuild, copy with the
 mapping CASE, indexes, `foreign_key_check`).
+
+Amendment (2026-08-16): v18 plan-review rows map unconditionally to `plan_approval` because its only writer stored `current_stage = 'human_review'`.
 
 ## Transition record (per-stage elapsed)
 

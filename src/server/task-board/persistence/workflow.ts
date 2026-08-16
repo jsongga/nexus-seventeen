@@ -414,7 +414,7 @@ export class TransparentWorkflow {
 
   private setWorkItemStage(planRevisionId: string, stage: WorkflowStage, updatedAt: string): void {
     const plan = this.db.prepare(`
-      SELECT plan.work_item_id, work_item.state
+      SELECT plan.work_item_id, work_item.state, work_item.current_stage
       FROM plan_revisions plan
       JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
       WHERE plan.plan_revision_id = ?

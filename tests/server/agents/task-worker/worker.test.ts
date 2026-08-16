@@ -288,6 +288,43 @@ test("restart after a pending-claim EIO cannot inherit an orphaned board-side cl
   }
 });
 
+test("a non-active pending-claim replay is discarded without launch and the next wake continues", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push(
+    (request) => claimed(request),
+    (request) => claimed(request, { runId: "run-after-inactive-replay", wakeupId: "wake-after-inactive-replay" }),
+  );
+  board.claimFailures = 1;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const diagnostics: WorkerDiagnostic[] = [];
+  const taskWorker = await worker(root, board, launcher, (event) => diagnostics.push(event));
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /lost claim response/u);
+    board.inactiveReplayStatus = "interrupted";
+
+    assert.equal(await taskWorker.dispatchOnce(), false);
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(taskWorker.hasActiveClaim(), false);
+    assert.equal(taskWorker.snapshot.completedRuns, 1);
+    assert.deepEqual(diagnostics, [{
+      type: "run_heartbeat_failed",
+      agentId: AGENT,
+      workerId: "worker-one",
+      runId: RUN,
+      error: "Skipped replay for a run already settled as interrupted",
+    }]);
+
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(launcher.requests.length, 1);
+    assert.equal(launcher.requests[0]?.runId, "run-after-inactive-replay");
+    assert.equal(board.settlements[0]?.claim.runId, "run-after-inactive-replay");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("area memory accepts only compact ordered prior-task results", () => {
   const recent = {
     taskId: "task-recent",
@@ -1103,6 +1140,64 @@ test("recovery clears last_error only after the durable claim replay validates",
     assert.equal(await restarted.dispatchOnce(), true);
     assert.deepEqual(board.laneErrors.map((entry) => entry.detail), [null]);
     assert.equal(launcher.requests.length, 1);
+  } finally {
+    await restarted.close();
+  }
+});
+
+test("recovery discards a claimed-phase replay settled during restart without poisoning the lane", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = {
+    agentId: AGENT,
+    claimId: "claim-recovery-inactive",
+    messageCursors: { [TASK]: 2 },
+    longPollMs: 0,
+  };
+  const board = new FakeBoard();
+  board.queued.push((claimRequest) => claimed(claimRequest));
+  const serverClaim = await board.claimNextWake(request);
+  assert.ok(serverClaim);
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    messageCursors: { [TASK]: 2 },
+    active: {
+      claim: serverClaim.claim,
+      phase: "claimed",
+      contextDigest: null,
+      launchStartedAt: null,
+      interruptReason: null,
+      outcome: null,
+      nextOutputIndex: 0,
+    },
+  });
+  await store.close();
+  board.inactiveReplayStatus = "interrupted";
+
+  const launcher = new FakeLauncher();
+  const diagnostics: WorkerDiagnostic[] = [];
+  const restarted = await worker(root, board, launcher, (event) => diagnostics.push(event));
+  try {
+    assert.equal(await restarted.dispatchOnce(), false);
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(restarted.hasActiveClaim(), false);
+    assert.equal(restarted.snapshot.completedRuns, 1);
+    assert.deepEqual(diagnostics, [{
+      type: "run_heartbeat_failed",
+      agentId: AGENT,
+      workerId: "worker-one",
+      runId: RUN,
+      error: "Skipped replay for a run already settled as interrupted",
+    }]);
+    assert.equal(board.laneErrors.length, 0);
+    assert.equal(board.settlementAttempts.length, 0);
+
+    assert.equal(await restarted.dispatchOnce(), false, "the lane continues after discarding the inactive claim");
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(board.laneErrors.length, 0);
+    assert.equal(board.settlementAttempts.length, 0);
   } finally {
     await restarted.close();
   }

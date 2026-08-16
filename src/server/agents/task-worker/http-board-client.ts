@@ -1,6 +1,7 @@
 import {
   TASK_BOARD_API_VERSION,
   type ClaimRunResult,
+  type RunStatus,
 } from "#shared/task-board-contract";
 import {
   exact,
@@ -36,6 +37,18 @@ export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
     super(message);
     this.name = "TaskBoardHttpError";
+  }
+}
+
+export class InactiveClaimReplayError extends Error {
+  constructor(
+    readonly claim: TaskWakeClaim,
+    readonly status: Exclude<RunStatus, "active">,
+    readonly endedAt: string,
+    readonly heartbeatAt: string | null,
+  ) {
+    super(`Task-board replayed a ${status} run`);
+    this.name = "InactiveClaimReplayError";
   }
 }
 
@@ -240,10 +253,15 @@ function claimHandleFromResponse(value: unknown, request: ClaimNextWakeRequest):
     const envelope = record(value, "Claim result");
     const run = record(envelope.run, "Claim run");
     const wakeup = record(envelope.wakeup, "Claim wakeup");
+    const activeShape = run.status === "active" && run.endedAt === null && run.result === null;
+    const settledShape = (
+      run.status === "completed" || run.status === "failed" ||
+      run.status === "interrupted" || run.status === "waiting_for_human"
+    ) && typeof run.endedAt === "string" && typeof run.result === "string";
     if (
       envelope.apiVersion !== TASK_BOARD_API_VERSION || run.apiVersion !== TASK_BOARD_API_VERSION ||
       wakeup.apiVersion !== TASK_BOARD_API_VERSION || run.claimId !== request.claimId ||
-      run.agentId !== request.agentId || run.status !== "active" || run.endedAt !== null || run.result !== null ||
+      run.agentId !== request.agentId || (!activeShape && !settledShape) ||
       run.wakeupId !== wakeup.wakeupId || run.projectId !== wakeup.projectId || run.agentId !== wakeup.agentId ||
       run.taskId !== wakeup.taskId || run.runId !== wakeup.runId || wakeup.claimedAt === null
     ) {
@@ -425,6 +443,19 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     if (result.status === 204) return null;
     const claimHandle = claimHandleFromResponse(result.body, request);
     try {
+      const replayEnvelope = record(result.body, "Claim result");
+      const replayRun = parseRunEntity(replayEnvelope.run, "Claim run");
+      if (replayRun.status !== "active") {
+        if (claimHandle === null || replayRun.endedAt === null) {
+          throw new Error("Settled claim replay omitted its validated identity or end timestamp");
+        }
+        throw new InactiveClaimReplayError(
+          claimHandle,
+          replayRun.status,
+          replayRun.endedAt,
+          replayRun.heartbeatAt,
+        );
+      }
       const claimed = parseClaimRunResult(result.body);
       const requestedMessageCursor = claimed.wakeup.taskId === null
         ? null
@@ -451,6 +482,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         }),
       });
     } catch (error) {
+      if (error instanceof InactiveClaimReplayError) throw error;
       const message = error instanceof Error ? error.message : "Task-board claim response is invalid";
       throw new TaskBoardClaimResponseError(message, claimHandle, error);
     }

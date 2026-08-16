@@ -22,6 +22,7 @@ import type {
   UpdateTaskEstimateRequest,
 } from "#server/agents/task-worker/types";
 import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
+import { InactiveClaimReplayError } from "#server/agents/task-worker/http-board-client";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
 export const PROJECT = "project-one";
@@ -206,6 +207,7 @@ export class FakeBoard implements TaskBoardClient {
   settleFailures = 0;
   heartbeatFailures = 0;
   heartbeatFailure: Error = new Error("Simulated heartbeat rejection");
+  inactiveReplayStatus: "completed" | "failed" | "interrupted" | "waiting_for_human" | null = null;
   estimateFailures = 0;
   laneErrorFailures = 0;
   laneErrorFailure: Error = new Error("Simulated lane-error endpoint rejection");
@@ -217,6 +219,7 @@ export class FakeBoard implements TaskBoardClient {
     this.onClaim?.(structuredClone(request));
     this.claimRequests.push(structuredClone(request));
     let result = this.#claimed.get(request.claimId);
+    const replayed = result !== undefined;
     if (result === undefined) {
       const factory = this.queued.shift();
       if (factory === undefined) return Promise.resolve(null);
@@ -226,6 +229,11 @@ export class FakeBoard implements TaskBoardClient {
     if (this.claimFailures > 0) {
       this.claimFailures -= 1;
       return Promise.reject(new Error("Simulated lost claim response"));
+    }
+    if (replayed && this.inactiveReplayStatus !== null) {
+      const status = this.inactiveReplayStatus;
+      this.inactiveReplayStatus = null;
+      return Promise.reject(new InactiveClaimReplayError(result.claim, status, NOW, null));
     }
     if (this.poisonedClaimFailures > 0) {
       this.poisonedClaimFailures -= 1;

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { safeErrorDetail } from "../../shared/safe-error-detail.js";
 import { TaskWorkerJournalStore } from "./journal.js";
+import { InactiveClaimReplayError } from "./http-board-client.js";
 import {
   estimateMinutesFromActivity,
   phaseStageFromActivity,
@@ -445,6 +446,10 @@ export class TaskWorker {
           ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
         }, signal);
       } catch (error) {
+        if (replayingPendingClaim && error instanceof InactiveClaimReplayError) {
+          await this.#discardInactiveClaimReplay(error, pending);
+          return false;
+        }
         if (error instanceof TaskBoardClaimResponseError && error.claim !== null) {
           await this.#recordPoisonedClaim(error.claim, pending);
         }
@@ -550,6 +555,29 @@ export class TaskWorker {
     }));
   }
 
+  async #discardInactiveClaimReplay(
+    error: InactiveClaimReplayError,
+    pending?: NonNullable<TaskWorkerJournal["pendingClaim"]>,
+  ): Promise<void> {
+    if (pending !== undefined) await this.#recordPoisonedClaim(error.claim, pending);
+    if (
+      this.#state.active?.claim.claimId !== error.claim.claimId ||
+      this.#state.active.claim.runId !== error.claim.runId ||
+      this.#state.active.claim.wakeupId !== error.claim.wakeupId
+    ) throw error;
+    this.#logger({
+      type: "run_heartbeat_failed",
+      agentId: this.#options.identity.agentId,
+      workerId: this.#options.identity.workerId,
+      runId: error.claim.runId,
+      error: safeDetail(
+        `Skipped replay for a run already settled as ${error.status}`,
+        "Skipped an inactive replayed run",
+      ),
+    });
+    await this.dropActiveClaim("The task board reported that the replayed run was already settled.");
+  }
+
   async #recoverOrContinueActive(signal?: AbortSignal): Promise<boolean> {
     const active = this.#state.active;
     if (active === null) return false;
@@ -558,15 +586,24 @@ export class TaskWorker {
       return true;
     }
     if (active.phase === "claimed") {
-      const replay = await this.#options.board.claimNextWake({
-        agentId: this.#options.identity.agentId,
-        claimId: active.claim.claimId,
-        messageCursors: active.claim.taskId === null || active.claim.requestedMessageCursor === null
-          ? Object.freeze({})
-          : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
-        longPollMs: 0,
-        ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
-      }, signal);
+      let replay: ClaimedAgentRun | null;
+      try {
+        replay = await this.#options.board.claimNextWake({
+          agentId: this.#options.identity.agentId,
+          claimId: active.claim.claimId,
+          messageCursors: active.claim.taskId === null || active.claim.requestedMessageCursor === null
+            ? Object.freeze({})
+            : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
+          longPollMs: 0,
+          ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
+        }, signal);
+      } catch (error) {
+        if (error instanceof InactiveClaimReplayError) {
+          await this.#discardInactiveClaimReplay(error);
+          return false;
+        }
+        throw error;
+      }
       if (replay === null) throw new Error("Task board did not replay the active durable claim");
       const parsed = assertClaimBinding(
         replay,

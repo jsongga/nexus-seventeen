@@ -724,6 +724,14 @@ export class RunsCollaborator {
       for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
         if (!Object.hasOwn(run, field)) run[field] = null;
       }
+      if (typeof run.runId !== "string") throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+      const currentRow = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(run.runId);
+      if (currentRow === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+      const currentRun = runFromRow(currentRow);
+      run.status = currentRun.status;
+      run.heartbeatAt = currentRun.heartbeatAt;
+      run.endedAt = currentRun.endedAt;
+      run.result = currentRun.result;
     }
     return result as ClaimRunResult;
   }
