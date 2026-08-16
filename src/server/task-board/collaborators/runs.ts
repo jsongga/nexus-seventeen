@@ -50,6 +50,8 @@ type SettlementEffects = Readonly<{
   settledWorkflowNodes: readonly WorkNode[];
 }>;
 
+type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
+
 export const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
 
 export class RunsCollaborator {
@@ -375,6 +377,72 @@ export class RunsCollaborator {
     return this.claimRun(agentId, request, credentialVersion);
   }
 
+  heartbeatRun(runId: string, agentId: string, credentialVersion: number): void {
+    this.runtime.store.transaction(() => {
+      this.runtime.requireAgentCredentialVersion(agentId, credentialVersion);
+      const row = this.runtime.store.db.prepare(
+        "SELECT * FROM runs WHERE run_id = ? AND agent_id = ?",
+      ).get(runId, agentId);
+      if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
+      const current = runFromRow(row);
+      if (current.status !== "active") throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+      const heartbeatAt = exactNow(this.runtime.config.now);
+      const update = this.runtime.store.db.prepare(`
+        UPDATE runs SET heartbeat_at = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
+      `).run(heartbeatAt, runId, agentId);
+      if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+    });
+  }
+
+  reconcileStaleRuns(): number {
+    const timeoutSeconds = this.runtime.config.heartbeatTimeoutSeconds;
+    if (timeoutSeconds === 0) return 0;
+    const runColumns = new Set(this.runtime.store.db.prepare(
+      "SELECT name FROM pragma_table_info('runs')",
+    ).all().map((row) => stringValue(row, "name")));
+    if (!["run_id", "agent_id", "status", "started_at", "heartbeat_at"].every((column) => runColumns.has(column))) {
+      return 0;
+    }
+    const sweepStartedAt = exactNow(this.runtime.config.now);
+    const cutoff = new Date(Date.parse(sweepStartedAt) - timeoutSeconds * 1_000).toISOString();
+    const candidates = this.runtime.store.db.prepare(`
+      SELECT run_id
+      FROM runs
+      WHERE status = 'active' AND COALESCE(heartbeat_at, started_at) < ?
+      ORDER BY run_id
+    `).all(cutoff).map((row) => stringValue(row, "run_id"));
+    let settledCount = 0;
+    for (const runId of candidates) {
+      const settlement = this.runtime.store.transaction(() => {
+        const row = this.runtime.store.db.prepare(`
+          SELECT *
+          FROM runs
+          WHERE run_id = ?
+            AND status = 'active'
+            AND COALESCE(heartbeat_at, started_at) < ?
+        `).get(runId, cutoff);
+        if (row === undefined) return null;
+        const current = runFromRow(row);
+        const effects = this.settleActiveRunInTransaction(
+          current,
+          current.agentId,
+          { outcome: "interrupted", result: "run heartbeat lost" },
+          exactNow(this.runtime.config.now),
+          { type: "system", id: "system:stale-run-sweep" },
+        );
+        return Object.freeze({ current, effects });
+      });
+      if (settlement === null) continue;
+      if (settlement.effects.workflowWakeAgentId !== null) {
+        this.runtime.wakeupEvents.emit(settlement.effects.workflowWakeAgentId);
+      }
+      this.projects.activateWorkflowNodes(settlement.effects.settledWorkflowNodes);
+      this.projects.reconcileWorkflowsBestEffort(settlement.current.projectId);
+      settledCount += 1;
+    }
+    return settledCount;
+  }
+
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {
     const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
@@ -420,7 +488,7 @@ export class RunsCollaborator {
     agentId: string,
     request: SettleRunRequest,
     now: string,
-    actor: Actor,
+    actor: SettlementActor,
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
@@ -523,6 +591,7 @@ export class RunsCollaborator {
             version: task.version + 1,
           }, now);
           if (request.outcome === "completed") {
+            if (actor.type === "system") throw new Error("TASK_BOARD_SYSTEM_RUN_COMPLETION_INVALID");
             this.runtime.reconcileTaskPhasesForTerminal(task, "completed", actor, now);
             workflowWakeAgentId = this.runtime.createReviewFollowup(task, now)?.wakeAgentId ?? null;
           }

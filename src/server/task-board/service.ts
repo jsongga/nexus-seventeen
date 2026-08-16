@@ -146,6 +146,7 @@ export class TaskBoardService {
   readonly #documentStreams = new Set<DocumentStream>();
   readonly #projectStreams = new Set<DocumentStream>();
   readonly #closingAbort = new AbortController();
+  #reconcileTimer: NodeJS.Timeout | undefined;
   #started = false;
   #closing = false;
 
@@ -159,6 +160,17 @@ export class TaskBoardService {
     this.#server.headersTimeout = 10_000;
     this.#server.keepAliveTimeout = 5_000;
     this.#server.maxHeadersCount = 32;
+    if (config.reconcileIntervalSeconds > 0) {
+      this.#reconcileTimer = setInterval(() => {
+        try {
+          this.#board.reconcileStaleRuns();
+        } catch (error) {
+          console.error("[task-board] stale-run reconciliation failed", error);
+        }
+        this.#board.reconcileWorkflowsBestEffort();
+      }, config.reconcileIntervalSeconds * 1_000);
+      this.#reconcileTimer.unref();
+    }
   }
 
   static async create(options: TaskBoardOptions): Promise<TaskBoardService> {
@@ -588,6 +600,16 @@ export class TaskBoardService {
       return;
     }
     const settleMatch = /^\/v1\/runs\/([^/]+)\/settle$/u.exec(url.pathname);
+    const heartbeatMatch = /^\/v1\/runs\/([^/]+)\/heartbeat$/u.exec(url.pathname);
+    if (heartbeatMatch && request.method === "POST") {
+      noQuery(url);
+      const runId = parseRouteIdentifier(heartbeatMatch[1], "runId");
+      const agent = this.#board.authenticateAgent(bearerToken(request));
+      this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
+      this.#board.heartbeatRun(runId, agent);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
     if (settleMatch && request.method === "POST") {
       noQuery(url);
       const runId = parseRouteIdentifier(settleMatch[1], "runId");
@@ -754,6 +776,10 @@ export class TaskBoardService {
   async close(): Promise<void> {
     if (this.#closing) return;
     this.#closing = true;
+    if (this.#reconcileTimer !== undefined) {
+      clearInterval(this.#reconcileTimer);
+      this.#reconcileTimer = undefined;
+    }
     this.#closingAbort.abort();
     for (const stream of [...this.#documentStreams]) {
       stream.unsubscribe();

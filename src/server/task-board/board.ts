@@ -101,6 +101,7 @@ export class TaskBoard {
 
   static async open(config: TaskBoardConfig): Promise<TaskBoard> {
     const board = new TaskBoard(config, await TaskBoardStore.open(config.dbPath));
+    board.#runs.reconcileStaleRuns();
     board.#projects.reconcileWorkflowsBestEffort();
     return board;
   }
@@ -137,6 +138,10 @@ export class TaskBoard {
 
   reconcileWorkflows(projectId?: string): void {
     this.#projects.reconcileWorkflows(projectId);
+  }
+
+  reconcileWorkflowsBestEffort(projectId?: string): void {
+    this.#projects.reconcileWorkflowsBestEffort(projectId);
   }
 
   createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
@@ -320,6 +325,14 @@ export class TaskBoard {
     credentialVersion?: number,
   ): Promise<ClaimRunResult | null> {
     return this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
+  }
+
+  heartbeatRun(runId: string, agentAuth: Pick<AgentProfile, "agentId" | "version">): void {
+    this.#runs.heartbeatRun(runId, agentAuth.agentId, agentAuth.version);
+  }
+
+  reconcileStaleRuns(): number {
+    return this.#runs.reconcileStaleRuns();
   }
 
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {

@@ -5,6 +5,7 @@ import { TaskBoardError } from "./errors.js";
 import type { HostContext } from "./host.js";
 
 const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
+const MAX_TIMER_SECONDS = Math.floor(2_147_483_647 / 1_000);
 
 export interface TaskBoardHostOptions {
   readonly homeDir?: string;
@@ -22,6 +23,8 @@ export interface TaskBoardOptions {
   readonly listenHost?: TaskBoardListenHost;
   readonly port?: number;
   readonly maxBodyBytes?: number;
+  readonly heartbeatTimeoutSeconds?: number;
+  readonly reconcileIntervalSeconds?: number;
   readonly now?: () => Date;
   readonly artifactRoot?: string;
 }
@@ -35,6 +38,8 @@ export interface TaskBoardConfig {
   readonly listenHost: TaskBoardListenHost;
   readonly port: number;
   readonly maxBodyBytes: number;
+  readonly heartbeatTimeoutSeconds: number;
+  readonly reconcileIntervalSeconds: number;
   readonly now: () => Date;
   readonly artifactRoot: string;
 }
@@ -126,6 +131,20 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     listenHost,
     port: boundedInteger(options.port, 4_318, 0, 65_535, "port"),
     maxBodyBytes: boundedInteger(options.maxBodyBytes, 64 * 1_024, 1_024, 256 * 1_024, "maxBodyBytes"),
+    heartbeatTimeoutSeconds: boundedInteger(
+      options.heartbeatTimeoutSeconds,
+      300,
+      0,
+      MAX_TIMER_SECONDS,
+      "heartbeatTimeoutSeconds",
+    ),
+    reconcileIntervalSeconds: boundedInteger(
+      options.reconcileIntervalSeconds,
+      60,
+      0,
+      MAX_TIMER_SECONDS,
+      "reconcileIntervalSeconds",
+    ),
     now: options.now ?? (() => new Date()),
     artifactRoot,
   });
