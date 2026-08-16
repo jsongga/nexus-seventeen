@@ -15,6 +15,10 @@ services:
       STEWARD_TASK_BOARD_HUMAN_PRINCIPAL: ${STEWARD_TASK_BOARD_HUMAN_PRINCIPAL:-human:operator}
       STEWARD_TASK_BOARD_HOST: 127.0.0.1
       STEWARD_TASK_BOARD_PORT: "4318"
+      # Project-picker discovery roots (colon-separated absolute paths).
+      # Unset, the server scans $HOME for *Projects folders — empty in this
+      # container, so the picker falls back to browse/paste.
+      # STEWARD_PROJECT_ROOTS: /srv/projects
     expose:
       - "3000"
     volumes:
