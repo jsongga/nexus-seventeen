@@ -17,6 +17,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_WORKFLOW_ATTEMPT_SUPERSEDED: "TASK_WORKFLOW_ATTEMPT_SUPERSEDED",
   WORK_NODE_VERSION_CONFLICT: "WORK_NODE_VERSION_CONFLICT",
   WORK_ITEM_ENDED: "WORK_ITEM_ENDED",
+  WORK_ITEM_ILLEGAL_TRANSITION: "WORK_ITEM_ILLEGAL_TRANSITION",
   WORK_ITEM_NOT_TERMINAL: "WORK_ITEM_NOT_TERMINAL",
 } as const);
 export type TaskBoardErrorCode = typeof TASK_BOARD_ERROR_CODES[keyof typeof TASK_BOARD_ERROR_CODES];
@@ -49,6 +50,8 @@ export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
  * PLAN_REVISION_STATES, WORK_NODE_STATES, and STAGE_HANDOFF_OUTCOMES. Adding or
  * removing a member from one of those arrays also requires a schema-version bump
  * and rebuild migration so existing databases receive the new CHECK constraint.
+ * WORK_ITEM_STATES backs state CHECKs in both work_items and
+ * work_item_transitions.
  */
 export const IDENTIFIER_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" as const;
 
@@ -111,8 +114,66 @@ export const TASK_MESSAGE_ACTOR_TYPES = DOCUMENT_ACTOR_TYPES;
 export const WORK_ITEM_PRIORITIES = ["urgent", "high", "normal", "low", "opportunistic"] as const;
 export type WorkItemPriority = typeof WORK_ITEM_PRIORITIES[number];
 
-export const WORK_ITEM_STATES = ["submitted", "processing", "needs_input", "waiting_for_human_review", "completed", "failed", "cancelled"] as const;
+export const WORK_ITEM_STATES = [
+  "queued",
+  "planning",
+  "plan_approval",
+  "designing",
+  "implementing",
+  "verifying",
+  "reviewing",
+  "fixing",
+  "final_approval",
+  "merged",
+  "parked",
+  "abandoned",
+  "dead_letter",
+] as const;
 export type WorkItemState = typeof WORK_ITEM_STATES[number];
+
+export const WORK_ITEM_TERMINAL_STATES = ["merged", "abandoned", "dead_letter"] as const;
+
+export function isTerminalWorkItemState(state: WorkItemState): boolean {
+  return (WORK_ITEM_TERMINAL_STATES as readonly WorkItemState[]).includes(state);
+}
+
+export const WORK_ITEM_TRANSITIONS: Readonly<
+  Record<WorkItemState, readonly WorkItemState[]>
+> = {
+  queued: ["planning", "parked", "abandoned", "dead_letter"],
+  planning: ["plan_approval", "parked", "abandoned", "dead_letter"],
+  plan_approval: ["designing", "implementing", "planning", "parked", "abandoned", "dead_letter"],
+  designing: ["implementing", "parked", "abandoned", "dead_letter"],
+  implementing: [
+    "verifying",
+    // legacy completion — removed when campaign 4's pipeline drives final_approval
+    "merged",
+    "parked",
+    "abandoned",
+    "dead_letter",
+  ],
+  verifying: ["reviewing", "fixing", "parked", "abandoned", "dead_letter"],
+  reviewing: [
+    "fixing",
+    "planning",
+    "final_approval",
+    // legacy completion — removed when campaign 4's pipeline drives final_approval
+    "merged",
+    "parked",
+    "abandoned",
+    "dead_letter",
+  ],
+  fixing: ["verifying", "parked", "abandoned", "dead_letter"],
+  final_approval: ["merged", "fixing", "implementing", "parked", "abandoned", "dead_letter"],
+  merged: [],
+  parked: ["planning", "implementing", "abandoned", "dead_letter"],
+  abandoned: [],
+  dead_letter: [],
+};
+
+export function isWorkItemTransitionAllowed(from: WorkItemState, to: WorkItemState): boolean {
+  return WORK_ITEM_TRANSITIONS[from].includes(to);
+}
 
 export const WORK_ITEM_STAGES = ["refinement", "project_resolution", "research", "planning", "implementation", "testing", "verification", "human_review", "deployment"] as const;
 export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
