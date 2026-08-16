@@ -4,7 +4,46 @@ import {
   rawTaskStatuses,
   type WireTaskStatus,
 } from '../data/wire';
-import type { TaskStatus } from '../types';
+import type { TaskKind, TaskStatus } from '../types';
+
+export interface TaskDetailMutationAffordances {
+  answerQuestion: boolean;
+  decideHumanCheck: boolean;
+  recover: boolean;
+  assign: boolean;
+  interrupt: boolean;
+}
+
+export function deriveTaskDetailMutationAffordances(input: {
+  status: TaskStatus;
+  kind: TaskKind;
+  ended: boolean;
+  hasOpenQuestion: boolean;
+  hasActiveRun: boolean;
+  hasRecovery: boolean;
+}): TaskDetailMutationAffordances {
+  if (input.status === 'unrecognized') {
+    return {
+      answerQuestion: false,
+      decideHumanCheck: false,
+      recover: false,
+      assign: false,
+      interrupt: false,
+    };
+  }
+
+  const agentTask = input.kind !== 'human_check';
+  const queuedUnclaimed = input.status === 'queued' && !input.hasActiveRun;
+  return {
+    answerQuestion: agentTask && input.hasOpenQuestion,
+    decideHumanCheck: !agentTask && !input.ended,
+    recover: agentTask && input.hasRecovery && !input.hasOpenQuestion,
+    assign: agentTask
+      && !input.hasOpenQuestion
+      && (input.status === 'backlog' || input.status === 'proposed' || queuedUnclaimed),
+    interrupt: agentTask && input.hasActiveRun,
+  };
+}
 
 export interface RecoveryAffordanceInput {
   status: TaskStatus;

@@ -16,6 +16,7 @@ import {
   WORK_ITEM_STAGES,
 } from "#shared/task-board-contract";
 import {
+  BROWSER_SCALAR_MESSAGES,
   NAMED_EXACT_MESSAGES,
   PATH_EXACT_MESSAGES,
   exact,
@@ -30,6 +31,8 @@ import {
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseClaimRunResult,
+  parseTaskEntity,
+  parseWorkItemEntity,
   parseWorkerAgentContext,
   parseWorkerAgentRunOutcome,
   prose,
@@ -37,6 +40,66 @@ import {
 } from "#shared/task-board-contract/validate";
 
 const NOW = "2026-08-09T20:00:00.000Z";
+
+const browserProfile = {
+  exact: false,
+  identifiers: "string",
+  projection: "browser",
+  scalarMessages: BROWSER_SCALAR_MESSAGES,
+  tolerantEnums: true,
+} as const;
+
+function taskEntity(status: string): Record<string, unknown> {
+  return {
+    apiVersion: TASK_BOARD_API_VERSION,
+    taskId: "task-one",
+    projectId: "project-one",
+    parentTaskId: null,
+    kind: "work",
+    requiredRole: null,
+    requiresReview: false,
+    title: "Validate browser parsing",
+    objective: "Keep future task states visible.",
+    acceptanceCriteria: "Unknown states are inert.",
+    workspaceRefs: [],
+    status,
+    assignedAgentId: null,
+    assignedRole: null,
+    expectedAgentMinutes: null,
+    estimateRecordedAt: null,
+    orderKey: 0,
+    phases: [],
+    startedAt: null,
+    expectedCompletedAt: null,
+    endedAt: null,
+    result: null,
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function workItemEntity(state: string): Record<string, unknown> {
+  return {
+    apiVersion: TASK_BOARD_API_VERSION,
+    workItemId: "work-item-one",
+    originalRequest: "Keep future work-item states visible.",
+    refinedObjective: null,
+    priority: "normal",
+    projectTarget: { mode: "auto" },
+    resolvedProjectId: null,
+    planningTaskId: null,
+    state,
+    currentStage: "refinement",
+    createdBy: "human:operator",
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+    endedAt: null,
+    cancelledReason: null,
+    archivedAt: null,
+  };
+}
 
 function assertAcceptedSet(expected: readonly string[], validate: (value: string) => unknown): void {
   const candidates = [...expected, "not_a_contract_member"];
@@ -206,6 +269,54 @@ test("timestamp accepts ISO spellings for web millisecond projection and can req
   assert.equal(Date.parse(timestamp(offset, "createdAt")), Date.parse(NOW));
   assert.throws(() => timestamp(offset, "createdAt", "createdAt must be canonical", true), /canonical/u);
   assert.equal(timestamp(NOW, "createdAt", "createdAt must be canonical", true), NOW);
+});
+
+test("strict entity parsing rejects unknown task statuses and work-item states", () => {
+  assert.throws(() => parseTaskEntity(taskEntity("future_task_state"), "tasks[0]"), /unsupported value/u);
+  assert.throws(() => parseWorkItemEntity(workItemEntity("future_work_item_state"), "workItems[0]"), /unsupported value/u);
+  assert.throws(
+    () => parseTaskEntity(taskEntity("future_task_state"), "tasks[0]", { tolerantEnums: true }),
+    /unsupported value/u,
+  );
+  assert.throws(
+    () => parseWorkItemEntity(workItemEntity("future_work_item_state"), "workItems[0]", { tolerantEnums: true }),
+    /unsupported value/u,
+  );
+});
+
+test("the browser profile buckets only task statuses and work-item states as unrecognized", () => {
+  assert.equal(parseTaskEntity(taskEntity("future_task_state"), "tasks[0]", browserProfile).status, "unrecognized");
+  assert.equal(
+    parseWorkItemEntity(workItemEntity("future_work_item_state"), "workItems[0]", browserProfile).state,
+    "unrecognized",
+  );
+
+  assert.throws(() => parseTaskEntity({
+    ...taskEntity("queued"),
+    kind: "future_task_kind",
+  }, "tasks[0]", browserProfile), /kind has an unsupported value/u);
+  assert.throws(() => parseWorkItemEntity({
+    ...workItemEntity("queued"),
+    priority: "future_priority",
+  }, "workItems[0]", browserProfile), /priority has an unsupported value/u);
+});
+
+test("work-item detail transitions are accepted in both profiles and remain strict", () => {
+  const transition = {
+    fromState: null,
+    toState: "queued",
+    actorType: "human",
+    actorId: "human:operator",
+    createdAt: NOW,
+  };
+  const detail = { ...workItemEntity("queued"), transitions: [transition] };
+
+  assert.equal(parseWorkItemEntity(detail, "workItem").state, "queued");
+  assert.equal(parseWorkItemEntity(detail, "workItem", browserProfile).state, "queued");
+  assert.throws(() => parseWorkItemEntity({
+    ...detail,
+    transitions: [{ ...transition, toState: "future_work_item_state" }],
+  }, "workItem", browserProfile), /transitions\[0\]\.toState has an unsupported value/u);
 });
 
 test("identifier validation is the single contract grammar", () => {

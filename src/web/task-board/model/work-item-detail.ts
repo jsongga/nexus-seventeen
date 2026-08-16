@@ -23,9 +23,19 @@ export function deriveWorkItemDetailAffordances(input: {
     };
   }
 
-  const terminal = input.workItemState === 'completed'
-    || input.workItemState === 'failed'
-    || input.workItemState === 'cancelled';
+  if (input.workItemState === 'unrecognized') {
+    return {
+      answerQuestion: false,
+      confirmPlan: false,
+      rejectPlan: false,
+      cancel: false,
+      archive: false,
+    };
+  }
+
+  const terminal = input.workItemState === 'merged'
+    || input.workItemState === 'dead_letter'
+    || input.workItemState === 'abandoned';
   if (terminal) {
     return {
       answerQuestion: false,
@@ -37,9 +47,9 @@ export function deriveWorkItemDetailAffordances(input: {
   }
 
   return {
-    answerQuestion: input.workItemState === 'needs_input' && input.planningTaskState === 'waiting_for_human',
-    confirmPlan: input.workItemState === 'waiting_for_human_review' && input.planningTaskState === 'completed',
-    rejectPlan: input.workItemState === 'waiting_for_human_review' && input.planningTaskState === 'completed',
+    answerQuestion: input.workItemState === 'parked' && input.planningTaskState === 'waiting_for_human',
+    confirmPlan: input.workItemState === 'plan_approval' && input.planningTaskState === 'completed',
+    rejectPlan: input.workItemState === 'plan_approval' && input.planningTaskState === 'completed',
     cancel: true,
     archive: false,
   };

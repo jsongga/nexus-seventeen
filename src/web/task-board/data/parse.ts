@@ -4,7 +4,6 @@ import type {
   AgentProfile,
   AgentRun,
   BoardSnapshot,
-  BoardTask,
   DocumentPenHolder,
   DocumentSnapshot,
   DocumentSummary,
@@ -13,7 +12,6 @@ import type {
   TaskEvent,
   TaskMessage,
   TaskPhase,
-  WorkItem,
 } from '@shared/task-board-contract';
 import {
   BROWSER_SCALAR_MESSAGES,
@@ -48,6 +46,7 @@ import {
   parseTaskEntity,
   parseTaskPhaseEntity,
   parseWorkItemEntity,
+  parseWorkItemTransitionEntity,
   prose,
   record as contractRecord,
   skillIdentifier as contractSkillIdentifier,
@@ -56,6 +55,9 @@ import {
   validateAutomationConfigurationParts,
   versionedRecord,
   type JsonRecord,
+  type ParsedWorkItemTransition,
+  type TolerantTaskEntity,
+  type TolerantWorkItemEntity,
 } from '@shared/task-board-contract/validate';
 import type {
   AutomationAgentType,
@@ -81,14 +83,16 @@ type WithMs<T, K extends string> = T & Record<`${K}Ms`, number>;
 type WithNullableMs<T, K extends string> = T & Record<`${K}Ms`, number | null>;
 type WithoutApi<T> = Omit<T, 'apiVersion'>;
 export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updatedAt'>;
-export type RawWorkItem = WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<WorkItem>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>;
+export type RawWorkItem = WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>;
+export type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
+export type RawWorkItemDetail = RawWorkItem & Readonly<{ transitions: RawWorkItemTransition[] }>;
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
 export type RawDocumentPenHolder = WithMs<DocumentPenHolder, 'acquiredAt'>;
 export type RawDocumentSummary = WithMs<WithMs<Omit<WithoutApi<DocumentSummary>, 'penHolder'> & { penHolder: RawDocumentPenHolder | null }, 'createdAt'>, 'updatedAt'>;
 export type RawDocument = RawDocumentSummary & Pick<DocumentSnapshot, 'content'>;
 export type RawTaskPhase = WithMs<WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, 'startedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
 export type RawTask = WithMs<WithMs<WithNullableMs<WithNullableMs<WithNullableMs<WithNullableMs<
-  Omit<WithoutApi<BoardTask>, 'phases' | 'workspaceRefs'> & { phases: RawTaskPhase[]; workspaceRefs: string[] }, 'estimateRecordedAt'>, 'startedAt'>,
+  Omit<WithoutApi<TolerantTaskEntity>, 'phases' | 'workspaceRefs'> & { phases: RawTaskPhase[]; workspaceRefs: string[] }, 'estimateRecordedAt'>, 'startedAt'>,
   'expectedCompletedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
 export type RawQuestion = WithMs<WithNullableMs<Omit<WithoutApi<HumanQuestion>, 'runId' | 'answeredBy'>, 'answeredAt'>, 'askedAt'>;
 export type RawRun = WithMs<WithNullableMs<Omit<WithoutApi<AgentRun>, 'claimId' | 'wakeupId' | 'result'>, 'endedAt'>, 'startedAt'>;
@@ -102,6 +106,7 @@ const loose = {
   identifiers: 'string',
   projection: 'browser',
   scalarMessages: BROWSER_SCALAR_MESSAGES,
+  tolerantEnums: true,
 } as const;
 const strict = {
   exact: PATH_EXACT_MESSAGES,
@@ -153,11 +158,24 @@ function projectProject(item: Project): RawProject {
 export function parseProject(value: unknown, path: string): RawProject {
   return projectProject(parseProjectEntity(value, path, loose));
 }
-function projectWorkItem(item: WorkItem): RawWorkItem {
+function projectWorkItem(item: TolerantWorkItemEntity): RawWorkItem {
   return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt), endedAtMs: nullableMs(item.endedAt), archivedAtMs: nullableMs(item.archivedAt) };
 }
 export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   return projectWorkItem(parseWorkItemEntity(value, path, loose));
+}
+export function parseWorkItemTransitions(value: unknown, path: string): RawWorkItemTransition[] {
+  return arrayOf(value, path, (entry, entryPath) => {
+    const transition = parseWorkItemTransitionEntity(entry, entryPath, loose);
+    return { ...transition, createdAtMs: ms(transition.createdAt) };
+  });
+}
+export function parseWorkItemDetail(value: unknown, path: string): RawWorkItemDetail {
+  const item = contractRecord(value, path);
+  return {
+    ...projectWorkItem(parseWorkItemEntity(item, path, loose)),
+    transitions: parseWorkItemTransitions(item.transitions, `${path}.transitions`),
+  };
 }
 function projectAgent(item: AgentProfile): RawAgent {
   return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt) };
@@ -194,7 +212,7 @@ function projectTaskPhase(item: TaskPhase): RawTaskPhase {
 export function parseTaskPhase(value: unknown, path: string): RawTaskPhase {
   return projectTaskPhase(parseTaskPhaseEntity(value, path, loose));
 }
-function projectTask(item: BoardTask): RawTask {
+function projectTask(item: TolerantTaskEntity): RawTask {
   return {
     ...withoutApiVersion(item),
     workspaceRefs: [...item.workspaceRefs],

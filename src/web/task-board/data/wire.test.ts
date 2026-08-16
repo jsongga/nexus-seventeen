@@ -47,6 +47,7 @@ import {
   taskMessagePageSize,
   taskPhaseStages,
   taskPhaseStatuses,
+  unrecognizedState,
   messageKinds,
   wakeReasons,
   workflowStages,
@@ -69,6 +70,7 @@ describe('wire constants', () => {
     expect(taskMessagePageSize).toBe(TASK_MESSAGE_PAGE_SIZE);
     expect(workItemPageSize).toBe(WORK_ITEM_PAGE_SIZE);
     expect(identifierPattern.source).toBe(IDENTIFIER_PATTERN);
+    expect(unrecognizedState).toBe('unrecognized');
     expect(planRevisionStateValues).toBe(PLAN_REVISION_STATES);
     expect(workNodeStateValues).toBe(WORK_NODE_STATES);
     expect(stageHandoffOutcomeValues).toBe(STAGE_HANDOFF_OUTCOMES);
@@ -113,5 +115,7 @@ describe('wire validators', () => {
     // ever accepts it, the projection layer has leaked into parsing.
     expect(rawTaskStatuses.has('running' as never)).toBe(false);
     expect(rawAgentStatuses.has('sleeping' as never)).toBe(false);
+    expect(rawTaskStatuses.has(unrecognizedState as never)).toBe(false);
+    expect(workItemStates.has(unrecognizedState as never)).toBe(false);
   });
 });

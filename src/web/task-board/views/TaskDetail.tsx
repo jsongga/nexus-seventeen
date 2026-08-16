@@ -19,6 +19,7 @@ import {
   assignmentAgentOptionLabel,
 } from '../model/workspace-model';
 import {
+  deriveTaskDetailMutationAffordances,
   explicitAgentPickerSelection,
   initialAgentPickerSelection,
   recoveryAffordances,
@@ -161,6 +162,14 @@ export function TaskDetail({
   const openQuestion = questions.find((question) => question.status === 'open');
   const activeRun = runs.find((run) => run.status === 'running' || run.status === 'queued');
   const queuedUnclaimed = task.status === 'queued' && !activeRun;
+  const mutationAffordances = deriveTaskDetailMutationAffordances({
+    status: task.status,
+    kind: task.kind,
+    ended: task.endedAt !== null,
+    hasOpenQuestion: openQuestion !== undefined,
+    hasActiveRun: activeRun !== undefined,
+    hasRecovery: recovery !== null,
+  });
   const assigneeChanged = agentId !== task.assignedAgentId;
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -212,7 +221,7 @@ export function TaskDetail({
 
       {task.kind !== 'human_check' ? <TaskPhases task={task} /> : null}
 
-      {task.kind !== 'human_check' && openQuestion ? (
+      {mutationAffordances.answerQuestion && openQuestion ? (
         <section className="border-b border-caution-fill/30 bg-caution-soft/55 px-4 py-4 sm:px-5">
           <div className="flex items-center gap-2 text-caution">
             <HelpCircle size={17} />
@@ -241,7 +250,7 @@ export function TaskDetail({
         </section>
       ) : null}
 
-      {task.kind === 'human_check' && task.endedAt === null ? (
+      {mutationAffordances.decideHumanCheck ? (
         <section className="border-b border-caution-fill/30 bg-caution-soft/45 px-4 py-4 sm:px-5">
           <div className="flex items-center gap-2 text-caution"><UserRoundCheck size={17} /><h3 className="text-xs font-semibold">Human release decision</h3></div>
           <FieldLabel htmlFor={'human-decision-' + task.id}>Decision rationale</FieldLabel>
@@ -273,7 +282,7 @@ export function TaskDetail({
         </section>
       ) : null}
 
-      {task.kind !== 'human_check' && recovery !== null && !openQuestion ? (
+      {mutationAffordances.recover && recovery !== null ? (
         <section className="space-y-3 px-4 py-4 sm:px-5" aria-label="Task recovery actions">
           <div>
             <h3 className="text-xs font-semibold text-ink">Recover task</h3>
@@ -320,7 +329,7 @@ export function TaskDetail({
             </p>
           ) : null}
         </section>
-      ) : task.kind !== 'human_check' && (task.status === 'backlog' || task.status === 'proposed' || queuedUnclaimed) && !openQuestion ? (
+      ) : mutationAffordances.assign ? (
         <section className="px-4 py-4 sm:px-5">
             <div className="space-y-3">
               {eligibleAgents.length > 0 ? (
@@ -341,7 +350,7 @@ export function TaskDetail({
 
       {actionErrors.errors.length > 0 ? <div className="border-t border-line px-4 py-4 sm:px-5"><InlineActionErrors errors={actionErrors.errors} onDismiss={actionErrors.dismiss} /></div> : null}
 
-      {task.kind !== 'human_check' && activeRun ? (
+      {mutationAffordances.interrupt && activeRun ? (
         <section className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
           <span className="text-sm text-muted">Agent is working on this task.</span>
           <Button variant="danger" size="sm" icon={<Square size={14} />} disabled={busy} onClick={() => void runAction(actionErrorContexts.taskInterrupt(task.id, activeRun.id), () => onInterrupt(activeRun.id))}>Interrupt</Button>

@@ -90,6 +90,8 @@ import {
   parseRawBoard,
   parseRun,
   parseTask,
+  parseWorkItem,
+  parseWorkItemDetail,
 } from './parse';
 
 const NOW = '2026-08-09T20:00:00.000Z';
@@ -162,6 +164,26 @@ const task = {
   version: 1,
   createdAt: NOW,
   updatedAt: NOW,
+};
+
+const workItem = {
+  apiVersion: TASK_BOARD_API_VERSION,
+  workItemId: 'work-item-one',
+  originalRequest: 'Keep browser parsing forward compatible.',
+  refinedObjective: null,
+  priority: 'normal',
+  projectTarget: { mode: 'auto' },
+  resolvedProjectId: null,
+  planningTaskId: null,
+  state: 'queued',
+  currentStage: 'refinement',
+  createdBy: 'human:operator',
+  version: 1,
+  createdAt: NOW,
+  updatedAt: NOW,
+  endedAt: null,
+  cancelledReason: null,
+  archivedAt: null,
 };
 
 const question = {
@@ -253,6 +275,35 @@ describe('browser task-board validator adapter', () => {
       evaluatorProfile: 'tests',
       enabled: false,
     }, 'agentType')).toThrow('agentType.name must be a string');
+  });
+
+  it('buckets unknown task and work-item states without widening the wire validators', () => {
+    expect(parseTask({ ...task, status: 'future_task_state' }, 'tasks[0]').status).toBe('unrecognized');
+    expect(parseWorkItem({
+      ...workItem,
+      state: 'future_work_item_state',
+      endedAt: NOW,
+      archivedAt: NOW,
+      cancelledReason: 'A future state may carry terminal metadata.',
+    }, 'workItems[0]').state).toBe('unrecognized');
+  });
+
+  it('parses typed transition history on the work-item detail path', () => {
+    const transition = {
+      fromState: null,
+      toState: 'queued',
+      actorType: 'human',
+      actorId: 'human:operator',
+      createdAt: NOW,
+    };
+    expect(parseWorkItemDetail({ ...workItem, transitions: [transition] }, 'workItem').transitions).toEqual([{
+      ...transition,
+      createdAtMs: Date.parse(NOW),
+    }]);
+    expect(() => parseWorkItemDetail({
+      ...workItem,
+      transitions: [{ ...transition, toState: 'future_work_item_state' }],
+    }, 'workItem')).toThrow('workItem.transitions[0].toState has an unsupported value');
   });
 
   it('runs every entity parser once while projecting a board snapshot', () => {

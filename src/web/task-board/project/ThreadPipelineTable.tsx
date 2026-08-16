@@ -1,6 +1,6 @@
 import { Pill } from '../../components/ui';
 import type { BoardAgent, BoardTask, TaskStatus } from '../types';
-import { prettyStatus, taskStatusTone, type WorkItemTone } from '../model/work-item-labels';
+import { prettyStatus, taskStatusTone, unknownStateLabel, type WorkItemTone } from '../model/work-item-labels';
 
 type PipelineStage = {
   label: string;
@@ -15,7 +15,10 @@ const updatedDateTime = new Intl.DateTimeFormat(undefined, {
 });
 
 export function pipelineStageForStatus(status: TaskStatus): PipelineStage {
-  return { label: prettyStatus(status), tone: taskStatusTone[status] };
+  return {
+    label: status === 'unrecognized' ? unknownStateLabel : prettyStatus(status),
+    tone: taskStatusTone[status],
+  };
 }
 
 export function updatedLabel(value: string | null): string {

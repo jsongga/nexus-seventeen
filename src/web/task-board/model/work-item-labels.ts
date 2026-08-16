@@ -1,15 +1,40 @@
 import type { BoardWorkItem, TaskStatus, WorkItemStage, WorkItemState } from '../types';
 
 export type WorkItemTone = 'neutral' | 'green' | 'amber' | 'red' | 'blue' | 'purple';
+export const unknownStateLabel = 'Unknown state — refresh the app';
 
 export const workItemStateTone: Record<WorkItemState, WorkItemTone> = {
-  submitted: 'blue',
-  processing: 'green',
-  needs_input: 'amber',
-  waiting_for_human_review: 'amber',
-  completed: 'green',
-  failed: 'red',
-  cancelled: 'neutral',
+  queued: 'blue',
+  planning: 'green',
+  plan_approval: 'amber',
+  designing: 'green',
+  implementing: 'green',
+  verifying: 'green',
+  reviewing: 'green',
+  fixing: 'amber',
+  final_approval: 'amber',
+  merged: 'green',
+  parked: 'amber',
+  abandoned: 'neutral',
+  dead_letter: 'red',
+  unrecognized: 'neutral',
+};
+
+export const workItemStateLabel: Record<WorkItemState | 'unrecognized', string> = {
+  queued: 'Queued',
+  planning: 'Planning',
+  plan_approval: 'Plan review',
+  designing: 'Design',
+  implementing: 'Implementing',
+  verifying: 'Verifying',
+  reviewing: 'Reviewing',
+  fixing: 'Fixing',
+  final_approval: 'Final review',
+  merged: 'Done',
+  parked: 'Parked',
+  abandoned: 'Cancelled',
+  dead_letter: 'Failed',
+  unrecognized: unknownStateLabel,
 };
 
 export const taskStatusTone: Record<TaskStatus, WorkItemTone> = {
@@ -23,6 +48,7 @@ export const taskStatusTone: Record<TaskStatus, WorkItemTone> = {
   failed: 'red',
   interrupted: 'red',
   cancelled: 'neutral',
+  unrecognized: 'neutral',
 };
 
 export const workItemStageLabel: Record<WorkItemStage, string> = {
@@ -42,11 +68,5 @@ export function prettyStatus(value: string): string {
 }
 
 export function workItemStatusLabel(workItem: BoardWorkItem): string {
-  if (workItem.state === 'submitted') return 'Submitted · Refinement pending';
-  if (workItem.state === 'processing') {
-    return workItem.currentStage ? `Processing · ${workItemStageLabel[workItem.currentStage]}` : 'Processing';
-  }
-  if (workItem.state === 'needs_input') return 'Needs input';
-  if (workItem.state === 'waiting_for_human_review') return 'Waiting for human review';
-  return prettyStatus(workItem.state);
+  return workItemStateLabel[workItem.state];
 }

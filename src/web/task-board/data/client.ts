@@ -5,7 +5,7 @@ import type {
   BoardDocument,
   BoardProject,
   BoardSnapshot,
-  BoardWorkItem,
+  BoardWorkItemDetail,
   CreateDocumentInput,
   CreateProjectInput,
   CreateTaskInput,
@@ -44,6 +44,7 @@ import {
   parseProject,
   parseRawBoard,
   parseWorkItem,
+  parseWorkItemDetail,
   parseWorkflowEvent,
   record,
   string,
@@ -58,7 +59,7 @@ import {
   documentProjection,
   normalize,
   projectProjection,
-  workItemProjection,
+  workItemDetailProjection,
 } from '../model/project';
 import { taskMessagePageSize, workItemPageSize } from './wire';
 import { SseFrameParser, type SseEvent } from './sse';
@@ -204,9 +205,9 @@ function parseHostDirectoryListing(value: unknown, path: string): HostDirectoryL
   };
 }
 
-function workItemFromEnvelope(value: unknown, path: string): BoardWorkItem {
+function workItemFromEnvelope(value: unknown, path: string): BoardWorkItemDetail {
   const envelope = record(value, path);
-  return workItemProjection(parseWorkItem(envelope.workItem, `${path}.workItem`));
+  return workItemDetailProjection(parseWorkItemDetail(envelope.workItem, `${path}.workItem`));
 }
 
 function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTokenResult {
@@ -297,9 +298,9 @@ export interface TaskBoardClient {
   createProject(input: CreateProjectInput): Promise<BoardProject>;
   getHostProjectRoots(signal?: AbortSignal): Promise<HostProjectRoot[]>;
   getHostDirectories(path?: string, signal?: AbortSignal): Promise<HostDirectoryListing>;
-  createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItem>;
-  cancelWorkItem(workItemId: string, input: { version: number; reason: string }): Promise<BoardWorkItem>;
-  archiveWorkItem(workItemId: string, input: { version: number }): Promise<BoardWorkItem>;
+  createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItemDetail>;
+  cancelWorkItem(workItemId: string, input: { version: number; reason: string }): Promise<BoardWorkItemDetail>;
+  archiveWorkItem(workItemId: string, input: { version: number }): Promise<BoardWorkItemDetail>;
   rotateAgentToken(agentId: string, input: { version: number }): Promise<RotateAgentTokenResult>;
   createTask(input: CreateTaskInput): Promise<void>;
   createAgentQuery(input: {

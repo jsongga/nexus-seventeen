@@ -100,7 +100,7 @@ const workItem = {
   projectTarget: { mode: 'auto' },
   resolvedProjectId: null,
   planningTaskId: null,
-  state: 'submitted',
+  state: 'queued',
   currentStage: 'refinement',
   createdBy: 'human:operator',
   version: 1,
@@ -110,6 +110,14 @@ const workItem = {
   cancelledReason: null,
   archivedAt: null,
 };
+const initialWorkItemTransition = {
+  fromState: null,
+  toState: 'queued',
+  actorType: 'human',
+  actorId: 'human:operator',
+  createdAt: '2026-07-19T10:09:00.000Z',
+};
+const workItemDetail = { ...workItem, transitions: [initialWorkItemTransition] };
 const automationConfiguration = {
   apiVersion,
   configurationId: 'company-default',
@@ -428,6 +436,15 @@ describe('task-board protocol projection', () => {
     expect(snapshot.runs[0]).toMatchObject({ id: 'run-one', taskId: 'task-one', wakeReason: 'human_assignment' });
     expect(snapshot.documents[0]).toMatchObject({ id: 'document-release-notes', contentVersion: 2, penEpoch: 1, sequence: 4 });
     expect(snapshot.revision).toBe(7);
+  });
+
+  it('keeps an unknown task status visible and inert despite an open question', () => {
+    const snapshot = parseBoardSnapshot({
+      ...boardSnapshot(),
+      tasks: [{ ...task, status: 'future_task_state' }],
+    });
+
+    expect(snapshot.tasks[0]?.status).toBe('unrecognized');
   });
 
   it('orders mixed-precision and mixed-offset timestamps by their absolute instant', () => {
@@ -1034,7 +1051,7 @@ describe('task-board HTTP client', () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response(JSON.stringify({ workItem }));
+      return new Response(JSON.stringify({ workItem: workItemDetail }));
     });
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
@@ -1049,8 +1066,16 @@ describe('task-board HTTP client', () => {
     })).resolves.toMatchObject({
       id: workItem.workItemId,
       originalRequest: workItem.originalRequest,
-      state: 'submitted',
+      state: 'queued',
       currentStage: 'refinement',
+      transitions: [{
+        fromState: null,
+        toState: 'queued',
+        actorType: 'human',
+        actorId: 'human:operator',
+        createdAt: '2026-07-19T10:09:00.000Z',
+        createdAtMs: Date.parse('2026-07-19T10:09:00.000Z'),
+      }],
     });
 
     expect(calls).toHaveLength(1);
@@ -1096,18 +1121,28 @@ describe('task-board HTTP client', () => {
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
       const body = JSON.parse(String(init?.body)) as { action: string };
-      const cancelled = {
+      const abandoned = {
         ...workItem,
-        state: 'cancelled',
+        state: 'abandoned',
         currentStage: null,
         version: 2,
         endedAt: '2026-07-19T10:10:00.000Z',
         cancelledReason: 'The request is no longer needed.',
+        transitions: [
+          initialWorkItemTransition,
+          {
+            fromState: 'queued',
+            toState: 'abandoned',
+            actorType: 'human',
+            actorId: 'human:operator',
+            createdAt: '2026-07-19T10:10:00.000Z',
+          },
+        ],
       };
       return new Response(JSON.stringify({
         workItem: body.action === 'archive'
-          ? { ...cancelled, version: 3, archivedAt: '2026-07-19T10:11:00.000Z' }
-          : cancelled,
+          ? { ...abandoned, version: 3, archivedAt: '2026-07-19T10:11:00.000Z' }
+          : abandoned,
       }));
     });
     const client = createTaskBoardClient({
@@ -1119,7 +1154,7 @@ describe('task-board HTTP client', () => {
       version: 1,
       reason: '  The request is no longer needed.  ',
     })).resolves.toMatchObject({
-      state: 'cancelled',
+      state: 'abandoned',
       version: 2,
       cancelledReason: 'The request is no longer needed.',
     });
@@ -1175,7 +1210,7 @@ describe('task-board HTTP client', () => {
         id: workItem.workItemId,
         priority: 'normal',
         projectTarget: { mode: 'auto' },
-        state: 'submitted',
+        state: 'queued',
       })],
     });
     await expect(load({
@@ -1183,19 +1218,22 @@ describe('task-board HTTP client', () => {
       workItemId: 'work-item-explicit',
       projectTarget: { mode: 'explicit', projectId: project.projectId },
       resolvedProjectId: project.projectId,
-      state: 'processing',
+      state: 'planning',
       currentStage: 'human_review',
     })).resolves.toMatchObject({
       workItems: [expect.objectContaining({ currentStage: 'human_review' })],
     });
+    await expect(load({ ...workItem, state: 'future_work_item_state' })).resolves.toMatchObject({
+      workItems: [expect.objectContaining({ state: 'unrecognized' })],
+    });
     await expect(load({ ...workItem, projectTarget: { mode: 'auto', unexpected: true } })).rejects.toThrow(/unsupported fields/iu);
-    await expect(load({ ...workItem, state: 'completed', endedAt: null })).rejects.toThrow(/endedAt/iu);
+    await expect(load({ ...workItem, state: 'merged', endedAt: null })).rejects.toThrow(/endedAt/iu);
     await expect(load({ ...workItem, archivedAt: '2026-07-19T10:10:00.000Z' })).rejects.toThrow(/terminal state/iu);
-    await expect(load({ ...workItem, cancelledReason: 'Not cancelled.' })).rejects.toThrow(/cancelled state/iu);
+    await expect(load({ ...workItem, cancelledReason: 'Not cancelled.' })).rejects.toThrow(/abandoned state/iu);
     await expect(load({
       ...workItem,
       planningTaskId: 'planning-task-one',
-      state: 'cancelled',
+      state: 'abandoned',
       currentStage: null,
       endedAt: '2026-07-19T10:10:00.000Z',
       cancelledReason: 'The request was cancelled.',

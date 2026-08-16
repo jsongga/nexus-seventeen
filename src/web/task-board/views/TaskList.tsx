@@ -5,6 +5,7 @@ import type { ActionError } from '../model/action-errors';
 import {
   prettyStatus,
   taskStatusTone,
+  unknownStateLabel,
   workItemStateTone,
   workItemStatusLabel,
 } from '../model/work-item-labels';
@@ -46,6 +47,7 @@ function formatTime(value: string | null): string {
 }
 
 function taskStatusLabel(task: BoardTask): string {
+  if (task.status === 'unrecognized') return unknownStateLabel;
   if (task.kind !== 'human_check') return prettyStatus(task.status);
   if (task.status === 'completed') return 'approved';
   if (task.status === 'failed') return 'changes requested';

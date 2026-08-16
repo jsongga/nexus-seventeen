@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveTaskDetailMutationAffordances,
   explicitAgentPickerSelection,
   initialAgentPickerSelection,
   recoveryAffordances,
@@ -63,6 +64,15 @@ describe('task recovery affordances', () => {
     },
   );
 
+  it('offers no recovery action for an unrecognized task status', () => {
+    expect(recoveryAffordances({
+      status: 'unrecognized',
+      assignedAgentId: 'current-agent',
+      workflowBound: false,
+      eligibleAgentIds: ['current-agent', 'replacement-agent'],
+    })).toBeNull();
+  });
+
   it('offers backlog when workflow linkage is unavailable so the server can enforce the boundary', () => {
     expect(recoveryAffordances({
       status: 'failed',
@@ -70,6 +80,38 @@ describe('task recovery affordances', () => {
       workflowBound: null,
       eligibleAgentIds: ['current-agent'],
     })?.backlog).toEqual({ primary: false });
+  });
+});
+
+describe('task detail mutation affordances', () => {
+  const noAffordances = {
+    answerQuestion: false,
+    decideHumanCheck: false,
+    recover: false,
+    assign: false,
+    interrupt: false,
+  };
+
+  it('offers no mutation for an unrecognized task with an open question', () => {
+    expect(deriveTaskDetailMutationAffordances({
+      status: 'unrecognized',
+      kind: 'work',
+      ended: false,
+      hasOpenQuestion: true,
+      hasActiveRun: true,
+      hasRecovery: false,
+    })).toEqual(noAffordances);
+  });
+
+  it('offers no mutation for an unrecognized human-check task', () => {
+    expect(deriveTaskDetailMutationAffordances({
+      status: 'unrecognized',
+      kind: 'human_check',
+      ended: false,
+      hasOpenQuestion: false,
+      hasActiveRun: false,
+      hasRecovery: false,
+    })).toEqual(noAffordances);
   });
 });
 

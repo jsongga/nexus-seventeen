@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardWorkItem, TaskStatus, WorkItemState } from '../types';
 import { deriveWorkItemDetailAffordances, nodesForPlan, proposedPlanForWorkItem } from './work-item-detail';
-import { workItemStatusLabel } from './work-item-labels';
+import { workItemStateLabel, workItemStatusLabel } from './work-item-labels';
 
 const workItemStates: readonly WorkItemState[] = [
-  'submitted',
-  'processing',
-  'needs_input',
-  'waiting_for_human_review',
-  'completed',
-  'failed',
-  'cancelled',
+  'queued',
+  'planning',
+  'plan_approval',
+  'designing',
+  'implementing',
+  'verifying',
+  'reviewing',
+  'fixing',
+  'final_approval',
+  'merged',
+  'parked',
+  'abandoned',
+  'dead_letter',
+  'unrecognized',
 ];
 
 const planningTaskStates: readonly (TaskStatus | null)[] = [
@@ -24,6 +31,8 @@ const planningTaskStates: readonly (TaskStatus | null)[] = [
   'completed',
   'failed',
   'interrupted',
+  'cancelled',
+  'unrecognized',
 ];
 
 const noAffordances = {
@@ -39,18 +48,20 @@ describe('deriveWorkItemDetailAffordances', () => {
     for (const workItemState of workItemStates) {
       for (const planningTaskState of planningTaskStates) {
         for (const archived of [false, true]) {
-          const terminal = workItemState === 'completed' || workItemState === 'failed' || workItemState === 'cancelled';
+          const terminal = workItemState === 'merged' || workItemState === 'dead_letter' || workItemState === 'abandoned';
           const expected = archived
             ? noAffordances
-            : terminal
-              ? { ...noAffordances, archive: true }
-              : {
-                  answerQuestion: workItemState === 'needs_input' && planningTaskState === 'waiting_for_human',
-                  confirmPlan: workItemState === 'waiting_for_human_review' && planningTaskState === 'completed',
-                  rejectPlan: workItemState === 'waiting_for_human_review' && planningTaskState === 'completed',
-                  cancel: true,
-                  archive: false,
-                };
+            : workItemState === 'unrecognized'
+              ? noAffordances
+              : terminal
+                ? { ...noAffordances, archive: true }
+                : {
+                    answerQuestion: workItemState === 'parked' && planningTaskState === 'waiting_for_human',
+                    confirmPlan: workItemState === 'plan_approval' && planningTaskState === 'completed',
+                    rejectPlan: workItemState === 'plan_approval' && planningTaskState === 'completed',
+                    cancel: true,
+                    archive: false,
+                  };
 
           expect(
             deriveWorkItemDetailAffordances({
@@ -67,12 +78,12 @@ describe('deriveWorkItemDetailAffordances', () => {
 
   it('does not infer answer or review actions from the work-item state alone', () => {
     expect(deriveWorkItemDetailAffordances({
-      workItemState: 'needs_input',
+      workItemState: 'parked',
       planningTaskState: null,
       archived: false,
     })).toEqual({ ...noAffordances, cancel: true });
     expect(deriveWorkItemDetailAffordances({
-      workItemState: 'waiting_for_human_review',
+      workItemState: 'plan_approval',
       planningTaskState: 'running',
       archived: false,
     })).toEqual({ ...noAffordances, cancel: true });
@@ -102,10 +113,27 @@ describe('work-item workflow selection', () => {
 });
 
 describe('work-item labels', () => {
-  it('uses one human-review stage label in list rows and the detail pane', () => {
-    expect(workItemStatusLabel({
-      state: 'processing',
-      currentStage: 'human_review',
-    } as BoardWorkItem)).toBe('Processing · Preparing human review');
+  it('uses the exhaustive campaign vocabulary in list rows and the detail pane', () => {
+    const expected = {
+      queued: 'Queued',
+      planning: 'Planning',
+      plan_approval: 'Plan review',
+      designing: 'Design',
+      implementing: 'Implementing',
+      verifying: 'Verifying',
+      reviewing: 'Reviewing',
+      fixing: 'Fixing',
+      final_approval: 'Final review',
+      merged: 'Done',
+      parked: 'Parked',
+      abandoned: 'Cancelled',
+      dead_letter: 'Failed',
+      unrecognized: 'Unknown state — refresh the app',
+    } satisfies Record<WorkItemState | 'unrecognized', string>;
+
+    expect(workItemStateLabel).toEqual(expected);
+    for (const state of workItemStates) {
+      expect(workItemStatusLabel({ state } as BoardWorkItem)).toBe(expected[state]);
+    }
   });
 });

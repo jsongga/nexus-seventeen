@@ -20,6 +20,8 @@ import {
 } from '../model/work-item-detail';
 import {
   prettyStatus,
+  unknownStateLabel,
+  workItemStateLabel,
   workItemStateTone,
   workItemStatusLabel,
 } from '../model/work-item-labels';
@@ -47,27 +49,32 @@ interface WorkItemDetailProps {
 }
 
 function StatusTimeline({ workItem }: { workItem: BoardWorkItem }) {
-  const position = workItem.state === 'submitted'
-    ? 0
-    : workItem.state === 'processing'
-      ? 1
-      : workItem.endedAt === null
-        ? 2
-        : 3;
-  const checkpoint = workItem.state === 'needs_input'
-    ? 'Needs input'
-    : workItem.state === 'waiting_for_human_review'
+  const position = workItem.state === 'unrecognized'
+    ? -1
+    : workItem.state === 'queued'
+      ? 0
+      : workItem.endedAt !== null
+        ? 3
+        : workItem.state === 'plan_approval' || workItem.state === 'final_approval' || workItem.state === 'parked'
+          ? 2
+          : 1;
+  const checkpoint = workItem.state === 'parked'
+    ? 'Parked'
+    : workItem.state === 'plan_approval'
       ? 'Plan review'
-      : 'Human checkpoint';
-  const terminalLabel = workItem.endedAt === null ? 'Terminal' : prettyStatus(workItem.state);
-  const steps = ['Submitted', 'Processing', checkpoint, terminalLabel];
+      : workItem.state === 'final_approval'
+        ? 'Final review'
+        : 'Human checkpoint';
+  const terminalLabel = workItem.endedAt === null ? 'Terminal' : workItemStateLabel[workItem.state];
+  const steps = ['Queued', 'In progress', checkpoint, terminalLabel];
 
   return (
     <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="work-item-timeline-heading">
       <h3 id="work-item-timeline-heading" className="text-xs font-semibold text-ink">Status timeline</h3>
       <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-0">
         {steps.map((label, index) => {
-          const complete = index < position || (index === 3 && workItem.endedAt !== null);
+          const complete = workItem.state !== 'unrecognized'
+            && (index < position || (index === 3 && workItem.endedAt !== null));
           const current = index === position && workItem.endedAt === null;
           return (
             <li key={`${index}-${label}`} className="relative flex items-center gap-3 sm:block sm:pr-3">
@@ -164,7 +171,7 @@ export function WorkItemDetail({
   }, [workItem.id]);
 
   useEffect(() => {
-    if (workItem.state !== 'waiting_for_human_review' || workItem.resolvedProjectId === null) {
+    if (workItem.state !== 'plan_approval' || workItem.resolvedProjectId === null) {
       setWorkflow(null);
       setWorkflowError(null);
       setWorkflowState('idle');
@@ -266,7 +273,7 @@ export function WorkItemDetail({
               <dt className="text-xs font-medium text-muted">Planning task</dt>
               <dd className="mt-1 flex flex-wrap items-center gap-2 text-ink">
                 <span className="break-words">{planningTask?.title ?? 'Not linked yet'}</span>
-                {planningTask ? <Pill>{prettyStatus(planningTask.status)}</Pill> : null}
+                {planningTask ? <Pill>{planningTask.status === 'unrecognized' ? unknownStateLabel : prettyStatus(planningTask.status)}</Pill> : null}
               </dd>
             </div>
           </dl>
@@ -286,12 +293,12 @@ export function WorkItemDetail({
           </section>
         ) : null}
 
-        {workItem.state === 'needs_input' ? (
+        {workItem.state === 'parked' && openQuestion !== null ? (
           <form
             className="border-b border-caution-fill/30 bg-caution-soft/55 px-4 py-4 sm:px-5"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!openQuestion || answer.trim().length === 0) return;
+              if (answer.trim().length === 0) return;
               void save(actionErrorContexts.workItemAnswer(workItem.id, openQuestion.id), () => onAnswer(openQuestion.id, answer.trim()), () => setAnswer(''));
             }}
           >
@@ -299,7 +306,7 @@ export function WorkItemDetail({
               <HelpCircle size={17} />
               <h3 className="text-xs font-semibold">Planning needs your input</h3>
             </div>
-            {affordances.answerQuestion && openQuestion ? (
+            {affordances.answerQuestion ? (
               <>
                 <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-6 text-ink">{openQuestion.prompt}</p>
                 <div className="mt-3">
@@ -322,9 +329,15 @@ export function WorkItemDetail({
               </div>
             )}
           </form>
+        ) : workItem.state === 'parked' ? (
+          <section className="border-b border-line px-4 py-4 sm:px-5">
+            <div className="rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted" role="status">
+              Parked — no open question. Retry or reassign from the task view.
+            </div>
+          </section>
         ) : null}
 
-        {workItem.state === 'waiting_for_human_review' ? (
+        {workItem.state === 'plan_approval' ? (
           <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="proposed-plan-heading">
             <div className="flex items-start justify-between gap-3">
               <div>

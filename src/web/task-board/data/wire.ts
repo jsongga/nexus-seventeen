@@ -63,6 +63,7 @@ export type { WorkflowStage };
 export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 
 export const apiVersion = TASK_BOARD_API_VERSION;
+export const unrecognizedState = 'unrecognized' as const;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
 export const maximumDocumentContentBytes = DOCUMENT_CONTENT_MAX_BYTES;
 export const maximumWorkItemCursorBytes = WORK_ITEM_CURSOR_MAX_BYTES;

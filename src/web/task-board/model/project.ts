@@ -21,6 +21,7 @@ import type {
   BoardTask,
   BoardTaskPhase,
   BoardWorkItem,
+  BoardWorkItemDetail,
   RunStatus,
   TaskStatus,
 } from '../types';
@@ -32,6 +33,7 @@ import type {
   RawMessage,
   RawProject,
   RawWorkItem,
+  RawWorkItemDetail,
 } from '../data/parse';
 import {
   wakeReasons,
@@ -41,7 +43,8 @@ import {
   type WireTaskStatus,
 } from '../data/wire';
 
-export function taskStatus(status: WireTaskStatus, hasOpenQuestion: boolean): TaskStatus {
+export function taskStatus(status: WireTaskStatus | 'unrecognized', hasOpenQuestion: boolean): TaskStatus {
+  if (status === 'unrecognized') return status;
   if (hasOpenQuestion) return 'waiting_for_human';
   const statuses: Record<WireTaskStatus, TaskStatus> = {
     backlog: 'backlog',
@@ -158,6 +161,13 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     cancelledReason: raw.cancelledReason,
     archivedAt: raw.archivedAt,
     archivedAtMs: raw.archivedAtMs,
+  };
+}
+
+export function workItemDetailProjection(raw: RawWorkItemDetail): BoardWorkItemDetail {
+  return {
+    ...workItemProjection(raw),
+    transitions: raw.transitions.map((transition) => ({ ...transition })),
   };
 }
 

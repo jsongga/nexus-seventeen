@@ -83,6 +83,7 @@ import {
   type Wakeup,
   type WorkItem,
   type WorkItemProjectTarget,
+  type WorkItemState,
   type WorkNode,
   type WorkflowStage,
   type WorkflowPlanDraft,
@@ -307,6 +308,24 @@ export interface ShapeParserOptions {
   readonly scalarMessages?: ScalarMessageProfile;
   /** Skip fields that the browser's legacy raw projection intentionally discarded. */
   readonly projection?: "contract" | "browser";
+  /** Bucket the two explicitly forward-compatible browser enum fields. */
+  readonly tolerantEnums?: boolean;
+}
+
+export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
+  status: TaskStatus | "unrecognized";
+}>;
+
+export type TolerantWorkItemEntity = Omit<WorkItem, "state"> & Readonly<{
+  state: WorkItemState | "unrecognized";
+}>;
+
+export interface ParsedWorkItemTransition {
+  readonly fromState: WorkItemState | null;
+  readonly toState: WorkItemState;
+  readonly actorType: "human" | "agent" | "system";
+  readonly actorId: string;
+  readonly createdAt: string;
 }
 
 function shape(
@@ -368,8 +387,29 @@ function entityMember<const Values extends readonly string[]>(
   values: Values,
   label: string,
   options: ShapeParserOptions,
+  message: string | undefined,
+  tolerateUnknown: true,
+): Values[number] | "unrecognized";
+function entityMember<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+  label: string,
+  options: ShapeParserOptions,
+  message?: string,
+  tolerateUnknown?: false,
+): Values[number];
+function entityMember<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+  label: string,
+  options: ShapeParserOptions,
   message = `${label} has an unsupported value`,
-): Values[number] {
+  tolerateUnknown = false,
+): Values[number] | "unrecognized" {
+  if (
+    tolerateUnknown && options.tolerantEnums === true && options.projection === "browser" && typeof value === "string" &&
+    !(values as readonly string[]).includes(value)
+  ) return "unrecognized";
   return contractMember(value, values, label, message, options.scalarMessages);
 }
 
@@ -439,24 +479,59 @@ export function parseWorkItemProjectTargetEntity(
   throw new ContractValidationError(`${label}.mode has an unsupported value`);
 }
 
-export function parseWorkItemEntity(value: unknown, label: string, options: ShapeParserOptions = {}): WorkItem {
+export function parseWorkItemTransitionEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): ParsedWorkItemTransition {
+  const fields = ["fromState", "toState", "actorType", "actorId", "createdAt"];
+  const item = shape(value, label, fields, fields, options);
+  return Object.freeze({
+    fromState: item.fromState === null
+      ? null
+      : entityMember(item.fromState, WORK_ITEM_STATES, `${label}.fromState`, options),
+    toState: entityMember(item.toState, WORK_ITEM_STATES, `${label}.toState`, options),
+    actorType: entityMember(item.actorType, ACTOR_TYPES, `${label}.actorType`, options),
+    actorId: stringValue(item.actorId, `${label}.actorId`),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+  });
+}
+
+export function parseWorkItemEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantWorkItemEntity;
+export function parseWorkItemEntity(value: unknown, label: string, options?: ShapeParserOptions): WorkItem;
+export function parseWorkItemEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): WorkItem | TolerantWorkItemEntity {
   const fields = [
     "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "projectTarget", "resolvedProjectId",
     "planningTaskId", "state", "currentStage", "createdBy", "version", "createdAt", "updatedAt", "endedAt",
-    "cancelledReason", "archivedAt",
+    "cancelledReason", "archivedAt", "transitions",
   ];
-  const item = entity(value, label, fields, fields, options);
+  const required = fields.filter((field) => field !== "transitions");
+  const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
-  const state = entityMember(item.state, WORK_ITEM_STATES, `${label}.state`, options);
+  const state = entityMember(item.state, WORK_ITEM_STATES, `${label}.state`, options, undefined, true);
   const endedAt = nullableTimestamp(item.endedAt, `${label}.endedAt`, options);
   const archivedAt = nullableTimestamp(item.archivedAt, `${label}.archivedAt`, options);
   const cancelledReason = nullableString(item.cancelledReason, `${label}.cancelledReason`);
-  const terminal = isTerminalWorkItemState(state);
-  if (terminal !== (endedAt !== null)) throw new ContractValidationError(`${label}.endedAt does not match its state`);
-  if (archivedAt !== null && !terminal) throw new ContractValidationError(`${label}.archivedAt requires a terminal state`);
-  if (cancelledReason !== null && state !== "abandoned") {
-    throw new ContractValidationError(`${label}.cancelledReason requires an abandoned state`);
+  if (item.transitions !== undefined) {
+    arrayOf(item.transitions, `${label}.transitions`, (entry, entryLabel) =>
+      parseWorkItemTransitionEntity(entry, entryLabel, options));
+  }
+  if (state !== "unrecognized") {
+    const terminal = isTerminalWorkItemState(state);
+    if (terminal !== (endedAt !== null)) throw new ContractValidationError(`${label}.endedAt does not match its state`);
+    if (archivedAt !== null && !terminal) throw new ContractValidationError(`${label}.archivedAt requires a terminal state`);
+    if (cancelledReason !== null && state !== "abandoned") {
+      throw new ContractValidationError(`${label}.cancelledReason requires an abandoned state`);
+    }
   }
   if (projectTarget.mode === "explicit" && resolvedProjectId !== projectTarget.projectId) {
     throw new ContractValidationError(`${label}.resolvedProjectId must match its explicit project target`);
@@ -554,7 +629,17 @@ export function parseAgentTaskPhaseResponse(
   });
 }
 
-export function parseTaskEntity(value: unknown, label: string, options: ShapeParserOptions = {}): BoardTask {
+export function parseTaskEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantTaskEntity;
+export function parseTaskEntity(value: unknown, label: string, options?: ShapeParserOptions): BoardTask;
+export function parseTaskEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): BoardTask | TolerantTaskEntity {
   const fields = [
     "apiVersion", "taskId", "projectId", "parentTaskId", "kind", "requiredRole", "requiresReview", "title", "objective",
     "acceptanceCriteria", "workspaceRefs", "status", "assignedAgentId", "assignedRole", "expectedAgentMinutes",
@@ -587,7 +672,7 @@ export function parseTaskEntity(value: unknown, label: string, options: ShapePar
   if (phases.some((phase) => phase.taskId !== taskId || phase.projectId !== projectId)) {
     throw new ContractValidationError(`${label}.phases must belong to their containing task`);
   }
-  const status = entityMember(item.status, TASK_STATUSES, `${label}.status`, options);
+  const status = entityMember(item.status, TASK_STATUSES, `${label}.status`, options, undefined, true);
   const validatedExpectedCompletedAt = nullableTimestamp(item.expectedCompletedAt, `${label}.expectedCompletedAt`, options);
   const expectedCompletedAt = status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled"
     ? null

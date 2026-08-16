@@ -7,6 +7,7 @@ import {
   taskKindValues,
   taskPhaseStageValues,
   taskPhaseStatusValues,
+  unrecognizedState,
   wakeReasonValues,
   workerConnectionValues,
   workNodeStateValues,
@@ -41,7 +42,8 @@ export type TaskStatus =
   | 'completed'
   | 'failed'
   | 'interrupted'
-  | 'cancelled';
+  | 'cancelled'
+  | typeof unrecognizedState;
 
 export type TaskPhaseStage = typeof taskPhaseStageValues[number];
 export type TaskPhaseStatus = typeof taskPhaseStatusValues[number];
@@ -59,7 +61,7 @@ export type RunStatus =
 export type WakeReason = typeof wakeReasonValues[number];
 
 export type WorkItemPriority = typeof workItemPriorityValues[number];
-export type WorkItemState = typeof workItemStateValues[number];
+export type WorkItemState = typeof workItemStateValues[number] | typeof unrecognizedState;
 export type WorkItemStage = typeof workItemStageValues[number];
 export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
 export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = {
@@ -139,6 +141,19 @@ export interface BoardWorkItem {
   cancelledReason: string | null;
   archivedAt: string | null;
   archivedAtMs: number | null;
+}
+
+export interface BoardWorkItemTransition {
+  fromState: typeof workItemStateValues[number] | null;
+  toState: typeof workItemStateValues[number];
+  actorType: 'human' | 'agent' | 'system';
+  actorId: string;
+  createdAt: string;
+  createdAtMs: number;
+}
+
+export interface BoardWorkItemDetail extends BoardWorkItem {
+  transitions: BoardWorkItemTransition[];
 }
 
 export interface BoardProject {
