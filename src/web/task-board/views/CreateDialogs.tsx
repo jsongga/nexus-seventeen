@@ -72,6 +72,10 @@ function ProjectForm({
   const [validatingPaste, setValidatingPaste] = useState(false);
   const browseControllerRef = useRef<AbortController | null>(null);
   const pasteControllerRef = useRef<AbortController | null>(null);
+  // Paste validation is async; read the name at submit time, not capture time,
+  // so an edit made while "Checking folder…" is shown is not discarded.
+  const nameRef = useRef('');
+  nameRef.current = name;
   const browseInitializedRef = useRef(false);
   const pasteInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,7 +210,10 @@ function ProjectForm({
     try {
       await client.getHostDirectories(normalizedPath, controller.signal);
       if (!controller.signal.aborted) {
-        await onSubmit({ name: name.trim(), description: normalizedPath });
+        const latestName = nameRef.current.trim();
+        if (latestName.length > 0 && latestName.length <= 160) {
+          await onSubmit({ name: latestName, description: normalizedPath });
+        }
       }
     } catch (caught) {
       if (controller.signal.aborted) return;
