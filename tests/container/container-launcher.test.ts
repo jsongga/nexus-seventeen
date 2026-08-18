@@ -34,11 +34,11 @@ const CONNECT_PROBE = [
   "finish(expectation==='forbidden'?(forbidden?0:1):(forbidden?1:0));return true;};",
   "const socket=net.connect({host:proxy.hostname,port:Number(proxy.port)},()=>{connected=true;",
   "socket.write('CONNECT '+target+' HTTP/1.1\\r\\nhost: '+target+'\\r\\n\\r\\n');});",
-  "socket.setTimeout(5000,()=>finish(expectation==='admitted'&&connected?0:1));",
+  "socket.setTimeout(5000,()=>finish(1));",
   "socket.on('data',(chunk)=>{response+=chunk;if(evaluate())return;});",
-  "socket.on('end',()=>{if(!evaluate())finish(expectation==='admitted'&&connected?0:1);});",
-  "socket.on('error',()=>finish(expectation==='admitted'&&connected?0:1));",
-  "socket.on('close',()=>finish(expectation==='admitted'&&connected?0:1));",
+  "socket.on('end',()=>{if(!evaluate())finish(1);});",
+  "socket.on('error',()=>finish(1));",
+  "socket.on('close',()=>finish(1));",
 ].join("");
 
 function request(runId: string, taskId: string): AgentLaunchRequest {
