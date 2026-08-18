@@ -49,10 +49,31 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
   assert.deepEqual(config.retry, { initialDelayMs: 1_000, maximumDelayMs: 60_000 });
   assert.equal(config.agents[0]?.longPollMs, 30_000);
   assert.equal(config.agents[0]?.agentTimeoutMs, undefined);
+  assert.equal(config.agents[0]?.runtime, "local-process");
+  assert.equal(config.agents[0]?.container, undefined);
   assert.equal(config.agents[1]?.longPollMs, 12_000);
   assert.ok(Object.isFrozen(config));
   assert.ok(Object.isFrozen(config.agents));
   assert.ok(Object.isFrozen(config.agents[0]));
+});
+
+test("parses a container lane and applies container defaults", () => {
+  const input = validConfig();
+  const agent = (input.agents as Array<Record<string, unknown>>)[0]!;
+  agent.runtime = "container";
+  agent.container = { workspaceRoot: "/task-workspaces" };
+
+  const parsed = parseTaskFleetConfig(input).agents[0];
+
+  assert.equal(parsed?.runtime, "container");
+  assert.deepEqual(parsed?.container, {
+    workspaceRoot: "/task-workspaces",
+    image: undefined,
+    agentCommand: undefined,
+    extraAllowedHosts: [],
+  });
+  assert.ok(Object.isFrozen(parsed?.container));
+  assert.ok(Object.isFrozen(parsed?.container?.extraAllowedHosts));
 });
 
 test("rejects ambiguous, duplicated, unsafe, and unbounded fleet configuration", () => {
@@ -66,6 +87,27 @@ test("rejects ambiguous, duplicated, unsafe, and unbounded fleet configuration",
     ["agent unknown", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.extra = true; }, /unknown field extra/u],
     ["short token", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.token = "short"; }, /at least 32/u],
     ["bad provider", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.provider = "other"; }, /codex or claude/u],
+    ["container lane without config", (value) => {
+      (value.agents as Array<Record<string, unknown>>)[0]!.runtime = "container";
+    }, /container is required for container lanes/u],
+    ["container config on local lane", (value) => {
+      (value.agents as Array<Record<string, unknown>>)[0]!.container = { workspaceRoot: "/task-workspaces" };
+    }, /container is only valid for container lanes/u],
+    ["bad container host", (value) => {
+      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+      agent.runtime = "container";
+      agent.container = { workspaceRoot: "/task-workspaces", extraAllowedHosts: ["Bad Host!"] };
+    }, /extraAllowedHosts\[0\] is invalid/u],
+    ["relative container workspace root", (value) => {
+      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+      agent.runtime = "container";
+      agent.container = { workspaceRoot: "task-workspaces" };
+    }, /workspaceRoot must be absolute/u],
+    ["container unknown", (value) => {
+      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+      agent.runtime = "container";
+      agent.container = { workspaceRoot: "/task-workspaces", extra: true };
+    }, /container has unknown field extra/u],
     ["unbounded model", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.model = "m".repeat(129); }, /model is invalid/u],
     ["relative workdir", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.workingDirectory = "work"; }, /must be absolute/u],
     ["tight long poll", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.longPollMs = 0; }, /between 1000 and 30000/u],

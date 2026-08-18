@@ -2,10 +2,16 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";
-import type { TaskFleetAgentConfig, TaskFleetConfig, TaskFleetRetryConfig } from "./types.js";
+import type {
+  TaskFleetAgentConfig,
+  TaskFleetConfig,
+  TaskFleetContainerLaneConfig,
+  TaskFleetRetryConfig,
+} from "./types.js";
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
+const CONTAINER_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const DEFAULT_LONG_POLL_MS = 30_000;
 const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 1_000, maximumDelayMs: 60_000 });
 
@@ -83,14 +89,39 @@ function retryConfig(value: unknown): TaskFleetRetryConfig {
   return Object.freeze({ initialDelayMs, maximumDelayMs });
 }
 
+function containerConfig(value: unknown, label: string): TaskFleetContainerLaneConfig {
+  const item = exact(value, ["workspaceRoot"], ["image", "agentCommand", "extraAllowedHosts"], label);
+  let extraAllowedHosts: readonly string[] = Object.freeze([]);
+  if (item.extraAllowedHosts !== undefined) {
+    if (!Array.isArray(item.extraAllowedHosts) || item.extraAllowedHosts.length > 32) {
+      throw new Error(`${label}.extraAllowedHosts must be an array of at most 32 hosts`);
+    }
+    extraAllowedHosts = Object.freeze(item.extraAllowedHosts.map((value, index) => {
+      const host = text(value, `${label}.extraAllowedHosts[${index}]`, 253);
+      if (!CONTAINER_HOST.test(host)) throw new Error(`${label}.extraAllowedHosts[${index}] is invalid`);
+      return host;
+    }));
+  }
+  return Object.freeze({
+    workspaceRoot: absolutePath(item.workspaceRoot, `${label}.workspaceRoot`),
+    image: item.image === undefined ? undefined : text(item.image, `${label}.image`, 512),
+    agentCommand: item.agentCommand === undefined ? undefined : text(item.agentCommand, `${label}.agentCommand`, 512),
+    extraAllowedHosts,
+  });
+}
+
 function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
   const label = `config.agents[${index}]`;
   const item = exact(
     value,
     ["workerId", "agentId", "token", "provider", "model", "workingDirectory", "statePath"],
-    ["longPollMs", "agentTimeoutMs", "terminationGraceMs"],
+    ["longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container"],
     label,
   );
+  const runtime = item.runtime === undefined ? "local-process" : item.runtime;
+  if (runtime !== "local-process" && runtime !== "container") throw new Error(`${label}.runtime must be local-process or container`);
+  if (runtime === "container" && item.container === undefined) throw new Error(`${label}.container is required for container lanes`);
+  if (runtime !== "container" && item.container !== undefined) throw new Error(`${label}.container is only valid for container lanes`);
   const provider = item.provider;
   if (provider !== "codex" && provider !== "claude") throw new Error(`${label}.provider must be codex or claude`);
   const token = text(item.token, `${label}.token`, 512);
@@ -108,6 +139,8 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
       : integer(item.longPollMs, `${label}.longPollMs`, 1_000, 30_000),
     agentTimeoutMs: optionalInteger(item.agentTimeoutMs, `${label}.agentTimeoutMs`, 1_000, 24 * 60 * 60_000),
     terminationGraceMs: optionalInteger(item.terminationGraceMs, `${label}.terminationGraceMs`, 10, 60_000),
+    runtime,
+    container: runtime === "container" ? containerConfig(item.container, `${label}.container`) : undefined,
   });
 }
 

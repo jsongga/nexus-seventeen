@@ -1,16 +1,28 @@
 export type TaskFleetProvider = "codex" | "claude";
 
+export type TaskFleetRuntimeKind = "local-process" | "container";
+
+export interface TaskFleetContainerLaneConfig {
+  readonly workspaceRoot: string;
+  readonly image: string | undefined;
+  readonly agentCommand: string | undefined;
+  readonly extraAllowedHosts: readonly string[];
+}
+
 export interface TaskFleetAgentConfig {
   readonly workerId: string;
   readonly agentId: string;
   readonly token: string;
   readonly provider: TaskFleetProvider;
   readonly model: string;
+  /** For container lanes, workingDirectory is the repository path workspaces are cloned from. */
   readonly workingDirectory: string;
   readonly statePath: string;
   readonly longPollMs: number;
   readonly agentTimeoutMs: number | undefined;
   readonly terminationGraceMs: number | undefined;
+  readonly runtime: TaskFleetRuntimeKind;
+  readonly container: TaskFleetContainerLaneConfig | undefined;
 }
 
 export interface TaskFleetRetryConfig {

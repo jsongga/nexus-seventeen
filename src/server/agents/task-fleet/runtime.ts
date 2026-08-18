@@ -5,7 +5,17 @@ import {
   TaskBoardHttpError,
   TaskWorker,
 } from "#server/agents/task-worker";
+import {
+  AGENT_IMAGE_REPOSITORY,
+  computeAgentImageTag,
+  ContainerAgentLauncher,
+  DEFAULT_ALLOWED_HOSTS,
+  prepareContainerInfrastructure,
+} from "#server/agents/task-container";
+import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
 import type {
+  ManagedTaskWorker,
+  TaskFleetAgentConfig,
   TaskFleetErrorClassifier,
   TaskFleetProvider,
   TaskFleetTransientClassifier,
@@ -32,6 +42,8 @@ const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new P
   });
 });
 
+const runDockerInspect: TaskFleetVersionRunner = runVersionCommand;
+
 export async function captureTaskFleetRuntimeVersion(
   provider: TaskFleetProvider,
   runner: TaskFleetVersionRunner = runVersionCommand,
@@ -46,7 +58,33 @@ export async function captureTaskFleetRuntimeVersion(
   }
 }
 
-export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boardUrl) => {
+/** `<cli label version>+<imageId12>` from `docker image inspect`; null when unreadable. */
+export async function captureContainerRuntimeVersion(
+  provider: TaskFleetProvider,
+  image: string,
+  runner: TaskFleetVersionRunner = runDockerInspect,
+): Promise<string | null> {
+  try {
+    const format = `{{index .Config.Labels "steward.cli.${provider}"}}|{{.Id}}`;
+    const output = await runner("docker", ["image", "inspect", "-f", format, image]);
+    const firstLine = output.split(/\r?\n/u, 1)[0]?.trim() ?? "";
+    const separator = firstLine.indexOf("|");
+    if (separator < 1 || separator !== firstLine.lastIndexOf("|")) return null;
+    const label = firstLine.slice(0, separator);
+    const imageId = firstLine.slice(separator + 1).replace(/^sha256:/u, "").slice(0, 12);
+    if (label.length < 1 || imageId.length < 1) return null;
+    const runtimeVersion = `${label}+${imageId}`;
+    if (runtimeVersion.length > 128 || /[\u0000-\u001f\u007f]/u.test(runtimeVersion)) return null;
+    return runtimeVersion;
+  } catch {
+    return null;
+  }
+}
+
+async function createLocalProcessTaskFleetWorker(
+  config: TaskFleetAgentConfig,
+  boardUrl: string,
+): Promise<ManagedTaskWorker> {
   const runtimeVersion = await captureTaskFleetRuntimeVersion(config.provider);
   const worker = await TaskWorker.create({
     identity: { workerId: config.workerId, agentId: config.agentId },
@@ -78,7 +116,65 @@ export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boar
       : worker.reportLaneError(detail, signal),
     close: () => worker.close(),
   });
-};
+}
+
+async function createContainerTaskFleetWorker(
+  config: TaskFleetAgentConfig,
+  boardUrl: string,
+): Promise<ManagedTaskWorker> {
+  const lane = config.container;
+  if (lane === undefined) throw new Error("container lane config missing");
+  const image = lane.image ?? `${AGENT_IMAGE_REPOSITORY}:${await computeAgentImageTag(process.cwd())}`;
+  const infrastructure = await prepareContainerInfrastructure({
+    image,
+    allowedHosts: [...DEFAULT_ALLOWED_HOSTS, ...lane.extraAllowedHosts],
+  });
+  const runtimeVersion = await captureContainerRuntimeVersion(config.provider, image);
+  const manager = new TaskWorkspaceManager({ workspaceRoot: lane.workspaceRoot, repositoryPath: config.workingDirectory });
+  const launcher = new WorkspaceScopedLauncher(
+    new ContainerAgentLauncher({
+      provider: config.provider,
+      model: config.model,
+      image,
+      ...(lane.agentCommand === undefined ? {} : { agentCommand: lane.agentCommand }),
+      networkName: infrastructure.agentNetwork,
+      proxyUrl: infrastructure.proxyUrl,
+      ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
+      ...(config.terminationGraceMs === undefined ? {} : { terminationGraceMs: config.terminationGraceMs }),
+    }),
+    manager,
+  );
+  const worker = await TaskWorker.create({
+    identity: { workerId: config.workerId, agentId: config.agentId },
+    statePath: config.statePath,
+    board: new HttpTaskBoardClient({ baseUrl: boardUrl, token: config.token }),
+    launcher,
+    pinned: {
+      runtime: config.provider,
+      ...(runtimeVersion === null ? {} : { runtimeVersion }),
+      model: config.model,
+    },
+    longPollMs: config.longPollMs,
+  });
+  return Object.freeze({
+    run: (signal: AbortSignal) => worker.dispatchOnce(signal),
+    hasActiveClaim: () => worker.hasActiveClaim(),
+    quarantineActiveClaim: (detail: string, signal?: AbortSignal) => worker.quarantineActiveClaim(detail, signal),
+    dropActiveClaim: (detail: string) => worker.dropActiveClaim(detail),
+    // TaskWorker clears immediately after persisting a successful claim. The
+    // fleet's post-operation clear remains useful for test/custom adapters.
+    reportLaneError: (detail: string | null, signal?: AbortSignal) => detail === null
+      ? Promise.resolve()
+      : worker.reportLaneError(detail, signal),
+    close: () => worker.close(),
+  });
+}
+
+export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boardUrl) => (
+  config.runtime === "container"
+    ? createContainerTaskFleetWorker(config, boardUrl)
+    : createLocalProcessTaskFleetWorker(config, boardUrl)
+);
 
 export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
   if (error instanceof TaskBoardHttpError) {
