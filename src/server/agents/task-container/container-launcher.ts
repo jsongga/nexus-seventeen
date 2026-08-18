@@ -35,7 +35,10 @@ import { buildContainerRunPlan } from "./arguments.js";
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 512 * 1024;
 const CONTAINER_POLL_MS = 100;
-const CONTAINER_ABSENCE_TIMEOUT_MS = 30_000;
+const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
+const DOCKER_REMOVE_TIMEOUT_MS = 10_000;
+const DOCKER_CLIENT_CLOSE_TIMEOUT_MS = 10_000;
+const CONTAINER_IMAGE_PATTERN = /^[a-z0-9][a-z0-9._\-\/]*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?$/u;
 const DOCKER_ENVIRONMENT_KEYS = [
   "DOCKER_HOST",
   "DOCKER_CONFIG",
@@ -43,6 +46,18 @@ const DOCKER_ENVIRONMENT_KEYS = [
   "DOCKER_CERT_PATH",
   "DOCKER_TLS_VERIFY",
 ] as const;
+
+class DockerCommandError extends Error {
+  readonly stderr: string;
+  readonly timedOut: boolean;
+
+  constructor(error: Error & { readonly killed?: boolean }, stderr: string) {
+    super(error.message, { cause: error });
+    this.name = "DockerCommandError";
+    this.stderr = stderr;
+    this.timedOut = error.killed === true;
+  }
+}
 
 export interface ContainerAgentLauncherOptions {
   readonly provider: "codex" | "claude";
@@ -64,29 +79,52 @@ function dockerCommand(
   dockerBinary: string,
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
+  timeoutMs: number,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(dockerBinary, [...args], { encoding: "utf8", env: environment }, (error, stdout) => {
-      if (error !== null) reject(error);
+    execFile(dockerBinary, [...args], {
+      encoding: "utf8",
+      env: environment,
+      timeout: timeoutMs,
+    }, (error, stdout, stderr) => {
+      if (error !== null) reject(new DockerCommandError(error, stderr));
       else resolve(stdout);
     });
   });
 }
 
-async function containerStoppedOrAbsent(
+function isExplicitDockerAbsence(error: unknown): boolean {
+  return error instanceof DockerCommandError
+    && !error.timedOut
+    && /No such object|no such container/iu.test(error.stderr);
+}
+
+function childClosesWithin(childClose: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), timeoutMs);
+    timeout.unref();
+    void childClose.then(() => {
+      clearTimeout(timeout);
+      resolve(true);
+    });
+  });
+}
+
+async function inspectContainer(
   dockerBinary: string,
   containerName: string,
   environment: NodeJS.ProcessEnv,
-): Promise<boolean> {
+): Promise<"absent" | "present" | "unknown"> {
   try {
-    const status = await dockerCommand(
+    await dockerCommand(
       dockerBinary,
       ["inspect", "--format", "{{.State.Running}}", containerName],
       environment,
+      DOCKER_INSPECT_TIMEOUT_MS,
     );
-    return status.trim() === "false";
-  } catch {
-    return true;
+    return "present";
+  } catch (error) {
+    return isExplicitDockerAbsence(error) ? "absent" : "unknown";
   }
 }
 
@@ -95,30 +133,55 @@ async function terminateContainer(
   containerName: string,
   terminationGraceMs: number,
   environment: NodeJS.ProcessEnv,
+  child: ChildProcess,
+  childClose: Promise<unknown>,
+  childIsClosed: () => boolean,
 ): Promise<void> {
+  const graceDeadline = Date.now() + terminationGraceMs;
+  const graceSeconds = Math.ceil(terminationGraceMs / 1_000);
   try {
     await dockerCommand(
       dockerBinary,
-      ["stop", "-t", String(Math.ceil(terminationGraceMs / 1_000)), containerName],
+      ["stop", "-t", String(graceSeconds), containerName],
       environment,
+      graceSeconds * 1_000 + 10_000,
     );
   } catch {
     // A concurrent exit or a missing container is confirmed by inspect below.
   }
 
-  const deadline = Date.now() + CONTAINER_ABSENCE_TIMEOUT_MS;
-  let confirmedAbsent = await containerStoppedOrAbsent(dockerBinary, containerName, environment);
-  while (!confirmedAbsent && Date.now() < deadline) {
-    await delay(CONTAINER_POLL_MS);
-    confirmedAbsent = await containerStoppedOrAbsent(dockerBinary, containerName, environment);
+  const remainingGraceMs = graceDeadline - Date.now();
+  if (remainingGraceMs > 0) await delay(remainingGraceMs);
+  if (!childIsClosed()) child.kill("SIGKILL");
+  if (!childIsClosed()) {
+    const closed = await childClosesWithin(childClose, DOCKER_CLIENT_CLOSE_TIMEOUT_MS);
+    if (!closed) throw new AgentProcessError("Task container could not be confirmed absent");
+  }
+
+  const deadline = Date.now() + terminationGraceMs;
+  let state = await inspectContainer(dockerBinary, containerName, environment);
+  while (state === "unknown" && Date.now() < deadline) {
+    await delay(Math.min(CONTAINER_POLL_MS, Math.max(1, deadline - Date.now())));
+    state = await inspectContainer(dockerBinary, containerName, environment);
   }
 
   try {
-    await dockerCommand(dockerBinary, ["rm", "-f", containerName], environment);
+    await dockerCommand(
+      dockerBinary,
+      ["rm", "-f", containerName],
+      environment,
+      DOCKER_REMOVE_TIMEOUT_MS,
+    );
   } catch {
-    // Idempotent best effort after inspect has established the terminal state.
+    // The final inspect is the authoritative absence check.
   }
-  if (!confirmedAbsent) throw new AgentProcessError("Task container could not be confirmed absent");
+
+  state = await inspectContainer(dockerBinary, containerName, environment);
+  while (state !== "absent" && Date.now() < deadline) {
+    await delay(Math.min(CONTAINER_POLL_MS, Math.max(1, deadline - Date.now())));
+    state = await inspectContainer(dockerBinary, containerName, environment);
+  }
+  if (state !== "absent") throw new AgentProcessError("Task container could not be confirmed absent");
 }
 
 export class ContainerAgentLauncher implements AgentLauncher {
@@ -133,6 +196,12 @@ export class ContainerAgentLauncher implements AgentLauncher {
   #active = false;
 
   constructor(options: ContainerAgentLauncherOptions) {
+    const image = configText(options.image, "image", 512);
+    if (!CONTAINER_IMAGE_PATTERN.test(image)) throw new Error("image is invalid");
+    const agentCommand = options.agentCommand === undefined
+      ? undefined
+      : configText(options.agentCommand, "agentCommand", 256);
+    if (agentCommand?.startsWith("-") === true) throw new Error("agentCommand is invalid");
     const sourceEnvironment = options.environment ?? process.env;
     this.#environment = providerEnvironment(options.provider, sourceEnvironment);
     this.#dockerEnvironment = { ...this.#environment };
@@ -143,7 +212,8 @@ export class ContainerAgentLauncher implements AgentLauncher {
     this.#options = {
       ...options,
       model: configText(options.model, "model", 256),
-      image: configText(options.image, "image", 512),
+      image,
+      agentCommand,
       timeoutMs: boundedInteger(options.timeoutMs, 60 * 60_000, 1_000, 24 * 60 * 60_000, "timeoutMs"),
       terminationGraceMs: boundedInteger(options.terminationGraceMs, 2_000, 10, 60_000, "terminationGraceMs"),
       dockerBinary: options.dockerBinary ?? "docker",
@@ -182,6 +252,23 @@ export class ContainerAgentLauncher implements AgentLauncher {
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let failure: Error | null = null;
+    let childSpawned = false;
+    let childClosed = false;
+    let spawnFailed = false;
+    const childClose = new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>((resolve) => {
+      child.once("close", (code, signal) => {
+        childClosed = true;
+        resolve({ code, signal });
+      });
+    });
+    child.once("spawn", () => { childSpawned = true; });
+    child.once("error", (error) => {
+      spawnFailed = !childSpawned;
+      failure ??= new AgentProcessError(
+        spawnFailed ? "Unable to start the docker client" : "Docker client process failed",
+        { cause: error },
+      );
+    });
     const activity = new ActivityChannel();
     const activityBuffer = new ActivityBuffer();
     const decoder = new StringDecoder("utf8");
@@ -218,6 +305,9 @@ export class ContainerAgentLauncher implements AgentLauncher {
           plan.containerName,
           this.#options.terminationGraceMs,
           this.#dockerEnvironment,
+          child,
+          childClose,
+          () => childClosed,
         );
         termination = attempt;
         void attempt.catch(() => {
@@ -254,40 +344,35 @@ export class ContainerAgentLauncher implements AgentLauncher {
     });
     child.stdin?.end(stdin, "utf8");
 
-    const completion = new Promise<AgentRunOutcome>((resolve, reject) => {
-      child.once("error", (error) => {
-        failure ??= new AgentProcessError("Unable to start the docker client", { cause: error });
-      });
-      child.once("close", (code, signal) => {
-        void (async () => {
-          clearTimeout(timeout);
-          finishActivity();
-          if (termination !== null) {
-            try { await termination; } catch (error) { failure ??= error as Error; }
-          }
-          this.#active = false;
-          if (failure !== null) { reject(failure); return; }
-          if (code !== 0) {
-            reject(new AgentProcessError(`Agent container exited unsuccessfully (${code ?? signal ?? "unknown"})`));
-            return;
-          }
-          try {
-            const output = Buffer.concat(stdout).toString("utf8");
-            const diagnostic = Buffer.concat(stderr).toString("utf8");
-            assertCredentialSafe(diagnostic, "Agent diagnostics");
-            resolve(structuredOutcome(providerResult(this.#options.provider, output)));
-          } catch (error) {
-            reject(error);
-          }
-        })();
-      });
-    });
+    const completion = (async (): Promise<AgentRunOutcome> => {
+      const { code, signal } = await childClose;
+      clearTimeout(timeout);
+      finishActivity();
+      try {
+        if (termination !== null) {
+          try { await termination; } catch (error) { failure ??= error as Error; }
+        } else if (!spawnFailed && code !== 0) {
+          try { await terminate(); } catch (error) { failure = error as Error; }
+        }
+        if (failure !== null) throw failure;
+        if (code !== 0) {
+          throw new AgentProcessError(`Agent container exited unsuccessfully (${code ?? signal ?? "unknown"})`);
+        }
+        const output = Buffer.concat(stdout).toString("utf8");
+        const diagnostic = Buffer.concat(stderr).toString("utf8");
+        assertCredentialSafe(diagnostic, "Agent diagnostics");
+        return structuredOutcome(providerResult(this.#options.provider, output));
+      } finally {
+        this.#active = false;
+      }
+    })();
     return Object.freeze({
       completion,
       activity,
       interrupt: async (_reason: string): Promise<void> => {
         failure ??= new AgentProcessError("Agent container was interrupted directly");
         await terminate();
+        try { await completion; } catch {}
       },
     });
   }

@@ -76,6 +76,9 @@ test("builds a hardened Codex docker run plan without credential values in argv"
   assert.equal(plan.args[imageIndex + 1], "steward-stub");
   assertPair(plan.args, "--cd", "/workspace");
   assertPair(plan.args, "--output-schema", "/opt/steward/agent-result.schema.json");
+  assert.ok(plan.args.includes("sandbox_workspace_write.network_access=true"));
+  const includedEnvironment = plan.args.find((argument) => argument.startsWith("shell_environment_policy.include_only="));
+  assert.match(includedEnvironment ?? "", /HTTP_PROXY/u);
 });
 
 test("builds Claude plans with the default command and bare mode selected by input", () => {
@@ -115,6 +118,26 @@ test("validates container launcher configuration", () => {
     timeoutMs: 999,
     dockerBinary: "/nonexistent",
   }), /timeoutMs is invalid/u);
+  assert.throws(() => new ContainerAgentLauncher({
+    ...baseOptions,
+    image: "--network=host",
+    dockerBinary: "/nonexistent",
+  }), /image is invalid/u);
+  assert.throws(() => new ContainerAgentLauncher({
+    ...baseOptions,
+    agentCommand: "--evil",
+    dockerBinary: "/nonexistent",
+  }), /agentCommand is invalid/u);
+  assert.doesNotThrow(() => new ContainerAgentLauncher({
+    ...baseOptions,
+    image: "steward-agent:abc123",
+    dockerBinary: "/nonexistent",
+  }));
+  assert.doesNotThrow(() => new ContainerAgentLauncher({
+    ...baseOptions,
+    image: "node:24-alpine",
+    dockerBinary: "/nonexistent",
+  }));
 });
 
 test("rejects a launch without a per-launch workspace before spawning docker", async () => {

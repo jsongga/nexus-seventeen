@@ -22,7 +22,7 @@ export function buildContainerRunPlan(input: {
   const containerName = `steward-task-${input.runId}`;
   const { model } = input.options;
   const cliArgs = input.options.provider === "codex"
-    ? codexProviderArgs({ model, workingDirectory: "/workspace", schemaPath: "/opt/steward/agent-result.schema.json", bareApiKey: input.bareApiKey }, input.fixedRole)
+    ? codexProviderArgs({ model, workingDirectory: "/workspace", schemaPath: "/opt/steward/agent-result.schema.json", bareApiKey: input.bareApiKey, proxyEgress: true }, input.fixedRole)
     : claudeProviderArgs({ model, workingDirectory: "/workspace", schemaPath: "/opt/steward/agent-result.schema.json", bareApiKey: input.bareApiKey }, input.fixedRole);
   const providerKeys = input.options.provider === "codex"
     ? ["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ORGANIZATION", "OPENAI_PROJECT"]

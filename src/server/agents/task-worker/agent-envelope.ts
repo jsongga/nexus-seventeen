@@ -141,6 +141,8 @@ export interface ProviderArgumentOptions {
   readonly schemaPath: string;
   /** Claude only: pass --bare when explicit API-key auth is available. */
   readonly bareApiKey: boolean;
+  /** Codex only: allow subprocess network access through the container's proxy environment. */
+  readonly proxyEgress?: boolean;
 }
 
 export class AgentProcessError extends Error {
@@ -282,6 +284,9 @@ export function agentPrompt(request: AgentLaunchRequest): string {
 }
 
 export function codexProviderArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): readonly string[] {
+  const includedEnvironment = options.proxyEgress === true
+    ? ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY"]
+    : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
   return Object.freeze([
     "exec",
     "--ephemeral",
@@ -291,11 +296,11 @@ export function codexProviderArgs(options: ProviderArgumentOptions, fixedRole: A
     "--config",
     'approval_policy="never"',
     "--config",
-    "sandbox_workspace_write.network_access=false",
+    `sandbox_workspace_write.network_access=${options.proxyEgress === true ? "true" : "false"}`,
     "--config",
     'shell_environment_policy.inherit="none"',
     "--config",
-    'shell_environment_policy.include_only=["PATH","HOME","TMPDIR","TEMP","TMP","LANG","LC_ALL"]',
+    `shell_environment_policy.include_only=${JSON.stringify(includedEnvironment)}`,
     "--model",
     options.model,
     "--sandbox",
