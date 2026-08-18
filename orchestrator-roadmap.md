@@ -49,7 +49,7 @@ exit criterion.
 for onboarding. Exit: add a project by picking a discovered repo. Small;
 ships while campaign 1 is specced.
 
-**1. Task record and state machine** *(§3; §15 item 1 delta)* — v19
+**1. Task record and state machine** *(shipped 2026-08-16; §3; §15 item 1 delta)* — v19
 migration to `queued → planning → plan_approval → designing → implementing →
 verifying → reviewing → fixing → final_approval → merged` plus
 `parked | abandoned | dead_letter`; heartbeat writes and a reconciler keyed
@@ -58,7 +58,7 @@ per-stage elapsed tracking; forward-tolerant web enum parsing (closes the
 parked audit finding). Exit: a task can be driven through the full state
 graph by tests, and a killed run is swept and re-entered cleanly.
 
-**2. Worktree + container execution** *(§10; item 2)* — one git worktree and
+**2. Worktree + container execution** *(spec/plan 2026-08-17, in flight; §10; item 2)* — one git worktree and
 branch per task; Docker `agent` image target for nexus-seventeen itself;
 container-per-task lifecycle behind the runtime adapter; egress allowlist;
 no prod secrets. Exit: a task runs in a disposable container against its own
