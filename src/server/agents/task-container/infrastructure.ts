@@ -1,0 +1,235 @@
+import { execFile } from "node:child_process";
+
+const DOCKER_TIMEOUT_MS = 30_000;
+const DEFAULT_AGENT_NETWORK = "steward-agents";
+const DEFAULT_EGRESS_NETWORK = "steward-egress";
+const DEFAULT_PROXY_CONTAINER_NAME = "steward-egress-proxy";
+const DEFAULT_PROXY_PORT = 3128;
+
+export const DEFAULT_ALLOWED_HOSTS = Object.freeze([
+  "api.anthropic.com",
+  "api.openai.com",
+  "registry.npmjs.org",
+]);
+
+export interface ContainerInfrastructureOptions {
+  readonly image: string;
+  readonly allowedHosts: readonly string[];
+  readonly dockerBinary?: string;
+  readonly agentNetwork?: string;
+  readonly egressNetwork?: string;
+  readonly proxyContainerName?: string;
+  readonly proxyPort?: number;
+}
+
+export interface ContainerInfrastructure {
+  readonly agentNetwork: string;
+  readonly proxyUrl: string;
+}
+
+export class ContainerInfrastructureError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ContainerInfrastructureError";
+  }
+}
+
+class DockerExecutionError extends ContainerInfrastructureError {
+  readonly detail: string;
+
+  constructor(args: readonly string[], detail: string, cause: Error) {
+    super(`docker ${args[0] ?? "command"} failed: ${detail}`, { cause });
+    this.detail = detail;
+  }
+}
+
+function dockerCommand(dockerBinary: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(dockerBinary, [...args], {
+      encoding: "utf8",
+      timeout: DOCKER_TIMEOUT_MS,
+    }, (error, stdout, stderr) => {
+      if (error !== null) {
+        const detail = stderr.trim() || error.message.trim();
+        reject(new DockerExecutionError(args, detail, error));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+function dockerDetail(error: unknown): string {
+  if (error instanceof DockerExecutionError) return error.detail;
+  if (error instanceof Error) return error.message.trim();
+  return String(error).trim();
+}
+
+function isMissingContainer(error: unknown): boolean {
+  return /No such container|No such object/iu.test(dockerDetail(error));
+}
+
+function isAlreadyConnected(error: unknown): boolean {
+  return /already connected|already exists in network/iu.test(dockerDetail(error));
+}
+
+export async function assertDockerAvailable(dockerBinary = "docker"): Promise<void> {
+  try {
+    await dockerCommand(dockerBinary, ["version", "--format", "{{.Server.Version}}"]);
+  } catch (error) {
+    const detail = dockerDetail(error);
+    throw new ContainerInfrastructureError(
+      `Docker daemon unreachable — start Docker Desktop and retry (${detail})`,
+      { cause: error },
+    );
+  }
+}
+
+async function ensureNetwork(
+  dockerBinary: string,
+  networkName: string,
+  internal: boolean,
+): Promise<void> {
+  try {
+    await dockerCommand(dockerBinary, ["network", "inspect", networkName]);
+    return;
+  } catch {
+    // A missing network and every other inspect failure are resolved by a create attempt.
+  }
+
+  try {
+    await dockerCommand(dockerBinary, [
+      "network",
+      "create",
+      ...(internal ? ["--internal"] : []),
+      networkName,
+    ]);
+  } catch (createError) {
+    try {
+      await dockerCommand(dockerBinary, ["network", "inspect", networkName]);
+    } catch {
+      throw createError;
+    }
+  }
+}
+
+function proxyInspection(output: string): Readonly<{
+  running: boolean;
+  allowedHosts: string | null;
+}> {
+  const separator = output.indexOf("|");
+  if (separator === -1) return { running: false, allowedHosts: null };
+  const running = output.slice(0, separator).trim() === "true";
+  const environment = output.slice(separator + 1);
+  const match = /(?:^|\s)STEWARD_EGRESS_ALLOWED_HOSTS=([^\s]*)/u.exec(environment);
+  return { running, allowedHosts: match?.[1] ?? null };
+}
+
+async function inspectProxy(
+  dockerBinary: string,
+  proxyContainerName: string,
+): Promise<Readonly<{ running: boolean; allowedHosts: string | null }> | null> {
+  try {
+    const output = await dockerCommand(dockerBinary, [
+      "inspect",
+      "--format",
+      "{{.State.Running}}|{{range .Config.Env}}{{.}} {{end}}",
+      proxyContainerName,
+    ]);
+    return proxyInspection(output);
+  } catch {
+    return null;
+  }
+}
+
+async function startProxy(input: Readonly<{
+  dockerBinary: string;
+  proxyContainerName: string;
+  agentNetwork: string;
+  egressNetwork: string;
+  allowedHosts: string;
+  proxyPort: number;
+  image: string;
+}>): Promise<void> {
+  try {
+    await dockerCommand(input.dockerBinary, ["rm", "-f", input.proxyContainerName]);
+  } catch (error) {
+    if (!isMissingContainer(error)) throw error;
+  }
+
+  await dockerCommand(input.dockerBinary, [
+    "run",
+    "-d",
+    "--restart",
+    "unless-stopped",
+    "--name",
+    input.proxyContainerName,
+    "--network",
+    input.agentNetwork,
+    "-e",
+    `STEWARD_EGRESS_ALLOWED_HOSTS=${input.allowedHosts}`,
+    "-e",
+    `STEWARD_EGRESS_PORT=${input.proxyPort}`,
+    input.image,
+    "node",
+    "/opt/steward/build/server/agents/egress-proxy/main.js",
+  ]);
+
+  try {
+    await dockerCommand(input.dockerBinary, [
+      "network",
+      "connect",
+      input.egressNetwork,
+      input.proxyContainerName,
+    ]);
+  } catch (error) {
+    if (!isAlreadyConnected(error)) throw error;
+  }
+}
+
+async function sweepOrphanedTaskContainers(dockerBinary: string): Promise<void> {
+  const output = await dockerCommand(dockerBinary, [
+    "ps",
+    "-aq",
+    "--filter",
+    "label=steward.task",
+  ]);
+  const containerIds = output.split(/\r?\n/u).map((id) => id.trim()).filter((id) => id.length > 0);
+  for (const containerId of containerIds) {
+    await dockerCommand(dockerBinary, ["rm", "-f", containerId]);
+  }
+}
+
+export async function prepareContainerInfrastructure(
+  options: ContainerInfrastructureOptions,
+): Promise<ContainerInfrastructure> {
+  const dockerBinary = options.dockerBinary ?? "docker";
+  const agentNetwork = options.agentNetwork ?? DEFAULT_AGENT_NETWORK;
+  const egressNetwork = options.egressNetwork ?? DEFAULT_EGRESS_NETWORK;
+  const proxyContainerName = options.proxyContainerName ?? DEFAULT_PROXY_CONTAINER_NAME;
+  const proxyPort = options.proxyPort ?? DEFAULT_PROXY_PORT;
+  const allowedHosts = [...options.allowedHosts].sort().join(",");
+
+  await assertDockerAvailable(dockerBinary);
+  await ensureNetwork(dockerBinary, agentNetwork, true);
+  await ensureNetwork(dockerBinary, egressNetwork, false);
+
+  const proxy = await inspectProxy(dockerBinary, proxyContainerName);
+  if (proxy === null || !proxy.running || proxy.allowedHosts !== allowedHosts) {
+    await startProxy({
+      dockerBinary,
+      proxyContainerName,
+      agentNetwork,
+      egressNetwork,
+      allowedHosts,
+      proxyPort,
+      image: options.image,
+    });
+  }
+
+  await sweepOrphanedTaskContainers(dockerBinary);
+  return Object.freeze({
+    agentNetwork,
+    proxyUrl: `http://${proxyContainerName}:${proxyPort}`,
+  });
+}

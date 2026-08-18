@@ -3,3 +3,13 @@ export { buildContainerRunPlan } from "./arguments.js";
 export type { ContainerRunPlan } from "./arguments.js";
 export { ContainerAgentLauncher } from "./container-launcher.js";
 export type { ContainerAgentLauncherOptions } from "./container-launcher.js";
+export {
+  assertDockerAvailable,
+  ContainerInfrastructureError,
+  DEFAULT_ALLOWED_HOSTS,
+  prepareContainerInfrastructure,
+} from "./infrastructure.js";
+export type {
+  ContainerInfrastructure,
+  ContainerInfrastructureOptions,
+} from "./infrastructure.js";

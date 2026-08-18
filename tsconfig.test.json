@@ -8,5 +8,5 @@
     "sourceMap": false,
     "noEmit": false
   },
-  "include": ["tests/server/**/*.ts", "tests/shared/**/*.ts"]
+  "include": ["tests/server/**/*.ts", "tests/shared/**/*.ts", "tests/container/**/*.ts"]
 }
