@@ -21,11 +21,16 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
     if (!HOSTNAME.test(host)) throw new Error(`Egress allowlist entry is invalid: ${host}`);
     return host;
   }));
-  const allowedPorts = new Set(options.allowedPorts ?? DEFAULT_ALLOWED_PORTS);
+  const allowedPorts = new Set((options.allowedPorts ?? DEFAULT_ALLOWED_PORTS).map((port) => {
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`Egress allowed port is invalid: ${port}`);
+    }
+    return port;
+  }));
   const server = createServer((_request, response) => {
     response.writeHead(405, { connection: "close" }).end();
   });
-  server.on("connect", (request, clientSocket) => {
+  server.on("connect", (request, clientSocket, head) => {
     const target = request.url ?? "";
     const match = /^([a-z0-9.-]+):(\d{1,5})$/u.exec(target.toLowerCase());
     const host = match?.[1];
@@ -36,6 +41,7 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
     }
     const upstream = connect(port, host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) upstream.write(head);
       upstream.pipe(clientSocket);
       clientSocket.pipe(upstream);
     });
