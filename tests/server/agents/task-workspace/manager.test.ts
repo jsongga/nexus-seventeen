@@ -98,6 +98,25 @@ test("a hook planted inside the workspace never executes on the host during harv
   await assert.rejects(access(marker), { code: "ENOENT" }, "workspace hooks must not run on the host");
 });
 
+test("dirty checks disable an agent-controlled core.fsmonitor executable", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const manager = new TaskWorkspaceManager({ workspaceRoot: join(root, "ws"), repositoryPath: repo });
+  const path = await manager.create("task-fsmonitor");
+  const marker = join(root, "fsmonitor-ran");
+  const fsmonitor = join(root, "fsmonitor.sh");
+  await writeFile(fsmonitor, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf 'token\\n'\n`, { mode: 0o755 });
+  await run(path, "git", ["config", "core.fsmonitor", fsmonitor]);
+
+  await writeFile(join(path, "dirty.txt"), "dirty\n");
+  assert.equal(await manager.hasUncommittedChanges("task-fsmonitor"), true);
+  await assert.rejects(access(marker), { code: "ENOENT" }, "core.fsmonitor must not run on the host");
+
+  await rm(join(path, "dirty.txt"));
+  assert.equal(await manager.hasUncommittedChanges("task-fsmonitor"), false);
+  await assert.rejects(access(marker), { code: "ENOENT" }, "core.fsmonitor must remain disabled");
+});
+
 test("remove is idempotent, retain prunes oldest timestamps across keys, and bad inputs are rejected", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);
@@ -132,4 +151,22 @@ test("retain ignores only missing workspaces and wraps other stat failures", asy
     assert.equal((error.cause as NodeJS.ErrnoException).code, "ELOOP");
     return true;
   });
+});
+
+test("retainStrays retains direct child workspaces and enforces the retained cap", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const workspaceRoot = join(root, "ws");
+  await mkdir(join(workspaceRoot, "retained-old-1"), { recursive: true });
+  await mkdir(join(workspaceRoot, "task-stray-a"));
+  await mkdir(join(workspaceRoot, "task-stray-b"));
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo, retainedLimit: 2 });
+
+  await manager.retainStrays([]);
+
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(workspaceRoot);
+  assert.equal(entries.length, 2);
+  assert.equal(entries.some((name) => name.startsWith("retained-task-stray-a-")), true);
+  assert.equal(entries.some((name) => name.startsWith("retained-task-stray-b-")), true);
 });

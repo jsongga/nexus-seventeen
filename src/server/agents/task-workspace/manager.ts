@@ -26,7 +26,7 @@ export class TaskWorkspaceError extends Error {
 
 function git(cwd: string | null, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", [...args], {
+    execFile("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", ...args], {
       ...(cwd === null ? {} : { cwd }),
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
@@ -125,15 +125,7 @@ export class TaskWorkspaceManager {
     await rm(this.workspacePath(key), { recursive: true, force: true });
   }
 
-  async retain(key: string): Promise<void> {
-    const path = this.workspacePath(key);
-    try {
-      await stat(path);
-    } catch (error) {
-      if (errorCode(error) === "ENOENT") return; // nothing to retain
-      throw new TaskWorkspaceError(`Could not inspect task workspace before retention: ${path}`, { cause: error });
-    }
-    await rename(path, join(this.#workspaceRoot, `retained-${this.#key(key)}-${Date.now()}`));
+  async #pruneRetained(): Promise<void> {
     const entries = (await readdir(this.#workspaceRoot))
       .filter((name) => name.startsWith("retained-"))
       .sort((left, right) => {
@@ -144,6 +136,33 @@ export class TaskWorkspaceManager {
       });
     for (const name of entries.slice(0, Math.max(0, entries.length - this.#retainedLimit))) {
       await rm(join(this.#workspaceRoot, name), { recursive: true, force: true });
+    }
+  }
+
+  async #retainName(name: string): Promise<void> {
+    const path = join(this.#workspaceRoot, name);
+    try {
+      await stat(path);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return; // nothing to retain
+      throw new TaskWorkspaceError(`Could not inspect task workspace before retention: ${path}`, { cause: error });
+    }
+    await rename(path, join(this.#workspaceRoot, `retained-${name}-${Date.now()}`));
+    await this.#pruneRetained();
+  }
+
+  async retain(key: string): Promise<void> {
+    await this.#retainName(this.#key(key));
+  }
+
+  async retainStrays(activeKeys: readonly string[]): Promise<void> {
+    const active = new Set(activeKeys.map((key) => this.#key(key)));
+    await mkdir(this.#workspaceRoot, { recursive: true });
+    const entries = await readdir(this.#workspaceRoot, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith("retained-") && !active.has(entry.name)) {
+        await this.#retainName(entry.name);
+      }
     }
   }
 }

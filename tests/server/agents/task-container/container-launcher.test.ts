@@ -108,7 +108,7 @@ test("interrupt waits for docker run to close before accepting explicit absence"
   const root = await tempRoot();
   const marker = join(root, "run.pid");
   const fixture = await fakeDocker(root, {
-    run: `fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid)); process.stdin.resume(); setInterval(() => {}, 1_000);`,
+    run: `fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid)); process.stdout.write("attached\\n"); process.stdin.resume(); setInterval(() => {}, 1_000);`,
     inspect: `
       const pid = Number(fs.readFileSync(${JSON.stringify(marker)}, "utf8"));
       try {
@@ -123,13 +123,24 @@ test("interrupt waits for docker run to close before accepting explicit absence"
     `,
   });
   const handle = await launch(launcher(fixture), fixture.workspace, "run-explicit-absence");
+  const activityLabels: string[] = [];
+  const collectedActivity = (async (): Promise<string[]> => {
+    for await (const label of handle.activity) activityLabels.push(label);
+    return activityLabels;
+  })();
   void handle.completion.catch(() => undefined);
   await until(() => existsSync(fixture.marker), "fake docker run client");
+  await until(() => activityLabels.includes("Task container attached"), "container attachment activity");
 
   await handle.interrupt("Human interrupted this agent run");
   await assert.rejects(handle.completion, /interrupted directly/u);
   assert.deepEqual((await readFile(fixture.log, "utf8")).trim().split("\n"), [
     "run", "stop", "inspect", "rm", "inspect",
+  ]);
+  assert.deepEqual(await collectedActivity, [
+    "Task container starting",
+    "Task container attached",
+    "Task container teardown",
   ]);
 });
 

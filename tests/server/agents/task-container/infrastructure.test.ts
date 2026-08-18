@@ -34,7 +34,7 @@ async function fakeDocker(options: FakeDockerOptions = {}): Promise<FakeDocker> 
     proxyAllowedHosts: options.proxyAllowedHosts ?? "api.openai.com",
     proxyImage: options.proxyImage ?? "steward-agent:test",
     proxyPort: options.proxyPort ?? "3128",
-    proxyNetworks: options.proxyNetworks ?? ["steward-egress"],
+    proxyNetworks: options.proxyNetworks ?? ["steward-agents", "steward-egress"],
     readinessLogs: options.readinessLogs ?? "steward-egress-proxy listening on 3128",
     readinessRunning: options.readinessRunning ?? true,
     slowProxyInspect: options.slowProxyInspect ?? false,
@@ -156,11 +156,12 @@ test("a pre-existing non-internal agent network is rejected without removal", as
   assert.equal((await invocations(fixture)).some((args) => args[0] === "rm"), false);
 });
 
-test("proxy image, port, and egress-network mismatches each force recreation", async (t) => {
+test("proxy image, port, and network mismatches each force recreation", async (t) => {
   const cases: readonly FakeDockerOptions[] = [
     { proxyImage: "steward-agent:old" },
     { proxyPort: "9999" },
     { proxyNetworks: ["steward-agents"] },
+    { proxyNetworks: ["steward-egress"] },
   ];
 
   for (const options of cases) {
@@ -193,5 +194,31 @@ test("proxy allowlists converge without removing hosts needed by another lane", 
   });
   const proxyRuns = (await invocations(fixture)).filter((args) => args[0] === "run");
   assert.equal(proxyRuns.length, 1);
-  assert.ok(proxyRuns[0]?.includes("STEWARD_EGRESS_ALLOWED_HOSTS=a,b,c"));
+  assert.deepEqual(proxyRuns[0], [
+    "run",
+    "-d",
+    "--restart",
+    "unless-stopped",
+    "--name",
+    "steward-egress-proxy",
+    "--user",
+    "node",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--memory",
+    "512m",
+    "--pids-limit",
+    "128",
+    "--network",
+    "steward-agents",
+    "-e",
+    "STEWARD_EGRESS_ALLOWED_HOSTS=a,b,c",
+    "-e",
+    "STEWARD_EGRESS_PORT=3128",
+    "steward-agent:test",
+    "node",
+    "/opt/steward/build/server/agents/egress-proxy/main.js",
+  ]);
 });

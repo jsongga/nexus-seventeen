@@ -246,6 +246,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
     } catch (error) {
       throw new AgentProcessError("Unable to start the docker client", { cause: error });
     }
+    const activity = new ActivityChannel();
     this.#active = true;
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -261,7 +262,10 @@ export class ContainerAgentLauncher implements AgentLauncher {
         resolve({ code, signal });
       });
     });
-    child.once("spawn", () => { childSpawned = true; });
+    child.once("spawn", () => {
+      childSpawned = true;
+      activity.publish("Task container starting");
+    });
     child.once("error", (error) => {
       spawnFailed = !childSpawned;
       failure ??= new AgentProcessError(
@@ -269,11 +273,11 @@ export class ContainerAgentLauncher implements AgentLauncher {
         { cause: error },
       );
     });
-    const activity = new ActivityChannel();
     const activityBuffer = new ActivityBuffer();
     const decoder = new StringDecoder("utf8");
     let pendingLine = "";
     let activityFinished = false;
+    let containerAttached = false;
     const observeLine = (line: string): void => {
       const estimate = estimateMinutesFromProviderLine(this.#options.provider, line);
       if (estimate !== null) activity.publish(estimateActivity(estimate));
@@ -298,8 +302,13 @@ export class ContainerAgentLauncher implements AgentLauncher {
       activity.close();
     };
     let termination: Promise<void> | null = null;
+    let teardownPublished = false;
     const terminate = (): Promise<void> => {
       if (termination === null) {
+        if (!teardownPublished) {
+          teardownPublished = true;
+          activity.publish("Task container teardown");
+        }
         const attempt = terminateContainer(
           this.#options.dockerBinary,
           plan.containerName,
@@ -327,6 +336,10 @@ export class ContainerAgentLauncher implements AgentLauncher {
     };
     child.stdout?.on("data", (chunkValue: Buffer | string) => {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
+      if (!containerAttached) {
+        containerAttached = true;
+        activity.publish("Task container attached");
+      }
       stdoutBytes += chunk.length;
       if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
       stdout.push(Buffer.from(chunk));
@@ -347,12 +360,11 @@ export class ContainerAgentLauncher implements AgentLauncher {
     const completion = (async (): Promise<AgentRunOutcome> => {
       const { code, signal } = await childClose;
       clearTimeout(timeout);
+      if (termination === null && !spawnFailed && code !== 0) void terminate();
       finishActivity();
       try {
         if (termination !== null) {
           try { await termination; } catch (error) { failure ??= error as Error; }
-        } else if (!spawnFailed && code !== 0) {
-          try { await terminate(); } catch (error) { failure = error as Error; }
         }
         if (failure !== null) throw failure;
         if (code !== 0) {

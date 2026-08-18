@@ -247,6 +247,9 @@ function isAllowedHostSuperset(actual: string | null, requested: string): boolea
 }
 
 function reconciledAllowedHosts(proxy: ProxyInspection | null, requested: string): string {
+  // Removed hosts linger by design under union reconciliation. For exact recovery,
+  // run `docker rm -f steward-egress-proxy` and restart the fleet; fleet-wide
+  // convergence is campaign 7 scope.
   const current = proxy?.running === true ? allowedHostList(proxy.allowedHosts) : [];
   return [...new Set([...current, ...allowedHostList(requested)])].sort().join(",");
 }
@@ -257,6 +260,7 @@ function isProxyHealthy(proxy: ProxyInspection | null, expected: ProxyConfigurat
     && isAllowedHostSuperset(proxy.allowedHosts, expected.allowedHosts)
     && proxy.proxyPort === String(expected.proxyPort)
     && proxy.image === expected.image
+    && proxy.networks.includes(expected.agentNetwork)
     && proxy.networks.includes(expected.egressNetwork);
 }
 
@@ -275,6 +279,16 @@ async function startProxy(input: ProxyConfiguration): Promise<void> {
       "unless-stopped",
       "--name",
       input.proxyContainerName,
+      "--user",
+      "node",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--memory",
+      "512m",
+      "--pids-limit",
+      "128",
       "--network",
       input.agentNetwork,
       "-e",
@@ -408,8 +422,9 @@ async function serializeProxyReconciliation(
 }
 
 async function sweepOrphanedTaskContainers(dockerBinary: string): Promise<void> {
-  // Safe only while no task lane is live. Docker-gated test files run serially so a
-  // prepare-time sweep in one file cannot remove another file's active lane.
+  // Safe only while no task lane is live and while a single fleet process owns the host.
+  // Docker-gated test files run serially so a prepare-time sweep in one file cannot
+  // remove another file's active lane. Multi-fleet ownership labels are campaign 7 scope.
   const output = await dockerCommand(dockerBinary, [
     "ps",
     "-aq",

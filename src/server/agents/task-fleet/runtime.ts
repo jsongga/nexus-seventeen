@@ -139,6 +139,7 @@ async function createContainerTaskFleetWorker(
     throw new Error(`container image identity could not be inspected: ${image}`);
   }
   const manager = new TaskWorkspaceManager({ workspaceRoot: lane.workspaceRoot, repositoryPath: config.workingDirectory });
+  await manager.retainStrays([]);
   const launcher = new WorkspaceScopedLauncher(
     new ContainerAgentLauncher({
       provider: config.provider,
