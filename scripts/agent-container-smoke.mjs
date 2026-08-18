@@ -9,10 +9,11 @@ if (!process.env[key]) throw new Error(`${key} must be set for the smoke run`);
 const root = fileURLToPath(new URL("..", import.meta.url));
 const image = `${AGENT_IMAGE_REPOSITORY}:${await computeAgentImageTag(root)}`;
 // Infrastructure (networks + proxy) must already exist — run npm run test:container once first, or any container lane.
+// If the Claude smoke cannot reach the proxy without NODE_USE_ENV_PROXY, add it to buildContainerRunPlan (production), not here.
 const output = execFileSync("docker", [
   "run", "--rm", "-i", "--network", "steward-agents", "--user", "node", "--cap-drop", "ALL",
   "-e", "HTTPS_PROXY=http://steward-egress-proxy:3128", "-e", "HTTP_PROXY=http://steward-egress-proxy:3128",
-  "-e", "NODE_USE_ENV_PROXY=1", "-e", key,
+  "-e", key,
   image,
   ...(provider === "codex"
     ? ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--model", "gpt-5-codex", "-"]

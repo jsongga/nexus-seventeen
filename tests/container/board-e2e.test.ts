@@ -129,9 +129,11 @@ test("a board-claimed task executes in a disposable container against its own wo
     assert.equal(board.tasks.find((candidate) => candidate.taskId === task.taskId)?.status, "completed");
 
     assert.match(await runGit(repo, ["show", `task/${task.taskId}:stub-proof.txt`]), /stub ran/u);
+    assert.equal((await runGit(repo, ["branch", "--show-current"])).trim(), "main");
+    assert.equal(await runGit(repo, ["status", "--porcelain"]), "");
 
     await assert.rejects(access(join(root, "workspaces", task.taskId)));
-    assert.deepEqual((await readdir(join(root, "workspaces"))).filter((name) => !name.startsWith("retained-")), []);
+    assert.deepEqual(await readdir(join(root, "workspaces")), []);
     assert.equal((await docker(["ps", "-aq", "--filter", "label=steward.task"])).trim(), "");
   } finally {
     try {
