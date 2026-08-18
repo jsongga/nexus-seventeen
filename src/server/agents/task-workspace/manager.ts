@@ -117,6 +117,10 @@ export class TaskWorkspaceManager {
     await git(this.#repositoryPath, ["fetch", this.workspacePath(key), `+${branch}:${branch}`]);
   }
 
+  async hasUncommittedChanges(key: string): Promise<boolean> {
+    return (await git(this.workspacePath(key), ["status", "--porcelain"])).trim().length > 0;
+  }
+
   async remove(key: string): Promise<void> {
     await rm(this.workspacePath(key), { recursive: true, force: true });
   }

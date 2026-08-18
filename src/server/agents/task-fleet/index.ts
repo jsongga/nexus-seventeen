@@ -8,7 +8,7 @@ export {
   createTaskFleetWorker,
   isTransientTaskFleetError,
 } from "./runtime.js";
-export type { TaskFleetVersionRunner } from "./runtime.js";
+export type { ContainerRuntimeIdentity, TaskFleetVersionRunner } from "./runtime.js";
 export type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,

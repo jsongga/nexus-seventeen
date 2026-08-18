@@ -68,6 +68,25 @@ async function launch(
   });
 }
 
+test("constructor accepts an immutable image ID without allowing option injection", () => {
+  const options = {
+    provider: "codex" as const,
+    model: "gpt-test",
+    networkName: "steward-agents",
+    proxyUrl: "http://steward-egress-proxy:3128",
+    dockerBinary: "/nonexistent",
+  };
+
+  assert.doesNotThrow(() => new ContainerAgentLauncher({
+    ...options,
+    image: `sha256:${"a".repeat(64)}`,
+  }));
+  assert.throws(() => new ContainerAgentLauncher({
+    ...options,
+    image: "--network=host",
+  }), /image is invalid/u);
+});
+
 test("interrupt rejects when daemon errors prevent confirming container absence", async () => {
   const root = await tempRoot();
   const fixture = await fakeDocker(root, {

@@ -174,3 +174,24 @@ test("proxy image, port, and egress-network mismatches each force recreation", a
     assert.equal((await invocations(fixture)).filter((args) => args[0] === "run").length, 1);
   }
 });
+
+test("proxy allowlists converge without removing hosts needed by another lane", async (t) => {
+  const fixture = await fakeDocker({ proxyAllowedHosts: "b,a" });
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+
+  await prepareContainerInfrastructure({
+    image: "steward-agent:test",
+    allowedHosts: ["a"],
+    dockerBinary: fixture.binary,
+  });
+  assert.equal((await invocations(fixture)).filter((args) => args[0] === "run").length, 0);
+
+  await prepareContainerInfrastructure({
+    image: "steward-agent:test",
+    allowedHosts: ["c"],
+    dockerBinary: fixture.binary,
+  });
+  const proxyRuns = (await invocations(fixture)).filter((args) => args[0] === "run");
+  assert.equal(proxyRuns.length, 1);
+  assert.ok(proxyRuns[0]?.includes("STEWARD_EGRESS_ALLOWED_HOSTS=a,b,c"));
+});

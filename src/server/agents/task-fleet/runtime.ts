@@ -27,6 +27,11 @@ const VERSION_COMMAND_MAX_BYTES = 16 * 1024;
 
 export type TaskFleetVersionRunner = (command: string, arguments_: readonly string[]) => Promise<string>;
 
+export interface ContainerRuntimeIdentity {
+  readonly runtimeVersion: string;
+  readonly imageId: string;
+}
+
 const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new Promise((resolve, reject) => {
   execFile(command, [...arguments_], {
     encoding: "utf8",
@@ -58,12 +63,12 @@ export async function captureTaskFleetRuntimeVersion(
   }
 }
 
-/** `<cli label version>+<imageId12>` from `docker image inspect`; null when unreadable. */
+/** Runtime pin and full immutable image ID from one `docker image inspect`; null when unreadable. */
 export async function captureContainerRuntimeVersion(
   provider: TaskFleetProvider,
   image: string,
   runner: TaskFleetVersionRunner = runDockerInspect,
-): Promise<string | null> {
+): Promise<ContainerRuntimeIdentity | null> {
   try {
     const format = `{{index .Config.Labels "steward.cli.${provider}"}}|{{.Id}}`;
     const output = await runner("docker", ["image", "inspect", "-f", format, image]);
@@ -71,11 +76,11 @@ export async function captureContainerRuntimeVersion(
     const separator = firstLine.indexOf("|");
     if (separator < 1 || separator !== firstLine.lastIndexOf("|")) return null;
     const label = firstLine.slice(0, separator);
-    const imageId = firstLine.slice(separator + 1).replace(/^sha256:/u, "").slice(0, 12);
-    if (label.length < 1 || imageId.length < 1) return null;
-    const runtimeVersion = `${label}+${imageId}`;
+    const imageId = firstLine.slice(separator + 1);
+    if (!/^sha256:[a-f0-9]{64}$/u.test(imageId)) return null;
+    const runtimeVersion = `${label}+${imageId.slice("sha256:".length, "sha256:".length + 12)}`;
     if (runtimeVersion.length > 128 || /[\u0000-\u001f\u007f]/u.test(runtimeVersion)) return null;
-    return runtimeVersion;
+    return Object.freeze({ runtimeVersion, imageId });
   } catch {
     return null;
   }
@@ -129,13 +134,16 @@ async function createContainerTaskFleetWorker(
     image,
     allowedHosts: [...DEFAULT_ALLOWED_HOSTS, ...lane.extraAllowedHosts],
   });
-  const runtimeVersion = await captureContainerRuntimeVersion(config.provider, image);
+  const runtimeIdentity = await captureContainerRuntimeVersion(config.provider, image);
+  if (runtimeIdentity === null) {
+    throw new Error(`container image identity could not be inspected: ${image}`);
+  }
   const manager = new TaskWorkspaceManager({ workspaceRoot: lane.workspaceRoot, repositoryPath: config.workingDirectory });
   const launcher = new WorkspaceScopedLauncher(
     new ContainerAgentLauncher({
       provider: config.provider,
       model: config.model,
-      image,
+      image: runtimeIdentity.imageId,
       ...(lane.agentCommand === undefined ? {} : { agentCommand: lane.agentCommand }),
       networkName: infrastructure.agentNetwork,
       proxyUrl: infrastructure.proxyUrl,
@@ -151,7 +159,7 @@ async function createContainerTaskFleetWorker(
     launcher,
     pinned: {
       runtime: config.provider,
-      ...(runtimeVersion === null ? {} : { runtimeVersion }),
+      runtimeVersion: runtimeIdentity.runtimeVersion,
       model: config.model,
     },
     longPollMs: config.longPollMs,

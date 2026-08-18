@@ -30,7 +30,18 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
             await this.#manager.retain(key);
             throw new TaskWorkspaceError("Run completed but its branch could not be harvested", { cause: error });
           }
-          await this.#manager.remove(key);
+          let hasUncommittedChanges: boolean;
+          try {
+            hasUncommittedChanges = await this.#manager.hasUncommittedChanges(key);
+          } catch (error) {
+            await this.#manager.retain(key);
+            throw new TaskWorkspaceError(
+              "Run completed but its workspace cleanliness could not be verified",
+              { cause: error },
+            );
+          }
+          if (hasUncommittedChanges) await this.#manager.retain(key);
+          else await this.#manager.remove(key);
         } else {
           await this.#manager.retain(key);
         }

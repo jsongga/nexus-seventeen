@@ -38,7 +38,7 @@ const CONTAINER_POLL_MS = 100;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const DOCKER_REMOVE_TIMEOUT_MS = 10_000;
 const DOCKER_CLIENT_CLOSE_TIMEOUT_MS = 10_000;
-const CONTAINER_IMAGE_PATTERN = /^[a-z0-9][a-z0-9._\-\/]*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?$/u;
+const CONTAINER_IMAGE_PATTERN = /^(?:sha256:[a-f0-9]{64}|[a-z0-9][a-z0-9._\-\/]*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?)$/u;
 const DOCKER_ENVIRONMENT_KEYS = [
   "DOCKER_HOST",
   "DOCKER_CONFIG",

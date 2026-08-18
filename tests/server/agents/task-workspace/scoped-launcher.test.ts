@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, readdir, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
@@ -65,6 +65,30 @@ test("a completed outcome harvests the task branch and removes the workspace", a
   assert.equal((await handle.completion).status, "completed");
   assert.equal(await run(repo, "git", ["show", `task/${key}:work.txt`]), "done\n");
   await assert.rejects(access(path));
+});
+
+test("a completed outcome harvests its branch and retains uncommitted workspace changes", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const workspaceRoot = join(root, "ws");
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+  const inner = new FakeLauncher();
+  const launcher = new WorkspaceScopedLauncher(inner, manager);
+  const key = "task-completed-dirty";
+
+  const handle = await launcher.launch(request(key));
+  const path = manager.workspacePath(key);
+  await writeFile(join(path, "work.txt"), "committed\n");
+  await run(path, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
+  await run(path, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "work"]);
+  await writeFile(join(path, "evidence.txt"), "uncommitted\n");
+  inner.handles[0]?.resolve(completedOutcome());
+
+  assert.equal((await handle.completion).status, "completed");
+  assert.equal(await run(repo, "git", ["show", `task/${key}:work.txt`]), "committed\n");
+  const retained = (await readdir(workspaceRoot)).filter((name) => name.startsWith(`retained-${key}-`));
+  assert.equal(retained.length, 1);
+  assert.equal(await readFile(join(workspaceRoot, retained[0] ?? "", "evidence.txt"), "utf8"), "uncommitted\n");
 });
 
 test("a failed outcome retains the workspace without harvesting the task branch", async () => {

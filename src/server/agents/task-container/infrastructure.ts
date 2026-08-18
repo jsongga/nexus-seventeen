@@ -234,10 +234,27 @@ interface ProxyConfiguration {
   readonly image: string;
 }
 
+function allowedHostList(value: string | null): readonly string[] {
+  return value === null
+    ? []
+    : value.split(",").map((host) => host.trim()).filter((host) => host.length > 0);
+}
+
+function isAllowedHostSuperset(actual: string | null, requested: string): boolean {
+  if (actual === null) return false;
+  const actualHosts = new Set(allowedHostList(actual));
+  return allowedHostList(requested).every((host) => actualHosts.has(host));
+}
+
+function reconciledAllowedHosts(proxy: ProxyInspection | null, requested: string): string {
+  const current = proxy?.running === true ? allowedHostList(proxy.allowedHosts) : [];
+  return [...new Set([...current, ...allowedHostList(requested)])].sort().join(",");
+}
+
 function isProxyHealthy(proxy: ProxyInspection | null, expected: ProxyConfiguration): boolean {
   return proxy !== null
     && proxy.running
-    && proxy.allowedHosts === expected.allowedHosts
+    && isAllowedHostSuperset(proxy.allowedHosts, expected.allowedHosts)
     && proxy.proxyPort === String(expected.proxyPort)
     && proxy.image === expected.image
     && proxy.networks.includes(expected.egressNetwork);
@@ -365,7 +382,12 @@ async function waitForProxyReady(
 
 async function reconcileProxy(input: ProxyConfiguration): Promise<void> {
   const proxy = await inspectProxy(input.dockerBinary, input.proxyContainerName);
-  if (!isProxyHealthy(proxy, input)) await startProxy(input);
+  if (!isProxyHealthy(proxy, input)) {
+    await startProxy({
+      ...input,
+      allowedHosts: reconciledAllowedHosts(proxy, input.allowedHosts),
+    });
+  }
   await waitForProxyReady(input.dockerBinary, input.proxyContainerName);
 }
 
