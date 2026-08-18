@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkspaceManager, TaskWorkspaceError } from "#server/agents/task-workspace";
@@ -37,6 +37,34 @@ test("create clones without hardlinks, branches task/<key>, and is reset-idempot
   await assert.rejects(access(join(again, "leftover.txt")));
 });
 
+test("create rejects unsafe keys before touching the filesystem", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const workspaceRoot = join(root, "ws");
+  const outsidePath = join(root, "state");
+  await writeFile(outsidePath, "outside\n");
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+
+  await assert.rejects(manager.create("a/../../state"), TaskWorkspaceError);
+
+  assert.equal(await readFile(outsidePath, "utf8"), "outside\n");
+  await assert.rejects(access(workspaceRoot), { code: "ENOENT" });
+  for (const key of ["foo:bar", "a..b", "trailing."]) {
+    assert.throws(() => manager.workspacePath(key), TaskWorkspaceError);
+  }
+});
+
+test("create removes the cloned workspace when base ref selection fails", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const manager = new TaskWorkspaceManager({ workspaceRoot: join(root, "ws"), repositoryPath: repo });
+  const path = manager.workspacePath("task-bad-ref");
+
+  await assert.rejects(manager.create("task-bad-ref", "refs/heads/does-not-exist"), TaskWorkspaceError);
+
+  await assert.rejects(access(path), { code: "ENOENT" });
+});
+
 test("harvest publishes the task branch into the source repo and force-updates on re-harvest", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);
@@ -70,21 +98,38 @@ test("a hook planted inside the workspace never executes on the host during harv
   await assert.rejects(access(marker), { code: "ENOENT" }, "workspace hooks must not run on the host");
 });
 
-test("remove is idempotent, retain caps the debugging cache, and bad inputs are rejected", async () => {
+test("remove is idempotent, retain prunes oldest timestamps across keys, and bad inputs are rejected", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);
   const manager = new TaskWorkspaceManager({ workspaceRoot: join(root, "ws"), repositoryPath: repo, retainedLimit: 1 });
   await manager.remove("never-created");
-  await manager.create("task-d");
-  await manager.retain("task-d");
-  await manager.create("task-e");
-  await manager.retain("task-e");
+  await manager.create("task-z");
+  await manager.retain("task-z");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await manager.create("task-a");
+  await manager.retain("task-a");
   const { readdir } = await import("node:fs/promises");
   const retained = (await readdir(join(root, "ws"))).filter((name) => name.startsWith("retained-"));
   assert.equal(retained.length, 1);
-  assert.match(retained[0] ?? "", /^retained-task-e-/u);
-  await manager.retain("task-d"); // already gone — no-op
+  assert.match(retained[0] ?? "", /^retained-task-a-/u);
+  await manager.retain("task-z"); // already gone — no-op
   assert.throws(() => new TaskWorkspaceManager({ workspaceRoot: "relative", repositoryPath: repo }), TaskWorkspaceError);
   await assert.rejects(manager.create("../escape"), TaskWorkspaceError);
   await assert.rejects(manager.create("retained-x"), TaskWorkspaceError);
+});
+
+test("retain ignores only missing workspaces and wraps other stat failures", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const workspaceRoot = join(root, "ws");
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+  await manager.retain("missing");
+  await mkdir(workspaceRoot, { recursive: true });
+  await symlink("task-loop", manager.workspacePath("task-loop"));
+
+  await assert.rejects(manager.retain("task-loop"), (error: unknown) => {
+    assert.ok(error instanceof TaskWorkspaceError);
+    assert.equal((error.cause as NodeJS.ErrnoException).code, "ELOOP");
+    return true;
+  });
 });

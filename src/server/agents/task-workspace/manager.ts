@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
-import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";
+import { isAbsolute, join, relative, sep } from "node:path";
 
-const KEY = new RegExp(IDENTIFIER_PATTERN, "u");
+const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const RETAINED_TIMESTAMP_PATTERN = /-([0-9]+)$/u;
 const GIT_TIMEOUT_MS = 60_000;
 const GIT_MAX_BYTES = 4 * 1024 * 1024;
 const DEFAULT_RETAINED_LIMIT = 5;
@@ -43,6 +43,18 @@ function git(cwd: string | null, args: readonly string[]): Promise<string> {
   });
 }
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+function retainedTimestamp(name: string): number {
+  const match = RETAINED_TIMESTAMP_PATTERN.exec(name);
+  if (match === null) return Number.NEGATIVE_INFINITY;
+  const timestamp = Number(match[1]);
+  return Number.isSafeInteger(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
 export class TaskWorkspaceManager {
   readonly #workspaceRoot: string;
   readonly #repositoryPath: string;
@@ -65,23 +77,38 @@ export class TaskWorkspaceManager {
   }
 
   #key(key: string): string {
-    if (!KEY.test(key) || key.startsWith("retained-")) {
+    if (
+      !KEY_PATTERN.test(key)
+      || key.includes("..")
+      || key.endsWith(".")
+      || key.startsWith("retained-")
+    ) {
       throw new TaskWorkspaceError(`Invalid task workspace key: ${key}`);
     }
     return key;
   }
 
   workspacePath(key: string): string {
-    return join(this.#workspaceRoot, this.#key(key));
+    const path = join(this.#workspaceRoot, this.#key(key));
+    const relativePath = relative(this.#workspaceRoot, path);
+    if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new TaskWorkspaceError(`Task workspace path escapes workspaceRoot: ${key}`);
+    }
+    return path;
   }
 
   async create(key: string, baseRef?: string): Promise<string> {
     const path = this.workspacePath(key);
     await mkdir(this.#workspaceRoot, { recursive: true });
     await rm(path, { recursive: true, force: true });
-    await git(null, ["clone", "--no-hardlinks", this.#repositoryPath, path]);
-    if (baseRef !== undefined) await git(path, ["switch", "--detach", baseRef]);
-    await git(path, ["switch", "-c", `task/${this.#key(key)}`]);
+    try {
+      await git(null, ["clone", "--no-hardlinks", this.#repositoryPath, path]);
+      if (baseRef !== undefined) await git(path, ["switch", "--detach", baseRef]);
+      await git(path, ["switch", "-c", `task/${this.#key(key)}`]);
+    } catch (error) {
+      await rm(path, { recursive: true, force: true });
+      throw error;
+    }
     return path;
   }
 
@@ -98,11 +125,19 @@ export class TaskWorkspaceManager {
     const path = this.workspacePath(key);
     try {
       await stat(path);
-    } catch {
-      return; // nothing to retain
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return; // nothing to retain
+      throw new TaskWorkspaceError(`Could not inspect task workspace before retention: ${path}`, { cause: error });
     }
     await rename(path, join(this.#workspaceRoot, `retained-${this.#key(key)}-${Date.now()}`));
-    const entries = (await readdir(this.#workspaceRoot)).filter((name) => name.startsWith("retained-")).sort();
+    const entries = (await readdir(this.#workspaceRoot))
+      .filter((name) => name.startsWith("retained-"))
+      .sort((left, right) => {
+        const leftTimestamp = retainedTimestamp(left);
+        const rightTimestamp = retainedTimestamp(right);
+        if (leftTimestamp !== rightTimestamp) return leftTimestamp < rightTimestamp ? -1 : 1;
+        return left.localeCompare(right);
+      });
     for (const name of entries.slice(0, Math.max(0, entries.length - this.#retainedLimit))) {
       await rm(join(this.#workspaceRoot, name), { recursive: true, force: true });
     }
