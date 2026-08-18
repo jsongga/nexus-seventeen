@@ -21,7 +21,25 @@ import {
   tempRoot,
 } from "./helpers.js";
 
-const PROBE = "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
+const DIRECT_EGRESS_PROBE = "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
+const CONNECT_PROBE = [
+  "const net=require('node:net');",
+  "const proxy=new URL(process.env.STEWARD_PROXY_URL);",
+  "const target=process.env.STEWARD_CONNECT_TARGET;",
+  "const expectation=process.env.STEWARD_CONNECT_EXPECTATION;",
+  "let connected=false,response='',settled=false;",
+  "const finish=(code)=>{if(settled)return;settled=true;socket.destroy();process.exit(code);};",
+  "const evaluate=()=>{const end=response.indexOf('\\r\\n');if(end<0)return false;",
+  "const forbidden=response.slice(0,end).startsWith('HTTP/1.1 403');",
+  "finish(expectation==='forbidden'?(forbidden?0:1):(forbidden?1:0));return true;};",
+  "const socket=net.connect({host:proxy.hostname,port:Number(proxy.port)},()=>{connected=true;",
+  "socket.write('CONNECT '+target+' HTTP/1.1\\r\\nhost: '+target+'\\r\\n\\r\\n');});",
+  "socket.setTimeout(5000,()=>finish(expectation==='admitted'&&connected?0:1));",
+  "socket.on('data',(chunk)=>{response+=chunk;if(evaluate())return;});",
+  "socket.on('end',()=>{if(!evaluate())finish(expectation==='admitted'&&connected?0:1);});",
+  "socket.on('error',()=>finish(expectation==='admitted'&&connected?0:1));",
+  "socket.on('close',()=>finish(expectation==='admitted'&&connected?0:1));",
+].join("");
 
 function request(runId: string, taskId: string): AgentLaunchRequest {
   return {
@@ -89,6 +107,14 @@ async function assertNoTaskContainers(): Promise<void> {
   assert.equal((await docker(["ps", "-aq", "--filter", "label=steward.task"])).trim(), "");
 }
 
+async function removeContainerBestEffort(containerName: string): Promise<void> {
+  try {
+    await docker(["rm", "-f", containerName]);
+  } catch {
+    // The normal launcher cleanup already removed it, or Docker itself is unavailable.
+  }
+}
+
 test("stub round-trip harvests its commit and removes all transient state", async (t) => {
   await requireDocker();
   const image = await agentImage();
@@ -108,7 +134,7 @@ test("stub round-trip harvests its commit and removes all transient state", asyn
   await assertNoTaskContainers();
 });
 
-test("agent network blocks direct egress and the proxy refuses a non-allowlisted host", async () => {
+test("agent network blocks direct egress and proxy CONNECT enforces the allowlist", async () => {
   await requireDocker();
   const image = await agentImage();
   const infrastructure = await prepareContainerInfrastructure({ image, allowedHosts: DEFAULT_ALLOWED_HOSTS });
@@ -121,7 +147,7 @@ test("agent network blocks direct egress and the proxy refuses a non-allowlisted
     image,
     "node",
     "-e",
-    PROBE,
+    DIRECT_EGRESS_PROBE,
   ]), 1);
   assert.equal(await dockerExitCode([
     "run",
@@ -129,12 +155,32 @@ test("agent network blocks direct egress and the proxy refuses a non-allowlisted
     "--network",
     infrastructure.agentNetwork,
     "-e",
-    `HTTPS_PROXY=${infrastructure.proxyUrl}`,
+    `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
+    "-e",
+    "STEWARD_CONNECT_TARGET=example.com:443",
+    "-e",
+    "STEWARD_CONNECT_EXPECTATION=forbidden",
     image,
     "node",
     "-e",
-    PROBE,
-  ]), 1);
+    CONNECT_PROBE,
+  ]), 0);
+  assert.equal(await dockerExitCode([
+    "run",
+    "--rm",
+    "--network",
+    infrastructure.agentNetwork,
+    "-e",
+    `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
+    "-e",
+    "STEWARD_CONNECT_TARGET=registry.npmjs.org:443",
+    "-e",
+    "STEWARD_CONNECT_EXPECTATION=admitted",
+    image,
+    "node",
+    "-e",
+    CONNECT_PROBE,
+  ]), 0);
 });
 
 test("an externally killed task container fails uneventfully and retains its workspace", async (t) => {
@@ -149,6 +195,7 @@ test("an externally killed task container fails uneventfully and retains its wor
   const taskId = "container-killed";
   const runId = "killed";
   const containerName = `steward-task-${runId}`;
+  t.after(() => removeContainerBestEffort(containerName));
   const target = launcher(image, infrastructure, manager, {
     hang: true,
     timeoutMs: 120_000,
@@ -177,6 +224,7 @@ test("interrupt returns only after the task container is absent", async (t) => {
   const taskId = "container-interrupted";
   const runId = "interrupted";
   const containerName = `steward-task-${runId}`;
+  t.after(() => removeContainerBestEffort(containerName));
   const target = launcher(image, infrastructure, manager, {
     hang: true,
     timeoutMs: 120_000,
