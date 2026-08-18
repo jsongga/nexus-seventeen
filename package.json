@@ -8,6 +8,7 @@
     "#shared/task-board-contract/*": "./build/shared/task-board-contract/*.js",
     "#server/agents/task-fleet": "./build/server/agents/task-fleet/index.js",
     "#server/agents/task-fleet/*": "./build/server/agents/task-fleet/*.js",
+    "#server/agents/egress-proxy/*": "./build/server/agents/egress-proxy/*.js",
     "#server/agents/task-workspace": "./build/server/agents/task-workspace/index.js",
     "#server/agents/task-workspace/*": "./build/server/agents/task-workspace/*.js",
     "#server/agents/task-worker": "./build/server/agents/task-worker/index.js",
