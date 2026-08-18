@@ -1,0 +1,294 @@
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
+import {
+  ActivityChannel,
+  AgentProcessError,
+  agentPrompt,
+  agentRole,
+  assertCredentialSafe,
+  boundedInteger,
+  configText,
+  delay,
+  providerEnvironment,
+  providerResult,
+  structuredOutcome,
+  type AgentProvider,
+} from "#server/agents/task-worker/agent-envelope";
+import {
+  ActivityBuffer,
+  activityFromProviderLine,
+  estimateActivity,
+  estimateMinutesFromProviderLine,
+  phaseActivity,
+  phaseSignalFromProviderLine,
+} from "#server/agents/task-worker/provider-activity";
+import type {
+  AgentLaunchRequest,
+  AgentLauncher,
+  AgentRunHandle,
+  AgentRunOutcome,
+} from "#server/agents/task-worker/types";
+import { buildContainerRunPlan } from "./arguments.js";
+
+const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+const MAX_STDERR_BYTES = 512 * 1024;
+const CONTAINER_POLL_MS = 100;
+const CONTAINER_ABSENCE_TIMEOUT_MS = 30_000;
+const DOCKER_ENVIRONMENT_KEYS = [
+  "DOCKER_HOST",
+  "DOCKER_CONFIG",
+  "DOCKER_CONTEXT",
+  "DOCKER_CERT_PATH",
+  "DOCKER_TLS_VERIFY",
+] as const;
+
+export interface ContainerAgentLauncherOptions {
+  readonly provider: "codex" | "claude";
+  readonly model: string;
+  readonly image: string;
+  /** Executable inside the image. Default: the provider name. Tests pass "steward-stub". */
+  readonly agentCommand?: string;
+  readonly networkName: string;
+  readonly proxyUrl: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly timeoutMs?: number;
+  readonly terminationGraceMs?: number;
+  readonly dockerBinary?: string;
+  /** Extra -e KEY=VALUE pairs for the container (test hook, e.g. STEWARD_STUB_MODE). */
+  readonly extraContainerEnv?: Readonly<Record<string, string>>;
+}
+
+function dockerCommand(
+  dockerBinary: string,
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(dockerBinary, [...args], { encoding: "utf8", env: environment }, (error, stdout) => {
+      if (error !== null) reject(error);
+      else resolve(stdout);
+    });
+  });
+}
+
+async function containerStoppedOrAbsent(
+  dockerBinary: string,
+  containerName: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  try {
+    const status = await dockerCommand(
+      dockerBinary,
+      ["inspect", "--format", "{{.State.Running}}", containerName],
+      environment,
+    );
+    return status.trim() === "false";
+  } catch {
+    return true;
+  }
+}
+
+async function terminateContainer(
+  dockerBinary: string,
+  containerName: string,
+  terminationGraceMs: number,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  try {
+    await dockerCommand(
+      dockerBinary,
+      ["stop", "-t", String(Math.ceil(terminationGraceMs / 1_000)), containerName],
+      environment,
+    );
+  } catch {
+    // A concurrent exit or a missing container is confirmed by inspect below.
+  }
+
+  const deadline = Date.now() + CONTAINER_ABSENCE_TIMEOUT_MS;
+  let confirmedAbsent = await containerStoppedOrAbsent(dockerBinary, containerName, environment);
+  while (!confirmedAbsent && Date.now() < deadline) {
+    await delay(CONTAINER_POLL_MS);
+    confirmedAbsent = await containerStoppedOrAbsent(dockerBinary, containerName, environment);
+  }
+
+  try {
+    await dockerCommand(dockerBinary, ["rm", "-f", containerName], environment);
+  } catch {
+    // Idempotent best effort after inspect has established the terminal state.
+  }
+  if (!confirmedAbsent) throw new AgentProcessError("Task container could not be confirmed absent");
+}
+
+export class ContainerAgentLauncher implements AgentLauncher {
+  readonly #options: ContainerAgentLauncherOptions & {
+    readonly provider: AgentProvider;
+    readonly timeoutMs: number;
+    readonly terminationGraceMs: number;
+    readonly dockerBinary: string;
+  };
+  readonly #environment: NodeJS.ProcessEnv;
+  readonly #dockerEnvironment: NodeJS.ProcessEnv;
+  #active = false;
+
+  constructor(options: ContainerAgentLauncherOptions) {
+    const sourceEnvironment = options.environment ?? process.env;
+    this.#environment = providerEnvironment(options.provider, sourceEnvironment);
+    this.#dockerEnvironment = { ...this.#environment };
+    for (const key of DOCKER_ENVIRONMENT_KEYS) {
+      const value = sourceEnvironment[key];
+      if (typeof value === "string") this.#dockerEnvironment[key] = value;
+    }
+    this.#options = {
+      ...options,
+      model: configText(options.model, "model", 256),
+      image: configText(options.image, "image", 512),
+      timeoutMs: boundedInteger(options.timeoutMs, 60 * 60_000, 1_000, 24 * 60 * 60_000, "timeoutMs"),
+      terminationGraceMs: boundedInteger(options.terminationGraceMs, 2_000, 10, 60_000, "terminationGraceMs"),
+      dockerBinary: options.dockerBinary ?? "docker",
+    };
+  }
+
+  async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
+    if (request.workspace === undefined) {
+      throw new AgentProcessError("Container launches require a per-launch workspace");
+    }
+    if (this.#active) throw new AgentProcessError("This launcher already owns an active agent process");
+    assertCredentialSafe(JSON.stringify(request.context), "Agent context");
+    const directory = await open(request.workspace.path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    await directory.close();
+    const plan = buildContainerRunPlan({
+      options: this.#options,
+      runId: request.runId,
+      taskId: request.context.taskId,
+      fixedRole: agentRole(request),
+      workspacePath: request.workspace.path,
+      bareApiKey: typeof this.#environment.ANTHROPIC_API_KEY === "string",
+    });
+    const stdin = agentPrompt(request);
+    let child: ChildProcess;
+    try {
+      child = spawn(this.#options.dockerBinary, [...plan.args], {
+        env: this.#dockerEnvironment,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (error) {
+      throw new AgentProcessError("Unable to start the docker client", { cause: error });
+    }
+    this.#active = true;
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let failure: Error | null = null;
+    const activity = new ActivityChannel();
+    const activityBuffer = new ActivityBuffer();
+    const decoder = new StringDecoder("utf8");
+    let pendingLine = "";
+    let activityFinished = false;
+    const observeLine = (line: string): void => {
+      const estimate = estimateMinutesFromProviderLine(this.#options.provider, line);
+      if (estimate !== null) activity.publish(estimateActivity(estimate));
+      const phase = phaseSignalFromProviderLine(this.#options.provider, line);
+      if (phase !== null) activity.publish(phaseActivity(phase));
+      const ready = activityBuffer.push(activityFromProviderLine(this.#options.provider, line));
+      if (ready !== null) activity.publish(ready);
+    };
+    const observeChunk = (chunk: Buffer): void => {
+      pendingLine += decoder.write(chunk);
+      const lines = pendingLine.split(/\r?\n/u);
+      pendingLine = lines.pop() ?? "";
+      for (const line of lines) observeLine(line);
+    };
+    const finishActivity = (): void => {
+      if (activityFinished) return;
+      activityFinished = true;
+      pendingLine += decoder.end();
+      if (pendingLine.length > 0) observeLine(pendingLine);
+      const final = activityBuffer.drain();
+      if (final !== null) activity.publish(final);
+      activity.close();
+    };
+    let termination: Promise<void> | null = null;
+    const terminate = (): Promise<void> => {
+      if (termination === null) {
+        const attempt = terminateContainer(
+          this.#options.dockerBinary,
+          plan.containerName,
+          this.#options.terminationGraceMs,
+          this.#dockerEnvironment,
+        );
+        termination = attempt;
+        void attempt.catch(() => {
+          if (termination === attempt) termination = null;
+        });
+      }
+      return termination;
+    };
+    const timeout = setTimeout(() => {
+      failure ??= new AgentProcessError("Agent container exceeded its timeout");
+      void terminate().catch(() => undefined);
+    }, this.#options.timeoutMs);
+    timeout.unref();
+    const failBound = (stream: "stdout" | "stderr"): void => {
+      failure ??= new AgentProcessError(`Agent container ${stream} exceeded its byte bound`);
+      void terminate().catch(() => undefined);
+    };
+    child.stdout?.on("data", (chunkValue: Buffer | string) => {
+      const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
+      stdout.push(Buffer.from(chunk));
+      observeChunk(chunk);
+    });
+    child.stderr?.on("data", (chunkValue: Buffer | string) => {
+      const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
+      stderrBytes += chunk.length;
+      if (stderrBytes > MAX_STDERR_BYTES) { failBound("stderr"); return; }
+      stderr.push(Buffer.from(chunk));
+    });
+    child.stdin?.once("error", (error) => {
+      failure ??= new AgentProcessError("Unable to send bounded context to the agent container", { cause: error });
+      void terminate().catch(() => undefined);
+    });
+    child.stdin?.end(stdin, "utf8");
+
+    const completion = new Promise<AgentRunOutcome>((resolve, reject) => {
+      child.once("error", (error) => {
+        failure ??= new AgentProcessError("Unable to start the docker client", { cause: error });
+      });
+      child.once("close", (code, signal) => {
+        void (async () => {
+          clearTimeout(timeout);
+          finishActivity();
+          if (termination !== null) {
+            try { await termination; } catch (error) { failure ??= error as Error; }
+          }
+          this.#active = false;
+          if (failure !== null) { reject(failure); return; }
+          if (code !== 0) {
+            reject(new AgentProcessError(`Agent container exited unsuccessfully (${code ?? signal ?? "unknown"})`));
+            return;
+          }
+          try {
+            const output = Buffer.concat(stdout).toString("utf8");
+            const diagnostic = Buffer.concat(stderr).toString("utf8");
+            assertCredentialSafe(diagnostic, "Agent diagnostics");
+            resolve(structuredOutcome(providerResult(this.#options.provider, output)));
+          } catch (error) {
+            reject(error);
+          }
+        })();
+      });
+    });
+    return Object.freeze({
+      completion,
+      activity,
+      interrupt: async (_reason: string): Promise<void> => {
+        failure ??= new AgentProcessError("Agent container was interrupted directly");
+        await terminate();
+      },
+    });
+  }
+}
