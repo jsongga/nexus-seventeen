@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { AGENT_IMAGE_REPOSITORY, computeAgentImageTag } from "../build/server/agents/task-container/image-tag.js";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const tag = await computeAgentImageTag(root);
 const image = `${AGENT_IMAGE_REPOSITORY}:${tag}`;
 

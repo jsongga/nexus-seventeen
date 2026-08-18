@@ -7,7 +7,10 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { input += chunk; });
 process.stdin.on("end", () => {
   const mode = process.env.STEWARD_STUB_MODE ?? "success";
-  if (mode === "hang") return; // never exits; the launcher's timeout/stop path reaps it
+  if (mode === "hang") {
+    setInterval(() => {}, 1 << 30);
+    return; // never exits; the launcher's timeout/stop path reaps it
+  }
   if (mode === "fail") process.exit(2);
   if (mode === "invalid") {
     process.stdout.write("this is not a codex event stream\n");

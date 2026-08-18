@@ -57,6 +57,7 @@ LABEL steward.cli.codex="${CODEX_CLI_VERSION}" \
       steward.cli.claude="${CLAUDE_CLI_VERSION}"
 
 COPY --from=deps /build/node_modules /opt/steward/node_modules
+COPY --from=deps /build/package-lock.json /opt/steward/package-lock.json
 COPY --from=build /build/build /opt/steward/build
 COPY --from=build /build/build/server/agents/task-worker/agent-result.schema.json /opt/steward/agent-result.schema.json
 COPY --chmod=0755 deploy/agent/stub-codex.mjs /usr/local/bin/steward-stub
