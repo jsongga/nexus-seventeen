@@ -169,10 +169,14 @@ export interface AgentRunOutcome {
   readonly workflowPlan?: WorkflowPlanDraft | null;
 }
 
+export interface AgentWorkspace { readonly path: string }
+
 export interface AgentLaunchRequest {
   readonly runId: string;
   readonly wakeReason: TaskWakeReason;
   readonly context: BoundedAgentContext;
+  /** Per-launch working tree. Absent for local-process lanes constructed with a fixed directory. */
+  readonly workspace?: AgentWorkspace;
 }
 
 /** `interrupt` must return only after the OS process and descendants are confirmed absent. */
