@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24-alpine AS build
+FROM node:24-alpine AS deps
 
 WORKDIR /build
-COPY . .
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
 
-RUN npm ci --ignore-scripts \
-  && npm run build
+FROM deps AS build
+
+COPY . .
+RUN npm run build
 
 FROM caddy:2-alpine AS caddy
 
@@ -40,3 +43,23 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
   CMD wget -q -T 2 -O /dev/null http://127.0.0.1:3000/health || exit 1
 
 ENTRYPOINT ["/sbin/tini", "-g", "--", "/app/deploy/entrypoint.sh"]
+
+FROM node:24-alpine AS agent
+
+ARG CODEX_CLI_VERSION
+ARG CLAUDE_CLI_VERSION
+
+RUN apk add --no-cache git tini
+
+RUN npm install -g "@openai/codex@${CODEX_CLI_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"
+
+LABEL steward.cli.codex="${CODEX_CLI_VERSION}" \
+      steward.cli.claude="${CLAUDE_CLI_VERSION}"
+
+COPY --from=deps /build/node_modules /opt/steward/node_modules
+COPY --from=build /build/build /opt/steward/build
+COPY --from=build /build/build/server/agents/task-worker/agent-result.schema.json /opt/steward/agent-result.schema.json
+COPY --chmod=0755 deploy/agent/stub-codex.mjs /usr/local/bin/steward-stub
+COPY --chmod=0755 deploy/agent/entrypoint.sh /opt/steward/agent-entrypoint.sh
+
+ENTRYPOINT ["/sbin/tini", "-g", "--", "/opt/steward/agent-entrypoint.sh"]
