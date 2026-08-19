@@ -19,6 +19,7 @@ import { ArtifactStore } from "../persistence/artifacts.js";
 import { projectFromRow, type Row } from "../persistence/rows.js";
 import {
   TransparentWorkflow,
+  type AttemptScopeCheckResult,
   type ProjectWorkflowSnapshot,
   type RejectWorkflowTransactionResult,
   type WorkflowGitRunner,
@@ -175,8 +176,9 @@ export class ProjectsCollaborator {
     outcome: SettleRunRequest["outcome"],
     result: string,
     handoff: SettleRunRequest["handoff"],
+    scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
-    return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff);
+    return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, scopeCheck);
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {

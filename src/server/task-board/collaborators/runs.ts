@@ -39,9 +39,16 @@ import {
   wakeupFromRow,
 } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
+import type { AttemptScopeCheckResult } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
+import {
+  checkDeclaredScope,
+  runDeclaredScopeGit,
+  scopeViolationResult,
+  type DeclaredScopeGitRunner,
+} from "./scope-check.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
 
@@ -52,6 +59,25 @@ type SettlementEffects = Readonly<{
 
 type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
 
+type AttemptSettlementPrecheck = Readonly<{
+  scopeCheck: AttemptScopeCheckResult | null;
+  result: string;
+}>;
+
+function attemptSettlementResult(
+  request: SettleRunRequest,
+  scopeCheck: AttemptScopeCheckResult | null,
+): string {
+  if (request.outcome === "failed") {
+    if (request.result.startsWith("BRIGHT_LINE:")) return request.result;
+    if (request.handoff?.summary.startsWith("BRIGHT_LINE:") === true) return request.handoff.summary;
+  }
+  if (scopeCheck !== null && !scopeCheck.ok) {
+    return "files" in scopeCheck ? scopeViolationResult(scopeCheck.files) : scopeCheck.error.slice(0, 2_000);
+  }
+  return request.result;
+}
+
 export const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
 
 export class RunsCollaborator {
@@ -60,7 +86,52 @@ export class RunsCollaborator {
     private readonly automation: AutomationCollaborator,
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
+    private readonly git: DeclaredScopeGitRunner = runDeclaredScopeGit,
   ) {}
+
+  private scopeCheckForSettlement(taskId: string, outcome: SettleRunRequest["outcome"]): AttemptScopeCheckResult | null {
+    if (outcome !== "completed") return null;
+    const row = this.runtime.store.db.prepare(`
+      SELECT
+        attempt.stage,
+        project.description AS repo_path,
+        item.base_sha,
+        item.pipeline_branch,
+        plan.declared_scope_json
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN projects project ON project.project_id=node.project_id
+      WHERE attempt.task_id=?
+    `).get(taskId);
+    if (row === undefined || row.stage !== "implementation") return null;
+    if (row.pipeline_branch === null && row.base_sha === null) return null;
+    if (
+      typeof row.repo_path !== "string" || typeof row.base_sha !== "string" ||
+      typeof row.pipeline_branch !== "string" || typeof row.declared_scope_json !== "string"
+    ) return Object.freeze({ ok: false, error: "scope check failed" });
+    let declaredScope: unknown;
+    try {
+      declaredScope = JSON.parse(row.declared_scope_json);
+    } catch {
+      return Object.freeze({ ok: false, error: "scope check failed" });
+    }
+    if (!Array.isArray(declaredScope) || !declaredScope.every((prefix) => typeof prefix === "string")) {
+      return Object.freeze({ ok: false, error: "scope check failed" });
+    }
+    try {
+      return checkDeclaredScope({
+        repoPath: row.repo_path,
+        baseSha: row.base_sha,
+        branch: row.pipeline_branch,
+        declaredScope,
+        git: this.git,
+      });
+    } catch {
+      return Object.freeze({ ok: false, error: "scope check failed" });
+    }
+  }
 
   resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
     const agent = this.runtime.requireAgent(agentId);
@@ -468,14 +539,18 @@ export class RunsCollaborator {
       if (current.status === request.outcome && current.result === request.result) {
         let repairedNodes: readonly WorkNode[] = Object.freeze([]);
         const taskId = current.taskId;
-        if (taskId !== null) {
+        const needsRepair = taskId !== null && this.projects.attemptNeedsSettlementRepair(taskId, current.runId);
+        if (taskId !== null && needsRepair) {
+          const scopeCheck = this.scopeCheckForSettlement(taskId, request.outcome);
+          const settlementResult = attemptSettlementResult(request, scopeCheck);
           this.runtime.store.transaction(() => {
             if (this.projects.attemptNeedsSettlementRepair(taskId, current.runId)) {
               repairedNodes = this.projects.settleAttemptInTransaction(
                 taskId,
                 request.outcome,
-                request.result,
+                settlementResult,
                 request.handoff,
+                scopeCheck,
               );
             }
           });
@@ -486,6 +561,11 @@ export class RunsCollaborator {
       }
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
+    const scopeCheck = current.taskId === null ? null : this.scopeCheckForSettlement(current.taskId, request.outcome);
+    const attemptPrecheck = Object.freeze({
+      scopeCheck,
+      result: attemptSettlementResult(request, scopeCheck),
+    });
     const now = exactNow(this.runtime.config.now);
     const effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
       current,
@@ -493,6 +573,7 @@ export class RunsCollaborator {
       request,
       now,
       { type: "agent", id: agentId },
+      attemptPrecheck,
     ));
     if (effects.workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(effects.workflowWakeAgentId);
     this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
@@ -506,9 +587,11 @@ export class RunsCollaborator {
     request: SettleRunRequest,
     now: string,
     actor: SettlementActor,
+    attemptPrecheck?: AttemptSettlementPrecheck,
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
+    const attemptResult = attemptPrecheck?.result ?? request.result;
     // Keep this planning snapshot: its work-item state is reused after task and workflow settlement below.
     const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
       SELECT w.* FROM work_item_planning_tasks link
@@ -585,8 +668,9 @@ export class RunsCollaborator {
       settledWorkflowNodes = this.projects.settleAttemptInTransaction(
         current.taskId,
         request.outcome,
-        request.result,
+        attemptResult,
         request.handoff,
+        attemptPrecheck?.scopeCheck ?? null,
       );
     }
     if (workflowProposal !== null) {
@@ -608,12 +692,12 @@ export class RunsCollaborator {
                 UPDATE tasks
                 SET status = 'completed', ended_at = ?, result = ?, version = version + 1, updated_at = ?
                 WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-              `).run(now, request.result, now, task.taskId, agentId, task.version)
+              `).run(now, attemptResult, now, task.taskId, agentId, task.version)
             : this.runtime.store.db.prepare(`
                 UPDATE tasks
                 SET status = ?, ended_at = ?, result = ?, version = version + 1, updated_at = ?
                 WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-              `).run(request.outcome, now, request.result, now, task.taskId, agentId, task.version);
+              `).run(request.outcome, now, attemptResult, now, task.taskId, agentId, task.version);
           if (Number(lifecycle.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
           this.runtime.insertEvent(task.projectId, task.taskId, actor, "task_run_settled", {
             kind: task.kind,

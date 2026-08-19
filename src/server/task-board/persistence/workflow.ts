@@ -26,9 +26,17 @@ import {
   workItemStateForStage,
   workItemTransitionStoreForDatabase,
 } from "../collaborators/work-item-transitions.js";
+import {
+  scopeViolationResult,
+  type DeclaredScopeCheckResult,
+} from "../collaborators/scope-check.js";
 
 type Row = Record<string, unknown>;
 export type WorkflowGitRunner = (arguments_: readonly string[]) => string;
+export type AttemptScopeCheckResult = DeclaredScopeCheckResult | Readonly<{
+  ok: false;
+  error: string;
+}>;
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
@@ -539,8 +547,14 @@ export class TransparentWorkflow {
     return true;
   }
 
-  settleAttemptInTransaction(taskId: string, outcome: "completed" | "failed" | "interrupted", result: string, draft?: StageHandoffDraft | null): readonly WorkNode[] {
-    return this.settleAttemptInternal(taskId, outcome, result, draft);
+  settleAttemptInTransaction(
+    taskId: string,
+    outcome: "completed" | "failed" | "interrupted",
+    result: string,
+    draft?: StageHandoffDraft | null,
+    scopeCheck: AttemptScopeCheckResult | null = null,
+  ): readonly WorkNode[] {
+    return this.settleAttemptInternal(taskId, outcome, result, draft, scopeCheck);
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {
@@ -575,9 +589,24 @@ export class TransparentWorkflow {
     outcome: "completed" | "failed" | "interrupted",
     result: string,
     draft: StageHandoffDraft | null | undefined,
+    scopeCheck: AttemptScopeCheckResult | null,
   ): readonly WorkNode[] {
-    const attempt = this.db.prepare(`SELECT a.*,n.project_id,n.plan_revision_id,n.stage_template_json,n.current_stage FROM stage_attempts a
-      JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
+    const attempt = this.db.prepare(`
+      SELECT
+        a.*,
+        n.project_id,
+        n.plan_revision_id,
+        n.stage_template_json,
+        n.current_stage,
+        plan.work_item_id,
+        item.state AS work_item_state,
+        item.pipeline_branch
+      FROM stage_attempts a
+      JOIN work_nodes n ON n.node_id=a.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE a.task_id=?
+    `).get(taskId) as Row | undefined;
     if (!attempt) return Object.freeze([]);
     const now = this.now().toISOString();
     const apply = (): readonly WorkNode[] => {
@@ -606,6 +635,37 @@ export class TransparentWorkflow {
         recommendedReturnStage: supplied?.recommendedReturnStage ?? (passed ? null : stage), createdAt: now,
       });
       this.db.prepare("INSERT OR IGNORE INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(handoff.handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
+      const parkAttempt = (detail: string): readonly WorkNode[] => {
+        this.db.prepare(
+          "UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?",
+        ).run(now, nodeId);
+        const workItemState = String(attempt.work_item_state) as WorkItemState;
+        if (!isTerminalWorkItemState(workItemState) && workItemState !== "parked") {
+          transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+            workItemId: String(attempt.work_item_id),
+            to: "parked",
+            actorType: "system",
+            actorId: "system:workflow",
+            now,
+          });
+        }
+        this.event(projectId, nodeId, taskId, "stage_failed", `${stage} blocked: ${detail.slice(0, 240)}`, now);
+        return Object.freeze([]);
+      };
+      const brightLineDetail = !passed
+        ? result.startsWith("BRIGHT_LINE:")
+          ? result
+          : supplied?.summary.startsWith("BRIGHT_LINE:") === true ? supplied.summary : null
+        : null;
+      if (brightLineDetail !== null) return parkAttempt(brightLineDetail);
+      if (passed && stage === "implementation" && attempt.pipeline_branch !== null) {
+        if (scopeCheck === null) return parkAttempt("scope check failed");
+        if (!scopeCheck.ok) {
+          return parkAttempt("files" in scopeCheck
+            ? scopeViolationResult(scopeCheck.files)
+            : scopeCheck.error.slice(0, 2_000));
+        }
+      }
       if (!passed) {
         const returnStage = supplied?.recommendedReturnStage ?? null;
         const attemptNumber = Number(attempt.attempt);

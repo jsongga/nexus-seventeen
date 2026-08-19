@@ -268,6 +268,11 @@ export function agentRole(request: AgentLaunchRequest): AgentRole {
 export function agentPrompt(request: AgentLaunchRequest): string {
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
+  const pipeline = request.context.workflow?.pipeline;
+  const pipelineImplementation = fixedRole === "engineer" &&
+    request.context.workflow?.stage === "implementation" && pipeline != null
+    ? `Pipeline task on branch ${pipeline.branch}. Declared scope (only these path prefixes): ${pipeline.declaredScope.join(", ")}. Non-goals: ${pipeline.nonGoals.join(", ")}. Loop: write a failing test where a criterion allows, implement, run \`npm run verify:fast\`, read the failure, fix; repeat until green. Run \`npm run verify:area\` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: append to assumptions in your handoff evidence. STOP and return failed with detail starting \`BRIGHT_LINE:\` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.`
+    : null;
   const workflow = fixedRole === "engineer"
     ? [
         "Follow a research → plan → execute → test loop inside this one run.",
@@ -293,6 +298,7 @@ export function agentPrompt(request: AgentLaunchRequest): string {
     `You are the fixed Cicada ${fixedRole} agent for ${request.context.mission.area}.`,
     request.context.mission.mission,
     ...workflow,
+    ...(pipelineImplementation === null ? [] : [pipelineImplementation]),
     "This is a single event-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.",
     "Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.",
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
