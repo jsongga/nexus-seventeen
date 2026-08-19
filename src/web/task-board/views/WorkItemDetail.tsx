@@ -400,9 +400,14 @@ export function FinalApprovalActions({
   onRequestChanges: () => void;
 }) {
   return (
-    <div className="mt-4 grid gap-2 sm:grid-cols-2" role="group" aria-label="Final approval actions">
-      <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
-      <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>Request changes</Button>
+    <div className="mt-4">
+      <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Final approval actions">
+        <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
+        <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>Request changes</Button>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-muted">
+        A merge conflict returns the work item to implementation with conflict details for the next engineering round.
+      </p>
     </div>
   );
 }
@@ -897,7 +902,7 @@ export function WorkItemDetail({
         open={confirmation === 'merge'}
         onClose={closeConfirmation}
         title="Approve and merge pipeline"
-        description="This creates a local no-fast-forward merge commit on the repository's clean default branch. It does not push anything."
+        description="This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the work item to implementation with conflict details."
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
           <Button variant="mint" icon={<Check size={15} />} disabled={busy || finalActionBusy} onClick={() => { void submitMergeApproval(); }}>Approve &amp; merge</Button>

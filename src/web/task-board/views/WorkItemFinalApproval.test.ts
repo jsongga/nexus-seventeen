@@ -79,6 +79,8 @@ describe('final approval summary and controls', () => {
 
     expect(markup).toContain('Approve &amp; merge');
     expect(markup).toContain('Request changes');
+    expect(markup).toContain('returns the work item to implementation with conflict details');
+    expect(markup).not.toContain('parked');
   });
 
   it('renders a required bounded change note without cancellation language', () => {

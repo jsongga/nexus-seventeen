@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
+  GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
   TASK_BOARD_ERROR_CODES,
   WORKFLOW_STAGES,
@@ -48,7 +49,6 @@ export interface MachineVerifyEvidence {
 }
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
-const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
 function text(value: unknown, field: string, max = 8_000): string {
   if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > max) {
@@ -123,7 +123,7 @@ function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
       "-C", repositoryPath,
       "rev-parse", "HEAD",
     ]).trim();
-    if (!GIT_OBJECT_ID.test(output)) throw new Error("git returned an invalid object id");
+    if (!GIT_OBJECT_ID_PATTERN.test(output)) throw new Error("git returned an invalid object id");
     return output;
   } catch (error) {
     throw new TaskBoardError(
@@ -431,7 +431,7 @@ export class TransparentWorkflow {
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
       if (row.tier !== "hazardous" && hasPipelineShape) {
         assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
-        if (resolvedBaseSha === null || !GIT_OBJECT_ID.test(resolvedBaseSha)) {
+        if (resolvedBaseSha === null || !GIT_OBJECT_ID_PATTERN.test(resolvedBaseSha)) {
           throw new TaskBoardError(
             409,
             TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
@@ -552,7 +552,16 @@ export class TransparentWorkflow {
     version: number,
     settlement: PipelineMergeSettlement,
     actor: string,
-  ): void {
+  ): readonly WorkNode[] {
+    if (settlement.kind === "conflict") {
+      // Spec refinement: a cleanly aborted merge conflict is recoverable engineering work.
+      // Use the final-rejection return path verbatim so the implementation node is re-armed
+      // with a system:final-approval failed handoff instead of parking the serial pipeline.
+      return this.rejectFinalApprovalInTransaction(workItemId, {
+        version,
+        note: settlement.summary,
+      }, actor);
+    }
     const row = this.db.prepare(`
       SELECT item.state,item.version,plan.project_id,node.node_id
       FROM work_items item
@@ -576,20 +585,40 @@ export class TransparentWorkflow {
     const now = this.now().toISOString();
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
-      to: settlement.kind === "merged" ? "merged" : "parked",
+      to: "merged",
       actorType: "human",
       actorId: actor,
       now,
-      ...(settlement.kind === "merged" ? { endedAt: now } : {}),
+      endedAt: now,
       currentStage: null,
     });
     this.event(
       String(row.project_id),
       String(row.node_id),
       null,
-      settlement.kind === "merged" ? "pipeline_merged" : "pipeline_merge_conflict",
-      settlement.kind === "merged" ? `merged ${settlement.mergeSha}` : settlement.summary,
+      "pipeline_merged",
+      `merged ${settlement.mergeSha}`,
       now,
+    );
+    return Object.freeze([]);
+  }
+
+  recordOrphanedPipelineMergeInTransaction(workItemId: string, mergeSha: string): void {
+    const row = this.db.prepare(`
+      SELECT plan.project_id,node.node_id
+      FROM plan_revisions plan
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      WHERE plan.work_item_id=? AND plan.state='confirmed'
+      ORDER BY plan.revision DESC,node.created_at,node.node_id
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_missing");
+    this.event(
+      String(row.project_id),
+      String(row.node_id),
+      null,
+      "pipeline_merge_orphaned",
+      `Orphaned merge ${mergeSha} for work item ${workItemId}; board settlement failed.`,
     );
   }
 

@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { StageHandoff, WorkflowPlanDraft } from "#shared/task-board-contract";
 import { createTaskBoardService } from "#server/task-board";
+import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
 import {
   AGENT_ONE_TOKEN,
   HUMAN_TOKEN,
@@ -53,7 +54,10 @@ function plan(suffix: string): WorkflowPlanDraft {
     nonGoals: ["Do not push a remote branch."],
     mechanicalPortions: ["Merge the reviewed local branch."],
     blockingQuestions: [],
-    criterionChecks: [{ criterion: "The fixture check passes.", check: "node check.mjs" }],
+    criterionChecks: [
+      { criterion: "The human can inspect the complete pipeline evidence.", check: "node check.mjs" },
+      { criterion: "An unmatched machine check remains visible.", check: "node unmatched.mjs" },
+    ],
     nodes: [{
       nodeId: `final-approval-${suffix}`,
       title: `Final approval ${suffix}`,
@@ -120,7 +124,9 @@ function forceFinalApproval(path: string, workItemId: string): number {
   const db = new DatabaseSync(path);
   try {
     const row = db.prepare(`
-      SELECT node.node_id, attempt.task_id
+      SELECT
+        node.node_id,node.project_id,node.title,node.objective,node.acceptance_criteria_json,
+        attempt.task_id
       FROM plan_revisions plan
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
       JOIN stage_attempts attempt ON attempt.node_id=node.node_id AND attempt.stage='implementation'
@@ -160,6 +166,10 @@ function forceFinalApproval(path: string, workItemId: string): number {
       now,
     );
     db.prepare(`
+      INSERT INTO task_events(event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at)
+      VALUES (?, ?, ?, 'agent', 'engineer-one', 'task_run_settled', '{}', ?)
+    `).run(`event-engineer-${workItemId}`, String(row.project_id), taskId, now);
+    db.prepare(`
       INSERT INTO verify_attempts(
         verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
         check_results_json,detail,created_at,ended_at
@@ -167,8 +177,63 @@ function forceFinalApproval(path: string, workItemId: string): number {
     `).run(
       `verify-final-${workItemId}`,
       nodeId,
-      JSON.stringify([{ criterion: "The fixture check passes.", check: "node check.mjs", passed: true }]),
+      JSON.stringify([{
+        criterion: "The human can inspect the complete pipeline evidence.",
+        check: "node check.mjs",
+        passed: true,
+      }]),
       now,
+      now,
+    );
+    const verifyTaskId = `task-machine-${workItemId}`;
+    const orderKey = Number(db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
+    db.prepare(`
+      INSERT INTO tasks(
+        task_id,project_id,parent_task_id,task_kind,required_role,requires_review,
+        title,objective,acceptance_criteria,workspace_refs_json,status,assigned_agent_id,
+        assigned_role,expected_agent_minutes,agent_estimate_minutes,estimate_recorded_at,
+        order_key,started_at,ended_at,result,version,created_at,updated_at
+      ) VALUES (?, ?, NULL, 'work', NULL, 0, ?, ?, ?, '[]', 'completed', NULL,
+        NULL, 15, NULL, NULL, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      verifyTaskId,
+      String(row.project_id),
+      `Machine verify: ${String(row.title)}`,
+      String(row.objective),
+      (JSON.parse(String(row.acceptance_criteria_json)) as string[]).join("\n"),
+      orderKey,
+      now,
+      now,
+      "All configured checks passed.",
+      now,
+      now,
+    );
+    db.prepare(`
+      INSERT INTO task_events(event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at)
+      VALUES (?, ?, ?, 'system', 'system:machine-verify', 'task_created', '{}', ?)
+    `).run(`event-machine-${workItemId}`, String(row.project_id), verifyTaskId, now);
+    const verifyHandoff: StageHandoff = {
+      apiVersion: "steward.task-board/v1",
+      handoffId: `handoff-machine-${workItemId}`,
+      nodeId,
+      taskId: verifyTaskId,
+      stage: "testing",
+      outcome: "passed",
+      summary: "Machine verification passed.",
+      evidence: ["Machine verify supplied this operational message."],
+      artifactIds: [],
+      acceptanceCriteria: [],
+      blockers: [],
+      recommendedReturnStage: null,
+      createdAt: now,
+    };
+    db.prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(
+      verifyHandoff.handoffId,
+      nodeId,
+      verifyTaskId,
+      verifyHandoff.stage,
+      verifyHandoff.outcome,
+      JSON.stringify(verifyHandoff),
       now,
     );
     db.prepare("UPDATE work_nodes SET state='completed',current_stage=NULL,version=version+1,updated_at=? WHERE node_id=?")
@@ -181,7 +246,7 @@ function forceFinalApproval(path: string, workItemId: string): number {
   }
 }
 
-async function finalApprovalFixture(suffix: string, conflict = false) {
+async function finalApprovalFixture(suffix: string, conflict = false, forceSettlementConflict = false) {
   const fixture = await boardFixture();
   const repo = await repository();
   setProjectRepository(fixture, repo.repo);
@@ -205,14 +270,30 @@ async function finalApprovalFixture(suffix: string, conflict = false) {
   }
   const version = forceFinalApproval(fixture.path, proposed.workItemId);
   fixture.board.close();
-  const service = await createTaskBoardService({
-    dbPath: fixture.path,
-    humanToken: HUMAN_TOKEN,
-    humanPrincipal: "human:alice",
-    port: 0,
-    reconcileIntervalSeconds: 0,
-    now: () => new Date("2026-08-19T17:00:00.000Z"),
-  });
+  const service = await createTaskBoardService(
+    {
+      dbPath: fixture.path,
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      reconcileIntervalSeconds: 0,
+      now: () => new Date("2026-08-19T17:00:00.000Z"),
+    },
+    forceSettlementConflict ? {
+      mergePipeline: (request_) => {
+        const result = mergePipelineBranch(request_);
+        if (result.kind === "merged") {
+          const db = new DatabaseSync(fixture.path);
+          try {
+            db.prepare("UPDATE work_items SET version=version+1 WHERE work_item_id=?").run(proposed.workItemId);
+          } finally {
+            db.close();
+          }
+        }
+        return result;
+      },
+    } : {},
+  );
   const address = await service.start();
   return { ...fixture, ...repo, ...proposed, branch, version, service, origin: address.url };
 }
@@ -250,20 +331,27 @@ test("pipeline summary returns git, scope, assumption, verify, and criteria evid
     assert.equal(summary.scopeOk, true);
     assert.deepEqual(summary.assumptions, ["The default branch stays available."]);
     assert.deepEqual(summary.midRunAssumptions, ["Use a plain-text marker for v1."]);
-    assert.deepEqual(summary.criteria, [
-      "The human can inspect the complete pipeline evidence.",
-      "The pipeline commit lands only after approval.",
+    assert.deepEqual(summary.criteria, ["The pipeline commit lands only after approval."]);
+    assert.deepEqual(summary.criterionChecks, [
+      {
+        criterion: "The human can inspect the complete pipeline evidence.",
+        check: "node check.mjs",
+      },
+      {
+        criterion: "An unmatched machine check remains visible.",
+        check: "node unmatched.mjs",
+      },
     ]);
-    assert.deepEqual(summary.criterionChecks, [{
-      criterion: "The fixture check passes.",
-      check: "node check.mjs",
-    }]);
     assert.deepEqual((summary.verify as Array<Record<string, unknown>>).map((attempt) => ({
       state: attempt.state,
       checkResults: attempt.checkResults,
     })), [{
       state: "green",
-      checkResults: [{ criterion: "The fixture check passes.", check: "node check.mjs", passed: true }],
+      checkResults: [{
+        criterion: "The human can inspect the complete pipeline evidence.",
+        check: "node check.mjs",
+        passed: true,
+      }],
     }]);
     assert.equal((await request(
       fixture.origin,
@@ -304,7 +392,106 @@ test("approve-merge merges before transitioning the work item to merged", async 
   }
 });
 
-test("approve-merge parks conflicts after abort and returns repo-busy without transition", async () => {
+test("concurrent approve and reject serialize so exactly one wins without an orphaned merge", async () => {
+  const fixture = await finalApprovalFixture("approval-race");
+  try {
+    const [approve, reject] = await Promise.all([
+      request(
+        fixture.origin,
+        `/v1/work-items/${fixture.workItemId}/approve-merge`,
+        "POST",
+        { version: fixture.version },
+      ),
+      request(
+        fixture.origin,
+        `/v1/work-items/${fixture.workItemId}/reject-final`,
+        "POST",
+        { version: fixture.version, note: "Hold this merge for one more implementation pass." },
+      ),
+    ]);
+    assert.deepEqual([approve.status, reject.status].sort((left, right) => left - right), [200, 409]);
+    const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
+    assert.match(
+      (await current.json() as { workItem: { state: string } }).workItem.state,
+      /^(?:merged|implementing)$/u,
+    );
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(db.prepare(
+        "SELECT COUNT(*) AS n FROM project_events WHERE event_type='pipeline_merge_orphaned'",
+      ).get()?.n, 0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await fixture.service.close();
+  }
+});
+
+test("a forced post-merge settlement CAS failure records the orphaned sha and returns its distinct code", async () => {
+  const fixture = await finalApprovalFixture("settlement-conflict", false, true);
+  try {
+    const response = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/approve-merge`,
+      "POST",
+      { version: fixture.version },
+    );
+    assert.equal(response.status, 409);
+    assert.equal(
+      (await response.json() as { error: { code: string } }).error.code,
+      "TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT",
+    );
+    const mergeSha = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const event = db.prepare(`
+        SELECT summary
+        FROM project_events
+        WHERE event_type='pipeline_merge_orphaned'
+        ORDER BY sequence DESC
+        LIMIT 1
+      `).get();
+      assert.match(String(event?.summary), new RegExp(mergeSha, "u"));
+      assert.equal(
+        db.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(fixture.workItemId)?.state,
+        "final_approval",
+      );
+    } finally {
+      db.close();
+    }
+  } finally {
+    await fixture.service.close();
+  }
+});
+
+test("approve-merge returns a distinct divergence conflict without mutating the merge target", async () => {
+  const fixture = await finalApprovalFixture("diverged");
+  try {
+    await git(fixture.repo, ["switch", "--orphan", "develop"]);
+    await writeFile(join(fixture.repo, "unrelated.txt"), "unrelated root\n");
+    await git(fixture.repo, ["add", "."]);
+    await git(fixture.repo, ["commit", "-m", "unrelated merge target"]);
+    const before = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
+    const response = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/approve-merge`,
+      "POST",
+      { version: fixture.version },
+    );
+    assert.equal(response.status, 409);
+    const error = await response.json() as { error: { code: string; message: string } };
+    assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BASE_DIVERGED");
+    assert.match(error.error.message, /diverged/iu);
+    assert.equal((await git(fixture.repo, ["rev-parse", "HEAD"])).trim(), before);
+    const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
+    assert.equal((await current.json() as { workItem: { state: string } }).workItem.state, "final_approval");
+  } finally {
+    await fixture.service.close();
+  }
+});
+
+test("approve-merge returns conflicts to implementation and returns repo-busy without transition", async () => {
   const conflictFixture = await finalApprovalFixture("conflict", true);
   try {
     const before = (await git(conflictFixture.repo, ["rev-parse", "HEAD"])).trim();
@@ -315,9 +502,26 @@ test("approve-merge parks conflicts after abort and returns repo-busy without tr
       { version: conflictFixture.version },
     );
     assert.equal(response.status, 200);
-    assert.equal((await response.json() as { workItem: { state: string } }).workItem.state, "parked");
+    const body = await response.json() as { workItem: { state: string; currentStage: string } };
+    assert.equal(body.workItem.state, "implementing");
+    assert.equal(body.workItem.currentStage, "implementation");
     assert.equal((await git(conflictFixture.repo, ["rev-parse", "HEAD"])).trim(), before);
     assert.equal(await git(conflictFixture.repo, ["status", "--porcelain"]), "");
+    const claimResponse = await request(
+      conflictFixture.origin,
+      `/v1/agents/${conflictFixture.engineer.agentId}/runs/claim`,
+      "POST",
+      { claimId: "claim-merge-conflict", messageCursor: null },
+      AGENT_ONE_TOKEN,
+    );
+    assert.equal(claimResponse.status, 201);
+    const claim = await claimResponse.json() as {
+      context: { workflow: { stage: string; dependencyHandoffs: Array<{ outcome: string; summary: string }> } };
+    };
+    assert.equal(claim.context.workflow.stage, "implementation");
+    assert.equal(claim.context.workflow.dependencyHandoffs.length, 1);
+    assert.equal(claim.context.workflow.dependencyHandoffs[0]?.outcome, "failed");
+    assert.match(String(claim.context.workflow.dependencyHandoffs[0]?.summary), /merge conflict/iu);
   } finally {
     await conflictFixture.service.close();
   }
@@ -354,6 +558,17 @@ test("reject-final records a system implementation handoff and re-arms engineeri
     const body = await response.json() as { workItem: { state: string; currentStage: string } };
     assert.equal(body.workItem.state, "implementing");
     assert.equal(body.workItem.currentStage, "implementation");
+
+    const summaryResponse = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/pipeline-summary`,
+      "GET",
+    );
+    assert.equal(summaryResponse.status, 200);
+    assert.deepEqual(
+      (await summaryResponse.json() as { midRunAssumptions: string[] }).midRunAssumptions,
+      ["Use a plain-text marker for v1."],
+    );
 
     const claimResponse = await request(
       fixture.origin,

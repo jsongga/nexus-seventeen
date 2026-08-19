@@ -221,7 +221,7 @@ export class VerifyAttemptsCollaborator {
       FROM verify_attempts verify
       JOIN work_nodes node ON node.node_id=verify.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      WHERE plan.work_item_id=?
+      WHERE plan.work_item_id=? AND plan.state='confirmed'
       ORDER BY verify.created_at,verify.verify_attempt_id
     `).all(workItemId) as Row[]).map(verifyAttempt));
   }

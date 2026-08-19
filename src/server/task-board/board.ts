@@ -62,7 +62,10 @@ import { AgentsCollaborator } from "./collaborators/agents.js";
 import { AutomationCollaborator } from "./collaborators/automation.js";
 import { DocumentsCollaborator } from "./collaborators/documents.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
-import { ProjectsCollaborator } from "./collaborators/projects.js";
+import {
+  ProjectsCollaborator,
+  type PipelineMergeExecutor,
+} from "./collaborators/projects.js";
 import { RunsCollaborator } from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
@@ -83,6 +86,10 @@ import { TaskBoardStore } from "./persistence/store.js";
 import type { ProjectWorkflowSnapshot } from "./persistence/workflow.js";
 import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 
+export interface TaskBoardDependencies {
+  readonly mergePipeline?: PipelineMergeExecutor;
+}
+
 export class TaskBoard {
   readonly #runtime: TaskBoardRuntime;
   readonly #agents: AgentsCollaborator;
@@ -94,11 +101,18 @@ export class TaskBoard {
   readonly #tasks: TasksCollaborator;
   readonly #workItems: WorkItemsCollaborator;
 
-  private constructor(config: TaskBoardConfig, store: TaskBoardStore) {
+  private constructor(config: TaskBoardConfig, store: TaskBoardStore, dependencies: TaskBoardDependencies) {
     this.#runtime = new TaskBoardRuntime(config, store);
     this.#automation = new AutomationCollaborator(this.#runtime);
     this.#tasks = new TasksCollaborator(this.#runtime);
-    this.#projects = new ProjectsCollaborator(this.#runtime, this.#automation, this.#tasks);
+    this.#projects = new ProjectsCollaborator(
+      this.#runtime,
+      this.#automation,
+      this.#tasks,
+      undefined,
+      {},
+      dependencies.mergePipeline,
+    );
     this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
     this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects, this.#tasks);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
@@ -106,8 +120,8 @@ export class TaskBoard {
     this.#messages = new MessagesCollaborator(this.#runtime);
   }
 
-  static async open(config: TaskBoardConfig): Promise<TaskBoard> {
-    const board = new TaskBoard(config, await TaskBoardStore.open(config.dbPath));
+  static async open(config: TaskBoardConfig, dependencies: TaskBoardDependencies = {}): Promise<TaskBoard> {
+    const board = new TaskBoard(config, await TaskBoardStore.open(config.dbPath), dependencies);
     board.#runs.reconcileStaleRuns();
     board.#projects.reconcileWorkflowsBestEffort();
     return board;
@@ -200,13 +214,13 @@ export class TaskBoard {
     return this.#projects.pipelineSummary(workItemId);
   }
 
-  approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): WorkItemDetail {
-    this.#projects.approvePipelineMerge(workItemId, request);
+  async approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): Promise<WorkItemDetail> {
+    await this.#projects.approvePipelineMerge(workItemId, request);
     return this.#workItems.requireWorkItem(workItemId);
   }
 
-  rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): WorkItemDetail {
-    this.#projects.rejectFinalApproval(workItemId, request);
+  async rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): Promise<WorkItemDetail> {
+    await this.#projects.rejectFinalApproval(workItemId, request);
     return this.#workItems.requireWorkItem(workItemId);
   }
 

@@ -13,28 +13,32 @@ function git(repo: string, ...arguments_: string[]): string {
   });
 }
 
-async function fixtureRepo(): Promise<Readonly<{ root: string; repo: string; baseSha: string; branch: string }>> {
+async function fixtureRepo(
+  mergeTarget = "main",
+): Promise<Readonly<{ root: string; repo: string; baseSha: string; branch: string; mergeTarget: string }>> {
   const root = await mkdtemp(join(tmpdir(), "steward-final-merge-"));
   const repo = join(root, "repo");
-  execFileSync("git", ["init", "-b", "main", repo]);
+  execFileSync("git", ["init", "-b", mergeTarget, repo]);
   git(repo, "config", "user.name", "Task Board Test");
   git(repo, "config", "user.email", "task-board@example.test");
   await writeFile(join(repo, "shared.txt"), "base\n");
   git(repo, "add", "shared.txt");
   git(repo, "commit", "-m", "initial");
   const baseSha = git(repo, "rev-parse", "HEAD").trim();
-  return Object.freeze({ root, repo, baseSha, branch: "task/work-item-one" });
+  return Object.freeze({ root, repo, baseSha, branch: "task/work-item-one", mergeTarget });
 }
 
-test("mergePipelineBranch creates a no-fast-forward merge commit on a clean default branch", async (t) => {
-  const fixture = await fixtureRepo();
+test("mergePipelineBranch merges into a clean trunk target even when the repository has multiple branches", async (t) => {
+  const fixture = await fixtureRepo("trunk");
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  git(fixture.repo, "branch", "develop");
+  git(fixture.repo, "branch", "release");
   git(fixture.repo, "switch", "-c", fixture.branch);
   await writeFile(join(fixture.repo, "feature.txt"), "pipeline change\n");
   git(fixture.repo, "add", "feature.txt");
   git(fixture.repo, "commit", "-m", "add pipeline change");
   const branchSha = git(fixture.repo, "rev-parse", "HEAD").trim();
-  git(fixture.repo, "switch", "main");
+  git(fixture.repo, "switch", fixture.mergeTarget);
 
   const result = mergePipelineBranch({
     repoPath: fixture.repo,
@@ -78,11 +82,11 @@ test("mergePipelineBranch aborts a conflict and leaves the repository clean", as
   assert.throws(() => git(fixture.repo, "rev-parse", "--verify", "MERGE_HEAD"));
 });
 
-test("mergePipelineBranch reports repo_busy when another non-default branch is checked out", async (t) => {
+test("mergePipelineBranch reports repo_busy when another task branch is checked out", async (t) => {
   const fixture = await fixtureRepo();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   git(fixture.repo, "branch", fixture.branch);
-  git(fixture.repo, "switch", "-c", "topic/operator-work");
+  git(fixture.repo, "switch", "-c", "task/operator-work");
 
   assert.deepEqual(mergePipelineBranch({
     repoPath: fixture.repo,
@@ -104,4 +108,25 @@ test("mergePipelineBranch reports repo_busy when the default branch worktree is 
     baseSha: fixture.baseSha,
     git: runMergeGit,
   }), { kind: "repo_busy" });
+});
+
+test("mergePipelineBranch reports diverged when the pipeline base is not an ancestor of the merge target", async (t) => {
+  const fixture = await fixtureRepo("trunk");
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  git(fixture.repo, "branch", fixture.branch);
+  git(fixture.repo, "switch", "--orphan", "develop");
+  await writeFile(join(fixture.repo, "unrelated.txt"), "unrelated history\n");
+  git(fixture.repo, "add", ".");
+  git(fixture.repo, "commit", "-m", "unrelated root");
+
+  const result = mergePipelineBranch({
+    repoPath: fixture.repo,
+    branch: fixture.branch,
+    baseSha: fixture.baseSha,
+    git: runMergeGit,
+  });
+
+  assert.equal(result.kind, "diverged");
+  if (result.kind !== "diverged") return;
+  assert.match(result.detail, /not an ancestor of merge target develop/iu);
 });

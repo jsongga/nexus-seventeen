@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
 import type { GitRunner } from "./scope-check.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
-const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const SUMMARY_LIMIT = 2_000;
 
 const neutralized = (repoPath: string, arguments_: readonly string[]): readonly string[] => [
@@ -25,6 +25,7 @@ export const runMergeGit: GitRunner = (arguments_) => execFileSync("git", [...ar
 export type MergePipelineResult =
   | Readonly<{ kind: "merged"; mergeSha: string }>
   | Readonly<{ kind: "conflict"; summary: string }>
+  | Readonly<{ kind: "diverged"; detail: string }>
   | Readonly<{ kind: "repo_busy" }>;
 
 function optionalGit(git: GitRunner, arguments_: readonly string[]): string | null {
@@ -33,28 +34,6 @@ function optionalGit(git: GitRunner, arguments_: readonly string[]): string | nu
   } catch {
     return null;
   }
-}
-
-function defaultBranch(repoPath: string, currentBranch: string, git: GitRunner): string | null {
-  const remoteHead = optionalGit(git, neutralized(repoPath, [
-    "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
-  ]))?.trim();
-  if (remoteHead !== undefined && remoteHead !== null && remoteHead.length > 0) {
-    return remoteHead.startsWith("origin/") ? remoteHead.slice("origin/".length) : remoteHead;
-  }
-
-  const configured = optionalGit(git, neutralized(repoPath, ["config", "--get", "init.defaultBranch"]))?.trim();
-  const candidates = [configured, "main", "master"]
-    .filter((candidate): candidate is string => candidate !== undefined && candidate !== null && candidate.length > 0);
-  for (const candidate of new Set(candidates)) {
-    const resolved = optionalGit(git, neutralized(repoPath, ["rev-parse", "--verify", `refs/heads/${candidate}`]))?.trim();
-    if (resolved !== undefined && resolved !== null && GIT_OBJECT_ID.test(resolved)) return candidate;
-  }
-
-  const localBranches = optionalGit(git, neutralized(repoPath, [
-    "for-each-ref", "--format=%(refname:short)", "refs/heads",
-  ]))?.split("\n").filter((branch) => branch.length > 0) ?? [];
-  return localBranches.length === 1 && localBranches[0] === currentBranch ? currentBranch : null;
 }
 
 function mergeErrorDetail(error: unknown): string {
@@ -81,19 +60,21 @@ export function mergePipelineBranch(request: Readonly<{
   } catch {
     return Object.freeze({ kind: "repo_busy" });
   }
-  const expectedDefault = defaultBranch(request.repoPath, currentBranch, request.git);
   if (
     dirty.length > 0 ||
     currentBranch === "HEAD" ||
     currentBranch === request.branch ||
-    expectedDefault === null ||
-    currentBranch !== expectedDefault
+    currentBranch.startsWith("task/")
   ) return Object.freeze({ kind: "repo_busy" });
 
   const head = request.git(neutralized(request.repoPath, ["rev-parse", "HEAD"])).trim();
-  if (head !== request.baseSha) {
+  try {
     request.git(neutralized(request.repoPath, ["merge-base", "--is-ancestor", request.baseSha, "HEAD"]));
-    console.warn(`[task-board] default branch moved beyond pipeline base ${request.baseSha}`);
+  } catch {
+    return Object.freeze({
+      kind: "diverged",
+      detail: `Pipeline base ${request.baseSha} is not an ancestor of merge target ${currentBranch} at ${head}.`,
+    });
   }
   try {
     request.git(neutralized(request.repoPath, ["merge", "--no-ff", "--no-edit", request.branch]));
@@ -107,6 +88,6 @@ export function mergePipelineBranch(request: Readonly<{
     });
   }
   const mergeSha = request.git(neutralized(request.repoPath, ["rev-parse", "HEAD"])).trim();
-  if (!GIT_OBJECT_ID.test(mergeSha)) throw new Error("git returned an invalid merge object id");
+  if (!GIT_OBJECT_ID_PATTERN.test(mergeSha)) throw new Error("git returned an invalid merge object id");
   return Object.freeze({ kind: "merged", mergeSha });
 }

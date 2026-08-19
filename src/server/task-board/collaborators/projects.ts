@@ -65,11 +65,14 @@ export type ProjectsVerifyDependencies = Omit<
   VerifyAttemptsDependencies,
   "settleInTransaction" | "activateNodes"
 >;
+export type PipelineMergeExecutor = typeof mergePipelineBranch;
 
 export class ProjectsCollaborator {
   readonly #workflow: TransparentWorkflow;
   readonly #artifacts: ArtifactStore;
   readonly #verifyAttempts: VerifyAttemptsCollaborator;
+  // Process-local by ruling: one task-board process owns a repository/database pair.
+  readonly #finalApprovalLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -77,6 +80,7 @@ export class ProjectsCollaborator {
     private readonly tasks: TasksCollaborator,
     private readonly git: WorkflowGitRunner = runWorkflowGit,
     verifyDependencies: ProjectsVerifyDependencies = {},
+    private readonly mergePipeline: PipelineMergeExecutor = mergePipelineBranch,
   ) {
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
@@ -249,14 +253,35 @@ export class ProjectsCollaborator {
 
     const assumptions = Object.freeze(JSON.parse(String(row.assumptions_json)) as string[]);
     const handoffRows = this.runtime.store.db.prepare(`
-      SELECT handoff.payload_json
+      SELECT
+        handoff.payload_json,handoff.stage,
+        COALESCE(
+          (
+            SELECT event.actor_id
+            FROM task_events event
+            WHERE event.task_id=handoff.task_id AND event.event_type='task_run_settled'
+            ORDER BY event.sequence DESC
+            LIMIT 1
+          ),
+          (
+            SELECT event.actor_id
+            FROM task_events event
+            WHERE event.task_id=handoff.task_id AND event.event_type='task_created'
+            ORDER BY event.sequence
+            LIMIT 1
+          )
+        ) AS author_id
       FROM stage_handoffs handoff
       JOIN work_nodes node ON node.node_id=handoff.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       WHERE plan.work_item_id=?
       ORDER BY handoff.created_at,handoff.rowid
     `).all(workItemId) as Row[];
-    const evidence = handoffRows.flatMap((handoffRow) => {
+    const evidence = handoffRows.filter((handoffRow) =>
+      handoffRow.stage === "implementation" &&
+      handoffRow.author_id !== null &&
+      !String(handoffRow.author_id).startsWith("system:"),
+    ).flatMap((handoffRow) => {
       const handoff = JSON.parse(String(handoffRow.payload_json)) as { evidence?: unknown };
       return Array.isArray(handoff.evidence)
         ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
@@ -264,6 +289,12 @@ export class ProjectsCollaborator {
     });
     const midRunAssumptions = Object.freeze([...new Set(evidence.filter((candidate) =>
       !assumptions.some((planned) => candidate.includes(planned) || planned.includes(candidate))))]);
+    const criteria = JSON.parse(String(row.acceptance_criteria_json)) as string[];
+    const criterionChecks = JSON.parse(String(row.criterion_checks_json ?? "[]")) as Array<{
+      criterion: string;
+      check: string;
+    }>;
+    const machineCheckedCriteria = new Set(criterionChecks.map((entry) => entry.criterion));
     return Object.freeze({
       commits,
       diffstat,
@@ -273,57 +304,95 @@ export class ProjectsCollaborator {
       assumptions,
       midRunAssumptions,
       verify: this.#verifyAttempts.listForWorkItem(workItemId),
-      criteria: Object.freeze(JSON.parse(String(row.acceptance_criteria_json)) as string[]),
-      criterionChecks: Object.freeze(
-        JSON.parse(String(row.criterion_checks_json ?? "[]")) as Array<{ criterion: string; check: string }>,
-      ),
+      criteria: Object.freeze(criteria.filter((criterion) => !machineCheckedCriteria.has(criterion))),
+      criterionChecks: Object.freeze(criterionChecks),
     });
   }
 
-  approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): WorkItem {
-    const context = this.pipelineMergeContext(workItemId, request.version);
-    let merge: MergePipelineResult;
-    try {
-      merge = mergePipelineBranch({
-        repoPath: context.repoPath,
-        branch: context.branch,
-        baseSha: context.baseSha,
-        git: this.git,
-      });
-    } catch (error) {
-      throw new TaskBoardError(
-        409,
-        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-        "The pipeline repository is unavailable",
-        { cause: error },
-      );
-    }
-    if (merge.kind === "repo_busy") {
-      throw new TaskBoardError(
-        409,
-        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
-        "The pipeline repository is busy; check out its clean default branch and retry",
-      );
-    }
-    this.runtime.store.transaction(() => {
-      this.#workflow.settlePipelineMergeInTransaction(
+  approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): Promise<WorkItem> {
+    return this.withFinalApprovalLock(workItemId, () => {
+      // Git never runs inside this transaction. It is only the final state/version CAS
+      // immediately before the irreversible repository mutation.
+      const context = this.runtime.store.transaction(() => this.pipelineMergeContext(workItemId, request.version));
+      let merge: MergePipelineResult;
+      try {
+        merge = this.mergePipeline({
+          repoPath: context.repoPath,
+          branch: context.branch,
+          baseSha: context.baseSha,
+          git: this.git,
+        });
+      } catch (error) {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+          "The pipeline repository is unavailable",
+          { cause: error },
+        );
+      }
+      if (merge.kind === "repo_busy") {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
+          "The pipeline repository is busy; check out a clean non-task merge target and retry",
+        );
+      }
+      if (merge.kind === "diverged") {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BASE_DIVERGED,
+          `The pipeline base diverged from the current merge target: ${merge.detail}`,
+        );
+      }
+      let readyNodes: readonly WorkNode[];
+      try {
+        readyNodes = this.runtime.store.transaction(() => this.#workflow.settlePipelineMergeInTransaction(
+          workItemId,
+          request.version,
+          merge,
+          this.runtime.config.humanPrincipal,
+        ));
+      } catch (error) {
+        if (merge.kind !== "merged") throw error;
+        this.runtime.store.transaction(() => {
+          this.#workflow.recordOrphanedPipelineMergeInTransaction(workItemId, merge.mergeSha);
+        });
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT,
+          `Merge ${merge.mergeSha} landed, but the work item could not be settled; operator recovery is required`,
+          { cause: error },
+        );
+      }
+      this.activateWorkflowNodes(readyNodes);
+      return this.runtime.requireWorkItem(workItemId);
+    });
+  }
+
+  rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): Promise<WorkItem> {
+    return this.withFinalApprovalLock(workItemId, () => {
+      const readyNodes = this.runtime.store.transaction(() => this.#workflow.rejectFinalApprovalInTransaction(
         workItemId,
-        request.version,
-        merge,
+        request,
         this.runtime.config.humanPrincipal,
-      );
+      ));
+      this.activateWorkflowNodes(readyNodes);
+      return this.runtime.requireWorkItem(workItemId);
     });
-    return this.runtime.requireWorkItem(workItemId);
   }
 
-  rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): WorkItem {
-    const readyNodes = this.runtime.store.transaction(() => this.#workflow.rejectFinalApprovalInTransaction(
-      workItemId,
-      request,
-      this.runtime.config.humanPrincipal,
-    ));
-    this.activateWorkflowNodes(readyNodes);
-    return this.runtime.requireWorkItem(workItemId);
+  private async withFinalApprovalLock<T>(workItemId: string, operation: () => T | Promise<T>): Promise<T> {
+    const predecessor = this.#finalApprovalLocks.get(workItemId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolveCurrent) => { release = resolveCurrent; });
+    this.#finalApprovalLocks.set(workItemId, current);
+    await predecessor.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.#finalApprovalLocks.get(workItemId) === current) this.#finalApprovalLocks.delete(workItemId);
+    }
   }
 
   private pipelineMergeContext(workItemId: string, version: number): Readonly<{

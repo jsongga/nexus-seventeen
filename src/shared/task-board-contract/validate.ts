@@ -6,6 +6,7 @@ import {
   DOCUMENT_CONTENT_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
+  GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
   PLAN_CHANGE_SHAPES,
   PLAN_REVISION_STATES,
@@ -1007,8 +1008,6 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
 }
 
 const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start"] as const;
-const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-
 export function parseVerifyAttemptEntity(
   value: unknown,
   label: string,
@@ -1062,7 +1061,7 @@ export function parsePipelineSummaryEntity(
   const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
     const commit = shape(entry, entryLabel, ["sha", "subject"], ["sha", "subject"], options);
     const sha = stringValue(commit.sha, `${entryLabel}.sha`);
-    if (!GIT_OBJECT_ID.test(sha)) throw new ContractValidationError(`${entryLabel}.sha is invalid`);
+    if (!GIT_OBJECT_ID_PATTERN.test(sha)) throw new ContractValidationError(`${entryLabel}.sha is invalid`);
     return Object.freeze({ sha, subject: stringValue(commit.subject, `${entryLabel}.subject`) });
   });
   const stringList = (field: unknown, fieldLabel: string, maximum: number): readonly string[] =>
@@ -1763,7 +1762,7 @@ function parseWorkflowPipelineFields(
     if (
       branchWorkspaceKey === undefined ||
       (workspaceKey !== branchWorkspaceKey && workspaceKey !== `${branchWorkspaceKey}-verify`) ||
-      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(baseSha)
+      !GIT_OBJECT_ID_PATTERN.test(baseSha)
     ) {
       throw new ContractValidationError(`${label}.pipeline identity is invalid`);
     }

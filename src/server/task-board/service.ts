@@ -7,7 +7,7 @@ import {
   type CreateProjectArtifactRequest,
   type RejectPlanRevisionResponse,
 } from "#shared/task-board-contract";
-import { TaskBoard } from "./board.js";
+import { TaskBoard, type TaskBoardDependencies } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
 import { listDirectories, listProjectRoots } from "./host.js";
@@ -188,9 +188,12 @@ export class TaskBoardService {
     this.#verifyTimer.unref();
   }
 
-  static async create(options: TaskBoardOptions): Promise<TaskBoardService> {
+  static async create(
+    options: TaskBoardOptions,
+    dependencies: TaskBoardDependencies = {},
+  ): Promise<TaskBoardService> {
     const config = normalizeTaskBoardConfig(options);
-    const board = await TaskBoard.open(config);
+    const board = await TaskBoard.open(config, dependencies);
     return new TaskBoardService(config, board);
   }
 
@@ -284,7 +287,7 @@ export class TaskBoardService {
     if (approveMergeMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const workItem = this.#board.approvePipelineMerge(
+      const workItem = await this.#board.approvePipelineMerge(
         parseRouteIdentifier(approveMergeMatch[1], "workItemId"),
         parseApprovePipelineMergeRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
@@ -295,7 +298,7 @@ export class TaskBoardService {
     if (rejectFinalMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const workItem = this.#board.rejectFinalApproval(
+      const workItem = await this.#board.rejectFinalApproval(
         parseRouteIdentifier(rejectFinalMatch[1], "workItemId"),
         parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
@@ -872,6 +875,9 @@ export class TaskBoardService {
   }
 }
 
-export function createTaskBoardService(options: TaskBoardOptions): Promise<TaskBoardService> {
-  return TaskBoardService.create(options);
+export function createTaskBoardService(
+  options: TaskBoardOptions,
+  dependencies: TaskBoardDependencies = {},
+): Promise<TaskBoardService> {
+  return TaskBoardService.create(options, dependencies);
 }
