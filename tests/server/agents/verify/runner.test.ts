@@ -60,6 +60,17 @@ async function command(command: string, args: readonly string[], cwd: string): P
   });
 }
 
+async function deadProcessPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", ""], { shell: false, stdio: "ignore" });
+  const { pid } = child;
+  assert.ok(pid !== undefined, "short-lived child did not receive a pid");
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", () => resolve());
+  });
+  return pid;
+}
+
 async function foregroundRepo(
   files: Readonly<Record<string, string>>,
   options: WorkflowOptions,
@@ -145,6 +156,32 @@ test("docs-only change is green, prints nothing to verify, and executes no comma
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
   assert.deepEqual(executions, []);
   assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+});
+
+test("an untracked source inside a new directory is listed as a file and maps normally", async () => {
+  const root = await foregroundRepo(
+    { "tests/server/new-area/widget.test.ts": "export {};\n" },
+    { rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }] },
+  );
+  await writePath(root, "src/server/new-area/widget.ts", "export const value = 1;\n");
+  const executions: string[][] = [];
+  const runner = new VerifyRunner({
+    repoRoot: root,
+    execute: async (argv) => {
+      executions.push([...argv]);
+      if (executions.length === 1) {
+        await writePath(root, ".test-dist/tests/server/new-area/widget.test.js", "export {};\n");
+      }
+      return 0;
+    },
+  });
+
+  assert.deepEqual(await runner.changedFiles("HEAD"), ["src/server/new-area/widget.ts"]);
+  assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
+  assert.deepEqual(executions, [
+    ["compile"],
+    ["node", "--test", ".test-dist/tests/server/new-area/widget.test.js"],
+  ]);
 });
 
 test("an escalating container-test change returns the rule reason and executes no commands", async () => {
@@ -298,6 +335,28 @@ test("a deleted committed file escalates before incremental compilation", async 
   assert.deepEqual(executions, []);
 });
 
+test("a deleted markdown file mapped to none is green without compiling", async (t) => {
+  const root = await foregroundRepo(
+    { "docs/deleted.md": "documentation\n" },
+    { rules: [{ match: "**/*.md", action: { kind: "none" } }] },
+  );
+  await rm(join(root, "docs/deleted.md"));
+  const executions: string[][] = [];
+  const log = t.mock.method(console, "log", () => undefined);
+  const runner = new VerifyRunner({
+    repoRoot: root,
+    execute: async (argv) => {
+      executions.push([...argv]);
+      return 0;
+    },
+  });
+
+  assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/deleted.md"]);
+  assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
+  assert.deepEqual(executions, []);
+  assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+});
+
 test("a background full run progresses from running to green and tail reads only final bytes", async () => {
   const full = ["node .test-helpers/delayed-exit0.mjs"];
   const root = await backgroundRepo(full);
@@ -305,6 +364,10 @@ test("a background full run progresses from running to green and tail reads only
 
   const id = await runner.startFull();
   assert.match(id, /^\d{8}-\d{6}-[0-9a-f]{4}$/u);
+  const storedInitial = JSON.parse(
+    await readFile(join(root, ".verify-runs", id, "status.json"), "utf8"),
+  ) as { pid?: unknown };
+  assert.equal(typeof storedInitial.pid, "number");
   const initial = await runner.status(id);
   assert.deepEqual(initial, {
     id,
@@ -367,6 +430,57 @@ test("status reports died after a running supervisor is killed", async () => {
   assert.equal(died.exitCode, null);
   assert.equal(died.endedAt, null);
   assert.equal(died.command, "node .test-helpers/sleep.mjs");
+});
+
+test("status reports a persisted running dead pid as died but leaves terminal status green", async () => {
+  const root = await mkdtemp(join(tmpdir(), "verify-status-"));
+  const runner = new VerifyRunner({ repoRoot: root });
+  const id = "20260818-120000-dead";
+  const statusPath = join(root, ".verify-runs", id, "status.json");
+  const pid = await deadProcessPid();
+  const startedAt = "2026-08-18T12:00:00.000Z";
+  const running = {
+    id,
+    tier: "full",
+    state: "running",
+    startedAt,
+    endedAt: null,
+    exitCode: null,
+    command: "node -e",
+    pid,
+  };
+  await writePath(root, `.verify-runs/${id}/status.json`, `${JSON.stringify(running)}\n`);
+
+  assert.deepEqual(await runner.status(id), {
+    id,
+    state: "died",
+    startedAt,
+    endedAt: null,
+    exitCode: null,
+    command: "node -e",
+  });
+
+  await writeFile(statusPath, `${JSON.stringify({
+    ...running,
+    state: "green",
+    endedAt: "2026-08-18T12:00:01.000Z",
+    exitCode: 0,
+  })}\n`, "utf8");
+  assert.deepEqual(await runner.status(id), {
+    id,
+    state: "green",
+    startedAt,
+    endedAt: "2026-08-18T12:00:01.000Z",
+    exitCode: 0,
+    command: "node -e",
+  });
+});
+
+test("list returns an empty result when the runs directory does not exist", async () => {
+  const root = await mkdtemp(join(tmpdir(), "verify-list-"));
+  const runner = new VerifyRunner({ repoRoot: root });
+
+  assert.deepEqual(await runner.list(), []);
 });
 
 test("keepRuns two prunes the oldest run when a third full run starts", async () => {

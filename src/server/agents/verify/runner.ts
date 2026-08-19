@@ -13,7 +13,7 @@ import {
 import { join, posix } from "node:path";
 
 import { loadVerifyContract } from "./contract.js";
-import { mapChangedFiles } from "./mapping.js";
+import { globToRegExp, mapChangedFiles } from "./mapping.js";
 import type { MappingHost, VerifyTier } from "./mapping.js";
 
 export interface VerifyRunnerOptions {
@@ -229,16 +229,21 @@ export class VerifyRunner {
 
   public async runForeground(tier: VerifyTier, base: string): Promise<ForegroundResult> {
     const changed = await this.#changedFileSnapshot(base);
-    if (changed.deletedOrRenamed.length > 0) {
+    const contract = await loadVerifyContract(this.#repoRoot);
+    const ruleMatchers = contract.rules.map((rule) => ({ rule, matcher: globToRegExp(rule.match) }));
+    const unsafeDeletions = changed.deletedOrRenamed.filter((file) => {
+      const matched = ruleMatchers.find(({ matcher }) => matcher.test(file));
+      return matched?.rule.action.kind !== "none";
+    });
+    if (unsafeDeletions.length > 0) {
       return {
         outcome: "escalate",
-        reasons: changed.deletedOrRenamed.map(
+        reasons: unsafeDeletions.map(
           (file) => `${file} (deleted or renamed — stale compiled outputs; run a clean tier)`,
         ),
       };
     }
 
-    const contract = await loadVerifyContract(this.#repoRoot);
     const selection = mapChangedFiles(changed.files, contract.rules, tier, hostFor(this.#repoRoot));
     const reasons = [
       ...selection.escalations,
@@ -309,8 +314,6 @@ export class VerifyRunner {
       exitCode: null,
       command: contract.full.join(" && "),
     };
-    await atomicWriteJson(join(runDirectory, "status.json"), initial);
-
     const supervisor = join(this.#repoRoot, "build", "server", "agents", "verify", "supervisor.js");
     const commands = contract.full.map(splitCommand);
     const child = spawn(process.execPath, [supervisor, runDirectory, JSON.stringify(commands)], {
@@ -320,6 +323,8 @@ export class VerifyRunner {
       stdio: "ignore",
     });
     child.once("error", () => undefined);
+    if (child.pid === undefined) throw new Error("failed to start verify supervisor");
+    await atomicWriteJson(join(runDirectory, "status.json"), { ...initial, pid: child.pid });
     child.unref();
     return id;
   }
@@ -334,7 +339,11 @@ export class VerifyRunner {
         process.kill(parsed.pid, 0);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ESRCH") return publicStatus({ ...parsed, state: "died" });
+        if (code === "ESRCH") {
+          const latest = storedStatus(JSON.parse(await readFile(path, "utf8")) as unknown, path);
+          if (latest.id !== id) throw new Error(`verify status id mismatch at ${path}`);
+          return publicStatus(latest.state === "running" ? { ...latest, state: "died" } : latest);
+        }
         if (code !== "EPERM") throw error;
       }
     }
@@ -376,7 +385,7 @@ export class VerifyRunner {
 
     const [diff, status, stale] = await Promise.all([
       capture("git", ["diff", "--name-only", base, "--"], this.#repoRoot),
-      capture("git", ["status", "--porcelain"], this.#repoRoot),
+      capture("git", ["status", "--porcelain", "--untracked-files=all"], this.#repoRoot),
       capture("git", ["diff", "--name-only", "--diff-filter=DR", base, "--"], this.#repoRoot),
     ]);
     for (const result of [diff, status, stale]) {
@@ -395,7 +404,13 @@ export class VerifyRunner {
   }
 
   async #runDirectories(): Promise<readonly string[]> {
-    const entries = await readdir(this.#runsRoot, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await readdir(this.#runsRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
     return entries.filter((entry) => entry.isDirectory() && RUN_ID.test(entry.name))
       .map((entry) => entry.name)
       .sort();

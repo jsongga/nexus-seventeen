@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 interface SupervisorStatus {
   readonly id: string;
@@ -36,10 +37,11 @@ function parseStatus(value: unknown, path: string): SupervisorStatus {
     throw new Error(`invalid verify status at ${path}`);
   }
   const candidate = value as Record<string, unknown>;
+  const validPid = typeof candidate.pid === "number" && Number.isInteger(candidate.pid) && candidate.pid > 0;
   if (
     typeof candidate.id !== "string" || candidate.state !== "running" ||
     typeof candidate.startedAt !== "string" || candidate.endedAt !== null ||
-    candidate.exitCode !== null || typeof candidate.command !== "string"
+    candidate.exitCode !== null || typeof candidate.command !== "string" || !validPid
   ) {
     throw new Error(`invalid verify status at ${path}`);
   }
@@ -51,7 +53,20 @@ function parseStatus(value: unknown, path: string): SupervisorStatus {
     endedAt: null,
     exitCode: null,
     command: candidate.command,
+    pid: candidate.pid as number,
   };
+}
+
+async function readInitialStatus(path: string): Promise<SupervisorStatus> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    try {
+      return parseStatus(JSON.parse(await readFile(path, "utf8")) as unknown, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await delay(10);
+    }
+  }
+  throw new Error(`verify status did not appear at ${path}`);
 }
 
 function runStep(argv: readonly string[], logDescriptor: number): Promise<StepResult> {
@@ -90,7 +105,8 @@ export async function runSupervisor(
 ): Promise<number> {
   const statusPath = resolve(runDirectory, "status.json");
   const logPath = resolve(runDirectory, "log");
-  const initial = parseStatus(JSON.parse(await readFile(statusPath, "utf8")) as unknown, statusPath);
+  const initial = await readInitialStatus(statusPath);
+  if (initial.pid !== process.pid) throw new Error(`verify supervisor pid mismatch at ${statusPath}`);
   await atomicWriteJson(statusPath, { ...initial, pid: process.pid });
 
   const log = await open(logPath, "a");
