@@ -179,10 +179,17 @@ additions flagged, files-touched vs `declaredScope`, verify results
 
 - **Approve**: `POST /v1/work-items/:id/approve-merge { version }` — the
   board performs the local merge in the project repo: `git merge --no-ff
-  task/<workItemId>` onto the default branch with hooks neutralized (the
+  task/<workItemId>` onto the **currently checked-out branch** (guarded:
+  not a task/* branch, clean working tree, and `base_sha` an ancestor of
+  its HEAD — divergence is a distinct 409) with hooks neutralized (the
   campaign-2/3 `-c core.hooksPath= -c core.fsmonitor=` discipline), then
-  transitions to `merged`. Merge conflict → no mutation beyond an aborted
-  merge, item parks with the conflict summary. Nothing is ever pushed.
+  transitions to `merged`. Merge conflict → aborted merge, item **returns
+  to `implementing`** with the conflict summary as a system handoff — the
+  engineer resolves next round, per §4's rebase-as-agent-step semantics
+  (ruled during implementation review, 2026-08-19; supersedes this spec's
+  earlier "parks" wording). Approve and reject share a per-work-item mutex,
+  and a post-merge settlement conflict records a durable orphaned-merge
+  event with a distinct error code. Nothing is ever pushed.
 - **Reject**: returns the item to `implementing` with the note as handoff
   (the state machine already allows `final_approval → implementing`).
 - The base-branch-push withdrawal webhook is campaign 7, unchanged.
