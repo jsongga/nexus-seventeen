@@ -78,7 +78,7 @@ Serial execution (one task at a time) defers §8. Exit: a real task flows
 request → approved plan → green Verify → PR → merge with no human in the
 middle.
 
-**5. Review + Fix loop** *(§4; item 5)* — reviewer on a different
+**5. Review + Fix loop** *(spec 2026-08-19, in flight; §4; item 5)* — reviewer on a different
 runtime/model; structured findings; files-touched vs predicted; fix rounds
 (cap 3) with fresh sessions; dead letter; Design stage for hazardous tier
 with its failure-point table. Exit: a seeded defect is caught, fixed, and
