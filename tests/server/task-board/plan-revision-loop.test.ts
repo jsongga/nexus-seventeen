@@ -4,9 +4,11 @@ import type {
   PlanRevision,
   WorkflowPlanDraft,
 } from "#shared/task-board-contract";
+import { HttpTaskBoardClient } from "#server/agents/task-worker";
 import { createTaskBoardService, TaskBoard } from "#server/task-board";
 import {
   AGENT_ONE_TOKEN,
+  AGENT_TWO_TOKEN,
   HUMAN_TOKEN,
   automationConfigurationRequest,
   automationStages,
@@ -81,7 +83,11 @@ function settlePlanning(
   return proposed;
 }
 
-function startIntake(fixture: Awaited<ReturnType<typeof boardFixture>>, idempotencyKey: string) {
+function startIntake(
+  fixture: Awaited<ReturnType<typeof boardFixture>>,
+  idempotencyKey: string,
+  originalRequest = "Make checkout revision handling explicit.",
+) {
   const executor = {
     agentTypeId: "plan-gate-executor",
     name: "Plan gate executor",
@@ -108,7 +114,7 @@ function startIntake(fixture: Awaited<ReturnType<typeof boardFixture>>, idempote
     }),
   }));
   return fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Make checkout revision handling explicit.",
+    originalRequest,
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   }), idempotencyKey).workItem;
 }
@@ -133,7 +139,7 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     assert.ok(revising.planningTaskId);
     assert.equal(
       fixture.board.requireTask(revising.planningTaskId).objective,
-      `${workItem.originalRequest}\n\nPrior plan rejected: ${note}`,
+      `Prior plan rejected: ${note}\n\n${workItem.originalRequest}`,
     );
     const rejected = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
       (plan) => plan.planRevisionId === firstPlan.planRevisionId,
@@ -145,6 +151,52 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     const confirmed = fixture.board.confirmWorkflow(secondPlan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, undefined);
     assert.equal(confirmed.plans.find((plan) => plan.planRevisionId === secondPlan.planRevisionId)?.state, "confirmed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a prepended rejection note survives bounded worker-context truncation", async () => {
+  const fixture = await boardFixture();
+  try {
+    const workItem = startIntake(fixture, "plan-revision-long-request-0001", "x".repeat(8_000));
+    const firstPlan = settlePlanning(
+      fixture,
+      "plan-revision-long-request-first-claim-0001",
+      standardPlan("long-request"),
+    );
+    const note = "Keep the rollback instruction at the head of the manager context.";
+    const prefix = `Prior plan rejected: ${note}`;
+
+    fixture.board.rejectWorkflowPlan(firstPlan.planRevisionId, {
+      note,
+      expectedState: "proposed",
+    });
+
+    const revised = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.ok(revised.planningTaskId);
+    assert.ok(fixture.board.requireTask(revised.planningTaskId).objective.startsWith(prefix));
+
+    const claimId = "plan-revision-long-request-second-claim-0001";
+    const rawClaim = fixture.board.claimRun(fixture.manager.agentId, { claimId, messageCursor: null });
+    assert.ok(rawClaim);
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1/",
+      token: AGENT_TWO_TOKEN,
+      fetchImplementation: async () => new Response(JSON.stringify(rawClaim), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    const mappedClaim = await client.claimNextWake({
+      agentId: fixture.manager.agentId,
+      claimId,
+      messageCursors: {},
+      longPollMs: 0,
+    });
+    assert.ok(mappedClaim?.context);
+    assert.ok(mappedClaim.context.task.objective.startsWith(prefix));
+    assert.match(mappedClaim.context.task.objective, /\n\[truncated\]$/u);
   } finally {
     fixture.board.close();
   }

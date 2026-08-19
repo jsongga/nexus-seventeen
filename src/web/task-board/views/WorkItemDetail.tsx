@@ -28,7 +28,6 @@ import {
 } from '../model/work-item-labels';
 import {
   actionErrorContexts,
-  actionErrorMessage,
   useActionErrors,
   type ActionErrorState,
   type ActionResult,
@@ -51,6 +50,7 @@ interface WorkItemDetailProps {
   onClose: () => void;
   onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
   onConfirm: (planRevisionId: string) => Promise<ActionResult>;
+  onReject?: (planRevisionId: string, note: string) => Promise<ActionResult>;
   onCancel: (reason: string) => Promise<ActionResult>;
   onArchive: () => Promise<ActionResult>;
 }
@@ -285,6 +285,7 @@ export function WorkItemDetail({
   onClose,
   onAnswer,
   onConfirm,
+  onReject,
   onCancel,
   onArchive,
 }: WorkItemDetailProps) {
@@ -379,21 +380,17 @@ export function WorkItemDetail({
 
   async function submitRejection() {
     const note = rejectionNote.trim();
-    if (note.length === 0 || confirmation !== 'reject' || proposedPlan === null) return;
+    if (note.length === 0 || confirmation !== 'reject' || proposedPlan === null || onReject === undefined) return;
     await save(actionContexts.rejectPlan, async () => {
       setRejecting(true);
       try {
-        await client.rejectWorkflowPlan(proposedPlan.planRevisionId, note);
-        return { ok: true };
-      } catch (caught) {
-        return { ok: false, error: actionErrorMessage(caught) };
+        return await onReject(proposedPlan.planRevisionId, note);
       } finally {
         setRejecting(false);
       }
     }, () => {
       setRejectionNote('');
       closeConfirmation();
-      setWorkflowAttempt((value) => value + 1);
     });
   }
 
@@ -541,7 +538,7 @@ export function WorkItemDetail({
                   plan={proposedPlan}
                   busy={busy || rejecting}
                   confirmEnabled={affordances.confirmPlan}
-                  rejectEnabled={affordances.rejectPlan}
+                  rejectEnabled={affordances.rejectPlan && onReject !== undefined}
                   onConfirm={() => { void save(actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId), () => onConfirm(proposedPlan.planRevisionId)); }}
                   onReject={() => openConfirmation('reject')}
                 />

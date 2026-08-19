@@ -1,5 +1,6 @@
 import {
   TASK_BOARD_API_VERSION,
+  TASK_BOARD_ERROR_CODES,
   type AutomationConfiguration,
   type AgentInterrupt,
   type AgentProfile,
@@ -178,7 +179,7 @@ export class TaskBoard {
       if (rejected.outcome === "revising") {
         const planning = this.#workItems.startWorkItemPlanningRevisionInTransaction(rejected.workItemId, request.note);
         if (planning.task === null || planning.wakeAgentId === null) {
-          throw new TaskBoardError(409, "PLANNING_UNAVAILABLE", "A planning manager is unavailable");
+          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A planning manager is unavailable");
         }
         wakeAgentId = planning.wakeAgentId;
       }

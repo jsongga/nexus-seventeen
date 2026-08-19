@@ -243,7 +243,7 @@ export class WorkItemsCollaborator {
       title: `Plan workflow: ${workItem.originalRequest.slice(0, 160)}`,
       objective: revisionNote === undefined
         ? workItem.originalRequest
-        : `${workItem.originalRequest}\n\nPrior plan rejected: ${revisionNote}`,
+        : `Prior plan rejected: ${revisionNote}\n\n${workItem.originalRequest}`,
       acceptanceCriteria: `${PLANNING_ACCEPTANCE_CRITERIA_PREFIX}${availableStages.join(", ") || "none configured"}.`,
       workspaceRefs: [],
       assignedAgentId: managerId,

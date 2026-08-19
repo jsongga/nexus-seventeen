@@ -20,6 +20,26 @@ import { createTaskDetailDraftState, taskDetailDraftReducer } from './model/task
 import { signInFailure } from './model/sign-in-failure';
 import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput } from './types';
 
+export async function runWorkItemDetailMutation(
+  operation: () => Promise<unknown>,
+  refresh: () => Promise<boolean>,
+): Promise<Readonly<{ actionResult: ActionResult; refreshCommitted: boolean | null }>> {
+  try {
+    await operation();
+    const refreshCommitted = await refresh();
+    return { actionResult: { ok: true }, refreshCommitted };
+  } catch (caught) {
+    if (caught instanceof BoardApiError && (
+      caught.code === 'WORK_ITEM_ENDED'
+      || caught.code === 'WORK_ITEM_VERSION_CONFLICT'
+      || caught.code === 'PLAN_NOT_PROPOSED'
+    )) {
+      await refresh();
+    }
+    return { actionResult: { ok: false, error: actionErrorMessage(caught) }, refreshCommitted: null };
+  }
+}
+
 export function BoardApp() {
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: '/board-api' }), []);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
@@ -144,20 +164,11 @@ export function BoardApp() {
     if (!connected) return { ok: false, error: mutationNetworkError };
     setBusy(true);
     try {
-      await operation();
-      const refreshCommitted = await refresh('mutation');
-      dispatchErrorPipeline({ type: 'action-succeeded', refreshCommitted });
-      return { ok: true };
-    } catch (caught) {
-      if (caught instanceof BoardApiError) {
-        if (caught.code === 'WORK_ITEM_ENDED') {
-          await refresh('mutation');
-        }
-        if (caught.code === 'WORK_ITEM_VERSION_CONFLICT' || caught.code === 'PLAN_NOT_PROPOSED') {
-          await refresh('mutation');
-        }
+      const mutation = await runWorkItemDetailMutation(operation, () => refresh('mutation'));
+      if (mutation.actionResult.ok) {
+        dispatchErrorPipeline({ type: 'action-succeeded', refreshCommitted: mutation.refreshCommitted ?? false });
       }
-      return { ok: false, error: actionErrorMessage(caught) };
+      return mutation.actionResult;
     } finally {
       setBusy(false);
     }
@@ -432,6 +443,7 @@ export function BoardApp() {
                 onClose={closeWorkItem}
                 onAnswer={(questionId, answer) => mutateWorkItemDetail(() => client.answerQuestion(questionId, { answer }))}
                 onConfirm={(planRevisionId) => mutateWorkItemDetail(() => client.confirmWorkflow(planRevisionId))}
+                onReject={(planRevisionId, note) => mutateWorkItemDetail(() => client.rejectWorkflowPlan(planRevisionId, note))}
                 onCancel={(reason) => mutateWorkItemDetail(() => client.cancelWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version, reason }))}
                 onArchive={async () => {
                   const result = await mutateWorkItemDetail(() => client.archiveWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version }));

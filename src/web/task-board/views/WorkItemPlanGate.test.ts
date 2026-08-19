@@ -1,6 +1,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { runWorkItemDetailMutation } from '../BoardApp';
+import { BoardApiError } from '../data/client';
 import type { DetailedWorkflowPlan } from '../model/work-item-detail';
 import { PlanApprovalActions, PlanRecordDetails, PlanRejectionForm } from './WorkItemDetail';
 
@@ -91,5 +93,25 @@ describe('plan approval record and controls', () => {
     expect(markup).toContain('Reject and revise');
     expect(markup).toContain('Keep proposed plan');
     expect(markup).not.toContain('Reject and cancel');
+  });
+
+  it('refreshes work-item detail after rejection success and a stale-plan conflict', async () => {
+    const successRefresh = vi.fn().mockResolvedValue(true);
+    const success = await runWorkItemDetailMutation(
+      async () => ({ outcome: 'revising' }),
+      successRefresh,
+    );
+
+    expect(success.actionResult).toEqual({ ok: true });
+    expect(successRefresh).toHaveBeenCalledOnce();
+
+    const conflictRefresh = vi.fn().mockResolvedValue(true);
+    const conflict = await runWorkItemDetailMutation(
+      async () => { throw new BoardApiError('Plan revision is no longer proposed', 409, 'PLAN_NOT_PROPOSED'); },
+      conflictRefresh,
+    );
+
+    expect(conflict.actionResult.ok).toBe(false);
+    expect(conflictRefresh).toHaveBeenCalledOnce();
   });
 });
