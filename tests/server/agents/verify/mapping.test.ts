@@ -17,11 +17,26 @@ const host = (files: string[], dirs: string[]): MappingHost => ({
 });
 
 test("globToRegExp semantics", () => {
+  assert.ok(globToRegExp("**/*.md").test("README.md"));
+  assert.ok(globToRegExp("tests/**/*.test.ts").test("tests/foo.test.ts"));
+  assert.ok(globToRegExp("src/server/**/*.ts").test("src/server/x.ts"));
+  assert.ok(globToRegExp("tests/**/*.test.ts").test("tests/unit/foo.test.ts"));
   assert.ok(globToRegExp("src/server/**/*.ts").test("src/server/a/b/c.ts"));
+  assert.ok(!globToRegExp("src/server/**/*.ts").test("src/web/x.ts"));
   assert.ok(!globToRegExp("src/server/*.ts").test("src/server/a/b.ts"));
   assert.ok(globToRegExp("Dockerfile").test("Dockerfile"));
   assert.ok(!globToRegExp("Dockerfile").test("sub/Dockerfile"));
   assert.ok(globToRegExp("tsconfig*.json").test("tsconfig.test.json"));
+});
+
+test("colocated selects an already-colocated test directly in fast tier and falls back in area tier", () => {
+  const h = host(["src/web/x.test.tsx"], []);
+
+  const fast = mapChangedFiles(["src/web/x.test.tsx"], RULES, "fast", h);
+  assert.deepEqual(fast.vitestTargets, ["src/web/x.test.tsx"]);
+
+  const area = mapChangedFiles(["src/web/x.test.tsx"], RULES, "area", h);
+  assert.deepEqual(area.vitestTargets, ["src/web"]);
 });
 
 test("mirror fast prefers the exact test file, falls back to dir, escalates when neither exists", () => {

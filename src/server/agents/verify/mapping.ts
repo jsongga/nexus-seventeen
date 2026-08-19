@@ -23,7 +23,13 @@ export function globToRegExp(glob: string): RegExp {
   let pattern = "^";
   for (let index = 0; index < glob.length; index += 1) {
     const character = glob[index] ?? "";
-    if (character === "*" && glob[index + 1] === "*") {
+    if (character === "/" && glob[index + 1] === "*" && glob[index + 2] === "*" && index + 3 === glob.length) {
+      pattern += "(?:/[^/]+)*";
+      index += 2;
+    } else if (character === "*" && glob[index + 1] === "*" && glob[index + 2] === "/") {
+      pattern += "(?:[^/]+/)*";
+      index += 2;
+    } else if (character === "*" && glob[index + 1] === "*") {
       pattern += ".*";
       index += 1;
     } else if (character === "*") {
@@ -88,8 +94,13 @@ export function mapChangedFiles(
           vitestTargets.add(action.vitestFallback);
           break;
         }
-        const testFile = /\.tsx?$/u.test(file) ? file.replace(/(\.tsx?)$/u, ".test$1") : undefined;
-        if (testFile !== undefined && host.fileExists(testFile)) vitestTargets.add(testFile);
+        const isTestFile = /\.test\.tsx?$/u.test(file);
+        const testFile = isTestFile
+          ? file
+          : /\.tsx?$/u.test(file)
+            ? file.replace(/(\.tsx?)$/u, ".test$1")
+            : undefined;
+        if (testFile !== undefined && (isTestFile || host.fileExists(testFile))) vitestTargets.add(testFile);
         else vitestTargets.add(action.vitestFallback);
         break;
       }
