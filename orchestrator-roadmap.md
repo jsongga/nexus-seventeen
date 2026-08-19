@@ -69,7 +69,7 @@ worktree and the container's death is uneventful.
 nexus-seventeen onboards itself as the proof. Exit: fast tier under ~10 s
 here, full tier runs headless with tail-only ingestion.
 
-**4. Pipeline v1: Intake → plan gate → Implement → Verify** *(§4; item 4)* —
+**4. Pipeline v1: Intake → plan gate → Implement → Verify** *(spec/plan 2026-08-19, in flight; §4; item 4)* —
 single runtime; the full plan record (change shape, tier, declared scope,
 acceptance criteria, assumptions, decision-enumeration); plan-approval UI;
 Implement's bright lines and staged commits; machine-only Verify; PR keyed
