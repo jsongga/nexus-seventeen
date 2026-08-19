@@ -392,6 +392,18 @@ test("board request shapes accept exactly the shared contract enum members", () 
       .stages.find((stage) => stage.stage === "testing")?.executor,
     { kind: "machine_verify" },
   );
+
+  for (const stage of WORK_ITEM_STAGES.filter((candidate) => candidate !== "testing")) {
+    const invalidMachineVerifyStages = stages();
+    invalidMachineVerifyStages[WORK_ITEM_STAGES.indexOf(stage)] = {
+      stage,
+      executor: { kind: "machine_verify" },
+    };
+    assert.throws(
+      () => parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: invalidMachineVerifyStages }),
+      new RegExp(`${stage} cannot use the machine_verify executor`, "u"),
+    );
+  }
 });
 
 test("board workflow shapes accept exactly the shared handoff and stage enums", () => {

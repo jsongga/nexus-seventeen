@@ -148,6 +148,10 @@ export class TaskBoard {
     this.#projects.reconcileWorkflowsBestEffort(projectId);
   }
 
+  sweepVerifyAttempts(): Promise<number> {
+    return this.#projects.sweepVerifyAttempts();
+  }
+
   createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
     return this.#projects.createArtifact(projectId, request);
   }
@@ -388,6 +392,7 @@ export class TaskBoard {
   }
 
   close(): void {
+    this.#projects.close();
     this.#runtime.close();
     this.#runtime.store.close();
   }

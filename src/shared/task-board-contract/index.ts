@@ -188,6 +188,7 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
   verifying: [
     "reviewing",
     "fixing",
+    "final_approval",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
     "implementing",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates

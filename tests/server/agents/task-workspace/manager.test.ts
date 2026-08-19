@@ -37,6 +37,23 @@ test("create clones without hardlinks, branches task/<key>, and is reset-idempot
   await assert.rejects(access(join(again, "leftover.txt")));
 });
 
+test("create can isolate a verify workspace while resuming the work item's task branch", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  await run(repo, "git", ["checkout", "-b", "task/work-item-a"]);
+  await writeFile(join(repo, "implementation.txt"), "committed implementation\n");
+  await run(repo, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "add", "implementation.txt"]);
+  await run(repo, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "implementation"]);
+  await run(repo, "git", ["checkout", "main"]);
+  const manager = new TaskWorkspaceManager({ workspaceRoot: join(root, "ws"), repositoryPath: repo });
+
+  const path = await manager.create("work-item-a-verify", undefined, "work-item-a");
+
+  assert.equal(path, manager.workspacePath("work-item-a-verify"));
+  assert.equal((await run(path, "git", ["branch", "--show-current"])).trim(), "task/work-item-a");
+  assert.equal(await readFile(join(path, "implementation.txt"), "utf8"), "committed implementation\n");
+});
+
 test("create rejects unsafe keys before touching the filesystem", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);

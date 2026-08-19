@@ -27,6 +27,7 @@ export interface TaskBoardOptions {
   readonly reconcileIntervalSeconds?: number;
   readonly now?: () => Date;
   readonly artifactRoot?: string;
+  readonly verifyWorkspaceRoot?: string;
 }
 
 export interface TaskBoardConfig {
@@ -42,6 +43,7 @@ export interface TaskBoardConfig {
   readonly reconcileIntervalSeconds: number;
   readonly now: () => Date;
   readonly artifactRoot: string;
+  readonly verifyWorkspaceRoot: string;
 }
 
 function boundedInteger(
@@ -122,6 +124,14 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   if (!isAbsolute(artifactRoot) || artifactRoot === "/") {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "artifactRoot must be an absolute directory path");
   }
+  const verifyWorkspaceRoot = configText(
+    options.verifyWorkspaceRoot ?? join(dirname(dbPath), "verify-workspaces"),
+    "verifyWorkspaceRoot",
+    4_096,
+  );
+  if (!isAbsolute(verifyWorkspaceRoot) || verifyWorkspaceRoot === "/") {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "verifyWorkspaceRoot must be an absolute directory path");
+  }
   const heartbeatTimeoutSeconds = boundedInteger(
     options.heartbeatTimeoutSeconds,
     300,
@@ -152,5 +162,6 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     ),
     now: options.now ?? (() => new Date()),
     artifactRoot,
+    verifyWorkspaceRoot,
   });
 }

@@ -31,6 +31,10 @@ import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
+import {
+  VerifyAttemptsCollaborator,
+  type VerifyAttemptsDependencies,
+} from "./verify-attempts.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
@@ -49,15 +53,22 @@ export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
   outcome?: "parked_hazardous";
 }>;
 
+export type ProjectsVerifyDependencies = Omit<
+  VerifyAttemptsDependencies,
+  "settleInTransaction" | "activateNodes"
+>;
+
 export class ProjectsCollaborator {
   readonly #workflow: TransparentWorkflow;
   readonly #artifacts: ArtifactStore;
+  readonly #verifyAttempts: VerifyAttemptsCollaborator;
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
     git: WorkflowGitRunner = runWorkflowGit,
+    verifyDependencies: ProjectsVerifyDependencies = {},
   ) {
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
@@ -68,6 +79,12 @@ export class ProjectsCollaborator {
       git,
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
+    this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
+      ...verifyDependencies,
+      settleInTransaction: (nodeId, stage, passed, evidence) =>
+        this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, stage, passed, evidence),
+      activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
+    });
   }
 
   listProjects(): readonly Project[] {
@@ -256,6 +273,14 @@ export class ProjectsCollaborator {
     }
   }
 
+  sweepVerifyAttempts(): Promise<number> {
+    return this.#verifyAttempts.sweep();
+  }
+
+  close(): void {
+    this.#verifyAttempts.close();
+  }
+
   private reconcileWorkflowCandidate(nodeId: string, candidate?: WorkNode): void {
     try {
       const node = candidate ?? this.#workflow.nodesForIds([nodeId])[0];
@@ -287,6 +312,19 @@ export class ProjectsCollaborator {
       if (stage === null) return;
       const configuration = this.automation.getConfiguration();
       const configuredExecutor = configuration.stages.find((item) => item.stage === stage)?.executor;
+      if (configuredExecutor?.kind === "machine_verify") {
+        const verifyAttemptId = this.#verifyAttempts.createStartingAttemptInTransaction(current.nodeId, stage);
+        if (verifyAttemptId === null) return;
+        this.#workflow.event(
+          current.projectId,
+          current.nodeId,
+          null,
+          "stage_started",
+          `${current.title} entered ${stage}`,
+        );
+        this.runtime.store.afterCommit(() => this.#verifyAttempts.startAfterCommit(verifyAttemptId));
+        return;
+      }
       if (configuredExecutor?.kind !== "agent_type") {
         this.#workflow.blockNodeInTransaction(
           current.nodeId,

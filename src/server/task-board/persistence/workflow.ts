@@ -7,6 +7,7 @@ import {
   isTerminalWorkItemState,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
+  type CriterionResult,
   type CreatePlanRevisionRequest,
   type PlanRevision,
   type ProjectEvent,
@@ -38,6 +39,12 @@ export type AttemptScopeCheckResult = DeclaredScopeCheckResult | Readonly<{
   ok: false;
   error: string;
 }>;
+export interface MachineVerifyEvidence {
+  readonly summary: string;
+  readonly evidence: readonly string[];
+  readonly acceptanceCriteria: readonly CriterionResult[];
+  readonly blockers: readonly string[];
+}
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
@@ -556,6 +563,209 @@ export class TransparentWorkflow {
     scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
     return this.settleAttemptInternal(taskId, outcome, result, draft, scopeCheck);
+  }
+
+  settleMachineVerifyAttemptInTransaction(
+    nodeId: string,
+    stage: WorkflowStage,
+    passed: boolean,
+    evidence: MachineVerifyEvidence,
+  ): readonly WorkNode[] {
+    const attempt = this.db.prepare(`
+      SELECT
+        verify.verify_attempt_id,
+        verify.attempt,
+        node.project_id,
+        node.plan_revision_id,
+        node.title,
+        node.objective,
+        node.acceptance_criteria_json,
+        node.stage_template_json,
+        node.current_stage,
+        node.state AS node_state,
+        plan.work_item_id,
+        plan.objective AS plan_objective,
+        item.state AS work_item_state,
+        item.pipeline_branch
+      FROM verify_attempts verify
+      JOIN work_nodes node ON node.node_id=verify.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE verify.node_id=? AND verify.stage=?
+      ORDER BY verify.attempt DESC
+      LIMIT 1
+    `).get(nodeId, stage) as Row | undefined;
+    if (attempt === undefined) return Object.freeze([]);
+    if (attempt.current_stage !== stage || attempt.node_state !== "active") return Object.freeze([]);
+    const verifyAttemptId = String(attempt.verify_attempt_id);
+    const taskId = `task_${verifyAttemptId}`;
+    const handoffId = `handoff_${verifyAttemptId}`;
+    if (this.db.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?").get(handoffId) !== undefined) {
+      return Object.freeze([]);
+    }
+
+    const now = this.now().toISOString();
+    const projectId = String(attempt.project_id);
+    const attemptNumber = Number(attempt.attempt);
+    const template = json<WorkflowStage[]>(attempt.stage_template_json);
+    const taskStatus = passed ? "completed" : "failed";
+    const orderKey = Number(this.db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
+    // stage_handoffs requires a task FK. This already-terminal, unassigned task is only the
+    // durable system-authored anchor; machine verify never creates a wakeup or agent run.
+    this.db.prepare(`
+      INSERT INTO tasks(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json,
+        status, assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      ) VALUES (?, ?, NULL, 'work', NULL, 0, ?, ?, ?, '[]', ?, NULL, NULL, 15, NULL,
+        NULL, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      taskId,
+      projectId,
+      `Machine verify: ${String(attempt.title)}`.slice(0, 240),
+      String(attempt.objective),
+      json<string[]>(attempt.acceptance_criteria_json).join("\n"),
+      taskStatus,
+      orderKey,
+      now,
+      now,
+      evidence.summary,
+      now,
+      now,
+    );
+    this.db.prepare(`
+      INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
+      VALUES (?, ?, ?, 'system', 'system:machine-verify', 'task_created', ?, ?)
+    `).run(
+      randomUUID(),
+      projectId,
+      taskId,
+      JSON.stringify({ kind: "work", requiresReview: false, status: taskStatus, verifyAttemptId }),
+      now,
+    );
+    const handoff: StageHandoff = Object.freeze({
+      apiVersion: "steward.task-board/v1",
+      handoffId,
+      nodeId,
+      taskId,
+      stage,
+      outcome: passed ? "passed" : "failed",
+      summary: evidence.summary,
+      evidence: Object.freeze([...evidence.evidence]),
+      artifactIds: Object.freeze([]),
+      acceptanceCriteria: Object.freeze([...evidence.acceptanceCriteria]),
+      blockers: Object.freeze([...evidence.blockers]),
+      recommendedReturnStage: passed ? null : "implementation",
+      createdAt: now,
+    });
+    this.db.prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)")
+      .run(handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
+
+    if (!passed) {
+      if (template.includes("implementation") && attemptNumber < 3) {
+        this.db.prepare(`
+          UPDATE work_nodes
+          SET state='ready', current_stage='implementation', version=version+1, updated_at=?
+          WHERE node_id=?
+        `).run(now, nodeId);
+        this.setWorkItemStage(String(attempt.plan_revision_id), "implementation", now);
+        this.event(
+          projectId,
+          nodeId,
+          taskId,
+          "stage_retry_ready",
+          `${stage} failed; returning to implementation (attempt ${attemptNumber + 1} of 3)`,
+          now,
+        );
+        return Object.freeze(this.nodesForIds([nodeId]));
+      }
+      this.db.prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?")
+        .run(now, nodeId);
+      const workItemState = String(attempt.work_item_state) as WorkItemState;
+      if (attemptNumber >= 3 && !isTerminalWorkItemState(workItemState)) {
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(attempt.work_item_id),
+          to: "dead_letter",
+          actorType: "system",
+          actorId: "system:machine-verify",
+          now,
+          endedAt: now,
+          currentStage: null,
+        });
+      }
+      this.event(projectId, nodeId, taskId, "stage_failed", `${stage} failed: ${evidence.summary.slice(0, 240)}`, now);
+      return Object.freeze([]);
+    }
+
+    const next = template[template.indexOf(stage) + 1] ?? null;
+    if (next !== null) {
+      this.db.prepare(`
+        UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?
+      `).run(next, now, nodeId);
+      this.setWorkItemStage(String(attempt.plan_revision_id), next, now);
+      this.event(projectId, nodeId, taskId, "stage_completed", `${stage} completed; ${next} is ready`, now);
+      return Object.freeze(this.nodesForIds([nodeId]));
+    }
+
+    this.db.prepare(`
+      UPDATE work_nodes SET state='completed',current_stage=NULL,version=version+1,updated_at=? WHERE node_id=?
+    `).run(now, nodeId);
+    this.event(projectId, nodeId, taskId, "node_completed", "Subtask completed", now);
+    const newlyReady = (this.db.prepare(`
+      SELECT candidate.node_id
+      FROM work_nodes candidate
+      WHERE candidate.state='pending'
+        AND EXISTS(
+          SELECT 1 FROM work_node_dependencies dependency
+          WHERE dependency.node_id=candidate.node_id AND dependency.dependency_node_id=?
+        )
+        AND NOT EXISTS(
+          SELECT 1
+          FROM work_node_dependencies dependency
+          JOIN work_nodes predecessor ON predecessor.node_id=dependency.dependency_node_id
+          WHERE dependency.node_id=candidate.node_id AND predecessor.state<>'completed'
+        )
+    `).all(nodeId) as Row[]).map((row) => String(row.node_id));
+    for (const readyNodeId of newlyReady) {
+      this.db.prepare(`
+        UPDATE work_nodes
+        SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
+        WHERE node_id=?
+      `).run(now, readyNodeId);
+      this.event(projectId, readyNodeId, null, "dependency_unblocked", "Dependencies completed", now);
+    }
+
+    const planRevisionId = String(attempt.plan_revision_id);
+    const unfinished = this.db.prepare(
+      "SELECT 1 FROM work_nodes WHERE plan_revision_id=? AND state<>'completed' LIMIT 1",
+    ).get(planRevisionId);
+    if (unfinished === undefined) {
+      const workItem = this.db.prepare("SELECT state,current_stage FROM work_items WHERE work_item_id=?")
+        .get(String(attempt.work_item_id)) as Row | undefined;
+      if (workItem === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_work_item");
+      if (!isTerminalWorkItemState(String(workItem.state) as WorkItemState)) {
+        const pipeline = attempt.pipeline_branch !== null;
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(attempt.work_item_id),
+          to: pipeline ? "final_approval" : "merged",
+          actorType: "system",
+          actorId: "system:machine-verify",
+          now,
+          ...(pipeline ? {} : { endedAt: now }),
+          ...(workItem.current_stage === null ? {} : { currentStage: null }),
+        });
+      }
+      this.event(
+        projectId,
+        null,
+        taskId,
+        "workflow_completed",
+        `Completed: ${String(attempt.plan_objective).slice(0, 240)}`,
+        now,
+      );
+    }
+    return Object.freeze(this.nodesForIds(newlyReady));
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {

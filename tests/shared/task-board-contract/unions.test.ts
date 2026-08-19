@@ -74,7 +74,7 @@ test('work item transition table is pinned edge for edge', () => {
     plan_approval: ['designing', 'implementing', 'verifying', 'reviewing', 'planning', 'parked', 'abandoned', 'dead_letter'],
     designing: ['implementing', 'parked', 'abandoned', 'dead_letter'],
     implementing: ['verifying', 'reviewing', 'planning', 'merged', 'parked', 'abandoned', 'dead_letter'],
-    verifying: ['reviewing', 'fixing', 'implementing', 'planning', 'parked', 'abandoned', 'dead_letter'],
+    verifying: ['reviewing', 'fixing', 'final_approval', 'implementing', 'planning', 'parked', 'abandoned', 'dead_letter'],
     reviewing: ['fixing', 'planning', 'implementing', 'verifying', 'final_approval', 'merged', 'parked', 'abandoned', 'dead_letter'],
     fixing: ['verifying', 'parked', 'abandoned', 'dead_letter'],
     final_approval: ['merged', 'fixing', 'implementing', 'parked', 'abandoned', 'dead_letter'],

@@ -1255,6 +1255,9 @@ export function validateAutomationConfigurationParts(
   stages.forEach((entry, index) => {
     const expectedStage = WORK_ITEM_STAGES[index];
     if (entry.stage !== expectedStage) throw new ContractValidationError(`${label}.stages must use the canonical automation stage order`);
+    if (entry.executor.kind === "machine_verify" && entry.stage !== "testing") {
+      throw new ContractValidationError(`${label}.stages ${entry.stage} cannot use the machine_verify executor`);
+    }
     if (entry.stage === "human_review") {
       if (entry.executor.kind !== "human") throw new ContractValidationError(`${label}.stages human_review must be owned by a human`);
       return;
@@ -2347,6 +2350,9 @@ function parseBoardAutomationStages(value: unknown, agentTypes: readonly Automat
   });
   const types = new Map(agentTypes.map((entry) => [entry.agentTypeId, entry] as const));
   for (const entry of stages) {
+    if (entry.executor.kind === "machine_verify" && entry.stage !== "testing") {
+      boardFailure(`${entry.stage} cannot use the machine_verify executor`);
+    }
     if (entry.stage === "human_review") { if (entry.executor.kind !== "human") boardFailure("human_review must use the human executor"); continue; }
     if (entry.stage === "deployment") { if (entry.executor.kind !== "disabled") boardFailure("deployment must remain disabled"); continue; }
     if (entry.executor.kind === "human") boardFailure(`${entry.stage} cannot use the human executor`);

@@ -20,6 +20,7 @@ export interface VerifyRunnerOptions {
   readonly repoRoot: string;
   readonly runsRoot?: string;
   readonly keepRuns?: number;
+  readonly supervisorPath?: string;
   /** Command executor injection for tests. Default: spawn via shell:false, argv = command.split(" "). */
   readonly execute?: (argv: readonly string[], options: { cwd: string }) => Promise<number>;
 }
@@ -237,6 +238,7 @@ export class VerifyRunner {
   readonly #repoRoot: string;
   readonly #runsRoot: string;
   readonly #keepRuns: number;
+  readonly #supervisorPath: string;
   readonly #execute: (argv: readonly string[], options: { cwd: string }) => Promise<number>;
 
   public constructor(options: VerifyRunnerOptions) {
@@ -246,6 +248,7 @@ export class VerifyRunner {
     this.#repoRoot = options.repoRoot;
     this.#runsRoot = options.runsRoot ?? join(options.repoRoot, ".verify-runs");
     this.#keepRuns = options.keepRuns ?? DEFAULT_KEEP_RUNS;
+    this.#supervisorPath = options.supervisorPath ?? join(options.repoRoot, "build", "server", "agents", "verify", "supervisor.js");
     this.#execute = options.execute ?? executeCommand;
   }
 
@@ -349,9 +352,8 @@ export class VerifyRunner {
       exitCode: null,
       command: contract.full.join(" && "),
     };
-    const supervisor = join(this.#repoRoot, "build", "server", "agents", "verify", "supervisor.js");
     const commands = contract.full.map(splitCommand);
-    const child = spawn(process.execPath, [supervisor, runDirectory, JSON.stringify(commands)], {
+    const child = spawn(process.execPath, [this.#supervisorPath, runDirectory, JSON.stringify(commands)], {
       cwd: this.#repoRoot,
       detached: true,
       shell: false,

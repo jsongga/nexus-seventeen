@@ -171,6 +171,9 @@ export class TaskBoardService {
           console.error("[task-board] stale-run reconciliation failed", error);
         }
         this.#board.reconcileWorkflowsBestEffort();
+        void this.#board.sweepVerifyAttempts().catch((error: unknown) => {
+          console.error("[task-board] machine-verify reconciliation failed", error);
+        });
       }, config.reconcileIntervalSeconds * 1_000);
       this.#reconcileTimer.unref();
     }

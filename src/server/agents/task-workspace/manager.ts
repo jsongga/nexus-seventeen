@@ -97,13 +97,13 @@ export class TaskWorkspaceManager {
     return path;
   }
 
-  async create(key: string, baseRef?: string): Promise<string> {
+  async create(key: string, baseRef?: string, branchKey = key): Promise<string> {
     const path = this.workspacePath(key);
+    const branch = `task/${this.#key(branchKey)}`;
     await mkdir(this.#workspaceRoot, { recursive: true });
     await rm(path, { recursive: true, force: true });
     try {
       await git(null, ["clone", "--no-hardlinks", this.#repositoryPath, path]);
-      const branch = `task/${this.#key(key)}`;
       const existing = (await git(path, [
         "branch", "--remotes", "--list", `origin/${branch}`,
       ])).trim().length > 0;

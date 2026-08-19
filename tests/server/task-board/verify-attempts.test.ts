@@ -1,0 +1,322 @@
+import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import type { VerifyRunStatus } from "#server/agents/verify";
+import { normalizeTaskBoardConfig } from "#server/task-board";
+import {
+  VerifyAttemptsCollaborator,
+  type MachineVerifyRunner,
+  type MachineVerifyWorkspaceManager,
+} from "#server/task-board/collaborators/verify-attempts";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
+import type { MachineVerifyEvidence } from "#server/task-board/persistence/workflow";
+import { HUMAN_TOKEN, boardFixture, config, workItemRequest } from "./helpers.js";
+
+type AttemptState = "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
+
+interface Settlement {
+  readonly passed: boolean;
+  readonly evidence: MachineVerifyEvidence;
+}
+
+test("verify workspace configuration defaults beside the database and rejects unsafe overrides", async () => {
+  const fixture = await boardFixture();
+  try {
+    const normalized = config(fixture.path);
+    assert.equal(normalized.verifyWorkspaceRoot, join(dirname(fixture.path), "verify-workspaces"));
+    assert.throws(
+      () => normalizeTaskBoardConfig({
+        dbPath: fixture.path,
+        humanToken: HUMAN_TOKEN,
+        humanPrincipal: "human:alice",
+        verifyWorkspaceRoot: "relative/verify-workspaces",
+      }),
+      /verifyWorkspaceRoot must be an absolute directory path/u,
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
+  readonly creates: Array<{ key: string; baseRef: string | undefined; branchKey: string | undefined }> = [];
+  readonly removed: string[] = [];
+  readonly retained: string[] = [];
+
+  constructor(
+    private readonly runtime: TaskBoardRuntime,
+    private readonly workspace: string,
+  ) {}
+
+  async create(key: string, baseRef?: string, branchKey?: string): Promise<string> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.creates.push({ key, baseRef, branchKey });
+    return this.workspace;
+  }
+
+  async remove(key: string): Promise<void> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.removed.push(key);
+  }
+
+  async retain(key: string): Promise<void> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.retained.push(key);
+  }
+}
+
+class FakeRunner implements MachineVerifyRunner {
+  readonly starts: string[] = [];
+  readonly statusCalls: string[] = [];
+  readonly tailCalls: Array<{ id: string; bytes: number }> = [];
+  startErrors: Error[] = [];
+  statusState: VerifyRunStatus["state"] = "running";
+  tailText = "verify log tail";
+
+  constructor(
+    private readonly runtime: TaskBoardRuntime,
+    private readonly repoRoot: string,
+  ) {}
+
+  async startFull(): Promise<string> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.starts.push(this.repoRoot);
+    const error = this.startErrors.shift();
+    if (error !== undefined) throw error;
+    return `verify-run-${this.starts.length}`;
+  }
+
+  async status(id: string): Promise<VerifyRunStatus> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.statusCalls.push(id);
+    return {
+      id,
+      state: this.statusState,
+      startedAt: "2026-08-19T12:00:00.000Z",
+      endedAt: this.statusState === "running" ? null : "2026-08-19T12:01:00.000Z",
+      exitCode: this.statusState === "green" ? 0 : this.statusState === "running" || this.statusState === "died" ? null : 1,
+      command: "npm test",
+    };
+  }
+
+  async tail(id: string, bytes: number): Promise<string> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.tailCalls.push({ id, bytes });
+    return this.tailText;
+  }
+}
+
+async function attemptFixture(
+  suffix: string,
+  state: AttemptState,
+  criterionChecks: readonly { readonly criterion: string; readonly check: string }[] = [],
+) {
+  const fixture = await boardFixture();
+  const workItem = fixture.board.createWorkItem(workItemRequest({
+    originalRequest: `Machine verify ${suffix}.`,
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `machine-verify-${suffix}`).workItem;
+  fixture.board.close();
+  const boardConfig = config(fixture.path);
+  const store = await TaskBoardStore.open(boardConfig.dbPath);
+  const runtime = new TaskBoardRuntime(boardConfig, store);
+  const planRevisionId = `plan-machine-verify-${suffix}`;
+  const nodeId = `node-machine-verify-${suffix}`;
+  const verifyAttemptId = `verify-attempt-${suffix}`;
+  const workspacePath = join(await mkdtemp(join(tmpdir(), "machine-verify-workspace-")), "checkout");
+  store.transaction(() => {
+    store.db.prepare("UPDATE projects SET description=? WHERE project_id=?")
+      .run("/target/repository", fixture.project.projectId);
+    store.db.prepare(`
+      UPDATE work_items
+      SET state='verifying', current_stage='testing', pipeline_branch=?, base_sha=?, version=version+1
+      WHERE work_item_id=?
+    `).run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
+    store.db.prepare(`
+      INSERT INTO plan_revisions(
+        plan_revision_id, work_item_id, revision, objective, assumptions_json, acceptance_criteria_json,
+        change_shape, tier, declared_scope_json, non_goals_json, mechanical_portions_json,
+        blocking_questions_json, criterion_checks_json, rejected_note, project_id, skill_digests_json,
+        state, created_by, confirmed_by, created_at, confirmed_at
+      ) VALUES (?, ?, 1, ?, '[]', '["Verify succeeds."]', 'feature', 'standard', '["src"]', '[]',
+        '[]', '[]', ?, NULL, ?, '{}', 'confirmed', 'human:alice', 'human:alice', ?, ?)
+    `).run(
+      planRevisionId,
+      workItem.workItemId,
+      `Machine verify ${suffix}.`,
+      JSON.stringify(criterionChecks),
+      fixture.project.projectId,
+      "2026-08-19T12:00:00.000Z",
+      "2026-08-19T12:00:00.000Z",
+    );
+    store.db.prepare(`
+      INSERT INTO work_nodes(
+        node_id, plan_revision_id, project_id, title, objective, acceptance_criteria_json,
+        stage_template_json, current_stage, state, version, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Verify', 'Run machine verify.', '["Verify succeeds."]',
+        '["implementation","testing"]', 'testing', 'active', 1, ?, ?)
+    `).run(
+      nodeId,
+      planRevisionId,
+      fixture.project.projectId,
+      "2026-08-19T12:00:00.000Z",
+      "2026-08-19T12:00:00.000Z",
+    );
+    store.db.prepare(`
+      INSERT INTO verify_attempts(
+        verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
+        state, check_results_json, detail, created_at, ended_at
+      ) VALUES (?, ?, 'testing', 1, ?, ?, ?, NULL, NULL, ?, NULL)
+    `).run(
+      verifyAttemptId,
+      nodeId,
+      state === "running" ? "verify-run-1" : null,
+      state === "running" ? workspacePath : null,
+      state,
+      "2026-08-19T12:00:00.000Z",
+    );
+  });
+
+  const workspace = new FakeWorkspaceManager(runtime, workspacePath);
+  const runner = new FakeRunner(runtime, workspacePath);
+  const settlements: Settlement[] = [];
+  const checkCalls: Array<{ command: string; cwd: string }> = [];
+  let checkPassed = true;
+  const collaborator = new VerifyAttemptsCollaborator(runtime, {
+    supervisorPath: "/orchestrator/build/server/agents/verify/supervisor.js",
+    workspaceManagerFactory: () => workspace,
+    runnerFactory: ({ repoRoot }) => {
+      assert.equal(repoRoot, workspacePath);
+      return runner;
+    },
+    executeCheck: async (command, cwd) => {
+      assert.equal(runtime.store.hasOpenTransaction, false);
+      checkCalls.push({ command, cwd });
+      return { passed: checkPassed, detail: checkPassed ? "exit 0" : "exit 1" };
+    },
+    settleInTransaction: (_nodeId, _stage, passed, evidence) => {
+      assert.equal(runtime.store.hasOpenTransaction, true);
+      settlements.push({ passed, evidence });
+      return [];
+    },
+    activateNodes: () => undefined,
+  });
+
+  const row = () => store.db.prepare("SELECT * FROM verify_attempts WHERE verify_attempt_id=?")
+    .get(verifyAttemptId) as Record<string, unknown>;
+  return {
+    runtime, store, collaborator, runner, workspace, settlements, checkCalls, row,
+    verifyAttemptId, workItem, nodeId,
+    setCheckPassed(value: boolean): void { checkPassed = value; },
+  };
+}
+
+test("starting attempts start outside the transaction, then green runs execute and record criterion checks", async () => {
+  const fixture = await attemptFixture("green", "starting", [{
+    criterion: "The focused test passes.",
+    check: "node test.mjs",
+  }]);
+  try {
+    await fixture.collaborator.sweep();
+    assert.equal(fixture.row().state, "running");
+    assert.deepEqual(fixture.workspace.creates, [{
+      key: `${fixture.workItem.workItemId}-verify`,
+      baseRef: "a".repeat(40),
+      branchKey: fixture.workItem.workItemId,
+    }]);
+
+    fixture.runner.statusState = "green";
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "green");
+    assert.deepEqual(JSON.parse(String(fixture.row().check_results_json)), [{
+      criterion: "The focused test passes.",
+      check: "node test.mjs",
+      passed: true,
+    }]);
+    assert.deepEqual(fixture.checkCalls, [{ command: "node test.mjs", cwd: String(fixture.row().workspace_path) }]);
+    assert.equal(fixture.settlements[0]?.passed, true);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.retained, []);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("a failed criterion settles the green verify run as failed and retains its workspace", async () => {
+  const fixture = await attemptFixture("check-failure", "running", [{
+    criterion: "The focused test passes.",
+    check: "node test.mjs",
+  }]);
+  try {
+    fixture.runner.statusState = "green";
+    fixture.setCheckPassed(false);
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "failed");
+    assert.match(String(fixture.row().detail), /The focused test passes/u);
+    assert.equal(fixture.settlements[0]?.passed, false);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.retained, [`${fixture.workItem.workItemId}-verify`]);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+for (const terminal of ["failed", "died"] as const) {
+  test(`${terminal} verify runs settle with a bounded tail and retain the workspace`, async () => {
+    const fixture = await attemptFixture(`terminal-${terminal}`, "running");
+    try {
+      fixture.runner.statusState = terminal;
+      fixture.runner.tailText = `${terminal} evidence`;
+      await fixture.collaborator.sweep();
+
+      assert.equal(fixture.row().state, terminal);
+      assert.deepEqual(fixture.runner.tailCalls, [{ id: "verify-run-1", bytes: 4_096 }]);
+      assert.equal(fixture.settlements[0]?.passed, false);
+      assert.match(fixture.settlements[0]?.evidence.summary ?? "", new RegExp(`${terminal} evidence`, "u"));
+      assert.deepEqual(fixture.workspace.retained, [`${fixture.workItem.workItemId}-verify`]);
+    } finally {
+      fixture.runtime.close();
+      fixture.store.close();
+    }
+  });
+}
+
+test("failed_to_start retries once, while a second start failure settles the verify round", async () => {
+  const retried = await attemptFixture("retry-start", "starting");
+  try {
+    retried.runner.startErrors.push(new Error("first spawn failed"));
+    await retried.collaborator.sweep();
+    assert.equal(retried.row().state, "failed_to_start");
+    assert.match(String(retried.row().detail), /start-failures:1/u);
+
+    await retried.collaborator.sweep();
+    assert.equal(retried.row().state, "running");
+    assert.equal(retried.runner.starts.length, 2);
+    assert.deepEqual(retried.settlements, []);
+  } finally {
+    retried.runtime.close();
+    retried.store.close();
+  }
+
+  const exhausted = await attemptFixture("exhaust-start", "starting");
+  try {
+    exhausted.runner.startErrors.push(new Error("first spawn failed"), new Error("second spawn failed"));
+    await exhausted.collaborator.sweep();
+    await exhausted.collaborator.sweep();
+
+    assert.equal(exhausted.row().state, "failed");
+    assert.match(String(exhausted.row().detail), /second spawn failed/u);
+    assert.equal(exhausted.settlements[0]?.passed, false);
+    assert.deepEqual(exhausted.workspace.retained, [`${exhausted.workItem.workItemId}-verify`]);
+  } finally {
+    exhausted.runtime.close();
+    exhausted.store.close();
+  }
+});

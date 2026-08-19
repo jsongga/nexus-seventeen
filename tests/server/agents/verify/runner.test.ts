@@ -476,6 +476,20 @@ test("a background full run progresses from running to green and tail reads only
   assert.equal(Buffer.byteLength(expectedTail), 8);
 });
 
+test("a background full run can use an orchestrator supervisor outside the target repo", async () => {
+  const root = await backgroundRepo(["node .test-helpers/exit0.mjs"]);
+  const targetSupervisor = join(root, "build", "server", "agents", "verify", "supervisor.js");
+  const supervisorPath = join(root, "..", `orchestrator-supervisor-${Date.now()}.js`);
+  await copyFile(targetSupervisor, supervisorPath);
+  await rm(join(root, "build"), { recursive: true, force: true });
+  const runner = new VerifyRunner({ repoRoot: root, supervisorPath });
+
+  const id = await runner.startFull();
+  const complete = await pollStatus(runner, id, (status) => status.state === "green");
+
+  assert.equal(complete.exitCode, 0);
+});
+
 test("a background full run stops at its failing step and records that step", async () => {
   const full = [
     "node .test-helpers/exit0.mjs",
