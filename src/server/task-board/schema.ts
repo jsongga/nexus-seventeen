@@ -21,6 +21,7 @@ import {
   parseBoardInterrupt,
   parseBoardLaneErrorDetail,
   parseBoardQuestion,
+  parseBoardRejectPlan,
   parseBoardResume,
   parseBoardRetryTask,
   parseBoardRotateAgentToken,
@@ -44,6 +45,7 @@ import type {
   CreateTaskRequest,
   CreateWorkItemRequest,
   InterruptAgentRequest,
+  RejectPlanRevisionRequest,
   ResumeAgentRequest,
   RetryTaskRequest,
   RotateAgentTokenRequest,
@@ -75,6 +77,7 @@ export function parseIdentifier(value: unknown, field: string): string {
 
 export function parseCreateProject(value: unknown): CreateProjectRequest { return adapt(() => parseBoardCreateProject(value)); }
 export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest { return adapt(() => parseBoardConfirmPlan(value)); }
+export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest { return adapt(() => parseBoardRejectPlan(value)); }
 export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest { return adapt(() => parseBoardCreateWorkItem(value)); }
 export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest { return adapt(() => parseBoardUpdateWorkItem(value)); }
 export function parseUpdateAutomationConfiguration(value: unknown): UpdateAutomationConfigurationRequest { return adapt(() => parseBoardAutomationUpdate(value)); }

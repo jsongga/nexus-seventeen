@@ -3,7 +3,9 @@ import type { AddressInfo } from "node:net";
 import {
   TASK_BOARD_ERROR_CODES,
   WORK_ITEM_CURSOR_MAX_BYTES,
+  type ConfirmPlanRevisionResponse,
   type CreateProjectArtifactRequest,
+  type RejectPlanRevisionResponse,
 } from "#shared/task-board-contract";
 import { TaskBoard } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
@@ -39,6 +41,7 @@ import {
   parseDocumentPenUpdate,
   parseDocumentUpdate,
   parseQuestion,
+  parseRejectPlanRevisionRequest,
   parseRetryTask,
   parseRotateAgentToken,
   parseResume,
@@ -233,11 +236,27 @@ export class TaskBoardService {
     if (confirmPlanMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      const workflow = this.#board.confirmWorkflow(
+      const confirmed = this.#board.confirmWorkflow(
         parseRouteIdentifier(confirmPlanMatch[1], "planRevisionId"),
         parseConfirmPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
-      sendJson(response, 200, { workflow });
+      const { outcome, ...workflow } = confirmed;
+      const body: ConfirmPlanRevisionResponse<typeof workflow> = {
+        workflow,
+        ...(outcome === undefined ? {} : { outcome }),
+      };
+      sendJson(response, 200, body);
+      return;
+    }
+    const rejectPlanMatch = /^\/v1\/plans\/([^/]+)\/reject$/u.exec(url.pathname);
+    if (rejectPlanMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const body: RejectPlanRevisionResponse = this.#board.rejectWorkflowPlan(
+        parseRouteIdentifier(rejectPlanMatch[1], "planRevisionId"),
+        parseRejectPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, body);
       return;
     }
     const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);

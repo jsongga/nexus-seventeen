@@ -31,6 +31,8 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type RejectPlanRevisionRequest,
+  type RejectPlanRevisionResponse,
   type RetryTaskRequest,
   type RetryTaskResponse,
   type RotateAgentTokenResponse,
@@ -75,6 +77,7 @@ import {
 } from "./persistence/rows.js";
 import { TaskBoardStore } from "./persistence/store.js";
 import type { ProjectWorkflowSnapshot } from "./persistence/workflow.js";
+import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 
 export class TaskBoard {
   readonly #runtime: TaskBoardRuntime;
@@ -164,8 +167,25 @@ export class TaskBoard {
     return this.#projects.subscribeProjectEvents(projectId, listener);
   }
 
-  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ProjectWorkflowSnapshot {
+  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
     return this.#projects.confirmWorkflow(planRevisionId, request);
+  }
+
+  rejectWorkflowPlan(planRevisionId: string, request: RejectPlanRevisionRequest): RejectPlanRevisionResponse {
+    let wakeAgentId: string | null = null;
+    const result = this.#runtime.store.transaction(() => {
+      const rejected = this.#projects.rejectWorkflowInTransaction(planRevisionId, request);
+      if (rejected.outcome === "revising") {
+        const planning = this.#workItems.startWorkItemPlanningRevisionInTransaction(rejected.workItemId, request.note);
+        if (planning.task === null || planning.wakeAgentId === null) {
+          throw new TaskBoardError(409, "PLANNING_UNAVAILABLE", "A planning manager is unavailable");
+        }
+        wakeAgentId = planning.wakeAgentId;
+      }
+      return Object.freeze({ outcome: rejected.outcome });
+    });
+    if (wakeAgentId !== null) this.#runtime.wakeupEvents.emit(wakeAgentId);
+    return result;
   }
 
   getAutomationConfiguration(): AutomationConfiguration {

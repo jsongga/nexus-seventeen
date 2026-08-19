@@ -63,6 +63,7 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type RejectPlanRevisionRequest,
   type ResumeAgentRequest,
   type RetryTaskRequest,
   type RotateAgentTokenRequest,
@@ -2185,6 +2186,15 @@ export function parseBoardConfirmPlan(value: unknown): ConfirmPlanRevisionReques
   const item = boardExact(value, ["expectedState"], "Plan confirmation", true);
   if (item.expectedState !== "proposed") boardFailure("expectedState must be proposed");
   return Object.freeze({ expectedState: "proposed" });
+}
+
+export function parseBoardRejectPlan(value: unknown): RejectPlanRevisionRequest {
+  const item = boardExact(value, ["note", "expectedState"], "Plan rejection", true);
+  if (item.expectedState !== "proposed") boardFailure("expectedState must be proposed");
+  return Object.freeze({
+    note: boardText(item.note, "note", 2_000),
+    expectedState: "proposed",
+  });
 }
 
 export function parseBoardCreateWorkItem(value: unknown): CreateWorkItemRequest {

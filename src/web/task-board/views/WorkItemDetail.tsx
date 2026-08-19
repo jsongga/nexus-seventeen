@@ -17,6 +17,7 @@ import {
   deriveWorkItemDetailAffordances,
   nodesForPlan,
   proposedPlanForWorkItem,
+  type DetailedWorkflowPlan,
 } from '../model/work-item-detail';
 import {
   prettyStatus,
@@ -25,7 +26,13 @@ import {
   workItemStateTone,
   workItemStatusLabel,
 } from '../model/work-item-labels';
-import { actionErrorContexts, useActionErrors, type ActionResult } from '../model/action-errors';
+import {
+  actionErrorContexts,
+  actionErrorMessage,
+  useActionErrors,
+  type ActionErrorState,
+  type ActionResult,
+} from '../model/action-errors';
 import type {
   BoardQuestion,
   BoardTask,
@@ -125,6 +132,149 @@ function WorkflowNodeCard({ node, allNodes }: { node: WorkflowNode; allNodes: Wo
   );
 }
 
+function planValueLabel(value: string): string {
+  const label = prettyStatus(value);
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
+
+function PlanListSection({ title, items }: { title: string; items: readonly string[] }) {
+  return (
+    <div className="mt-3">
+      <p className="text-[11px] font-medium text-muted">{title}</p>
+      {items.length > 0
+        ? <ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-ink">{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+        : <p className="mt-1 text-xs leading-5 text-muted">None declared.</p>}
+    </div>
+  );
+}
+
+export function PlanRecordDetails({ plan }: { plan: DetailedWorkflowPlan }) {
+  return (
+    <div className="rounded-md border border-line bg-card p-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">{plan.objective}</p>
+        {plan.changeShape !== undefined || plan.tier !== undefined ? (
+          <div className="flex flex-wrap gap-1.5" aria-label="Plan classification">
+            {plan.changeShape === undefined ? null : <Pill tone="purple">{planValueLabel(plan.changeShape)}</Pill>}
+            {plan.tier === undefined ? null : <Pill tone={plan.tier === 'hazardous' ? 'red' : 'green'}>{planValueLabel(plan.tier)}</Pill>}
+          </div>
+        ) : null}
+      </div>
+      {plan.assumptions.length > 0 ? <PlanListSection title="Assumptions" items={plan.assumptions} /> : null}
+      <PlanListSection title="Acceptance criteria" items={plan.acceptanceCriteria} />
+      {plan.declaredScope === undefined ? null : <PlanListSection title="Declared scope" items={plan.declaredScope} />}
+      {plan.nonGoals === undefined ? null : <PlanListSection title="Non-goals" items={plan.nonGoals} />}
+      {plan.mechanicalPortions === undefined ? null : <PlanListSection title="Mechanical portions" items={plan.mechanicalPortions} />}
+      {plan.blockingQuestions === undefined ? null : (
+        <div className="mt-3">
+          <p className="text-[11px] font-medium text-muted">Blocking questions</p>
+          {plan.blockingQuestions.length > 0 ? (
+            <ol className="mt-1.5 space-y-2">
+              {plan.blockingQuestions.map((question, index) => (
+                <li key={`${index}-${question.question}`} className="rounded-md border border-line bg-muted-surface px-3 py-2.5">
+                  <p className="text-xs font-medium leading-5 text-ink">{question.question}</p>
+                  <p className="mt-1 text-[11px] font-medium text-muted">Recommended default</p>
+                  <p className="mt-0.5 text-xs leading-5 text-ink">{question.recommendedDefault}</p>
+                </li>
+              ))}
+            </ol>
+          ) : <p className="mt-1 text-xs leading-5 text-muted">None declared.</p>}
+        </div>
+      )}
+      {plan.criterionChecks === undefined ? null : (
+        <div className="mt-3">
+          <p className="text-[11px] font-medium text-muted">Criterion checks</p>
+          {plan.criterionChecks.length > 0 ? (
+            <dl className="mt-1.5 space-y-2">
+              {plan.criterionChecks.map((criterion, index) => (
+                <div key={`${index}-${criterion.criterion}`} className="rounded-md border border-line bg-muted-surface px-3 py-2.5">
+                  <dt className="text-xs font-medium leading-5 text-ink">{criterion.criterion}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted">{criterion.check}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : <p className="mt-1 text-xs leading-5 text-muted">None declared.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PlanApprovalActions({
+  plan,
+  busy,
+  confirmEnabled,
+  rejectEnabled,
+  onConfirm,
+  onReject,
+}: {
+  plan: DetailedWorkflowPlan;
+  busy: boolean;
+  confirmEnabled: boolean;
+  rejectEnabled: boolean;
+  onConfirm: () => void;
+  onReject: () => void;
+}) {
+  if (!confirmEnabled && !rejectEnabled) return null;
+  return (
+    <div className="mt-4">
+      {plan.tier === 'hazardous' ? (
+        <div className="mb-3 rounded-md border border-caution/30 bg-caution-soft px-3.5 py-3 text-sm leading-6 text-caution" role="alert">
+          <p className="font-medium">Hazardous plans park at confirmation</p>
+          <p className="mt-1 text-xs leading-5">This tier needs the Design stage from campaign 5. Confirming records approval but does not activate work.</p>
+        </div>
+      ) : null}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {confirmEnabled ? <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onConfirm}>Confirm plan</Button> : null}
+        {rejectEnabled ? <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onReject}>Reject plan</Button> : null}
+      </div>
+    </div>
+  );
+}
+
+export function PlanRejectionForm({
+  workItemId,
+  note,
+  busy,
+  errors,
+  onNoteChange,
+  onDismissError,
+  onSubmit,
+  onKeep,
+}: {
+  workItemId: string;
+  note: string;
+  busy: boolean;
+  errors: ActionErrorState;
+  onNoteChange: (note: string) => void;
+  onDismissError: (context: string) => void;
+  onSubmit: () => void;
+  onKeep: () => void;
+}) {
+  return (
+    <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <div>
+        <FieldLabel htmlFor={`work-item-rejection-note-${workItemId}`}>Revision note</FieldLabel>
+        <textarea
+          id={`work-item-rejection-note-${workItemId}`}
+          className={cn(inputClass, 'min-h-24 resize-y py-3')}
+          autoFocus
+          required
+          maxLength={2_000}
+          value={note}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="What must change before this plan can proceed?"
+        />
+      </div>
+      <InlineActionErrors errors={errors} onDismiss={onDismissError} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="submit" variant="danger" disabled={busy || note.trim().length === 0}>Reject and revise</Button>
+        <Button disabled={busy} onClick={onKeep}>Keep proposed plan</Button>
+      </div>
+    </form>
+  );
+}
+
 export function WorkItemDetail({
   workItem,
   projectName,
@@ -140,6 +290,8 @@ export function WorkItemDetail({
 }: WorkItemDetailProps) {
   const [answer, setAnswer] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [rejectionNote, setRejectionNote] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'archive' | null>(null);
   const actionErrors = useActionErrors();
   const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
@@ -162,6 +314,8 @@ export function WorkItemDetail({
   useEffect(() => {
     setAnswer('');
     setCancelReason('');
+    setRejectionNote('');
+    setRejecting(false);
     setConfirmation(null);
   }, [workItem.id]);
 
@@ -207,8 +361,6 @@ export function WorkItemDetail({
   const confirmPlanContext = proposedPlan === null
     ? null
     : actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId);
-  const cancellationContext = confirmation === 'reject' ? actionContexts.rejectPlan : actionContexts.cancel;
-
   async function save(context: string, operation: () => Promise<ActionResult>, onSaved?: () => void) {
     actionErrors.start(context);
     const result = await operation();
@@ -218,10 +370,30 @@ export function WorkItemDetail({
 
   async function submitCancellation() {
     const reason = cancelReason.trim();
-    if (reason.length === 0 || (confirmation !== 'cancel' && confirmation !== 'reject')) return;
-    await save(cancellationContext, () => onCancel(reason), () => {
+    if (reason.length === 0 || confirmation !== 'cancel') return;
+    await save(actionContexts.cancel, () => onCancel(reason), () => {
       setCancelReason('');
       closeConfirmation();
+    });
+  }
+
+  async function submitRejection() {
+    const note = rejectionNote.trim();
+    if (note.length === 0 || confirmation !== 'reject' || proposedPlan === null) return;
+    await save(actionContexts.rejectPlan, async () => {
+      setRejecting(true);
+      try {
+        await client.rejectWorkflowPlan(proposedPlan.planRevisionId, note);
+        return { ok: true };
+      } catch (caught) {
+        return { ok: false, error: actionErrorMessage(caught) };
+      } finally {
+        setRejecting(false);
+      }
+    }, () => {
+      setRejectionNote('');
+      closeConfirmation();
+      setWorkflowAttempt((value) => value + 1);
     });
   }
 
@@ -234,7 +406,8 @@ export function WorkItemDetail({
 
   function openConfirmation(next: Exclude<typeof confirmation, null>) {
     actionErrors.dismiss(confirmationContext(next)!);
-    if (next === 'cancel' || next === 'reject') setCancelReason('');
+    if (next === 'cancel') setCancelReason('');
+    if (next === 'reject') setRejectionNote('');
     setConfirmation(next);
   }
 
@@ -362,20 +535,16 @@ export function WorkItemDetail({
               </div>
             ) : proposedPlan ? (
               <div className="mt-4">
-                <div className="rounded-md border border-line bg-card p-3.5">
-                  <p className="text-sm font-semibold text-ink">{proposedPlan.objective}</p>
-                  {proposedPlan.assumptions.length > 0 ? (
-                    <div className="mt-3"><p className="text-[11px] font-medium text-muted">Assumptions</p><ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-ink">{proposedPlan.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul></div>
-                  ) : null}
-                  <div className="mt-3"><p className="text-[11px] font-medium text-muted">Acceptance criteria</p><ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-ink">{proposedPlan.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul></div>
-                </div>
+                <PlanRecordDetails plan={proposedPlan} />
                 {planNodes.length > 0 ? <ol className="mt-3 space-y-3">{planNodes.map((node) => <WorkflowNodeCard key={node.nodeId} node={node} allNodes={planNodes} />)}</ol> : <p className="mt-3 rounded-md border border-line bg-muted-surface p-3.5 text-sm text-muted">This proposed plan contains no work nodes.</p>}
-                {affordances.confirmPlan || affordances.rejectPlan ? (
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={() => void save(actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId), () => onConfirm(proposedPlan.planRevisionId))}>Confirm plan</Button>
-                    <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={() => openConfirmation('reject')}>Reject plan</Button>
-                  </div>
-                ) : null}
+                <PlanApprovalActions
+                  plan={proposedPlan}
+                  busy={busy || rejecting}
+                  confirmEnabled={affordances.confirmPlan}
+                  rejectEnabled={affordances.rejectPlan}
+                  onConfirm={() => { void save(actionErrorContexts.workItemConfirmPlan(workItem.id, proposedPlan.planRevisionId), () => onConfirm(proposedPlan.planRevisionId)); }}
+                  onReject={() => openConfirmation('reject')}
+                />
               </div>
             ) : workflowState === 'idle' ? (
               <div className="mt-4 rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted">
@@ -401,13 +570,11 @@ export function WorkItemDetail({
       </div>
 
       <Modal
-        open={confirmation === 'cancel' || confirmation === 'reject'}
+        open={confirmation === 'cancel'}
         onClose={closeConfirmation}
         isDirty={() => fieldsAreDirty([cancelReason])}
-        title={confirmation === 'reject' ? 'Reject proposed plan' : 'Cancel work item'}
-        description={confirmation === 'reject'
-          ? 'Rejecting the plan cancels this work item and records your reason on its planning task.'
-          : 'This stops the intake and its live planning task. This action cannot be undone.'}
+        title="Cancel work item"
+        description="This stops the intake and its live planning task. This action cannot be undone."
       >
         {(requestClose) => <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); void submitCancellation(); }}>
           <div>
@@ -420,15 +587,34 @@ export function WorkItemDetail({
               maxLength={16_000}
               value={cancelReason}
               onChange={(event) => setCancelReason(event.target.value)}
-              placeholder={confirmation === 'reject' ? 'What must change before this can proceed?' : 'Why is this work item being cancelled?'}
+              placeholder="Why is this work item being cancelled?"
             />
           </div>
-          <InlineActionErrors errors={actionErrors.errors.filter((entry) => entry.context === cancellationContext)} onDismiss={actionErrors.dismiss} />
+          <InlineActionErrors errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.cancel)} onDismiss={actionErrors.dismiss} />
           <div className="grid gap-2 sm:grid-cols-2">
-            <Button type="submit" variant="danger" disabled={busy || cancelReason.trim().length === 0}>{confirmation === 'reject' ? 'Reject and cancel' : 'Cancel work item'}</Button>
+            <Button type="submit" variant="danger" disabled={busy || cancelReason.trim().length === 0}>Cancel work item</Button>
             <Button disabled={busy} onClick={requestClose}>Keep work item</Button>
           </div>
         </form>}
+      </Modal>
+
+      <Modal
+        open={confirmation === 'reject'}
+        onClose={closeConfirmation}
+        isDirty={() => fieldsAreDirty([rejectionNote])}
+        title="Reject proposed plan"
+        description="Send one bounded revision note back to planning. Rejecting a second proposed revision parks the work item."
+      >
+        {(requestClose) => <PlanRejectionForm
+          workItemId={workItem.id}
+          note={rejectionNote}
+          busy={busy || rejecting}
+          errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.rejectPlan)}
+          onNoteChange={setRejectionNote}
+          onDismissError={actionErrors.dismiss}
+          onSubmit={() => { void submitRejection(); }}
+          onKeep={requestClose}
+        />}
       </Modal>
 
       <Modal

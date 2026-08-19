@@ -1,3 +1,4 @@
+import type { RejectPlanRevisionResponse } from '@shared/task-board-contract';
 import type {
   AgentQueryConversationTurn,
   AgentRole,
@@ -229,6 +230,14 @@ function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
   return parseProjectWorkflow(envelope.workflow, `${path}.workflow`);
 }
 
+function planRejectionFromEnvelope(value: unknown, path: string): RejectPlanRevisionResponse {
+  const envelope = exactRecord(value, path, ['outcome']);
+  if (envelope.outcome !== 'revising' && envelope.outcome !== 'parked') {
+    throw new Error(`${path}.outcome must be revising or parked`);
+  }
+  return { outcome: envelope.outcome };
+}
+
 function workItemPageFromEnvelope(value: unknown, path: string): {
   workItems: RawWorkItem[];
   nextCursor: string | null;
@@ -325,6 +334,7 @@ export interface TaskBoardClient {
   getProjectWorkflow(projectId: string, signal?: AbortSignal): Promise<ProjectWorkflow>;
   getProjectArtifacts(projectId: string, signal?: AbortSignal): Promise<ProjectArtifact[]>;
   confirmWorkflow(planRevisionId: string): Promise<ProjectWorkflow>;
+  rejectWorkflowPlan(planRevisionId: string, note: string): Promise<RejectPlanRevisionResponse>;
   subscribeProjectEvents(input: {
     projectId: string;
     after: number;
@@ -559,6 +569,16 @@ export function createTaskBoardClient(options: {
           body: JSON.stringify({ expectedState: 'proposed' }),
         }),
         'confirm workflow response',
+      );
+    },
+    async rejectWorkflowPlan(planRevisionId, note) {
+      const parsedNote = boundedText(note, 'plan rejection note', 2_000);
+      return planRejectionFromEnvelope(
+        await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/reject`, {
+          method: 'POST',
+          body: JSON.stringify({ note: parsedNote, expectedState: 'proposed' }),
+        }),
+        'reject workflow plan response',
       );
     },
     async subscribeProjectEvents(input) {

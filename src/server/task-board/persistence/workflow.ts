@@ -10,6 +10,8 @@ import {
   type CreatePlanRevisionRequest,
   type PlanRevision,
   type ProjectEvent,
+  type RejectPlanRevisionRequest,
+  type RejectPlanRevisionResponse,
   type StageHandoff,
   type StageHandoffDraft,
   type WorkNode,
@@ -83,6 +85,16 @@ export interface ProjectWorkflowSnapshot {
   readonly nodes: readonly WorkNode[];
   readonly handoffs: readonly StageHandoff[];
   readonly events: readonly ProjectEvent[];
+}
+
+export interface ConfirmWorkflowTransactionResult {
+  readonly readyNodes: readonly WorkNode[];
+  readonly outcome?: "parked_hazardous";
+}
+
+export interface RejectWorkflowTransactionResult extends RejectPlanRevisionResponse {
+  readonly workItemId: string;
+  readonly projectId: string;
 }
 
 export class TransparentWorkflow {
@@ -243,22 +255,14 @@ export class TransparentWorkflow {
     });
   }
 
-  confirm(planId: string, request: ConfirmPlanRevisionRequest, actor: string): readonly WorkNode[] {
+  confirm(planId: string, request: ConfirmPlanRevisionRequest, actor: string): ConfirmWorkflowTransactionResult {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
     const now = this.now().toISOString();
     return this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
-      if (!row) throw new TaskBoardError(404, "PLAN_NOT_FOUND", "Plan was not found");
-      if (row.state !== "proposed") throw new TaskBoardError(409, "PLAN_NOT_PROPOSED", "Plan is no longer proposed");
+      if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
+      if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
       this.db.prepare("UPDATE plan_revisions SET state='confirmed',confirmed_by=?,confirmed_at=? WHERE plan_revision_id=?").run(actor, now, planId);
-      this.db.prepare(`UPDATE work_nodes SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
-        WHERE plan_revision_id=? AND NOT EXISTS(SELECT 1 FROM work_node_dependencies d WHERE d.node_id=work_nodes.node_id)`).run(now, planId);
-      const firstStage = this.db.prepare(
-        "SELECT current_stage FROM work_nodes WHERE plan_revision_id=? AND state='ready' ORDER BY created_at,node_id LIMIT 1",
-      ).get(planId)?.current_stage;
-      if (firstStage === undefined || firstStage === null) {
-        throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_without_ready_stage");
-      }
       const projectUpdate = this.db.prepare(`
         UPDATE
           work_items
@@ -267,6 +271,27 @@ export class TransparentWorkflow {
       `).run(String(row.project_id), String(row.work_item_id));
       if (Number(projectUpdate.changes) !== 1) {
         throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+      }
+      if (row.tier === "hazardous") {
+        const result = "hazardous tier needs the Design stage (campaign 5)";
+        this.recordPlanningResult(String(row.work_item_id), result, now);
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(row.work_item_id),
+          to: "parked",
+          actorType: "human",
+          actorId: actor,
+          now,
+        });
+        this.event(String(row.project_id), null, null, "plan_confirmed", result, now);
+        return Object.freeze({ readyNodes: Object.freeze([]), outcome: "parked_hazardous" });
+      }
+      this.db.prepare(`UPDATE work_nodes SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
+        WHERE plan_revision_id=? AND NOT EXISTS(SELECT 1 FROM work_node_dependencies d WHERE d.node_id=work_nodes.node_id)`).run(now, planId);
+      const firstStage = this.db.prepare(
+        "SELECT current_stage FROM work_nodes WHERE plan_revision_id=? AND state='ready' ORDER BY created_at,node_id LIMIT 1",
+      ).get(planId)?.current_stage;
+      if (firstStage === undefined || firstStage === null) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_without_ready_stage");
       }
       const firstWorkflowStage = String(firstStage) as WorkflowStage;
       const firstWorkItemState = workItemStateForStage(firstWorkflowStage);
@@ -279,8 +304,67 @@ export class TransparentWorkflow {
         currentStage: firstWorkflowStage,
       });
       this.event(String(row.project_id), null, null, "plan_confirmed", `Plan revision ${row.revision} confirmed`, now);
-      return this.nodes(planId).filter((node) => node.state === "ready");
+      return Object.freeze({ readyNodes: this.nodes(planId).filter((node) => node.state === "ready") });
     });
+  }
+
+  rejectInTransaction(
+    planId: string,
+    request: RejectPlanRevisionRequest,
+    actor: string,
+  ): RejectWorkflowTransactionResult {
+    if (request.expectedState !== "proposed") {
+      throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
+    }
+    const now = this.now().toISOString();
+    const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
+    if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
+    if (row.state !== "proposed") {
+      throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+    }
+    const workItemId = String(row.work_item_id);
+    const projectId = String(row.project_id);
+    const rejectedBefore = this.db.prepare(
+      "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state='rejected' LIMIT 1",
+    ).get(workItemId) !== undefined;
+    const updated = this.db.prepare(
+      "UPDATE plan_revisions SET state='rejected',rejected_note=? WHERE plan_revision_id=? AND state='proposed'",
+    ).run(request.note, planId);
+    if (Number(updated.changes) !== 1) {
+      throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+    }
+    const outcome = rejectedBefore ? "parked" : "revising";
+    if (outcome === "parked") {
+      this.recordPlanningResult(workItemId, "plan rejected twice — request unclear", now);
+    }
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId,
+      to: outcome === "parked" ? "parked" : "planning",
+      actorType: "human",
+      actorId: actor,
+      now,
+      ...(outcome === "revising" ? { currentStage: "planning" as const } : {}),
+    });
+    this.event(
+      projectId,
+      null,
+      null,
+      "plan_rejected",
+      outcome === "parked" ? "Plan rejected twice; work item parked" : "Plan rejected for revision",
+      now,
+    );
+    return Object.freeze({ outcome, workItemId, projectId });
+  }
+
+  private recordPlanningResult(workItemId: string, result: string, updatedAt: string): void {
+    const update = this.db.prepare(`
+      UPDATE tasks
+      SET result=?,version=version+1,updated_at=?
+      WHERE task_id=(SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?)
+    `).run(result, updatedAt, workItemId);
+    if (Number(update.changes) !== 1) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_planning_task_missing");
+    }
   }
 
   linkAttempt(nodeId: string, taskId: string, stage: WorkflowStage, skillDigests: Readonly<Record<string, string>>): void {

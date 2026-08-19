@@ -1,4 +1,7 @@
+import type { PlanRecordFields, PlanRevision } from '@shared/task-board-contract';
 import type { ProjectWorkflow, TaskStatus, WorkflowNode, WorkflowPlan, WorkItemState } from '../types';
+
+export type DetailedWorkflowPlan = WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'>;
 
 export interface WorkItemDetailAffordances {
   answerQuestion: boolean;
@@ -55,8 +58,8 @@ export function deriveWorkItemDetailAffordances(input: {
   };
 }
 
-export function proposedPlanForWorkItem(workflow: ProjectWorkflow, workItemId: string): WorkflowPlan | null {
-  return workflow.plans
+export function proposedPlanForWorkItem(workflow: ProjectWorkflow, workItemId: string): DetailedWorkflowPlan | null {
+  return (workflow.plans as DetailedWorkflowPlan[])
     .filter((plan) => plan.workItemId === workItemId && plan.state === 'proposed')
     .sort((left, right) => right.revision - left.revision)[0] ?? null;
 }

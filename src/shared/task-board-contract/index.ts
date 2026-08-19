@@ -7,6 +7,8 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   HOST_PATH_OUTSIDE_ROOTS: "HOST_PATH_OUTSIDE_ROOTS",
   HOST_PATH_UNREADABLE: "HOST_PATH_UNREADABLE",
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  PLAN_NOT_FOUND: "PLAN_NOT_FOUND",
+  PLAN_NOT_PROPOSED: "PLAN_NOT_PROPOSED",
   PROJECT_REQUIRED: "PROJECT_REQUIRED",
   TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
   TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
@@ -496,6 +498,21 @@ export interface CreatePlanRevisionRequest extends PlanRecordFields {
 
 export interface ConfirmPlanRevisionRequest {
   readonly expectedState: "proposed";
+}
+
+export interface RejectPlanRevisionRequest {
+  readonly note: string;
+  readonly expectedState: "proposed";
+}
+
+export interface RejectPlanRevisionResponse {
+  readonly outcome: "revising" | "parked";
+}
+
+/** The outcome is absent for the existing activation path. */
+export interface ConfirmPlanRevisionResponse<Workflow = unknown> {
+  readonly workflow: Workflow;
+  readonly outcome?: "parked_hazardous";
 }
 
 export interface DocumentPenHolder {

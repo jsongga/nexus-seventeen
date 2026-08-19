@@ -36,7 +36,7 @@ export type WorkItemDetail = WorkItem & Readonly<{
     createdAt: string;
   }>[];
 }>;
-type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
+export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
 const WORK_ITEM_TERMINAL_RANK_SQL = "(ended_at IS NOT NULL)";
@@ -200,14 +200,29 @@ export class WorkItemsCollaborator {
     return planning.task;
   }
 
-  private startWorkItemPlanningInTransaction(workItemId: string, repairLegacyOrphan: boolean): PlanningStartResult {
+  startWorkItemPlanningRevisionInTransaction(workItemId: string, revisionNote: string): PlanningStartResult {
+    return this.startWorkItemPlanningInTransaction(workItemId, false, revisionNote);
+  }
+
+  private startWorkItemPlanningInTransaction(
+    workItemId: string,
+    repairLegacyOrphan: boolean,
+    revisionNote?: string,
+  ): PlanningStartResult {
     const workItem = this.runtime.requireWorkItem(workItemId);
     if (workItem.resolvedProjectId === null || workItem.endedAt !== null) {
       return Object.freeze({ task: null, wakeAgentId: null });
     }
     const existing = this.runtime.store.db.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?").get(workItemId);
-    if (existing) {
+    if (existing && revisionNote === undefined) {
       return Object.freeze({ task: this.runtime.requireTask(String(existing.task_id)), wakeAgentId: null });
+    }
+    if (existing) {
+      const priorTask = this.runtime.requireTask(String(existing.task_id));
+      if (!isHardTerminalTaskStatus(priorTask.status)) {
+        throw conflict("PLAN_REVISION_NOT_READY", "The prior planning task has not completed");
+      }
+      this.runtime.store.db.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(workItemId);
     }
     let managers = this.runtime.store.db.prepare(
       "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
@@ -226,7 +241,9 @@ export class WorkItemsCollaborator {
     const taskRequest = {
       parentTaskId: null,
       title: `Plan workflow: ${workItem.originalRequest.slice(0, 160)}`,
-      objective: workItem.originalRequest,
+      objective: revisionNote === undefined
+        ? workItem.originalRequest
+        : `${workItem.originalRequest}\n\nPrior plan rejected: ${revisionNote}`,
       acceptanceCriteria: `${PLANNING_ACCEPTANCE_CRITERIA_PREFIX}${availableStages.join(", ") || "none configured"}.`,
       workspaceRefs: [],
       assignedAgentId: managerId,

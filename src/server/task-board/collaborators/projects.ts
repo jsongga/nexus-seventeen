@@ -10,12 +10,17 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type RejectPlanRevisionRequest,
   type SettleRunRequest,
   type WorkNode,
 } from "#shared/task-board-contract";
 import { ArtifactStore } from "../persistence/artifacts.js";
 import { projectFromRow, type Row } from "../persistence/rows.js";
-import { TransparentWorkflow, type ProjectWorkflowSnapshot } from "../persistence/workflow.js";
+import {
+  TransparentWorkflow,
+  type ProjectWorkflowSnapshot,
+  type RejectWorkflowTransactionResult,
+} from "../persistence/workflow.js";
 import { SkillRegistry } from "../skills.js";
 import { exactNow } from "../persistence/timestamps.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
@@ -25,6 +30,10 @@ import type { TasksCollaborator } from "./tasks.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
+
+export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
+  outcome?: "parked_hazardous";
+}>;
 
 export class ProjectsCollaborator {
   readonly #workflow: TransparentWorkflow;
@@ -101,13 +110,24 @@ export class ProjectsCollaborator {
     return () => this.runtime.projectEvents.off(projectId, listener);
   }
 
-  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ProjectWorkflowSnapshot {
-    const ready = this.#workflow.confirm(planRevisionId, request, this.runtime.config.humanPrincipal);
-    for (const node of ready) this.activateWorkflowNode(node);
-    const projectId = ready[0]?.projectId
+  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
+    const confirmation = this.#workflow.confirm(planRevisionId, request, this.runtime.config.humanPrincipal);
+    for (const node of confirmation.readyNodes) this.activateWorkflowNode(node);
+    const projectId = confirmation.readyNodes[0]?.projectId
       ?? String(this.runtime.store.db.prepare("SELECT project_id FROM plan_revisions WHERE plan_revision_id=?").get(planRevisionId)?.project_id);
-    this.reconcileWorkflowsBestEffort(projectId);
-    return this.#workflow.snapshot(projectId);
+    if (confirmation.outcome === undefined) this.reconcileWorkflowsBestEffort(projectId);
+    const workflow = this.#workflow.snapshot(projectId);
+    return Object.freeze({
+      ...workflow,
+      ...(confirmation.outcome === undefined ? {} : { outcome: confirmation.outcome }),
+    });
+  }
+
+  rejectWorkflowInTransaction(
+    planRevisionId: string,
+    request: RejectPlanRevisionRequest,
+  ): RejectWorkflowTransactionResult {
+    return this.#workflow.rejectInTransaction(planRevisionId, request, this.runtime.config.humanPrincipal);
   }
 
   createProject(request: CreateProjectRequest): Project {
