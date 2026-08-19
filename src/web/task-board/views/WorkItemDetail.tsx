@@ -10,12 +10,15 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { PipelineSummary } from '@shared/task-board-contract';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import { fieldsAreDirty } from '../../components/dialog-discard';
 import type { TaskBoardClient } from '../data/client';
 import {
   deriveWorkItemDetailAffordances,
   nodesForPlan,
+  pipelineAssumptionReview,
+  pipelineFileReview,
   proposedPlanForWorkItem,
   type DetailedWorkflowPlan,
 } from '../model/work-item-detail';
@@ -51,6 +54,8 @@ interface WorkItemDetailProps {
   onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
   onConfirm: (planRevisionId: string) => Promise<ActionResult>;
   onReject?: (planRevisionId: string, note: string) => Promise<ActionResult>;
+  onApproveMerge?: () => Promise<ActionResult>;
+  onRejectFinal?: (note: string) => Promise<ActionResult>;
   onCancel: (reason: string) => Promise<ActionResult>;
   onArchive: () => Promise<ActionResult>;
 }
@@ -275,6 +280,176 @@ export function PlanRejectionForm({
   );
 }
 
+export function PipelineSummaryDetails({ summary }: { summary: PipelineSummary }) {
+  const files = pipelineFileReview(summary);
+  const assumptions = pipelineAssumptionReview(summary);
+  return (
+    <div className="mt-4 space-y-4">
+      {!summary.scopeOk ? (
+        <div className="rounded-md border border-urgent/25 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+          <p className="font-medium">Work outside the declared scope</p>
+          <p className="mt-1 text-xs leading-5">Review each highlighted file before approving the merge.</p>
+        </div>
+      ) : null}
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <h4 className="text-xs font-semibold text-ink">Commits</h4>
+        {summary.commits.length > 0 ? (
+          <ol className="mt-2 space-y-2">
+            {summary.commits.map((commit) => (
+              <li key={commit.sha} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 text-xs leading-5">
+                <code className="font-mono text-muted" title={commit.sha}>{commit.sha.slice(0, 8)}</code>
+                <span className="break-words text-ink">{commit.subject}</span>
+              </li>
+            ))}
+          </ol>
+        ) : <p className="mt-2 text-xs text-muted">No commits are present on the pipeline branch.</p>}
+      </div>
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <h4 className="text-xs font-semibold text-ink">Diffstat</h4>
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted-surface p-3 font-mono text-[11px] leading-5 text-ink">{summary.diffstat || 'No file changes.'}</pre>
+      </div>
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold text-ink">Files and declared scope</h4>
+          <Pill tone={summary.scopeOk ? 'green' : 'red'}>{summary.scopeOk ? 'Within scope' : 'Scope violations'}</Pill>
+        </div>
+        <p className="mt-2 text-[11px] leading-5 text-muted">Declared: {summary.declaredScope.join(', ') || 'None declared'}</p>
+        {files.length > 0 ? (
+          <ul className="mt-2 space-y-2">
+            {files.map((file) => (
+              <li key={file.file} className={cn(
+                'flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs',
+                file.outsideScope ? 'border-urgent/25 bg-urgent-soft text-urgent' : 'border-line bg-muted-surface text-ink',
+              )}>
+                <code className="min-w-0 break-all font-mono">{file.file}</code>
+                {file.outsideScope ? <Pill tone="red">Outside declared scope</Pill> : <Pill tone="green">In scope</Pill>}
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mt-2 text-xs text-muted">No files changed.</p>}
+      </div>
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <h4 className="text-xs font-semibold text-ink">Assumptions</h4>
+        {assumptions.length > 0 ? (
+          <ul className="mt-2 space-y-2">
+            {assumptions.map((item, index) => (
+              <li key={`${index}-${item.assumption}`} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-line bg-muted-surface px-3 py-2 text-xs leading-5 text-ink">
+                <span className="min-w-0 flex-1 break-words">{item.assumption}</span>
+                {item.addedMidRun ? <Pill tone="amber">Added during implementation</Pill> : <Pill>Confirmed plan</Pill>}
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mt-2 text-xs text-muted">No assumptions recorded.</p>}
+      </div>
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <h4 className="text-xs font-semibold text-ink">Machine verification</h4>
+        {summary.verify.length > 0 ? (
+          <ol className="mt-2 space-y-3">
+            {summary.verify.map((attempt) => (
+              <li key={attempt.verifyAttemptId} className="rounded-md border border-line bg-muted-surface p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-ink">Attempt {attempt.attempt} · {prettyStatus(attempt.stage)}</p>
+                  <Pill tone={attempt.state === 'green' ? 'green' : attempt.state === 'running' || attempt.state === 'starting' ? 'amber' : 'red'}>{prettyStatus(attempt.state)}</Pill>
+                </div>
+                {attempt.detail ? <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted">{attempt.detail}</p> : null}
+                {attempt.checkResults === null || attempt.checkResults.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted">No criterion checks were recorded.</p>
+                ) : (
+                  <dl className="mt-2 space-y-2">
+                    {attempt.checkResults.map((check, index) => (
+                      <div key={`${index}-${check.criterion}`} className="rounded-md border border-line bg-card px-3 py-2">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <dt className="text-xs font-medium leading-5 text-ink">{check.criterion}</dt>
+                          <Pill tone={check.passed ? 'green' : 'red'}>{check.passed ? 'Passed' : 'Failed'}</Pill>
+                        </div>
+                        <dd className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted">{check.check}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </li>
+            ))}
+          </ol>
+        ) : <p className="mt-2 text-xs text-muted">No verify attempts were recorded.</p>}
+      </div>
+
+      <div className="rounded-md border border-line bg-card p-3.5">
+        <h4 className="text-xs font-semibold text-ink">Human-review criteria</h4>
+        {summary.criteria.length > 0 ? (
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-ink">
+            {summary.criteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}
+          </ul>
+        ) : <p className="mt-2 text-xs text-muted">No prose criteria recorded.</p>}
+      </div>
+    </div>
+  );
+}
+
+export function FinalApprovalActions({
+  busy,
+  onApprove,
+  onRequestChanges,
+}: {
+  busy: boolean;
+  onApprove: () => void;
+  onRequestChanges: () => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-2 sm:grid-cols-2" role="group" aria-label="Final approval actions">
+      <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
+      <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>Request changes</Button>
+    </div>
+  );
+}
+
+export function FinalRejectionForm({
+  workItemId,
+  note,
+  busy,
+  errors,
+  onNoteChange,
+  onDismissError,
+  onSubmit,
+  onKeep,
+}: {
+  workItemId: string;
+  note: string;
+  busy: boolean;
+  errors: ActionErrorState;
+  onNoteChange: (note: string) => void;
+  onDismissError: (context: string) => void;
+  onSubmit: () => void;
+  onKeep: () => void;
+}) {
+  return (
+    <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <div>
+        <FieldLabel htmlFor={`work-item-final-change-note-${workItemId}`}>Change note</FieldLabel>
+        <textarea
+          id={`work-item-final-change-note-${workItemId}`}
+          className={cn(inputClass, 'min-h-24 resize-y py-3')}
+          autoFocus
+          required
+          maxLength={2_000}
+          value={note}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="What should the next implementation round change?"
+        />
+      </div>
+      <InlineActionErrors errors={errors} onDismiss={onDismissError} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="submit" variant="danger" disabled={busy || note.trim().length === 0}>Send back to implementation</Button>
+        <Button disabled={busy} onClick={onKeep}>Keep in final review</Button>
+      </div>
+    </form>
+  );
+}
+
 export function WorkItemDetail({
   workItem,
   projectName,
@@ -286,23 +461,33 @@ export function WorkItemDetail({
   onAnswer,
   onConfirm,
   onReject,
+  onApproveMerge,
+  onRejectFinal,
   onCancel,
   onArchive,
 }: WorkItemDetailProps) {
   const [answer, setAnswer] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [rejectionNote, setRejectionNote] = useState('');
+  const [finalChangeNote, setFinalChangeNote] = useState('');
   const [rejecting, setRejecting] = useState(false);
-  const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'archive' | null>(null);
+  const [finalActionBusy, setFinalActionBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'merge' | 'requestChanges' | 'archive' | null>(null);
   const actionErrors = useActionErrors();
   const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
   const [workflowState, setWorkflowState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [workflowAttempt, setWorkflowAttempt] = useState(0);
+  const [pipelineSummary, setPipelineSummary] = useState<PipelineSummary | null>(null);
+  const [pipelineSummaryState, setPipelineSummaryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
+  const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
   const actionContexts = {
     rejectPlan: actionErrorContexts.workItemRejectPlan(workItem.id),
+    approveMerge: `work-item:${encodeURIComponent(workItem.id)}:approve-merge`,
+    rejectFinal: `work-item:${encodeURIComponent(workItem.id)}:reject-final`,
     cancel: actionErrorContexts.workItemCancel(workItem.id),
     archive: actionErrorContexts.workItemArchive(workItem.id),
   } as const;
@@ -316,7 +501,9 @@ export function WorkItemDetail({
     setAnswer('');
     setCancelReason('');
     setRejectionNote('');
+    setFinalChangeNote('');
     setRejecting(false);
+    setFinalActionBusy(false);
     setConfirmation(null);
   }, [workItem.id]);
 
@@ -347,6 +534,29 @@ export function WorkItemDetail({
     });
     return () => controller.abort();
   }, [client, workItem.id, workItem.resolvedProjectId, workItem.state, workflowAttempt]);
+
+  useEffect(() => {
+    if (workItem.state !== 'final_approval') {
+      setPipelineSummary(null);
+      setPipelineSummaryError(null);
+      setPipelineSummaryState('idle');
+      return;
+    }
+    const controller = new AbortController();
+    setPipelineSummary(null);
+    setPipelineSummaryError(null);
+    setPipelineSummaryState('loading');
+    void client.getPipelineSummary(workItem.id, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
+      setPipelineSummary(next);
+      setPipelineSummaryState('ready');
+    }).catch((caught: unknown) => {
+      if (controller.signal.aborted) return;
+      setPipelineSummaryError(caught instanceof Error ? caught.message : 'The pipeline summary could not be loaded');
+      setPipelineSummaryState('error');
+    });
+    return () => controller.abort();
+  }, [client, pipelineSummaryAttempt, workItem.id, workItem.state, workItem.version]);
 
   const proposedPlan = useMemo(
     () => workflow === null ? null : proposedPlanForWorkItem(workflow, workItem.id),
@@ -394,8 +604,38 @@ export function WorkItemDetail({
     });
   }
 
+  async function submitFinalRejection() {
+    const note = finalChangeNote.trim();
+    if (note.length === 0 || confirmation !== 'requestChanges' || onRejectFinal === undefined) return;
+    await save(actionContexts.rejectFinal, async () => {
+      setFinalActionBusy(true);
+      try {
+        return await onRejectFinal(note);
+      } finally {
+        setFinalActionBusy(false);
+      }
+    }, () => {
+      setFinalChangeNote('');
+      closeConfirmation();
+    });
+  }
+
+  async function submitMergeApproval() {
+    if (confirmation !== 'merge' || onApproveMerge === undefined) return;
+    await save(actionContexts.approveMerge, async () => {
+      setFinalActionBusy(true);
+      try {
+        return await onApproveMerge();
+      } finally {
+        setFinalActionBusy(false);
+      }
+    }, closeConfirmation);
+  }
+
   function confirmationContext(next: typeof confirmation): string | null {
     if (next === 'reject') return actionContexts.rejectPlan;
+    if (next === 'merge') return actionContexts.approveMerge;
+    if (next === 'requestChanges') return actionContexts.rejectFinal;
     if (next === 'cancel') return actionContexts.cancel;
     if (next === 'archive') return actionContexts.archive;
     return null;
@@ -405,6 +645,7 @@ export function WorkItemDetail({
     actionErrors.dismiss(confirmationContext(next)!);
     if (next === 'cancel') setCancelReason('');
     if (next === 'reject') setRejectionNote('');
+    if (next === 'requestChanges') setFinalChangeNote('');
     setConfirmation(next);
   }
 
@@ -551,6 +792,44 @@ export function WorkItemDetail({
           </section>
         ) : null}
 
+        {workItem.state === 'final_approval' ? (
+          <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="pipeline-summary-heading">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="pipeline-summary-heading" className="text-xs font-semibold text-ink">Final approval</h3>
+                <p className="mt-1 text-xs leading-5 text-muted">Review the committed changes, declared scope, assumptions, and verify evidence before merging locally.</p>
+              </div>
+              {pipelineSummaryState === 'error' ? (
+                <Button size="sm" icon={<RefreshCw size={14} />} onClick={() => setPipelineSummaryAttempt((value) => value + 1)}>Retry</Button>
+              ) : null}
+            </div>
+            {pipelineSummaryState === 'loading' ? (
+              <div className="mt-4 flex min-h-28 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted" role="status">
+                <RefreshCw size={16} className="animate-spin" /> Loading pipeline summary…
+              </div>
+            ) : pipelineSummaryState === 'error' ? (
+              <div className="mt-4 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+                {pipelineSummaryError ?? 'The pipeline summary could not be loaded.'}
+              </div>
+            ) : pipelineSummaryState === 'ready' && pipelineSummary !== null ? (
+              <>
+                <PipelineSummaryDetails summary={pipelineSummary} />
+                {onApproveMerge !== undefined && onRejectFinal !== undefined ? (
+                  <FinalApprovalActions
+                    busy={busy || finalActionBusy}
+                    onApprove={() => openConfirmation('merge')}
+                    onRequestChanges={() => openConfirmation('requestChanges')}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <div className="mt-4 rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted">
+                The pipeline summary is unavailable. Refresh before making a final decision.
+              </div>
+            )}
+          </section>
+        ) : null}
+
         <InlineActionErrors
           className={actionErrors.errors.some((entry) => entry.context === answerContext || entry.context === confirmPlanContext) ? 'border-b border-line px-4 py-3 sm:px-5' : undefined}
           errors={actionErrors.errors.filter((entry) => entry.context === answerContext || entry.context === confirmPlanContext)}
@@ -610,6 +889,38 @@ export function WorkItemDetail({
           onNoteChange={setRejectionNote}
           onDismissError={actionErrors.dismiss}
           onSubmit={() => { void submitRejection(); }}
+          onKeep={requestClose}
+        />}
+      </Modal>
+
+      <Modal
+        open={confirmation === 'merge'}
+        onClose={closeConfirmation}
+        title="Approve and merge pipeline"
+        description="This creates a local no-fast-forward merge commit on the repository's clean default branch. It does not push anything."
+      >
+        <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
+          <Button variant="mint" icon={<Check size={15} />} disabled={busy || finalActionBusy} onClick={() => { void submitMergeApproval(); }}>Approve &amp; merge</Button>
+          <Button disabled={busy || finalActionBusy} onClick={closeConfirmation}>Keep in final review</Button>
+          <InlineActionErrors className="sm:col-span-2" errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.approveMerge)} onDismiss={actionErrors.dismiss} />
+        </div>
+      </Modal>
+
+      <Modal
+        open={confirmation === 'requestChanges'}
+        onClose={closeConfirmation}
+        isDirty={() => fieldsAreDirty([finalChangeNote])}
+        title="Request implementation changes"
+        description="The work item returns to implementation with this note attached to the next engineering round."
+      >
+        {(requestClose) => <FinalRejectionForm
+          workItemId={workItem.id}
+          note={finalChangeNote}
+          busy={busy || finalActionBusy}
+          errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.rejectFinal)}
+          onNoteChange={setFinalChangeNote}
+          onDismissError={actionErrors.dismiss}
+          onSubmit={() => { void submitFinalRejection(); }}
           onKeep={requestClose}
         />}
       </Modal>

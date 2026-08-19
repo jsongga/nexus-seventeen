@@ -1,4 +1,4 @@
-import type { PlanRecordFields, PlanRevision } from '@shared/task-board-contract';
+import type { PipelineSummary, PlanRecordFields, PlanRevision } from '@shared/task-board-contract';
 import type { ProjectWorkflow, TaskStatus, WorkflowNode, WorkflowPlan, WorkItemState } from '../types';
 
 export type DetailedWorkflowPlan = WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'>;
@@ -66,4 +66,25 @@ export function proposedPlanForWorkItem(workflow: ProjectWorkflow, workItemId: s
 
 export function nodesForPlan(workflow: ProjectWorkflow, planRevisionId: string): WorkflowNode[] {
   return workflow.nodes.filter((node) => node.planRevisionId === planRevisionId);
+}
+
+export function pipelineFileReview(summary: PipelineSummary): Array<Readonly<{
+  file: string;
+  outsideScope: boolean;
+}>> {
+  const scope = summary.declaredScope.map((prefix) => prefix.replace(/\/+$/u, ''));
+  return summary.filesTouched.map((file) => ({
+    file,
+    outsideScope: !scope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)),
+  }));
+}
+
+export function pipelineAssumptionReview(summary: PipelineSummary): Array<Readonly<{
+  assumption: string;
+  addedMidRun: boolean;
+}>> {
+  return [
+    ...summary.assumptions.map((assumption) => ({ assumption, addedMidRun: false })),
+    ...summary.midRunAssumptions.map((assumption) => ({ assumption, addedMidRun: true })),
+  ];
 }

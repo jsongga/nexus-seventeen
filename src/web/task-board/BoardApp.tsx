@@ -33,6 +33,7 @@ export async function runWorkItemDetailMutation(
       caught.code === 'WORK_ITEM_ENDED'
       || caught.code === 'WORK_ITEM_VERSION_CONFLICT'
       || caught.code === 'PLAN_NOT_PROPOSED'
+      || caught.code === 'WORK_ITEM_ILLEGAL_TRANSITION'
     )) {
       await refresh();
     }
@@ -444,6 +445,8 @@ export function BoardApp() {
                 onAnswer={(questionId, answer) => mutateWorkItemDetail(() => client.answerQuestion(questionId, { answer }))}
                 onConfirm={(planRevisionId) => mutateWorkItemDetail(() => client.confirmWorkflow(planRevisionId))}
                 onReject={(planRevisionId, note) => mutateWorkItemDetail(() => client.rejectWorkflowPlan(planRevisionId, note))}
+                onApproveMerge={() => mutateWorkItemDetail(() => client.approvePipelineMerge(selectedWorkItem.id, { version: selectedWorkItem.version }))}
+                onRejectFinal={(note) => mutateWorkItemDetail(() => client.rejectFinalApproval(selectedWorkItem.id, { version: selectedWorkItem.version, note }))}
                 onCancel={(reason) => mutateWorkItemDetail(() => client.cancelWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version, reason }))}
                 onArchive={async () => {
                   const result = await mutateWorkItemDetail(() => client.archiveWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version }));

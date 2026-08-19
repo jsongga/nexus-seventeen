@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
   TASK_BOARD_API_VERSION,
+  TASK_BOARD_ERROR_CODES,
+  type ApprovePipelineMergeRequest,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CreatePlanRevisionRequest,
@@ -11,8 +13,11 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type PipelineSummary,
+  type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type SettleRunRequest,
+  type WorkItem,
   type WorkNode,
 } from "#shared/task-board-contract";
 import { ArtifactStore } from "../persistence/artifacts.js";
@@ -35,6 +40,9 @@ import {
   VerifyAttemptsCollaborator,
   type VerifyAttemptsDependencies,
 } from "./verify-attempts.js";
+import { checkDeclaredScope } from "./scope-check.js";
+import { mergePipelineBranch, type MergePipelineResult } from "./merge-executor.js";
+import { TaskBoardError } from "../errors.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
@@ -67,7 +75,7 @@ export class ProjectsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
-    git: WorkflowGitRunner = runWorkflowGit,
+    private readonly git: WorkflowGitRunner = runWorkflowGit,
     verifyDependencies: ProjectsVerifyDependencies = {},
   ) {
     this.#workflow = new TransparentWorkflow(
@@ -167,6 +175,196 @@ export class ProjectsCollaborator {
     request: RejectPlanRevisionRequest,
   ): RejectWorkflowTransactionResult {
     return this.#workflow.rejectInTransaction(planRevisionId, request, this.runtime.config.humanPrincipal);
+  }
+
+  pipelineSummary(workItemId: string): PipelineSummary {
+    this.runtime.requireWorkItem(workItemId);
+    const row = this.runtime.store.db.prepare(`
+      SELECT
+        item.pipeline_branch,item.base_sha,project.description AS repo_path,
+        plan.assumptions_json,plan.acceptance_criteria_json,plan.declared_scope_json,
+        plan.criterion_checks_json
+      FROM work_items item
+      JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      JOIN projects project ON project.project_id=plan.project_id
+      WHERE item.work_item_id=?
+      ORDER BY plan.revision DESC
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (row === undefined || row.pipeline_branch === null || row.base_sha === null) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "Work item has no pipeline branch",
+      );
+    }
+    if (row.declared_scope_json === null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
+    }
+    const repoPath = String(row.repo_path);
+    const branch = String(row.pipeline_branch);
+    const baseSha = String(row.base_sha);
+    const declaredScope = Object.freeze(JSON.parse(String(row.declared_scope_json)) as string[]);
+    let commits: readonly { readonly sha: string; readonly subject: string }[];
+    let diffstat: string;
+    let filesTouched: readonly string[];
+    let scopeOk: boolean;
+    try {
+      const range = `${baseSha}..${branch}`;
+      const fields = this.git([
+        "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath,
+        "log", "--format=%H%x00%s", "-z", range, "--",
+      ]).split("\0").filter((field) => field.length > 0);
+      if (fields.length % 2 !== 0) throw new Error("git returned an invalid commit list");
+      const parsedCommits: Array<{ sha: string; subject: string }> = [];
+      for (let index = 0; index < fields.length; index += 2) {
+        parsedCommits.push({ sha: fields[index]!, subject: fields[index + 1]! });
+      }
+      commits = Object.freeze(parsedCommits.map((commit) => Object.freeze(commit)));
+      diffstat = this.git([
+        "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath,
+        "diff", "--stat", range, "--",
+      ]);
+      let namesOutput = "";
+      const scope = checkDeclaredScope({
+        repoPath,
+        baseSha,
+        branch,
+        declaredScope,
+        git: (arguments_) => {
+          namesOutput = this.git(arguments_);
+          return namesOutput;
+        },
+      });
+      filesTouched = Object.freeze(namesOutput.split("\0").filter((file) => file.length > 0));
+      scopeOk = scope.ok;
+    } catch (error) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+        { cause: error },
+      );
+    }
+
+    const assumptions = Object.freeze(JSON.parse(String(row.assumptions_json)) as string[]);
+    const handoffRows = this.runtime.store.db.prepare(`
+      SELECT handoff.payload_json
+      FROM stage_handoffs handoff
+      JOIN work_nodes node ON node.node_id=handoff.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE plan.work_item_id=?
+      ORDER BY handoff.created_at,handoff.rowid
+    `).all(workItemId) as Row[];
+    const evidence = handoffRows.flatMap((handoffRow) => {
+      const handoff = JSON.parse(String(handoffRow.payload_json)) as { evidence?: unknown };
+      return Array.isArray(handoff.evidence)
+        ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
+        : [];
+    });
+    const midRunAssumptions = Object.freeze([...new Set(evidence.filter((candidate) =>
+      !assumptions.some((planned) => candidate.includes(planned) || planned.includes(candidate))))]);
+    return Object.freeze({
+      commits,
+      diffstat,
+      filesTouched,
+      declaredScope,
+      scopeOk,
+      assumptions,
+      midRunAssumptions,
+      verify: this.#verifyAttempts.listForWorkItem(workItemId),
+      criteria: Object.freeze(JSON.parse(String(row.acceptance_criteria_json)) as string[]),
+      criterionChecks: Object.freeze(
+        JSON.parse(String(row.criterion_checks_json ?? "[]")) as Array<{ criterion: string; check: string }>,
+      ),
+    });
+  }
+
+  approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): WorkItem {
+    const context = this.pipelineMergeContext(workItemId, request.version);
+    let merge: MergePipelineResult;
+    try {
+      merge = mergePipelineBranch({
+        repoPath: context.repoPath,
+        branch: context.branch,
+        baseSha: context.baseSha,
+        git: this.git,
+      });
+    } catch (error) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+        { cause: error },
+      );
+    }
+    if (merge.kind === "repo_busy") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
+        "The pipeline repository is busy; check out its clean default branch and retry",
+      );
+    }
+    this.runtime.store.transaction(() => {
+      this.#workflow.settlePipelineMergeInTransaction(
+        workItemId,
+        request.version,
+        merge,
+        this.runtime.config.humanPrincipal,
+      );
+    });
+    return this.runtime.requireWorkItem(workItemId);
+  }
+
+  rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): WorkItem {
+    const readyNodes = this.runtime.store.transaction(() => this.#workflow.rejectFinalApprovalInTransaction(
+      workItemId,
+      request,
+      this.runtime.config.humanPrincipal,
+    ));
+    this.activateWorkflowNodes(readyNodes);
+    return this.runtime.requireWorkItem(workItemId);
+  }
+
+  private pipelineMergeContext(workItemId: string, version: number): Readonly<{
+    repoPath: string;
+    branch: string;
+    baseSha: string;
+  }> {
+    const workItem = this.runtime.requireWorkItem(workItemId);
+    if (workItem.version !== version) {
+      throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+    }
+    if (workItem.state !== "final_approval") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+        "Work item is not awaiting final approval",
+      );
+    }
+    if (
+      workItem.pipelineBranch === null || workItem.pipelineBranch === undefined ||
+      workItem.baseSha === null || workItem.baseSha === undefined
+    ) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "Work item has no pipeline branch",
+      );
+    }
+    if (workItem.resolvedProjectId === null) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+      );
+    }
+    const project = this.runtime.requireProject(workItem.resolvedProjectId);
+    return Object.freeze({
+      repoPath: project.description,
+      branch: workItem.pipelineBranch,
+      baseSha: workItem.baseSha,
+    });
   }
 
   createProject(request: CreateProjectRequest): Project {

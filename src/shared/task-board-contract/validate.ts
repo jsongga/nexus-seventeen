@@ -33,6 +33,7 @@ import {
   type AgentRole,
   type AgentRun,
   type AnswerHumanQuestionRequest,
+  type ApprovePipelineMergeRequest,
   type AutomationAgentType,
   type AutomationConfiguration,
   type AutomationPipelineStage,
@@ -60,10 +61,12 @@ import {
   type InterruptAgentRequest,
   type PlanRecordFields,
   type PlanRevision,
+  type PipelineSummary,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
   type RejectPlanRevisionRequest,
+  type RejectFinalApprovalRequest,
   type ResumeAgentRequest,
   type RetryTaskRequest,
   type RotateAgentTokenRequest,
@@ -84,6 +87,7 @@ import {
   type UpdateTaskPhaseRequest,
   type UpdateTaskRequest,
   type UpdateWorkItemRequest,
+  type VerifyAttempt,
   type Wakeup,
   type WorkItem,
   type WorkItemProjectTarget,
@@ -999,6 +1003,95 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     confirmedAt: nullableTimestamp(item.confirmedAt, `${label}.confirmedAt`, options),
     ...(item.rejectedNote === undefined ? {} : { rejectedNote: stringValue(item.rejectedNote, `${label}.rejectedNote`) }),
+  });
+}
+
+const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start"] as const;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+
+export function parseVerifyAttemptEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): VerifyAttempt {
+  const fields = [
+    "verifyAttemptId", "nodeId", "stage", "attempt", "verifyRunId", "workspacePath", "state",
+    "checkResults", "detail", "createdAt", "endedAt",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  let checkResults: VerifyAttempt["checkResults"] = null;
+  if (item.checkResults !== null) {
+    if (!Array.isArray(item.checkResults) || item.checkResults.length > 32) {
+      throw new ContractValidationError(`${label}.checkResults is invalid`);
+    }
+    checkResults = Object.freeze(item.checkResults.map((entry, index) => {
+      const resultLabel = `${label}.checkResults[${index}]`;
+      const result = shape(entry, resultLabel, ["criterion", "check", "passed"], ["criterion", "check", "passed"], options);
+      return Object.freeze({
+        criterion: stringValue(result.criterion, `${resultLabel}.criterion`),
+        check: stringValue(result.check, `${resultLabel}.check`),
+        passed: booleanValue(result.passed, `${resultLabel}.passed`),
+      });
+    }));
+  }
+  return Object.freeze({
+    verifyAttemptId: shapeIdentifier(item.verifyAttemptId, `${label}.verifyAttemptId`, options),
+    nodeId: shapeIdentifier(item.nodeId, `${label}.nodeId`, options),
+    stage: entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options),
+    attempt: integer(item.attempt, `${label}.attempt`, 1),
+    verifyRunId: nullableIdentifier(item.verifyRunId, `${label}.verifyRunId`, options),
+    workspacePath: nullableString(item.workspacePath, `${label}.workspacePath`),
+    state: entityMember(item.state, VERIFY_ATTEMPT_STATES, `${label}.state`, options),
+    checkResults,
+    detail: nullableString(item.detail, `${label}.detail`),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+    endedAt: nullableTimestamp(item.endedAt, `${label}.endedAt`, options),
+  });
+}
+
+export function parsePipelineSummaryEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): PipelineSummary {
+  const fields = [
+    "commits", "diffstat", "filesTouched", "declaredScope", "scopeOk", "assumptions",
+    "midRunAssumptions", "verify", "criteria", "criterionChecks",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
+    const commit = shape(entry, entryLabel, ["sha", "subject"], ["sha", "subject"], options);
+    const sha = stringValue(commit.sha, `${entryLabel}.sha`);
+    if (!GIT_OBJECT_ID.test(sha)) throw new ContractValidationError(`${entryLabel}.sha is invalid`);
+    return Object.freeze({ sha, subject: stringValue(commit.subject, `${entryLabel}.subject`) });
+  });
+  const stringList = (field: unknown, fieldLabel: string, maximum: number): readonly string[] =>
+    boundedPlanArray(field, fieldLabel, 0, maximum, (entry, entryLabel) => stringValue(entry, entryLabel));
+  const criterionChecks = boundedPlanArray(
+    item.criterionChecks,
+    `${label}.criterionChecks`,
+    0,
+    32,
+    (entry, entryLabel) => {
+      const check = shape(entry, entryLabel, ["criterion", "check"], ["criterion", "check"], options);
+      return Object.freeze({
+        criterion: stringValue(check.criterion, `${entryLabel}.criterion`),
+        check: stringValue(check.check, `${entryLabel}.check`),
+      });
+    },
+  );
+  return Object.freeze({
+    commits,
+    diffstat: stringValue(item.diffstat, `${label}.diffstat`),
+    filesTouched: stringList(item.filesTouched, `${label}.filesTouched`, 10_000),
+    declaredScope: stringList(item.declaredScope, `${label}.declaredScope`, 64),
+    scopeOk: booleanValue(item.scopeOk, `${label}.scopeOk`),
+    assumptions: stringList(item.assumptions, `${label}.assumptions`, 64),
+    midRunAssumptions: stringList(item.midRunAssumptions, `${label}.midRunAssumptions`, 256),
+    verify: boundedPlanArray(item.verify, `${label}.verify`, 0, 256,
+      (entry, entryLabel) => parseVerifyAttemptEntity(entry, entryLabel, options)),
+    criteria: stringList(item.criteria, `${label}.criteria`, 64),
+    criterionChecks,
   });
 }
 
@@ -2262,6 +2355,19 @@ export function parseBoardRejectPlan(value: unknown): RejectPlanRevisionRequest 
   return Object.freeze({
     note: boardText(item.note, "note", 2_000),
     expectedState: "proposed",
+  });
+}
+
+export function parseBoardApprovePipelineMerge(value: unknown): ApprovePipelineMergeRequest {
+  const item = boardExact(value, ["version"], "Pipeline merge approval", true);
+  return Object.freeze({ version: boardPositiveVersion(item.version) });
+}
+
+export function parseBoardRejectFinalApproval(value: unknown): RejectFinalApprovalRequest {
+  const item = boardExact(value, ["version", "note"], "Final approval rejection", true);
+  return Object.freeze({
+    version: boardPositiveVersion(item.version),
+    note: boardText(item.note, "note", 2_000),
   });
 }
 

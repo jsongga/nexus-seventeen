@@ -98,6 +98,8 @@ export function workItemFromRow(row: Row): WorkItem {
     projectTarget,
     resolvedProjectId: nullableString(row, "resolved_project_id"),
     planningTaskId: nullableString(row, "planning_task_id"),
+    pipelineBranch: nullableString(row, "pipeline_branch"),
+    baseSha: nullableString(row, "base_sha"),
     state: stringValue(row, "state") as WorkItemState,
     currentStage: nullableString(row, "current_stage") as WorkItemStage | null,
     createdBy: stringValue(row, "created_by"),

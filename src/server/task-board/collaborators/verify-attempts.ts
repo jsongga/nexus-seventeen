@@ -174,6 +174,24 @@ function attemptContext(row: Row): AttemptContext {
   });
 }
 
+function verifyAttempt(row: Row): VerifyAttempt {
+  return Object.freeze({
+    verifyAttemptId: String(row.verify_attempt_id),
+    nodeId: String(row.node_id),
+    stage: String(row.stage) as WorkflowStage,
+    attempt: Number(row.attempt),
+    verifyRunId: row.verify_run_id === null ? null : String(row.verify_run_id),
+    workspacePath: row.workspace_path === null ? null : String(row.workspace_path),
+    state: String(row.state) as VerifyAttempt["state"],
+    checkResults: row.check_results_json === null
+      ? null
+      : Object.freeze(JSON.parse(String(row.check_results_json)) as NonNullable<VerifyAttempt["checkResults"]>),
+    detail: row.detail === null ? null : String(row.detail),
+    createdAt: String(row.created_at),
+    endedAt: row.ended_at === null ? null : String(row.ended_at),
+  });
+}
+
 export class VerifyAttemptsCollaborator {
   readonly #supervisorPath: string;
   readonly #workspaceManagerFactory: (repositoryPath: string) => MachineVerifyWorkspaceManager;
@@ -195,6 +213,17 @@ export class VerifyAttemptsCollaborator {
       }));
     this.#runnerFactory = dependencies.runnerFactory ?? ((options) => new VerifyRunner(options));
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
+  }
+
+  listForWorkItem(workItemId: string): readonly VerifyAttempt[] {
+    return Object.freeze((this.runtime.store.db.prepare(`
+      SELECT verify.*
+      FROM verify_attempts verify
+      JOIN work_nodes node ON node.node_id=verify.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE plan.work_item_id=?
+      ORDER BY verify.created_at,verify.verify_attempt_id
+    `).all(workItemId) as Row[]).map(verifyAttempt));
   }
 
   createStartingAttemptInTransaction(nodeId: string, stage: WorkflowStage): StartingVerifyAttemptResult {

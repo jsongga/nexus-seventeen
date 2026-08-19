@@ -3,6 +3,7 @@ import {
   ContractValidationError,
   parseBoardAgentMessage,
   parseBoardAnswer,
+  parseBoardApprovePipelineMerge,
   parseBoardAutomationUpdate,
   parseBoardBacklogTask,
   parseBoardClaim,
@@ -22,6 +23,7 @@ import {
   parseBoardLaneErrorDetail,
   parseBoardQuestion,
   parseBoardRejectPlan,
+  parseBoardRejectFinalApproval,
   parseBoardResume,
   parseBoardRetryTask,
   parseBoardRotateAgentToken,
@@ -32,6 +34,7 @@ import {
 } from "#shared/task-board-contract/validate";
 import type {
   AnswerHumanQuestionRequest,
+  ApprovePipelineMergeRequest,
   BacklogTaskRequest,
   ClaimRunRequest,
   ConfirmPlanRevisionRequest,
@@ -46,6 +49,7 @@ import type {
   CreateWorkItemRequest,
   InterruptAgentRequest,
   RejectPlanRevisionRequest,
+  RejectFinalApprovalRequest,
   ResumeAgentRequest,
   RetryTaskRequest,
   RotateAgentTokenRequest,
@@ -78,6 +82,8 @@ export function parseIdentifier(value: unknown, field: string): string {
 export function parseCreateProject(value: unknown): CreateProjectRequest { return adapt(() => parseBoardCreateProject(value)); }
 export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest { return adapt(() => parseBoardConfirmPlan(value)); }
 export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest { return adapt(() => parseBoardRejectPlan(value)); }
+export function parseApprovePipelineMergeRequest(value: unknown): ApprovePipelineMergeRequest { return adapt(() => parseBoardApprovePipelineMerge(value)); }
+export function parseRejectFinalApprovalRequest(value: unknown): RejectFinalApprovalRequest { return adapt(() => parseBoardRejectFinalApproval(value)); }
 export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest { return adapt(() => parseBoardCreateWorkItem(value)); }
 export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest { return adapt(() => parseBoardUpdateWorkItem(value)); }
 export function parseUpdateAutomationConfiguration(value: unknown): UpdateAutomationConfigurationRequest { return adapt(() => parseBoardAutomationUpdate(value)); }

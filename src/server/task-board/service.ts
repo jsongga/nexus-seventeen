@@ -24,6 +24,7 @@ import {
 import {
   parseAgentMessage,
   parseAnswer,
+  parseApprovePipelineMergeRequest,
   parseBacklogTask,
   parseClaim,
   parseConfirmPlanRevisionRequest,
@@ -42,6 +43,7 @@ import {
   parseDocumentUpdate,
   parseQuestion,
   parseRejectPlanRevisionRequest,
+  parseRejectFinalApprovalRequest,
   parseRetryTask,
   parseRotateAgentToken,
   parseResume,
@@ -267,6 +269,37 @@ export class TaskBoardService {
         parseRejectPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, 200, body);
+      return;
+    }
+    const pipelineSummaryMatch = /^\/v1\/work-items\/([^/]+)\/pipeline-summary$/u.exec(url.pathname);
+    if (pipelineSummaryMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, this.#board.pipelineSummary(
+        parseRouteIdentifier(pipelineSummaryMatch[1], "workItemId"),
+      ));
+      return;
+    }
+    const approveMergeMatch = /^\/v1\/work-items\/([^/]+)\/approve-merge$/u.exec(url.pathname);
+    if (approveMergeMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const workItem = this.#board.approvePipelineMerge(
+        parseRouteIdentifier(approveMergeMatch[1], "workItemId"),
+        parseApprovePipelineMergeRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, { workItem });
+      return;
+    }
+    const rejectFinalMatch = /^\/v1\/work-items\/([^/]+)\/reject-final$/u.exec(url.pathname);
+    if (rejectFinalMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const workItem = this.#board.rejectFinalApproval(
+        parseRouteIdentifier(rejectFinalMatch[1], "workItemId"),
+        parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+      );
+      sendJson(response, 200, { workItem });
       return;
     }
     const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);

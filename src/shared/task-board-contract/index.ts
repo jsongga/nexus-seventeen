@@ -16,7 +16,9 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_RETRY_REQUIRED: "TASK_RETRY_REQUIRED",
   TASK_BOARD_PIPELINE_EXECUTOR_DRIFT: "TASK_BOARD_PIPELINE_EXECUTOR_DRIFT",
   TASK_BOARD_PIPELINE_PLAN_INCOMPLETE: "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE",
+  TASK_BOARD_PIPELINE_REPO_BUSY: "TASK_BOARD_PIPELINE_REPO_BUSY",
   TASK_BOARD_PIPELINE_REPO_UNAVAILABLE: "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
+  TASK_BOARD_PIPELINE_SERIAL_CONFLICT: "TASK_BOARD_PIPELINE_SERIAL_CONFLICT",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -418,6 +420,24 @@ export interface VerifyAttempt {
   readonly endedAt: string | null;
 }
 
+export interface PipelineCommit {
+  readonly sha: string;
+  readonly subject: string;
+}
+
+export interface PipelineSummary {
+  readonly commits: readonly PipelineCommit[];
+  readonly diffstat: string;
+  readonly filesTouched: readonly string[];
+  readonly declaredScope: readonly string[];
+  readonly scopeOk: boolean;
+  readonly assumptions: readonly string[];
+  readonly midRunAssumptions: readonly string[];
+  readonly verify: readonly VerifyAttempt[];
+  readonly criteria: readonly string[];
+  readonly criterionChecks: readonly PlanCriterionCheck[];
+}
+
 export interface CriterionResult {
   readonly criterion: string;
   readonly passed: boolean;
@@ -517,6 +537,15 @@ export interface ConfirmPlanRevisionRequest {
 export interface RejectPlanRevisionRequest {
   readonly note: string;
   readonly expectedState: "proposed";
+}
+
+export interface ApprovePipelineMergeRequest {
+  readonly version: number;
+}
+
+export interface RejectFinalApprovalRequest {
+  readonly version: number;
+  readonly note: string;
 }
 
 export interface RejectPlanRevisionResponse {

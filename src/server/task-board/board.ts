@@ -5,6 +5,7 @@ import {
   type AgentInterrupt,
   type AgentProfile,
   type AgentRun,
+  type ApprovePipelineMergeRequest,
   type AnswerHumanQuestionRequest,
   type BacklogTaskRequest,
   type BacklogTaskResponse,
@@ -32,6 +33,8 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type PipelineSummary,
+  type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type RejectPlanRevisionResponse,
   type RetryTaskRequest,
@@ -191,6 +194,20 @@ export class TaskBoard {
     });
     if (wakeAgentId !== null) this.#runtime.wakeupEvents.emit(wakeAgentId);
     return result;
+  }
+
+  pipelineSummary(workItemId: string): PipelineSummary {
+    return this.#projects.pipelineSummary(workItemId);
+  }
+
+  approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): WorkItemDetail {
+    this.#projects.approvePipelineMerge(workItemId, request);
+    return this.#workItems.requireWorkItem(workItemId);
+  }
+
+  rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): WorkItemDetail {
+    this.#projects.rejectFinalApproval(workItemId, request);
+    return this.#workItems.requireWorkItem(workItemId);
   }
 
   getAutomationConfiguration(): AutomationConfiguration {

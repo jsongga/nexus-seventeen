@@ -1,4 +1,4 @@
-import type { RejectPlanRevisionResponse } from '@shared/task-board-contract';
+import type { PipelineSummary, RejectPlanRevisionResponse } from '@shared/task-board-contract';
 import type {
   AgentQueryConversationTurn,
   AgentRole,
@@ -41,6 +41,7 @@ import {
   parseInterrupt,
   parseMessage,
   parseProjectArtifact,
+  parsePipelineSummary,
   parseProjectWorkflow,
   parseProject,
   parseRawBoard,
@@ -332,6 +333,9 @@ export interface TaskBoardClient {
   decideHumanCheck(taskId: string, input: { version: number; status: 'completed' | 'failed'; result: string }): Promise<void>;
   interruptRun(runId: string): Promise<InterruptRunResult>;
   getProjectWorkflow(projectId: string, signal?: AbortSignal): Promise<ProjectWorkflow>;
+  getPipelineSummary(workItemId: string, signal?: AbortSignal): Promise<PipelineSummary>;
+  approvePipelineMerge(workItemId: string, input: { version: number }): Promise<BoardWorkItemDetail>;
+  rejectFinalApproval(workItemId: string, input: { version: number; note: string }): Promise<BoardWorkItemDetail>;
   getProjectArtifacts(projectId: string, signal?: AbortSignal): Promise<ProjectArtifact[]>;
   confirmWorkflow(planRevisionId: string): Promise<ProjectWorkflow>;
   rejectWorkflowPlan(planRevisionId: string, note: string): Promise<RejectPlanRevisionResponse>;
@@ -552,6 +556,34 @@ export function createTaskBoardClient(options: {
 
   return {
     documentClientId,
+    async getPipelineSummary(workItemId, signal) {
+      return parsePipelineSummary(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/pipeline-summary`, { signal }),
+        'pipeline summary response',
+      );
+    },
+    async approvePipelineMerge(workItemId, input) {
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/approve-merge`, {
+          method: 'POST',
+          body: JSON.stringify({ version: integer(input.version, 'pipeline merge approval.version', 1) }),
+        }),
+        'approve pipeline merge response',
+      );
+    },
+    async rejectFinalApproval(workItemId, input) {
+      const note = boundedText(input.note.trim(), 'final approval rejection note', 2_000);
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/reject-final`, {
+          method: 'POST',
+          body: JSON.stringify({
+            version: integer(input.version, 'final approval rejection.version', 1),
+            note,
+          }),
+        }),
+        'reject final approval response',
+      );
+    },
     async getProjectWorkflow(projectId, signal) {
       return workflowFromEnvelope(
         await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }),

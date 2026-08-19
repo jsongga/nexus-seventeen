@@ -11,6 +11,7 @@ import {
   type CreatePlanRevisionRequest,
   type PlanRevision,
   type ProjectEvent,
+  type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type RejectPlanRevisionResponse,
   type StageHandoff,
@@ -95,6 +96,25 @@ function pipelineExecutorDrift(): TaskBoardError {
   );
 }
 
+function assertPipelineSerialAvailability(db: DatabaseSync, projectId: string, workItemId: string): void {
+  const active = db.prepare(`
+    SELECT 1
+    FROM work_items
+    WHERE resolved_project_id=?
+      AND work_item_id<>?
+      AND pipeline_branch IS NOT NULL
+      AND state IN ('implementing','verifying','final_approval','parked')
+    LIMIT 1
+  `).get(projectId, workItemId);
+  if (active !== undefined) {
+    throw new TaskBoardError(
+      409,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_SERIAL_CONFLICT,
+      "Another pipeline work item is still active for this project",
+    );
+  }
+}
+
 function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
   try {
     const output = git([
@@ -157,6 +177,10 @@ export interface RejectWorkflowTransactionResult extends RejectPlanRevisionRespo
   readonly workItemId: string;
   readonly projectId: string;
 }
+
+export type PipelineMergeSettlement =
+  | Readonly<{ kind: "merged"; mergeSha: string }>
+  | Readonly<{ kind: "conflict"; summary: string }>;
 
 export class TransparentWorkflow {
   constructor(
@@ -349,15 +373,15 @@ export class TransparentWorkflow {
         assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
       });
       if (row.stage === "implementation") {
-        const latestTestingHandoff = this.db.prepare(`
+        const latestSameNodeHandoff = this.db.prepare(`
           SELECT payload_json
           FROM stage_handoffs
-          WHERE node_id=? AND stage='testing'
+          WHERE node_id=? AND stage IN ('implementation','testing')
           ORDER BY created_at DESC, rowid DESC
           LIMIT 1
         `).get(String(row.node_id)) as Row | undefined;
-        if (latestTestingHandoff !== undefined) {
-          const handoff = Object.freeze(json<StageHandoff>(latestTestingHandoff.payload_json));
+        if (latestSameNodeHandoff !== undefined) {
+          const handoff = Object.freeze(json<StageHandoff>(latestSameNodeHandoff.payload_json));
           if (handoff.outcome === "failed") handoffs.push(handoff);
         }
       }
@@ -378,6 +402,7 @@ export class TransparentWorkflow {
     const hasPipelineShape = storedPlanHasPipelineShape(this.db, planId);
     if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
     if (row.tier === "hazardous" || !hasPipelineShape) return null;
+    assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
     const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
     if (project === undefined) {
       throw new TaskBoardError(
@@ -405,6 +430,7 @@ export class TransparentWorkflow {
       if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
       if (row.tier !== "hazardous" && hasPipelineShape) {
+        assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
         if (resolvedBaseSha === null || !GIT_OBJECT_ID.test(resolvedBaseSha)) {
           throw new TaskBoardError(
             409,
@@ -519,6 +545,163 @@ export class TransparentWorkflow {
       now,
     );
     return Object.freeze({ outcome, workItemId, projectId });
+  }
+
+  settlePipelineMergeInTransaction(
+    workItemId: string,
+    version: number,
+    settlement: PipelineMergeSettlement,
+    actor: string,
+  ): void {
+    const row = this.db.prepare(`
+      SELECT item.state,item.version,plan.project_id,node.node_id
+      FROM work_items item
+      JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      WHERE item.work_item_id=?
+      ORDER BY plan.revision DESC,node.created_at,node.node_id
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (row === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    if (Number(row.version) !== version) {
+      throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+    }
+    if (row.state !== "final_approval") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+        "Work item is not awaiting final approval",
+      );
+    }
+    const now = this.now().toISOString();
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId,
+      to: settlement.kind === "merged" ? "merged" : "parked",
+      actorType: "human",
+      actorId: actor,
+      now,
+      ...(settlement.kind === "merged" ? { endedAt: now } : {}),
+      currentStage: null,
+    });
+    this.event(
+      String(row.project_id),
+      String(row.node_id),
+      null,
+      settlement.kind === "merged" ? "pipeline_merged" : "pipeline_merge_conflict",
+      settlement.kind === "merged" ? `merged ${settlement.mergeSha}` : settlement.summary,
+      now,
+    );
+  }
+
+  rejectFinalApprovalInTransaction(
+    workItemId: string,
+    request: RejectFinalApprovalRequest,
+    actor: string,
+  ): readonly WorkNode[] {
+    const row = this.db.prepare(`
+      SELECT
+        item.state,item.version,plan.project_id,node.node_id,node.title,node.objective,
+        node.acceptance_criteria_json,node.stage_template_json,node.state AS node_state
+      FROM work_items item
+      JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      WHERE item.work_item_id=?
+      ORDER BY plan.revision DESC,node.created_at,node.node_id
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (row === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    if (Number(row.version) !== request.version) {
+      throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+    }
+    if (row.state !== "final_approval") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+        "Work item is not awaiting final approval",
+      );
+    }
+    const template = json<WorkflowStage[]>(row.stage_template_json);
+    if (!template.includes("implementation") || row.node_state !== "completed") {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_implementation_stage_missing");
+    }
+    const now = this.now().toISOString();
+    const nodeId = String(row.node_id);
+    const projectId = String(row.project_id);
+    const taskId = `task_final_${randomUUID()}`;
+    const orderKey = Number(this.db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
+    this.db.prepare(`
+      INSERT INTO tasks(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json,
+        status, assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      ) VALUES (?, ?, NULL, 'work', NULL, 0, ?, ?, ?, '[]', 'failed', NULL, NULL, 15, NULL,
+        NULL, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      taskId,
+      projectId,
+      `Final approval changes: ${String(row.title)}`.slice(0, 240),
+      String(row.objective),
+      json<string[]>(row.acceptance_criteria_json).join("\n"),
+      orderKey,
+      now,
+      now,
+      request.note,
+      now,
+      now,
+    );
+    this.db.prepare(`
+      INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
+      VALUES (?, ?, ?, 'system', 'system:final-approval', 'task_created', ?, ?)
+    `).run(
+      randomUUID(),
+      projectId,
+      taskId,
+      JSON.stringify({ kind: "work", requiresReview: false, status: "failed", workItemId }),
+      now,
+    );
+    const handoff: StageHandoff = Object.freeze({
+      apiVersion: "steward.task-board/v1",
+      handoffId: `handoff_final_${randomUUID()}`,
+      nodeId,
+      taskId,
+      stage: "implementation",
+      outcome: "failed",
+      summary: request.note,
+      evidence: Object.freeze([request.note]),
+      artifactIds: Object.freeze([]),
+      acceptanceCriteria: Object.freeze([]),
+      blockers: Object.freeze([request.note]),
+      recommendedReturnStage: "implementation",
+      createdAt: now,
+    });
+    this.db.prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(
+      handoff.handoffId,
+      nodeId,
+      taskId,
+      handoff.stage,
+      handoff.outcome,
+      JSON.stringify(handoff),
+      now,
+    );
+    const nodeUpdate = this.db.prepare(`
+      UPDATE work_nodes
+      SET state='ready',current_stage='implementation',version=version+1,updated_at=?
+      WHERE node_id=? AND state='completed'
+    `).run(now, nodeId);
+    if (Number(nodeUpdate.changes) !== 1) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:final_approval_node_not_completed");
+    }
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId,
+      to: "implementing",
+      actorType: "human",
+      actorId: actor,
+      now,
+      currentStage: "implementation",
+    });
+    this.event(projectId, nodeId, taskId, "final_approval_rejected", request.note, now);
+    return Object.freeze(this.nodesForIds([nodeId]));
   }
 
   private recordPlanningResult(workItemId: string, result: string, updatedAt: string): void {
