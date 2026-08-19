@@ -60,7 +60,7 @@ function hazardousPlan(): WorkflowPlanDraft {
       objective: "Implement the control only after a Design stage exists.",
       acceptanceCriteria: ["The control is machine verified."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"],
+      stageTemplate: ["implementation", "testing", "verification"],
     }],
   };
 }

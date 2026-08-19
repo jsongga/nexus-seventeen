@@ -6,6 +6,7 @@ import {
   TASK_BOARD_ERROR_CODES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
+  pipelineTemplateShape,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CriterionResult,
@@ -65,6 +66,25 @@ function optionalJsonList<T>(value: unknown): readonly T[] | undefined {
   return value === null ? undefined : Object.freeze(json<T[]>(value));
 }
 
+function assertPipelinePlanRecordComplete(raw: CreatePlanRevisionRequest): void {
+  const pipelineNode = raw.nodes.length === 1 ? raw.nodes[0] : undefined;
+  if (pipelineNode === undefined || pipelineTemplateShape(pipelineNode.stageTemplate) === null) return;
+  const missingField = raw.changeShape === undefined
+    ? "changeShape"
+    : raw.tier === undefined
+      ? "tier"
+      : raw.declaredScope === undefined || raw.declaredScope.length === 0
+        ? "declaredScope"
+        : null;
+  if (missingField !== null) {
+    throw new TaskBoardError(
+      400,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
+      `Pipeline plan is missing required field ${missingField}`,
+    );
+  }
+}
+
 function testingStageUsesMachineVerify(db: DatabaseSync): boolean {
   const row = db.prepare(
     "SELECT stages_json FROM automation_configuration WHERE configuration_id = 'company-default'",
@@ -74,18 +94,30 @@ function testingStageUsesMachineVerify(db: DatabaseSync): boolean {
   return stages.some((stage) => stage.stage === "testing" && stage.executor?.kind === "machine_verify");
 }
 
-function pipelineShaped(nodes: readonly { readonly stageTemplate: readonly unknown[] }[]): boolean {
-  return nodes.length === 1 &&
-    nodes[0]?.stageTemplate.length === 2 &&
-    nodes[0].stageTemplate[0] === "implementation" &&
-    nodes[0].stageTemplate[1] === "testing";
+function verificationStageUsesEnabledAgentType(db: DatabaseSync): boolean {
+  const row = db.prepare(
+    "SELECT agent_types_json,stages_json FROM automation_configuration WHERE configuration_id = 'company-default'",
+  ).get();
+  if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:automation_configuration_missing");
+  const stages = json<Array<{
+    readonly stage?: unknown;
+    readonly executor?: { readonly kind?: unknown; readonly agentTypeId?: unknown };
+  }>>(row.stages_json);
+  const agentTypes = json<Array<{ readonly agentTypeId?: unknown; readonly enabled?: unknown }>>(row.agent_types_json);
+  const executor = stages.find((stage) => stage.stage === "verification")?.executor;
+  return executor?.kind === "agent_type" &&
+    typeof executor.agentTypeId === "string" &&
+    agentTypes.some((agentType) => agentType.agentTypeId === executor.agentTypeId && agentType.enabled === true);
 }
 
-function storedPlanHasPipelineShape(db: DatabaseSync, planRevisionId: string): boolean {
-  const nodes = (db.prepare(
+function storedPlanPipelineShape(
+  db: DatabaseSync,
+  planRevisionId: string,
+): ReturnType<typeof pipelineTemplateShape> {
+  const templates = (db.prepare(
     "SELECT stage_template_json FROM work_nodes WHERE plan_revision_id=? ORDER BY node_id",
-  ).all(planRevisionId) as Row[]).map((row) => ({ stageTemplate: json<unknown[]>(row.stage_template_json) }));
-  return pipelineShaped(nodes);
+  ).all(planRevisionId) as Row[]).map((row) => json<WorkflowStage[]>(row.stage_template_json));
+  return templates.length === 1 ? pipelineTemplateShape(templates[0]!) : null;
 }
 
 function pipelineExecutorDrift(): TaskBoardError {
@@ -103,7 +135,7 @@ function assertPipelineSerialAvailability(db: DatabaseSync, projectId: string, w
     WHERE resolved_project_id=?
       AND work_item_id<>?
       AND pipeline_branch IS NOT NULL
-      AND state IN ('implementing','verifying','final_approval','parked')
+      AND state IN ('implementing','verifying','reviewing','fixing','designing','final_approval','parked')
     LIMIT 1
   `).get(projectId, workItemId);
   if (active !== undefined) {
@@ -214,11 +246,11 @@ export class TransparentWorkflow {
     if (acceptance.length === 0 || !Array.isArray(raw.nodes) || raw.nodes.length < 1 || raw.nodes.length > 128) {
       throw new TaskBoardError(400, "WORKFLOW_INVALID", "A plan needs criteria and bounded nodes");
     }
+    assertPipelinePlanRecordComplete(raw);
     if (!this.db.prepare("SELECT 1 FROM work_items WHERE work_item_id = ?").get(workItemId)) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
     if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId)) throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     const snapshots = this.skills.loadSync(raw.skillIds);
     const skillDigests = Object.fromEntries(snapshots.map((skill) => [skill.skillId, skill.digest]));
-    const machineVerifiedTesting = pipelineShaped(raw.nodes) && testingStageUsesMachineVerify(this.db);
     const ids = new Set<string>();
     const nodes = raw.nodes.map((node, index) => {
       const nodeId = text(node.nodeId, `nodes[${index}].nodeId`, 128);
@@ -230,12 +262,12 @@ export class TransparentWorkflow {
       });
       const terminalStage = stages.at(-1);
       if (stages.length === 0 ||
-        (terminalStage !== "verification" && !(terminalStage === "testing" && machineVerifiedTesting)) ||
+        terminalStage !== "verification" ||
         new Set(stages).size !== stages.length) {
         throw new TaskBoardError(
           400,
           "WORKFLOW_INVALID",
-          "Every node needs unique ordered stages ending in verification, or testing with a machine_verify executor",
+          "Every node needs unique ordered stages ending in verification",
         );
       }
       return { nodeId, title: text(node.title, "node.title", 256), objective: text(node.objective, "node.objective"), acceptanceCriteria: list(node.acceptanceCriteria, "node.acceptanceCriteria"), dependencyNodeIds: [...node.dependencyNodeIds], stages };
@@ -399,8 +431,13 @@ export class TransparentWorkflow {
     const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
     if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
     if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
-    const hasPipelineShape = storedPlanHasPipelineShape(this.db, planId);
-    if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
+    const pipelineShape = storedPlanPipelineShape(this.db, planId);
+    const hasPipelineShape = pipelineShape !== null;
+    if (
+      pipelineShape !== null &&
+      (!testingStageUsesMachineVerify(this.db) ||
+        (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
+    ) throw pipelineExecutorDrift();
     if (row.tier === "hazardous" || !hasPipelineShape) return null;
     assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
     const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
@@ -426,8 +463,13 @@ export class TransparentWorkflow {
       const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
       if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
       if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
-      const hasPipelineShape = storedPlanHasPipelineShape(this.db, planId);
-      if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
+      const pipelineShape = storedPlanPipelineShape(this.db, planId);
+      const hasPipelineShape = pipelineShape !== null;
+      if (
+        pipelineShape !== null &&
+        (!testingStageUsesMachineVerify(this.db) ||
+          (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
+      ) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
       if (row.tier !== "hazardous" && hasPipelineShape) {
         assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
@@ -1186,13 +1228,14 @@ export class TransparentWorkflow {
         ).get(String(plan.work_item_id)) as Row | undefined;
         if (workItem === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_work_item");
         if (!isTerminalWorkItemState(String(workItem.state) as WorkItemState)) {
+          const pipeline = attempt.pipeline_branch !== null;
           transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
             workItemId: String(plan.work_item_id),
-            to: "merged",
+            to: pipeline ? "final_approval" : "merged",
             actorType: "system",
             actorId: "system:workflow",
             now,
-            endedAt: now,
+            ...(pipeline ? {} : { endedAt: now }),
             ...(workItem.current_stage === null ? {} : { currentStage: null }),
           });
         }

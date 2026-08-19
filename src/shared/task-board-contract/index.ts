@@ -235,6 +235,8 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "verifying",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
     "reviewing",
+    // campaign 5: unparked fix-round items re-enter the fix loop
+    "fixing",
     "abandoned",
     "dead_letter",
   ],
@@ -251,6 +253,21 @@ export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
 
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
 export type WorkflowStage = typeof WORKFLOW_STAGES[number];
+
+export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" | "v2" | null {
+  if (
+    template.length === 2 &&
+    template[0] === "implementation" &&
+    template[1] === "testing"
+  ) return "v1";
+  if (
+    template.length === 3 &&
+    template[0] === "implementation" &&
+    template[1] === "testing" &&
+    template[2] === "verification"
+  ) return "v2";
+  return null;
+}
 
 export const REVIEW_FINDING_CATEGORIES = [
   "correctness",

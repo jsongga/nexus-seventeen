@@ -5,6 +5,7 @@ import {
   isHardTerminalTaskStatus,
   isRecoverableTaskStatus,
   isTerminalWorkItemState,
+  pipelineTemplateShape,
   type AgentInterrupt,
   type AgentRun,
   type BoardTask,
@@ -604,23 +605,13 @@ export class RunsCollaborator {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
       }
       const pipelineNode = request.workflowPlan.nodes.length === 1 ? request.workflowPlan.nodes[0] : undefined;
-      const pipelineShaped = pipelineNode?.stageTemplate.length === 2 &&
-        pipelineNode.stageTemplate[0] === "implementation" && pipelineNode.stageTemplate[1] === "testing";
-      if (pipelineShaped) {
-        const missingField = request.workflowPlan.changeShape === undefined
-          ? "changeShape"
-          : request.workflowPlan.tier === undefined
-            ? "tier"
-            : request.workflowPlan.declaredScope === undefined || request.workflowPlan.declaredScope.length === 0
-              ? "declaredScope"
-              : null;
-        if (missingField !== null) {
-          throw new TaskBoardError(
-            400,
-            TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
-            `Pipeline plan is missing required field ${missingField}`,
-          );
-        }
+      const pipelineShape = pipelineNode === undefined ? null : pipelineTemplateShape(pipelineNode.stageTemplate);
+      if (pipelineShape === "v1") {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
+          "pipeline plans must end in a verification stage (template [\"implementation\",\"testing\",\"verification\"])",
+        );
       }
       const workItemId = String(planning.work_item_id);
       if (isTerminalWorkItemState(String(planning.state) as WorkItemState)) {

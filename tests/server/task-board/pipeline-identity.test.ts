@@ -71,7 +71,7 @@ function pipelinePlan(tier: "standard" | "hazardous" = "standard"): WorkflowPlan
       objective: "Carry one branch through each pipeline stage.",
       acceptanceCriteria: ["The claim contains the confirmed pipeline metadata."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"],
+      stageTemplate: ["implementation", "testing", "verification"],
     }],
   };
 }
@@ -87,11 +87,19 @@ function preparePipeline(fixture: Fixture, suffix: string, plan = pipelinePlan()
     evaluatorProfile: "tests" as const,
     enabled: true,
   };
+  const verificationType = {
+    ...implementationType,
+    agentTypeId: `pipeline-verification-${suffix}`,
+    name: "Pipeline verification",
+    description: "Independently reviews the confirmed pipeline implementation.",
+    role: "verifier" as const,
+  };
   fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType],
+    agentTypes: [implementationType, verificationType],
     stages: automationStages({
       implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
       testing: { kind: "machine_verify" },
+      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
     }),
   }));
   const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
@@ -187,6 +195,35 @@ function transactionSnapshot(path: string, workItemId: string, planRevisionId: s
     db.close();
   }
 }
+
+test("a direct v2 pipeline proposal missing tier is rejected before persistence", async () => {
+  const fixture = await boardFixture();
+  const { tier: _tier, ...incompletePlan } = pipelinePlan();
+  try {
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Reject an incomplete direct pipeline proposal.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "pipeline-incomplete-direct-proposal").workItem;
+
+    assert.throws(
+      () => fixture.board.proposeWorkflow({
+        ...incompletePlan,
+        workItemId: workItem.workItemId,
+        projectId: fixture.project.projectId,
+        skillIds: [],
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE" &&
+        error.message === "Pipeline plan is missing required field tier"
+      ),
+    );
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId).plans, []);
+  } finally {
+    fixture.board.close();
+  }
+});
 
 test("confirm records the pipeline branch and base SHA and claim projects the pipeline workspace context", async () => {
   const fixture = await boardFixture();
@@ -373,6 +410,103 @@ test("pipeline executor drift rejects confirmation without transitioning the wor
 
     assert.deepEqual(transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId), before);
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline verification executor drift rejects confirmation without transitioning the work item", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { workItem, revision } = preparePipeline(fixture, "verification-executor-drift");
+    const configured = fixture.board.getAutomationConfiguration();
+    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    assert.equal(implementation?.kind, "agent_type");
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: configured.version,
+      agentTypes: configured.agentTypes,
+      stages: automationStages({
+        implementation,
+        testing: { kind: "machine_verify" },
+        verification: { kind: "disabled" },
+      }),
+    }));
+    const before = transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId);
+
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_EXECUTOR_DRIFT"
+      ),
+    );
+
+    assert.deepEqual(transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId), before);
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a stored v1 pipeline keeps its testing-only executor contract", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { workItem, revision } = preparePipeline(fixture, "stored-v1");
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare("UPDATE work_nodes SET stage_template_json=? WHERE plan_revision_id=?")
+        .run(JSON.stringify(["implementation", "testing"]), revision.planRevisionId);
+    } finally {
+      db.close();
+    }
+    const configured = fixture.board.getAutomationConfiguration();
+    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    assert.equal(implementation?.kind, "agent_type");
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: configured.version,
+      agentTypes: configured.agentTypes.map((agentType) => (
+        agentType.role === "verifier" ? { ...agentType, enabled: false } : agentType
+      )),
+      stages: automationStages({
+        implementation,
+        testing: { kind: "machine_verify" },
+        verification: { kind: "disabled" },
+      }),
+    }));
+
+    fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+
+    const current = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(current.pipelineBranch, `task/${workItem.workItemId}`);
+    assert.equal(current.baseSha, repository.head);
+    assert.equal(current.state, "implementing");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a v1 pipeline proposal is rejected with the required v2 template", async () => {
+  const fixture = await boardFixture();
+  const v2 = pipelinePlan();
+  const v1: WorkflowPlanDraft = {
+    ...v2,
+    nodes: [{ ...v2.nodes[0]!, stageTemplate: ["implementation", "testing"] }],
+  };
+  try {
+    assert.throws(
+      () => preparePipeline(fixture, "v1-proposal", v1),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE" &&
+        error.message === "pipeline plans must end in a verification stage (template [\"implementation\",\"testing\",\"verification\"])"
+      ),
+    );
   } finally {
     fixture.board.close();
   }

@@ -68,7 +68,7 @@ function pipelinePlan(declaredScope: readonly string[]): WorkflowPlanDraft {
       objective: "Check task-branch files before advancing to machine verification.",
       acceptanceCriteria: ["Only declared files advance."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"],
+      stageTemplate: ["implementation", "testing", "verification"],
     }],
   };
 }
@@ -103,11 +103,19 @@ async function pipelineFixture(suffix: string, declaredScope = ["src/allowed"]) 
     evaluatorProfile: "tests" as const,
     enabled: true,
   };
+  const verificationType = {
+    ...implementationType,
+    agentTypeId: `pipeline-scope-verification-${suffix}`,
+    name: "Pipeline scope verification",
+    description: "Independently reviews a scope-checked pipeline.",
+    role: "verifier" as const,
+  };
   fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType],
+    agentTypes: [implementationType, verificationType],
     stages: automationStages({
       implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
       testing: { kind: "machine_verify" },
+      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
     }),
   }));
   const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({

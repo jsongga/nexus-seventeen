@@ -81,7 +81,7 @@ function pipelinePlan(): WorkflowPlanDraft {
       objective: "Implement a scoped change and verify it without an agent executor.",
       acceptanceCriteria: ["The machine verify result is durably settled."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"],
+      stageTemplate: ["implementation", "testing", "verification"],
     }],
   };
 }
@@ -116,11 +116,27 @@ async function pipelineFixture(suffix: string, verifyPasses: boolean) {
     evaluatorProfile: "tests" as const,
     enabled: true,
   };
+  const verificationType = {
+    ...implementationType,
+    agentTypeId: `machine-verify-verification-${suffix}`,
+    name: "Machine verify reviewer",
+    description: "Independently reviews green machine verification evidence.",
+    role: "verifier" as const,
+  };
+  const verifier = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: `machine-verify-verifier-${suffix}`,
+    role: "verifier",
+    area: "independent-review",
+    mission: "Review a green pipeline without implementing it.",
+    model: "codex-mini",
+    token: "machine-verify-verifier-token-0123456789abcdef",
+  });
   fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType],
+    agentTypes: [implementationType, verificationType],
     stages: automationStages({
       implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
       testing: { kind: "machine_verify" },
+      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
     }),
   }));
   const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
@@ -153,7 +169,7 @@ async function pipelineFixture(suffix: string, verifyPasses: boolean) {
   await writeFile(join(repo, "src", "change.txt"), "scoped pipeline change\n");
   await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "src/change.txt"]);
   await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "scoped change"]);
-  return { ...fixture, repo, workItem, implementation };
+  return { ...fixture, repo, workItem, implementation, verifier };
 }
 
 function terminalAttemptCount(path: string): number {
@@ -171,7 +187,7 @@ function terminalAttemptCount(path: string): number {
 
 async function driveVerify(
   fixture: Awaited<ReturnType<typeof pipelineFixture>>,
-  expectedState: "implementing" | "final_approval" | "dead_letter",
+  expectedState: "implementing" | "reviewing" | "dead_letter",
   expectedTerminalAttempts: number,
 ): Promise<void> {
   const deadline = Date.now() + 8_000;
@@ -188,7 +204,7 @@ async function driveVerify(
   );
 }
 
-test("pipeline activation and the public sweep settle machine verify green into final approval", async () => {
+test("pipeline activation, machine verify, and independent review settle into final approval", async () => {
   const fixture = await pipelineFixture("green", true);
   try {
     fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
@@ -198,10 +214,11 @@ test("pipeline activation and the public sweep settle machine verify green into 
     });
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "verifying");
 
-    await driveVerify(fixture, "final_approval", 1);
+    await driveVerify(fixture, "reviewing", 1);
 
-    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
-    assert.equal(workflow.nodes[0]?.state, "completed");
+    let workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "active");
+    assert.equal(workflow.nodes[0]?.currentStage, "verification");
     const machineHandoff = workflow.handoffs.find((handoff) => handoff.stage === "testing");
     assert.ok(machineHandoff);
     assert.equal(machineHandoff.outcome, "passed");
@@ -229,6 +246,28 @@ test("pipeline activation and the public sweep settle machine verify green into 
     } finally {
       db.close();
     }
+    const verification = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-machine-verify-independent-review-green",
+      messageCursor: null,
+    });
+    assert.ok(verification);
+    assert.equal(verification.context.workflow?.stage, "verification");
+    fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Independent verification passed.",
+      handoff: {
+        outcome: "passed",
+        summary: "Independent verification passed.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
+      },
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
+    workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "completed");
     await assert.rejects(access(join(dirname(fixture.path), "verify-workspaces", `${fixture.workItem.workItemId}-verify`)));
   } finally {
     fixture.board.close();

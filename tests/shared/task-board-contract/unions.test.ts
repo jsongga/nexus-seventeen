@@ -10,6 +10,7 @@ import {
   WORK_ITEM_TERMINAL_STATES,
   WORK_ITEM_TRANSITIONS,
   isHardTerminalTaskStatus,
+  pipelineTemplateShape,
   isRecoverableTaskStatus,
   isTerminalWorkItemState,
   isWorkItemTransitionAllowed,
@@ -78,7 +79,7 @@ test('work item transition table is pinned edge for edge', () => {
     reviewing: ['fixing', 'planning', 'implementing', 'verifying', 'final_approval', 'merged', 'parked', 'abandoned', 'dead_letter'],
     fixing: ['verifying', 'parked', 'abandoned', 'dead_letter'],
     final_approval: ['merged', 'fixing', 'implementing', 'parked', 'abandoned', 'dead_letter'],
-    parked: ['planning', 'implementing', 'verifying', 'reviewing', 'abandoned', 'dead_letter'],
+    parked: ['planning', 'implementing', 'verifying', 'reviewing', 'fixing', 'abandoned', 'dead_letter'],
     merged: [],
     abandoned: [],
     dead_letter: [],
@@ -127,6 +128,22 @@ test('work item transitions include required reverse edges', () => {
   assert.equal(isWorkItemTransitionAllowed('fixing', 'verifying'), true);
   assert.equal(isWorkItemTransitionAllowed('final_approval', 'implementing'), true);
   assert.equal(isWorkItemTransitionAllowed('parked', 'implementing'), true);
+  assert.equal(isWorkItemTransitionAllowed('parked', 'fixing'), true);
+});
+
+test('pipeline template shape recognizes only the v1 and v2 serial templates', () => {
+  const cases = [
+    { template: ['implementation', 'testing'], expected: 'v1' },
+    { template: ['implementation', 'testing', 'verification'], expected: 'v2' },
+    { template: ['testing', 'implementation'], expected: null },
+    { template: ['implementation', 'implementation', 'testing'], expected: null },
+    { template: ['implementation', 'testing', 'verification', 'research'], expected: null },
+    { template: ['implementation', 'verification', 'testing'], expected: null },
+  ] as const;
+
+  for (const { template, expected } of cases) {
+    assert.equal(pipelineTemplateShape(template), expected, JSON.stringify(template));
+  }
 });
 
 test('work item transitions reject exits from terminal states', () => {

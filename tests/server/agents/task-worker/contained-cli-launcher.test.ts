@@ -87,7 +87,7 @@ test("manager planning prompt branches on intake rather than the task title", ()
   assert.match(intakePrompt, /Refine the supplied request into a small dependency-aware workflow plan/u);
   assert.match(
     intakePrompt,
-    /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing"\]/u,
+    /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing","verification"\] \(Implement, machine Verify, then an independent review\)/u,
   );
   assert.match(intakePrompt, /Apply the reversibility test/u);
 });

@@ -6,14 +6,20 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { StageHandoff, WorkflowPlanDraft } from "#shared/task-board-contract";
-import { createTaskBoardService } from "#server/task-board";
+import { createTaskBoardService, TaskBoard, TaskBoardError } from "#server/task-board";
 import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
+import {
+  registerWorkItemTransitionStore,
+  transitionWorkItemInTransaction,
+} from "#server/task-board/collaborators/work-item-transitions";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   AGENT_ONE_TOKEN,
   HUMAN_TOKEN,
   automationConfigurationRequest,
   automationStages,
   boardFixture,
+  config,
   workItemRequest,
 } from "./helpers.js";
 
@@ -64,7 +70,7 @@ function plan(suffix: string): WorkflowPlanDraft {
       objective: "Produce one bounded implementation commit.",
       acceptanceCriteria: ["The commit is reviewable."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"],
+      stageTemplate: ["implementation", "testing", "verification"],
     }],
   };
 }
@@ -80,11 +86,19 @@ function configurePipeline(fixture: Fixture, suffix: string): void {
     evaluatorProfile: "tests" as const,
     enabled: true,
   };
+  const verification = {
+    ...implementation,
+    agentTypeId: `final-approval-verifier-${suffix}`,
+    name: "Final approval verifier",
+    description: "Independently reviews the machine-verified pipeline.",
+    role: "verifier" as const,
+  };
   fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementation],
+    agentTypes: [implementation, verification],
     stages: automationStages({
       implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
       testing: { kind: "machine_verify" },
+      verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
     }),
   }));
 }
@@ -678,7 +692,7 @@ test("reject-final records a system implementation handoff and re-arms engineeri
   }
 });
 
-test("confirming a second pipeline plan returns the serial-project conflict", async () => {
+test("confirming a second pipeline plan returns the serial-project conflict while the first is reviewing", async () => {
   const fixture = await boardFixture();
   const repo = await repository();
   setProjectRepository(fixture, repo.repo);
@@ -687,23 +701,30 @@ test("confirming a second pipeline plan returns the serial-project conflict", as
   fixture.board.confirmWorkflow(first.planRevisionId, { expectedState: "proposed" });
   const second = proposePipeline(fixture, "serial-second");
   fixture.board.close();
-  const service = await createTaskBoardService({
-    dbPath: fixture.path,
-    humanToken: HUMAN_TOKEN,
-    humanPrincipal: "human:alice",
-    port: 0,
-    reconcileIntervalSeconds: 0,
-  });
-  const address = await service.start();
+  const store = await TaskBoardStore.open(fixture.path);
+  registerWorkItemTransitionStore(store);
   try {
-    const response = await request(
-      address.url,
-      `/v1/plans/${second.planRevisionId}/confirm`,
-      "POST",
-      { expectedState: "proposed" },
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId: first.workItemId,
+      to: "reviewing",
+      actorType: "system",
+      actorId: "system:test",
+      now: "2026-08-19T16:00:00.000Z",
+      currentStage: "verification",
+    }));
+  } finally {
+    store.close();
+  }
+  const board = await TaskBoard.open(config(fixture.path));
+  try {
+    assert.throws(
+      () => board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_SERIAL_CONFLICT"
+      ),
     );
-    assert.equal(response.status, 409);
-    assert.equal((await response.json() as { error: { code: string } }).error.code, "TASK_BOARD_PIPELINE_SERIAL_CONFLICT");
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.deepEqual({
@@ -716,6 +737,6 @@ test("confirming a second pipeline plan returns the serial-project conflict", as
       db.close();
     }
   } finally {
-    await service.close();
+    board.close();
   }
 });

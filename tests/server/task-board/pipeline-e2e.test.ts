@@ -33,7 +33,8 @@ import { automationConfigurationRequest, automationStages } from "./helpers.js";
 const HUMAN_TOKEN = "pipeline-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "pipeline-e2e-manager-token-0123456789abcdef";
 const ENGINEER_TOKEN = "pipeline-e2e-engineer-token-0123456789abcdef";
-const RAW_REQUEST = "Deliver the scoped Pipeline v1 fixture change.";
+const VERIFIER_TOKEN = "pipeline-e2e-verifier-token-0123456789abcdef";
+const RAW_REQUEST = "Deliver the scoped Pipeline v2 fixture change.";
 const REJECTION_NOTE = "Make the second plan explicitly identify the two reviewable commits.";
 const CHECKED_CRITERION = "The fixture criterion command passes.";
 const HUMAN_CRITERION = "The implementation uses two reviewable commits.";
@@ -64,8 +65,10 @@ interface PipelineFixture {
   readonly workItem: WorkItem;
   readonly managerId: string;
   readonly engineerId: string;
+  readonly verifierId: string;
   readonly managerWorker: TaskWorker;
   readonly engineerWorker: TaskWorker;
+  readonly verifierWorker: TaskWorker;
   readonly managerScratch: string;
   readonly workspaceRoot: string;
   readonly verifyWorkspaceRoot: string;
@@ -138,7 +141,7 @@ process.stdin.on("end", () => {
   fs.writeFileSync(statePath, String(revision));
   fs.writeFileSync(path.join(process.env.TMPDIR, "prompt-" + revision + ".txt"), input);
   const workflowPlan = {
-    objective: "Deliver the scoped Pipeline v1 fixture plan v" + revision + ".",
+    objective: "Deliver the scoped Pipeline v2 fixture plan v" + revision + ".",
     assumptions: ["The fixture repository stays available."],
     acceptanceCriteria: [${JSON.stringify(CHECKED_CRITERION)}, ${JSON.stringify(HUMAN_CRITERION)}],
     changeShape: "feature",
@@ -153,11 +156,11 @@ process.stdin.on("end", () => {
     criterionChecks: [{ criterion: ${JSON.stringify(CHECKED_CRITERION)}, check: "node criterion-check.mjs" }],
     nodes: [{
       nodeId: ${JSON.stringify(`pipeline-${suffix}-v`)} + revision,
-      title: "Implement the Pipeline v1 fixture",
+      title: "Implement the Pipeline v2 fixture",
       objective: "Create two scoped commits and pass machine verification.",
       acceptanceCriteria: [${JSON.stringify(HUMAN_CRITERION)}],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"]
+      stageTemplate: ["implementation", "testing", "verification"]
     }]
   };
   const result = {
@@ -230,13 +233,43 @@ process.stdin.on("end", () => {
 `;
 }
 
+function verifierCliSource(): string {
+  return `
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const result = {
+    status: "completed",
+    progress: ["Independent verification is complete."],
+    result: "Independent verification passed.",
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    handoff: {
+      outcome: "passed",
+      summary: "Independent verification passed.",
+      evidence: [],
+      artifactIds: [],
+      acceptanceCriteria: [],
+      blockers: [],
+      recommendedReturnStage: null
+    },
+    workflowPlan: null,
+    detail: "Independent verification passed."
+  };
+  process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
+});
+`;
+}
+
 async function fixtureRepository(root: string, verifyPasses: boolean): Promise<string> {
   const repo = join(root, "repo");
   await git(root, ["init", "-b", "main", repo]);
   await git(repo, ["config", "user.name", "Pipeline Test"]);
   await git(repo, ["config", "user.email", "pipeline@test.invalid"]);
   await mkdir(join(repo, "docs"), { recursive: true });
-  await writeFile(join(repo, "readme.md"), "Pipeline v1 fixture repository.\n");
+  await writeFile(join(repo, "readme.md"), "Pipeline v2 fixture repository.\n");
   await writeFile(join(repo, "shared.txt"), "base shared value\n");
   await writeFile(
     join(repo, "docs", "workflow.md"),
@@ -281,14 +314,25 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   });
   const managerId = `pipeline-${options.suffix}-manager`;
   const engineerId = `pipeline-${options.suffix}-engineer`;
+  const verifierId = `pipeline-${options.suffix}-verifier`;
   await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
     body: {
       agentId: managerId,
       role: "manager",
       area: "pipeline planning",
-      mission: "Return complete Pipeline v1 plans for human approval.",
+      mission: "Return complete Pipeline v2 plans for human approval.",
       model: "fake-codex",
       token: MANAGER_TOKEN,
+    },
+  });
+  await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
+    body: {
+      agentId: verifierId,
+      role: "verifier",
+      area: "pipeline verification",
+      mission: "Independently review the machine-verified pipeline evidence.",
+      model: "fake-codex",
+      token: VERIFIER_TOKEN,
     },
   });
   await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
@@ -304,19 +348,27 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const engineerType = {
     agentTypeId: `pipeline-${options.suffix}-engineer-type`,
     name: "Pipeline engineer",
-    description: "Implements the confirmed Pipeline v1 fixture.",
+    description: "Implements the confirmed Pipeline v2 fixture.",
     role: "engineer" as const,
     supplementalInstructions: "Commit only files in the confirmed declared scope.",
     skillIds: [],
     evaluatorProfile: "tests" as const,
     enabled: true,
   };
+  const verifierType = {
+    ...engineerType,
+    agentTypeId: `pipeline-${options.suffix}-verifier-type`,
+    name: "Pipeline verifier",
+    description: "Independently reviews the confirmed Pipeline v2 fixture.",
+    role: "verifier" as const,
+  };
   await jsonRequest(address.url, "/v1/automation-configuration", "PATCH", 200, {
     body: automationConfigurationRequest({
-      agentTypes: [engineerType],
+      agentTypes: [engineerType, verifierType],
       stages: automationStages({
         implementation: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
         testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
       }),
     }),
   });
@@ -324,6 +376,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const declaredScope = options.declaredScope ?? ["src/allowed"];
   const managerCli = await fakeCodex(root, "manager-cli", managerCliSource(options.suffix, declaredScope));
   const engineerCli = await fakeCodex(root, "engineer-cli", engineerCliSource(options.engineerMode));
+  const verifierCli = await fakeCodex(root, "verifier-cli", verifierCliSource());
   const managerWorker = await TaskWorker.create({
     identity: { workerId: `pipeline-${options.suffix}-manager-worker`, agentId: managerId },
     statePath: join(root, "manager-worker", "journal.json"),
@@ -365,6 +418,24 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     launcher: engineerLauncher,
     longPollMs: 1,
   });
+  const verifierWorker = await TaskWorker.create({
+    identity: { workerId: `pipeline-${options.suffix}-verifier-worker`, agentId: verifierId },
+    statePath: join(root, "verifier-worker", "journal.json"),
+    board: new HttpTaskBoardClient({ baseUrl: address.url, token: VERIFIER_TOKEN }),
+    launcher: new ContainedCliAgentLauncher({
+      provider: "codex",
+      model: "fake-codex",
+      workingDirectory: verifierCli.working,
+      environment: {
+        PATH: `${verifierCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+        TMPDIR: verifierCli.scratch,
+      },
+      timeoutMs: 5_000,
+      terminationGraceMs: 10,
+      groupAbsenceTimeoutMs: 2_000,
+    }),
+    longPollMs: 1,
+  });
   const { workItem } = await jsonRequest<{ workItem: WorkItem }>(address.url, "/v1/work-items", "POST", 201, {
     idempotencyKey: `pipeline-e2e-${options.suffix}`,
     body: {
@@ -385,8 +456,10 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     workItem,
     managerId,
     engineerId,
+    verifierId,
     managerWorker,
     engineerWorker,
+    verifierWorker,
     managerScratch: managerCli.scratch,
     workspaceRoot,
     verifyWorkspaceRoot,
@@ -397,6 +470,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
 async function closeFixture(fixture: PipelineFixture): Promise<void> {
   await fixture.managerWorker.close();
   await fixture.engineerWorker.close();
+  await fixture.verifierWorker.close();
   fixture.sweepBoard.close();
   await fixture.service.close();
 }
@@ -449,6 +523,7 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
   assert.deepEqual(snapshot.nodes.find((node) => node.planRevisionId === first.planRevisionId)?.stageTemplate, [
     "implementation",
     "testing",
+    "verification",
   ]);
 
   let selected = first;
@@ -506,7 +581,7 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
 
 async function driveVerify(
   fixture: PipelineFixture,
-  expectedState: "implementing" | "final_approval",
+  expectedState: "implementing" | "reviewing",
 ): Promise<WorkItem> {
   const startDeadline = Date.now() + 5_000;
   let launchState = "";
@@ -549,7 +624,7 @@ async function claimImplementationRetry(fixture: PipelineFixture, claimId: strin
   );
 }
 
-test("Pipeline v1 exits through reject, revise, implement, machine verify, final approval, and merge", async () => {
+test("Pipeline v2 exits through reject, revise, implement, machine verify, independent review, final approval, and merge", async () => {
   const fixture = await createFixture({ suffix: "happy", engineerMode: "scoped", verifyPasses: true });
   try {
     await proposeAndConfirm(fixture, true);
@@ -558,7 +633,11 @@ test("Pipeline v1 exits through reject, revise, implement, machine verify, final
 
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
     assert.equal((await currentWorkItem(fixture)).state, "verifying");
-    const finalApproval = await driveVerify(fixture, "final_approval");
+    const reviewing = await driveVerify(fixture, "reviewing");
+    assert.equal(reviewing.currentStage, "verification");
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    const finalApproval = await currentWorkItem(fixture);
+    assert.equal(finalApproval.state, "final_approval");
     assert.equal(finalApproval.currentStage, null);
 
     const summary = await jsonRequest<PipelineSummary>(
@@ -667,7 +746,10 @@ test("an approve-merge conflict returns to implementation with a conflict handof
   try {
     await proposeAndConfirm(fixture, false);
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
-    const finalApproval = await driveVerify(fixture, "final_approval");
+    await driveVerify(fixture, "reviewing");
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    const finalApproval = await currentWorkItem(fixture);
+    assert.equal(finalApproval.state, "final_approval");
     await writeFile(join(fixture.repo, "shared.txt"), "default branch conflict\n");
     await git(fixture.repo, ["add", "shared.txt"]);
     await git(fixture.repo, ["commit", "-m", "default branch conflict"]);

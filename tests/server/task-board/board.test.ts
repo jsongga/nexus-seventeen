@@ -1877,6 +1877,90 @@ test("explicit work-item intake plans, confirms, executes, and completes without
   }
 });
 
+test("a non-pipeline multi-node DAG still completes as merged", async () => {
+  const fixture = await boardFixture();
+  const verifier = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "multi-node-dag-verifier",
+    role: "verifier",
+    area: "multi-node workflow",
+    mission: "Settle each dependency-ordered verification node.",
+    model: "codex-mini",
+    token: "multi-node-dag-verifier-token-0123456789abcdef",
+  });
+  try {
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "multi-node-dag-verifier",
+        name: "Multi-node DAG verifier",
+        description: "Executes ordinary verification nodes in dependency order.",
+        role: "verifier",
+        supplementalInstructions: "Verify the active ordinary workflow node.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "multi-node-dag-verifier" },
+      }),
+    }));
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Complete an ordinary two-node verification DAG.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "ordinary-multi-node-dag").workItem;
+    await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
+    const proposed = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Complete two dependency-ordered verification nodes.",
+      assumptions: [],
+      acceptanceCriteria: ["Both ordinary nodes complete before merge."],
+      skillIds: [],
+      nodes: [
+        {
+          nodeId: "ordinary-multi-node-first",
+          title: "Verify the first ordinary node",
+          objective: "Record the first verification result.",
+          acceptanceCriteria: ["The first result is recorded."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        },
+        {
+          nodeId: "ordinary-multi-node-second",
+          title: "Verify the dependent ordinary node",
+          objective: "Record the dependent verification result.",
+          acceptanceCriteria: ["The dependent result is recorded."],
+          dependencyNodeIds: ["ordinary-multi-node-first"],
+          stageTemplate: ["verification"],
+        },
+      ],
+    });
+    fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+
+    for (const suffix of ["first", "second"] as const) {
+      const claim = fixture.board.claimRun(verifier.agentId, {
+        claimId: `claim-ordinary-multi-node-${suffix}`,
+        messageCursor: null,
+      });
+      assert.ok(claim);
+      fixture.board.settleRun(claim.run.runId, verifier.agentId, {
+        outcome: "completed",
+        result: `The ${suffix} ordinary verification passed.`,
+      });
+    }
+
+    const completed = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(completed.pipelineBranch, null);
+    assert.equal(completed.state, "merged");
+    assert.ok(completed.endedAt);
+    assert.deepEqual(
+      fixture.board.projectWorkflow(fixture.project.projectId).nodes.map((node) => node.state),
+      ["completed", "completed"],
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("contradictory handoff validation leaves an active workflow run settleable", async () => {
   const fixture = await activeSettlementWorkflow("handoff-mismatch");
   try {
@@ -2238,7 +2322,7 @@ test("a completed planning run missing workflowPlan remains active and accepts a
   }
 });
 
-test("pipeline planning requires the full plan record and a machine_verify terminal testing stage", async () => {
+test("pipeline planning requires the full plan record and the v2 review stage", async () => {
   const fixture = await boardFixture();
   try {
     const implementationType = {
@@ -2251,11 +2335,20 @@ test("pipeline planning requires the full plan record and a machine_verify termi
       evaluatorProfile: "tests" as const,
       enabled: true,
     };
-    const agentTestingConfiguration = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [implementationType],
+    const verificationType = {
+      ...implementationType,
+      agentTypeId: "pipeline-verification",
+      name: "Pipeline verification",
+      description: "Independently reviews a machine-verified pipeline plan.",
+      role: "verifier" as const,
+    };
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
       stages: automationStages({
+        research: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
         implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        testing: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
       }),
     }));
     const workItem = fixture.board.createWorkItem(workItemRequest({
@@ -2276,7 +2369,7 @@ test("pipeline planning requires the full plan record and a machine_verify termi
       objective: "Replace the title heuristic and validate complete pipeline plans.",
       acceptanceCriteria: ["Pipeline plans carry the complete record."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing"] as const,
+      stageTemplate: ["implementation", "testing", "verification"] as const,
     };
     const basePlan = {
       objective: "Implement and machine-verify the explicit intake pipeline.",
@@ -2320,29 +2413,6 @@ test("pipeline planning requires the full plan record and a machine_verify termi
         check: "npm run test:runtime",
       }],
     };
-    assert.throws(
-      () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The complete pipeline plan is ready for approval.",
-        workflowPlan: completePlan,
-      }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "WORKFLOW_INVALID" &&
-        /ending in verification/u.test(error.message)
-      ),
-    );
-
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      version: agentTestingConfiguration.version,
-      agentTypes: [implementationType],
-      stages: automationStages({
-        research: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        testing: { kind: "machine_verify" },
-      }),
-    }));
     const expectWorkflowInvalid = (workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"]): void => {
       assert.throws(
         () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
@@ -2365,13 +2435,6 @@ test("pipeline planning requires the full plan record and a machine_verify termi
         nodeId: "research-pipeline-plan-record",
         stageTemplate: ["research", "testing"],
       }],
-    });
-    expectWorkflowInvalid({
-      ...completePlan,
-      nodes: [
-        node,
-        { ...node, nodeId: "implement-second-pipeline-plan-record" },
-      ],
     });
     const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
