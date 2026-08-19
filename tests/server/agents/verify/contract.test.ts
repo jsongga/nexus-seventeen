@@ -9,6 +9,10 @@ test("parses the real repo contract from docs/workflow.md", async () => {
   assert.deepEqual(contract.full, ["npm run typecheck:all", "npm run test:all", "npm run test:container"]);
   assert.equal(contract.rules[0]?.match, "tests/container/**");
   assert.equal(contract.rules[0]?.action.kind, "escalate");
+  assert.deepEqual(
+    contract.rules.find((rule) => rule.match === "docs/workflow.md")?.action,
+    { kind: "fixed", nodeTestDirs: ["tests/server/agents/verify"], vitest: undefined },
+  );
   assert.ok(contract.rules.length >= 10);
 });
 

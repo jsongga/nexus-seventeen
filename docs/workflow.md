@@ -42,6 +42,7 @@ Full runs in the background: the command prints a run id; observe with
     { "match": "deploy/**", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-container"] } },
     { "match": "Dockerfile", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-container"] } },
     { "match": "scripts/**", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-container"] } },
+    { "match": "docs/workflow.md", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/verify"] } },
     { "match": "docs/**", "action": { "kind": "none" } },
     { "match": "**/*.md", "action": { "kind": "none" } },
     { "match": "package.json", "action": { "kind": "escalate" } },

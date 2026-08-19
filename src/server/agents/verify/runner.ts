@@ -98,6 +98,19 @@ function lines(value: string): readonly string[] {
   return value.split(/\r?\n/u).filter((line) => line.length > 0);
 }
 
+function untrackedPaths(porcelain: string): readonly string[] {
+  const records = porcelain.split("\0");
+  const paths: string[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record === undefined || record.length === 0) continue;
+    const code = record.slice(0, 2);
+    if (code === "??" && record[2] === " ") paths.push(record.slice(3));
+    if (code.startsWith("R") || code.startsWith("C")) index += 1;
+  }
+  return paths;
+}
+
 function isRunArtifact(path: string): boolean {
   return path === ".verify-runs" || path.startsWith(".verify-runs/");
 }
@@ -123,6 +136,19 @@ function compiledTestFile(source: string): string {
 
 function compiledTestDirectory(source: string): string {
   return posix.join(".test-dist", source, "**/*.test.js");
+}
+
+async function compiledTestDirectoryHasMatches(repoRoot: string, source: string): Promise<boolean> {
+  try {
+    const entries = await readdir(join(repoRoot, ".test-dist", source), {
+      recursive: true,
+      withFileTypes: true,
+    });
+    return entries.some((entry) => entry.isFile() && entry.name.endsWith(".test.js"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function formatRunTimestamp(date: Date): string {
@@ -272,6 +298,15 @@ export class VerifyRunner {
       }
     }
 
+    for (const source of selection.nodeTestDirs) {
+      if (!await compiledTestDirectoryHasMatches(this.#repoRoot, source)) {
+        return {
+          outcome: "failed",
+          step: `selection (${source} matched no compiled tests — mapping bug)`,
+        };
+      }
+    }
+
     const nodeTests = [
       ...selection.nodeTestFiles.map(compiledTestFile),
       ...selection.nodeTestDirs.map(compiledTestDirectory),
@@ -368,7 +403,14 @@ export class VerifyRunner {
 
   public async list(): Promise<readonly VerifyRunStatus[]> {
     const ids = [...await this.#runDirectories()].reverse();
-    return Promise.all(ids.map(async (id) => this.status(id)));
+    const statuses = await Promise.all(ids.map(async (id) => {
+      try {
+        return await this.status(id);
+      } catch {
+        return undefined;
+      }
+    }));
+    return statuses.filter((status): status is VerifyRunStatus => status !== undefined);
   }
 
   async #changedFileSnapshot(base: string): Promise<ChangedFileSnapshot> {
@@ -384,9 +426,9 @@ export class VerifyRunner {
     }
 
     const [diff, status, stale] = await Promise.all([
-      capture("git", ["diff", "--name-only", base, "--"], this.#repoRoot),
-      capture("git", ["status", "--porcelain", "--untracked-files=all"], this.#repoRoot),
-      capture("git", ["diff", "--name-only", "--diff-filter=DR", base, "--"], this.#repoRoot),
+      capture("git", ["diff", "--no-renames", "--name-only", base, "--"], this.#repoRoot),
+      capture("git", ["status", "--porcelain", "-z", "--untracked-files=all"], this.#repoRoot),
+      capture("git", ["diff", "--no-renames", "--name-only", "--diff-filter=DR", base, "--"], this.#repoRoot),
     ]);
     for (const result of [diff, status, stale]) {
       if (result.exitCode !== 0) {
@@ -394,9 +436,7 @@ export class VerifyRunner {
       }
     }
 
-    const untracked = lines(status.stdout)
-      .filter((line) => line.startsWith("?? "))
-      .map((line) => line.slice(3));
+    const untracked = untrackedPaths(status.stdout);
     const deletedOrRenamed = [...new Set(lines(stale.stdout).filter((path) => !isRunArtifact(path)))].sort();
     const files = [...new Set([...lines(diff.stdout), ...untracked, ...deletedOrRenamed]
       .filter((path) => !isRunArtifact(path)))].sort();

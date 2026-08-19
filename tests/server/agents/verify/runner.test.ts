@@ -184,6 +184,28 @@ test("an untracked source inside a new directory is listed as a file and maps no
   ]);
 });
 
+test("an untracked docs file with a space in its name maps to none", async (t) => {
+  const root = await foregroundRepo(
+    {},
+    { rules: [{ match: "docs/**", action: { kind: "none" } }] },
+  );
+  await writePath(root, "docs/design note.md", "documentation\n");
+  const executions: string[][] = [];
+  const log = t.mock.method(console, "log", () => undefined);
+  const runner = new VerifyRunner({
+    repoRoot: root,
+    execute: async (argv) => {
+      executions.push([...argv]);
+      return 0;
+    },
+  });
+
+  assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/design note.md"]);
+  assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
+  assert.deepEqual(executions, []);
+  assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+});
+
 test("an escalating container-test change returns the rule reason and executes no commands", async () => {
   const root = await foregroundRepo(
     { "tests/container/image.test.ts": "before\n" },
@@ -259,6 +281,9 @@ test("a failing node-test step is named and prevents the later vitest step", asy
     repoRoot: root,
     execute: async (argv) => {
       executions.push([...argv]);
+      if (executions.length === 2) {
+        await writePath(root, ".test-dist/tests/server/existing.test.js", "export {};\n");
+      }
       return exitCodes[executions.length - 1] ?? 0;
     },
   });
@@ -304,6 +329,33 @@ test("a selected compiled test missing after compile fails as a mapping bug", as
   assert.deepEqual(executions, [["compile-one"], ["compile-two"]]);
 });
 
+test("a selected mirror directory with no compiled tests fails as a mapping bug", async () => {
+  const root = await foregroundRepo(
+    {
+      "src/server/empty/widget.ts": "export const value = 1;\n",
+      "tests/server/empty/.gitkeep": "",
+    },
+    {
+      rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }],
+    },
+  );
+  await writePath(root, "src/server/empty/widget.ts", "export const value = 2;\n");
+  const executions: string[][] = [];
+  const runner = new VerifyRunner({
+    repoRoot: root,
+    execute: async (argv) => {
+      executions.push([...argv]);
+      return 0;
+    },
+  });
+
+  assert.deepEqual(await runner.runForeground("fast", "HEAD"), {
+    outcome: "failed",
+    step: "selection (tests/server/empty matched no compiled tests — mapping bug)",
+  });
+  assert.deepEqual(executions, [["compile"]]);
+});
+
 test("a deleted committed file escalates before incremental compilation", async () => {
   const root = await foregroundRepo(
     {
@@ -330,6 +382,40 @@ test("a deleted committed file escalates before incremental compilation", async 
     outcome: "escalate",
     reasons: [
       "src/server/deleted.ts (deleted or renamed — stale compiled outputs; run a clean tier)",
+    ],
+  });
+  assert.deepEqual(executions, []);
+});
+
+test("a committed source renamed to docs escalates with the deleted source path", async () => {
+  const root = await foregroundRepo(
+    {
+      "src/server/renamed.ts": "export const value = 1;\n",
+      "tests/server/renamed.test.ts": "export {};\n",
+    },
+    {
+      rules: [
+        { match: "src/server/**/*.ts", action: { kind: "mirror" } },
+        { match: "docs/**", action: { kind: "none" } },
+      ],
+    },
+  );
+  await mkdir(join(root, "docs"), { recursive: true });
+  await command("git", ["mv", "src/server/renamed.ts", "docs/renamed.md"], root);
+  const executions: string[][] = [];
+  const runner = new VerifyRunner({
+    repoRoot: root,
+    execute: async (argv) => {
+      executions.push([...argv]);
+      return 0;
+    },
+  });
+
+  assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/renamed.md", "src/server/renamed.ts"]);
+  assert.deepEqual(await runner.runForeground("fast", "HEAD"), {
+    outcome: "escalate",
+    reasons: [
+      "src/server/renamed.ts (deleted or renamed — stale compiled outputs; run a clean tier)",
     ],
   });
   assert.deepEqual(executions, []);
@@ -481,6 +567,34 @@ test("list returns an empty result when the runs directory does not exist", asyn
   const runner = new VerifyRunner({ repoRoot: root });
 
   assert.deepEqual(await runner.list(), []);
+});
+
+test("list skips a run directory with no status alongside a valid run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "verify-list-"));
+  const runner = new VerifyRunner({ repoRoot: root });
+  const validId = "20260818-120001-abcd";
+  const unreadableId = "20260818-120000-dead";
+  const startedAt = "2026-08-18T12:00:01.000Z";
+  const validStatus = {
+    id: validId,
+    tier: "full",
+    state: "green",
+    startedAt,
+    endedAt: "2026-08-18T12:00:02.000Z",
+    exitCode: 0,
+    command: "npm test",
+  };
+  await writePath(root, `.verify-runs/${validId}/status.json`, `${JSON.stringify(validStatus)}\n`);
+  await mkdir(join(root, ".verify-runs", unreadableId));
+
+  assert.deepEqual(await runner.list(), [{
+    id: validId,
+    state: "green",
+    startedAt,
+    endedAt: "2026-08-18T12:00:02.000Z",
+    exitCode: 0,
+    command: "npm test",
+  }]);
 });
 
 test("keepRuns two prunes the oldest run when a third full run starts", async () => {
