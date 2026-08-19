@@ -2,7 +2,8 @@
   "extends": "./tsconfig.runtime.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "build"
+    "outDir": "build",
+    "tsBuildInfoFile": "build/.tsbuildinfo-bootstrap"
   },
   "files": ["src/shared/task-board-contract/index.ts"],
   "include": []
