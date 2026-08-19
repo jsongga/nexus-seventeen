@@ -4,13 +4,13 @@ const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const SETTLEMENT_RESULT_LIMIT = 2_000;
 
-export type DeclaredScopeGitRunner = (arguments_: readonly string[]) => string;
+export type GitRunner = (arguments_: readonly string[]) => string;
 
 export type DeclaredScopeCheckResult =
   | Readonly<{ ok: true }>
   | Readonly<{ ok: false; files: readonly string[] }>;
 
-export const runDeclaredScopeGit: DeclaredScopeGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
+export const runDeclaredScopeGit: GitRunner = (arguments_) => execFileSync("git", [...arguments_], {
   encoding: "utf8",
   timeout: GIT_TIMEOUT_MS,
   maxBuffer: GIT_MAX_BYTES,
@@ -28,18 +28,22 @@ export function checkDeclaredScope(request: Readonly<{
   baseSha: string;
   branch: string;
   declaredScope: readonly string[];
-  git: DeclaredScopeGitRunner;
+  git: GitRunner;
 }>): DeclaredScopeCheckResult {
+  const normalizedScope = request.declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
+  if (normalizedScope.some((prefix) => prefix.length === 0)) {
+    throw new Error("declared scope contains an empty path prefix");
+  }
   const output = request.git([
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=",
     "-C", request.repoPath,
-    "diff", "--name-only", `${request.baseSha}..${request.branch}`, "--",
+    "diff", "--no-renames", "--name-only", "-z", `${request.baseSha}..${request.branch}`, "--",
   ]);
   const outsideScope = output
-    .split(/\r?\n/u)
+    .split("\0")
     .filter((file) => file.length > 0)
-    .filter((file) => !request.declaredScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)));
+    .filter((file) => !normalizedScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)));
   return outsideScope.length === 0
     ? Object.freeze({ ok: true })
     : Object.freeze({ ok: false, files: Object.freeze(outsideScope) });

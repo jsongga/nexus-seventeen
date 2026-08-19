@@ -6,10 +6,17 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { StageHandoffDraft, WorkflowPlanDraft } from "#shared/task-board-contract";
+import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
+import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
+import { RunsCollaborator } from "#server/task-board/collaborators/runs";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   automationConfigurationRequest,
   automationStages,
   boardFixture,
+  config,
   workItemRequest,
 } from "./helpers.js";
 
@@ -159,6 +166,69 @@ test("out-of-scope implementation commit parks the pipeline and names the file",
   }
 });
 
+test("scope-violation parking records a failed handoff with the violation detail", async () => {
+  const fixture = await pipelineFixture("outside-handoff");
+  try {
+    const branch = `task/${fixture.workItem.workItemId}`;
+    await commitTaskFile(fixture.repository.repo, branch, "docs/outside.md");
+
+    fixture.board.settleRun(fixture.implementationClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Implementation is complete.",
+      handoff: handoff("passed"),
+    });
+
+    const persisted = fixture.board.projectWorkflow(fixture.project.projectId).handoffs.find(
+      (candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId,
+    );
+    assert.ok(persisted);
+    assert.equal(persisted.outcome, "failed");
+    assert.equal(persisted.summary, "scope violation: docs/outside.md");
+    assert.deepEqual(persisted.blockers, ["scope violation: docs/outside.md"]);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("throwing settlement Git runner fails closed and never advances", async () => {
+  const fixture = await pipelineFixture("git-failure");
+  fixture.board.close();
+  const boardConfig = config(fixture.path);
+  const store = await TaskBoardStore.open(boardConfig.dbPath);
+  const runtime = new TaskBoardRuntime(boardConfig, store);
+  const automation = new AutomationCollaborator(runtime);
+  const tasks = new TasksCollaborator(runtime);
+  const projects = new ProjectsCollaborator(runtime, automation, tasks);
+  let gitCalls = 0;
+  const runs = new RunsCollaborator(runtime, automation, projects, tasks, () => {
+    gitCalls += 1;
+    throw new Error("task branch was not harvested");
+  });
+  try {
+    runs.settleRun(fixture.implementationClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Implementation is complete.",
+      handoff: handoff("passed"),
+    });
+
+    assert.equal(gitCalls, 1);
+    assert.equal(runtime.requireWorkItem(fixture.workItem.workItemId).state, "parked");
+    assert.equal(runtime.requireTask(fixture.implementationClaim.task!.taskId).result, "scope check failed");
+    const node = projects.projectWorkflow(fixture.project.projectId).nodes[0]!;
+    assert.equal(node.state, "blocked");
+    assert.equal(node.currentStage, "implementation");
+    const persisted = projects.projectWorkflow(fixture.project.projectId).handoffs.find(
+      (candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId,
+    );
+    assert.ok(persisted);
+    assert.equal(persisted.outcome, "failed");
+    assert.equal(persisted.summary, "scope check failed");
+  } finally {
+    runtime.close();
+    store.close();
+  }
+});
+
 test("failed implementation with BRIGHT_LINE detail parks instead of retrying", async () => {
   const fixture = await pipelineFixture("bright-line");
   const detail = "BRIGHT_LINE: adding the required dependency is outside the confirmed plan.";
@@ -167,6 +237,26 @@ test("failed implementation with BRIGHT_LINE detail parks instead of retrying", 
       outcome: "failed",
       result: detail,
       handoff: handoff("failed"),
+    });
+
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
+    assert.equal(fixture.board.requireTask(fixture.implementationClaim.task!.taskId).result, detail);
+    const node = fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]!;
+    assert.equal(node.state, "blocked");
+    assert.equal(node.currentStage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("failed implementation parks on a BRIGHT_LINE handoff summary", async () => {
+  const fixture = await pipelineFixture("bright-line-handoff");
+  const detail = "BRIGHT_LINE: the requested interface change is outside the confirmed plan.";
+  try {
+    fixture.board.settleRun(fixture.implementationClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "Implementation could not finish.",
+      handoff: handoff("failed", detail),
     });
 
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");

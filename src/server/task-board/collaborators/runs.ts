@@ -47,7 +47,7 @@ import {
   checkDeclaredScope,
   runDeclaredScopeGit,
   scopeViolationResult,
-  type DeclaredScopeGitRunner,
+  type GitRunner,
 } from "./scope-check.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
@@ -86,7 +86,7 @@ export class RunsCollaborator {
     private readonly automation: AutomationCollaborator,
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
-    private readonly git: DeclaredScopeGitRunner = runDeclaredScopeGit,
+    private readonly git: GitRunner = runDeclaredScopeGit,
   ) {}
 
   private scopeCheckForSettlement(taskId: string, outcome: SettleRunRequest["outcome"]): AttemptScopeCheckResult | null {

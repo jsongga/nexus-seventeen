@@ -29,10 +29,11 @@ import {
 import {
   scopeViolationResult,
   type DeclaredScopeCheckResult,
+  type GitRunner,
 } from "../collaborators/scope-check.js";
 
 type Row = Record<string, unknown>;
-export type WorkflowGitRunner = (arguments_: readonly string[]) => string;
+export type { GitRunner as WorkflowGitRunner } from "../collaborators/scope-check.js";
 export type AttemptScopeCheckResult = DeclaredScopeCheckResult | Readonly<{
   ok: false;
   error: string;
@@ -87,7 +88,7 @@ function pipelineExecutorDrift(): TaskBoardError {
   );
 }
 
-function pipelineBaseSha(repositoryPath: string, git: WorkflowGitRunner): string {
+function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
   try {
     const output = git([
       "-c", "core.fsmonitor=",
@@ -157,7 +158,7 @@ export class TransparentWorkflow {
     readonly now: () => Date,
     readonly transaction: <T>(operation: () => T) => T,
     readonly queueEvent: ((event: ProjectEvent) => void) | undefined,
-    readonly git: WorkflowGitRunner,
+    readonly git: GitRunner,
   ) {}
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
@@ -626,13 +627,28 @@ export class TransparentWorkflow {
           throw new TaskBoardError(400, "HANDOFF_ARTIFACT_INVALID", "Handoff references an unavailable artifact");
         }
       }
+      const scopeFailureDetail = passed && stage === "implementation" && attempt.pipeline_branch !== null
+        ? scopeCheck === null
+          ? "scope check failed"
+          : scopeCheck.ok
+            ? null
+            : "files" in scopeCheck
+              ? scopeViolationResult(scopeCheck.files)
+              : scopeCheck.error.slice(0, 2_000)
+        : null;
       const handoff: StageHandoff = Object.freeze({
         apiVersion: "steward.task-board/v1", handoffId: `handoff_${randomUUID()}`, nodeId, taskId, stage,
-        outcome: supplied?.outcome ?? (passed ? "passed" : "failed"), summary: supplied?.summary ?? result,
+        outcome: scopeFailureDetail === null ? supplied?.outcome ?? (passed ? "passed" : "failed") : "failed",
+        summary: scopeFailureDetail ?? supplied?.summary ?? result,
         evidence: supplied?.evidence ?? Object.freeze([]), artifactIds: supplied?.artifactIds ?? Object.freeze([]),
         acceptanceCriteria: supplied?.acceptanceCriteria ?? Object.freeze([]),
-        blockers: supplied?.blockers ?? Object.freeze(passed ? [] : [result]),
-        recommendedReturnStage: supplied?.recommendedReturnStage ?? (passed ? null : stage), createdAt: now,
+        blockers: scopeFailureDetail === null
+          ? supplied?.blockers ?? Object.freeze(passed ? [] : [result])
+          : Object.freeze([scopeFailureDetail]),
+        recommendedReturnStage: scopeFailureDetail === null
+          ? supplied?.recommendedReturnStage ?? (passed ? null : stage)
+          : stage,
+        createdAt: now,
       });
       this.db.prepare("INSERT OR IGNORE INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(handoff.handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
       const parkAttempt = (detail: string): readonly WorkNode[] => {
@@ -658,14 +674,7 @@ export class TransparentWorkflow {
           : supplied?.summary.startsWith("BRIGHT_LINE:") === true ? supplied.summary : null
         : null;
       if (brightLineDetail !== null) return parkAttempt(brightLineDetail);
-      if (passed && stage === "implementation" && attempt.pipeline_branch !== null) {
-        if (scopeCheck === null) return parkAttempt("scope check failed");
-        if (!scopeCheck.ok) {
-          return parkAttempt("files" in scopeCheck
-            ? scopeViolationResult(scopeCheck.files)
-            : scopeCheck.error.slice(0, 2_000));
-        }
-      }
+      if (scopeFailureDetail !== null) return parkAttempt(scopeFailureDetail);
       if (!passed) {
         const returnStage = supplied?.recommendedReturnStage ?? null;
         const attemptNumber = Number(attempt.attempt);
