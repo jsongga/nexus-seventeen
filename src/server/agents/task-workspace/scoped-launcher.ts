@@ -13,7 +13,7 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
     const key = request.context.workflow?.workspaceKey ?? request.context.taskId;
-    const path = await this.#manager.create(key);
+    const path = await this.#manager.create(key, request.context.workflow?.pipeline?.baseSha);
     let handle: AgentRunHandle;
     try {
       handle = await this.#inner.launch({ ...request, workspace: { path } });

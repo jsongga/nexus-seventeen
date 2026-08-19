@@ -126,7 +126,13 @@ export class ProjectsCollaborator {
   }
 
   confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
-    const confirmation = this.#workflow.confirm(planRevisionId, request, this.runtime.config.humanPrincipal);
+    const baseSha = this.#workflow.pipelineBaseShaForConfirm(planRevisionId, request);
+    const confirmation = this.#workflow.confirm(
+      planRevisionId,
+      request,
+      this.runtime.config.humanPrincipal,
+      baseSha,
+    );
     for (const node of confirmation.readyNodes) this.activateWorkflowNode(node);
     const projectId = confirmation.readyNodes[0]?.projectId
       ?? String(this.runtime.store.db.prepare("SELECT project_id FROM plan_revisions WHERE plan_revision_id=?").get(planRevisionId)?.project_id);

@@ -245,6 +245,27 @@ test("confirm records the pipeline branch and base SHA and claim projects the pi
   }
 });
 
+test("a pipeline plan without non-goals confirms and projects an empty claim-context list", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  const { nonGoals: _nonGoals, ...planWithoutNonGoals } = pipelinePlan();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { revision } = preparePipeline(fixture, "without-non-goals", planWithoutNonGoals);
+
+    fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-pipeline-implementation-without-non-goals",
+      messageCursor: null,
+    });
+
+    assert.ok(claim?.context.workflow?.pipeline);
+    assert.deepEqual(claim.context.workflow.pipeline.nonGoals, []);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("an unavailable pipeline repository rolls the entire confirm transaction back", async () => {
   const fixture = await boardFixture();
   try {
@@ -322,7 +343,42 @@ test("hazardous pipeline confirmation parks without assigning branch identity", 
   }
 });
 
-test("pipeline HEAD resolution uses the injected hooks-neutralized git invocation", async () => {
+test("pipeline executor drift rejects confirmation without transitioning the work item", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { workItem, revision } = preparePipeline(fixture, "executor-drift");
+    const configured = fixture.board.getAutomationConfiguration();
+    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    assert.equal(implementation?.kind, "agent_type");
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: configured.version,
+      agentTypes: configured.agentTypes,
+      stages: automationStages({
+        implementation,
+        testing: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
+      }),
+    }));
+    const before = transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId);
+
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_EXECUTOR_DRIFT"
+      ),
+    );
+
+    assert.deepEqual(transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId), before);
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline HEAD resolution uses the injected hooks-neutralized git invocation before the confirm transaction", async () => {
   const fixture = await boardFixture();
   updateProjectPath(fixture, "/registered/pipeline-repository");
   const { workItem, revision } = preparePipeline(fixture, "injected-git");
@@ -332,12 +388,16 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
   const calls: readonly string[][] = [];
   const mutableCalls = calls as string[][];
   const expectedSha = "a".repeat(40);
+  let transactions = 0;
   try {
     const workflow = new TransparentWorkflow(
       store.db,
       new SkillRegistry(join(process.cwd(), "skills")),
       () => new Date("2026-08-19T20:00:00.000Z"),
-      (operation) => store.transaction(operation),
+      (operation) => {
+        transactions += 1;
+        return store.transaction(operation);
+      },
       undefined,
       (arguments_) => {
         mutableCalls.push([...arguments_]);
@@ -345,7 +405,12 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
       },
     );
 
-    workflow.confirm(revision.planRevisionId, { expectedState: "proposed" }, "human:alice");
+    const baseSha = workflow.pipelineBaseShaForConfirm(
+      revision.planRevisionId,
+      { expectedState: "proposed" },
+    );
+    assert.equal(transactions, 0);
+    workflow.confirm(revision.planRevisionId, { expectedState: "proposed" }, "human:alice", baseSha);
 
     assert.deepEqual(calls, [[
       "-c", "core.fsmonitor=",
@@ -358,6 +423,75 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
     ).get(workItem.workItemId);
     assert.equal(identity?.pipeline_branch, `task/${workItem.workItemId}`);
     assert.equal(identity?.base_sha, expectedSha);
+    assert.equal(transactions, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("a throwing injected git runner fails before opening the confirm transaction", async () => {
+  const fixture = await boardFixture();
+  updateProjectPath(fixture, "/registered/pipeline-repository");
+  const { workItem, revision } = preparePipeline(fixture, "throwing-git");
+  fixture.board.close();
+  const store = await TaskBoardStore.open(fixture.path);
+  registerWorkItemTransitionStore(store);
+  let transactions = 0;
+  const before = transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId);
+  try {
+    const workflow = new TransparentWorkflow(
+      store.db,
+      new SkillRegistry(join(process.cwd(), "skills")),
+      () => new Date("2026-08-19T20:00:00.000Z"),
+      (operation) => {
+        transactions += 1;
+        return store.transaction(operation);
+      },
+      undefined,
+      () => { throw new Error("git unavailable"); },
+    );
+
+    assert.throws(
+      () => workflow.pipelineBaseShaForConfirm(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+      ),
+    );
+
+    assert.equal(transactions, 0);
+    assert.deepEqual(transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId), before);
+  } finally {
+    store.close();
+  }
+});
+
+test("a malformed pipeline HEAD is reported as an unavailable repository", async () => {
+  const fixture = await boardFixture();
+  updateProjectPath(fixture, "/registered/pipeline-repository");
+  const { revision } = preparePipeline(fixture, "malformed-git");
+  fixture.board.close();
+  const store = await TaskBoardStore.open(fixture.path);
+  registerWorkItemTransitionStore(store);
+  try {
+    const workflow = new TransparentWorkflow(
+      store.db,
+      new SkillRegistry(join(process.cwd(), "skills")),
+      () => new Date("2026-08-19T20:00:00.000Z"),
+      (operation) => store.transaction(operation),
+      undefined,
+      () => "not-a-sha\n",
+    );
+
+    assert.throws(
+      () => workflow.pipelineBaseShaForConfirm(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+      ),
+    );
   } finally {
     store.close();
   }

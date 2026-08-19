@@ -46,3 +46,29 @@ test("pipeline workflow contexts validate and preserve their branch-bound plan r
     /pipeline identity is invalid/u,
   );
 });
+
+test("pipeline workflow contexts accept implementation and verify workspace keys bound to one task branch", () => {
+  const branch = "task/work-item-pipeline-context";
+  const pipeline = {
+    branch,
+    baseSha: "c".repeat(40),
+    changeShape: "feature",
+    tier: "standard",
+    declaredScope: ["src/server"],
+    nonGoals: [],
+    assumptions: [],
+  };
+
+  for (const workspaceKey of ["work-item-pipeline-context", "work-item-pipeline-context-verify"]) {
+    const parsed = parseBoundedAgentContext(context({
+      workflow: workflow({ workspaceKey, pipeline }),
+    }));
+    assert.equal(parsed.workflow?.workspaceKey, workspaceKey);
+  }
+  assert.throws(
+    () => parseBoundedAgentContext(context({
+      workflow: workflow({ workspaceKey: "unrelated-workspace", pipeline }),
+    })),
+    /pipeline identity is invalid/u,
+  );
+});

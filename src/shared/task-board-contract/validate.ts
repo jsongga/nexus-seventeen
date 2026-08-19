@@ -1662,7 +1662,13 @@ function parseWorkflowPipelineFields(
     }
     const branch = workerProse(value.branch, `${label}.pipeline.branch`, 133);
     const baseSha = workerProse(value.baseSha, `${label}.pipeline.baseSha`, 64);
-    if (branch !== `task/${workspaceKey}` || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(baseSha)) {
+    const branchMatch = /^task\/(.+)$/u.exec(branch);
+    const branchWorkspaceKey = branchMatch?.[1];
+    if (
+      branchWorkspaceKey === undefined ||
+      (workspaceKey !== branchWorkspaceKey && workspaceKey !== `${branchWorkspaceKey}-verify`) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(baseSha)
+    ) {
       throw new ContractValidationError(`${label}.pipeline identity is invalid`);
     }
     pipeline = Object.freeze({

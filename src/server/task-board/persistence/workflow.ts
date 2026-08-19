@@ -64,11 +64,19 @@ function pipelineShaped(nodes: readonly { readonly stageTemplate: readonly unkno
     nodes[0].stageTemplate[1] === "testing";
 }
 
-function storedPlanIsPipeline(db: DatabaseSync, planRevisionId: string): boolean {
+function storedPlanHasPipelineShape(db: DatabaseSync, planRevisionId: string): boolean {
   const nodes = (db.prepare(
     "SELECT stage_template_json FROM work_nodes WHERE plan_revision_id=? ORDER BY node_id",
   ).all(planRevisionId) as Row[]).map((row) => ({ stageTemplate: json<unknown[]>(row.stage_template_json) }));
-  return pipelineShaped(nodes) && testingStageUsesMachineVerify(db);
+  return pipelineShaped(nodes);
+}
+
+function pipelineExecutorDrift(): TaskBoardError {
+  return new TaskBoardError(
+    409,
+    TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_EXECUTOR_DRIFT,
+    "The pipeline testing executor changed before confirmation",
+  );
 }
 
 function pipelineBaseSha(repositoryPath: string, git: WorkflowGitRunner): string {
@@ -309,7 +317,7 @@ export class TransparentWorkflow {
     if (hasPipelineBranch) {
       if (
         row.change_shape === null || row.tier === null ||
-        row.declared_scope_json === null || row.non_goals_json === null
+        row.declared_scope_json === null
       ) {
         throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
       }
@@ -319,7 +327,9 @@ export class TransparentWorkflow {
         changeShape: String(row.change_shape) as WorkflowPipelineContext["changeShape"],
         tier: String(row.tier) as WorkflowPipelineContext["tier"],
         declaredScope: Object.freeze(json<string[]>(row.declared_scope_json)),
-        nonGoals: Object.freeze(json<string[]>(row.non_goals_json)),
+        nonGoals: row.non_goals_json === null
+          ? Object.freeze([])
+          : Object.freeze(json<string[]>(row.non_goals_json)),
         assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
       });
     }
@@ -331,17 +341,42 @@ export class TransparentWorkflow {
     });
   }
 
-  confirm(planId: string, request: ConfirmPlanRevisionRequest, actor: string): ConfirmWorkflowTransactionResult {
+  pipelineBaseShaForConfirm(planId: string, request: ConfirmPlanRevisionRequest): string | null {
+    if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
+    const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
+    if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
+    if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+    const hasPipelineShape = storedPlanHasPipelineShape(this.db, planId);
+    if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
+    if (row.tier === "hazardous" || !hasPipelineShape) return null;
+    const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
+    if (project === undefined) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+      );
+    }
+    return pipelineBaseSha(String(project.description), this.git);
+  }
+
+  confirm(
+    planId: string,
+    request: ConfirmPlanRevisionRequest,
+    actor: string,
+    resolvedBaseSha: string | null,
+  ): ConfirmWorkflowTransactionResult {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
     const now = this.now().toISOString();
     return this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
       if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
       if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+      const hasPipelineShape = storedPlanHasPipelineShape(this.db, planId);
+      if (hasPipelineShape && !testingStageUsesMachineVerify(this.db)) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
-      if (row.tier !== "hazardous" && storedPlanIsPipeline(this.db, planId)) {
-        const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
-        if (project === undefined) {
+      if (row.tier !== "hazardous" && hasPipelineShape) {
+        if (resolvedBaseSha === null || !GIT_OBJECT_ID.test(resolvedBaseSha)) {
           throw new TaskBoardError(
             409,
             TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
@@ -350,7 +385,7 @@ export class TransparentWorkflow {
         }
         identity = Object.freeze({
           branch: `task/${String(row.work_item_id)}`,
-          baseSha: pipelineBaseSha(String(project.description), this.git),
+          baseSha: resolvedBaseSha,
         });
       }
       this.db.prepare("UPDATE plan_revisions SET state='confirmed',confirmed_by=?,confirmed_at=? WHERE plan_revision_id=?").run(actor, now, planId);
