@@ -61,6 +61,7 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
     projectId: "container-project",
     agentId: "container-engineer",
     taskId: "container-task",
+    intake: false,
     mission: {
       role: "engineer",
       area: "Container execution",

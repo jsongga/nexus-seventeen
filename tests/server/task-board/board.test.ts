@@ -1457,6 +1457,7 @@ test("a new claimId succeeds with complete context after a rejected claim is ref
       messageCursor: null,
     });
     assert.ok(claim);
+    assert.equal(claim.context.intake, false);
     assertCompleteClaimPayload(claim, fixture);
   } finally {
     await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
@@ -1499,6 +1500,7 @@ test("happy-path claim keeps the existing complete response shape", async () => 
       "acceptanceCriteria",
       "agent",
       "areaMemory",
+      "intake",
       "messageCursor",
       "messages",
       "openQuestions",
@@ -1630,10 +1632,14 @@ test("legacy claim-result replay adds null run fields without changing claim ide
     try {
       const row = direct.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(first.run.runId);
       assert.equal(typeof row?.claim_result_json, "string");
-      const legacyResult = JSON.parse(String(row?.claim_result_json)) as { run: Record<string, unknown> };
+      const legacyResult = JSON.parse(String(row?.claim_result_json)) as {
+        run: Record<string, unknown>;
+        context: Record<string, unknown>;
+      };
       for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
         delete legacyResult.run[field];
       }
+      delete legacyResult.context.intake;
       const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
         .run(JSON.stringify(legacyResult), first.run.runId);
       assert.equal(Number(seeded.changes), 1);
@@ -1645,6 +1651,7 @@ test("legacy claim-result replay adds null run fields without changing claim ide
     const replay = restarted.claimRun(fixture.engineer.agentId, request);
     assert.ok(replay);
     assert.equal(parseClaimRunResult(replay), replay);
+    assert.equal(replay.context.intake, false);
     assert.deepEqual(
       {
         runId: replay.run.runId,
@@ -2192,6 +2199,141 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "completed");
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline planning requires the full plan record and a machine_verify terminal testing stage", async () => {
+  const fixture = await boardFixture();
+  try {
+    const implementationType = {
+      agentTypeId: "pipeline-implementation",
+      name: "Pipeline implementation",
+      description: "Implements an approved single-node pipeline plan.",
+      role: "engineer" as const,
+      supplementalInstructions: "Implement only the approved pipeline plan.",
+      skillIds: [],
+      evaluatorProfile: "tests" as const,
+      enabled: true,
+    };
+    const agentTestingConfiguration = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [implementationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+      }),
+    }));
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Add the explicit intake signal and validate the pipeline plan record.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "pipeline-plan-record-0001").workItem;
+    const planningTask = fixture.board.startWorkItemPlanning(workItem.workItemId);
+    assert.ok(planningTask);
+    const claimRequest = { claimId: "claim-pipeline-plan-record-0001", messageCursor: null } as const;
+    const claim = fixture.board.claimRun(fixture.manager.agentId, claimRequest);
+    assert.ok(claim);
+    assert.equal(claim.context.intake, true);
+    assert.equal(fixture.board.claimRun(fixture.manager.agentId, claimRequest)?.context.intake, true);
+
+    const node = {
+      nodeId: "implement-pipeline-plan-record",
+      title: "Implement the pipeline plan record",
+      objective: "Replace the title heuristic and validate complete pipeline plans.",
+      acceptanceCriteria: ["Pipeline plans carry the complete record."],
+      dependencyNodeIds: [],
+      stageTemplate: ["implementation", "testing"] as const,
+    };
+    const basePlan = {
+      objective: "Implement and machine-verify the explicit intake pipeline.",
+      assumptions: ["The company automation configuration applies to this project."],
+      acceptanceCriteria: ["The complete pipeline plan reaches plan approval."],
+      nodes: [node],
+    };
+    const expectIncomplete = (workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"], field: string): void => {
+      assert.throws(
+        () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The pipeline plan is ready for approval.",
+          workflowPlan,
+        }),
+        (error: unknown) => (
+          error instanceof TaskBoardError &&
+          error.status === 400 &&
+          error.code === "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE" &&
+          error.message.includes(field)
+        ),
+      );
+    };
+    expectIncomplete(basePlan, "changeShape");
+    expectIncomplete({ ...basePlan, changeShape: "feature" }, "tier");
+    expectIncomplete({ ...basePlan, changeShape: "feature", tier: "standard", declaredScope: [] }, "declaredScope");
+    assert.equal(fixture.board.requireTask(planningTask.taskId).status, "in_progress");
+
+    const completePlan = {
+      ...basePlan,
+      changeShape: "feature" as const,
+      tier: "standard" as const,
+      declaredScope: ["src/server", "src/shared", "tests/server", "tests/shared"],
+      nonGoals: ["Do not activate machine verification."],
+      mechanicalPortions: ["Add intake: false to bounded-context fixtures."],
+      blockingQuestions: [{
+        question: "Should the public contract add the executor kind now?",
+        recommendedDefault: "Yes, add the kind without activating it.",
+      }],
+      criterionChecks: [{
+        criterion: "The runtime suite passes.",
+        check: "npm run test:runtime",
+      }],
+    };
+    assert.throws(
+      () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The complete pipeline plan is ready for approval.",
+        workflowPlan: completePlan,
+      }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "WORKFLOW_INVALID" &&
+        /ending in verification/u.test(error.message)
+      ),
+    );
+
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: agentTestingConfiguration.version,
+      agentTypes: [implementationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+      }),
+    }));
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The complete pipeline plan is ready for approval.",
+      workflowPlan: completePlan,
+    });
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
+    const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans[0];
+    assert.ok(plan);
+    assert.deepEqual({
+      changeShape: plan.changeShape,
+      tier: plan.tier,
+      declaredScope: plan.declaredScope,
+      nonGoals: plan.nonGoals,
+      mechanicalPortions: plan.mechanicalPortions,
+      blockingQuestions: plan.blockingQuestions,
+      criterionChecks: plan.criterionChecks,
+    }, {
+      changeShape: completePlan.changeShape,
+      tier: completePlan.tier,
+      declaredScope: completePlan.declaredScope,
+      nonGoals: completePlan.nonGoals,
+      mechanicalPortions: completePlan.mechanicalPortions,
+      blockingQuestions: completePlan.blockingQuestions,
+      criterionChecks: completePlan.criterionChecks,
+    });
   } finally {
     fixture.board.close();
   }

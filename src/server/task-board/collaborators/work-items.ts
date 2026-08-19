@@ -38,7 +38,7 @@ export type WorkItemDetail = WorkItem & Readonly<{
 }>;
 type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
-const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and unique stage sequences ending in verification. Available automated stages: ";
+const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
 const WORK_ITEM_TERMINAL_RANK_SQL = "(ended_at IS NOT NULL)";
 const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
   ${workItemPriorityCases("  ")}
@@ -221,6 +221,7 @@ export class WorkItemsCollaborator {
     const configuration = this.automation.getConfiguration();
     const enabledTypes = new Set(configuration.agentTypes.filter((agentType) => agentType.enabled).map((agentType) => agentType.agentTypeId));
     const availableStages = configuration.stages.flatMap((stage) =>
+      stage.executor.kind === "machine_verify" ||
       stage.executor.kind === "agent_type" && enabledTypes.has(stage.executor.agentTypeId) ? [stage.stage] : []);
     const taskRequest = {
       parentTaskId: null,

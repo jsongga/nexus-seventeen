@@ -129,6 +129,7 @@ function context(overrides: Record<string, unknown> = {}): Record<string, unknow
     projectId: "project-one",
     agentId: "agent-one",
     taskId: "task-one",
+    intake: false,
     mission: { role: "engineer", area: "Checkout", mission: "Keep checkout dependable." },
     projectMemory: "Checkout uses idempotency keys.",
     task: {
@@ -275,6 +276,7 @@ test("claim result validation preserves canonical timestamps and the legacy proj
     },
     task: { validatedByTheBoundedContextProjection: true },
     context: {
+      intake: false,
       agent: null,
       projectMemory: null,
       areaMemory: [],
@@ -380,6 +382,16 @@ test("board request shapes accept exactly the shared contract enum members", () 
   }));
   assert.deepEqual(parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: stages() }).stages.map((stage) => stage.stage),
     [...WORK_ITEM_STAGES]);
+  const machineVerifyStages = stages();
+  machineVerifyStages[WORK_ITEM_STAGES.indexOf("testing")] = {
+    stage: "testing",
+    executor: { kind: "machine_verify" },
+  };
+  assert.deepEqual(
+    parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: machineVerifyStages })
+      .stages.find((stage) => stage.stage === "testing")?.executor,
+    { kind: "machine_verify" },
+  );
 });
 
 test("board workflow shapes accept exactly the shared handoff and stage enums", () => {
@@ -397,6 +409,23 @@ test("board workflow shapes accept exactly the shared handoff and stage enums", 
         stageTemplate: stage === "verification" ? [stage] : [stage, "verification"] }],
     },
   }));
+  assert.deepEqual(
+    parseBoardSettle({
+      outcome: "completed",
+      result: "Done.",
+      workflowPlan: pipelinePlan({
+        nodes: [{
+          nodeId: "node-one",
+          title: "Implement the pipeline contract",
+          objective: "Add and machine-verify the shared contract.",
+          acceptanceCriteria: ["The pipeline contract round-trips."],
+          dependencyNodeIds: [],
+          stageTemplate: ["implementation", "testing"],
+        }],
+      }),
+    }).workflowPlan?.nodes[0]?.stageTemplate,
+    ["implementation", "testing"],
+  );
 });
 
 test("worker context shapes accept exactly the shared role, task, and phase enums", () => {

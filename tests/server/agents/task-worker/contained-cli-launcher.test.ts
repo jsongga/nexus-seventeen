@@ -5,12 +5,15 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import {
   IDENTIFIER_PATTERN,
+  PLAN_CHANGE_SHAPES,
+  PLAN_TIERS,
   STAGE_HANDOFF_OUTCOMES,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
+import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
 import { context, tempRoot, until } from "./helpers.js";
 
 async function fakeCli(
@@ -50,8 +53,43 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.outcome.enum, STAGE_HANDOFF_OUTCOMES);
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.recommendedReturnStage.enum, [...WORKFLOW_STAGES, null]);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum, WORKFLOW_STAGES);
+  assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.changeShape.enum, PLAN_CHANGE_SHAPES);
+  assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.tier.enum, PLAN_TIERS);
+  assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.declaredScope.minItems, 1);
+  assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.blockingQuestions.maxItems, 16);
+  assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.criterionChecks.maxItems, 32);
   assert.equal(RESULT_SCHEMA.properties.phases.items.properties.phaseId.pattern, IDENTIFIER_PATTERN);
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern, IDENTIFIER_PATTERN);
+});
+
+test("manager planning prompt branches on intake rather than the task title", () => {
+  const titlePrefixed = agentPrompt({
+    runId: "run-title-prefix",
+    wakeReason: "human_assignment",
+    context: context({
+      intake: false,
+      mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
+      task: { ...context().task, title: "Plan workflow: this is ordinary oversight" },
+    }),
+  });
+  assert.match(titlePrefixed, /Perform read-only oversight/u);
+  assert.doesNotMatch(titlePrefixed, /single-implementation pipeline plan/u);
+
+  const intakePrompt = agentPrompt({
+    runId: "run-intake",
+    wakeReason: "human_assignment",
+    context: context({
+      intake: true,
+      mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
+      task: { ...context().task, title: "Refine a request without the legacy prefix" },
+    }),
+  });
+  assert.match(intakePrompt, /Refine the supplied request into a small dependency-aware workflow plan/u);
+  assert.match(
+    intakePrompt,
+    /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing"\]/u,
+  );
+  assert.match(intakePrompt, /Apply the reversibility test/u);
 });
 
 test("runs one real contained Codex process with bounded full-task context", async () => {
@@ -215,7 +253,7 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
   assert.ok(args.includes("--bare"));
 });
 
-test("manager role is launched read-only with an oversight prompt", async () => {
+test("manager role with a legacy planning title and no intake signal is launched with an oversight prompt", async () => {
   const root = await tempRoot();
   const fixture = await fakeCodex(root, `
 let input = "";
@@ -241,7 +279,11 @@ process.stdin.on("end", () => {
   const handle = await launcher.launch({
     runId: "run-manager-one",
     wakeReason: "human_assignment",
-    context: context({ mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." } }),
+    context: context({
+      intake: false,
+      mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
+      task: { ...context().task, title: "Plan workflow: review this without intake authority" },
+    }),
   });
   await handle.completion;
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];

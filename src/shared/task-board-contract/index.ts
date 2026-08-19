@@ -11,6 +11,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
   TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
   TASK_RETRY_REQUIRED: "TASK_RETRY_REQUIRED",
+  TASK_BOARD_PIPELINE_PLAN_INCOMPLETE: "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -281,6 +282,7 @@ export const EVALUATOR_PROFILES = ["tests", "editorial", "visual", "manual"] as 
 export type AgentTypeEvaluatorProfile = typeof EVALUATOR_PROFILES[number];
 export type AutomationStageExecutor =
   | Readonly<{ kind: "agent_type"; agentTypeId: string }>
+  | Readonly<{ kind: "machine_verify" }>
   | Readonly<{ kind: "human" }>
   | Readonly<{ kind: "disabled" }>;
 
@@ -482,7 +484,7 @@ export interface WorkflowPlanDraft extends PlanRecordFields {
   readonly nodes: readonly ProposedWorkNode[];
 }
 
-export interface CreatePlanRevisionRequest {
+export interface CreatePlanRevisionRequest extends PlanRecordFields {
   readonly workItemId: string;
   readonly objective: string;
   readonly assumptions: readonly string[];
@@ -728,6 +730,7 @@ export interface ClaimRunResult {
   readonly wakeup: Wakeup;
   readonly task: BoardTask | null;
   readonly context: Readonly<{
+    intake: boolean;
     agent: AgentProfile;
     projectMemory: Readonly<{
       projectId: string;

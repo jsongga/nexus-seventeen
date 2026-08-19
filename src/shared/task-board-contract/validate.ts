@@ -1217,7 +1217,7 @@ export function parseAutomationExecutorEntity(
     const parsed = shape(item, label, ["kind", "agentTypeId"], ["kind", "agentTypeId"], options);
     return Object.freeze({ kind: "agent_type", agentTypeId: shapeIdentifier(parsed.agentTypeId, `${label}.agentTypeId`, options) });
   }
-  if (kind === "human" || kind === "disabled") {
+  if (kind === "machine_verify" || kind === "human" || kind === "disabled") {
     shape(item, label, ["kind"], ["kind"], options);
     return Object.freeze({ kind });
   }
@@ -1350,7 +1350,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     "createdAt", "claimedAt", "runId",
   ], "Claim wakeup");
   const context = exact(envelope.context, [
-    "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+    "intake", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
     "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
   ], "Claim context");
   if (
@@ -1391,6 +1391,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     throw new ContractValidationError("Claim context collections are invalid");
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
+  booleanValue(context.intake, "context.intake");
   return value as ClaimRunResult;
 }
 
@@ -1428,6 +1429,7 @@ export interface ValidatedAgentContext {
   readonly projectId: string;
   readonly agentId: string;
   readonly taskId: string;
+  readonly intake: boolean;
   readonly mission: Readonly<{ role: string; area: string; mission: string }>;
   readonly projectMemory: string;
   readonly task: Readonly<{
@@ -1655,7 +1657,7 @@ export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim
 export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   boundedJsonValue(value, MAX_CONTEXT_BYTES, "Agent context");
   const item = exact(value, [
-    "apiVersion", "projectId", "agentId", "taskId", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
+    "apiVersion", "projectId", "agentId", "taskId", "intake", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
     "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
   ], "Agent context");
   if (item.apiVersion !== 1) throw new ContractValidationError("Agent context version is invalid");
@@ -1813,6 +1815,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   return Object.freeze({
     apiVersion: 1,
     projectId: identifier(item.projectId, "context.projectId"), agentId: identifier(item.agentId, "context.agentId"), taskId: currentTaskId,
+    intake: booleanValue(item.intake, "context.intake"),
     mission: Object.freeze({ role: workerProse(mission.role, "mission.role", 64), area: workerProse(mission.area, "mission.area", 256), mission: workerProse(mission.mission, "mission.mission", 2_000) }),
     projectMemory: workerProse(item.projectMemory, "projectMemory", 8_000),
     task: Object.freeze({
@@ -2044,12 +2047,14 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
       }
       stageTemplate = node.stageTemplate.map((stage, stageIndex) =>
         contractMember(stage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex)));
-      if (new Set(stageTemplate).size !== stageTemplate.length || stageTemplate.at(-1) !== "verification") {
+      if (new Set(stageTemplate).size !== stageTemplate.length ||
+        (stageTemplate.at(-1) !== "verification" && stageTemplate.at(-1) !== "testing")) {
         throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
       }
     } else {
       const stages = draftStringList(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, policy, 64, 1);
-      if (stages.length > 5 || new Set(stages).size !== stages.length || stages.at(-1) !== "verification" ||
+      if (stages.length > 5 || new Set(stages).size !== stages.length ||
+        (stages.at(-1) !== "verification" && stages.at(-1) !== "testing") ||
         stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))) {
         throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
       }
@@ -2250,7 +2255,7 @@ function parseBoardAutomationExecutor(value: unknown, label: string): Automation
     const parsed = boardExact(item, ["kind", "agentTypeId"], label);
     return Object.freeze({ kind: "agent_type", agentTypeId: parseBoardIdentifier(parsed.agentTypeId, `${label}.agentTypeId`) });
   }
-  if (item.kind === "human" || item.kind === "disabled") {
+  if (item.kind === "machine_verify" || item.kind === "human" || item.kind === "disabled") {
     boardExact(item, ["kind"], label); return Object.freeze({ kind: item.kind });
   }
   boardFailure(`${label}.kind is invalid`);
@@ -2270,7 +2275,7 @@ function parseBoardAutomationStages(value: unknown, agentTypes: readonly Automat
     if (entry.stage === "human_review") { if (entry.executor.kind !== "human") boardFailure("human_review must use the human executor"); continue; }
     if (entry.stage === "deployment") { if (entry.executor.kind !== "disabled") boardFailure("deployment must remain disabled"); continue; }
     if (entry.executor.kind === "human") boardFailure(`${entry.stage} cannot use the human executor`);
-    if (entry.executor.kind === "disabled") continue;
+    if (entry.executor.kind === "disabled" || entry.executor.kind === "machine_verify") continue;
     const agentType = types.get(entry.executor.agentTypeId);
     if (agentType === undefined) boardFailure(`${entry.stage} references an unknown agent type`);
     if (!agentType.enabled) boardFailure(`${entry.stage} references a disabled agent type`);

@@ -95,6 +95,34 @@ export const RESULT_SCHEMA = Object.freeze({
             objective: { type: "string", minLength: 1, maxLength: 8_000 },
             assumptions: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
             acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            changeShape: { type: "string", enum: ["mechanical_sweep", "feature", "blast_radius"] },
+            tier: { type: "string", enum: ["standard", "hazardous"] },
+            declaredScope: {
+              type: "array", minItems: 1, maxItems: 64,
+              items: { type: "string", minLength: 1, maxLength: 256, pattern: "^(?!/)(?!.*\\.\\.).+$" },
+            },
+            nonGoals: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 1_000 } },
+            mechanicalPortions: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 1_000 } },
+            blockingQuestions: {
+              type: "array", maxItems: 16, items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  question: { type: "string", minLength: 1, maxLength: 1_000 },
+                  recommendedDefault: { type: "string", minLength: 1, maxLength: 1_000 },
+                },
+                required: ["question", "recommendedDefault"],
+              },
+            },
+            criterionChecks: {
+              type: "array", maxItems: 32, items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  criterion: { type: "string", minLength: 1, maxLength: 1_000 },
+                  check: { type: "string", minLength: 1, maxLength: 512, pattern: "^[^\\u0000-\\u001f\\u007f]+$" },
+                },
+                required: ["criterion", "check"],
+              },
+            },
             nodes: {
               type: "array", minItems: 1, maxItems: 64, items: {
                 type: "object", additionalProperties: false,
@@ -239,7 +267,7 @@ export function agentRole(request: AgentLaunchRequest): AgentRole {
 
 export function agentPrompt(request: AgentLaunchRequest): string {
   const fixedRole = agentRole(request);
-  const planningRun = request.context.task.title.startsWith("Plan workflow:");
+  const planningRun = request.context.intake === true;
   const workflow = fixedRole === "engineer"
     ? [
         "Follow a research → plan → execute → test loop inside this one run.",
@@ -255,6 +283,7 @@ export function agentPrompt(request: AgentLaunchRequest): string {
           "Refine the supplied request into a small dependency-aware workflow plan for human confirmation.",
           "Do not implement, assign, or start the proposed nodes.",
           "Call out assumptions explicitly and make every acceptance criterion observable.",
+          "For a single-implementation pipeline plan, return exactly one node with stageTemplate [\"implementation\",\"testing\"] and include changeShape, tier, declaredScope (directory prefixes), nonGoals, mechanicalPortions, blockingQuestions (each with a recommendedDefault), and criterionChecks where a criterion is machine-checkable. Apply the reversibility test: decisions whose reversal would change a published interface, schema, or out-of-scope code become blockingQuestions; all others are assumptions.",
         ] : [
           "Perform read-only oversight of the supplied task, evidence, progress, and risks.",
           "Return a clear READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED recommendation supported by the supplied evidence.",
@@ -269,7 +298,9 @@ export function agentPrompt(request: AgentLaunchRequest): string {
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
     "Progress entries must be short, result-oriented updates. Do not include secrets or a technical transcript.",
     "When workflow context is present, return a compact handoff with criterion results, evidence references, artifact IDs, blockers, and a recommended return stage. Otherwise return handoff null.",
-    "When the task asks you to plan a workflow, return workflowPlan with a dependency hierarchy and unique ordered stages ending in verification. Otherwise return workflowPlan null.",
+    planningRun
+      ? "For this intake planning run, return workflowPlan with a dependency hierarchy and the stage rules above."
+      : "When the task asks you to plan a workflow, return workflowPlan with a dependency hierarchy and unique ordered stages ending in verification. Otherwise return workflowPlan null.",
     "After inspecting the task, estimate only the agent's remaining work in 15-minute intervals. Return expectedAgentMinutes null until there is enough evidence; null leaves any current estimate unchanged.",
     "Use phases for durable work stages. Return only phases that should be created or changed: copy an active existing phaseId from context to update it, or use null to create one. Phases with the same non-null parallelGroup may run concurrently.",
     "When a phase completes, keep its semantic research, planning, execution, testing, or review stage and set status completed. The legacy done stage may appear in old context but should not be created.",

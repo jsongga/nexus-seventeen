@@ -520,6 +520,25 @@ export class RunsCollaborator {
       if (request.workflowPlan === undefined || request.workflowPlan === null) {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
       }
+      const pipelineNode = request.workflowPlan.nodes.length === 1 ? request.workflowPlan.nodes[0] : undefined;
+      const pipelineShaped = pipelineNode?.stageTemplate.length === 2 &&
+        pipelineNode.stageTemplate[0] === "implementation" && pipelineNode.stageTemplate[1] === "testing";
+      if (pipelineShaped) {
+        const missingField = request.workflowPlan.changeShape === undefined
+          ? "changeShape"
+          : request.workflowPlan.tier === undefined
+            ? "tier"
+            : request.workflowPlan.declaredScope === undefined || request.workflowPlan.declaredScope.length === 0
+              ? "declaredScope"
+              : null;
+        if (missingField !== null) {
+          throw new TaskBoardError(
+            400,
+            TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
+            `Pipeline plan is missing required field ${missingField}`,
+          );
+        }
+      }
       const workItemId = String(planning.work_item_id);
       if (isTerminalWorkItemState(String(planning.state) as WorkItemState)) {
         this.runtime.insertEvent(
@@ -539,6 +558,7 @@ export class RunsCollaborator {
           const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
           for (const stage of requiredStages) {
             const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
+            if (executor?.kind === "machine_verify") continue;
             const agentType = executor?.kind === "agent_type"
               ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
               : undefined;
@@ -551,13 +571,10 @@ export class RunsCollaborator {
           const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
             agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
           workflowProposal = {
+            ...request.workflowPlan,
             workItemId,
             projectId: String(planning.resolved_project_id),
-            objective: request.workflowPlan.objective,
-            assumptions: request.workflowPlan.assumptions,
-            acceptanceCriteria: request.workflowPlan.acceptanceCriteria,
             skillIds,
-            nodes: request.workflowPlan.nodes,
           };
         }
       }
@@ -689,6 +706,9 @@ export class RunsCollaborator {
       wakeup,
       task,
       context: Object.freeze({
+        intake: task !== null && this.runtime.store.db.prepare(
+          "SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?",
+        ).get(task.taskId) !== undefined,
         agent: this.runtime.requireAgent(run.agentId),
         projectMemory: Object.freeze({ projectId: project.projectId, name: project.name, description: project.description }),
         areaMemory: Object.freeze(areaMemory),
@@ -717,8 +737,9 @@ export class RunsCollaborator {
     if (result === null || typeof result !== "object" || Array.isArray(result)) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
     }
-    const envelope = result as { apiVersion?: unknown; run?: unknown };
+    const envelope = result as { apiVersion?: unknown; run?: unknown; context?: unknown };
     if (envelope.apiVersion !== TASK_BOARD_API_VERSION) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    let currentRun: AgentRun | null = null;
     if (envelope.run !== null && typeof envelope.run === "object" && !Array.isArray(envelope.run)) {
       const run = envelope.run as Record<string, unknown>;
       for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
@@ -727,11 +748,19 @@ export class RunsCollaborator {
       if (typeof run.runId !== "string") throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
       const currentRow = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(run.runId);
       if (currentRow === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
-      const currentRun = runFromRow(currentRow);
+      currentRun = runFromRow(currentRow);
       run.status = currentRun.status;
       run.heartbeatAt = currentRun.heartbeatAt;
       run.endedAt = currentRun.endedAt;
       run.result = currentRun.result;
+    }
+    if (envelope.context !== null && typeof envelope.context === "object" && !Array.isArray(envelope.context)) {
+      const context = envelope.context as Record<string, unknown>;
+      if (!Object.hasOwn(context, "intake")) {
+        context.intake = currentRun?.taskId !== null && currentRun?.taskId !== undefined &&
+          this.runtime.store.db.prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
+            .get(currentRun.taskId) !== undefined;
+      }
     }
     return result as ClaimRunResult;
   }

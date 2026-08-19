@@ -39,17 +39,42 @@ function list(value: unknown, field: string, max = 64): string[] {
   return value.map((item, index) => text(item, `${field}[${index}]`, 4_000));
 }
 function json<T>(value: unknown): T { return JSON.parse(String(value)) as T; }
+function optionalJsonList<T>(value: unknown): readonly T[] | undefined {
+  return value === null ? undefined : Object.freeze(json<T[]>(value));
+}
+
+function testingStageUsesMachineVerify(db: DatabaseSync): boolean {
+  const row = db.prepare(
+    "SELECT stages_json FROM automation_configuration WHERE configuration_id = 'company-default'",
+  ).get();
+  if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:automation_configuration_missing");
+  const stages = json<Array<{ readonly stage?: unknown; readonly executor?: { readonly kind?: unknown } }>>(row.stages_json);
+  return stages.some((stage) => stage.stage === "testing" && stage.executor?.kind === "machine_verify");
+}
 
 function planFromRow(row: Row): PlanRevision {
+  const declaredScope = optionalJsonList<string>(row.declared_scope_json);
+  const nonGoals = optionalJsonList<string>(row.non_goals_json);
+  const mechanicalPortions = optionalJsonList<string>(row.mechanical_portions_json);
+  const blockingQuestions = optionalJsonList<{ readonly question: string; readonly recommendedDefault: string }>(row.blocking_questions_json);
+  const criterionChecks = optionalJsonList<{ readonly criterion: string; readonly check: string }>(row.criterion_checks_json);
   return Object.freeze({
     apiVersion: "steward.task-board/v1", planRevisionId: String(row.plan_revision_id),
     workItemId: String(row.work_item_id), revision: Number(row.revision), objective: String(row.objective),
     assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
     acceptanceCriteria: Object.freeze(json<string[]>(row.acceptance_criteria_json)),
+    ...(row.change_shape === null ? {} : { changeShape: String(row.change_shape) as NonNullable<PlanRevision["changeShape"]> }),
+    ...(row.tier === null ? {} : { tier: String(row.tier) as NonNullable<PlanRevision["tier"]> }),
+    ...(declaredScope === undefined ? {} : { declaredScope }),
+    ...(nonGoals === undefined ? {} : { nonGoals }),
+    ...(mechanicalPortions === undefined ? {} : { mechanicalPortions }),
+    ...(blockingQuestions === undefined ? {} : { blockingQuestions }),
+    ...(criterionChecks === undefined ? {} : { criterionChecks }),
     projectId: String(row.project_id), skillDigests: Object.freeze(json<Record<string, string>>(row.skill_digests_json)),
     state: row.state as PlanRevision["state"], createdBy: String(row.created_by),
     confirmedBy: row.confirmed_by === null ? null : String(row.confirmed_by),
     createdAt: String(row.created_at), confirmedAt: row.confirmed_at === null ? null : String(row.confirmed_at),
+    ...(row.rejected_note === null ? {} : { rejectedNote: String(row.rejected_note) }),
   });
 }
 
@@ -95,6 +120,7 @@ export class TransparentWorkflow {
     if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId)) throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     const snapshots = this.skills.loadSync(raw.skillIds);
     const skillDigests = Object.fromEntries(snapshots.map((skill) => [skill.skillId, skill.digest]));
+    const machineVerifiedTesting = testingStageUsesMachineVerify(this.db);
     const ids = new Set<string>();
     const nodes = raw.nodes.map((node, index) => {
       const nodeId = text(node.nodeId, `nodes[${index}].nodeId`, 128);
@@ -104,8 +130,15 @@ export class TransparentWorkflow {
         if (!STAGES.has(stage)) throw new TaskBoardError(400, "WORKFLOW_INVALID", "Node stage is invalid");
         return stage;
       });
-      if (stages.length === 0 || stages.at(-1) !== "verification" || new Set(stages).size !== stages.length) {
-        throw new TaskBoardError(400, "WORKFLOW_INVALID", "Every node needs unique ordered stages ending in verification");
+      const terminalStage = stages.at(-1);
+      if (stages.length === 0 ||
+        (terminalStage !== "verification" && !(terminalStage === "testing" && machineVerifiedTesting)) ||
+        new Set(stages).size !== stages.length) {
+        throw new TaskBoardError(
+          400,
+          "WORKFLOW_INVALID",
+          "Every node needs unique ordered stages ending in verification, or testing with a machine_verify executor",
+        );
       }
       return { nodeId, title: text(node.title, "node.title", 256), objective: text(node.objective, "node.objective"), acceptanceCriteria: list(node.acceptanceCriteria, "node.acceptanceCriteria"), dependencyNodeIds: [...node.dependencyNodeIds], stages };
     });
@@ -132,10 +165,33 @@ export class TransparentWorkflow {
       this.db.prepare(`
         INSERT INTO plan_revisions(
           plan_revision_id, work_item_id, revision, objective, assumptions_json,
-          acceptance_criteria_json, project_id, skill_digests_json, state, created_by,
+          acceptance_criteria_json, change_shape, tier, declared_scope_json, non_goals_json,
+          mechanical_portions_json, blocking_questions_json, criterion_checks_json,
+          project_id, skill_digests_json, state, created_by,
           confirmed_by, created_at, confirmed_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `).run(planId, workItemId, revision, objective, JSON.stringify(assumptions), JSON.stringify(acceptance), projectId, JSON.stringify(skillDigests), "proposed", actor, null, createdAt, null);
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        planId,
+        workItemId,
+        revision,
+        objective,
+        JSON.stringify(assumptions),
+        JSON.stringify(acceptance),
+        raw.changeShape ?? null,
+        raw.tier ?? null,
+        raw.declaredScope === undefined ? null : JSON.stringify(raw.declaredScope),
+        raw.nonGoals === undefined ? null : JSON.stringify(raw.nonGoals),
+        raw.mechanicalPortions === undefined ? null : JSON.stringify(raw.mechanicalPortions),
+        raw.blockingQuestions === undefined ? null : JSON.stringify(raw.blockingQuestions),
+        raw.criterionChecks === undefined ? null : JSON.stringify(raw.criterionChecks),
+        projectId,
+        JSON.stringify(skillDigests),
+        "proposed",
+        actor,
+        null,
+        createdAt,
+        null,
+      );
       for (const node of nodes) {
         const storedId = storedIds.get(node.nodeId)!;
         this.db.prepare("INSERT INTO work_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(storedId, planId, projectId, node.title, node.objective, JSON.stringify(node.acceptanceCriteria), JSON.stringify(node.stages), null, "pending", 1, createdAt, createdAt);

@@ -373,6 +373,7 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     projectId: run.projectId,
     agentId: run.agentId,
     taskId: task.taskId,
+    intake: context.intake,
     mission: {
       role: context.agent.role,
       area: bounded(context.agent.area, "agent.area", 256),
