@@ -45,7 +45,7 @@ Follows `§15`'s order, with scheduling/budgets and Outline inserted where
 their prerequisites exist; each campaign names its design sections and its
 exit criterion.
 
-**0. Project picker** *(spec approved, in flight)* — registration front door
+**0. Project picker** *(shipped 2026-08-15)* — registration front door
 for onboarding. Exit: add a project by picking a discovered repo. Small;
 ships while campaign 1 is specced.
 
