@@ -94,6 +94,7 @@ export interface AutomationAgentType {
 
 export type AutomationStageExecutor =
   | { kind: 'agent_type'; agentTypeId: string }
+  | { kind: 'machine_verify' }
   | { kind: 'human' }
   | { kind: 'disabled' };
 

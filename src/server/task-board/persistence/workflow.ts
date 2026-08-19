@@ -120,7 +120,11 @@ export class TransparentWorkflow {
     if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId)) throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     const snapshots = this.skills.loadSync(raw.skillIds);
     const skillDigests = Object.fromEntries(snapshots.map((skill) => [skill.skillId, skill.digest]));
-    const machineVerifiedTesting = testingStageUsesMachineVerify(this.db);
+    const pipelineShaped = raw.nodes.length === 1 &&
+      raw.nodes[0]?.stageTemplate.length === 2 &&
+      raw.nodes[0].stageTemplate[0] === "implementation" &&
+      raw.nodes[0].stageTemplate[1] === "testing";
+    const machineVerifiedTesting = pipelineShaped && testingStageUsesMachineVerify(this.db);
     const ids = new Set<string>();
     const nodes = raw.nodes.map((node, index) => {
       const nodeId = text(node.nodeId, `nodes[${index}].nodeId`, 128);

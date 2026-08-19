@@ -1632,14 +1632,10 @@ test("legacy claim-result replay adds null run fields without changing claim ide
     try {
       const row = direct.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(first.run.runId);
       assert.equal(typeof row?.claim_result_json, "string");
-      const legacyResult = JSON.parse(String(row?.claim_result_json)) as {
-        run: Record<string, unknown>;
-        context: Record<string, unknown>;
-      };
+      const legacyResult = JSON.parse(String(row?.claim_result_json)) as { run: Record<string, unknown> };
       for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
         delete legacyResult.run[field];
       }
-      delete legacyResult.context.intake;
       const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
         .run(JSON.stringify(legacyResult), first.run.runId);
       assert.equal(Number(seeded.changes), 1);
@@ -1651,7 +1647,6 @@ test("legacy claim-result replay adds null run fields without changing claim ide
     const replay = restarted.claimRun(fixture.engineer.agentId, request);
     assert.ok(replay);
     assert.equal(parseClaimRunResult(replay), replay);
-    assert.equal(replay.context.intake, false);
     assert.deepEqual(
       {
         runId: replay.run.runId,
@@ -1672,6 +1667,45 @@ test("legacy claim-result replay adds null run fields without changing claim ide
         promptsSha: null,
       },
     );
+  } finally {
+    if (fixtureOpen) fixture.board.close();
+    restarted?.close();
+  }
+});
+
+test("legacy claim-result replay backfills a missing intake flag", async () => {
+  const fixture = await boardFixture();
+  const request = { claimId: "claim-pinning-legacy-intake-0001", messageCursor: null } as const;
+  let fixtureOpen = true;
+  let restarted: TaskBoard | null = null;
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Replay a legacy claim result" }));
+    const first = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(first);
+    fixture.board.close();
+    fixtureOpen = false;
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const direct = new DatabaseSync(fixture.path);
+    try {
+      const row = direct.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(first.run.runId);
+      assert.equal(typeof row?.claim_result_json, "string");
+      const legacyResult = JSON.parse(String(row?.claim_result_json)) as { context: Record<string, unknown> };
+      delete legacyResult.context.intake;
+      const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
+        .run(JSON.stringify(legacyResult), first.run.runId);
+      assert.equal(Number(seeded.changes), 1);
+    } finally {
+      direct.close();
+    }
+
+    restarted = await TaskBoard.open(config(fixture.path));
+    const replay = restarted.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.equal(parseClaimRunResult(replay), replay);
+    assert.equal(replay.run.runId, first.run.runId);
+    assert.equal(replay.run.claimId, first.run.claimId);
+    assert.equal(replay.context.intake, false);
   } finally {
     if (fixtureOpen) fixture.board.close();
     restarted?.close();
@@ -2304,10 +2338,41 @@ test("pipeline planning requires the full plan record and a machine_verify termi
       version: agentTestingConfiguration.version,
       agentTypes: [implementationType],
       stages: automationStages({
+        research: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
         implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
         testing: { kind: "machine_verify" },
       }),
     }));
+    const expectWorkflowInvalid = (workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"]): void => {
+      assert.throws(
+        () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The non-pipeline testing-terminal plan must be rejected.",
+          workflowPlan,
+        }),
+        (error: unknown) => (
+          error instanceof TaskBoardError &&
+          error.status === 400 &&
+          error.code === "WORKFLOW_INVALID" &&
+          /ending in verification/u.test(error.message)
+        ),
+      );
+    };
+    expectWorkflowInvalid({
+      ...completePlan,
+      nodes: [{
+        ...node,
+        nodeId: "research-pipeline-plan-record",
+        stageTemplate: ["research", "testing"],
+      }],
+    });
+    expectWorkflowInvalid({
+      ...completePlan,
+      nodes: [
+        node,
+        { ...node, nodeId: "implement-second-pipeline-plan-record" },
+      ],
+    });
     const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The complete pipeline plan is ready for approval.",

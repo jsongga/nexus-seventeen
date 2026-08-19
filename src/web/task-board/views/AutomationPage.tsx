@@ -34,6 +34,7 @@ import {
 } from '../types';
 
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
+const machineVerifyExecutorValue = '__machine_verify__';
 
 const stageLabels: Record<WorkItemStage, string> = {
   refinement: 'Refinement',
@@ -102,7 +103,9 @@ function eligibleAgentTypes(stage: WorkItemStage, agentTypes: AutomationAgentTyp
 }
 
 function executorValue(executor: AutomationStageExecutor): string {
-  return executor.kind === 'agent_type' ? executor.agentTypeId : '';
+  return executor.kind === 'agent_type'
+    ? executor.agentTypeId
+    : executor.kind === 'machine_verify' ? machineVerifyExecutorValue : '';
 }
 
 interface AgentTypeFormProps {
@@ -718,6 +721,9 @@ export function AutomationPage({
                               onChange={(event) => updateStage(stage, event.target.value)}
                             >
                               <option value="">Disabled</option>
+                              {entry.executor.kind === 'machine_verify' ? (
+                                <option value={machineVerifyExecutorValue}>Machine verify</option>
+                              ) : null}
                               {eligible.map((agentType) => (
                                 <option key={agentType.id} value={agentType.id}>{agentType.name} · {roleLabels[agentType.role]}</option>
                               ))}
