@@ -31,6 +31,8 @@
     "build": "npm run build:runtime && npm run build:web",
     "build:web": "tsc -b && vite build",
     "build:runtime": "npm run clean:runtime && tsc -p tsconfig.runtime.json && node scripts/write-agent-result-schema.mjs",
+    "build:runtime:fast": "tsc -p tsconfig.runtime.json && node scripts/write-agent-result-schema.mjs",
+    "build:tests:fast": "tsc -p tsconfig.test.json",
     "build:agent-image": "npm run build:runtime && node scripts/build-agent-image.mjs",
     "build:bootstrap-contract": "tsc -p tsconfig.bootstrap.json",
     "preview": "vite preview",

@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 .test-dist/
+.verify-runs/
 test-results/
 playwright-report/
 *.tsbuildinfo

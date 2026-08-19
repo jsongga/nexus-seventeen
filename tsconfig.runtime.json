@@ -17,6 +17,8 @@
     },
     "rootDir": "src",
     "outDir": "build",
+    "incremental": true,
+    "tsBuildInfoFile": "build/.tsbuildinfo",
     "declaration": true,
     "sourceMap": true,
     "strict": true,
