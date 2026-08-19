@@ -425,6 +425,12 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
           ...context.workflow,
           workspaceKey: context.workflow.workspaceKey ?? null,
           pipeline: context.workflow.pipeline ?? null,
+          review: context.workflow.review === undefined || context.workflow.review === null
+            ? null
+            : {
+                ...context.workflow.review,
+                mechanicalPortions: context.workflow.review.mechanicalPortions ?? [],
+              },
         },
   };
   return parseBoundedAgentContext(internal);

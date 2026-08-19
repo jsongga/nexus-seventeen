@@ -40,7 +40,11 @@ import {
   VerifyAttemptsCollaborator,
   type VerifyAttemptsDependencies,
 } from "./verify-attempts.js";
-import { checkDeclaredScope } from "./scope-check.js";
+import {
+  inspectPipelineBranchSync,
+  pipelineMidRunAssumptions,
+  type PipelineInspection,
+} from "./pipeline-inspection.js";
 import {
   mergePipelineBranch,
   resolvePipelineBranchTip,
@@ -51,7 +55,6 @@ import { TaskBoardError } from "../errors.js";
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
-const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
 
 const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
@@ -216,39 +219,15 @@ export class ProjectsCollaborator {
     const branch = String(row.pipeline_branch);
     const baseSha = String(row.base_sha);
     const declaredScope = Object.freeze(JSON.parse(String(row.declared_scope_json)) as string[]);
-    let commits: readonly { readonly sha: string; readonly subject: string }[];
-    let diffstat: string;
-    let filesTouched: readonly string[];
-    let scopeOk: boolean;
+    let inspection: PipelineInspection;
     try {
-      const range = `${baseSha}..${branch}`;
-      const fields = this.git([
-        "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath,
-        "log", "--format=%H%x00%s", "-z", range, "--",
-      ]).split("\0").filter((field) => field.length > 0);
-      if (fields.length % 2 !== 0) throw new Error("git returned an invalid commit list");
-      const parsedCommits: Array<{ sha: string; subject: string }> = [];
-      for (let index = 0; index < fields.length; index += 2) {
-        parsedCommits.push({ sha: fields[index]!, subject: fields[index + 1]! });
-      }
-      commits = Object.freeze(parsedCommits.map((commit) => Object.freeze(commit)));
-      diffstat = this.git([
-        "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath,
-        "diff", "--stat", range, "--",
-      ]);
-      let namesOutput = "";
-      const scope = checkDeclaredScope({
+      inspection = inspectPipelineBranchSync({
         repoPath,
         baseSha,
         branch,
         declaredScope,
-        git: (arguments_) => {
-          namesOutput = this.git(arguments_);
-          return namesOutput;
-        },
+        git: this.git,
       });
-      filesTouched = Object.freeze(namesOutput.split("\0").filter((file) => file.length > 0));
-      scopeOk = scope.ok;
     } catch (error) {
       throw new TaskBoardError(
         409,
@@ -259,45 +238,7 @@ export class ProjectsCollaborator {
     }
 
     const assumptions = Object.freeze(JSON.parse(String(row.assumptions_json)) as string[]);
-    const handoffRows = this.runtime.store.db.prepare(`
-      SELECT
-        handoff.payload_json,handoff.stage,
-        COALESCE(
-          (
-            SELECT event.actor_id
-            FROM task_events event
-            WHERE event.task_id=handoff.task_id AND event.event_type='task_run_settled'
-            ORDER BY event.sequence DESC
-            LIMIT 1
-          ),
-          (
-            SELECT event.actor_id
-            FROM task_events event
-            WHERE event.task_id=handoff.task_id AND event.event_type='task_created'
-            ORDER BY event.sequence
-            LIMIT 1
-          )
-        ) AS author_id
-      FROM stage_handoffs handoff
-      JOIN work_nodes node ON node.node_id=handoff.node_id
-      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      WHERE plan.work_item_id=?
-      ORDER BY handoff.created_at,handoff.rowid
-    `).all(workItemId) as Row[];
-    const evidence = handoffRows.filter((handoffRow) =>
-      handoffRow.stage === "implementation" &&
-      handoffRow.author_id !== null &&
-      !String(handoffRow.author_id).startsWith("system:"),
-    ).flatMap((handoffRow) => {
-      const handoff = JSON.parse(String(handoffRow.payload_json)) as { evidence?: unknown };
-      return Array.isArray(handoff.evidence)
-        ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
-        : [];
-    });
-    const midRunAssumptions = Object.freeze([...new Set(evidence
-      .filter((candidate) => candidate.startsWith(MID_RUN_ASSUMPTION_PREFIX))
-      .map((candidate) => candidate.slice(MID_RUN_ASSUMPTION_PREFIX.length).trim())
-      .filter((candidate) => candidate.length > 0))]);
+    const midRunAssumptions = pipelineMidRunAssumptions(this.runtime.store.db, workItemId);
     const criteria = JSON.parse(String(row.acceptance_criteria_json)) as string[];
     const criterionChecks = JSON.parse(String(row.criterion_checks_json ?? "[]")) as Array<{
       criterion: string;
@@ -305,11 +246,11 @@ export class ProjectsCollaborator {
     }>;
     const machineCheckedCriteria = new Set(criterionChecks.map((entry) => entry.criterion));
     return Object.freeze({
-      commits,
-      diffstat,
-      filesTouched,
+      commits: inspection.commits,
+      diffstat: inspection.diffstat,
+      filesTouched: Object.freeze(inspection.filesTouched.map((file) => file.path)),
       declaredScope,
-      scopeOk,
+      scopeOk: inspection.scopeOk,
       assumptions,
       midRunAssumptions,
       verify: this.#verifyAttempts.listForWorkItem(workItemId),
@@ -503,8 +444,32 @@ export class ProjectsCollaborator {
     return this.runtime.requireProject(projectId);
   }
 
-  claimContext(taskId: string): ClaimRunResult["context"]["workflow"] {
-    return this.#workflow.claimContext(taskId);
+  prepareClaimContext(taskId: string): PipelineInspection | null {
+    return this.#workflow.claimReviewInspection(taskId);
+  }
+
+  claimContext(
+    taskId: string,
+    reviewInspection: PipelineInspection | null,
+  ): ClaimRunResult["context"]["workflow"] {
+    return this.#workflow.claimContext(taskId, reviewInspection);
+  }
+
+  recordReviewRuntimeConflictInTransaction(
+    projectId: string,
+    nodeId: string,
+    taskId: string,
+    summary: string,
+  ): void {
+    const mostRecent = this.runtime.store.db.prepare(`
+      SELECT summary
+      FROM project_events
+      WHERE task_id=? AND event_type='review_runtime_conflict'
+      ORDER BY sequence DESC
+      LIMIT 1
+    `).get(taskId) as Row | undefined;
+    if (mostRecent !== undefined && String(mostRecent.summary) === summary) return;
+    this.#workflow.event(projectId, nodeId, taskId, "review_runtime_conflict", summary);
   }
 
   settleAttemptInTransaction(

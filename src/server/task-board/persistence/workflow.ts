@@ -14,6 +14,7 @@ import {
   type PlanRevision,
   type ProjectEvent,
   type RejectFinalApprovalRequest,
+  type ReviewFinding,
   type RejectPlanRevisionRequest,
   type RejectPlanRevisionResponse,
   type StageHandoff,
@@ -21,6 +22,7 @@ import {
   type WorkNode,
   type WorkItemState,
   type WorkflowPipelineContext,
+  type WorkflowReviewContext,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
@@ -35,6 +37,11 @@ import {
   type DeclaredScopeCheckResult,
   type GitRunner,
 } from "../collaborators/scope-check.js";
+import {
+  inspectPipelineBranchSync,
+  pipelineMidRunAssumptions,
+  type PipelineInspection,
+} from "../collaborators/pipeline-inspection.js";
 
 type Row = Record<string, unknown>;
 export type { GitRunner as WorkflowGitRunner } from "../collaborators/scope-check.js";
@@ -50,6 +57,86 @@ export interface MachineVerifyEvidence {
 }
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
+const REVIEW_DIFFSTAT_MAX_CHARACTERS = 64_000;
+const REVIEW_COMMIT_MAX_ITEMS = 1_000;
+const REVIEW_FILE_MAX_ITEMS = 10_000;
+// Leave room inside the worker's aggregate 256 KiB context bound for the plan,
+// findings, skills, and the rest of the claim envelope.
+const REVIEW_COMMIT_JSON_BUDGET = 32_000;
+const REVIEW_FILE_JSON_BUDGET = 48_000;
+const REVIEW_DIFFSTAT_TRUNCATION_MARKER = "\n[truncated: additional diffstat output omitted]";
+const REVIEW_COMMIT_TRUNCATION_MARKER = Object.freeze({
+  sha: "0".repeat(40),
+  subject: "[truncated: additional commits omitted]",
+});
+const REVIEW_FILE_TRUNCATION_MARKER = Object.freeze({
+  path: "[truncated: additional files omitted]",
+  status: "modified" as const,
+});
+
+function truncateWithMarker(value: string, maximum: number, marker: string): string {
+  if (value.length <= maximum) return value;
+  return `${value.slice(0, Math.max(0, maximum - marker.length))}${marker}`;
+}
+
+function boundedReviewList<T>(
+  items: readonly T[],
+  maximumItems: number,
+  jsonBudget: number,
+  marker: T,
+): readonly T[] {
+  const result: T[] = [];
+  let consumed = 2;
+  const markerCost = JSON.stringify(marker).length + 1;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    const hasMore = index < items.length - 1;
+    const itemCost = JSON.stringify(item).length + 1;
+    if (
+      result.length >= maximumItems ||
+      (hasMore && result.length >= maximumItems - 1) ||
+      consumed + itemCost + (hasMore ? markerCost : 0) > jsonBudget
+    ) break;
+    result.push(item);
+    consumed += itemCost;
+  }
+  if (result.length < items.length) result.push(marker);
+  return Object.freeze(result);
+}
+
+function boundPipelineInspectionForReview(inspection: PipelineInspection): Readonly<{
+  commits: WorkflowReviewContext["commits"];
+  diffstat: string;
+  filesTouched: WorkflowReviewContext["filesTouched"];
+}> {
+  const commits = inspection.commits.map((commit) => Object.freeze({
+    sha: commit.sha,
+    subject: truncateWithMarker(commit.subject, 1_000, " [truncated]"),
+  }));
+  const filesTouched = inspection.filesTouched.map((file) => Object.freeze({
+    path: truncateWithMarker(file.path, 512, " [path truncated]"),
+    status: file.status,
+  }));
+  return Object.freeze({
+    commits: boundedReviewList(
+      commits,
+      REVIEW_COMMIT_MAX_ITEMS,
+      REVIEW_COMMIT_JSON_BUDGET,
+      REVIEW_COMMIT_TRUNCATION_MARKER,
+    ),
+    diffstat: truncateWithMarker(
+      inspection.diffstat,
+      REVIEW_DIFFSTAT_MAX_CHARACTERS,
+      REVIEW_DIFFSTAT_TRUNCATION_MARKER,
+    ),
+    filesTouched: boundedReviewList(
+      filesTouched,
+      REVIEW_FILE_MAX_ITEMS,
+      REVIEW_FILE_JSON_BUDGET,
+      REVIEW_FILE_TRUNCATION_MARKER,
+    ),
+  });
+}
 
 function text(value: unknown, field: string, max = 8_000): string {
   if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > max) {
@@ -354,7 +441,47 @@ export class TransparentWorkflow {
     return this.snapshot(projectId);
   }
 
-  claimContext(taskId: string): ClaimRunResult["context"]["workflow"] {
+  claimReviewInspection(taskId: string): PipelineInspection | null {
+    const row = this.db.prepare(`
+      SELECT
+        a.stage,
+        plan.declared_scope_json,
+        item.pipeline_branch,
+        item.base_sha,
+        project.description AS repo_path
+      FROM stage_attempts a
+      JOIN work_nodes n ON n.node_id=a.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN projects project ON project.project_id=plan.project_id
+      WHERE a.task_id=?
+    `).get(taskId) as Row | undefined;
+    if (row === undefined || row.stage !== "verification" || row.pipeline_branch === null) return null;
+    if (row.base_sha === null || row.declared_scope_json === null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
+    }
+    try {
+      return inspectPipelineBranchSync({
+        repoPath: String(row.repo_path),
+        baseSha: String(row.base_sha),
+        branch: String(row.pipeline_branch),
+        declaredScope: Object.freeze(json<string[]>(row.declared_scope_json)),
+        git: this.git,
+      });
+    } catch (error) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+        { cause: error },
+      );
+    }
+  }
+
+  claimContext(
+    taskId: string,
+    reviewInspection: PipelineInspection | null,
+  ): ClaimRunResult["context"]["workflow"] {
     const row = this.db.prepare(`
       SELECT
         a.stage,
@@ -363,16 +490,21 @@ export class TransparentWorkflow {
         n.plan_revision_id,
         plan.work_item_id,
         plan.assumptions_json,
+        plan.acceptance_criteria_json,
+        plan.criterion_checks_json,
         plan.change_shape,
         plan.tier,
         plan.declared_scope_json,
         plan.non_goals_json,
+        plan.mechanical_portions_json,
         item.pipeline_branch,
-        item.base_sha
+        item.base_sha,
+        project.description AS repo_path
       FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
       JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN projects project ON project.project_id=plan.project_id
       WHERE a.task_id=?
     `).get(taskId) as Row | undefined;
     if (!row) return null;
@@ -386,6 +518,7 @@ export class TransparentWorkflow {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_identity");
     }
     let pipeline: WorkflowPipelineContext | null = null;
+    let review: NonNullable<NonNullable<ClaimRunResult["context"]["workflow"]>["review"]> | null = null;
     if (hasPipelineBranch) {
       if (
         row.change_shape === null || row.tier === null ||
@@ -417,12 +550,53 @@ export class TransparentWorkflow {
           if (handoff.outcome === "failed") handoffs.push(handoff);
         }
       }
+      if (row.stage === "verification") {
+        if (reviewInspection === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:review_inspection");
+        const inspection = boundPipelineInspectionForReview(reviewInspection);
+        const priorFindings = (this.db.prepare(`
+          SELECT *
+          FROM review_findings
+          WHERE node_id=?
+          ORDER BY round,created_at,finding_id
+        `).all(String(row.node_id)) as Row[]).map((finding): ReviewFinding => Object.freeze({
+          findingId: String(finding.finding_id),
+          nodeId: String(finding.node_id),
+          stage: finding.stage as WorkflowStage,
+          round: Number(finding.round),
+          file: finding.file === null ? null : String(finding.file),
+          line: finding.line === null ? null : Number(finding.line),
+          category: finding.category as ReviewFinding["category"],
+          severity: finding.severity as ReviewFinding["severity"],
+          expected: String(finding.expected),
+          actual: String(finding.actual),
+          blocking: Number(finding.blocking) === 1,
+          createdAt: String(finding.created_at),
+        }));
+        review = Object.freeze({
+          commits: inspection.commits,
+          diffstat: inspection.diffstat,
+          filesTouched: inspection.filesTouched,
+          scopeOk: reviewInspection.scopeOk,
+          midRunAssumptions: pipelineMidRunAssumptions(this.db, String(row.work_item_id)),
+          acceptanceCriteria: Object.freeze(json<string[]>(row.acceptance_criteria_json)),
+          criterionChecks: Object.freeze(json<Array<{ criterion: string; check: string }>>(
+            row.criterion_checks_json ?? "[]",
+          ).map((criterionCheck) => Object.freeze(criterionCheck))),
+          mechanicalPortions: row.mechanical_portions_json === null
+            ? Object.freeze([])
+            : Object.freeze(json<string[]>(row.mechanical_portions_json)),
+          priorFindings: Object.freeze(priorFindings),
+        });
+      }
     }
     return Object.freeze({
       planRevisionId: String(row.plan_revision_id), nodeId: String(row.node_id), stage: row.stage as WorkflowStage,
       skills: Object.freeze(skills), dependencyHandoffs: Object.freeze(handoffs),
-      workspaceKey: pipeline === null ? null : String(row.work_item_id),
+      workspaceKey: pipeline === null
+        ? null
+        : row.stage === "verification" ? `${String(row.work_item_id)}-review` : String(row.work_item_id),
       pipeline,
+      review,
     });
   }
 

@@ -40,9 +40,21 @@ export function checkDeclaredScope(request: Readonly<{
     "-C", request.repoPath,
     "diff", "--no-renames", "--name-only", "-z", `${request.baseSha}..${request.branch}`, "--",
   ]);
-  const outsideScope = output
-    .split("\0")
-    .filter((file) => file.length > 0)
+  return checkDeclaredScopePaths(
+    output.split("\0").filter((file) => file.length > 0),
+    normalizedScope,
+  );
+}
+
+export function checkDeclaredScopePaths(
+  files: readonly string[],
+  declaredScope: readonly string[],
+): DeclaredScopeCheckResult {
+  const normalizedScope = declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
+  if (normalizedScope.some((prefix) => prefix.length === 0)) {
+    throw new Error("declared scope contains an empty path prefix");
+  }
+  const outsideScope = files
     .filter((file) => !normalizedScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)));
   return outsideScope.length === 0
     ? Object.freeze({ ok: true })

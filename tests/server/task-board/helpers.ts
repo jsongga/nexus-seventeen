@@ -10,7 +10,12 @@ import type {
   WorkItemStage,
 } from "#shared/task-board-contract";
 import { WORK_ITEM_STAGES } from "#shared/task-board-contract";
-import { TaskBoard, normalizeTaskBoardConfig, type TaskBoardConfig } from "#server/task-board";
+import {
+  TaskBoard,
+  normalizeTaskBoardConfig,
+  type TaskBoardConfig,
+  type TaskBoardDependencies,
+} from "#server/task-board";
 
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
 export const AGENT_ONE_TOKEN = "task-board-agent-one-token-0123456789";
@@ -32,9 +37,13 @@ export function config(path: string, now: () => Date = () => new Date("2026-07-1
   });
 }
 
-export async function boardFixture(path?: string, now?: () => Date) {
+export async function boardFixture(
+  path?: string,
+  now?: () => Date,
+  dependencies: TaskBoardDependencies = {},
+) {
   const resolvedPath = path ?? await databasePath();
-  const board = await TaskBoard.open(config(resolvedPath, now));
+  const board = await TaskBoard.open(config(resolvedPath, now), dependencies);
   const project = board.createProject({ name: "Checkout reliability", description: "Keep customer checkout dependable." });
   const engineer = board.createAgent(project.projectId, {
     agentId: "engineer-one",

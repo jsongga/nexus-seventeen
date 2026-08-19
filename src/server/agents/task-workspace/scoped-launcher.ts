@@ -13,7 +13,11 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
     const key = request.context.workflow?.workspaceKey ?? request.context.taskId;
-    const path = await this.#manager.create(key, request.context.workflow?.pipeline?.baseSha);
+    const reviewWorkspace = key.endsWith("-review");
+    const branchKey = reviewWorkspace ? key.slice(0, -"-review".length) : key;
+    const path = reviewWorkspace
+      ? await this.#manager.create(key, request.context.workflow?.pipeline?.baseSha, branchKey)
+      : await this.#manager.create(key, request.context.workflow?.pipeline?.baseSha);
     let handle: AgentRunHandle;
     try {
       handle = await this.#inner.launch({ ...request, workspace: { path } });
@@ -24,6 +28,15 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
     const completion = handle.completion.then(
       async (outcome: AgentRunOutcome) => {
         if (outcome.status === "completed") {
+          if (reviewWorkspace) {
+            try {
+              await this.#manager.remove(key);
+            } catch (error) {
+              await this.#manager.retain(key);
+              throw new TaskWorkspaceError("Run completed but its review workspace could not be removed", { cause: error });
+            }
+            return outcome;
+          }
           try {
             await this.#manager.harvest(key);
           } catch (error) {

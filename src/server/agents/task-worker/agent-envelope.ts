@@ -273,6 +273,65 @@ export function agentPrompt(request: AgentLaunchRequest): string {
     request.context.workflow?.stage === "implementation" && pipeline != null
     ? `Pipeline task on branch ${pipeline.branch}. Declared scope (only these path prefixes): ${pipeline.declaredScope.join(", ")}. Non-goals: ${pipeline.nonGoals.join(", ")}. Loop: write a failing test where a criterion allows, implement, run \`npm run verify:fast\`, read the failure, fix; repeat until green. Run \`npm run verify:area\` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting \`BRIGHT_LINE:\` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.`
     : null;
+  const pipelineReview = fixedRole === "verifier" &&
+    request.context.workflow?.stage === "verification" && pipeline != null
+    ? (() => {
+        const review = request.context.workflow?.review;
+        const scopeInstruction = review === null || review === undefined
+          ? "scope evidence unavailable in this legacy claim replay — skip check (1)"
+          : `pre-computed as scopeOk=${review.scopeOk}, files below`;
+        const block = `Pipeline review on branch ${pipeline.branch}. You are reviewing the diff against the approved plan — injected below — never the implementer's reasoning. Review depth follows change shape (${pipeline.changeShape}): spot-check a mechanical sweep; read feature work line by line; review a blast-radius change per consumer. Check in order: (1) files touched vs declared scope — ${scopeInstruction}; (2) each acceptance criterion actually met in the code; (3) docs updated in the same diff where the plan requires; (4) any modified or deleted existing test — emit a test_modification finding for each unless the plan's mechanicalPortions declared it. Emit reviewFindings [{file, line, category, severity, expected, actual}]; categories correctness|security|plan_deviation block, others do not. If any blocking finding exists return handoff outcome failed with recommendedReturnStage implementation; otherwise outcome passed. Do not edit the workspace.`;
+        if (review === null || review === undefined) {
+          return [block, "Review context: unavailable in this legacy claim replay."] as const;
+        }
+        const commits = review.commits.length === 0
+          ? "- none"
+          : review.commits.map((commit) => `- ${commit.sha} ${commit.subject}`).join("\n");
+        const files = review.filesTouched.length === 0
+          ? "- none"
+          : review.filesTouched.map((file) => `- ${file.path} (${file.status})`).join("\n");
+        const assumptions = review.midRunAssumptions.length === 0
+          ? "- none"
+          : review.midRunAssumptions.map((assumption) => `- ${assumption}`).join("\n");
+        const criteria = review.acceptanceCriteria.length === 0
+          ? "- none"
+          : review.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n");
+        const criterionChecks = review.criterionChecks.length === 0
+          ? "- none"
+          : review.criterionChecks.map((criterion) => `- ${criterion.criterion}: ${criterion.check}`).join("\n");
+        const mechanicalPortions = review.mechanicalPortions.length === 0
+          ? "- none"
+          : review.mechanicalPortions.map((portion) => `- ${portion}`).join("\n");
+        const priorFindings = review.priorFindings.length === 0
+          ? "- none"
+          : review.priorFindings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n");
+        return [
+          block,
+          [
+            "Approved pipeline plan:",
+            `Declared scope: ${pipeline.declaredScope.join(", ")}`,
+            `Non-goals: ${pipeline.nonGoals.join(", ") || "none"}`,
+            `Plan assumptions: ${pipeline.assumptions.join(" | ") || "none"}`,
+            "Commits:",
+            commits,
+            "Diffstat:",
+            review.diffstat,
+            "Files touched:",
+            files,
+            "Mid-run assumptions:",
+            assumptions,
+            "Acceptance criteria:",
+            criteria,
+            "Criterion checks:",
+            criterionChecks,
+            "Mechanical portions:",
+            mechanicalPortions,
+            "Prior review findings:",
+            priorFindings,
+          ].join("\n"),
+        ] as const;
+      })()
+    : null;
   const workflow = fixedRole === "engineer"
     ? [
         "Follow a research → plan → execute → test loop inside this one run.",
@@ -299,6 +358,7 @@ export function agentPrompt(request: AgentLaunchRequest): string {
     request.context.mission.mission,
     ...workflow,
     ...(pipelineImplementation === null ? [] : [pipelineImplementation]),
+    ...(pipelineReview === null ? [] : pipelineReview),
     "This is a single event-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.",
     "Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.",
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",

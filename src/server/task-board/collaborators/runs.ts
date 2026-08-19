@@ -317,16 +317,18 @@ export class RunsCollaborator {
       const persistedResult = nullableString(prior, "claim_result_json");
       if (persistedResult !== null) return this.claimResultFromJson(persistedResult);
       // Legacy runs created before claim-result persistence have NULL here; rebuild them while their source data remains valid.
-      return this.claimResult(priorRun, selectedCursor ?? 0);
+      const reviewInspection = priorRun.taskId === null
+        ? null
+        : this.projects.prepareClaimContext(priorRun.taskId);
+      return this.claimResult(priorRun, selectedCursor ?? 0, reviewInspection);
     }
     const existing = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
-    const now = exactNow(this.runtime.config.now);
-    return this.runtime.store.transaction(() => {
-      const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
+    const candidate = this.runtime.store.transaction(() => {
+      this.requireCredentialVersion(agentId, credentialVersion);
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
-      this.runtime.retireStaleWakeupsForAgent(agentId, now);
+      this.runtime.retireStaleWakeupsForAgent(agentId, exactNow(this.runtime.config.now));
       const wakeupRow = this.runtime.store.db.prepare(`
         SELECT wakeup.*
         FROM wakeups AS wakeup
@@ -355,8 +357,101 @@ export class RunsCollaborator {
           wakeup.rowid
         LIMIT 1
       `).get(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
-      if (!wakeupRow) return null;
+      return wakeupRow === undefined ? null : wakeupFromRow(wakeupRow);
+    });
+    if (candidate === null) return null;
+
+    // Review Git inspection may spawn several bounded subprocesses. It must run
+    // after candidate resolution and before the write transaction below.
+    const reviewInspection = candidate.taskId === null
+      ? null
+      : this.projects.prepareClaimContext(candidate.taskId);
+    const now = exactNow(this.runtime.config.now);
+    let reviewRuntimeConflict: TaskBoardError | null = null;
+    const claimed = this.runtime.store.transaction(() => {
+      const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
+      const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+      if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
+      const wakeupRow = this.runtime.store.db.prepare(`
+        SELECT wakeup.*
+        FROM wakeups AS wakeup
+        WHERE wakeup.wakeup_id = ?
+          AND wakeup.agent_id = ?
+          AND wakeup.claimed_at IS NULL
+          AND (
+            wakeup.task_id IS NULL OR EXISTS (
+              SELECT 1 FROM tasks AS task
+              WHERE task.task_id = wakeup.task_id
+                AND task.project_id = wakeup.project_id
+                AND task.assigned_agent_id = wakeup.agent_id
+                AND task.ended_at IS NULL
+                AND task.status IN ('queued', 'blocked')
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM task_events AS event
+            WHERE event.event_id = ? || wakeup.wakeup_id
+          )
+      `).get(candidate.wakeupId, agentId, RETIRED_WAKEUP_EVENT_PREFIX);
+      if (wakeupRow === undefined) return null;
       const wakeup = wakeupFromRow(wakeupRow);
+      if (wakeup.taskId !== null) {
+        const conflictRow = this.runtime.store.db.prepare(`
+          WITH claimed AS (
+            SELECT attempt.node_id,node.project_id
+            FROM stage_attempts attempt
+            JOIN work_nodes node ON node.node_id=attempt.node_id
+            JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+            JOIN work_items item ON item.work_item_id=plan.work_item_id
+            WHERE attempt.task_id=?
+              AND attempt.stage='verification'
+              AND item.pipeline_branch IS NOT NULL
+          ),
+          latest_implementation AS (
+            SELECT implementation.task_id
+            FROM stage_attempts implementation
+            WHERE implementation.node_id=(SELECT node_id FROM claimed)
+              AND implementation.stage='implementation'
+            ORDER BY implementation.attempt DESC
+            LIMIT 1
+          ),
+          latest_run AS (
+            SELECT run.runtime,run.model
+            FROM runs run
+            JOIN tasks task ON task.task_id=run.task_id
+            WHERE task.task_id=(SELECT task_id FROM latest_implementation)
+            ORDER BY run.started_at DESC,run.rowid DESC
+            LIMIT 1
+          )
+          SELECT claimed.node_id,claimed.project_id,latest_run.runtime,latest_run.model
+          FROM claimed
+          LEFT JOIN latest_run ON 1=1
+        `).get(wakeup.taskId);
+        const reviewRuntime = request.pinned?.runtime ?? null;
+        const reviewModel = request.pinned?.model ?? null;
+        const implementationRuntime = conflictRow?.runtime ?? null;
+        const implementationModel = conflictRow?.model ?? null;
+        if (
+          conflictRow !== undefined &&
+          typeof reviewRuntime === "string" && typeof reviewModel === "string" &&
+          typeof implementationRuntime === "string" && typeof implementationModel === "string" &&
+          reviewRuntime === implementationRuntime && reviewModel === implementationModel
+        ) {
+          const message = `review runtime matches implement runtime (${reviewRuntime}/${reviewModel}) — configure a different reviewer lane`;
+          this.projects.recordReviewRuntimeConflictInTransaction(
+            String(conflictRow.project_id),
+            String(conflictRow.node_id),
+            wakeup.taskId,
+            message,
+          );
+          reviewRuntimeConflict = new TaskBoardError(
+            409,
+            TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_RUNTIME_CONFLICT,
+            message,
+          );
+          return null;
+        }
+      }
       const requestHash = claimRequestHash(agentId, request, wakeup.taskId);
       const runId = randomUUID();
       this.runtime.store.db.prepare(`
@@ -417,6 +512,7 @@ export class RunsCollaborator {
       const result = this.claimResult(
         runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
         claimMessageCursor(request, wakeup.taskId) ?? 0,
+        reviewInspection,
       );
       const persisted = this.runtime.store.db.prepare(
         "UPDATE runs SET claim_result_json = ? WHERE run_id = ? AND claim_result_json IS NULL",
@@ -424,6 +520,8 @@ export class RunsCollaborator {
       if (Number(persisted.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
       return result;
     });
+    if (reviewRuntimeConflict !== null) throw reviewRuntimeConflict;
+    return claimed;
   }
 
   async waitToClaimRun(
@@ -741,7 +839,11 @@ export class RunsCollaborator {
     return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes });
   }
 
-  private claimResult(run: AgentRun, cursor: number): ClaimRunResult {
+  private claimResult(
+    run: AgentRun,
+    cursor: number,
+    reviewInspection: ReturnType<ProjectsCollaborator["prepareClaimContext"]>,
+  ): ClaimRunResult {
     const wakeup = wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(run.wakeupId)!);
     const task = wakeup.taskId === null ? null : this.runtime.requireTask(wakeup.taskId);
     const messages = task === null ? [] : this.runtime.store.db.prepare(`
@@ -757,7 +859,10 @@ export class RunsCollaborator {
         SELECT * FROM task_messages WHERE task_id = ? ORDER BY sequence DESC LIMIT 12
       ) ORDER BY sequence
     `).all(parentTask.taskId).map(messageFromRow);
-    const areaMemory = this.runtime.store.db.prepare(`
+    const workflow = task === null ? null : this.projects.claimContext(task.taskId, reviewInspection);
+    const areaMemory = workflow?.pipeline !== null && workflow?.pipeline !== undefined
+      ? []
+      : this.runtime.store.db.prepare(`
       SELECT task_id, title, substr(result, 1, 1000) AS result, ended_at
       FROM tasks
       WHERE project_id = ?
@@ -768,12 +873,12 @@ export class RunsCollaborator {
         AND (? IS NULL OR task_id <> ?)
       ORDER BY ended_at DESC, task_id DESC
       LIMIT 8
-    `).all(run.projectId, run.agentId, run.taskId, run.taskId).map((row) => Object.freeze({
-      taskId: stringValue(row, "task_id"),
-      title: stringValue(row, "title"),
-      result: stringValue(row, "result"),
-      endedAt: stringValue(row, "ended_at"),
-    }));
+      `).all(run.projectId, run.agentId, run.taskId, run.taskId).map((row) => Object.freeze({
+        taskId: stringValue(row, "task_id"),
+        title: stringValue(row, "title"),
+        result: stringValue(row, "result"),
+        endedAt: stringValue(row, "ended_at"),
+      }));
     const project = this.runtime.requireProject(run.projectId);
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
@@ -797,7 +902,7 @@ export class RunsCollaborator {
         openQuestions: Object.freeze(this.runtime.store.db.prepare(`
           SELECT * FROM questions WHERE agent_id = ? AND status = 'open' ORDER BY asked_at, question_id LIMIT 50
         `).all(run.agentId).map(questionFromRow)),
-        workflow: task === null ? null : this.projects.claimContext(task.taskId),
+        workflow,
       }),
     });
   }
@@ -840,6 +945,7 @@ export class RunsCollaborator {
         const workflow = context.workflow as Record<string, unknown>;
         if (!Object.hasOwn(workflow, "workspaceKey")) workflow.workspaceKey = null;
         if (!Object.hasOwn(workflow, "pipeline")) workflow.pipeline = null;
+        if (!Object.hasOwn(workflow, "review")) workflow.review = null;
       }
     }
     return result as ClaimRunResult;

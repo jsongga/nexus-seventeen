@@ -334,6 +334,21 @@ export interface WorkflowPipelineContext {
   readonly assumptions: readonly string[];
 }
 
+export interface WorkflowReviewContext {
+  readonly commits: readonly { readonly sha: string; readonly subject: string }[];
+  readonly diffstat: string;
+  readonly filesTouched: readonly {
+    readonly path: string;
+    readonly status: "added" | "modified" | "deleted";
+  }[];
+  readonly scopeOk: boolean;
+  readonly midRunAssumptions: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly criterionChecks: readonly PlanCriterionCheck[];
+  readonly mechanicalPortions: readonly string[];
+  readonly priorFindings: readonly ReviewFinding[];
+}
+
 export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
 export type WorkNodeState = typeof WORK_NODE_STATES[number];
 
@@ -937,6 +952,8 @@ export interface ClaimRunResult {
       workspaceKey?: string | null;
       /** Absent is accepted from pre-pipeline claim replays and normalizes to null at the worker boundary. */
       pipeline?: WorkflowPipelineContext | null;
+      /** Absent is accepted from claims created before independent pipeline review. */
+      review?: WorkflowReviewContext | null;
     }> | null;
   }>;
 }

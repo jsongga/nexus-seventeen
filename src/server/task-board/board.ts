@@ -68,6 +68,7 @@ import {
 } from "./collaborators/projects.js";
 import { RunsCollaborator } from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
+import type { GitRunner } from "./collaborators/scope-check.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
 import {
   WorkItemsCollaborator,
@@ -88,6 +89,7 @@ import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 
 export interface TaskBoardDependencies {
   readonly mergePipeline?: PipelineMergeExecutor;
+  readonly git?: GitRunner;
 }
 
 export class TaskBoard {
@@ -109,12 +111,18 @@ export class TaskBoard {
       this.#runtime,
       this.#automation,
       this.#tasks,
-      undefined,
+      dependencies.git,
       {},
       dependencies.mergePipeline,
     );
     this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
-    this.#runs = new RunsCollaborator(this.#runtime, this.#automation, this.#projects, this.#tasks);
+    this.#runs = new RunsCollaborator(
+      this.#runtime,
+      this.#automation,
+      this.#projects,
+      this.#tasks,
+      dependencies.git,
+    );
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);

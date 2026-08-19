@@ -8,6 +8,7 @@ import {
   type StageHandoffDraft,
   type WorkflowPlanDraft,
   type WorkflowPipelineContext,
+  type WorkflowReviewContext,
   type TaskKind,
   type TaskPhaseStage,
   type TaskPhaseStatus,
@@ -52,6 +53,11 @@ export interface AgentTaskContext {
   readonly version: number;
   readonly expectedAgentMinutes: number | null;
   readonly phases: readonly AgentTaskPhase[];
+}
+
+/** Worker-side mirror kept explicit so additive review fields cannot disappear at the HTTP boundary. */
+export interface BoundedWorkflowReviewContext extends WorkflowReviewContext {
+  readonly mechanicalPortions: readonly string[];
 }
 
 export interface AgentTaskPhase {
@@ -148,6 +154,7 @@ export interface BoundedAgentContext {
     dependencyHandoffs: readonly StageHandoff[];
     readonly workspaceKey?: string | null;
     readonly pipeline?: WorkflowPipelineContext | null;
+    readonly review?: BoundedWorkflowReviewContext | null;
   }> | null;
 }
 

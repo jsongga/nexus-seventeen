@@ -107,6 +107,7 @@ import {
   type WorkNode,
   type WorkflowStage,
   type WorkflowPipelineContext,
+  type WorkflowReviewContext,
   type WorkflowPlanDraft,
 } from "./index.js";
 
@@ -1740,7 +1741,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   if (context.workflow !== null) {
     const workflow = exact(
       context.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline"],
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review"],
       "Workflow context",
       { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
     );
@@ -1843,6 +1844,7 @@ export interface ValidatedAgentContext {
     dependencyHandoffs: readonly StageHandoff[];
     workspaceKey: string | null;
     pipeline: WorkflowPipelineContext | null;
+    review: WorkflowReviewContext | null;
   }> | null;
 }
 
@@ -1993,7 +1995,11 @@ function parseWorkerPhaseUpdate(value: unknown, index: number): ValidatedAgentTa
 function parseWorkflowPipelineFields(
   item: JsonRecord,
   label: string,
-): Readonly<{ workspaceKey: string | null; pipeline: WorkflowPipelineContext | null }> {
+): Readonly<{
+  workspaceKey: string | null;
+  pipeline: WorkflowPipelineContext | null;
+  review: WorkflowReviewContext | null;
+}> {
   const workspaceKey = item.workspaceKey === undefined || item.workspaceKey === null
     ? null
     : identifier(item.workspaceKey, `${label}.workspaceKey`);
@@ -2011,7 +2017,11 @@ function parseWorkflowPipelineFields(
     const branchWorkspaceKey = branchMatch?.[1];
     if (
       branchWorkspaceKey === undefined ||
-      (workspaceKey !== branchWorkspaceKey && workspaceKey !== `${branchWorkspaceKey}-verify`) ||
+      (
+        workspaceKey !== branchWorkspaceKey &&
+        workspaceKey !== `${branchWorkspaceKey}-verify` &&
+        workspaceKey !== `${branchWorkspaceKey}-review`
+      ) ||
       !GIT_OBJECT_ID_PATTERN.test(baseSha)
     ) {
       throw new ContractValidationError(`${label}.pipeline identity is invalid`);
@@ -2032,7 +2042,74 @@ function parseWorkflowPipelineFields(
   if ((workspaceKey === null) !== (pipeline === null)) {
     throw new ContractValidationError(`${label}.workspaceKey and pipeline must both be null or both be present`);
   }
-  return Object.freeze({ workspaceKey, pipeline });
+  const review = item.review === undefined || item.review === null
+    ? null
+    : parseWorkflowReviewContext(item.review, `${label}.review`);
+  if (review !== null && (pipeline === null || !workspaceKey?.endsWith("-review"))) {
+    throw new ContractValidationError(`${label}.review identity is invalid`);
+  }
+  return Object.freeze({ workspaceKey, pipeline, review });
+}
+
+function parseWorkflowReviewContext(value: unknown, label: string): WorkflowReviewContext {
+  const fields = [
+    "commits", "diffstat", "filesTouched", "scopeOk", "midRunAssumptions",
+    "acceptanceCriteria", "criterionChecks", "mechanicalPortions", "priorFindings",
+  ];
+  const item = exact(value, fields, label, {
+    // Claims persisted before mechanical portions joined the review block remain replayable.
+    required: fields.filter((field) => field !== "mechanicalPortions"),
+  });
+  const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
+    const commit = exact(entry, ["sha", "subject"], entryLabel);
+    const sha = workerProse(commit.sha, `${entryLabel}.sha`, 64);
+    if (!GIT_OBJECT_ID_PATTERN.test(sha)) throw new ContractValidationError(`${entryLabel}.sha is invalid`);
+    return Object.freeze({ sha, subject: workerProse(commit.subject, `${entryLabel}.subject`, 1_000) });
+  });
+  const filesTouched = boundedPlanArray(item.filesTouched, `${label}.filesTouched`, 0, 10_000, (entry, entryLabel) => {
+    const file = exact(entry, ["path", "status"], entryLabel);
+    return Object.freeze({
+      path: reviewFindingFile(file.path, `${entryLabel}.path`),
+      status: contractMember(file.status, ["added", "modified", "deleted"] as const, `${entryLabel}.status`),
+    });
+  });
+  const stringList = (input: unknown, field: string, maximum: number, itemMaximum: number): readonly string[] =>
+    boundedPlanArray(input, field, 0, maximum,
+      (entry, entryLabel) => workerProse(entry, entryLabel, itemMaximum));
+  const criterionChecks = boundedPlanArray(
+    item.criterionChecks,
+    `${label}.criterionChecks`,
+    0,
+    32,
+    (entry, entryLabel) => {
+      const criterionCheck = exact(entry, ["criterion", "check"], entryLabel);
+      return Object.freeze({
+        criterion: workerProse(criterionCheck.criterion, `${entryLabel}.criterion`, 4_000),
+        check: planCheck(criterionCheck.check, `${entryLabel}.check`, workerProse),
+      });
+    },
+  );
+  const priorFindings = boundedPlanArray(item.priorFindings, `${label}.priorFindings`, 0, 1_000,
+    (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel));
+  if (typeof item.scopeOk !== "boolean") throw new ContractValidationError(`${label}.scopeOk is invalid`);
+  return Object.freeze({
+    commits,
+    diffstat: text(item.diffstat, `${label}.diffstat`, {
+      maximum: 64_000,
+      allowEmpty: true,
+      trim: false,
+      carriageReturns: "preserve",
+    }),
+    filesTouched,
+    scopeOk: item.scopeOk,
+    midRunAssumptions: stringList(item.midRunAssumptions, `${label}.midRunAssumptions`, 256, 4_000),
+    acceptanceCriteria: stringList(item.acceptanceCriteria, `${label}.acceptanceCriteria`, 64, 4_000),
+    criterionChecks,
+    mechanicalPortions: item.mechanicalPortions === undefined
+      ? Object.freeze([])
+      : stringList(item.mechanicalPortions, `${label}.mechanicalPortions`, 32, 1_000),
+    priorFindings,
+  });
 }
 
 export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim {
@@ -2145,7 +2222,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   if (item.workflow !== null) {
     const workflowItem = exact(
       item.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline"],
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review"],
       "Workflow context",
       { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
     );
@@ -2177,6 +2254,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       dependencyHandoffs: Object.freeze(dependencyHandoffs),
       workspaceKey: pipelineFields.workspaceKey,
       pipeline: pipelineFields.pipeline,
+      review: pipelineFields.review,
     });
   }
 

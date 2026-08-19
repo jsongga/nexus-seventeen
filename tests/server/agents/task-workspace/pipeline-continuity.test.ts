@@ -180,3 +180,50 @@ test("two completed launches preserve both commits on one harvested task branch"
   assert.equal(await git(repo, ["show", `task/${workspaceKey}:round-1.txt`]), "first round\n");
   assert.equal(await git(repo, ["show", `task/${workspaceKey}:round-2.txt`]), "second round\n");
 });
+
+test("a completed review launch clones the implementation branch without harvesting reviewer commits", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const baseSha = (await git(repo, ["rev-parse", "HEAD"])).trim();
+  const workspaceRoot = join(root, "workspaces");
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+  const branchKey = "reviewed-pipeline-item";
+  const engineerWorkspace = await manager.create(branchKey, baseSha);
+  await commitFile(engineerWorkspace, "implementation.txt", "implementation result\n", "implementation result");
+  await manager.harvest(branchKey);
+  await manager.remove(branchKey);
+  const branchBeforeReview = (await git(repo, ["rev-parse", `task/${branchKey}`])).trim();
+  const inner: AgentLauncher = {
+    async launch(request): Promise<AgentRunHandle> {
+      assert.ok(request.workspace);
+      assert.equal(await readFile(join(request.workspace.path, "implementation.txt"), "utf8"), "implementation result\n");
+      assert.equal((await git(request.workspace.path, ["branch", "--show-current"])).trim(), `task/${branchKey}`);
+      await commitFile(request.workspace.path, "review-only.txt", "must not harvest\n", "review-only mutation");
+      return {
+        completion: Promise.resolve(completedOutcome("review complete")),
+        activity: (async function* activity() { return; })(),
+        interrupt: () => Promise.resolve(),
+      };
+    },
+  };
+  const launcher = new WorkspaceScopedLauncher(inner, manager);
+  const reviewKey = `${branchKey}-review`;
+
+  const handle = await launcher.launch({
+    runId: "run-isolated-review",
+    wakeReason: "workflow_handoff",
+    context: context({
+      taskId: "verification-review-task",
+      workflow: {
+        ...pipelineWorkflow(branchKey, baseSha),
+        stage: "verification",
+        workspaceKey: reviewKey,
+      },
+    }),
+  });
+
+  assert.equal((await handle.completion).status, "completed");
+  assert.equal((await git(repo, ["rev-parse", `task/${branchKey}`])).trim(), branchBeforeReview);
+  await assert.rejects(git(repo, ["show", `task/${branchKey}:review-only.txt`]));
+  await assert.rejects(access(manager.workspacePath(reviewKey)));
+});

@@ -5,7 +5,7 @@ import { context } from "./helpers.js";
 
 const PIPELINE_BLOCK = "Pipeline task on branch task/work-item-one. Declared scope (only these path prefixes): src/server, tests/server. Non-goals: do not change the schema, do not add dependencies. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
 
-function pipelineWorkflow(stage: "implementation" | "testing") {
+function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {
   return {
     planRevisionId: "plan-one",
     nodeId: "node-one",
@@ -24,6 +24,8 @@ function pipelineWorkflow(stage: "implementation" | "testing") {
     },
   } as const;
 }
+
+const REVIEWER_BLOCK = "Pipeline review on branch task/work-item-one. You are reviewing the diff against the approved plan — injected below — never the implementer's reasoning. Review depth follows change shape (feature): spot-check a mechanical sweep; read feature work line by line; review a blast-radius change per consumer. Check in order: (1) files touched vs declared scope — pre-computed as scopeOk=true, files below; (2) each acceptance criterion actually met in the code; (3) docs updated in the same diff where the plan requires; (4) any modified or deleted existing test — emit a test_modification finding for each unless the plan's mechanicalPortions declared it. Emit reviewFindings [{file, line, category, severity, expected, actual}]; categories correctness|security|plan_deviation block, others do not. If any blocking finding exists return handoff outcome failed with recommendedReturnStage implementation; otherwise outcome passed. Do not edit the workspace.";
 
 test("pipeline implementation engineer prompt appends the declared-scope bright-line block verbatim", () => {
   const prompt = agentPrompt({
@@ -55,4 +57,84 @@ test("pipeline block is absent outside the engineer implementation stage", () =>
     assert.doesNotMatch(prompt, /Pipeline task on branch/u);
     assert.doesNotMatch(prompt, /BRIGHT_LINE:/u);
   }
+});
+
+test("pipeline verification reviewer prompt injects the independent review instructions and evidence", () => {
+  const workflow = {
+    ...pipelineWorkflow("verification"),
+    workspaceKey: "work-item-one-review",
+    review: {
+      commits: [{ sha: "b".repeat(40), subject: "Implement review context" }],
+      diffstat: " 2 files changed, 8 insertions(+), 1 deletion(-)\n",
+      filesTouched: [
+        { path: "src/server/review.ts", status: "added" },
+        { path: "tests/server/review.test.ts", status: "modified" },
+      ],
+      scopeOk: true,
+      midRunAssumptions: ["The review workspace remains read-only."],
+      acceptanceCriteria: ["The reviewer receives branch evidence."],
+      criterionChecks: [{ criterion: "The reviewer receives branch evidence.", check: "npm run test:runtime" }],
+      mechanicalPortions: ["Regenerate the task-board snapshots."],
+      priorFindings: [{
+        findingId: "finding-one",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 1,
+        file: "src/server/review.ts",
+        line: 12,
+        category: "correctness",
+        severity: "major",
+        expected: "The context is isolated.",
+        actual: "The prior attempt reused the engineer workspace.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      }],
+    },
+  } as const;
+  const prompt = agentPrompt({
+    runId: "run-pipeline-review",
+    wakeReason: "workflow_handoff",
+    context: context({
+      mission: {
+        role: "verifier",
+        area: "Pipeline review",
+        mission: "Review the implementation independently.",
+      },
+      workflow: workflow as never,
+    }),
+  });
+
+  assert.ok(prompt.includes(REVIEWER_BLOCK));
+  assert.equal(prompt.split(REVIEWER_BLOCK).length, 2);
+  assert.match(prompt, /Implement review context/u);
+  assert.match(prompt, /src\/server\/review\.ts \(added\)/u);
+  assert.match(prompt, /tests\/server\/review\.test\.ts \(modified\)/u);
+  assert.match(prompt, /The review workspace remains read-only\./u);
+  assert.match(prompt, /The reviewer receives branch evidence\./u);
+  assert.match(prompt, /Mechanical portions:\n- Regenerate the task-board snapshots\./u);
+  assert.match(prompt, /The prior attempt reused the engineer workspace\./u);
+  assert.doesNotMatch(prompt, /design record/iu);
+});
+
+test("legacy pipeline review replays mark scope evidence unavailable instead of reporting a violation", () => {
+  const prompt = agentPrompt({
+    runId: "run-legacy-pipeline-review",
+    wakeReason: "workflow_handoff",
+    context: context({
+      mission: {
+        role: "verifier",
+        area: "Pipeline review",
+        mission: "Review the implementation independently.",
+      },
+      workflow: {
+        ...pipelineWorkflow("verification"),
+        workspaceKey: "work-item-one-review",
+        review: null,
+      },
+    }),
+  });
+
+  assert.match(prompt, /scope evidence unavailable in this legacy claim replay — skip check \(1\)/u);
+  assert.doesNotMatch(prompt, /scopeOk=false/u);
+  assert.match(prompt, /Review context: unavailable in this legacy claim replay\./u);
 });
