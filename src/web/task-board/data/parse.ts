@@ -8,6 +8,8 @@ import type {
   DocumentSnapshot,
   DocumentSummary,
   HumanQuestion,
+  PlanRecordFields,
+  PlanRevision,
   Project,
   TaskEvent,
   TaskMessage,
@@ -283,7 +285,37 @@ export function parseAutomationConfiguration(value: unknown, path: string): Auto
   return { id: 'company-default', agentTypes, stages, version: item.version, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), updatedAt: item.updatedAt, updatedAtMs: ms(item.updatedAt), updatedBy: item.updatedBy };
 }
 
-export function parseWorkflowPlan(value: unknown, path: string): WorkflowPlan { const item = parsePlanEntity(value, path, loose); return { planRevisionId: item.planRevisionId, workItemId: item.workItemId, revision: item.revision, objective: item.objective, assumptions: [...item.assumptions], acceptanceCriteria: [...item.acceptanceCriteria], state: item.state, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), confirmedAt: item.confirmedAt, confirmedAtMs: nullableMs(item.confirmedAt) }; }
+export function parseWorkflowPlan(
+  value: unknown,
+  path: string,
+): WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'> {
+  const item = parsePlanEntity(value, path, loose);
+  return {
+    planRevisionId: item.planRevisionId,
+    workItemId: item.workItemId,
+    revision: item.revision,
+    objective: item.objective,
+    assumptions: [...item.assumptions],
+    acceptanceCriteria: [...item.acceptanceCriteria],
+    ...(item.changeShape === undefined ? {} : { changeShape: item.changeShape }),
+    ...(item.tier === undefined ? {} : { tier: item.tier }),
+    ...(item.declaredScope === undefined ? {} : { declaredScope: [...item.declaredScope] }),
+    ...(item.nonGoals === undefined ? {} : { nonGoals: [...item.nonGoals] }),
+    ...(item.mechanicalPortions === undefined ? {} : { mechanicalPortions: [...item.mechanicalPortions] }),
+    ...(item.blockingQuestions === undefined ? {} : {
+      blockingQuestions: item.blockingQuestions.map((question) => ({ ...question })),
+    }),
+    ...(item.criterionChecks === undefined ? {} : {
+      criterionChecks: item.criterionChecks.map((criterion) => ({ ...criterion })),
+    }),
+    state: item.state,
+    createdAt: item.createdAt,
+    createdAtMs: ms(item.createdAt),
+    confirmedAt: item.confirmedAt,
+    confirmedAtMs: nullableMs(item.confirmedAt),
+    ...(item.rejectedNote === undefined ? {} : { rejectedNote: item.rejectedNote }),
+  };
+}
 export function parseWorkflowNode(value: unknown, path: string): WorkflowNode { const item = parseNodeEntity(value, path, loose); return { nodeId: item.nodeId, planRevisionId: item.planRevisionId, title: item.title, objective: item.objective, acceptanceCriteria: [...item.acceptanceCriteria], dependencyNodeIds: [...item.dependencyNodeIds], stageTemplate: [...item.stageTemplate], currentStage: item.currentStage, state: item.state, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), updatedAt: item.updatedAt, updatedAtMs: ms(item.updatedAt) }; }
 export function parseWorkflowHandoff(value: unknown, path: string): WorkflowHandoff { const item = parseHandoffEntity(value, path, loose); return { handoffId: item.handoffId, nodeId: item.nodeId, taskId: item.taskId, stage: item.stage, outcome: item.outcome, summary: item.summary, evidence: [...item.evidence], artifactIds: [...item.artifactIds], blockers: [...item.blockers], createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
 export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent { const item = parseProjectEventEntity(value, path, loose); return { sequence: item.sequence, eventId: item.eventId, nodeId: item.nodeId, taskId: item.taskId, eventType: item.eventType, summary: item.summary, createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }

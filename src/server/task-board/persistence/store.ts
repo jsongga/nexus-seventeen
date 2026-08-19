@@ -26,7 +26,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -37,6 +37,23 @@ const DEFAULT_AUTOMATION_STAGES_JSON = JSON.stringify(WORK_ITEM_STAGES.map((stag
   stage,
 })));
 
+const VERIFY_ATTEMPTS_SCHEMA = `
+CREATE TABLE verify_attempts (
+  verify_attempt_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id),
+  stage TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  verify_run_id TEXT NULL,
+  workspace_path TEXT NULL,
+  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start')),
+  check_results_json TEXT NULL,
+  detail TEXT NULL,
+  created_at TEXT NOT NULL,
+  ended_at TEXT NULL,
+  UNIQUE(node_id, stage, attempt)
+);
+`;
+
 const WORKFLOW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS plan_revisions (
   plan_revision_id TEXT PRIMARY KEY,
@@ -45,6 +62,14 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
   objective TEXT NOT NULL,
   assumptions_json TEXT NOT NULL CHECK (json_valid(assumptions_json)),
   acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json)),
+  change_shape TEXT NULL,
+  tier TEXT NULL,
+  declared_scope_json TEXT NULL,
+  non_goals_json TEXT NULL,
+  mechanical_portions_json TEXT NULL,
+  blocking_questions_json TEXT NULL,
+  criterion_checks_json TEXT NULL,
+  rejected_note TEXT NULL,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
   skill_digests_json TEXT NOT NULL CHECK (json_valid(skill_digests_json)),
   state TEXT NOT NULL CHECK (state IN (${sqlStringList(PLAN_REVISION_STATES, ",")})),
@@ -100,6 +125,7 @@ CREATE TABLE IF NOT EXISTS project_events (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS project_events_project ON project_events(project_id, sequence);
 CREATE INDEX IF NOT EXISTS project_events_node ON project_events(node_id, sequence);
+${VERIFY_ATTEMPTS_SCHEMA}
 `;
 
 const WORK_ITEM_PLANNING_SCHEMA = `
@@ -265,6 +291,8 @@ CREATE TABLE work_items (
   project_target_mode TEXT NOT NULL CHECK (project_target_mode IN ('auto', 'explicit')),
   target_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
   resolved_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  pipeline_branch TEXT NULL,
+  base_sha TEXT NULL,
   state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_ITEM_STATES)})),
   current_stage TEXT CHECK (current_stage IS NULL OR current_stage IN (${sqlStringList(WORK_ITEM_STAGES)})),
   created_by TEXT NOT NULL,
@@ -881,6 +909,67 @@ function migrateVersion18To19(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion19To20(db: DatabaseSync): void {
+  const hasWorkItems = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
+  ).get() !== undefined;
+  const hasPlanRevisions = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'plan_revisions'",
+  ).get() !== undefined;
+  const hasVerifyAttempts = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
+  ).get() !== undefined;
+  const migrations = [
+    !hasWorkItems || hasColumns(db, "work_items", ["pipeline_branch"])
+      ? ""
+      : "ALTER TABLE work_items ADD COLUMN pipeline_branch TEXT NULL;",
+    !hasWorkItems || hasColumns(db, "work_items", ["base_sha"])
+      ? ""
+      : "ALTER TABLE work_items ADD COLUMN base_sha TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["change_shape"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN change_shape TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["tier"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN tier TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["declared_scope_json"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN declared_scope_json TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["non_goals_json"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN non_goals_json TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["mechanical_portions_json"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN mechanical_portions_json TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["blocking_questions_json"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN blocking_questions_json TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["criterion_checks_json"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN criterion_checks_json TEXT NULL;",
+    !hasPlanRevisions || hasColumns(db, "plan_revisions", ["rejected_note"])
+      ? ""
+      : "ALTER TABLE plan_revisions ADD COLUMN rejected_note TEXT NULL;",
+    hasVerifyAttempts ? "" : VERIFY_ATTEMPTS_SCHEMA,
+  ].join("\n");
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(migrations);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 20; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -901,7 +990,11 @@ function migrateVersion9To10(db: DatabaseSync): void {
 }
 
 function migrateVersion10To11(db: DatabaseSync): void {
-  db.exec(`BEGIN IMMEDIATE; ${WORKFLOW_SCHEMA} PRAGMA user_version = 11; COMMIT;`);
+  const hasVerifyAttempts = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
+  ).get() !== undefined;
+  const schema = hasVerifyAttempts ? WORKFLOW_SCHEMA.replace(VERIFY_ATTEMPTS_SCHEMA, "") : WORKFLOW_SCHEMA;
+  db.exec(`BEGIN IMMEDIATE; ${schema} PRAGMA user_version = 11; COMMIT;`);
 }
 
 function migrateVersion11To12(db: DatabaseSync): void {
@@ -1171,6 +1264,8 @@ export class TaskBoardStore {
         // Workflow node event lookups are indexed below.
       } else if (version === 18) {
         // Work-item pipeline states, transition history, and run identity columns are added below.
+      } else if (version === 19) {
+        // Pipeline plan records, branch identity, and machine-verify attempts are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1191,6 +1286,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 16) migrateVersion16To17(db);
       if (version >= 1 && version <= 17) migrateVersion17To18(db);
       if (version >= 1 && version <= 18) migrateVersion18To19(db);
+      if (version >= 1 && version <= 19) migrateVersion19To20(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

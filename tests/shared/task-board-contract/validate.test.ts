@@ -4,6 +4,8 @@ import {
   AGENT_ROLES,
   EVALUATOR_PROFILES,
   IDENTIFIER_PATTERN,
+  PLAN_CHANGE_SHAPES,
+  PLAN_TIERS,
   STAGE_HANDOFF_OUTCOMES,
   TASK_KINDS,
   TASK_BOARD_API_VERSION,
@@ -14,6 +16,7 @@ import {
   WORKFLOW_STAGES,
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
+  type VerifyAttempt,
 } from "#shared/task-board-contract";
 import {
   BROWSER_SCALAR_MESSAGES,
@@ -31,6 +34,7 @@ import {
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseClaimRunResult,
+  parsePlanEntity,
   parseTaskEntity,
   parseWorkItemEntity,
   parseWorkerAgentContext,
@@ -141,6 +145,36 @@ function outcome(handoff: unknown = null, workflowPlan: unknown = null): unknown
   return {
     status: "completed", outputs: [{ type: "result", body: "Done." }], expectedAgentMinutes: null,
     phases: [], detail: "Done.", handoff, workflowPlan,
+  };
+}
+
+function pipelinePlan(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    objective: "Add the first local pipeline contract.",
+    assumptions: ["The repository remains local-first."],
+    acceptanceCriteria: ["The pipeline contract round-trips."],
+    changeShape: "feature",
+    tier: "standard",
+    declaredScope: ["src/shared", "tests/shared"],
+    nonGoals: ["Do not add remote delivery."],
+    mechanicalPortions: ["Add nullable schema columns."],
+    blockingQuestions: [{
+      question: "Should legacy plans remain valid?",
+      recommendedDefault: "Yes, keep every new field optional.",
+    }],
+    criterionChecks: [{
+      criterion: "The shared contract tests pass.",
+      check: "npm run test:runtime",
+    }],
+    nodes: [{
+      nodeId: "node-one",
+      title: "Implement the pipeline contract",
+      objective: "Add and verify the shared contract.",
+      acceptanceCriteria: ["The pipeline contract round-trips."],
+      dependencyNodeIds: [],
+      stageTemplate: ["implementation", "verification"],
+    }],
+    ...overrides,
   };
 }
 
@@ -396,4 +430,101 @@ test("worker outcome shapes accept exactly the shared handoff and workflow enums
       dependencyNodeIds: [], stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
     }],
   })));
+});
+
+test("pipeline plan-record fields round-trip through board and worker draft validators", () => {
+  const plan = pipelinePlan();
+  assert.deepEqual(
+    parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan }).workflowPlan,
+    plan,
+  );
+  assert.deepEqual(parseWorkerAgentRunOutcome(outcome(null, plan)).workflowPlan, plan);
+});
+
+test("plan-record enums, revision entities, and verify-attempt types expose the v20 contract", () => {
+  assert.deepEqual(PLAN_CHANGE_SHAPES, ["mechanical_sweep", "feature", "blast_radius"]);
+  assert.deepEqual(PLAN_TIERS, ["standard", "hazardous"]);
+  const revision = {
+    apiVersion: TASK_BOARD_API_VERSION,
+    planRevisionId: "plan-one",
+    workItemId: "work-item-one",
+    revision: 2,
+    objective: "Keep the plan record durable.",
+    assumptions: [],
+    acceptanceCriteria: ["The record round-trips."],
+    changeShape: "feature",
+    tier: "standard",
+    declaredScope: ["src/shared"],
+    nonGoals: ["Do not add remote delivery."],
+    mechanicalPortions: ["Add nullable schema columns."],
+    blockingQuestions: [{ question: "Keep legacy plans?", recommendedDefault: "Yes." }],
+    criterionChecks: [{ criterion: "The suite passes.", check: "npm test" }],
+    projectId: "project-one",
+    skillDigests: {},
+    state: "rejected",
+    createdBy: "agent:planner",
+    confirmedBy: null,
+    createdAt: NOW,
+    confirmedAt: null,
+    rejectedNote: "Clarify the requested scope.",
+  };
+  const parsedRevision = parsePlanEntity(revision, "Plan revision");
+  assert.deepEqual({ ...parsedRevision, skillDigests: { ...parsedRevision.skillDigests } }, revision);
+
+  const attempt: VerifyAttempt = {
+    verifyAttemptId: "verify-one",
+    nodeId: "node-one",
+    stage: "testing",
+    attempt: 1,
+    verifyRunId: null,
+    workspacePath: null,
+    state: "starting",
+    checkResults: [{ criterion: "The suite passes.", check: "npm test", passed: true }],
+    detail: null,
+    createdAt: NOW,
+    endedAt: null,
+  };
+  assert.equal(attempt.state, "starting");
+
+  const workItem = parseWorkItemEntity({
+    ...workItemEntity("queued"),
+    pipelineBranch: "task/work-item-one",
+    baseSha: null,
+  }, "Work item");
+  assert.equal(workItem.pipelineBranch, "task/work-item-one");
+  assert.equal(workItem.baseSha, null);
+});
+
+test("pipeline plan-record validation rejects invalid enums, scope, bounds, and check controls", () => {
+  const invalidPlans = [
+    pipelinePlan({ changeShape: "not_a_contract_member" }),
+    pipelinePlan({ tier: "not_a_contract_member" }),
+    pipelinePlan({ declaredScope: [] }),
+    pipelinePlan({ declaredScope: ["/src/shared"] }),
+    pipelinePlan({ declaredScope: ["src/../secrets"] }),
+    pipelinePlan({ declaredScope: ["s".repeat(257)] }),
+    pipelinePlan({ declaredScope: Array.from({ length: 65 }, (_, index) => `scope-${index}`) }),
+    pipelinePlan({ nonGoals: Array.from({ length: 33 }, (_, index) => `non-goal-${index}`) }),
+    pipelinePlan({ nonGoals: ["n".repeat(1_001)] }),
+    pipelinePlan({ mechanicalPortions: Array.from({ length: 33 }, (_, index) => `portion-${index}`) }),
+    pipelinePlan({ mechanicalPortions: ["m".repeat(1_001)] }),
+    pipelinePlan({ blockingQuestions: Array.from({ length: 17 }, (_, index) => ({
+      question: `Question ${index}?`, recommendedDefault: "Use the default.",
+    })) }),
+    pipelinePlan({ blockingQuestions: [{ question: "q".repeat(1_001), recommendedDefault: "Use the default." }] }),
+    pipelinePlan({ blockingQuestions: [{ question: "Choose a default?", recommendedDefault: "d".repeat(1_001) }] }),
+    pipelinePlan({ criterionChecks: Array.from({ length: 33 }, (_, index) => ({
+      criterion: `Criterion ${index}`, check: "npm test",
+    })) }),
+    pipelinePlan({ criterionChecks: [{ criterion: "c".repeat(1_001), check: "npm test" }] }),
+    pipelinePlan({ criterionChecks: [{ criterion: "Stay bounded.", check: "x".repeat(513) }] }),
+    pipelinePlan({ criterionChecks: [{ criterion: "Stay bounded.", check: "npm test\nrm -rf build" }] }),
+  ];
+  for (const plan of invalidPlans) {
+    assert.throws(
+      () => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan }),
+      /invalid/u,
+    );
+    assert.throws(() => parseWorkerAgentRunOutcome(outcome(null, plan)), /invalid/u);
+  }
 });

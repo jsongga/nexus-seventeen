@@ -69,22 +69,38 @@ function sqlList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value}'`).join(separator);
 }
 
-function frozenSchema(store: TaskBoardStore): string {
+function frozenV19Projection(store: TaskBoardStore): string {
   const rows = store.db.prepare(`
     SELECT type, name, sql
     FROM sqlite_master
     WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
     ORDER BY type, name
   `).all() as Array<Readonly<{ type: string; name: string; sql: string }>>;
-  return `${rows.map((row) => `-- ${row.type}: ${row.name}\n${row.sql};`).join("\n\n")}\n`;
+  return `${rows
+    .filter((row) => row.name !== "verify_attempts")
+    .map((row) => {
+      let sql = row.sql;
+      if (row.name === "work_items") {
+        sql = sql.replace("  pipeline_branch TEXT NULL,\n  base_sha TEXT NULL,\n", "");
+      } else if (row.name === "plan_revisions") {
+        sql = sql.replace(
+          "  change_shape TEXT NULL,\n  tier TEXT NULL,\n  declared_scope_json TEXT NULL,\n  non_goals_json TEXT NULL,\n" +
+          "  mechanical_portions_json TEXT NULL,\n  blocking_questions_json TEXT NULL,\n" +
+          "  criterion_checks_json TEXT NULL,\n  rejected_note TEXT NULL,\n",
+          "",
+        );
+      }
+      return `-- ${row.type}: ${row.name}\n${sql};`;
+    })
+    .join("\n\n")}\n`;
 }
 
-test("fresh v19 DDL remains byte-identical to the frozen schema", async () => {
+test("fresh v20 DDL preserves the byte-identical frozen v19 schema", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 19);
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 20);
     const golden = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v19-schema.sql"), "utf8");
-    assert.equal(frozenSchema(store), golden);
+    assert.equal(frozenV19Projection(store), golden);
   } finally {
     store.close();
   }
@@ -131,6 +147,134 @@ test("v19 table CHECK clauses contain byte-identical contract-derived enum lists
     for (const [table, fragment] of expected) assert.ok(tableSql(table).includes(fragment), `${table}: ${fragment}`);
   } finally {
     store.close();
+  }
+});
+
+test("v19 migrates to v20 with pipeline columns and durable verify attempts", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const legacy = new DatabaseSync(path);
+  try {
+    const frozenV19 = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v19-schema.sql"), "utf8");
+    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
+    const executableV19 = frozenV19
+      .split(/(?=^-- (?:index|table|trigger): )/m)
+      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
+        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .join("");
+    legacy.exec(executableV19);
+    legacy.exec(`
+      INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
+      VALUES ('pipeline-project', 'Pipeline project', 'Exercises the v20 migration.', 1,
+        '2026-08-18T12:00:00.000Z', '2026-08-18T12:00:00.000Z');
+      INSERT INTO work_items(
+        work_item_id, original_request, refined_objective, priority, project_target_mode,
+        target_project_id, resolved_project_id, state, current_stage, created_by,
+        idempotency_key, request_hash, version, created_at, updated_at, ended_at,
+        cancelled_reason, archived_at
+      ) VALUES (
+        'pipeline-work-item', 'Preserve this work item.', 'Preserve this plan.', 'normal', 'explicit',
+        'pipeline-project', 'pipeline-project', 'plan_approval', 'planning', 'system:migration-test',
+        'pipeline-migration-key', 'pipeline-migration-hash', 1,
+        '2026-08-18T12:01:00.000Z', '2026-08-18T12:02:00.000Z', NULL, NULL, NULL
+      );
+      INSERT INTO plan_revisions(
+        plan_revision_id, work_item_id, revision, objective, assumptions_json,
+        acceptance_criteria_json, project_id, skill_digests_json, state, created_by,
+        confirmed_by, created_at, confirmed_at
+      ) VALUES (
+        'pipeline-plan', 'pipeline-work-item', 1, 'Preserve this plan.', '[]',
+        '["The plan survives."]', 'pipeline-project', '{}', 'proposed', 'agent:planner',
+        NULL, '2026-08-18T12:02:00.000Z', NULL
+      );
+      INSERT INTO work_nodes(
+        node_id, plan_revision_id, project_id, title, objective,
+        acceptance_criteria_json, stage_template_json, current_stage, state,
+        version, created_at, updated_at
+      ) VALUES (
+        'pipeline-node', 'pipeline-plan', 'pipeline-project', 'Preserve this node',
+        'Keep the verify-attempt foreign key usable.', '["The node survives."]',
+        '["implementation","verification"]', NULL, 'pending', 1,
+        '2026-08-18T12:02:00.000Z', '2026-08-18T12:02:00.000Z'
+      );
+      PRAGMA user_version = 19;
+    `);
+  } finally {
+    legacy.close();
+  }
+  await chmod(path, 0o600);
+
+  const upgraded = await TaskBoardStore.open(path);
+  try {
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
+    const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
+      .map((row) => String(row.name));
+    for (const column of ["pipeline_branch", "base_sha"]) {
+      assert.ok(columns("work_items").includes(column), `work_items.${column}`);
+    }
+    for (const column of [
+      "change_shape", "tier", "declared_scope_json", "non_goals_json",
+      "mechanical_portions_json", "blocking_questions_json", "criterion_checks_json", "rejected_note",
+    ]) {
+      assert.ok(columns("plan_revisions").includes(column), `plan_revisions.${column}`);
+    }
+    assert.deepEqual(columns("verify_attempts"), [
+      "verify_attempt_id", "node_id", "stage", "attempt", "verify_run_id", "workspace_path",
+      "state", "check_results_json", "detail", "created_at", "ended_at",
+    ]);
+    assert.deepEqual(
+      { ...upgraded.db.prepare(`
+        SELECT original_request, pipeline_branch, base_sha
+        FROM work_items WHERE work_item_id = 'pipeline-work-item'
+      `).get() },
+      { original_request: "Preserve this work item.", pipeline_branch: null, base_sha: null },
+    );
+    assert.deepEqual(
+      { ...upgraded.db.prepare(`
+        SELECT objective, change_shape, tier, declared_scope_json, non_goals_json,
+          mechanical_portions_json, blocking_questions_json, criterion_checks_json, rejected_note
+        FROM plan_revisions WHERE plan_revision_id = 'pipeline-plan'
+      `).get() },
+      {
+        objective: "Preserve this plan.", change_shape: null, tier: null, declared_scope_json: null,
+        non_goals_json: null, mechanical_portions_json: null, blocking_questions_json: null,
+        criterion_checks_json: null, rejected_note: null,
+      },
+    );
+    const verifySql = String(upgraded.db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
+    ).get()?.sql);
+    assert.equal(verifySql, `CREATE TABLE verify_attempts (
+  verify_attempt_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id),
+  stage TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  verify_run_id TEXT NULL,
+  workspace_path TEXT NULL,
+  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start')),
+  check_results_json TEXT NULL,
+  detail TEXT NULL,
+  created_at TEXT NOT NULL,
+  ended_at TEXT NULL,
+  UNIQUE(node_id, stage, attempt)
+)`);
+    upgraded.db.prepare(`
+      INSERT INTO verify_attempts(
+        verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
+        state, check_results_json, detail, created_at, ended_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "verify-attempt-one", "pipeline-node", "testing", 1, null, null,
+      "starting", null, null, "2026-08-18T12:03:00.000Z", null,
+    );
+    assert.throws(() => upgraded.db.prepare(`
+      INSERT INTO verify_attempts(verify_attempt_id, node_id, stage, attempt, state, created_at)
+      VALUES ('verify-attempt-two', 'pipeline-node', 'testing', 1, 'running', '2026-08-18T12:04:00.000Z')
+    `).run(), /UNIQUE/u);
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    upgraded.close();
   }
 });
 
@@ -223,7 +367,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 19);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
     assert.deepEqual(
       upgraded.db.prepare(`
         SELECT work_item_id, state, project_target_mode, target_project_id, resolved_project_id, archived_at
@@ -335,7 +479,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
 
   const reopened = await TaskBoardStore.open(path);
   try {
-    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 19);
+    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 20);
     assert.deepEqual(
       reopened.db.prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id").all()
         .map((row) => ({ work_item_id: row.work_item_id, state: row.state })),
@@ -415,7 +559,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 19);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
       "CREATE INDEX project_events_node ON project_events(node_id, sequence)",

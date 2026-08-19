@@ -234,6 +234,30 @@ export type WorkflowStage = typeof WORKFLOW_STAGES[number];
 export const PLAN_REVISION_STATES = ["proposed", "confirmed", "superseded", "rejected"] as const;
 export type PlanRevisionState = typeof PLAN_REVISION_STATES[number];
 
+export const PLAN_CHANGE_SHAPES = ["mechanical_sweep", "feature", "blast_radius"] as const;
+export const PLAN_TIERS = ["standard", "hazardous"] as const;
+
+export interface PlanBlockingQuestion {
+  readonly question: string;
+  readonly recommendedDefault: string;
+}
+
+export interface PlanCriterionCheck {
+  readonly criterion: string;
+  readonly check: string;
+}
+
+/** All optional; present together on pipeline plans. */
+export interface PlanRecordFields {
+  readonly changeShape?: typeof PLAN_CHANGE_SHAPES[number];
+  readonly tier?: typeof PLAN_TIERS[number];
+  readonly declaredScope?: readonly string[];
+  readonly nonGoals?: readonly string[];
+  readonly mechanicalPortions?: readonly string[];
+  readonly blockingQuestions?: readonly PlanBlockingQuestion[];
+  readonly criterionChecks?: readonly PlanCriterionCheck[];
+}
+
 export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
 export type WorkNodeState = typeof WORK_NODE_STATES[number];
 
@@ -299,6 +323,8 @@ export interface WorkItem {
   readonly resolvedProjectId: string | null;
   /** Durable link to the manager task that refines and proposes this work item's workflow. */
   readonly planningTaskId: string | null;
+  readonly pipelineBranch?: string | null;
+  readonly baseSha?: string | null;
   readonly state: WorkItemState;
   readonly currentStage: WorkItemStage | null;
   readonly createdBy: string;
@@ -325,7 +351,7 @@ export interface SkillSnapshot {
   readonly content: string;
 }
 
-export interface PlanRevision {
+export interface PlanRevision extends PlanRecordFields {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly planRevisionId: string;
   readonly workItemId: string;
@@ -340,6 +366,7 @@ export interface PlanRevision {
   readonly confirmedBy: string | null;
   readonly createdAt: string;
   readonly confirmedAt: string | null;
+  readonly rejectedNote?: string;
 }
 
 export interface WorkNode {
@@ -357,6 +384,20 @@ export interface WorkNode {
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface VerifyAttempt {
+  readonly verifyAttemptId: string;
+  readonly nodeId: string;
+  readonly stage: WorkflowStage;
+  readonly attempt: number;
+  readonly verifyRunId: string | null;
+  readonly workspacePath: string | null;
+  readonly state: "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
+  readonly checkResults: readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[] | null;
+  readonly detail: string | null;
+  readonly createdAt: string;
+  readonly endedAt: string | null;
 }
 
 export interface CriterionResult {
@@ -434,7 +475,7 @@ export interface ProposedWorkNode {
   readonly stageTemplate: readonly WorkflowStage[];
 }
 
-export interface WorkflowPlanDraft {
+export interface WorkflowPlanDraft extends PlanRecordFields {
   readonly objective: string;
   readonly assumptions: readonly string[];
   readonly acceptanceCriteria: readonly string[];

@@ -129,7 +129,13 @@ export class TransparentWorkflow {
       const planId = `plan_${randomUUID()}`;
       const storedIds = new Map(nodes.map((node) => [node.nodeId, `node_${randomUUID()}`]));
       this.db.prepare("UPDATE plan_revisions SET state='superseded' WHERE work_item_id=? AND state='proposed'").run(workItemId);
-      this.db.prepare("INSERT INTO plan_revisions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(planId, workItemId, revision, objective, JSON.stringify(assumptions), JSON.stringify(acceptance), projectId, JSON.stringify(skillDigests), "proposed", actor, null, createdAt, null);
+      this.db.prepare(`
+        INSERT INTO plan_revisions(
+          plan_revision_id, work_item_id, revision, objective, assumptions_json,
+          acceptance_criteria_json, project_id, skill_digests_json, state, created_by,
+          confirmed_by, created_at, confirmed_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(planId, workItemId, revision, objective, JSON.stringify(assumptions), JSON.stringify(acceptance), projectId, JSON.stringify(skillDigests), "proposed", actor, null, createdAt, null);
       for (const node of nodes) {
         const storedId = storedIds.get(node.nodeId)!;
         this.db.prepare("INSERT INTO work_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(storedId, planId, projectId, node.title, node.objective, JSON.stringify(node.acceptanceCriteria), JSON.stringify(node.stages), null, "pending", 1, createdAt, createdAt);

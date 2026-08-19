@@ -7,7 +7,9 @@ import {
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
   IDENTIFIER_PATTERN,
+  PLAN_CHANGE_SHAPES,
   PLAN_REVISION_STATES,
+  PLAN_TIERS,
   QUESTION_STATUSES,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
@@ -56,6 +58,7 @@ import {
   type DocumentSummary,
   type HumanQuestion,
   type InterruptAgentRequest,
+  type PlanRecordFields,
   type PlanRevision,
   type Project,
   type ProjectArtifact,
@@ -510,10 +513,10 @@ export function parseWorkItemEntity(
 ): WorkItem | TolerantWorkItemEntity {
   const fields = [
     "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "projectTarget", "resolvedProjectId",
-    "planningTaskId", "state", "currentStage", "createdBy", "version", "createdAt", "updatedAt", "endedAt",
-    "cancelledReason", "archivedAt", "transitions",
+    "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "createdBy", "version", "createdAt",
+    "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
   ];
-  const required = fields.filter((field) => field !== "transitions");
+  const required = fields.filter((field) => field !== "transitions" && field !== "pipelineBranch" && field !== "baseSha");
   const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
@@ -545,6 +548,10 @@ export function parseWorkItemEntity(
     projectTarget,
     resolvedProjectId,
     planningTaskId: nullableIdentifier(item.planningTaskId, `${label}.planningTaskId`, options),
+    ...(item.pipelineBranch === undefined
+      ? {}
+      : { pipelineBranch: nullableString(item.pipelineBranch, `${label}.pipelineBranch`) }),
+    ...(item.baseSha === undefined ? {} : { baseSha: nullableString(item.baseSha, `${label}.baseSha`) }),
     state,
     currentStage: item.currentStage === null
       ? null
@@ -883,12 +890,93 @@ function parseCriterionResult(value: unknown, label: string, options: ShapeParse
   });
 }
 
+const PLAN_RECORD_FIELD_NAMES = [
+  "changeShape", "tier", "declaredScope", "nonGoals", "mechanicalPortions", "blockingQuestions", "criterionChecks",
+] as const;
+
+function boundedPlanArray<T>(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+  parse: (entry: unknown, entryLabel: string) => T,
+): readonly T[] {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  return Object.freeze(value.map((entry, index) => parse(entry, `${label}[${index}]`)));
+}
+
+function planRecordText(value: unknown, label: string, maximum: number): string {
+  return prose(value, label, { maximum, message: `${label} is invalid` });
+}
+
+function planScopeEntry(value: unknown, label: string, parseText: (value: unknown, label: string, maximum: number) => string): string {
+  const entry = parseText(value, label, 256);
+  if (entry.startsWith("/") || entry.includes("..")) throw new ContractValidationError(`${label} is invalid`);
+  return entry;
+}
+
+function planCheck(value: unknown, label: string, parseText: (value: unknown, label: string, maximum: number) => string): string {
+  const check = parseText(value, label, 512);
+  if (/[\u0000-\u001f\u007f]/u.test(check)) throw new ContractValidationError(`${label} is invalid`);
+  return check;
+}
+
+function parsePlanRecordEntity(
+  item: JsonRecord,
+  label: string,
+  options: ShapeParserOptions,
+): PlanRecordFields {
+  return Object.freeze({
+    ...(item.changeShape === undefined ? {} : {
+      changeShape: entityMember(item.changeShape, PLAN_CHANGE_SHAPES, `${label}.changeShape`, options),
+    }),
+    ...(item.tier === undefined ? {} : {
+      tier: entityMember(item.tier, PLAN_TIERS, `${label}.tier`, options),
+    }),
+    ...(item.declaredScope === undefined ? {} : {
+      declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
+        (entry, entryLabel) => planScopeEntry(entry, entryLabel, planRecordText)),
+    }),
+    ...(item.nonGoals === undefined ? {} : {
+      nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32,
+        (entry, entryLabel) => planRecordText(entry, entryLabel, 1_000)),
+    }),
+    ...(item.mechanicalPortions === undefined ? {} : {
+      mechanicalPortions: boundedPlanArray(item.mechanicalPortions, `${label}.mechanicalPortions`, 0, 32,
+        (entry, entryLabel) => planRecordText(entry, entryLabel, 1_000)),
+    }),
+    ...(item.blockingQuestions === undefined ? {} : {
+      blockingQuestions: boundedPlanArray(item.blockingQuestions, `${label}.blockingQuestions`, 0, 16,
+        (entry, entryLabel) => {
+          const question = shape(entry, entryLabel, ["question", "recommendedDefault"], ["question", "recommendedDefault"], options);
+          return Object.freeze({
+            question: planRecordText(question.question, `${entryLabel}.question`, 1_000),
+            recommendedDefault: planRecordText(question.recommendedDefault, `${entryLabel}.recommendedDefault`, 1_000),
+          });
+        }),
+    }),
+    ...(item.criterionChecks === undefined ? {} : {
+      criterionChecks: boundedPlanArray(item.criterionChecks, `${label}.criterionChecks`, 0, 32,
+        (entry, entryLabel) => {
+          const criterion = shape(entry, entryLabel, ["criterion", "check"], ["criterion", "check"], options);
+          return Object.freeze({
+            criterion: planRecordText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
+            check: planCheck(criterion.check, `${entryLabel}.check`, planRecordText),
+          });
+        }),
+    }),
+  });
+}
+
 export function parsePlanEntity(value: unknown, label: string, options: ShapeParserOptions = {}): PlanRevision {
-  const fields = [
+  const required = [
     "apiVersion", "planRevisionId", "workItemId", "revision", "objective", "assumptions", "acceptanceCriteria", "projectId",
     "skillDigests", "state", "createdBy", "confirmedBy", "createdAt", "confirmedAt",
   ];
-  const item = entity(value, label, fields, fields, options);
+  const fields = [...required, ...PLAN_RECORD_FIELD_NAMES, "rejectedNote"];
+  const item = entity(value, label, fields, required, options);
   const digests = record(item.skillDigests, `${label}.skillDigests`);
   const skillDigests: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [key, digest] of Object.entries(digests)) skillDigests[key] = stringValue(digest, `${label}.skillDigests.${key}`);
@@ -900,6 +988,7 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
     objective: stringValue(item.objective, `${label}.objective`),
     assumptions: Object.freeze(arrayOf(item.assumptions, `${label}.assumptions`, stringValue)),
     acceptanceCriteria: Object.freeze(arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`, stringValue)),
+    ...parsePlanRecordEntity(item, label, options),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     skillDigests: Object.freeze(skillDigests),
     state: entityMember(item.state, PLAN_REVISION_STATES, `${label}.state`, options),
@@ -907,6 +996,7 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
     confirmedBy: nullableIdentifier(item.confirmedBy, `${label}.confirmedBy`, options),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     confirmedAt: nullableTimestamp(item.confirmedAt, `${label}.confirmedAt`, options),
+    ...(item.rejectedNote === undefined ? {} : { rejectedNote: stringValue(item.rejectedNote, `${label}.rejectedNote`) }),
   });
 }
 
@@ -1890,9 +1980,58 @@ function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHand
   });
 }
 
+function parseDraftPlanRecord(item: JsonRecord, label: string, policy: DraftParserPolicy): PlanRecordFields {
+  const parseText = (value: unknown, field: string, maximum: number): string =>
+    draftText(value, field, maximum, policy);
+  return Object.freeze({
+    ...(item.changeShape === undefined ? {} : {
+      changeShape: contractMember(item.changeShape, PLAN_CHANGE_SHAPES, `${label}.changeShape`, `${label}.changeShape is invalid`),
+    }),
+    ...(item.tier === undefined ? {} : {
+      tier: contractMember(item.tier, PLAN_TIERS, `${label}.tier`, `${label}.tier is invalid`),
+    }),
+    ...(item.declaredScope === undefined ? {} : {
+      declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
+        (entry, entryLabel) => planScopeEntry(entry, entryLabel, parseText)),
+    }),
+    ...(item.nonGoals === undefined ? {} : {
+      nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32,
+        (entry, entryLabel) => parseText(entry, entryLabel, 1_000)),
+    }),
+    ...(item.mechanicalPortions === undefined ? {} : {
+      mechanicalPortions: boundedPlanArray(item.mechanicalPortions, `${label}.mechanicalPortions`, 0, 32,
+        (entry, entryLabel) => parseText(entry, entryLabel, 1_000)),
+    }),
+    ...(item.blockingQuestions === undefined ? {} : {
+      blockingQuestions: boundedPlanArray(item.blockingQuestions, `${label}.blockingQuestions`, 0, 16,
+        (entry, entryLabel) => {
+          const question = draftExact(entry, ["question", "recommendedDefault"], entryLabel, policy);
+          return Object.freeze({
+            question: parseText(question.question, `${entryLabel}.question`, 1_000),
+            recommendedDefault: parseText(question.recommendedDefault, `${entryLabel}.recommendedDefault`, 1_000),
+          });
+        }),
+    }),
+    ...(item.criterionChecks === undefined ? {} : {
+      criterionChecks: boundedPlanArray(item.criterionChecks, `${label}.criterionChecks`, 0, 32,
+        (entry, entryLabel) => {
+          const criterion = draftExact(entry, ["criterion", "check"], entryLabel, policy);
+          return Object.freeze({
+            criterion: parseText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
+            check: planCheck(criterion.check, `${entryLabel}.check`, parseText),
+          });
+        }),
+    }),
+  });
+}
+
 function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowPlanDraft {
   const messages = policy.messages;
-  const item = draftExact(value, ["objective", "assumptions", "acceptanceCriteria", "nodes"], messages.workflowPlanLabel, policy);
+  const required = ["objective", "assumptions", "acceptanceCriteria", "nodes"];
+  const item = exact(value, [...required, ...PLAN_RECORD_FIELD_NAMES], messages.workflowPlanLabel, {
+    messages: policy.exactMessages,
+    required,
+  });
   if (!Array.isArray(item.nodes) || item.nodes.length < 1 || item.nodes.length > 64) {
     throw new ContractValidationError(messages.workflowNodesInvalid);
   }
@@ -1929,6 +2068,7 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
     objective: draftText(item.objective, "workflowPlan.objective", 8_000, policy),
     assumptions: draftStringList(item.assumptions, "workflowPlan.assumptions", policy, 64),
     acceptanceCriteria: draftStringList(item.acceptanceCriteria, "workflowPlan.acceptanceCriteria", policy, 64, 1),
+    ...parseDraftPlanRecord(item, messages.workflowPlanLabel, policy),
     nodes: Object.freeze(nodes),
   });
 }
