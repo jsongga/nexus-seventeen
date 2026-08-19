@@ -235,6 +235,34 @@ test("pipeline activation and the public sweep settle machine verify green into 
   }
 });
 
+test("a retried pipeline implementation claim includes the latest failed machine-verify handoff", async () => {
+  const fixture = await pipelineFixture("retry-context", false);
+  try {
+    fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Implementation round one complete.",
+      handoff: implementationHandoff(),
+    });
+    await driveVerify(fixture, "implementing", 1);
+
+    const retry = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-machine-verify-retry-context-2",
+      messageCursor: null,
+    });
+
+    assert.ok(retry);
+    const handoffs = retry.context.workflow?.dependencyHandoffs;
+    assert.ok(handoffs);
+    assert.equal(handoffs.length, 1);
+    assert.equal(handoffs[0]?.stage, "testing");
+    assert.equal(handoffs[0]?.outcome, "failed");
+    assert.match(handoffs[0]?.summary ?? "", /intentional machine verify failure/u);
+    assert.match(handoffs[0]?.evidence.join("\n") ?? "", /intentional machine verify failure/u);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("machine verify failures return to implementation with tail evidence and dead-letter on round three", async () => {
   const fixture = await pipelineFixture("failed", false);
   try {

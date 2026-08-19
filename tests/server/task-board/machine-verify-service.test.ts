@@ -35,3 +35,40 @@ test("the reconciler timer invokes the public machine-verify sweep", async (t) =
     globalThis.clearInterval = originalClearInterval;
   }
 });
+
+test("machine verify keeps its 60-second sweep when stale-run reconciliation is disabled", async (t) => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const intervals: Array<{ callback: () => void; delay: number | undefined }> = [];
+  const fakeTimer = { unref: () => undefined } as unknown as NodeJS.Timeout;
+  globalThis.setInterval = ((callback: () => void, delay?: number) => {
+    intervals.push({ callback, delay });
+    return fakeTimer;
+  }) as typeof setInterval;
+  globalThis.clearInterval = (() => undefined) as typeof clearInterval;
+  const sweep = t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => 0);
+  const reconcile = t.mock.method(TaskBoard.prototype, "reconcileStaleRuns", () => 0);
+  let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
+  try {
+    service = await createTaskBoardService({
+      dbPath: await databasePath(),
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      reconcileIntervalSeconds: 0,
+    });
+    const reconcileCallsAfterOpen = reconcile.mock.callCount();
+
+    assert.equal(intervals.length, 1);
+    assert.equal(intervals[0]?.delay, 60_000);
+    intervals[0]?.callback();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(sweep.mock.callCount(), 1);
+    assert.equal(reconcile.mock.callCount(), reconcileCallsAfterOpen);
+  } finally {
+    await service?.close();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});

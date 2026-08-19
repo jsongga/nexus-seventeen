@@ -13,7 +13,7 @@ const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
 const TAIL_BYTES = 4_096;
 const START_FAILURE_MARKER = /\[machine-verify-start-failures:(\d+)\]/u;
-const DEFAULT_SUPERVISOR_PATH = fileURLToPath(
+export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(
   new URL("../../agents/verify/supervisor.js", import.meta.url),
 );
 
@@ -69,6 +69,11 @@ interface CheckOutcome {
   readonly results: readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[];
   readonly failures: readonly string[];
 }
+
+export type StartingVerifyAttemptResult =
+  | Readonly<{ kind: "created"; verifyAttemptId: string }>
+  | Readonly<{ kind: "ineligible" }>
+  | Readonly<{ kind: "pipeline_required" }>;
 
 function errorDetail(error: unknown): string {
   const value = error instanceof Error ? error.message : String(error);
@@ -192,17 +197,20 @@ export class VerifyAttemptsCollaborator {
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
   }
 
-  createStartingAttemptInTransaction(nodeId: string, stage: WorkflowStage): string | null {
+  createStartingAttemptInTransaction(nodeId: string, stage: WorkflowStage): StartingVerifyAttemptResult {
     const row = this.runtime.store.db.prepare(`
-      SELECT node.project_id, node.title, node.state, node.current_stage
+      SELECT node.project_id, node.title, node.state, node.current_stage, item.pipeline_branch
       FROM work_nodes node
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE node.node_id=?
     `).get(nodeId) as Row | undefined;
     if (
       row === undefined ||
       row.current_stage !== stage ||
       (row.state !== "ready" && row.state !== "blocked")
-    ) return null;
+    ) return Object.freeze({ kind: "ineligible" });
+    if (row.pipeline_branch === null) return Object.freeze({ kind: "pipeline_required" });
     const attempt = Number(this.runtime.store.db.prepare(`
       SELECT COALESCE(MAX(prior.attempt), 0) + 1 AS next_attempt
       FROM (
@@ -225,7 +233,7 @@ export class VerifyAttemptsCollaborator {
       WHERE node_id=? AND current_stage=? AND state IN ('ready','blocked')
     `).run(now, nodeId, stage);
     if (Number(updated.changes) !== 1) throw new Error("TASK_BOARD_MACHINE_VERIFY_ACTIVATION_CONFLICT");
-    return verifyAttemptId;
+    return Object.freeze({ kind: "created", verifyAttemptId });
   }
 
   startAfterCommit(verifyAttemptId: string): void {
@@ -390,7 +398,16 @@ export class VerifyAttemptsCollaborator {
       status = await runner.status(current.verifyRunId);
     } catch (error) {
       if (this.#closed) return false;
-      await this.#finalizeFailure(current, "died", `Machine verify status failed: ${errorDetail(error)}`);
+      const statusDetail = `Machine verify status failed: ${errorDetail(error)}`;
+      let detail: string;
+      try {
+        const tail = await runner.tail(current.verifyRunId, TAIL_BYTES);
+        detail = tail.length === 0 ? statusDetail : `${statusDetail}\n${tail}`;
+      } catch (tailError) {
+        detail = `${statusDetail}; verify log tail failed: ${errorDetail(tailError)}`;
+      }
+      if (this.#closed) return false;
+      await this.#finalizeFailure(current, "died", detail);
       return true;
     }
     if (this.#closed) return false;

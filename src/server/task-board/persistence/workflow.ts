@@ -348,6 +348,19 @@ export class TransparentWorkflow {
           : Object.freeze(json<string[]>(row.non_goals_json)),
         assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
       });
+      if (row.stage === "implementation") {
+        const latestTestingHandoff = this.db.prepare(`
+          SELECT payload_json
+          FROM stage_handoffs
+          WHERE node_id=? AND stage='testing'
+          ORDER BY created_at DESC, rowid DESC
+          LIMIT 1
+        `).get(String(row.node_id)) as Row | undefined;
+        if (latestTestingHandoff !== undefined) {
+          const handoff = Object.freeze(json<StageHandoff>(latestTestingHandoff.payload_json));
+          if (handoff.outcome === "failed") handoffs.push(handoff);
+        }
+      }
     }
     return Object.freeze({
       planRevisionId: String(row.plan_revision_id), nodeId: String(row.node_id), stage: row.stage as WorkflowStage,

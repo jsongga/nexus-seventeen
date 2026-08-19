@@ -313,8 +313,12 @@ export class ProjectsCollaborator {
       const configuration = this.automation.getConfiguration();
       const configuredExecutor = configuration.stages.find((item) => item.stage === stage)?.executor;
       if (configuredExecutor?.kind === "machine_verify") {
-        const verifyAttemptId = this.#verifyAttempts.createStartingAttemptInTransaction(current.nodeId, stage);
-        if (verifyAttemptId === null) return;
+        const activation = this.#verifyAttempts.createStartingAttemptInTransaction(current.nodeId, stage);
+        if (activation.kind === "pipeline_required") {
+          this.#workflow.blockNodeInTransaction(current.nodeId, "machine_verify requires a pipeline plan");
+          return;
+        }
+        if (activation.kind === "ineligible") return;
         this.#workflow.event(
           current.projectId,
           current.nodeId,
@@ -322,7 +326,7 @@ export class ProjectsCollaborator {
           "stage_started",
           `${current.title} entered ${stage}`,
         );
-        this.runtime.store.afterCommit(() => this.#verifyAttempts.startAfterCommit(verifyAttemptId));
+        this.runtime.store.afterCommit(() => this.#verifyAttempts.startAfterCommit(activation.verifyAttemptId));
         return;
       }
       if (configuredExecutor?.kind !== "agent_type") {

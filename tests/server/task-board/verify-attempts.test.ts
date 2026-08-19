@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import type { VerifyRunStatus } from "#server/agents/verify";
 import { normalizeTaskBoardConfig } from "#server/task-board";
 import {
+  DEFAULT_SUPERVISOR_PATH,
   VerifyAttemptsCollaborator,
   type MachineVerifyRunner,
   type MachineVerifyWorkspaceManager,
 } from "#server/task-board/collaborators/verify-attempts";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
-import type { MachineVerifyEvidence } from "#server/task-board/persistence/workflow";
+import {
+  TransparentWorkflow,
+  type MachineVerifyEvidence,
+} from "#server/task-board/persistence/workflow";
+import { SkillRegistry } from "#server/task-board/skills";
 import { HUMAN_TOKEN, boardFixture, config, workItemRequest } from "./helpers.js";
 
 type AttemptState = "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
@@ -21,6 +27,10 @@ interface Settlement {
   readonly passed: boolean;
   readonly evidence: MachineVerifyEvidence;
 }
+
+test("the default machine-verify supervisor path exists in the runtime build tree", () => {
+  assert.equal(existsSync(DEFAULT_SUPERVISOR_PATH), true, DEFAULT_SUPERVISOR_PATH);
+});
 
 test("verify workspace configuration defaults beside the database and rejects unsafe overrides", async () => {
   const fixture = await boardFixture();
@@ -73,6 +83,8 @@ class FakeRunner implements MachineVerifyRunner {
   readonly statusCalls: string[] = [];
   readonly tailCalls: Array<{ id: string; bytes: number }> = [];
   startErrors: Error[] = [];
+  statusError: Error | null = null;
+  tailError: Error | null = null;
   statusState: VerifyRunStatus["state"] = "running";
   tailText = "verify log tail";
 
@@ -92,6 +104,7 @@ class FakeRunner implements MachineVerifyRunner {
   async status(id: string): Promise<VerifyRunStatus> {
     assert.equal(this.runtime.store.hasOpenTransaction, false);
     this.statusCalls.push(id);
+    if (this.statusError !== null) throw this.statusError;
     return {
       id,
       state: this.statusState,
@@ -105,6 +118,7 @@ class FakeRunner implements MachineVerifyRunner {
   async tail(id: string, bytes: number): Promise<string> {
     assert.equal(this.runtime.store.hasOpenTransaction, false);
     this.tailCalls.push({ id, bytes });
+    if (this.tailError !== null) throw this.tailError;
     return this.tailText;
   }
 }
@@ -113,6 +127,7 @@ async function attemptFixture(
   suffix: string,
   state: AttemptState,
   criterionChecks: readonly { readonly criterion: string; readonly check: string }[] = [],
+  settleWorkflow = false,
 ) {
   const fixture = await boardFixture();
   const workItem = fixture.board.createWorkItem(workItemRequest({
@@ -185,6 +200,16 @@ async function attemptFixture(
   const settlements: Settlement[] = [];
   const checkCalls: Array<{ command: string; cwd: string }> = [];
   let checkPassed = true;
+  const workflow = settleWorkflow
+    ? new TransparentWorkflow(
+        store.db,
+        new SkillRegistry(resolve("skills")),
+        boardConfig.now,
+        (operation) => store.transaction(operation),
+        undefined,
+        () => "a".repeat(40),
+      )
+    : null;
   const collaborator = new VerifyAttemptsCollaborator(runtime, {
     supervisorPath: "/orchestrator/build/server/agents/verify/supervisor.js",
     workspaceManagerFactory: () => workspace,
@@ -200,7 +225,7 @@ async function attemptFixture(
     settleInTransaction: (_nodeId, _stage, passed, evidence) => {
       assert.equal(runtime.store.hasOpenTransaction, true);
       settlements.push({ passed, evidence });
-      return [];
+      return workflow?.settleMachineVerifyAttemptInTransaction(_nodeId, _stage, passed, evidence) ?? [];
     },
     activateNodes: () => undefined,
   });
@@ -318,5 +343,65 @@ test("failed_to_start retries once, while a second start failure settles the ver
   } finally {
     exhausted.runtime.close();
     exhausted.store.close();
+  }
+});
+
+test("missing running-attempt status and tail files settle died and return the node to implementation", async () => {
+  const fixture = await attemptFixture("missing-run-files", "running", [], true);
+  try {
+    fixture.runner.statusError = new Error("ENOENT: workspace/status.json");
+    fixture.runner.tailError = new Error("ENOENT: workspace/log");
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "died");
+    assert.deepEqual(fixture.runner.statusCalls, ["verify-run-1"]);
+    assert.deepEqual(fixture.runner.tailCalls, [{ id: "verify-run-1", bytes: 4_096 }]);
+    assert.equal(fixture.settlements.length, 1);
+    assert.equal(fixture.settlements[0]?.passed, false);
+    assert.match(fixture.settlements[0]?.evidence.summary ?? "", /workspace\/status\.json/u);
+    assert.match(fixture.settlements[0]?.evidence.summary ?? "", /workspace\/log/u);
+    const node = fixture.store.db.prepare(
+      "SELECT state,current_stage FROM work_nodes WHERE node_id=?",
+    ).get(fixture.nodeId);
+    assert.equal(node?.state, "ready");
+    assert.equal(node?.current_stage, "implementation");
+    assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
+    assert.equal(Number(fixture.store.db.prepare(
+      "SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'",
+    ).get(fixture.nodeId)?.count), 1);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("overlapping verify sweeps settle one handoff and one implementation return", async () => {
+  const fixture = await attemptFixture("overlapping-sweeps", "running", [], true);
+  try {
+    fixture.runner.statusState = "failed";
+    fixture.runner.tailText = "overlap failure evidence";
+
+    await Promise.all([fixture.collaborator.sweep(), fixture.collaborator.sweep()]);
+
+    assert.equal(fixture.settlements.length, 1);
+    assert.deepEqual(fixture.runner.statusCalls, ["verify-run-1"]);
+    assert.equal(Number(fixture.store.db.prepare(
+      "SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'",
+    ).get(fixture.nodeId)?.count), 1);
+    assert.equal(Number(fixture.store.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM project_events
+      WHERE node_id=? AND event_type='stage_retry_ready'
+    `).get(fixture.nodeId)?.count), 1);
+    const node = fixture.store.db.prepare(
+      "SELECT state,current_stage,version FROM work_nodes WHERE node_id=?",
+    ).get(fixture.nodeId);
+    assert.equal(node?.state, "ready");
+    assert.equal(node?.current_stage, "implementation");
+    assert.equal(node?.version, 2);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
   }
 });

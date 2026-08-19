@@ -150,6 +150,7 @@ export class TaskBoardService {
   readonly #projectStreams = new Set<DocumentStream>();
   readonly #closingAbort = new AbortController();
   #reconcileTimer: NodeJS.Timeout | undefined;
+  #verifyTimer: NodeJS.Timeout | undefined;
   #started = false;
   #closing = false;
 
@@ -171,12 +172,18 @@ export class TaskBoardService {
           console.error("[task-board] stale-run reconciliation failed", error);
         }
         this.#board.reconcileWorkflowsBestEffort();
-        void this.#board.sweepVerifyAttempts().catch((error: unknown) => {
-          console.error("[task-board] machine-verify reconciliation failed", error);
-        });
       }, config.reconcileIntervalSeconds * 1_000);
       this.#reconcileTimer.unref();
     }
+    const verifyIntervalSeconds = config.reconcileIntervalSeconds > 0
+      ? config.reconcileIntervalSeconds
+      : 60;
+    this.#verifyTimer = setInterval(() => {
+      void this.#board.sweepVerifyAttempts().catch((error: unknown) => {
+        console.error("[task-board] machine-verify reconciliation failed", error);
+      });
+    }, verifyIntervalSeconds * 1_000);
+    this.#verifyTimer.unref();
   }
 
   static async create(options: TaskBoardOptions): Promise<TaskBoardService> {
@@ -801,6 +808,10 @@ export class TaskBoardService {
     if (this.#reconcileTimer !== undefined) {
       clearInterval(this.#reconcileTimer);
       this.#reconcileTimer = undefined;
+    }
+    if (this.#verifyTimer !== undefined) {
+      clearInterval(this.#verifyTimer);
+      this.#verifyTimer = undefined;
     }
     this.#closingAbort.abort();
     for (const stream of [...this.#documentStreams]) {
