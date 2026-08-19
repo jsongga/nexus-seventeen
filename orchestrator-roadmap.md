@@ -64,7 +64,7 @@ container-per-task lifecycle behind the runtime adapter; egress allowlist;
 no prod secrets. Exit: a task runs in a disposable container against its own
 worktree and the container's death is uneventful.
 
-**3. Fast verify path** *(§5; item 3)* — three-tier test contract in
+**3. Fast verify path** *(spec/plan 2026-08-18, in flight; §5; item 3)* — three-tier test contract in
 `workflow.md`, diff-derived fast tier, background execution for long runs;
 nexus-seventeen onboards itself as the proof. Exit: fast tier under ~10 s
 here, full tier runs headless with tail-only ingestion.
