@@ -800,6 +800,13 @@ export class TransparentWorkflow {
       SELECT
         verify.verify_attempt_id,
         verify.attempt,
+        (
+          SELECT COUNT(*)
+          FROM verify_attempts failed_verify
+          WHERE failed_verify.node_id=verify.node_id
+            AND failed_verify.stage=verify.stage
+            AND failed_verify.state IN ('failed','died')
+        ) AS failed_attempt_count,
         node.project_id,
         node.plan_revision_id,
         node.title,
@@ -831,7 +838,7 @@ export class TransparentWorkflow {
 
     const now = this.now().toISOString();
     const projectId = String(attempt.project_id);
-    const attemptNumber = Number(attempt.attempt);
+    const failedAttemptCount = Number(attempt.failed_attempt_count);
     const template = json<WorkflowStage[]>(attempt.stage_template_json);
     const taskStatus = passed ? "completed" : "failed";
     const orderKey = Number(this.db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
@@ -888,7 +895,7 @@ export class TransparentWorkflow {
       .run(handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
 
     if (!passed) {
-      if (template.includes("implementation") && attemptNumber < 3) {
+      if (template.includes("implementation") && failedAttemptCount < 3) {
         this.db.prepare(`
           UPDATE work_nodes
           SET state='ready', current_stage='implementation', version=version+1, updated_at=?
@@ -900,7 +907,7 @@ export class TransparentWorkflow {
           nodeId,
           taskId,
           "stage_retry_ready",
-          `${stage} failed; returning to implementation (attempt ${attemptNumber + 1} of 3)`,
+          `${stage} failed; returning to implementation (attempt ${failedAttemptCount + 1} of 3)`,
           now,
         );
         return Object.freeze(this.nodesForIds([nodeId]));
@@ -908,7 +915,7 @@ export class TransparentWorkflow {
       this.db.prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?")
         .run(now, nodeId);
       const workItemState = String(attempt.work_item_state) as WorkItemState;
-      if (attemptNumber >= 3 && !isTerminalWorkItemState(workItemState)) {
+      if (failedAttemptCount >= 3 && !isTerminalWorkItemState(workItemState)) {
         transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
           workItemId: String(attempt.work_item_id),
           to: "dead_letter",
@@ -1103,7 +1110,7 @@ export class TransparentWorkflow {
         this.event(projectId, nodeId, taskId, "stage_failed", `${stage} blocked: ${detail.slice(0, 240)}`, now);
         return Object.freeze([]);
       };
-      const brightLineDetail = !passed
+      const brightLineDetail = attempt.pipeline_branch !== null && !passed
         ? result.startsWith("BRIGHT_LINE:")
           ? result
           : supplied?.summary.startsWith("BRIGHT_LINE:") === true ? supplied.summary : null

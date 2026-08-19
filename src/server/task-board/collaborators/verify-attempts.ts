@@ -5,9 +5,11 @@ import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager } from "#server/agents/task-workspace";
 import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
+import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
+import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
 
 const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
@@ -41,6 +43,7 @@ export interface VerifyAttemptsDependencies {
   readonly workspaceManagerFactory?: (repositoryPath: string) => MachineVerifyWorkspaceManager;
   readonly runnerFactory?: (options: VerifyRunnerOptions) => MachineVerifyRunner;
   readonly executeCheck?: (command: string, cwd: string) => Promise<CriterionCheckExecution>;
+  readonly git?: GitRunner;
   readonly settleInTransaction: (
     nodeId: string,
     stage: WorkflowStage,
@@ -197,6 +200,7 @@ export class VerifyAttemptsCollaborator {
   readonly #workspaceManagerFactory: (repositoryPath: string) => MachineVerifyWorkspaceManager;
   readonly #runnerFactory: (options: VerifyRunnerOptions) => MachineVerifyRunner;
   readonly #executeCheck: (command: string, cwd: string) => Promise<CriterionCheckExecution>;
+  readonly #git: GitRunner;
   readonly #inFlightStarts = new Set<string>();
   #sweepInFlight: Promise<number> | null = null;
   #closed = false;
@@ -213,6 +217,7 @@ export class VerifyAttemptsCollaborator {
       }));
     this.#runnerFactory = dependencies.runnerFactory ?? ((options) => new VerifyRunner(options));
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
+    this.#git = dependencies.git ?? runDeclaredScopeGit;
   }
 
   listForWorkItem(workItemId: string): readonly VerifyAttempt[] {
@@ -459,7 +464,32 @@ export class VerifyAttemptsCollaborator {
       const detail = `Machine verify criterion checks failed: ${checks.failures.join("; ")}`.slice(0, 4_000);
       await this.#finalize(current, "failed", checks, detail, false);
     } else {
-      await this.#finalize(current, "green", checks, "Machine verify and criterion checks passed.", true);
+      let verifiedSha: string;
+      try {
+        if (current.workspacePath === null) throw new Error("verify workspace path is unavailable");
+        verifiedSha = this.#git([
+          "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", current.workspacePath,
+          "rev-parse", "HEAD",
+        ]).trim();
+        if (!GIT_OBJECT_ID_PATTERN.test(verifiedSha) || verifiedSha.length !== 40) {
+          throw new Error("git returned an invalid verified object id");
+        }
+      } catch (error) {
+        await this.#finalizeFailure(
+          current,
+          "died",
+          `Machine verify could not record the verified branch tip: ${errorDetail(error)}`,
+        );
+        return true;
+      }
+      await this.#finalize(
+        current,
+        "green",
+        checks,
+        "Machine verify and criterion checks passed.",
+        true,
+        `verified-sha:${verifiedSha}`,
+      );
     }
     return true;
   }
@@ -502,6 +532,7 @@ export class VerifyAttemptsCollaborator {
     checks: CheckOutcome,
     detail: string,
     passed: boolean,
+    storedDetail = detail,
   ): Promise<void> {
     if (this.#closed) return;
     let settledNodes: readonly WorkNode[] = [];
@@ -514,7 +545,7 @@ export class VerifyAttemptsCollaborator {
       `).run(
         state,
         JSON.stringify(checks.results),
-        detail.slice(0, 4_000),
+        storedDetail.slice(0, 4_000),
         exactNow(this.runtime.config.now),
         current.verifyAttemptId,
       );

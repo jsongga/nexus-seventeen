@@ -26,7 +26,20 @@ export type MergePipelineResult =
   | Readonly<{ kind: "merged"; mergeSha: string }>
   | Readonly<{ kind: "conflict"; summary: string }>
   | Readonly<{ kind: "diverged"; detail: string }>
+  | Readonly<{ kind: "empty" }>
   | Readonly<{ kind: "repo_busy" }>;
+
+export function resolvePipelineBranchTip(request: Readonly<{
+  repoPath: string;
+  branch: string;
+  git: GitRunner;
+}>): string {
+  const sha = request.git(neutralized(request.repoPath, [
+    "rev-parse", "--verify", `${request.branch}^{commit}`,
+  ])).trim();
+  if (!GIT_OBJECT_ID_PATTERN.test(sha)) throw new Error("git returned an invalid branch object id");
+  return sha;
+}
 
 function optionalGit(git: GitRunner, arguments_: readonly string[]): string | null {
   try {
@@ -49,9 +62,13 @@ function mergeErrorDetail(error: unknown): string {
 export function mergePipelineBranch(request: Readonly<{
   repoPath: string;
   branch: string;
+  branchSha: string;
   baseSha: string;
   git: GitRunner;
 }>): MergePipelineResult {
+  if (!GIT_OBJECT_ID_PATTERN.test(request.branchSha)) {
+    throw new Error("pipeline branch object id is invalid");
+  }
   let currentBranch: string;
   let dirty: string;
   try {
@@ -76,8 +93,15 @@ export function mergePipelineBranch(request: Readonly<{
       detail: `Pipeline base ${request.baseSha} is not an ancestor of merge target ${currentBranch} at ${head}.`,
     });
   }
+  const commitCount = request.git(neutralized(request.repoPath, [
+    "rev-list", "--count", `${request.baseSha}..${request.branchSha}`,
+  ])).trim();
+  if (commitCount === "0") return Object.freeze({ kind: "empty" });
+  if (!/^\d+$/u.test(commitCount)) throw new Error("git returned an invalid pipeline commit count");
   try {
-    request.git(neutralized(request.repoPath, ["merge", "--no-ff", "--no-edit", request.branch]));
+    request.git(neutralized(request.repoPath, [
+      "merge", "--no-ff", "--no-edit", "-m", `Merge branch '${request.branch}'`, request.branchSha,
+    ]));
   } catch (error) {
     const mergeHead = optionalGit(request.git, neutralized(request.repoPath, ["rev-parse", "--verify", "MERGE_HEAD"]));
     if (mergeHead === null) throw error;

@@ -199,6 +199,7 @@ async function attemptFixture(
   const runner = new FakeRunner(runtime, workspacePath);
   const settlements: Settlement[] = [];
   const checkCalls: Array<{ command: string; cwd: string }> = [];
+  const gitCalls: string[][] = [];
   let checkPassed = true;
   const workflow = settleWorkflow
     ? new TransparentWorkflow(
@@ -222,6 +223,11 @@ async function attemptFixture(
       checkCalls.push({ command, cwd });
       return { passed: checkPassed, detail: checkPassed ? "exit 0" : "exit 1" };
     },
+    git: (arguments_) => {
+      assert.equal(runtime.store.hasOpenTransaction, false);
+      gitCalls.push([...arguments_]);
+      return "b".repeat(40);
+    },
     settleInTransaction: (_nodeId, _stage, passed, evidence) => {
       assert.equal(runtime.store.hasOpenTransaction, true);
       settlements.push({ passed, evidence });
@@ -233,7 +239,7 @@ async function attemptFixture(
   const row = () => store.db.prepare("SELECT * FROM verify_attempts WHERE verify_attempt_id=?")
     .get(verifyAttemptId) as Record<string, unknown>;
   return {
-    runtime, store, collaborator, runner, workspace, settlements, checkCalls, row,
+    runtime, store, collaborator, runner, workspace, settlements, checkCalls, gitCalls, row,
     verifyAttemptId, workItem, nodeId,
     setCheckPassed(value: boolean): void { checkPassed = value; },
   };
@@ -263,6 +269,11 @@ test("starting attempts start outside the transaction, then green runs execute a
       passed: true,
     }]);
     assert.deepEqual(fixture.checkCalls, [{ command: "node test.mjs", cwd: String(fixture.row().workspace_path) }]);
+    assert.deepEqual(fixture.gitCalls, [[
+      "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", String(fixture.row().workspace_path),
+      "rev-parse", "HEAD",
+    ]]);
+    assert.equal(fixture.row().detail, `verified-sha:${"b".repeat(40)}`);
     assert.equal(fixture.settlements[0]?.passed, true);
     assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
     assert.deepEqual(fixture.workspace.retained, []);
@@ -400,6 +411,92 @@ test("overlapping verify sweeps settle one handoff and one implementation return
     assert.equal(node?.state, "ready");
     assert.equal(node?.current_stage, "implementation");
     assert.equal(node?.version, 2);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("green rounds separated by final rejection do not consume the failed-verify retry budget", async () => {
+  const fixture = await attemptFixture("green-rejection-budget", "running", [], true);
+  try {
+    fixture.store.transaction(() => {
+      fixture.store.db.prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
+        .run(fixture.verifyAttemptId);
+      const insert = fixture.store.db.prepare(`
+        INSERT INTO verify_attempts(
+          verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+          check_results_json,detail,created_at,ended_at
+        ) VALUES (?,?,'testing',?,NULL,NULL,'green','[]',?, ?, ?)
+      `);
+      insert.run(
+        "verify-prior-green-one",
+        fixture.nodeId,
+        1,
+        `verified-sha:${"1".repeat(40)}`,
+        "2026-08-19T11:00:00.000Z",
+        "2026-08-19T11:01:00.000Z",
+      );
+      insert.run(
+        "verify-prior-green-two",
+        fixture.nodeId,
+        3,
+        `verified-sha:${"2".repeat(40)}`,
+        "2026-08-19T11:30:00.000Z",
+        "2026-08-19T11:31:00.000Z",
+      );
+    });
+    fixture.runner.statusState = "failed";
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
+    assert.deepEqual({
+      ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
+        .get(fixture.nodeId),
+    }, { state: "ready", current_stage: "implementation" });
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("three failed or died verify rounds exhaust the verify retry budget", async () => {
+  const fixture = await attemptFixture("failed-budget", "running", [], true);
+  try {
+    fixture.store.transaction(() => {
+      fixture.store.db.prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
+        .run(fixture.verifyAttemptId);
+      const insert = fixture.store.db.prepare(`
+        INSERT INTO verify_attempts(
+          verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+          check_results_json,detail,created_at,ended_at
+        ) VALUES (?,?,'testing',?,NULL,NULL,?,'[]','prior verify failure',?,?)
+      `);
+      insert.run(
+        "verify-prior-failed-one",
+        fixture.nodeId,
+        1,
+        "failed",
+        "2026-08-19T11:00:00.000Z",
+        "2026-08-19T11:01:00.000Z",
+      );
+      insert.run(
+        "verify-prior-died-two",
+        fixture.nodeId,
+        3,
+        "died",
+        "2026-08-19T11:30:00.000Z",
+        "2026-08-19T11:31:00.000Z",
+      );
+    });
+    fixture.runner.statusState = "failed";
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "dead_letter");
+    assert.equal(fixture.store.db.prepare("SELECT state FROM work_nodes WHERE node_id=?")
+      .get(fixture.nodeId)?.state, "blocked");
   } finally {
     fixture.runtime.close();
     fixture.store.close();

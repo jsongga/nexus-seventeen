@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
 import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
@@ -120,5 +121,98 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
     runtime?.close();
     store?.close();
     if (originalBoardOpen) fixture.board.close();
+  }
+});
+
+test("a pipeline testing node blocks when its executor is flipped to an agent after confirmation", async () => {
+  const fixture = await boardFixture();
+  try {
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Do not dispatch pipeline testing to an agent after executor drift.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "pipeline-testing-agent-drift").workItem;
+    const proposed = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Keep pipeline testing machine-owned after confirmation.",
+      assumptions: [],
+      acceptanceCriteria: ["No testing agent is awakened."],
+      skillIds: [],
+      nodes: [{
+        nodeId: "pipeline-testing-agent-drift-node",
+        title: "Guard pipeline testing",
+        objective: "Block the testing stage when its executor drifts to an agent.",
+        acceptanceCriteria: ["The node blocks without a task or wakeup."],
+        dependencyNodeIds: [],
+        stageTemplate: ["testing", "verification"],
+      }],
+    });
+    const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, {
+      expectedState: "proposed",
+    });
+    const node = confirmed.nodes[0];
+    assert.ok(node);
+
+    const machineConfiguration = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      stages: automationStages({ testing: { kind: "machine_verify" } }),
+    }));
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        UPDATE work_items
+        SET pipeline_branch=?,base_sha=?,state='verifying',current_stage='testing',version=version+1
+        WHERE work_item_id=?
+      `).run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
+      db.prepare(`
+        UPDATE work_nodes SET state='ready',current_stage='testing',version=version+1 WHERE node_id=?
+      `).run(node.nodeId);
+    } finally {
+      db.close();
+    }
+
+    const testingAgentType = {
+      agentTypeId: "pipeline-testing-drift-agent",
+      name: "Pipeline testing drift agent",
+      description: "Would run testing if the pipeline guard did not block it.",
+      role: "verifier" as const,
+      supplementalInstructions: "Inspect tests without changing the workspace.",
+      skillIds: [],
+      evaluatorProfile: "tests" as const,
+      enabled: true,
+    };
+    const before = new DatabaseSync(fixture.path, { readOnly: true });
+    let taskCount: number;
+    let wakeupCount: number;
+    try {
+      taskCount = Number(before.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count);
+      wakeupCount = Number(before.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count);
+    } finally {
+      before.close();
+    }
+
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      version: machineConfiguration.version,
+      agentTypes: [testingAgentType],
+      stages: automationStages({
+        testing: { kind: "agent_type", agentTypeId: testingAgentType.agentTypeId },
+      }),
+    }));
+
+    const after = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(after.prepare("SELECT state FROM work_nodes WHERE node_id=?").get(node.nodeId)?.state, "blocked");
+      assert.equal(after.prepare(`
+        SELECT summary FROM project_events
+        WHERE node_id=? AND event_type='node_blocked'
+        ORDER BY sequence DESC LIMIT 1
+      `).get(node.nodeId)?.summary, "pipeline testing stage requires machine_verify");
+      assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count), taskCount);
+      assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count), wakeupCount);
+      assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM verify_attempts").get()?.count), 0);
+    } finally {
+      after.close();
+    }
+  } finally {
+    fixture.board.close();
   }
 });

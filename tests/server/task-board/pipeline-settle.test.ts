@@ -269,6 +269,77 @@ test("failed implementation parks on a BRIGHT_LINE handoff summary", async () =>
   }
 });
 
+test("a non-pipeline BRIGHT_LINE string follows the ordinary failed-stage retry path", async () => {
+  const fixture = await boardFixture();
+  const detail = "BRIGHT_LINE: this is ordinary non-pipeline failure text.";
+  try {
+    const implementationType = {
+      agentTypeId: "non-pipeline-bright-line-engineer",
+      name: "Non-pipeline engineer",
+      description: "Exercises ordinary workflow retry behavior.",
+      role: "engineer" as const,
+      supplementalInstructions: "Follow the ordinary workflow contract.",
+      skillIds: [],
+      evaluatorProfile: "tests" as const,
+      enabled: true,
+    };
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [implementationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+      }),
+    }));
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Retry a non-pipeline implementation failure.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "non-pipeline-bright-line").workItem;
+    const proposed = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Exercise ordinary retry semantics.",
+      assumptions: [],
+      acceptanceCriteria: ["The work item remains live after its first failure."],
+      skillIds: [],
+      nodes: [{
+        nodeId: "non-pipeline-bright-line-node",
+        title: "Retry ordinary implementation",
+        objective: "Return the failed stage to implementation.",
+        acceptanceCriteria: ["The first failure does not park the work item."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "verification"],
+      }],
+    });
+    fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-non-pipeline-bright-line",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: detail,
+      handoff: {
+        outcome: "failed",
+        summary: detail,
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [detail],
+        recommendedReturnStage: "implementation",
+      },
+    });
+
+    const current = fixture.board.requireWorkItem(workItem.workItemId);
+    assert.equal(current.pipelineBranch, null);
+    assert.equal(current.state, "implementing");
+    assert.equal(current.currentStage, "implementation");
+    assert.notEqual(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "blocked");
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("in-scope implementation commit advances to machine testing", async () => {
   const fixture = await pipelineFixture("inside");
   try {

@@ -148,6 +148,15 @@ const conflictMessages: Readonly<Record<string, string>> = {
   PLAN_NOT_PROPOSED: 'This work item or plan changed in another session. Refresh before trying again.',
 };
 
+const serverMessageConflictCodes = new Set([
+  'TASK_BOARD_PIPELINE_REPO_BUSY',
+  'TASK_BOARD_PIPELINE_BASE_DIVERGED',
+  'TASK_BOARD_PIPELINE_BRANCH_EMPTY',
+  'TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT',
+  'TASK_BOARD_PIPELINE_BRANCH_MOVED',
+  'TASK_BOARD_PIPELINE_SERIAL_CONFLICT',
+]);
+
 export const mutationNetworkError = "Couldn't reach the board — your change was not saved. Check your connection and try again.";
 
 export function actionErrorMessage(caught: unknown): string {
@@ -160,6 +169,9 @@ export function actionErrorMessage(caught: unknown): string {
     }
     if (caught.code !== null && conflictMessages[caught.code]) {
       return conflictMessages[caught.code];
+    }
+    if (caught.code !== null && serverMessageConflictCodes.has(caught.code)) {
+      return caught.message;
     }
     if (caught.status === 400) {
       return `Check this change: ${caught.message}`;

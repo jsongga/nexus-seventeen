@@ -211,7 +211,7 @@ process.stdin.on("end", () => {
     handoff: {
       outcome: "passed",
       summary: "Two staged commits are ready for machine verification.",
-      evidence: ["The fixture repository stays available.", ${JSON.stringify(MID_RUN_ASSUMPTION)}],
+      evidence: ["The fixture repository stays available.", "Commit abc123 passed focused tests.", "ASSUMPTION: " + ${JSON.stringify(MID_RUN_ASSUMPTION)}],
       artifactIds: [],
       acceptanceCriteria: [{
         criterion: ${JSON.stringify(HUMAN_CRITERION)},

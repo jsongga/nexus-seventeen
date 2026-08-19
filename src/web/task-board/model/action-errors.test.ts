@@ -183,6 +183,14 @@ describe('action error taxonomy', () => {
       .toBe('The board could not save this change. database unavailable');
   });
 
+  it('surfaces the server message for actionable pipeline merge conflicts', () => {
+    expect(actionErrorMessage(new BoardApiError(
+      'branch advanced since verification — request changes to re-verify',
+      409,
+      'TASK_BOARD_PIPELINE_BRANCH_MOVED',
+    ))).toBe('branch advanced since verification — request changes to re-verify');
+  });
+
   it('uses saved-change copy for network failures without claiming the whole board is unavailable', () => {
     const message = actionErrorMessage(new TypeError('Failed to fetch'));
 

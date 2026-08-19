@@ -108,6 +108,12 @@ function executorValue(executor: AutomationStageExecutor): string {
     : executor.kind === 'machine_verify' ? machineVerifyExecutorValue : '';
 }
 
+export function automationExecutorFromValue(value: string): AutomationStageExecutor {
+  return value === machineVerifyExecutorValue
+    ? { kind: 'machine_verify' }
+    : value ? { kind: 'agent_type', agentTypeId: value } : { kind: 'disabled' };
+}
+
 interface AgentTypeFormProps {
   initial: AutomationAgentType | null;
   persisted: boolean;
@@ -460,7 +466,7 @@ export function AutomationPage({
       draft: {
         ...current.draft,
         stages: current.draft.stages.map((entry) => entry.stage === stage
-          ? { stage, executor: agentTypeId ? { kind: 'agent_type', agentTypeId } : { kind: 'disabled' } }
+          ? { stage, executor: automationExecutorFromValue(agentTypeId) }
           : entry),
       },
     });
@@ -721,7 +727,7 @@ export function AutomationPage({
                               onChange={(event) => updateStage(stage, event.target.value)}
                             >
                               <option value="">Disabled</option>
-                              {entry.executor.kind === 'machine_verify' ? (
+                              {stage === 'testing' ? (
                                 <option value={machineVerifyExecutorValue}>Machine verify</option>
                               ) : null}
                               {eligible.map((agentType) => (

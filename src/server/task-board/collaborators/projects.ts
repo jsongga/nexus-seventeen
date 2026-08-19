@@ -41,12 +41,18 @@ import {
   type VerifyAttemptsDependencies,
 } from "./verify-attempts.js";
 import { checkDeclaredScope } from "./scope-check.js";
-import { mergePipelineBranch, type MergePipelineResult } from "./merge-executor.js";
+import {
+  mergePipelineBranch,
+  resolvePipelineBranchTip,
+  type MergePipelineResult,
+} from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
+const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
+const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
 
 const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
   encoding: "utf8",
@@ -63,7 +69,7 @@ export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
 
 export type ProjectsVerifyDependencies = Omit<
   VerifyAttemptsDependencies,
-  "settleInTransaction" | "activateNodes"
+  "git" | "settleInTransaction" | "activateNodes"
 >;
 export type PipelineMergeExecutor = typeof mergePipelineBranch;
 
@@ -93,6 +99,7 @@ export class ProjectsCollaborator {
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
       ...verifyDependencies,
+      git,
       settleInTransaction: (nodeId, stage, passed, evidence) =>
         this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, stage, passed, evidence),
       activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
@@ -287,8 +294,10 @@ export class ProjectsCollaborator {
         ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
         : [];
     });
-    const midRunAssumptions = Object.freeze([...new Set(evidence.filter((candidate) =>
-      !assumptions.some((planned) => candidate.includes(planned) || planned.includes(candidate))))]);
+    const midRunAssumptions = Object.freeze([...new Set(evidence
+      .filter((candidate) => candidate.startsWith(MID_RUN_ASSUMPTION_PREFIX))
+      .map((candidate) => candidate.slice(MID_RUN_ASSUMPTION_PREFIX.length).trim())
+      .filter((candidate) => candidate.length > 0))]);
     const criteria = JSON.parse(String(row.acceptance_criteria_json)) as string[];
     const criterionChecks = JSON.parse(String(row.criterion_checks_json ?? "[]")) as Array<{
       criterion: string;
@@ -311,14 +320,36 @@ export class ProjectsCollaborator {
 
   approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): Promise<WorkItem> {
     return this.withFinalApprovalLock(workItemId, () => {
-      // Git never runs inside this transaction. It is only the final state/version CAS
-      // immediately before the irreversible repository mutation.
-      const context = this.runtime.store.transaction(() => this.pipelineMergeContext(workItemId, request.version));
+      // Git runs before the final settlement transaction and never while the store has an open transaction.
+      const context = this.pipelineMergeContext(workItemId, request.version);
+      let branchTip: string;
+      try {
+        branchTip = resolvePipelineBranchTip({
+          repoPath: context.repoPath,
+          branch: context.branch,
+          git: this.git,
+        });
+      } catch (error) {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+          "The pipeline repository is unavailable",
+          { cause: error },
+        );
+      }
+      if (context.verifiedSha === null || branchTip !== context.verifiedSha) {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_MOVED,
+          "branch advanced since verification — request changes to re-verify",
+        );
+      }
       let merge: MergePipelineResult;
       try {
         merge = this.mergePipeline({
           repoPath: context.repoPath,
           branch: context.branch,
+          branchSha: branchTip,
           baseSha: context.baseSha,
           git: this.git,
         });
@@ -342,6 +373,13 @@ export class ProjectsCollaborator {
           409,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BASE_DIVERGED,
           `The pipeline base diverged from the current merge target: ${merge.detail}`,
+        );
+      }
+      if (merge.kind === "empty") {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_EMPTY,
+          "nothing to merge",
         );
       }
       let readyNodes: readonly WorkNode[];
@@ -399,6 +437,7 @@ export class ProjectsCollaborator {
     repoPath: string;
     branch: string;
     baseSha: string;
+    verifiedSha: string | null;
   }> {
     const workItem = this.runtime.requireWorkItem(workItemId);
     if (workItem.version !== version) {
@@ -429,10 +468,23 @@ export class ProjectsCollaborator {
       );
     }
     const project = this.runtime.requireProject(workItem.resolvedProjectId);
+    const latestGreen = this.runtime.store.db.prepare(`
+      SELECT verify.detail
+      FROM verify_attempts verify
+      JOIN work_nodes node ON node.node_id=verify.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE plan.work_item_id=? AND plan.state='confirmed' AND verify.state='green'
+      ORDER BY verify.attempt DESC,verify.created_at DESC,verify.verify_attempt_id DESC
+      LIMIT 1
+    `).get(workItemId);
+    const verifiedSha = latestGreen?.detail === null || latestGreen?.detail === undefined
+      ? null
+      : VERIFIED_SHA_DETAIL.exec(String(latestGreen.detail))?.[1] ?? null;
     return Object.freeze({
       repoPath: project.description,
       branch: workItem.pipelineBranch,
       baseSha: workItem.baseSha,
+      verifiedSha,
     });
   }
 
@@ -602,6 +654,22 @@ export class ProjectsCollaborator {
           `${current.title} has no configured ${stage} executor`,
         );
         return;
+      }
+      if (stage === "testing") {
+        const pipeline = this.runtime.store.db.prepare(`
+          SELECT item.pipeline_branch
+          FROM work_nodes node
+          JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+          JOIN work_items item ON item.work_item_id=plan.work_item_id
+          WHERE node.node_id=?
+        `).get(current.nodeId);
+        if (pipeline?.pipeline_branch !== null && pipeline?.pipeline_branch !== undefined) {
+          this.#workflow.blockNodeInTransaction(
+            current.nodeId,
+            "pipeline testing stage requires machine_verify",
+          );
+          return;
+        }
       }
       const agentType = configuration.agentTypes.find((item) =>
         item.agentTypeId === configuredExecutor.agentTypeId && item.enabled);

@@ -43,6 +43,7 @@ test("mergePipelineBranch merges into a clean trunk target even when the reposit
   const result = mergePipelineBranch({
     repoPath: fixture.repo,
     branch: fixture.branch,
+    branchSha,
     baseSha: fixture.baseSha,
     git: runMergeGit,
   });
@@ -61,6 +62,7 @@ test("mergePipelineBranch aborts a conflict and leaves the repository clean", as
   await writeFile(join(fixture.repo, "shared.txt"), "pipeline\n");
   git(fixture.repo, "add", "shared.txt");
   git(fixture.repo, "commit", "-m", "pipeline edit");
+  const branchSha = git(fixture.repo, "rev-parse", "HEAD").trim();
   git(fixture.repo, "switch", "main");
   await writeFile(join(fixture.repo, "shared.txt"), "default branch\n");
   git(fixture.repo, "add", "shared.txt");
@@ -70,6 +72,7 @@ test("mergePipelineBranch aborts a conflict and leaves the repository clean", as
   const result = mergePipelineBranch({
     repoPath: fixture.repo,
     branch: fixture.branch,
+    branchSha,
     baseSha: fixture.baseSha,
     git: runMergeGit,
   });
@@ -91,6 +94,7 @@ test("mergePipelineBranch reports repo_busy when another task branch is checked 
   assert.deepEqual(mergePipelineBranch({
     repoPath: fixture.repo,
     branch: fixture.branch,
+    branchSha: fixture.baseSha,
     baseSha: fixture.baseSha,
     git: runMergeGit,
   }), { kind: "repo_busy" });
@@ -105,6 +109,7 @@ test("mergePipelineBranch reports repo_busy when the default branch worktree is 
   assert.deepEqual(mergePipelineBranch({
     repoPath: fixture.repo,
     branch: fixture.branch,
+    branchSha: fixture.baseSha,
     baseSha: fixture.baseSha,
     git: runMergeGit,
   }), { kind: "repo_busy" });
@@ -122,6 +127,7 @@ test("mergePipelineBranch reports diverged when the pipeline base is not an ance
   const result = mergePipelineBranch({
     repoPath: fixture.repo,
     branch: fixture.branch,
+    branchSha: fixture.baseSha,
     baseSha: fixture.baseSha,
     git: runMergeGit,
   });
@@ -129,4 +135,21 @@ test("mergePipelineBranch reports diverged when the pipeline base is not an ance
   assert.equal(result.kind, "diverged");
   if (result.kind !== "diverged") return;
   assert.match(result.detail, /not an ancestor of merge target develop/iu);
+});
+
+test("mergePipelineBranch reports an empty pipeline branch without creating a merge commit", async (t) => {
+  const fixture = await fixtureRepo();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  git(fixture.repo, "branch", fixture.branch);
+  const before = git(fixture.repo, "rev-parse", "HEAD").trim();
+
+  assert.deepEqual(mergePipelineBranch({
+    repoPath: fixture.repo,
+    branch: fixture.branch,
+    branchSha: fixture.baseSha,
+    baseSha: fixture.baseSha,
+    git: runMergeGit,
+  }), { kind: "empty" });
+  assert.equal(git(fixture.repo, "rev-parse", "HEAD").trim(), before);
+  assert.equal(git(fixture.repo, "status", "--porcelain", "-z"), "");
 });

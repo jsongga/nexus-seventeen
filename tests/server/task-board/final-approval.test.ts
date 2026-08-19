@@ -120,7 +120,7 @@ function proposePipeline(fixture: Fixture, suffix: string): { workItemId: string
   return { workItemId: workItem.workItemId, planRevisionId: revision.planRevisionId };
 }
 
-function forceFinalApproval(path: string, workItemId: string): number {
+function forceFinalApproval(path: string, workItemId: string, verifiedSha: string): number {
   const db = new DatabaseSync(path);
   try {
     const row = db.prepare(`
@@ -149,7 +149,11 @@ function forceFinalApproval(path: string, workItemId: string): number {
       stage: "implementation",
       outcome: "passed",
       summary: "Implementation is ready for final review.",
-      evidence: ["The default branch stays available.", "Use a plain-text marker for v1."],
+      evidence: [
+        "The default branch stays available.",
+        "Focused tests passed at commit abc123.",
+        "ASSUMPTION: Use a plain-text marker for v1.",
+      ],
       artifactIds: [],
       acceptanceCriteria: [],
       blockers: [],
@@ -173,7 +177,7 @@ function forceFinalApproval(path: string, workItemId: string): number {
       INSERT INTO verify_attempts(
         verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
         check_results_json,detail,created_at,ended_at
-      ) VALUES(?,?,'testing',1,'verify-run-one',NULL,'green',?,'All checks passed.',?,?)
+      ) VALUES(?,?,'testing',1,'verify-run-one',NULL,'green',?,?,?,?)
     `).run(
       `verify-final-${workItemId}`,
       nodeId,
@@ -182,6 +186,7 @@ function forceFinalApproval(path: string, workItemId: string): number {
         check: "node check.mjs",
         passed: true,
       }]),
+      `verified-sha:${verifiedSha}`,
       now,
       now,
     );
@@ -246,7 +251,12 @@ function forceFinalApproval(path: string, workItemId: string): number {
   }
 }
 
-async function finalApprovalFixture(suffix: string, conflict = false, forceSettlementConflict = false) {
+async function finalApprovalFixture(
+  suffix: string,
+  conflict = false,
+  forceSettlementConflict = false,
+  empty = false,
+) {
   const fixture = await boardFixture();
   const repo = await repository();
   setProjectRepository(fixture, repo.repo);
@@ -255,20 +265,23 @@ async function finalApprovalFixture(suffix: string, conflict = false, forceSettl
   fixture.board.confirmWorkflow(proposed.planRevisionId, { expectedState: "proposed" });
   const branch = `task/${proposed.workItemId}`;
   await git(repo.repo, ["switch", "-c", branch]);
-  await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
-  await writeFile(
-    join(repo.repo, conflict ? "shared.txt" : "src/allowed/change.txt"),
-    "pipeline\n",
-  );
-  await git(repo.repo, ["add", "."]);
-  await git(repo.repo, ["commit", "-m", `pipeline ${suffix}`]);
+  if (!empty) {
+    await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
+    await writeFile(
+      join(repo.repo, conflict ? "shared.txt" : "src/allowed/change.txt"),
+      "pipeline\n",
+    );
+    await git(repo.repo, ["add", "."]);
+    await git(repo.repo, ["commit", "-m", `pipeline ${suffix}`]);
+  }
+  const verifiedSha = (await git(repo.repo, ["rev-parse", "HEAD"])).trim();
   await git(repo.repo, ["switch", "main"]);
   if (conflict) {
     await writeFile(join(repo.repo, "shared.txt"), "default\n");
     await git(repo.repo, ["add", "shared.txt"]);
     await git(repo.repo, ["commit", "-m", "default conflict"]);
   }
-  const version = forceFinalApproval(fixture.path, proposed.workItemId);
+  const version = forceFinalApproval(fixture.path, proposed.workItemId, verifiedSha);
   fixture.board.close();
   const service = await createTaskBoardService(
     {
@@ -387,6 +400,67 @@ test("approve-merge merges before transitioning the work item to merged", async 
     } finally {
       db.close();
     }
+  } finally {
+    await fixture.service.close();
+  }
+});
+
+test("approve-merge rejects a branch advanced after green verification without touching the merge target", async () => {
+  const fixture = await finalApprovalFixture("branch-moved");
+  try {
+    const before = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
+    await git(fixture.repo, ["switch", fixture.branch]);
+    await writeFile(join(fixture.repo, "src", "allowed", "post-verify.txt"), "unverified\n");
+    await git(fixture.repo, ["add", "src/allowed/post-verify.txt"]);
+    await git(fixture.repo, ["commit", "-m", "advance after verification"]);
+    await git(fixture.repo, ["switch", "main"]);
+
+    const response = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/approve-merge`,
+      "POST",
+      { version: fixture.version },
+    );
+
+    assert.equal(response.status, 409);
+    const error = await response.json() as { error: { code: string; message: string } };
+    assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BRANCH_MOVED");
+    assert.equal(error.error.message, "branch advanced since verification — request changes to re-verify");
+    assert.equal((await git(fixture.repo, ["branch", "--show-current"])).trim(), "main");
+    assert.equal((await git(fixture.repo, ["rev-parse", "HEAD"])).trim(), before);
+    assert.equal(await git(fixture.repo, ["status", "--porcelain"]), "");
+    await assert.rejects(readFile(join(fixture.repo, "src", "allowed", "post-verify.txt")));
+    assert.equal(
+      (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET")
+        .then((result) => result.json()) as { workItem: { state: string } }).workItem.state,
+      "final_approval",
+    );
+  } finally {
+    await fixture.service.close();
+  }
+});
+
+test("approve-merge rejects a zero-commit pipeline branch as empty", async () => {
+  const fixture = await finalApprovalFixture("empty", false, false, true);
+  try {
+    const before = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
+    const response = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/approve-merge`,
+      "POST",
+      { version: fixture.version },
+    );
+
+    assert.equal(response.status, 409);
+    const error = await response.json() as { error: { code: string; message: string } };
+    assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BRANCH_EMPTY");
+    assert.equal(error.error.message, "nothing to merge");
+    assert.equal((await git(fixture.repo, ["rev-parse", "HEAD"])).trim(), before);
+    assert.equal(
+      (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET")
+        .then((result) => result.json()) as { workItem: { state: string } }).workItem.state,
+      "final_approval",
+    );
   } finally {
     await fixture.service.close();
   }
