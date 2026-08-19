@@ -7,6 +7,7 @@ import {
   type WorkflowStage,
   type StageHandoffDraft,
   type WorkflowPlanDraft,
+  type WorkflowPipelineContext,
   type TaskKind,
   type TaskPhaseStage,
   type TaskPhaseStatus,
@@ -145,6 +146,8 @@ export interface BoundedAgentContext {
     stage: WorkflowStage;
     skills: readonly SkillSnapshot[];
     dependencyHandoffs: readonly StageHandoff[];
+    readonly workspaceKey?: string | null;
+    readonly pipeline?: WorkflowPipelineContext | null;
   }> | null;
 }
 

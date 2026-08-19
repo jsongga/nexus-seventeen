@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
   TASK_BOARD_API_VERSION,
@@ -20,6 +21,7 @@ import {
   TransparentWorkflow,
   type ProjectWorkflowSnapshot,
   type RejectWorkflowTransactionResult,
+  type WorkflowGitRunner,
 } from "../persistence/workflow.js";
 import { SkillRegistry } from "../skills.js";
 import { exactNow } from "../persistence/timestamps.js";
@@ -30,6 +32,17 @@ import type { TasksCollaborator } from "./tasks.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
+const GIT_TIMEOUT_MS = 30_000;
+const GIT_MAX_BYTES = 1024 * 1024;
+
+const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
+  encoding: "utf8",
+  timeout: GIT_TIMEOUT_MS,
+  maxBuffer: GIT_MAX_BYTES,
+  windowsHide: true,
+  stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+});
 
 export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
   outcome?: "parked_hazardous";
@@ -43,6 +56,7 @@ export class ProjectsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
+    git: WorkflowGitRunner = runWorkflowGit,
   ) {
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
@@ -50,6 +64,7 @@ export class ProjectsCollaborator {
       runtime.config.now,
       (operation) => runtime.store.transaction(operation),
       (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),
+      git,
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
   }

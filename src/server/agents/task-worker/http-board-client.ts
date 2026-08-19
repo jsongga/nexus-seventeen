@@ -419,7 +419,13 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
       status: question.status,
     })),
     workspaceRefs: context.workspaceRefs,
-    workflow: context.workflow ?? null,
+    workflow: context.workflow === undefined || context.workflow === null
+      ? null
+      : {
+          ...context.workflow,
+          workspaceKey: context.workflow.workspaceKey ?? null,
+          pipeline: context.workflow.pipeline ?? null,
+        },
   };
   return parseBoundedAgentContext(internal);
 }

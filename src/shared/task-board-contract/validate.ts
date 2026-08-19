@@ -90,6 +90,7 @@ import {
   type WorkItemState,
   type WorkNode,
   type WorkflowStage,
+  type WorkflowPipelineContext,
   type WorkflowPlanDraft,
 } from "./index.js";
 
@@ -1391,6 +1392,15 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   ) {
     throw new ContractValidationError("Claim context collections are invalid");
   }
+  if (context.workflow !== null) {
+    const workflow = exact(
+      context.workflow,
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline"],
+      "Workflow context",
+      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
+    );
+    parseWorkflowPipelineFields(workflow, "Workflow context");
+  }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   booleanValue(context.intake, "context.intake");
   return value as ClaimRunResult;
@@ -1486,6 +1496,8 @@ export interface ValidatedAgentContext {
     stage: WorkflowStage;
     skills: readonly SkillSnapshot[];
     dependencyHandoffs: readonly StageHandoff[];
+    workspaceKey: string | null;
+    pipeline: WorkflowPipelineContext | null;
   }> | null;
 }
 
@@ -1633,6 +1645,45 @@ function parseWorkerPhaseUpdate(value: unknown, index: number): ValidatedAgentTa
   });
 }
 
+function parseWorkflowPipelineFields(
+  item: JsonRecord,
+  label: string,
+): Readonly<{ workspaceKey: string | null; pipeline: WorkflowPipelineContext | null }> {
+  const workspaceKey = item.workspaceKey === undefined || item.workspaceKey === null
+    ? null
+    : identifier(item.workspaceKey, `${label}.workspaceKey`);
+  let pipeline: WorkflowPipelineContext | null = null;
+  if (item.pipeline !== undefined && item.pipeline !== null) {
+    const value = exact(item.pipeline, [
+      "branch", "baseSha", "changeShape", "tier", "declaredScope", "nonGoals", "assumptions",
+    ], `${label}.pipeline`);
+    if (workspaceKey === null) {
+      throw new ContractValidationError(`${label}.pipeline requires workspaceKey`);
+    }
+    const branch = workerProse(value.branch, `${label}.pipeline.branch`, 133);
+    const baseSha = workerProse(value.baseSha, `${label}.pipeline.baseSha`, 64);
+    if (branch !== `task/${workspaceKey}` || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(baseSha)) {
+      throw new ContractValidationError(`${label}.pipeline identity is invalid`);
+    }
+    pipeline = Object.freeze({
+      branch,
+      baseSha,
+      changeShape: contractMember(value.changeShape, PLAN_CHANGE_SHAPES, `${label}.pipeline.changeShape`),
+      tier: contractMember(value.tier, PLAN_TIERS, `${label}.pipeline.tier`),
+      declaredScope: boundedPlanArray(value.declaredScope, `${label}.pipeline.declaredScope`, 1, 64,
+        (entry, entryLabel) => planScopeEntry(entry, entryLabel, workerProse)),
+      nonGoals: boundedPlanArray(value.nonGoals, `${label}.pipeline.nonGoals`, 0, 32,
+        (entry, entryLabel) => workerProse(entry, entryLabel, 1_000)),
+      assumptions: boundedPlanArray(value.assumptions, `${label}.pipeline.assumptions`, 0, 64,
+        (entry, entryLabel) => workerProse(entry, entryLabel, 4_000)),
+    });
+  }
+  if ((workspaceKey === null) !== (pipeline === null)) {
+    throw new ContractValidationError(`${label}.workspaceKey and pipeline must both be null or both be present`);
+  }
+  return Object.freeze({ workspaceKey, pipeline });
+}
+
 export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim {
   const item = exact(value, [
     "apiVersion", "claimId", "runId", "wakeupId", "projectId", "agentId", "taskId", "reason",
@@ -1741,8 +1792,14 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
 
   let workflow: ValidatedAgentContext["workflow"] = null;
   if (item.workflow !== null) {
-    const workflowItem = exact(item.workflow, ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"], "Workflow context");
+    const workflowItem = exact(
+      item.workflow,
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline"],
+      "Workflow context",
+      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
+    );
     const workflowStage = contractMember(workflowItem.stage, WORKFLOW_STAGES, "Workflow stage");
+    const pipelineFields = parseWorkflowPipelineFields(workflowItem, "Workflow context");
     if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16) throw new ContractValidationError("Workflow skills are invalid");
     const skills = workflowItem.skills.map((entry, index) => {
       const skill = exact(entry, ["skillId", "name", "description", "digest", "content"], `Workflow skill ${index}`);
@@ -1767,6 +1824,8 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       stage: workflowStage,
       skills: Object.freeze(skills),
       dependencyHandoffs: Object.freeze(dependencyHandoffs),
+      workspaceKey: pipelineFields.workspaceKey,
+      pipeline: pipelineFields.pipeline,
     });
   }
 

@@ -16,6 +16,7 @@ import {
   type StageHandoffDraft,
   type WorkNode,
   type WorkItemState,
+  type WorkflowPipelineContext,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
@@ -27,8 +28,10 @@ import {
 } from "../collaborators/work-item-transitions.js";
 
 type Row = Record<string, unknown>;
+export type WorkflowGitRunner = (arguments_: readonly string[]) => string;
 const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
 function text(value: unknown, field: string, max = 8_000): string {
   if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > max) {
@@ -52,6 +55,40 @@ function testingStageUsesMachineVerify(db: DatabaseSync): boolean {
   if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:automation_configuration_missing");
   const stages = json<Array<{ readonly stage?: unknown; readonly executor?: { readonly kind?: unknown } }>>(row.stages_json);
   return stages.some((stage) => stage.stage === "testing" && stage.executor?.kind === "machine_verify");
+}
+
+function pipelineShaped(nodes: readonly { readonly stageTemplate: readonly unknown[] }[]): boolean {
+  return nodes.length === 1 &&
+    nodes[0]?.stageTemplate.length === 2 &&
+    nodes[0].stageTemplate[0] === "implementation" &&
+    nodes[0].stageTemplate[1] === "testing";
+}
+
+function storedPlanIsPipeline(db: DatabaseSync, planRevisionId: string): boolean {
+  const nodes = (db.prepare(
+    "SELECT stage_template_json FROM work_nodes WHERE plan_revision_id=? ORDER BY node_id",
+  ).all(planRevisionId) as Row[]).map((row) => ({ stageTemplate: json<unknown[]>(row.stage_template_json) }));
+  return pipelineShaped(nodes) && testingStageUsesMachineVerify(db);
+}
+
+function pipelineBaseSha(repositoryPath: string, git: WorkflowGitRunner): string {
+  try {
+    const output = git([
+      "-c", "core.fsmonitor=",
+      "-c", "core.hooksPath=",
+      "-C", repositoryPath,
+      "rev-parse", "HEAD",
+    ]).trim();
+    if (!GIT_OBJECT_ID.test(output)) throw new Error("git returned an invalid object id");
+    return output;
+  } catch (error) {
+    throw new TaskBoardError(
+      409,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+      "The pipeline repository is unavailable",
+      { cause: error },
+    );
+  }
 }
 
 function planFromRow(row: Row): PlanRevision {
@@ -103,7 +140,8 @@ export class TransparentWorkflow {
     readonly skills: SkillRegistry,
     readonly now: () => Date,
     readonly transaction: <T>(operation: () => T) => T,
-    readonly queueEvent?: (event: ProjectEvent) => void,
+    readonly queueEvent: ((event: ProjectEvent) => void) | undefined,
+    readonly git: WorkflowGitRunner,
   ) {}
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
@@ -132,11 +170,7 @@ export class TransparentWorkflow {
     if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId)) throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     const snapshots = this.skills.loadSync(raw.skillIds);
     const skillDigests = Object.fromEntries(snapshots.map((skill) => [skill.skillId, skill.digest]));
-    const pipelineShaped = raw.nodes.length === 1 &&
-      raw.nodes[0]?.stageTemplate.length === 2 &&
-      raw.nodes[0].stageTemplate[0] === "implementation" &&
-      raw.nodes[0].stageTemplate[1] === "testing";
-    const machineVerifiedTesting = pipelineShaped && testingStageUsesMachineVerify(this.db);
+    const machineVerifiedTesting = pipelineShaped(raw.nodes) && testingStageUsesMachineVerify(this.db);
     const ids = new Set<string>();
     const nodes = raw.nodes.map((node, index) => {
       const nodeId = text(node.nodeId, `nodes[${index}].nodeId`, 128);
@@ -241,17 +275,59 @@ export class TransparentWorkflow {
   }
 
   claimContext(taskId: string): ClaimRunResult["context"]["workflow"] {
-    const row = this.db.prepare(`SELECT a.stage,a.skill_digests_json,n.node_id,n.plan_revision_id
-      FROM stage_attempts a JOIN work_nodes n ON n.node_id=a.node_id WHERE a.task_id=?`).get(taskId) as Row | undefined;
+    const row = this.db.prepare(`
+      SELECT
+        a.stage,
+        a.skill_digests_json,
+        n.node_id,
+        n.plan_revision_id,
+        plan.work_item_id,
+        plan.assumptions_json,
+        plan.change_shape,
+        plan.tier,
+        plan.declared_scope_json,
+        plan.non_goals_json,
+        item.pipeline_branch,
+        item.base_sha
+      FROM stage_attempts a
+      JOIN work_nodes n ON n.node_id=a.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE a.task_id=?
+    `).get(taskId) as Row | undefined;
     if (!row) return null;
     const digests = json<Record<string, string>>(row.skill_digests_json);
     const skills = this.skills.loadSync(Object.keys(digests));
     for (const skill of skills) if (digests[skill.skillId] !== skill.digest) throw new TaskBoardError(409, "SKILL_DIGEST_CHANGED", `Skill ${skill.skillId} changed after confirmation`);
     const handoffs = (this.db.prepare(`SELECT h.payload_json FROM work_node_dependencies d JOIN stage_handoffs h ON h.node_id=d.dependency_node_id
       WHERE d.node_id=? ORDER BY h.created_at`).all(String(row.node_id)) as Row[]).map((item) => Object.freeze(json<StageHandoff>(item.payload_json)));
+    const hasPipelineBranch = row.pipeline_branch !== null;
+    if (hasPipelineBranch !== (row.base_sha !== null)) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_identity");
+    }
+    let pipeline: WorkflowPipelineContext | null = null;
+    if (hasPipelineBranch) {
+      if (
+        row.change_shape === null || row.tier === null ||
+        row.declared_scope_json === null || row.non_goals_json === null
+      ) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
+      }
+      pipeline = Object.freeze({
+        branch: String(row.pipeline_branch),
+        baseSha: String(row.base_sha),
+        changeShape: String(row.change_shape) as WorkflowPipelineContext["changeShape"],
+        tier: String(row.tier) as WorkflowPipelineContext["tier"],
+        declaredScope: Object.freeze(json<string[]>(row.declared_scope_json)),
+        nonGoals: Object.freeze(json<string[]>(row.non_goals_json)),
+        assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
+      });
+    }
     return Object.freeze({
       planRevisionId: String(row.plan_revision_id), nodeId: String(row.node_id), stage: row.stage as WorkflowStage,
       skills: Object.freeze(skills), dependencyHandoffs: Object.freeze(handoffs),
+      workspaceKey: pipeline === null ? null : String(row.work_item_id),
+      pipeline,
     });
   }
 
@@ -262,6 +338,21 @@ export class TransparentWorkflow {
       const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
       if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
       if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+      let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
+      if (row.tier !== "hazardous" && storedPlanIsPipeline(this.db, planId)) {
+        const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
+        if (project === undefined) {
+          throw new TaskBoardError(
+            409,
+            TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+            "The pipeline repository is unavailable",
+          );
+        }
+        identity = Object.freeze({
+          branch: `task/${String(row.work_item_id)}`,
+          baseSha: pipelineBaseSha(String(project.description), this.git),
+        });
+      }
       this.db.prepare("UPDATE plan_revisions SET state='confirmed',confirmed_by=?,confirmed_at=? WHERE plan_revision_id=?").run(actor, now, planId);
       const projectUpdate = this.db.prepare(`
         UPDATE
@@ -271,6 +362,16 @@ export class TransparentWorkflow {
       `).run(String(row.project_id), String(row.work_item_id));
       if (Number(projectUpdate.changes) !== 1) {
         throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+      }
+      if (identity !== null) {
+        const identityUpdate = this.db.prepare(`
+          UPDATE work_items
+          SET pipeline_branch=?,base_sha=?
+          WHERE work_item_id=? AND ended_at IS NULL
+        `).run(identity.branch, identity.baseSha, String(row.work_item_id));
+        if (Number(identityUpdate.changes) !== 1) {
+          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+        }
       }
       if (row.tier === "hazardous") {
         const result = "hazardous tier needs the Design stage (campaign 5)";

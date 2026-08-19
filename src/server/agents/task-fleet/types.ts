@@ -17,6 +17,8 @@ export interface TaskFleetAgentConfig {
   readonly model: string;
   /** For container lanes, workingDirectory is the repository path workspaces are cloned from. */
   readonly workingDirectory: string;
+  /** Optional local-process workspace root; each pipeline work item receives a cloned task workspace. */
+  readonly workspaceRoot?: string;
   readonly statePath: string;
   readonly longPollMs: number;
   readonly agentTimeoutMs: number | undefined;

@@ -45,6 +45,11 @@ export interface ContainedCliAgentLauncherOptions {
   readonly groupAbsenceTimeoutMs?: number;
 }
 
+function workingDirectory(value: string): string {
+  if (!isAbsolute(value)) throw new Error("workingDirectory must be absolute");
+  return configText(value, "workingDirectory", 4_096);
+}
+
 function groupPresent(groupId: number): boolean {
   try {
     process.kill(-groupId, 0);
@@ -83,11 +88,10 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
 
   constructor(options: ContainedCliAgentLauncherOptions) {
     if (process.platform === "win32") throw new AgentProcessError("Contained task agents require POSIX process groups; Windows is fail-closed");
-    if (!isAbsolute(options.workingDirectory)) throw new Error("workingDirectory must be absolute");
     this.#options = {
       ...options,
       model: configText(options.model, "model", 256),
-      workingDirectory: configText(options.workingDirectory, "workingDirectory", 4_096),
+      workingDirectory: workingDirectory(options.workingDirectory),
       timeoutMs: boundedInteger(options.timeoutMs, 60 * 60_000, 1_000, 24 * 60 * 60_000, "timeoutMs"),
       terminationGraceMs: boundedInteger(options.terminationGraceMs, 2_000, 10, 60_000, "terminationGraceMs"),
       groupAbsenceTimeoutMs: boundedInteger(options.groupAbsenceTimeoutMs, 5_000, 100, 60_000, "groupAbsenceTimeoutMs"),
@@ -98,12 +102,13 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
     if (this.#active) throw new AgentProcessError("This launcher already owns an active agent process");
     assertCredentialSafe(JSON.stringify(request.context), "Agent context");
-    const directory = await open(this.#options.workingDirectory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    const launchWorkingDirectory = workingDirectory(request.workspace?.path ?? this.#options.workingDirectory);
+    const directory = await open(launchWorkingDirectory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
     await directory.close();
     const fixedRole = agentRole(request);
     const argumentOptions = {
       model: this.#options.model,
-      workingDirectory: this.#options.workingDirectory,
+      workingDirectory: launchWorkingDirectory,
       schemaPath: RESULT_SCHEMA_PATH,
       bareApiKey: typeof this.#options.environment.ANTHROPIC_API_KEY === "string",
     };
@@ -115,7 +120,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     let child: ChildProcess;
     try {
       child = spawn(command, [...args], {
-        cwd: this.#options.workingDirectory,
+        cwd: launchWorkingDirectory,
         env: this.#options.environment,
         shell: false,
         windowsHide: true,

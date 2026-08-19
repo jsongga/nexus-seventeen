@@ -1,0 +1,364 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+import type { WorkflowPlanDraft } from "#shared/task-board-contract";
+import { HttpTaskBoardClient } from "#server/agents/task-worker";
+import { TaskBoardError } from "#server/task-board";
+import { SkillRegistry } from "#server/task-board/skills";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
+import { registerWorkItemTransitionStore } from "#server/task-board/collaborators/work-item-transitions";
+import {
+  AGENT_ONE_TOKEN,
+  automationConfigurationRequest,
+  automationStages,
+  boardFixture,
+  workItemRequest,
+} from "./helpers.js";
+
+type Fixture = Awaited<ReturnType<typeof boardFixture>>;
+
+function git(cwd: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("git", [...args], { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error !== null) reject(new Error(stderr));
+      else resolve(stdout);
+    });
+  });
+}
+
+async function fixtureRepo(): Promise<{ repo: string; head: string }> {
+  const root = await mkdtemp(join(tmpdir(), "steward-pipeline-repo-"));
+  const repo = join(root, "repo");
+  await git(root, ["init", "-b", "main", repo]);
+  await writeFile(join(repo, "readme.md"), "pipeline\n");
+  await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
+  await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "initial"]);
+  return { repo, head: (await git(repo, ["rev-parse", "HEAD"])).trim() };
+}
+
+function updateProjectPath(fixture: Fixture, repositoryPath: string): void {
+  const db = new DatabaseSync(fixture.path);
+  try {
+    db.prepare("UPDATE projects SET description=? WHERE project_id=?").run(repositoryPath, fixture.project.projectId);
+  } finally {
+    db.close();
+  }
+}
+
+function pipelinePlan(tier: "standard" | "hazardous" = "standard"): WorkflowPlanDraft {
+  return {
+    objective: "Implement the pipeline branch identity.",
+    assumptions: ["The registered repository remains on its default branch."],
+    acceptanceCriteria: ["Every pipeline stage shares one task branch."],
+    changeShape: "feature",
+    tier,
+    declaredScope: ["src/server", "tests/server"],
+    nonGoals: ["Do not push the branch."],
+    mechanicalPortions: ["Propagate the confirmed branch metadata."],
+    blockingQuestions: [],
+    criterionChecks: [{
+      criterion: "The runtime suite passes.",
+      check: "npm run test:runtime",
+    }],
+    nodes: [{
+      nodeId: `pipeline-${tier}`,
+      title: "Implement pipeline identity",
+      objective: "Carry one branch through each pipeline stage.",
+      acceptanceCriteria: ["The claim contains the confirmed pipeline metadata."],
+      dependencyNodeIds: [],
+      stageTemplate: ["implementation", "testing"],
+    }],
+  };
+}
+
+function preparePipeline(fixture: Fixture, suffix: string, plan = pipelinePlan()) {
+  const implementationType = {
+    agentTypeId: `pipeline-implementation-${suffix}`,
+    name: "Pipeline implementation",
+    description: "Executes a confirmed pipeline implementation stage.",
+    role: "engineer" as const,
+    supplementalInstructions: "Implement only the confirmed pipeline plan.",
+    skillIds: [],
+    evaluatorProfile: "tests" as const,
+    enabled: true,
+  };
+  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: [implementationType],
+    stages: automationStages({
+      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+      testing: { kind: "machine_verify" },
+    }),
+  }));
+  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+    originalRequest: "Give pipeline stages one durable task branch.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `pipeline-identity-${suffix}`).workItem;
+  const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
+    claimId: `claim-pipeline-planning-${suffix}`,
+    messageCursor: null,
+  });
+  assert.ok(planningClaim);
+  fixture.board.settleRun(planningClaim.run.runId, fixture.manager.agentId, {
+    outcome: "completed",
+    result: "The pipeline plan is ready for confirmation.",
+    workflowPlan: plan,
+  });
+  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find((candidate) => candidate.state === "proposed");
+  assert.ok(revision);
+  return { workItem, revision };
+}
+
+function prepareNonPipeline(fixture: Fixture, suffix: string) {
+  const researchType = {
+    agentTypeId: `workflow-research-${suffix}`,
+    name: "Workflow research",
+    description: "Executes an ordinary confirmed research stage.",
+    role: "engineer" as const,
+    supplementalInstructions: "Verify only the confirmed workflow.",
+    skillIds: [],
+    evaluatorProfile: "tests" as const,
+    enabled: true,
+  };
+  const verificationType = {
+    ...researchType,
+    agentTypeId: `workflow-verification-${suffix}`,
+    name: "Workflow verification",
+    description: "Executes the terminal ordinary verification stage.",
+    role: "verifier" as const,
+  };
+  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+    agentTypes: [researchType, verificationType],
+    stages: automationStages({
+      research: { kind: "agent_type", agentTypeId: researchType.agentTypeId },
+      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+    }),
+  }));
+  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+    originalRequest: "Verify an ordinary workflow without pipeline identity.",
+    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+  }), `ordinary-workflow-${suffix}`).workItem;
+  const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
+    claimId: `claim-ordinary-planning-${suffix}`,
+    messageCursor: null,
+  });
+  assert.ok(planningClaim);
+  fixture.board.settleRun(planningClaim.run.runId, fixture.manager.agentId, {
+    outcome: "completed",
+    result: "The ordinary workflow is ready for confirmation.",
+    workflowPlan: {
+      objective: "Verify the ordinary workflow.",
+      assumptions: [],
+      acceptanceCriteria: ["The verification result is recorded."],
+      nodes: [{
+        nodeId: `ordinary-research-${suffix}`,
+        title: "Research ordinary workflow",
+        objective: "Verify without allocating a pipeline branch.",
+        acceptanceCriteria: ["The claim has no pipeline context."],
+        dependencyNodeIds: [],
+        stageTemplate: ["research", "verification"],
+      }],
+    },
+  });
+  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find((candidate) => candidate.state === "proposed");
+  assert.ok(revision);
+  fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+  return workItem;
+}
+
+function transactionSnapshot(path: string, workItemId: string, planRevisionId: string): unknown {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return {
+      workItem: db.prepare(`
+        SELECT state,current_stage,resolved_project_id,pipeline_branch,base_sha,version,updated_at
+        FROM work_items WHERE work_item_id=?
+      `).get(workItemId),
+      plan: db.prepare("SELECT state,confirmed_by,confirmed_at FROM plan_revisions WHERE plan_revision_id=?").get(planRevisionId),
+      nodes: db.prepare("SELECT state,current_stage,version,updated_at FROM work_nodes WHERE plan_revision_id=? ORDER BY node_id").all(planRevisionId),
+      transitions: db.prepare("SELECT COUNT(*) AS count FROM work_item_transitions WHERE work_item_id=?").get(workItemId),
+      events: db.prepare("SELECT COUNT(*) AS count FROM project_events").get(),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+test("confirm records the pipeline branch and base SHA and claim projects the pipeline workspace context", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { workItem, revision } = preparePipeline(fixture, "success");
+
+    fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const identity = db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(workItem.workItemId);
+      assert.equal(identity?.pipeline_branch, `task/${workItem.workItemId}`);
+      assert.equal(identity?.base_sha, repository.head);
+    } finally {
+      db.close();
+    }
+    const rawClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-pipeline-implementation-success",
+      messageCursor: null,
+    });
+    assert.ok(rawClaim);
+    const rawWorkflow = rawClaim.context.workflow as unknown as Record<string, unknown>;
+    assert.equal(rawWorkflow.workspaceKey, workItem.workItemId);
+    assert.deepEqual(rawWorkflow.pipeline, {
+      branch: `task/${workItem.workItemId}`,
+      baseSha: repository.head,
+      changeShape: "feature",
+      tier: "standard",
+      declaredScope: ["src/server", "tests/server"],
+      nonGoals: ["Do not push the branch."],
+      assumptions: ["The registered repository remains on its default branch."],
+    });
+
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1/",
+      token: AGENT_ONE_TOKEN,
+      fetchImplementation: async () => new Response(JSON.stringify(rawClaim), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    const mapped = await client.claimNextWake({
+      agentId: fixture.engineer.agentId,
+      claimId: rawClaim.run.claimId,
+      messageCursors: {},
+      longPollMs: 0,
+    });
+    assert.ok(mapped?.context?.workflow);
+    const mappedWorkflow = mapped.context.workflow as unknown as Record<string, unknown>;
+    assert.equal(mappedWorkflow.workspaceKey, workItem.workItemId);
+    assert.deepEqual(mappedWorkflow.pipeline, rawWorkflow.pipeline);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("an unavailable pipeline repository rolls the entire confirm transaction back", async () => {
+  const fixture = await boardFixture();
+  try {
+    updateProjectPath(fixture, join(tmpdir(), "missing-pipeline-repository"));
+    const { workItem, revision } = preparePipeline(fixture, "missing-repo");
+    const before = transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId);
+
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => (
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+      ),
+    );
+
+    assert.deepEqual(transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId), before);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("ordinary workflow claims carry null pipeline fields and legacy claim replays default absent fields", async () => {
+  const fixture = await boardFixture();
+  const claimRequest = { claimId: "claim-ordinary-verification-context", messageCursor: null } as const;
+  try {
+    prepareNonPipeline(fixture, "null-context");
+    const first = fixture.board.claimRun(fixture.engineer.agentId, claimRequest);
+    assert.ok(first?.context.workflow);
+    assert.equal(first.context.workflow.workspaceKey, null);
+    assert.equal(first.context.workflow.pipeline, null);
+
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const row = db.prepare("SELECT claim_result_json FROM runs WHERE run_id=?").get(first.run.runId);
+      const stored = JSON.parse(String(row?.claim_result_json)) as {
+        context: { workflow: Record<string, unknown> };
+      };
+      delete stored.context.workflow.workspaceKey;
+      delete stored.context.workflow.pipeline;
+      db.prepare("UPDATE runs SET claim_result_json=? WHERE run_id=?").run(JSON.stringify(stored), first.run.runId);
+    } finally {
+      db.close();
+    }
+
+    const replay = fixture.board.claimRun(fixture.engineer.agentId, claimRequest);
+    assert.ok(replay?.context.workflow);
+    assert.equal(replay.context.workflow.workspaceKey, null);
+    assert.equal(replay.context.workflow.pipeline, null);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("hazardous pipeline confirmation parks without assigning branch identity", async () => {
+  const fixture = await boardFixture();
+  const repository = await fixtureRepo();
+  try {
+    updateProjectPath(fixture, repository.repo);
+    const { workItem, revision } = preparePipeline(fixture, "hazardous", pipelinePlan("hazardous"));
+
+    const result = fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(result.outcome, "parked_hazardous");
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const identity = db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(workItem.workItemId);
+      assert.equal(identity?.pipeline_branch, null);
+      assert.equal(identity?.base_sha, null);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline HEAD resolution uses the injected hooks-neutralized git invocation", async () => {
+  const fixture = await boardFixture();
+  updateProjectPath(fixture, "/registered/pipeline-repository");
+  const { workItem, revision } = preparePipeline(fixture, "injected-git");
+  fixture.board.close();
+  const store = await TaskBoardStore.open(fixture.path);
+  registerWorkItemTransitionStore(store);
+  const calls: readonly string[][] = [];
+  const mutableCalls = calls as string[][];
+  const expectedSha = "a".repeat(40);
+  try {
+    const workflow = new TransparentWorkflow(
+      store.db,
+      new SkillRegistry(join(process.cwd(), "skills")),
+      () => new Date("2026-08-19T20:00:00.000Z"),
+      (operation) => store.transaction(operation),
+      undefined,
+      (arguments_) => {
+        mutableCalls.push([...arguments_]);
+        return `${expectedSha}\n`;
+      },
+    );
+
+    workflow.confirm(revision.planRevisionId, { expectedState: "proposed" }, "human:alice");
+
+    assert.deepEqual(calls, [[
+      "-c", "core.fsmonitor=",
+      "-c", "core.hooksPath=",
+      "-C", "/registered/pipeline-repository",
+      "rev-parse", "HEAD",
+    ]]);
+    const identity = store.db.prepare(
+      "SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?",
+    ).get(workItem.workItemId);
+    assert.equal(identity?.pipeline_branch, `task/${workItem.workItemId}`);
+    assert.equal(identity?.base_sha, expectedSha);
+  } finally {
+    store.close();
+  }
+});

@@ -4,6 +4,7 @@ import {
   HttpTaskBoardClient,
   TaskBoardHttpError,
   TaskWorker,
+  type AgentLauncher,
 } from "#server/agents/task-worker";
 import {
   AGENT_IMAGE_REPOSITORY,
@@ -91,17 +92,26 @@ async function createLocalProcessTaskFleetWorker(
   boardUrl: string,
 ): Promise<ManagedTaskWorker> {
   const runtimeVersion = await captureTaskFleetRuntimeVersion(config.provider);
+  let launcher: AgentLauncher = new ContainedCliAgentLauncher({
+    provider: config.provider,
+    model: config.model,
+    workingDirectory: config.workingDirectory,
+    ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
+    ...(config.terminationGraceMs === undefined ? {} : { terminationGraceMs: config.terminationGraceMs }),
+  });
+  if (config.workspaceRoot !== undefined) {
+    const manager = new TaskWorkspaceManager({
+      workspaceRoot: config.workspaceRoot,
+      repositoryPath: config.workingDirectory,
+    });
+    await manager.retainStrays([]);
+    launcher = new WorkspaceScopedLauncher(launcher, manager);
+  }
   const worker = await TaskWorker.create({
     identity: { workerId: config.workerId, agentId: config.agentId },
     statePath: config.statePath,
     board: new HttpTaskBoardClient({ baseUrl: boardUrl, token: config.token }),
-    launcher: new ContainedCliAgentLauncher({
-      provider: config.provider,
-      model: config.model,
-      workingDirectory: config.workingDirectory,
-      ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
-      ...(config.terminationGraceMs === undefined ? {} : { terminationGraceMs: config.terminationGraceMs }),
-    }),
+    launcher,
     pinned: {
       runtime: config.provider,
       ...(runtimeVersion === null ? {} : { runtimeVersion }),

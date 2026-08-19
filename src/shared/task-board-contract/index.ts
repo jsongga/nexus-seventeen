@@ -15,6 +15,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
   TASK_RETRY_REQUIRED: "TASK_RETRY_REQUIRED",
   TASK_BOARD_PIPELINE_PLAN_INCOMPLETE: "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE",
+  TASK_BOARD_PIPELINE_REPO_UNAVAILABLE: "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -260,6 +261,16 @@ export interface PlanRecordFields {
   readonly mechanicalPortions?: readonly string[];
   readonly blockingQuestions?: readonly PlanBlockingQuestion[];
   readonly criterionChecks?: readonly PlanCriterionCheck[];
+}
+
+export interface WorkflowPipelineContext {
+  readonly branch: string;
+  readonly baseSha: string;
+  readonly changeShape: typeof PLAN_CHANGE_SHAPES[number];
+  readonly tier: typeof PLAN_TIERS[number];
+  readonly declaredScope: readonly string[];
+  readonly nonGoals: readonly string[];
+  readonly assumptions: readonly string[];
 }
 
 export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
@@ -775,6 +786,10 @@ export interface ClaimRunResult {
       stage: WorkflowStage;
       skills: readonly SkillSnapshot[];
       dependencyHandoffs: readonly StageHandoff[];
+      /** Absent is accepted from pre-pipeline claim replays and normalizes to null at the worker boundary. */
+      workspaceKey?: string | null;
+      /** Absent is accepted from pre-pipeline claim replays and normalizes to null at the worker boundary. */
+      pipeline?: WorkflowPipelineContext | null;
     }> | null;
   }>;
 }

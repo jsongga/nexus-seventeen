@@ -103,8 +103,16 @@ export class TaskWorkspaceManager {
     await rm(path, { recursive: true, force: true });
     try {
       await git(null, ["clone", "--no-hardlinks", this.#repositoryPath, path]);
-      if (baseRef !== undefined) await git(path, ["switch", "--detach", baseRef]);
-      await git(path, ["switch", "-c", `task/${this.#key(key)}`]);
+      const branch = `task/${this.#key(key)}`;
+      const existing = (await git(path, [
+        "branch", "--remotes", "--list", `origin/${branch}`,
+      ])).trim().length > 0;
+      if (existing) {
+        await git(path, ["switch", branch]);
+      } else {
+        if (baseRef !== undefined) await git(path, ["switch", "--detach", baseRef]);
+        await git(path, ["switch", "-c", branch]);
+      }
     } catch (error) {
       await rm(path, { recursive: true, force: true });
       throw error;

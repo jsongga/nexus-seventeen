@@ -761,6 +761,11 @@ export class RunsCollaborator {
           this.runtime.store.db.prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
             .get(currentRun.taskId) !== undefined;
       }
+      if (context.workflow !== null && typeof context.workflow === "object" && !Array.isArray(context.workflow)) {
+        const workflow = context.workflow as Record<string, unknown>;
+        if (!Object.hasOwn(workflow, "workspaceKey")) workflow.workspaceKey = null;
+        if (!Object.hasOwn(workflow, "pipeline")) workflow.pipeline = null;
+      }
     }
     return result as ClaimRunResult;
   }

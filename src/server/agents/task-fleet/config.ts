@@ -115,13 +115,16 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
   const item = exact(
     value,
     ["workerId", "agentId", "token", "provider", "model", "workingDirectory", "statePath"],
-    ["longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container"],
+    ["longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container", "workspaceRoot"],
     label,
   );
   const runtime = item.runtime === undefined ? "local-process" : item.runtime;
   if (runtime !== "local-process" && runtime !== "container") throw new Error(`${label}.runtime must be local-process or container`);
   if (runtime === "container" && item.container === undefined) throw new Error(`${label}.container is required for container lanes`);
   if (runtime !== "container" && item.container !== undefined) throw new Error(`${label}.container is only valid for container lanes`);
+  if (runtime === "container" && item.workspaceRoot !== undefined) {
+    throw new Error(`${label}.workspaceRoot is only valid for local-process lanes`);
+  }
   const provider = item.provider;
   if (provider !== "codex" && provider !== "claude") throw new Error(`${label}.provider must be codex or claude`);
   const token = text(item.token, `${label}.token`, 512);
@@ -133,6 +136,9 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
     provider,
     model: text(item.model, `${label}.model`, 128),
     workingDirectory: absolutePath(item.workingDirectory, `${label}.workingDirectory`),
+    ...(item.workspaceRoot === undefined
+      ? {}
+      : { workspaceRoot: absolutePath(item.workspaceRoot, `${label}.workspaceRoot`) }),
     statePath: absolutePath(item.statePath, `${label}.statePath`),
     longPollMs: item.longPollMs === undefined
       ? DEFAULT_LONG_POLL_MS
