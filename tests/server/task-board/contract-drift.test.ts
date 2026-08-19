@@ -5,9 +5,12 @@ import test from "node:test";
 import {
   ACTOR_TYPES,
   AGENT_ROLES,
+  DESIGN_FAILURE_POINTS,
   DOCUMENT_ACTOR_TYPES,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_SEVERITIES,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_KINDS,
@@ -69,7 +72,7 @@ function sqlList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value}'`).join(separator);
 }
 
-function frozenV19Projection(store: TaskBoardStore): string {
+function frozenProjection(store: TaskBoardStore, version: 19 | 20): string {
   const rows = store.db.prepare(`
     SELECT type, name, sql
     FROM sqlite_master
@@ -77,12 +80,15 @@ function frozenV19Projection(store: TaskBoardStore): string {
     ORDER BY type, name
   `).all() as Array<Readonly<{ type: string; name: string; sql: string }>>;
   return `${rows
-    .filter((row) => row.name !== "verify_attempts")
+    .filter((row) => ![
+      "review_findings", "design_records", "work_item_design_tasks",
+      ...(version === 19 ? ["verify_attempts"] : []),
+    ].includes(row.name))
     .map((row) => {
       let sql = row.sql;
-      if (row.name === "work_items") {
+      if (version === 19 && row.name === "work_items") {
         sql = sql.replace("  pipeline_branch TEXT NULL,\n  base_sha TEXT NULL,\n", "");
-      } else if (row.name === "plan_revisions") {
+      } else if (version === 19 && row.name === "plan_revisions") {
         sql = sql.replace(
           "  change_shape TEXT NULL,\n  tier TEXT NULL,\n  declared_scope_json TEXT NULL,\n  non_goals_json TEXT NULL,\n" +
           "  mechanical_portions_json TEXT NULL,\n  blocking_questions_json TEXT NULL,\n" +
@@ -95,18 +101,23 @@ function frozenV19Projection(store: TaskBoardStore): string {
     .join("\n\n")}\n`;
 }
 
-test("fresh v20 DDL preserves the byte-identical frozen v19 schema", async () => {
+test("fresh v21 DDL preserves the byte-identical frozen v19 and v20 schemas", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 20);
-    const golden = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v19-schema.sql"), "utf8");
-    assert.equal(frozenV19Projection(store), golden);
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 21);
+    for (const version of [19, 20] as const) {
+      const golden = await readFile(
+        join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`),
+        "utf8",
+      );
+      assert.equal(frozenProjection(store, version), golden);
+    }
   } finally {
     store.close();
   }
 });
 
-test("v19 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
+test("v21 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
     const tableSql = (name: string): string => {
@@ -143,6 +154,11 @@ test("v19 table CHECK clauses contain byte-identical contract-derived enum lists
       ["work_nodes", `CHECK (state IN (${sqlList(WORK_NODE_STATES, ",")}))`],
       ["stage_attempts", `CHECK(stage IN (${sqlList(WORKFLOW_STAGES, ",")}))`],
       ["stage_handoffs", `CHECK(outcome IN (${sqlList(STAGE_HANDOFF_OUTCOMES, ",")}))`],
+      ["review_findings", `CHECK (stage IN (${sqlList(WORKFLOW_STAGES)}))`],
+      ["review_findings", `CHECK (category IN (${sqlList(REVIEW_FINDING_CATEGORIES)}))`],
+      ["review_findings", `CHECK (severity IN (${sqlList(REVIEW_FINDING_SEVERITIES)}))`],
+      ["review_findings", "CHECK (blocking IN (0, 1))"],
+      ["design_records", "CHECK (json_valid(payload_json))"],
     ];
     for (const [table, fragment] of expected) assert.ok(tableSql(table).includes(fragment), `${table}: ${fragment}`);
   } finally {
@@ -150,7 +166,7 @@ test("v19 table CHECK clauses contain byte-identical contract-derived enum lists
   }
 });
 
-test("v19 migrates to v20 with pipeline columns and durable verify attempts", async () => {
+test("v19 migrates through v21 with pipeline columns and durable verify attempts", async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -207,7 +223,7 @@ test("v19 migrates to v20 with pipeline columns and durable verify attempts", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 21);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     for (const column of ["pipeline_branch", "base_sha"]) {
@@ -272,6 +288,141 @@ test("v19 migrates to v20 with pipeline columns and durable verify attempts", as
       INSERT INTO verify_attempts(verify_attempt_id, node_id, stage, attempt, state, created_at)
       VALUES ('verify-attempt-two', 'pipeline-node', 'testing', 1, 'running', '2026-08-18T12:04:00.000Z')
     `).run(), /UNIQUE/u);
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    upgraded.close();
+  }
+});
+
+test("v20 migrates to v21 with review findings, design records, and design-task links", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const legacy = new DatabaseSync(path);
+  try {
+    const frozenV20 = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v20-schema.sql"), "utf8");
+    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
+    const executableV20 = frozenV20
+      .split(/(?=^-- (?:index|table|trigger): )/m)
+      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
+        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .join("");
+    legacy.exec(executableV20);
+    legacy.exec(`
+      INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
+      VALUES ('review-project', 'Review project', 'Exercises the v21 migration.', 1,
+        '2026-08-19T12:00:00.000Z', '2026-08-19T12:00:00.000Z');
+      INSERT INTO work_items(
+        work_item_id, original_request, refined_objective, priority, project_target_mode,
+        target_project_id, resolved_project_id, pipeline_branch, base_sha, state, current_stage,
+        created_by, idempotency_key, request_hash, version, created_at, updated_at
+      ) VALUES (
+        'review-work-item', 'Preserve this work item.', 'Review and fix safely.', 'normal', 'explicit',
+        'review-project', 'review-project', 'pipeline/review-work-item', '0123456789abcdef',
+        'reviewing', 'verification', 'system:migration-test', 'review-migration-key',
+        'review-migration-hash', 1, '2026-08-19T12:01:00.000Z', '2026-08-19T12:01:00.000Z'
+      );
+      INSERT INTO plan_revisions(
+        plan_revision_id, work_item_id, revision, objective, assumptions_json,
+        acceptance_criteria_json, project_id, skill_digests_json, state, created_by, created_at
+      ) VALUES (
+        'review-plan', 'review-work-item', 1, 'Review and fix safely.', '[]',
+        '["The review state survives."]', 'review-project', '{}', 'confirmed',
+        'agent:planner', '2026-08-19T12:02:00.000Z'
+      );
+      INSERT INTO work_nodes(
+        node_id, plan_revision_id, project_id, title, objective,
+        acceptance_criteria_json, stage_template_json, current_stage, state,
+        version, created_at, updated_at
+      ) VALUES (
+        'review-node', 'review-plan', 'review-project', 'Review the implementation',
+        'Persist review evidence.', '["Review findings are durable."]',
+        '["implementation","verification"]', 'verification', 'active', 1,
+        '2026-08-19T12:03:00.000Z', '2026-08-19T12:03:00.000Z'
+      );
+      INSERT INTO tasks(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json, status,
+        assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      ) VALUES (
+        'design-task', 'review-project', NULL, 'work', NULL, 1,
+        'Design the recovery flow', 'Cover the durable failure matrix.', 'Every failure point is covered.',
+        '[]', 'backlog', NULL, NULL, 15, NULL, NULL, 0, NULL, NULL, NULL, 1,
+        '2026-08-19T12:04:00.000Z', '2026-08-19T12:04:00.000Z'
+      );
+      PRAGMA user_version = 20;
+    `);
+  } finally {
+    legacy.close();
+  }
+  await chmod(path, 0o600);
+
+  const upgraded = await TaskBoardStore.open(path);
+  try {
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 21);
+    const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
+      .map((row) => String(row.name));
+    assert.deepEqual(columns("review_findings"), [
+      "finding_id", "node_id", "stage", "round", "file", "line", "category", "severity",
+      "expected", "actual", "blocking", "created_at",
+    ]);
+    assert.deepEqual(columns("design_records"), [
+      "design_record_id", "work_item_id", "plan_revision_id", "payload_json", "created_at",
+    ]);
+    assert.deepEqual(columns("work_item_design_tasks"), ["work_item_id", "task_id", "created_at"]);
+    assert.deepEqual(
+      { ...upgraded.db.prepare(`
+        SELECT original_request, pipeline_branch, base_sha
+        FROM work_items WHERE work_item_id = 'review-work-item'
+      `).get() },
+      {
+        original_request: "Preserve this work item.",
+        pipeline_branch: "pipeline/review-work-item",
+        base_sha: "0123456789abcdef",
+      },
+    );
+
+    upgraded.db.prepare(`
+      INSERT INTO review_findings(
+        finding_id, node_id, stage, round, file, line, category, severity,
+        expected, actual, blocking, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "finding-one", "review-node", "verification", 1, "src/example.ts", 42,
+      "correctness", "major", "A retry is idempotent.", "A retry duplicates a write.", 1,
+      "2026-08-19T12:05:00.000Z",
+    );
+    const payload = JSON.stringify({
+      states: ["pending", "committed"],
+      transitions: [{ from: "pending", to: "committed" }],
+      failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+        point,
+        resultingState: "durable",
+        recovery: "Retry with the persisted idempotency key.",
+      })),
+      idempotencyKeys: [],
+      faultInjectionCases: [],
+    });
+    upgraded.db.prepare(`
+      INSERT INTO design_records(design_record_id, work_item_id, plan_revision_id, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run("design-one", "review-work-item", "review-plan", payload, "2026-08-19T12:06:00.000Z");
+    upgraded.db.prepare(`
+      INSERT INTO work_item_design_tasks(work_item_id, task_id, created_at)
+      VALUES (?, ?, ?)
+    `).run("review-work-item", "design-task", "2026-08-19T12:07:00.000Z");
+
+    assert.throws(() => upgraded.db.prepare(`
+      INSERT INTO review_findings(
+        finding_id, node_id, stage, round, category, severity, expected, actual, blocking, created_at
+      ) VALUES ('finding-invalid', 'review-node', 'verification', 2, 'unknown', 'major', 'x', 'y', 0,
+        '2026-08-19T12:08:00.000Z')
+    `).run(), /CHECK constraint failed/u);
+    assert.throws(() => upgraded.db.prepare(`
+      INSERT INTO design_records(design_record_id, work_item_id, plan_revision_id, payload_json, created_at)
+      VALUES ('design-invalid', 'review-work-item', 'review-plan', 'not-json', '2026-08-19T12:08:00.000Z')
+    `).run(), /CHECK constraint failed/u);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     upgraded.close();
@@ -367,7 +518,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 21);
     assert.deepEqual(
       upgraded.db.prepare(`
         SELECT work_item_id, state, project_target_mode, target_project_id, resolved_project_id, archived_at
@@ -479,7 +630,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
 
   const reopened = await TaskBoardStore.open(path);
   try {
-    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 20);
+    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 21);
     assert.deepEqual(
       reopened.db.prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id").all()
         .map((row) => ({ work_item_id: row.work_item_id, state: row.state })),
@@ -559,7 +710,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 20);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 21);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
       "CREATE INDEX project_events_node ON project_events(node_id, sequence)",

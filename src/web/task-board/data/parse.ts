@@ -35,6 +35,7 @@ import {
   parseDocumentEntity,
   parseDocumentPenHolderEntity,
   parseDocumentSummaryEntity,
+  parseDesignRecordEntity,
   parseEventEntity,
   parseHandoffEntity,
   parseInterruptEntity,
@@ -46,6 +47,7 @@ import {
   parseProjectEntity,
   parseProjectEventEntity,
   parseQuestionEntity,
+  parseReviewFindingEntity,
   parseRunEntity,
   parseTaskEntity,
   parseTaskPhaseEntity,
@@ -60,6 +62,8 @@ import {
   versionedRecord,
   type JsonRecord,
   type ParsedWorkItemTransition,
+  type TolerantDesignRecordEntity,
+  type TolerantReviewFindingEntity,
   type TolerantTaskEntity,
   type TolerantWorkItemEntity,
 } from '@shared/task-board-contract/validate';
@@ -261,6 +265,22 @@ function projectMessage(value: TaskMessage): RawMessage {
 }
 export function parseMessage(value: unknown, path: string): RawMessage {
   return projectMessage(parseMessageEntity(value, path, loose));
+}
+
+export function parseReviewFinding(value: unknown, path: string): TolerantReviewFindingEntity {
+  return parseReviewFindingEntity(value, path, loose);
+}
+
+export function parseDesignRecord(value: unknown, path: string): TolerantDesignRecordEntity {
+  const item = parseDesignRecordEntity(value, path, loose);
+  return {
+    ...item,
+    states: [...item.states],
+    transitions: item.transitions.map((transition) => ({ ...transition })),
+    failurePoints: item.failurePoints.map((failurePoint) => ({ ...failurePoint })),
+    idempotencyKeys: item.idempotencyKeys.map((key) => ({ ...key })),
+    faultInjectionCases: item.faultInjectionCases.map((faultCase) => ({ ...faultCase })),
+  };
 }
 
 const uiAgentType = (item: ReturnType<typeof parseAutomationAgentTypeEntity>): AutomationAgentType => ({

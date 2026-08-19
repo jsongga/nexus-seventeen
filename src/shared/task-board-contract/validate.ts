@@ -3,6 +3,7 @@ import {
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  DESIGN_FAILURE_POINTS,
   DOCUMENT_CONTENT_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
@@ -12,6 +13,8 @@ import {
   PLAN_REVISION_STATES,
   PLAN_TIERS,
   QUESTION_STATUSES,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_SEVERITIES,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_BOARD_API_VERSION,
@@ -58,6 +61,10 @@ import {
   type DocumentPenHolder,
   type DocumentSnapshot,
   type DocumentSummary,
+  type DesignFailurePoint,
+  type DesignFailurePointKind,
+  type DesignRecord,
+  type DesignRecordDraft,
   type HumanQuestion,
   type InterruptAgentRequest,
   type PlanRecordFields,
@@ -66,6 +73,10 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type ReviewFinding,
+  type ReviewFindingCategory,
+  type ReviewFindingDraft,
+  type ReviewFindingSeverity,
   type RejectPlanRevisionRequest,
   type RejectFinalApprovalRequest,
   type ResumeAgentRequest,
@@ -318,7 +329,7 @@ export interface ShapeParserOptions {
   readonly scalarMessages?: ScalarMessageProfile;
   /** Skip fields that the browser's legacy raw projection intentionally discarded. */
   readonly projection?: "contract" | "browser";
-  /** Bucket the two explicitly forward-compatible browser enum fields. */
+  /** Bucket explicitly forward-compatible browser enum fields. */
   readonly tolerantEnums?: boolean;
 }
 
@@ -328,6 +339,20 @@ export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
 
 export type TolerantWorkItemEntity = Omit<WorkItem, "state"> & Readonly<{
   state: WorkItemState | "unrecognized";
+}>;
+
+export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "severity" | "stage"> & Readonly<{
+  category: ReviewFindingCategory | "unrecognized";
+  severity: ReviewFindingSeverity | "unrecognized";
+  stage: WorkflowStage | "unrecognized";
+}>;
+
+export type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> & Readonly<{
+  point: DesignFailurePointKind | "unrecognized";
+}>;
+
+export type TolerantDesignRecordEntity = Omit<DesignRecord, "failurePoints"> & Readonly<{
+  failurePoints: readonly TolerantDesignFailurePoint[];
 }>;
 
 export interface ParsedWorkItemTransition {
@@ -928,6 +953,231 @@ function planCheck(value: unknown, label: string, parseText: (value: unknown, la
   const check = parseText(value, label, 512);
   if (/[\u0000-\u001f\u007f]/u.test(check)) throw new ContractValidationError(`${label} is invalid`);
   return check;
+}
+
+const REVIEW_FINDING_DRAFT_FIELDS = ["file", "line", "category", "severity", "expected", "actual"] as const;
+const REVIEW_FINDING_DRAFT_REQUIRED_FIELDS = ["category", "severity", "expected", "actual"] as const;
+
+function boundedRecordText(value: unknown, label: string, maximum: number): string {
+  return text(value, label, { maximum, trim: false, message: `${label} is invalid` });
+}
+
+function reviewFindingFile(value: unknown, label: string): string {
+  const parsed = boundedRecordText(value, label, 512);
+  if (parsed.startsWith("/") || /[\u0000-\u001f\u007f]/u.test(parsed)) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  return parsed;
+}
+
+function reviewFindingDraftFields(
+  item: JsonRecord,
+  label: string,
+  options: ShapeParserOptions,
+  tolerateUnknown: boolean,
+): ReviewFindingDraft | Omit<TolerantReviewFindingEntity, "findingId" | "nodeId" | "stage" | "round" | "blocking" | "createdAt"> {
+  const category = tolerateUnknown
+    ? entityMember(item.category, REVIEW_FINDING_CATEGORIES, `${label}.category`, options, undefined, true)
+    : entityMember(item.category, REVIEW_FINDING_CATEGORIES, `${label}.category`, options);
+  const severity = tolerateUnknown
+    ? entityMember(item.severity, REVIEW_FINDING_SEVERITIES, `${label}.severity`, options, undefined, true)
+    : entityMember(item.severity, REVIEW_FINDING_SEVERITIES, `${label}.severity`, options);
+  return Object.freeze({
+    ...(item.file === undefined ? {} : {
+      file: item.file === null ? null : reviewFindingFile(item.file, `${label}.file`),
+    }),
+    ...(item.line === undefined ? {} : {
+      line: item.line === null ? null : integer(item.line, `${label}.line`, 1),
+    }),
+    category,
+    severity,
+    expected: boundedRecordText(item.expected, `${label}.expected`, 2_000),
+    actual: boundedRecordText(item.actual, `${label}.actual`, 2_000),
+  });
+}
+
+export function parseReviewFindingDraft(value: unknown): ReviewFindingDraft {
+  const item = exact(value, REVIEW_FINDING_DRAFT_FIELDS, "review finding", {
+    required: REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
+  });
+  return reviewFindingDraftFields(item, "review finding", {}, false) as ReviewFindingDraft;
+}
+
+export function parseReviewFindingEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantReviewFindingEntity;
+export function parseReviewFindingEntity(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): ReviewFinding;
+export function parseReviewFindingEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): ReviewFinding | TolerantReviewFindingEntity {
+  const required = [
+    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS, "blocking", "createdAt",
+  ];
+  const item = shape(value, label, [
+    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_FIELDS, "blocking", "createdAt",
+  ], required, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const stage = tolerateUnknown
+    ? entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options, undefined, true)
+    : entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options);
+  return Object.freeze({
+    findingId: shapeIdentifier(item.findingId, `${label}.findingId`, options),
+    nodeId: shapeIdentifier(item.nodeId, `${label}.nodeId`, options),
+    stage,
+    round: integer(item.round, `${label}.round`, 1),
+    ...reviewFindingDraftFields(item, label, options, tolerateUnknown),
+    blocking: booleanValue(item.blocking, `${label}.blocking`),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+  });
+}
+
+const DESIGN_RECORD_FIELDS = [
+  "states", "transitions", "failurePoints", "idempotencyKeys", "faultInjectionCases",
+] as const;
+
+function parseDesignRecordFields(
+  item: JsonRecord,
+  label: string,
+  options: ShapeParserOptions,
+  tolerateUnknown: boolean,
+): Omit<TolerantDesignRecordEntity, "designRecordId" | "workItemId" | "planRevisionId" | "createdAt"> {
+  const states = boundedPlanArray(item.states, `${label}.states`, 1, 64,
+    (entry, entryLabel) => boundedRecordText(entry, entryLabel, 200));
+  const transitions = boundedPlanArray(item.transitions, `${label}.transitions`, 1, 128, (entry, entryLabel) => {
+    const transition = shape(
+      entry,
+      entryLabel,
+      ["from", "to", "durablePrecondition", "recovery"],
+      ["from", "to"],
+      options,
+    );
+    return Object.freeze({
+      from: boundedRecordText(transition.from, `${entryLabel}.from`, 200),
+      to: boundedRecordText(transition.to, `${entryLabel}.to`, 200),
+      ...(transition.durablePrecondition === undefined ? {} : {
+        durablePrecondition: boundedRecordText(
+          transition.durablePrecondition,
+          `${entryLabel}.durablePrecondition`,
+          1_000,
+        ),
+      }),
+      ...(transition.recovery === undefined ? {} : {
+        recovery: boundedRecordText(transition.recovery, `${entryLabel}.recovery`, 1_000),
+      }),
+    });
+  });
+  const failurePoints = boundedPlanArray(
+    item.failurePoints,
+    `${label}.failurePoints`,
+    tolerateUnknown ? DESIGN_FAILURE_POINTS.length : 0,
+    32,
+    (entry, entryLabel) => {
+      const failurePoint = shape(
+        entry,
+        entryLabel,
+        ["point", "resultingState", "recovery"],
+        ["point", "resultingState", "recovery"],
+        options,
+      );
+      const point = tolerateUnknown
+        ? entityMember(failurePoint.point, DESIGN_FAILURE_POINTS, `${entryLabel}.point`, options, undefined, true)
+        : entityMember(failurePoint.point, DESIGN_FAILURE_POINTS, `${entryLabel}.point`, options);
+      return Object.freeze({
+        point,
+        resultingState: boundedRecordText(failurePoint.resultingState, `${entryLabel}.resultingState`, 500),
+        recovery: boundedRecordText(failurePoint.recovery, `${entryLabel}.recovery`, 1_000),
+      });
+    },
+  );
+  if (!tolerateUnknown) {
+    for (const point of DESIGN_FAILURE_POINTS) {
+      if (!failurePoints.some((failurePoint) => failurePoint.point === point)) {
+        throw new ContractValidationError(`design record missing failure point: ${point}`);
+      }
+    }
+  }
+  const idempotencyKeys = boundedPlanArray(
+    item.idempotencyKeys,
+    `${label}.idempotencyKeys`,
+    0,
+    32,
+    (entry, entryLabel) => {
+      const key = shape(
+        entry,
+        entryLabel,
+        ["name", "generatedAt", "persistedAt", "reuse"],
+        ["name", "generatedAt", "persistedAt", "reuse"],
+        options,
+      );
+      return Object.freeze({
+        name: boundedRecordText(key.name, `${entryLabel}.name`, 500),
+        generatedAt: boundedRecordText(key.generatedAt, `${entryLabel}.generatedAt`, 500),
+        persistedAt: boundedRecordText(key.persistedAt, `${entryLabel}.persistedAt`, 500),
+        reuse: boundedRecordText(key.reuse, `${entryLabel}.reuse`, 500),
+      });
+    },
+  );
+  const faultInjectionCases = boundedPlanArray(
+    item.faultInjectionCases,
+    `${label}.faultInjectionCases`,
+    0,
+    32,
+    (entry, entryLabel) => {
+      const faultCase = shape(
+        entry,
+        entryLabel,
+        ["name", "scenario", "expectation"],
+        ["name", "scenario", "expectation"],
+        options,
+      );
+      return Object.freeze({
+        name: boundedRecordText(faultCase.name, `${entryLabel}.name`, 200),
+        scenario: boundedRecordText(faultCase.scenario, `${entryLabel}.scenario`, 1_000),
+        expectation: boundedRecordText(faultCase.expectation, `${entryLabel}.expectation`, 1_000),
+      });
+    },
+  );
+  return Object.freeze({ states, transitions, failurePoints, idempotencyKeys, faultInjectionCases });
+}
+
+export function parseDesignRecordDraft(value: unknown): DesignRecordDraft {
+  const item = exact(value, DESIGN_RECORD_FIELDS, "design record");
+  return parseDesignRecordFields(item, "design record", {}, false) as DesignRecordDraft;
+}
+
+export function parseDesignRecordEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantDesignRecordEntity;
+export function parseDesignRecordEntity(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): DesignRecord;
+export function parseDesignRecordEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): DesignRecord | TolerantDesignRecordEntity {
+  const fields = ["designRecordId", "workItemId", "planRevisionId", "createdAt", ...DESIGN_RECORD_FIELDS];
+  const item = shape(value, label, fields, fields, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  return Object.freeze({
+    designRecordId: shapeIdentifier(item.designRecordId, `${label}.designRecordId`, options),
+    workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
+    planRevisionId: shapeIdentifier(item.planRevisionId, `${label}.planRevisionId`, options),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+    ...parseDesignRecordFields(item, label, options, tolerateUnknown),
+  });
 }
 
 function parsePlanRecordEntity(

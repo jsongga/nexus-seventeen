@@ -23,6 +23,12 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_BOARD_PIPELINE_REPO_BUSY: "TASK_BOARD_PIPELINE_REPO_BUSY",
   TASK_BOARD_PIPELINE_REPO_UNAVAILABLE: "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
   TASK_BOARD_PIPELINE_SERIAL_CONFLICT: "TASK_BOARD_PIPELINE_SERIAL_CONFLICT",
+  TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED: "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
+  TASK_BOARD_REVIEW_FINDINGS_REQUIRED: "TASK_BOARD_REVIEW_FINDINGS_REQUIRED",
+  TASK_BOARD_REVIEW_OUTCOME_MISMATCH: "TASK_BOARD_REVIEW_OUTCOME_MISMATCH",
+  TASK_BOARD_REVIEW_RUNTIME_CONFLICT: "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
+  TASK_BOARD_DESIGN_RECORD_REQUIRED: "TASK_BOARD_DESIGN_RECORD_REQUIRED",
+  TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED: "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -59,9 +65,10 @@ export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
  * QUESTION_STATUSES, WAKEUP_REASONS, RUN_STATUSES, DOCUMENT_ACTOR_TYPES (also
  * exposed as the column-specific TASK_MESSAGE_ACTOR_TYPES alias),
  * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
- * PLAN_REVISION_STATES, WORK_NODE_STATES, and STAGE_HANDOFF_OUTCOMES. Adding or
- * removing a member from one of those arrays also requires a schema-version bump
- * and rebuild migration so existing databases receive the new CHECK constraint.
+ * PLAN_REVISION_STATES, WORK_NODE_STATES, STAGE_HANDOFF_OUTCOMES,
+ * REVIEW_FINDING_CATEGORIES, and REVIEW_FINDING_SEVERITIES. Adding or removing a
+ * member from one of those arrays also requires a schema-version bump and rebuild
+ * migration so existing databases receive the new CHECK constraint.
  * WORK_ITEM_STATES backs state CHECKs in both work_items and
  * work_item_transitions.
  */
@@ -245,6 +252,34 @@ export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
 export type WorkflowStage = typeof WORKFLOW_STAGES[number];
 
+export const REVIEW_FINDING_CATEGORIES = [
+  "correctness",
+  "security",
+  "plan_deviation",
+  "test_modification",
+  "docs",
+  "style",
+  "other",
+] as const;
+export const REVIEW_FINDING_SEVERITIES = ["minor", "major", "critical"] as const;
+export const BLOCKING_REVIEW_FINDING_CATEGORIES = ["correctness", "security", "plan_deviation"] as const;
+export type ReviewFindingCategory = typeof REVIEW_FINDING_CATEGORIES[number];
+export type ReviewFindingSeverity = typeof REVIEW_FINDING_SEVERITIES[number];
+
+export function reviewFindingBlocks(category: ReviewFindingCategory): boolean {
+  return (BLOCKING_REVIEW_FINDING_CATEGORIES as readonly ReviewFindingCategory[]).includes(category);
+}
+
+export const DESIGN_FAILURE_POINTS = [
+  "crash_before_send",
+  "crash_after_send_before_response",
+  "crash_after_response_before_commit",
+  "crash_after_commit_before_ack",
+  "duplicate_delivery",
+  "concurrent_invocation",
+] as const;
+export type DesignFailurePointKind = typeof DESIGN_FAILURE_POINTS[number];
+
 export const PLAN_REVISION_STATES = ["proposed", "confirmed", "superseded", "rejected"] as const;
 export type PlanRevisionState = typeof PLAN_REVISION_STATES[number];
 
@@ -392,6 +427,65 @@ export interface PlanRevision extends PlanRecordFields {
   readonly createdAt: string;
   readonly confirmedAt: string | null;
   readonly rejectedNote?: string;
+}
+
+export interface ReviewFindingDraft {
+  readonly file?: string | null;
+  readonly line?: number | null;
+  readonly category: ReviewFindingCategory;
+  readonly severity: ReviewFindingSeverity;
+  readonly expected: string;
+  readonly actual: string;
+}
+
+export interface ReviewFinding extends ReviewFindingDraft {
+  readonly findingId: string;
+  readonly nodeId: string;
+  readonly stage: WorkflowStage;
+  readonly round: number;
+  readonly blocking: boolean;
+  readonly createdAt: string;
+}
+
+export interface DesignTransition {
+  readonly from: string;
+  readonly to: string;
+  readonly durablePrecondition?: string;
+  readonly recovery?: string;
+}
+
+export interface DesignFailurePoint {
+  readonly point: DesignFailurePointKind;
+  readonly resultingState: string;
+  readonly recovery: string;
+}
+
+export interface DesignIdempotencyKey {
+  readonly name: string;
+  readonly generatedAt: string;
+  readonly persistedAt: string;
+  readonly reuse: string;
+}
+
+export interface DesignFaultInjectionCase {
+  readonly name: string;
+  readonly scenario: string;
+  readonly expectation: string;
+}
+
+export interface DesignRecordDraft {
+  readonly states: readonly string[];
+  readonly transitions: readonly DesignTransition[];
+  readonly failurePoints: readonly DesignFailurePoint[];
+  readonly idempotencyKeys: readonly DesignIdempotencyKey[];
+  readonly faultInjectionCases: readonly DesignFaultInjectionCase[];
+}
+
+export interface DesignRecord extends DesignRecordDraft {
+  readonly designRecordId: string;
+  readonly workItemId: string;
+  readonly planRevisionId: string;
+  readonly createdAt: string;
 }
 
 export interface WorkNode {

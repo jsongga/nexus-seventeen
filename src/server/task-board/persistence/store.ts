@@ -7,6 +7,8 @@ import {
   DOCUMENT_ACTOR_TYPES,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_SEVERITIES,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_MESSAGE_ACTOR_TYPES,
@@ -26,7 +28,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -130,6 +132,35 @@ ${VERIFY_ATTEMPTS_SCHEMA}
 
 const WORK_ITEM_PLANNING_SCHEMA = `
 CREATE TABLE IF NOT EXISTS work_item_planning_tasks (
+  work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL
+) STRICT;
+`;
+
+const REVIEW_DESIGN_SCHEMA = `
+CREATE TABLE IF NOT EXISTS review_findings (
+  finding_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL REFERENCES work_nodes(node_id) ON DELETE RESTRICT,
+  stage TEXT NOT NULL CHECK (stage IN (${sqlStringList(WORKFLOW_STAGES)})),
+  round INTEGER NOT NULL,
+  file TEXT NULL,
+  line INTEGER NULL,
+  category TEXT NOT NULL CHECK (category IN (${sqlStringList(REVIEW_FINDING_CATEGORIES)})),
+  severity TEXT NOT NULL CHECK (severity IN (${sqlStringList(REVIEW_FINDING_SEVERITIES)})),
+  expected TEXT NOT NULL,
+  actual TEXT NOT NULL,
+  blocking INTEGER NOT NULL CHECK (blocking IN (0, 1)),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS design_records (
+  design_record_id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL UNIQUE REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  plan_revision_id TEXT NOT NULL REFERENCES plan_revisions(plan_revision_id) ON DELETE RESTRICT,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS work_item_design_tasks (
   work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
   created_at TEXT NOT NULL
@@ -449,6 +480,8 @@ CREATE INDEX tasks_agent ON tasks(assigned_agent_id, status, updated_at);
 CREATE UNIQUE INDEX tasks_one_review_stage
   ON tasks(parent_task_id, task_kind)
   WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
+
+${REVIEW_DESIGN_SCHEMA}
 
 ${TASK_PHASE_SCHEMA}
 
@@ -970,6 +1003,25 @@ function migrateVersion19To20(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion20To21(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(REVIEW_DESIGN_SCHEMA);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 21; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1266,6 +1318,8 @@ export class TaskBoardStore {
         // Work-item pipeline states, transition history, and run identity columns are added below.
       } else if (version === 19) {
         // Pipeline plan records, branch identity, and machine-verify attempts are added below.
+      } else if (version === 20) {
+        // Review findings, design records, and design-task links are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1287,6 +1341,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 17) migrateVersion17To18(db);
       if (version >= 1 && version <= 18) migrateVersion18To19(db);
       if (version >= 1 && version <= 19) migrateVersion19To20(db);
+      if (version >= 1 && version <= 20) migrateVersion20To21(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TASK_BOARD_API_VERSION } from '@shared/task-board-contract';
+import { DESIGN_FAILURE_POINTS, TASK_BOARD_API_VERSION } from '@shared/task-board-contract';
 
 const entityParserSpies = vi.hoisted(() => ({
   agent: vi.fn(),
@@ -84,10 +84,12 @@ import {
   parseAgent,
   parseAutomationAgentType,
   parseAutomationExecutor,
+  parseDesignRecord,
   parseDocument,
   parseProject,
   parseQuestion,
   parseRawBoard,
+  parseReviewFinding,
   parseRun,
   parseTask,
   parseWorkItem,
@@ -286,6 +288,50 @@ describe('browser task-board validator adapter', () => {
       archivedAt: NOW,
       cancelledReason: 'A future state may carry terminal metadata.',
     }, 'workItems[0]').state).toBe('unrecognized');
+  });
+
+  it('loosely projects review findings and design records across additive response changes', () => {
+    const finding = parseReviewFinding({
+      findingId: 'finding-one',
+      nodeId: 'node-one',
+      stage: 'future_stage',
+      round: 1,
+      file: null,
+      line: null,
+      category: 'future_category',
+      severity: 'future_severity',
+      expected: 'The retry is idempotent.',
+      actual: 'The retry duplicates a write.',
+      blocking: true,
+      createdAt: NOW,
+      additiveField: 'ignored',
+    }, 'finding');
+    expect(finding).toMatchObject({
+      stage: 'unrecognized',
+      category: 'unrecognized',
+      severity: 'unrecognized',
+    });
+    expect(finding).not.toHaveProperty('additiveField');
+
+    const design = parseDesignRecord({
+      designRecordId: 'design-one',
+      workItemId: 'work-item-one',
+      planRevisionId: 'plan-one',
+      states: ['pending'],
+      transitions: [{ from: 'pending', to: 'committed', additiveField: 'ignored' }],
+      failurePoints: DESIGN_FAILURE_POINTS.map((point, index) => ({
+        point: index === 0 ? 'future_failure_point' : point,
+        resultingState: 'durable',
+        recovery: 'Retry with the persisted idempotency key.',
+      })),
+      idempotencyKeys: [],
+      faultInjectionCases: [],
+      createdAt: NOW,
+      additiveField: 'ignored',
+    }, 'design');
+    expect(design.failurePoints[0]?.point).toBe('unrecognized');
+    expect(design.transitions[0]).not.toHaveProperty('additiveField');
+    expect(design).not.toHaveProperty('additiveField');
   });
 
   it('parses typed transition history on the work-item detail path', () => {
