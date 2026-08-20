@@ -343,7 +343,12 @@ export function parseWorkflowHandoff(value: unknown, path: string): WorkflowHand
 export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent { const item = parseProjectEventEntity(value, path, loose); return { sequence: item.sequence, eventId: item.eventId, nodeId: item.nodeId, taskId: item.taskId, eventType: item.eventType, summary: item.summary, createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
 export function parseProjectWorkflow(value: unknown, path: string): ProjectWorkflow { const item = record(value, path); return { plans: array(item.plans, `${path}.plans`, parseWorkflowPlan), nodes: array(item.nodes, `${path}.nodes`, parseWorkflowNode), handoffs: array(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff), events: array(item.events, `${path}.events`, parseWorkflowEvent) }; }
 export function parsePipelineSummary(value: unknown, path: string): PipelineSummary {
-  return parsePipelineSummaryEntity(value, path, loose);
+  const item = contractRecord(value, path);
+  return parsePipelineSummaryEntity({
+    ...item,
+    ...(item.findings === undefined ? { findings: [] } : {}),
+    ...(item.designRecord === undefined ? { designRecord: null } : {}),
+  }, path, loose);
 }
 export function parseProjectArtifact(value: unknown, path: string): ProjectArtifact { const item = parseProjectArtifactEntity(value, path, loose); return { artifactId: item.artifactId, nodeId: item.nodeId, taskId: item.taskId, mediaType: item.mediaType, byteSize: item.byteSize, caption: item.caption, createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
 

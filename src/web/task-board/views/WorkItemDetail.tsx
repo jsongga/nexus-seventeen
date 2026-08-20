@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PipelineSummary } from '@shared/task-board-contract';
+import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from '@shared/task-board-contract';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import { fieldsAreDirty } from '../../components/dialog-discard';
 import type { TaskBoardClient } from '../data/client';
@@ -18,6 +18,7 @@ import {
   deriveWorkItemDetailAffordances,
   nodesForPlan,
   pipelineAssumptionReview,
+  pipelineFindingRounds,
   pipelineFileReview,
   proposedPlanForWorkItem,
   type DetailedWorkflowPlan,
@@ -61,6 +62,11 @@ interface WorkItemDetailProps {
 }
 
 function StatusTimeline({ workItem }: { workItem: BoardWorkItem }) {
+  const planningSide = workItem.state === 'planning' || workItem.state === 'designing';
+  const executionSide = workItem.state === 'implementing'
+    || workItem.state === 'verifying'
+    || workItem.state === 'reviewing'
+    || workItem.state === 'fixing';
   const position = workItem.state === 'unrecognized'
     ? -1
     : workItem.state === 'queued'
@@ -69,7 +75,9 @@ function StatusTimeline({ workItem }: { workItem: BoardWorkItem }) {
         ? 3
         : workItem.state === 'plan_approval' || workItem.state === 'final_approval' || workItem.state === 'parked'
           ? 2
-          : 1;
+          : planningSide || executionSide
+            ? 1
+            : -1;
   const checkpoint = workItem.state === 'parked'
     ? 'Parked'
     : workItem.state === 'plan_approval'
@@ -225,8 +233,7 @@ export function PlanApprovalActions({
     <div className="mt-4">
       {plan.tier === 'hazardous' ? (
         <div className="mb-3 rounded-md border border-caution/30 bg-caution-soft px-3.5 py-3 text-sm leading-6 text-caution" role="alert">
-          <p className="font-medium">Hazardous plans park at confirmation</p>
-          <p className="mt-1 text-xs leading-5">This tier needs the Design stage from campaign 5. Confirming records approval but does not activate work.</p>
+          <p className="font-medium">Hazardous tier: confirming enters the Design stage before implementation.</p>
         </div>
       ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
@@ -280,6 +287,147 @@ export function PlanRejectionForm({
   );
 }
 
+export function ReviewFindingsPanel({ findings }: { findings: readonly ReviewFinding[] }) {
+  const rounds = pipelineFindingRounds(findings);
+  return (
+    <div className="rounded-md border border-line bg-card p-3.5">
+      <h4 className="text-xs font-semibold text-ink">Review findings</h4>
+      {rounds.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">No review findings were recorded.</p>
+      ) : (
+        <div className="mt-3 space-y-4">
+          {rounds.map((round) => (
+            <section key={round.round} aria-labelledby={`review-findings-round-${round.round}`}>
+              <h5 id={`review-findings-round-${round.round}`} className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                Round {round.round}
+              </h5>
+              <ol className="mt-2 space-y-2">
+                {round.findings.map((finding) => {
+                  const location = finding.file
+                    ? `${finding.file}${finding.line === undefined || finding.line === null ? '' : `:${finding.line}`}`
+                    : finding.line === undefined || finding.line === null
+                      ? null
+                      : `Line ${finding.line}`;
+                  return (
+                    <li key={finding.findingId} className="rounded-md border border-line bg-muted-surface p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {finding.blocking ? (
+                            <Pill tone="red">Blocking · {prettyStatus(finding.category)} · {prettyStatus(finding.severity)}</Pill>
+                          ) : (
+                            <Pill>{prettyStatus(finding.category)} · {prettyStatus(finding.severity)}</Pill>
+                          )}
+                          <Pill>{prettyStatus(finding.stage)}</Pill>
+                        </div>
+                        {location === null ? null : <code className="break-all font-mono text-[11px] leading-5 text-muted">{location}</code>}
+                      </div>
+                      <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <dt className="text-[11px] font-medium text-muted">Expected</dt>
+                          <dd className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-5 text-ink">{finding.expected}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[11px] font-medium text-muted">Actual</dt>
+                          <dd className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-5 text-ink">{finding.actual}</dd>
+                        </div>
+                      </dl>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DesignTable({
+  title,
+  headers,
+  rows,
+}: {
+  title: string;
+  headers: readonly string[];
+  rows: readonly (readonly string[])[];
+}) {
+  return (
+    <div className="mt-3">
+      <h5 className="text-[11px] font-medium text-muted">{title}</h5>
+      {rows.length === 0 ? (
+        <p className="mt-1 text-xs leading-5 text-muted">None recorded.</p>
+      ) : (
+        <div className="mt-1.5 overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-collapse text-left text-xs">
+            <thead className="bg-muted-surface text-[11px] text-muted">
+              <tr>
+                {headers.map((header) => <th key={header} scope="col" className="whitespace-nowrap border-b border-line px-3 py-2 font-medium">{header}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map((row, rowIndex) => (
+                <tr key={`${rowIndex}-${row.join('-')}`} className="align-top">
+                  {row.map((cell, cellIndex) => (
+                    <td key={`${cellIndex}-${cell}`} className="min-w-32 whitespace-pre-wrap break-words px-3 py-2 leading-5 text-ink">{cell || '—'}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function DesignRecordDetails({ designRecord }: { designRecord: DesignRecordDraft }) {
+  return (
+    <div className="rounded-md border border-line bg-card p-3.5">
+      <h4 className="text-xs font-semibold text-ink">Design record</h4>
+      <div className="mt-3">
+        <h5 className="text-[11px] font-medium text-muted">States</h5>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {designRecord.states.map((state) => <Pill key={state}>{state}</Pill>)}
+        </div>
+      </div>
+      <DesignTable
+        title="Transitions"
+        headers={['From', 'To', 'Durable precondition', 'Recovery']}
+        rows={designRecord.transitions.map((transition) => [
+          transition.from,
+          transition.to,
+          transition.durablePrecondition ?? '',
+          transition.recovery ?? '',
+        ])}
+      />
+      <DesignTable
+        title="Failure points"
+        headers={['Point', 'Resulting state', 'Recovery']}
+        rows={designRecord.failurePoints.map((failurePoint) => [
+          prettyStatus(failurePoint.point),
+          failurePoint.resultingState,
+          failurePoint.recovery,
+        ])}
+      />
+      <DesignTable
+        title="Idempotency keys"
+        headers={['Key', 'Generated', 'Persisted', 'Reuse']}
+        rows={designRecord.idempotencyKeys.map((key) => [key.name, key.generatedAt, key.persistedAt, key.reuse])}
+      />
+      <DesignTable
+        title="Fault-injection cases"
+        headers={['Case', 'Scenario', 'Expectation']}
+        rows={designRecord.faultInjectionCases.map((faultCase) => [
+          faultCase.name,
+          faultCase.scenario,
+          faultCase.expectation,
+        ])}
+      />
+    </div>
+  );
+}
+
 export function PipelineSummaryDetails({ summary }: { summary: PipelineSummary }) {
   const files = pipelineFileReview(summary);
   const assumptions = pipelineAssumptionReview(summary);
@@ -291,6 +439,10 @@ export function PipelineSummaryDetails({ summary }: { summary: PipelineSummary }
           <p className="mt-1 text-xs leading-5">Review each highlighted file before approving the merge.</p>
         </div>
       ) : null}
+
+      <ReviewFindingsPanel findings={summary.findings} />
+
+      {summary.designRecord === null ? null : <DesignRecordDetails designRecord={summary.designRecord} />}
 
       <div className="rounded-md border border-line bg-card p-3.5">
         <h4 className="text-xs font-semibold text-ink">Commits</h4>
@@ -487,6 +639,7 @@ export function WorkItemDetail({
   const [pipelineSummaryState, setPipelineSummaryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
   const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
+  const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
   const actionContexts = {
@@ -501,6 +654,11 @@ export function WorkItemDetail({
     planningTaskState: planningTask?.status ?? null,
     archived: workItem.archivedAt !== null,
   });
+  const pipelineSummaryVisible = ['reviewing', 'fixing', 'final_approval'].includes(workItem.state);
+  const pipelineSummaryBelongsToWorkItem = pipelineSummaryWorkItemIdRef.current === workItem.id;
+  const renderedPipelineSummary = pipelineSummaryBelongsToWorkItem ? pipelineSummary : null;
+  const renderedPipelineSummaryState = pipelineSummaryBelongsToWorkItem ? pipelineSummaryState : 'loading';
+  const renderedPipelineSummaryError = pipelineSummaryBelongsToWorkItem ? pipelineSummaryError : null;
 
   useEffect(() => {
     setAnswer('');
@@ -510,6 +668,13 @@ export function WorkItemDetail({
     setRejecting(false);
     setFinalActionBusy(false);
     setConfirmation(null);
+  }, [workItem.id]);
+
+  useEffect(() => {
+    pipelineSummaryWorkItemIdRef.current = workItem.id;
+    setPipelineSummary(null);
+    setPipelineSummaryError(null);
+    setPipelineSummaryState('idle');
   }, [workItem.id]);
 
   useEffect(() => {
@@ -541,16 +706,12 @@ export function WorkItemDetail({
   }, [client, workItem.id, workItem.resolvedProjectId, workItem.state, workflowAttempt]);
 
   useEffect(() => {
-    if (workItem.state !== 'final_approval') {
-      setPipelineSummary(null);
-      setPipelineSummaryError(null);
-      setPipelineSummaryState('idle');
+    if (!['reviewing', 'fixing', 'final_approval'].includes(workItem.state)) {
       return;
     }
     const controller = new AbortController();
-    setPipelineSummary(null);
     setPipelineSummaryError(null);
-    setPipelineSummaryState('loading');
+    setPipelineSummaryState(renderedPipelineSummary === null ? 'loading' : 'ready');
     void client.getPipelineSummary(workItem.id, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
       setPipelineSummary(next);
@@ -797,29 +958,35 @@ export function WorkItemDetail({
           </section>
         ) : null}
 
-        {workItem.state === 'final_approval' ? (
+        {pipelineSummaryVisible ? (
           <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="pipeline-summary-heading">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 id="pipeline-summary-heading" className="text-xs font-semibold text-ink">Final approval</h3>
-                <p className="mt-1 text-xs leading-5 text-muted">Review the committed changes, declared scope, assumptions, and verify evidence before merging locally.</p>
+                <h3 id="pipeline-summary-heading" className="text-xs font-semibold text-ink">
+                  {workItem.state === 'final_approval' ? 'Final approval' : 'Pipeline review'}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  {workItem.state === 'final_approval'
+                    ? 'Review the committed changes, declared scope, assumptions, and verify evidence before merging locally.'
+                    : 'Track review findings, design decisions, committed changes, and verification evidence while the pipeline is active.'}
+                </p>
               </div>
-              {pipelineSummaryState === 'error' ? (
+              {renderedPipelineSummaryState === 'error' ? (
                 <Button size="sm" icon={<RefreshCw size={14} />} onClick={() => setPipelineSummaryAttempt((value) => value + 1)}>Retry</Button>
               ) : null}
             </div>
-            {pipelineSummaryState === 'loading' ? (
+            {renderedPipelineSummaryState === 'loading' ? (
               <div className="mt-4 flex min-h-28 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted" role="status">
                 <RefreshCw size={16} className="animate-spin" /> Loading pipeline summary…
               </div>
-            ) : pipelineSummaryState === 'error' ? (
+            ) : renderedPipelineSummaryState === 'error' ? (
               <div className="mt-4 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
-                {pipelineSummaryError ?? 'The pipeline summary could not be loaded.'}
+                {renderedPipelineSummaryError ?? 'The pipeline summary could not be loaded.'}
               </div>
-            ) : pipelineSummaryState === 'ready' && pipelineSummary !== null ? (
+            ) : renderedPipelineSummaryState === 'ready' && renderedPipelineSummary !== null ? (
               <>
-                <PipelineSummaryDetails summary={pipelineSummary} />
-                {onApproveMerge !== undefined && onRejectFinal !== undefined ? (
+                <PipelineSummaryDetails summary={renderedPipelineSummary} />
+                {workItem.state === 'final_approval' && onApproveMerge !== undefined && onRejectFinal !== undefined ? (
                   <FinalApprovalActions
                     busy={busy || finalActionBusy}
                     onApprove={() => openConfirmation('merge')}
@@ -829,7 +996,9 @@ export function WorkItemDetail({
               </>
             ) : (
               <div className="mt-4 rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted">
-                The pipeline summary is unavailable. Refresh before making a final decision.
+                {workItem.state === 'final_approval'
+                  ? 'The pipeline summary is unavailable. Refresh before making a final decision.'
+                  : 'The pipeline summary is unavailable. Refresh to check the latest review evidence.'}
               </div>
             )}
           </section>

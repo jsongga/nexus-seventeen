@@ -60,7 +60,7 @@ describe('plan approval record and controls', () => {
     ]) expect(markup).toContain(text);
   });
 
-  it('keeps reject and confirm separate and warns that hazardous confirm parks', () => {
+  it('keeps reject and confirm separate and explains the hazardous Design-stage gate', () => {
     const markup = renderToStaticMarkup(createElement(PlanApprovalActions, {
       plan: plan('hazardous'),
       busy: false,
@@ -70,7 +70,7 @@ describe('plan approval record and controls', () => {
       onReject: vi.fn(),
     }));
 
-    expect(markup).toContain('Hazardous plans park at confirmation');
+    expect(markup).toContain('Hazardous tier: confirming enters the Design stage before implementation.');
     expect(markup).toContain('Confirm plan');
     expect(markup).toContain('Reject plan');
     expect(markup).not.toContain('Cancel work item');

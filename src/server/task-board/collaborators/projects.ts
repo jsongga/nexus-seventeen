@@ -14,12 +14,14 @@ import {
   type ProjectArtifact,
   type ProjectEvent,
   type PipelineSummary,
+  type ReviewFinding,
   type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type SettleRunRequest,
   type WorkItem,
   type WorkNode,
 } from "#shared/task-board-contract";
+import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
 import { ArtifactStore } from "../persistence/artifacts.js";
 import { projectFromRow, type Row } from "../persistence/rows.js";
 import {
@@ -56,6 +58,23 @@ const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
+
+function reviewFindingFromRow(row: Row): ReviewFinding {
+  return Object.freeze({
+    findingId: String(row.finding_id),
+    nodeId: String(row.node_id),
+    stage: String(row.stage) as ReviewFinding["stage"],
+    round: Number(row.round),
+    ...(row.file === null ? { file: null } : { file: String(row.file) }),
+    ...(row.line === null ? { line: null } : { line: Number(row.line) }),
+    category: String(row.category) as ReviewFinding["category"],
+    severity: String(row.severity) as ReviewFinding["severity"],
+    expected: String(row.expected),
+    actual: String(row.actual),
+    blocking: Number(row.blocking) === 1,
+    createdAt: String(row.created_at),
+  });
+}
 
 const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
   encoding: "utf8",
@@ -202,7 +221,10 @@ export class ProjectsCollaborator {
       SELECT
         item.pipeline_branch,item.base_sha,project.description AS repo_path,
         plan.assumptions_json,plan.acceptance_criteria_json,plan.declared_scope_json,
-        plan.criterion_checks_json
+        plan.criterion_checks_json,
+        (SELECT design.payload_json FROM design_records design
+          WHERE design.work_item_id=item.work_item_id
+        ) AS design_record_json
       FROM work_items item
       JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
       JOIN projects project ON project.project_id=plan.project_id
@@ -250,6 +272,17 @@ export class ProjectsCollaborator {
       check: string;
     }>;
     const machineCheckedCriteria = new Set(criterionChecks.map((entry) => entry.criterion));
+    const findings = Object.freeze((this.runtime.store.db.prepare(`
+      SELECT finding.*
+      FROM plan_revisions plan
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      JOIN review_findings finding ON finding.node_id=node.node_id
+      WHERE plan.work_item_id=? AND plan.state='confirmed'
+      ORDER BY finding.round,finding.created_at,finding.finding_id
+    `).all(workItemId) as Row[]).map(reviewFindingFromRow));
+    const designRecord = row.design_record_json === null
+      ? null
+      : parseDesignRecordDraft(JSON.parse(String(row.design_record_json)));
     return Object.freeze({
       commits: inspection.commits,
       diffstat: inspection.diffstat,
@@ -261,6 +294,8 @@ export class ProjectsCollaborator {
       verify: this.#verifyAttempts.listForWorkItem(workItemId),
       criteria: Object.freeze(criteria.filter((criterion) => !machineCheckedCriteria.has(criterion))),
       criterionChecks: Object.freeze(criterionChecks),
+      findings,
+      designRecord,
     });
   }
 

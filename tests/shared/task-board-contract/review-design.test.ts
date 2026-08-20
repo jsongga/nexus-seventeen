@@ -21,6 +21,7 @@ import {
   parseDesignRecordDraft,
   parseDesignRecordEntity,
   parseBoardSettle,
+  parsePipelineSummaryEntity,
   parseReviewFindingDraft,
   parseWorkerAgentRunOutcome,
 } from "#shared/task-board-contract/validate";
@@ -128,6 +129,42 @@ test("design records round-trip a complete failure matrix", () => {
     createdAt: NOW,
   };
   assert.deepEqual(parseDesignRecordEntity(record, "designRecord"), record);
+});
+
+test("pipeline summaries strictly round-trip findings and the design record", () => {
+  const summary = {
+    commits: [{ sha: "0123456789abcdef0123456789abcdef01234567", subject: "Review evidence" }],
+    diffstat: " src/change.ts | 1 +",
+    filesTouched: ["src/change.ts"],
+    declaredScope: ["src"],
+    scopeOk: true,
+    assumptions: [],
+    midRunAssumptions: [],
+    verify: [],
+    criteria: [],
+    criterionChecks: [],
+    findings: [{
+      findingId: "finding-one",
+      nodeId: "node-one",
+      stage: "verification",
+      round: 1,
+      file: "src/change.ts",
+      line: 4,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry is idempotent.",
+      actual: "The retry duplicates the write.",
+      blocking: true,
+      createdAt: NOW,
+    }],
+    designRecord: designRecordDraft(),
+  } as const;
+
+  assert.deepEqual(parsePipelineSummaryEntity(summary, "pipelineSummary"), summary);
+  const { findings: _findings, ...withoutFindings } = summary;
+  const { designRecord: _designRecord, ...withoutDesignRecord } = summary;
+  assert.throws(() => parsePipelineSummaryEntity(withoutFindings, "pipelineSummary"), ContractValidationError);
+  assert.throws(() => parsePipelineSummaryEntity(withoutDesignRecord, "pipelineSummary"), ContractValidationError);
 });
 
 test("board settlements preserve valid design records and use the required-record code for invalid drafts", () => {

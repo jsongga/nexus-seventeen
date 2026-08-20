@@ -590,6 +590,8 @@ export interface PipelineSummary {
   readonly verify: readonly VerifyAttempt[];
   readonly criteria: readonly string[];
   readonly criterionChecks: readonly PlanCriterionCheck[];
+  readonly findings: readonly ReviewFinding[];
+  readonly designRecord: DesignRecordDraft | null;
 }
 
 export interface CriterionResult {

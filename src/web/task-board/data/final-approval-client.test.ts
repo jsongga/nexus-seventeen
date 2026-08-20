@@ -52,14 +52,18 @@ const pipelineSummary = {
 };
 
 describe('final approval client', () => {
-  it('strictly validates the pipeline summary response', async () => {
+  it('validates the pipeline summary response while defaulting fields absent from older responses', async () => {
     const request = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify(pipelineSummary)));
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.getPipelineSummary('work-item-one')).resolves.toEqual(pipelineSummary);
+    await expect(client.getPipelineSummary('work-item-one')).resolves.toEqual({
+      ...pipelineSummary,
+      findings: [],
+      designRecord: null,
+    });
     expect(request.mock.calls[0]?.[0]).toBe('https://board.example.test/v1/work-items/work-item-one/pipeline-summary');
 
     const invalid = createTaskBoardClient({

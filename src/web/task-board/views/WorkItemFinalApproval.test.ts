@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PipelineSummary } from '@shared/task-board-contract';
 import { pipelineFileReview, pipelineAssumptionReview } from '../model/work-item-detail';
 import {
+  DesignRecordDetails,
   FinalApprovalActions,
   FinalRejectionForm,
   PipelineSummaryDetails,
+  ReviewFindingsPanel,
 } from './WorkItemDetail';
 
 const summary: PipelineSummary = {
@@ -35,6 +37,58 @@ const summary: PipelineSummary = {
   }],
   criteria: ['The operator can distinguish planned and unplanned files.'],
   criterionChecks: [{ criterion: 'The web suite passes.', check: 'npm run test:web' }],
+  findings: [{
+    findingId: 'finding-round-one',
+    nodeId: 'node-one',
+    stage: 'verification',
+    round: 1,
+    file: null,
+    line: null,
+    category: 'docs',
+    severity: 'minor',
+    expected: 'The operator notes are present.',
+    actual: 'The notes were absent.',
+    blocking: false,
+    createdAt: '2026-08-19T12:02:00.000Z',
+  }, {
+    findingId: 'finding-round-two',
+    nodeId: 'node-one',
+    stage: 'verification',
+    round: 2,
+    file: 'src/web/task-board/views/WorkItemDetail.tsx',
+    line: 321,
+    category: 'correctness',
+    severity: 'major',
+    expected: 'Retries reuse the durable key.',
+    actual: 'Retries create a new key.',
+    blocking: true,
+    createdAt: '2026-08-19T12:03:00.000Z',
+  }],
+  designRecord: {
+    states: ['pending', 'sent', 'committed'],
+    transitions: [{
+      from: 'pending',
+      to: 'sent',
+      durablePrecondition: 'requestId is persisted',
+      recovery: 'Reuse requestId',
+    }],
+    failurePoints: [{
+      point: 'crash_after_send_before_response',
+      resultingState: 'sent',
+      recovery: 'Retry with requestId',
+    }],
+    idempotencyKeys: [{
+      name: 'requestId',
+      generatedAt: 'Before send',
+      persistedAt: 'With pending state',
+      reuse: 'Every retry',
+    }],
+    faultInjectionCases: [{
+      name: 'Lost response',
+      scenario: 'Crash after send',
+      expectation: 'One durable write',
+    }],
+  },
 };
 
 describe('final approval summary and controls', () => {
@@ -68,6 +122,53 @@ describe('final approval summary and controls', () => {
       'Human-review criteria',
       'The operator can distinguish planned and unplanned files.',
     ]) expect(markup).toContain(text);
+  });
+
+  it('renders findings by round and badges blocking findings with category and severity', () => {
+    const markup = renderToStaticMarkup(createElement(ReviewFindingsPanel, { findings: summary.findings }));
+
+    for (const text of [
+      'Review findings',
+      'Round 1',
+      'Round 2',
+      'The operator notes are present.',
+      'Retries create a new key.',
+      'Blocking · correctness · major',
+      'src/web/task-board/views/WorkItemDetail.tsx:321',
+    ]) expect(markup).toContain(text);
+  });
+
+  it('renders an explicit empty state when no review findings were recorded', () => {
+    const markup = renderToStaticMarkup(createElement(ReviewFindingsPanel, { findings: [] }));
+
+    expect(markup).toContain('No review findings were recorded.');
+  });
+
+  it('renders the design record failure-point table and recovery contract', () => {
+    const markup = renderToStaticMarkup(createElement(DesignRecordDetails, {
+      designRecord: summary.designRecord!,
+    }));
+
+    for (const text of [
+      'Design record',
+      'States',
+      'Transitions',
+      'Failure points',
+      'crash after send before response',
+      'Retry with requestId',
+      'Idempotency keys',
+      'Fault-injection cases',
+      'One durable write',
+    ]) expect(markup).toContain(text);
+    expect(markup).toContain('<table');
+  });
+
+  it('omits design record details when the summary has no design record', () => {
+    const markup = renderToStaticMarkup(createElement(PipelineSummaryDetails, {
+      summary: { ...summary, designRecord: null },
+    }));
+
+    expect(markup).not.toContain('Design record');
   });
 
   it('presents merge as the primary confirmed action and changes as a separate path', () => {

@@ -1336,7 +1336,7 @@ export function parsePipelineSummaryEntity(
 ): PipelineSummary {
   const fields = [
     "commits", "diffstat", "filesTouched", "declaredScope", "scopeOk", "assumptions",
-    "midRunAssumptions", "verify", "criteria", "criterionChecks",
+    "midRunAssumptions", "verify", "criteria", "criterionChecks", "findings", "designRecord",
   ];
   const item = shape(value, label, fields, fields, options);
   const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
@@ -1360,6 +1360,30 @@ export function parsePipelineSummaryEntity(
       });
     },
   );
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const findings = Object.freeze(boundedPlanArray(
+    item.findings,
+    `${label}.findings`,
+    0,
+    10_000,
+    (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel, options) as ReviewFinding,
+  ));
+  let designRecord: DesignRecordDraft | null = null;
+  if (item.designRecord !== null) {
+    const designItem = shape(
+      item.designRecord,
+      `${label}.designRecord`,
+      DESIGN_RECORD_FIELDS,
+      DESIGN_RECORD_FIELDS,
+      options,
+    );
+    designRecord = parseDesignRecordFields(
+      designItem,
+      `${label}.designRecord`,
+      options,
+      tolerateUnknown,
+    ) as DesignRecordDraft;
+  }
   return Object.freeze({
     commits,
     diffstat: stringValue(item.diffstat, `${label}.diffstat`),
@@ -1372,6 +1396,8 @@ export function parsePipelineSummaryEntity(
       (entry, entryLabel) => parseVerifyAttemptEntity(entry, entryLabel, options)),
     criteria: stringList(item.criteria, `${label}.criteria`, 64),
     criterionChecks,
+    findings,
+    designRecord,
   });
 }
 

@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import type { StageHandoff, WorkflowPlanDraft } from "#shared/task-board-contract";
+import {
+  DESIGN_FAILURE_POINTS,
+  type DesignRecordDraft,
+  type StageHandoff,
+  type WorkflowPlanDraft,
+} from "#shared/task-board-contract";
 import { createTaskBoardService, TaskBoard, TaskBoardError } from "#server/task-board";
 import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
 import {
@@ -265,6 +270,94 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
   }
 }
 
+function addReviewAndDesignEvidence(path: string, workItemId: string): DesignRecordDraft {
+  const designRecord: DesignRecordDraft = {
+    states: ["pending", "sent", "committed"],
+    transitions: [{
+      from: "pending",
+      to: "sent",
+      durablePrecondition: "requestId is persisted",
+      recovery: "Reuse requestId",
+    }],
+    failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+      point,
+      resultingState: "pending",
+      recovery: "Retry with requestId",
+    })),
+    idempotencyKeys: [{
+      name: "requestId",
+      generatedAt: "Before send",
+      persistedAt: "With pending state",
+      reuse: "Every retry",
+    }],
+    faultInjectionCases: [{
+      name: "Lost response",
+      scenario: "Crash after send",
+      expectation: "One durable write",
+    }],
+  };
+  const db = new DatabaseSync(path);
+  try {
+    const row = db.prepare(`
+      SELECT plan.plan_revision_id,node.node_id
+      FROM plan_revisions plan
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      WHERE plan.work_item_id=? AND plan.state='confirmed'
+      LIMIT 1
+    `).get(workItemId);
+    assert.ok(row);
+    db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      `finding-round-two-${workItemId}`,
+      String(row.node_id),
+      "verification",
+      2,
+      "src/allowed/change.txt",
+      7,
+      "correctness",
+      "major",
+      "The retry reuses requestId.",
+      "The retry generated a new key.",
+      1,
+      "2026-08-19T16:01:00.000Z",
+    );
+    db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      `finding-round-one-${workItemId}`,
+      String(row.node_id),
+      "verification",
+      1,
+      null,
+      null,
+      "docs",
+      "minor",
+      "The operator notes are present.",
+      "The notes were absent.",
+      0,
+      "2026-08-19T16:02:00.000Z",
+    );
+    db.prepare(`
+      INSERT INTO design_records(design_record_id,work_item_id,plan_revision_id,payload_json,created_at)
+      VALUES(?,?,?,?,?)
+    `).run(
+      `design-${workItemId}`,
+      workItemId,
+      String(row.plan_revision_id),
+      JSON.stringify(designRecord),
+      "2026-08-19T16:03:00.000Z",
+    );
+  } finally {
+    db.close();
+  }
+  return designRecord;
+}
+
 async function finalApprovalFixture(
   suffix: string,
   conflict = false,
@@ -342,9 +435,43 @@ function request(
   });
 }
 
-test("pipeline summary returns git, scope, assumption, verify, and criteria evidence", async () => {
+test("board pipeline summary assembles ordered findings and the validated design record", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "direct-summary");
+    const proposed = proposePipeline(fixture, "direct-summary");
+    fixture.board.confirmWorkflow(proposed.planRevisionId, { expectedState: "proposed" });
+    const branch = `task/${proposed.workItemId}`;
+    await git(repo.repo, ["switch", "-c", branch]);
+    await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
+    await writeFile(join(repo.repo, "src", "allowed", "change.txt"), "pipeline\n");
+    await git(repo.repo, ["add", "."]);
+    await git(repo.repo, ["commit", "-m", "pipeline direct summary"]);
+    const verifiedSha = (await git(repo.repo, ["rev-parse", "HEAD"])).trim();
+    await git(repo.repo, ["switch", "main"]);
+    forceFinalApproval(fixture.path, proposed.workItemId, verifiedSha);
+    const designRecord = addReviewAndDesignEvidence(fixture.path, proposed.workItemId);
+
+    const summary = fixture.board.pipelineSummary(proposed.workItemId);
+
+    assert.deepEqual(summary.findings.map((finding) => finding.round), [1, 2]);
+    assert.deepEqual(summary.findings.map((finding) => finding.findingId), [
+      `finding-round-one-${proposed.workItemId}`,
+      `finding-round-two-${proposed.workItemId}`,
+    ]);
+    assert.equal(summary.findings[1]?.blocking, true);
+    assert.deepEqual(summary.designRecord, designRecord);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline summary returns git, scope, finding, design, verify, and criteria evidence", async () => {
   const fixture = await finalApprovalFixture("summary");
   try {
+    const designRecord = addReviewAndDesignEvidence(fixture.path, fixture.workItemId);
     const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/pipeline-summary`, "GET");
     assert.equal(response.status, 200);
     const summary = await response.json() as Record<string, unknown>;
@@ -358,6 +485,32 @@ test("pipeline summary returns git, scope, assumption, verify, and criteria evid
     assert.equal(summary.scopeOk, true);
     assert.deepEqual(summary.assumptions, ["The default branch stays available."]);
     assert.deepEqual(summary.midRunAssumptions, ["Use a plain-text marker for v1."]);
+    assert.deepEqual((summary.findings as Array<Record<string, unknown>>).map((finding) => ({
+      findingId: finding.findingId,
+      round: finding.round,
+      file: finding.file,
+      line: finding.line,
+      category: finding.category,
+      severity: finding.severity,
+      blocking: finding.blocking,
+    })), [{
+      findingId: `finding-round-one-${fixture.workItemId}`,
+      round: 1,
+      file: null,
+      line: null,
+      category: "docs",
+      severity: "minor",
+      blocking: false,
+    }, {
+      findingId: `finding-round-two-${fixture.workItemId}`,
+      round: 2,
+      file: "src/allowed/change.txt",
+      line: 7,
+      category: "correctness",
+      severity: "major",
+      blocking: true,
+    }]);
+    assert.deepEqual(summary.designRecord, designRecord);
     assert.deepEqual(summary.criteria, ["The pipeline commit lands only after approval."]);
     assert.deepEqual(summary.criterionChecks, [
       {

@@ -86,6 +86,7 @@ import {
   parseAutomationExecutor,
   parseDesignRecord,
   parseDocument,
+  parsePipelineSummary,
   parseProject,
   parseQuestion,
   parseRawBoard,
@@ -332,6 +333,92 @@ describe('browser task-board validator adapter', () => {
     expect(design.failurePoints[0]?.point).toBe('unrecognized');
     expect(design.transitions[0]).not.toHaveProperty('additiveField');
     expect(design).not.toHaveProperty('additiveField');
+  });
+
+  it('projects pipeline findings and the design record while ignoring additive response fields', () => {
+    const summary = {
+      commits: [{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'Review the pipeline' }],
+      diffstat: ' src/change.ts | 1 +',
+      filesTouched: ['src/change.ts'],
+      declaredScope: ['src'],
+      scopeOk: true,
+      assumptions: ['The current contract remains stable.'],
+      midRunAssumptions: [],
+      verify: [],
+      criteria: ['The review evidence is visible.'],
+      criterionChecks: [],
+      findings: [{
+        findingId: 'finding-one',
+        nodeId: 'node-one',
+        stage: 'verification',
+        round: 2,
+        file: 'src/change.ts',
+        line: 17,
+        category: 'correctness',
+        severity: 'major',
+        expected: 'The write is idempotent.',
+        actual: 'A retry duplicates the write.',
+        blocking: true,
+        createdAt: NOW,
+        additiveField: 'ignored',
+      }],
+      designRecord: {
+        states: ['pending', 'committed'],
+        transitions: [{ from: 'pending', to: 'committed', durablePrecondition: 'The key is persisted.' }],
+        failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+          point,
+          resultingState: 'pending',
+          recovery: 'Retry with the persisted key.',
+        })),
+        idempotencyKeys: [{
+          name: 'requestId',
+          generatedAt: 'Before the first send.',
+          persistedAt: 'With the pending state.',
+          reuse: 'Reuse for every retry.',
+        }],
+        faultInjectionCases: [{
+          name: 'Crash after send',
+          scenario: 'Stop before the response.',
+          expectation: 'The retry reuses requestId.',
+        }],
+        additiveField: 'ignored',
+      },
+      additiveField: 'ignored',
+    };
+
+    const {
+      additiveField: _summaryAdditiveField,
+      findings: _findings,
+      designRecord,
+      ...summaryFields
+    } = summary;
+    const { additiveField: _designAdditiveField, ...designFields } = designRecord;
+    expect(parsePipelineSummary(summary, 'pipeline summary')).toEqual({
+      ...summaryFields,
+      findings: summary.findings.map(({ additiveField: _additiveField, ...finding }) => finding),
+      designRecord: {
+        ...designFields,
+        transitions: designRecord.transitions.map(({ ...transition }) => transition),
+        failurePoints: designRecord.failurePoints.map(({ ...failurePoint }) => failurePoint),
+        idempotencyKeys: designRecord.idempotencyKeys.map(({ ...key }) => key),
+        faultInjectionCases: designRecord.faultInjectionCases.map(({ ...faultCase }) => faultCase),
+      },
+    });
+  });
+
+  it('defaults pipeline findings and the design record when an older tab receives neither field', () => {
+    expect(parsePipelineSummary({
+      commits: [],
+      diffstat: '',
+      filesTouched: [],
+      declaredScope: ['src'],
+      scopeOk: true,
+      assumptions: [],
+      midRunAssumptions: [],
+      verify: [],
+      criteria: [],
+      criterionChecks: [],
+    }, 'pipeline summary')).toMatchObject({ findings: [], designRecord: null });
   });
 
   it('parses typed transition history on the work-item detail path', () => {
