@@ -204,6 +204,98 @@ export class WorkItemsCollaborator {
     return this.startWorkItemPlanningInTransaction(workItemId, false, revisionNote);
   }
 
+  startWorkItemDesignInTransaction(workItemId: string): BoardTask | null {
+    const workItem = this.runtime.requireWorkItem(workItemId);
+    if (workItem.resolvedProjectId === null || workItem.endedAt !== null) return null;
+    const existing = this.runtime.store.db.prepare(
+      "SELECT task_id FROM work_item_design_tasks WHERE work_item_id=?",
+    ).get(workItemId);
+    if (existing !== undefined) return this.runtime.requireTask(String(existing.task_id));
+    let managers = this.runtime.store.db.prepare(
+      "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
+    ).all(workItem.resolvedProjectId);
+    if (managers.length === 0) {
+      const created = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
+      managers = created === null ? [] : [{ agent_id: created.agentId }];
+    }
+    if (managers.length !== 1) return null;
+    const confirmed = this.runtime.store.db.prepare(`
+      SELECT *
+      FROM plan_revisions
+      WHERE work_item_id=? AND state='confirmed'
+      ORDER BY revision DESC
+      LIMIT 1
+    `).get(workItemId);
+    if (confirmed === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_missing");
+    const nodes = this.runtime.store.db.prepare(`
+      SELECT *
+      FROM work_nodes
+      WHERE plan_revision_id=?
+      ORDER BY created_at,node_id
+    `).all(String(confirmed.plan_revision_id)).map((node) => ({
+      nodeId: String(node.node_id),
+      title: String(node.title),
+      objective: String(node.objective),
+      acceptanceCriteria: JSON.parse(String(node.acceptance_criteria_json)) as unknown,
+      dependencyNodeIds: this.runtime.store.db.prepare(`
+        SELECT dependency_node_id
+        FROM work_node_dependencies
+        WHERE node_id=?
+        ORDER BY dependency_node_id
+      `).all(String(node.node_id)).map((dependency) => String(dependency.dependency_node_id)),
+      stageTemplate: JSON.parse(String(node.stage_template_json)) as unknown,
+    }));
+    const confirmedPlanRecord = {
+      planRevisionId: String(confirmed.plan_revision_id),
+      workItemId,
+      revision: Number(confirmed.revision),
+      objective: String(confirmed.objective),
+      assumptions: JSON.parse(String(confirmed.assumptions_json)) as unknown,
+      acceptanceCriteria: JSON.parse(String(confirmed.acceptance_criteria_json)) as unknown,
+      changeShape: confirmed.change_shape === null ? null : String(confirmed.change_shape),
+      tier: confirmed.tier === null ? null : String(confirmed.tier),
+      declaredScope: confirmed.declared_scope_json === null
+        ? null
+        : JSON.parse(String(confirmed.declared_scope_json)) as unknown,
+      nonGoals: confirmed.non_goals_json === null
+        ? null
+        : JSON.parse(String(confirmed.non_goals_json)) as unknown,
+      mechanicalPortions: confirmed.mechanical_portions_json === null
+        ? null
+        : JSON.parse(String(confirmed.mechanical_portions_json)) as unknown,
+      blockingQuestions: confirmed.blocking_questions_json === null
+        ? null
+        : JSON.parse(String(confirmed.blocking_questions_json)) as unknown,
+      criterionChecks: confirmed.criterion_checks_json === null
+        ? null
+        : JSON.parse(String(confirmed.criterion_checks_json)) as unknown,
+      projectId: String(confirmed.project_id),
+      skillDigests: JSON.parse(String(confirmed.skill_digests_json)) as unknown,
+      state: "confirmed",
+      createdBy: String(confirmed.created_by),
+      createdAt: String(confirmed.created_at),
+      confirmedBy: confirmed.confirmed_by === null ? null : String(confirmed.confirmed_by),
+      confirmedAt: confirmed.confirmed_at === null ? null : String(confirmed.confirmed_at),
+      nodes,
+    };
+    const managerId = String(managers[0]!.agent_id);
+    const workItemTitle = (workItem.refinedObjective ?? workItem.originalRequest).slice(0, 220);
+    const task = this.tasks.createTaskInTransaction(workItem.resolvedProjectId, {
+      parentTaskId: null,
+      title: `Design workflow: ${workItemTitle}`,
+      objective: `${JSON.stringify(confirmedPlanRecord)}\n\n${workItem.originalRequest}`,
+      acceptanceCriteria: "Return a valid designRecord covering all six hazardous failure points. Never write code.",
+      workspaceRefs: [],
+      assignedAgentId: managerId,
+      assignedRole: "manager",
+      requiresReview: false,
+    });
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.db.prepare("INSERT INTO work_item_design_tasks VALUES(?,?,?)").run(workItemId, task.taskId, now);
+    this.runtime.store.afterCommit(() => this.runtime.wakeupEvents.emit(managerId));
+    return task;
+  }
+
   private startWorkItemPlanningInTransaction(
     workItemId: string,
     repairLegacyOrphan: boolean,

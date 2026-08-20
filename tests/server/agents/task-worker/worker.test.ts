@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
+import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
@@ -863,6 +863,99 @@ test("forwards non-empty structured review findings with the run settlement", as
   }
 });
 
+test("forwards a complete design record with the run settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request, { context: context({ design: true }) }));
+  const designRecord = {
+    states: ["pending", "committed"],
+    transitions: [{ from: "pending", to: "committed" }],
+    failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+      point,
+      resultingState: `state after ${point}`,
+      recovery: `recover ${point}`,
+    })),
+    idempotencyKeys: [],
+    faultInjectionCases: [],
+  };
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({
+    ...completedOutcome("The design is complete."),
+    designRecord,
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.deepEqual(board.settlements[0]?.designRecord, designRecord);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("drops a design record from a failed design run before settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request, { context: context({ design: true }) }));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({
+    status: "failed",
+    outputs: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    detail: "The design run failed before completing the design.",
+    designRecord: {
+      states: ["pending", "committed"],
+      transitions: [{ from: "pending", to: "committed" }],
+      failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+        point,
+        resultingState: `state after ${point}`,
+        recovery: `recover ${point}`,
+      })),
+      idempotencyKeys: [],
+      faultInjectionCases: [],
+    },
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.equal(Object.hasOwn(board.settlements[0]!, "designRecord"), false);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("drops an echoed design record from a non-design run before settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request, { context: context({ design: false }) }));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({
+    ...completedOutcome("Implementation completed without replacing the approved design."),
+    designRecord: {
+      states: ["pending", "committed"],
+      transitions: [{ from: "pending", to: "committed" }],
+      failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+        point,
+        resultingState: `state after ${point}`,
+        recovery: `recover ${point}`,
+      })),
+      idempotencyKeys: [],
+      faultInjectionCases: [],
+    },
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "completed");
+    assert.equal(Object.hasOwn(board.settlements[0]!, "designRecord"), false);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("a human answer is included in the next bounded one-shot context", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -1580,7 +1673,7 @@ test("launcher receives only the bounded contract fields", async () => {
   try {
     await taskWorker.dispatchOnce();
     assert.deepEqual(Object.keys(launcher.requests[0]?.context ?? {}).sort(), [
-      "agentId", "apiVersion", "areaMemory", "intake", "messages", "messagesSinceCursor", "mission", "nextMessageCursor",
+      "agentId", "apiVersion", "areaMemory", "design", "intake", "messages", "messagesSinceCursor", "mission", "nextMessageCursor",
       "openQuestions", "parentEvidence", "projectId", "projectMemory", "task", "taskId", "triggerQuestion",
       "workflow", "workspaceRefs",
     ]);

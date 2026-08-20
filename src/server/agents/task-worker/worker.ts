@@ -174,6 +174,13 @@ function settlementResult(outcome: AgentRunOutcome): string {
   return result.body;
 }
 
+function normalizeDesignRecordForRun(outcome: AgentRunOutcome, design: boolean): AgentRunOutcome {
+  if ((design && outcome.status === "completed") || outcome.designRecord === undefined) return outcome;
+  const normalized = { ...outcome };
+  Reflect.deleteProperty(normalized, "designRecord");
+  return Object.freeze(normalized);
+}
+
 function interruptedOutcome(reason: string): AgentRunOutcome {
   return Object.freeze({
     status: "interrupted",
@@ -822,7 +829,7 @@ export class TaskWorker {
       }
       await this.#applyStructuredTaskState(active.claim, context, outcome, liveTask);
       await this.#finishLivePhase(active.claim, liveTask, outcome.status);
-      await this.#recordOutcome(outcome);
+      await this.#recordOutcome(outcome, context.design);
       await this.#flushAndFinish();
     } finally {
       this.#stopHeartbeat();
@@ -1143,8 +1150,8 @@ export class TaskWorker {
     }
   }
 
-  async #recordOutcome(outcomeInput: AgentRunOutcome): Promise<void> {
-    const outcome = parseAgentRunOutcome(outcomeInput);
+  async #recordOutcome(outcomeInput: AgentRunOutcome, design = false): Promise<void> {
+    const outcome = normalizeDesignRecordForRun(parseAgentRunOutcome(outcomeInput), design);
     await this.#serial.run(async () => {
       const active = this.#state.active;
       if (active === null) throw new Error("Cannot record an outcome without an active run");
@@ -1197,6 +1204,7 @@ export class TaskWorker {
         ...(outcome.reviewFindings === undefined || outcome.reviewFindings.length === 0
           ? {}
           : { reviewFindings: outcome.reviewFindings }),
+        ...(outcome.designRecord === undefined ? {} : { designRecord: outcome.designRecord }),
         idempotencyKey: settlementIdempotency(active.claim, outcome, result),
       });
     }

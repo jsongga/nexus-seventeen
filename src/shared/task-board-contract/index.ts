@@ -302,6 +302,16 @@ export const DESIGN_FAILURE_POINTS = [
 ] as const;
 export type DesignFailurePointKind = typeof DESIGN_FAILURE_POINTS[number];
 
+// These bounds keep a maximally sized design record plus the settlement's
+// maximally sized result inside the default 64 KiB outcome/HTTP transport.
+export const DESIGN_RECORD_MAX_STATES = 32;
+export const DESIGN_RECORD_MAX_TRANSITIONS = 64;
+export const DESIGN_RECORD_MAX_FAILURE_POINTS = DESIGN_FAILURE_POINTS.length;
+export const DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS = 8;
+export const DESIGN_RECORD_MAX_FAULT_INJECTION_CASES = 8;
+export const DESIGN_RECORD_LABEL_MAX_LENGTH = 96;
+export const DESIGN_RECORD_DETAIL_MAX_LENGTH = 128;
+
 export const PLAN_REVISION_STATES = ["proposed", "confirmed", "superseded", "rejected"] as const;
 export type PlanRevisionState = typeof PLAN_REVISION_STATES[number];
 
@@ -337,6 +347,8 @@ export interface WorkflowPipelineContext {
   readonly declaredScope: readonly string[];
   readonly nonGoals: readonly string[];
   readonly assumptions: readonly string[];
+  /** Absent is accepted from claims persisted before the hazardous Design stage. */
+  readonly designRecord?: DesignRecordDraft | null;
 }
 
 export interface WorkflowReviewContext {
@@ -697,7 +709,7 @@ export interface RejectPlanRevisionResponse {
 /** The outcome is absent for the existing activation path. */
 export interface ConfirmPlanRevisionResponse<Workflow = unknown> {
   readonly workflow: Workflow;
-  readonly outcome?: "parked_hazardous";
+  readonly outcome?: "parked_hazardous" | "designing";
 }
 
 export interface DocumentPenHolder {
@@ -933,6 +945,7 @@ export interface ClaimRunResult {
   readonly task: BoardTask | null;
   readonly context: Readonly<{
     intake: boolean;
+    design: boolean;
     agent: AgentProfile;
     projectMemory: Readonly<{
       projectId: string;
@@ -1182,4 +1195,5 @@ export interface SettleRunRequest {
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
+  readonly designRecord?: DesignRecordDraft;
 }

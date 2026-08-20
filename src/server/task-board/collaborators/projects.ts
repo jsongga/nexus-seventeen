@@ -67,7 +67,7 @@ const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [.
 });
 
 export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
-  outcome?: "parked_hazardous";
+  outcome?: "parked_hazardous" | "designing";
 }>;
 
 export type ProjectsVerifyDependencies = Omit<
@@ -165,13 +165,18 @@ export class ProjectsCollaborator {
     return () => this.runtime.projectEvents.off(projectId, listener);
   }
 
-  confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
+  confirmWorkflow(
+    planRevisionId: string,
+    request: ConfirmPlanRevisionRequest,
+    startDesignInTransaction?: (workItemId: string) => void,
+  ): ConfirmWorkflowResult {
     const baseSha = this.#workflow.pipelineBaseShaForConfirm(planRevisionId, request);
     const confirmation = this.#workflow.confirm(
       planRevisionId,
       request,
       this.runtime.config.humanPrincipal,
       baseSha,
+      startDesignInTransaction,
     );
     for (const node of confirmation.readyNodes) this.activateWorkflowNode(node);
     const projectId = confirmation.readyNodes[0]?.projectId
@@ -481,6 +486,15 @@ export class ProjectsCollaborator {
     scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
     return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, reviewFindings, scopeCheck);
+  }
+
+  settleDesignInTransaction(
+    taskId: string,
+    result: string,
+    designRecord: NonNullable<SettleRunRequest["designRecord"]>,
+    actorId: string,
+  ): readonly WorkNode[] {
+    return this.#workflow.settleDesignInTransaction(taskId, result, designRecord, actorId);
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {

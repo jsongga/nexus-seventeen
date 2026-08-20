@@ -12,6 +12,7 @@ import {
   type ClaimRunRequest,
   type ClaimRunResult,
   type CreatePlanRevisionRequest,
+  type DesignRecordDraft,
   type InterruptAgentRequest,
   type ResumeAgentRequest,
   type RunInterruptBatch,
@@ -22,6 +23,7 @@ import {
   type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
+import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-board-contract/validate";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
@@ -634,6 +636,7 @@ export class RunsCollaborator {
     const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
+    this.designSettlement(current.taskId, request);
     if (request.reviewFindings !== undefined) {
       const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
         SELECT 1
@@ -715,6 +718,7 @@ export class RunsCollaborator {
       JOIN work_items w ON w.work_item_id=link.work_item_id
       WHERE link.task_id=?
     `).get(current.taskId);
+    const design = this.designSettlement(current.taskId, request);
     let workflowProposal: CreatePlanRevisionRequest | null = null;
     if (planning && request.outcome === "completed") {
       if (request.workflowPlan === undefined || request.workflowPlan === null) {
@@ -771,7 +775,26 @@ export class RunsCollaborator {
     } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
       throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
     }
-    if (current.taskId !== null) {
+    if (current.taskId !== null && design.row !== undefined && design.record !== null) {
+      const workItemId = String(design.row.work_item_id);
+      if (isTerminalWorkItemState(String(design.row.state) as WorkItemState)) {
+        this.runtime.insertEvent(
+          current.projectId,
+          current.taskId,
+          actor,
+          "work_item_design_discarded",
+          { workItemId, runId: current.runId, reason: "work_item_ended" },
+          now,
+        );
+      } else {
+        settledWorkflowNodes = this.projects.settleDesignInTransaction(
+          current.taskId,
+          request.result,
+          design.record,
+          agentId,
+        );
+      }
+    } else if (current.taskId !== null) {
       settledWorkflowNodes = this.projects.settleAttemptInTransaction(
         current.taskId,
         request.outcome,
@@ -851,11 +874,76 @@ export class RunsCollaborator {
         });
       }
     }
+    if (design.row !== undefined && request.outcome !== "completed") {
+      const workItemId = String(design.row.work_item_id);
+      if (!isTerminalWorkItemState(String(design.row.state) as WorkItemState)) {
+        transitionWorkItemInTransaction(this.runtime.store, {
+          workItemId,
+          to: "parked",
+          actorType: actor.type,
+          actorId: actor.id,
+          now,
+          currentStage: "planning",
+        });
+      }
+    }
     this.runtime.insertEvent(current.projectId, current.taskId, actor, "agent_run_settled", {
       runId: current.runId,
       outcome: request.outcome,
     }, now);
     return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes });
+  }
+
+  private designSettlement(
+    taskId: string | null,
+    request: SettleRunRequest,
+  ): Readonly<{ row: Record<string, unknown> | undefined; record: DesignRecordDraft | null }> {
+    const row = taskId === null ? undefined : this.runtime.store.db.prepare(`
+      SELECT item.*
+      FROM work_item_design_tasks link
+      JOIN work_items item ON item.work_item_id=link.work_item_id
+      WHERE link.task_id=?
+    `).get(taskId);
+    if (row === undefined) {
+      if (request.designRecord !== undefined) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
+          "Design records are only allowed for design tasks",
+        );
+      }
+      return Object.freeze({ row: undefined, record: null });
+    }
+    if (request.outcome !== "completed") {
+      if (request.designRecord !== undefined) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
+          "Only completed design tasks can return a design record",
+        );
+      }
+      return Object.freeze({ row, record: null });
+    }
+    if (request.designRecord === undefined) {
+      throw new TaskBoardError(
+        400,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
+        "Completed design tasks must return a design record",
+      );
+    }
+    try {
+      return Object.freeze({ row, record: parseDesignRecordDraft(request.designRecord) });
+    } catch (error) {
+      if (error instanceof ContractValidationError) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
+          error.message,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   private claimResult(
@@ -907,6 +995,9 @@ export class RunsCollaborator {
       context: Object.freeze({
         intake: task !== null && this.runtime.store.db.prepare(
           "SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?",
+        ).get(task.taskId) !== undefined,
+        design: task !== null && this.runtime.store.db.prepare(
+          "SELECT 1 FROM work_item_design_tasks WHERE task_id = ?",
         ).get(task.taskId) !== undefined,
         agent: this.runtime.requireAgent(run.agentId),
         projectMemory: Object.freeze({ projectId: project.projectId, name: project.name, description: project.description }),
@@ -960,10 +1051,15 @@ export class RunsCollaborator {
           this.runtime.store.db.prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
             .get(currentRun.taskId) !== undefined;
       }
+      if (!Object.hasOwn(context, "design")) context.design = false;
       if (context.workflow !== null && typeof context.workflow === "object" && !Array.isArray(context.workflow)) {
         const workflow = context.workflow as Record<string, unknown>;
         if (!Object.hasOwn(workflow, "workspaceKey")) workflow.workspaceKey = null;
         if (!Object.hasOwn(workflow, "pipeline")) workflow.pipeline = null;
+        if (workflow.pipeline !== null && typeof workflow.pipeline === "object" && !Array.isArray(workflow.pipeline)) {
+          const pipeline = workflow.pipeline as Record<string, unknown>;
+          if (!Object.hasOwn(pipeline, "designRecord")) pipeline.designRecord = null;
+        }
         if (!Object.hasOwn(workflow, "review")) workflow.review = null;
       }
     }

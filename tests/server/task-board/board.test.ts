@@ -1500,6 +1500,7 @@ test("happy-path claim keeps the existing complete response shape", async () => 
       "acceptanceCriteria",
       "agent",
       "areaMemory",
+      "design",
       "intake",
       "messageCursor",
       "messages",

@@ -4,6 +4,13 @@ import {
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
   DESIGN_FAILURE_POINTS,
+  DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  DESIGN_RECORD_LABEL_MAX_LENGTH,
+  DESIGN_RECORD_MAX_FAILURE_POINTS,
+  DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+  DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+  DESIGN_RECORD_MAX_STATES,
+  DESIGN_RECORD_MAX_TRANSITIONS,
   DOCUMENT_CONTENT_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
@@ -1069,9 +1076,9 @@ function parseDesignRecordFields(
   options: ShapeParserOptions,
   tolerateUnknown: boolean,
 ): Omit<TolerantDesignRecordEntity, "designRecordId" | "workItemId" | "planRevisionId" | "createdAt"> {
-  const states = boundedPlanArray(item.states, `${label}.states`, 1, 64,
-    (entry, entryLabel) => boundedRecordText(entry, entryLabel, 200));
-  const transitions = boundedPlanArray(item.transitions, `${label}.transitions`, 1, 128, (entry, entryLabel) => {
+  const states = boundedPlanArray(item.states, `${label}.states`, 1, DESIGN_RECORD_MAX_STATES,
+    (entry, entryLabel) => boundedRecordText(entry, entryLabel, DESIGN_RECORD_LABEL_MAX_LENGTH));
+  const transitions = boundedPlanArray(item.transitions, `${label}.transitions`, 1, DESIGN_RECORD_MAX_TRANSITIONS, (entry, entryLabel) => {
     const transition = shape(
       entry,
       entryLabel,
@@ -1080,17 +1087,17 @@ function parseDesignRecordFields(
       options,
     );
     return Object.freeze({
-      from: boundedRecordText(transition.from, `${entryLabel}.from`, 200),
-      to: boundedRecordText(transition.to, `${entryLabel}.to`, 200),
+      from: boundedRecordText(transition.from, `${entryLabel}.from`, DESIGN_RECORD_LABEL_MAX_LENGTH),
+      to: boundedRecordText(transition.to, `${entryLabel}.to`, DESIGN_RECORD_LABEL_MAX_LENGTH),
       ...(transition.durablePrecondition === undefined ? {} : {
         durablePrecondition: boundedRecordText(
           transition.durablePrecondition,
           `${entryLabel}.durablePrecondition`,
-          1_000,
+          DESIGN_RECORD_DETAIL_MAX_LENGTH,
         ),
       }),
       ...(transition.recovery === undefined ? {} : {
-        recovery: boundedRecordText(transition.recovery, `${entryLabel}.recovery`, 1_000),
+        recovery: boundedRecordText(transition.recovery, `${entryLabel}.recovery`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       }),
     });
   });
@@ -1098,7 +1105,7 @@ function parseDesignRecordFields(
     item.failurePoints,
     `${label}.failurePoints`,
     tolerateUnknown ? DESIGN_FAILURE_POINTS.length : 0,
-    32,
+    DESIGN_RECORD_MAX_FAILURE_POINTS,
     (entry, entryLabel) => {
       const failurePoint = shape(
         entry,
@@ -1112,8 +1119,12 @@ function parseDesignRecordFields(
         : entityMember(failurePoint.point, DESIGN_FAILURE_POINTS, `${entryLabel}.point`, options);
       return Object.freeze({
         point,
-        resultingState: boundedRecordText(failurePoint.resultingState, `${entryLabel}.resultingState`, 500),
-        recovery: boundedRecordText(failurePoint.recovery, `${entryLabel}.recovery`, 1_000),
+        resultingState: boundedRecordText(
+          failurePoint.resultingState,
+          `${entryLabel}.resultingState`,
+          DESIGN_RECORD_DETAIL_MAX_LENGTH,
+        ),
+        recovery: boundedRecordText(failurePoint.recovery, `${entryLabel}.recovery`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       });
     },
   );
@@ -1128,7 +1139,7 @@ function parseDesignRecordFields(
     item.idempotencyKeys,
     `${label}.idempotencyKeys`,
     0,
-    32,
+    DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
     (entry, entryLabel) => {
       const key = shape(
         entry,
@@ -1138,10 +1149,10 @@ function parseDesignRecordFields(
         options,
       );
       return Object.freeze({
-        name: boundedRecordText(key.name, `${entryLabel}.name`, 500),
-        generatedAt: boundedRecordText(key.generatedAt, `${entryLabel}.generatedAt`, 500),
-        persistedAt: boundedRecordText(key.persistedAt, `${entryLabel}.persistedAt`, 500),
-        reuse: boundedRecordText(key.reuse, `${entryLabel}.reuse`, 500),
+        name: boundedRecordText(key.name, `${entryLabel}.name`, DESIGN_RECORD_LABEL_MAX_LENGTH),
+        generatedAt: boundedRecordText(key.generatedAt, `${entryLabel}.generatedAt`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
+        persistedAt: boundedRecordText(key.persistedAt, `${entryLabel}.persistedAt`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
+        reuse: boundedRecordText(key.reuse, `${entryLabel}.reuse`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       });
     },
   );
@@ -1149,7 +1160,7 @@ function parseDesignRecordFields(
     item.faultInjectionCases,
     `${label}.faultInjectionCases`,
     0,
-    32,
+    DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
     (entry, entryLabel) => {
       const faultCase = shape(
         entry,
@@ -1159,9 +1170,9 @@ function parseDesignRecordFields(
         options,
       );
       return Object.freeze({
-        name: boundedRecordText(faultCase.name, `${entryLabel}.name`, 200),
-        scenario: boundedRecordText(faultCase.scenario, `${entryLabel}.scenario`, 1_000),
-        expectation: boundedRecordText(faultCase.expectation, `${entryLabel}.expectation`, 1_000),
+        name: boundedRecordText(faultCase.name, `${entryLabel}.name`, DESIGN_RECORD_LABEL_MAX_LENGTH),
+        scenario: boundedRecordText(faultCase.scenario, `${entryLabel}.scenario`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
+        expectation: boundedRecordText(faultCase.expectation, `${entryLabel}.expectation`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       });
     },
   );
@@ -1717,7 +1728,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     "createdAt", "claimedAt", "runId",
   ], "Claim wakeup");
   const context = exact(envelope.context, [
-    "intake", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+    "intake", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
     "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
   ], "Claim context");
   if (
@@ -1771,6 +1782,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   booleanValue(context.intake, "context.intake");
+  booleanValue(context.design, "context.design");
   return value as ClaimRunResult;
 }
 
@@ -1809,6 +1821,7 @@ export interface ValidatedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly design: boolean;
   readonly mission: Readonly<{ role: string; area: string; mission: string }>;
   readonly projectMemory: string;
   readonly task: Readonly<{
@@ -1886,9 +1899,14 @@ export interface ValidatedAgentRunOutcome {
   readonly handoff: StageHandoffDraft | null;
   readonly workflowPlan: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
+  readonly designRecord?: DesignRecordDraft;
 }
 
 const MAX_CONTEXT_BYTES = 256 * 1_024;
+// Design claims may carry their large approved-plan objective, while later
+// pipeline claims add the bounded record to an otherwise full context.
+const MAX_DESIGN_CONTEXT_BYTES = 4 * 1_024 * 1_024;
+const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 const MAX_OUTCOME_BYTES = 64 * 1_024;
 const MAX_AREA_MEMORY_ITEMS = 8;
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
@@ -2030,8 +2048,10 @@ function parseWorkflowPipelineFields(
     : identifier(item.workspaceKey, `${label}.workspaceKey`);
   let pipeline: WorkflowPipelineContext | null = null;
   if (item.pipeline !== undefined && item.pipeline !== null) {
+    const rawPipeline = record(item.pipeline, `${label}.pipeline`);
     const value = exact(item.pipeline, [
       "branch", "baseSha", "changeShape", "tier", "declaredScope", "nonGoals", "assumptions",
+      ...("designRecord" in rawPipeline ? ["designRecord"] : []),
     ], `${label}.pipeline`);
     if (workspaceKey === null) {
       throw new ContractValidationError(`${label}.pipeline requires workspaceKey`);
@@ -2062,6 +2082,9 @@ function parseWorkflowPipelineFields(
         (entry, entryLabel) => workerProse(entry, entryLabel, 1_000)),
       assumptions: boundedPlanArray(value.assumptions, `${label}.pipeline.assumptions`, 0, 64,
         (entry, entryLabel) => workerProse(entry, entryLabel, 4_000)),
+      designRecord: value.designRecord === undefined || value.designRecord === null
+        ? null
+        : parseDesignRecordDraft(value.designRecord),
     });
   }
   if ((workspaceKey === null) !== (pipeline === null)) {
@@ -2184,9 +2207,20 @@ export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim
 }
 
 export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
-  boundedJsonValue(value, MAX_CONTEXT_BYTES, "Agent context");
+  const rawContext = record(value, "Agent context");
+  const rawWorkflow = rawContext.workflow;
+  const rawPipeline = rawWorkflow !== null && typeof rawWorkflow === "object" && !Array.isArray(rawWorkflow)
+    ? (rawWorkflow as JsonRecord).pipeline
+    : null;
+  const carriesDesignRecord = rawPipeline !== null && typeof rawPipeline === "object" && !Array.isArray(rawPipeline) &&
+    (rawPipeline as JsonRecord).designRecord !== null && (rawPipeline as JsonRecord).designRecord !== undefined;
+  boundedJsonValue(
+    value,
+    rawContext.design === true || carriesDesignRecord ? MAX_DESIGN_CONTEXT_BYTES : MAX_CONTEXT_BYTES,
+    "Agent context",
+  );
   const item = exact(value, [
-    "apiVersion", "projectId", "agentId", "taskId", "intake", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
+    "apiVersion", "projectId", "agentId", "taskId", "intake", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
     "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
   ], "Agent context");
   if (item.apiVersion !== 1) throw new ContractValidationError("Agent context version is invalid");
@@ -2358,12 +2392,18 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     apiVersion: 1,
     projectId: identifier(item.projectId, "context.projectId"), agentId: identifier(item.agentId, "context.agentId"), taskId: currentTaskId,
     intake: booleanValue(item.intake, "context.intake"),
+    design: booleanValue(item.design, "context.design"),
     mission: Object.freeze({ role: workerProse(mission.role, "mission.role", 64), area: workerProse(mission.area, "mission.area", 256), mission: workerProse(mission.mission, "mission.mission", 2_000) }),
     projectMemory: workerProse(item.projectMemory, "projectMemory", 8_000),
     task: Object.freeze({
       kind: contractMember(task.kind, TASK_KINDS, "task.kind") as TaskKind,
       requiredRole: task.requiredRole === null ? null : contractMember(task.requiredRole, AGENT_ROLES, "task.requiredRole") as AgentRole,
-      title: workerProse(task.title, "task.title", 512), objective: workerProse(task.objective, "task.objective", 8_000),
+      title: workerProse(task.title, "task.title", 512),
+      objective: workerProse(
+        task.objective,
+        "task.objective",
+        item.design === true ? MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS : 8_000,
+      ),
       acceptanceCriteria: workerProse(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000), version: workerPositive(task.version, "task.version"),
       expectedAgentMinutes: expectedMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes", {
         nullable: true, maximum: 10_080,
@@ -2627,6 +2667,7 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
     "status", "outputs", "expectedAgentMinutes", "phases", "detail",
     ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : []),
     ...("reviewFindings" in raw ? ["reviewFindings"] : []),
+    ...("designRecord" in raw ? ["designRecord"] : []),
   ], "Agent outcome");
   if (item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" && item.status !== "waiting_for_human") {
     throw new ContractValidationError("Agent outcome status is invalid");
@@ -2658,6 +2699,9 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
     workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
     ...(item.reviewFindings === undefined ? {} : {
       reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "outcome.reviewFindings"),
+    }),
+    ...(item.designRecord === undefined || item.designRecord === null ? {} : {
+      designRecord: parseDesignRecordDraft(item.designRecord),
     }),
   });
 }
@@ -3087,6 +3131,7 @@ export function parseBoardSettle(value: unknown): SettleRunRequest {
     ...("handoff" in raw ? ["handoff"] : []),
     ...("workflowPlan" in raw ? ["workflowPlan"] : []),
     ...("reviewFindings" in raw ? ["reviewFindings"] : []),
+    ...("designRecord" in raw ? ["designRecord"] : []),
   ], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") boardFailure("Run outcome is invalid");
   return Object.freeze({ outcome: item.outcome, result: boardText(item.result, "result", 16_000),
@@ -3094,6 +3139,21 @@ export function parseBoardSettle(value: unknown): SettleRunRequest {
     workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY),
     ...(item.reviewFindings === undefined ? {} : {
       reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "reviewFindings"),
+    }),
+    ...(item.designRecord === undefined || item.designRecord === null ? {} : {
+      designRecord: (() => {
+        try {
+          return parseDesignRecordDraft(item.designRecord);
+        } catch (error) {
+          if (error instanceof ContractValidationError) {
+            throw new ContractValidationError(
+              error.message,
+              TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
+            );
+          }
+          throw error;
+        }
+      })(),
     }) });
 }
 

@@ -12,6 +12,7 @@ import {
   type ConfirmPlanRevisionRequest,
   type CriterionResult,
   type CreatePlanRevisionRequest,
+  type DesignRecordDraft,
   type PlanRevision,
   type ProjectEvent,
   type RejectFinalApprovalRequest,
@@ -27,6 +28,7 @@ import {
   type WorkflowReviewContext,
   type WorkflowStage,
 } from "#shared/task-board-contract";
+import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
 import { TaskBoardError } from "../errors.js";
 import { SkillRegistry } from "../skills.js";
 import {
@@ -63,8 +65,8 @@ const ID = new RegExp(IDENTIFIER_PATTERN, "u");
 const REVIEW_DIFFSTAT_MAX_CHARACTERS = 64_000;
 const REVIEW_COMMIT_MAX_ITEMS = 1_000;
 const REVIEW_FILE_MAX_ITEMS = 10_000;
-// Leave room inside the worker's aggregate 256 KiB context bound for the plan,
-// findings, skills, and the rest of the claim envelope.
+// Keep branch-inspection evidence bounded independently of the plan, design
+// record, skills, and the rest of the aggregate claim envelope.
 const REVIEW_COMMIT_JSON_BUDGET = 32_000;
 const REVIEW_FILE_JSON_BUDGET = 48_000;
 const REVIEW_PRIOR_FINDINGS_JSON_BUDGET = 48_000;
@@ -329,7 +331,7 @@ export interface ProjectWorkflowSnapshot {
 
 export interface ConfirmWorkflowTransactionResult {
   readonly readyNodes: readonly WorkNode[];
-  readonly outcome?: "parked_hazardous";
+  readonly outcome?: "parked_hazardous" | "designing";
 }
 
 export interface RejectWorkflowTransactionResult extends RejectPlanRevisionResponse {
@@ -357,6 +359,30 @@ export class TransparentWorkflow {
 
   proposeInTransaction(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
     return this.proposeInternal(raw, "agent", actor, true);
+  }
+
+  private activateDependencyFreeNodesAtTemplateStart(
+    planRevisionId: string,
+    updatedAt: string,
+  ): Readonly<{ firstStage: WorkflowStage | null; readyNodes: readonly WorkNode[] }> {
+    this.db.prepare(`
+      UPDATE work_nodes
+      SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
+      WHERE plan_revision_id=?
+        AND state='pending'
+        AND NOT EXISTS(SELECT 1 FROM work_node_dependencies dependency WHERE dependency.node_id=work_nodes.node_id)
+    `).run(updatedAt, planRevisionId);
+    const firstStage = this.db.prepare(`
+      SELECT current_stage
+      FROM work_nodes
+      WHERE plan_revision_id=? AND state='ready'
+      ORDER BY created_at,node_id
+      LIMIT 1
+    `).get(planRevisionId)?.current_stage;
+    return Object.freeze({
+      firstStage: firstStage === undefined || firstStage === null ? null : String(firstStage) as WorkflowStage,
+      readyNodes: Object.freeze(this.nodes(planRevisionId).filter((node) => node.state === "ready")),
+    });
   }
 
   private proposeInternal(
@@ -539,7 +565,10 @@ export class TransparentWorkflow {
         plan.mechanical_portions_json,
         item.pipeline_branch,
         item.base_sha,
-        project.description AS repo_path
+        project.description AS repo_path,
+        (SELECT payload_json FROM design_records design
+          WHERE design.work_item_id=plan.work_item_id AND design.plan_revision_id=plan.plan_revision_id
+        ) AS design_record_json
       FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
@@ -577,6 +606,9 @@ export class TransparentWorkflow {
           ? Object.freeze([])
           : Object.freeze(json<string[]>(row.non_goals_json)),
         assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
+        designRecord: row.design_record_json === null
+          ? null
+          : parseDesignRecordDraft(json<DesignRecordDraft>(row.design_record_json)),
       });
       if (row.stage === "implementation") {
         const latestSameNodeHandoff = this.db.prepare(`
@@ -658,7 +690,7 @@ export class TransparentWorkflow {
       (!testingStageUsesMachineVerify(this.db) ||
         (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
     ) throw pipelineExecutorDrift();
-    if (row.tier === "hazardous" || !hasPipelineShape) return null;
+    if (!hasPipelineShape) return null;
     assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
     const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
     if (project === undefined) {
@@ -676,6 +708,7 @@ export class TransparentWorkflow {
     request: ConfirmPlanRevisionRequest,
     actor: string,
     resolvedBaseSha: string | null,
+    startDesignInTransaction?: (workItemId: string) => void,
   ): ConfirmWorkflowTransactionResult {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
     const now = this.now().toISOString();
@@ -691,7 +724,7 @@ export class TransparentWorkflow {
           (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
       ) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
-      if (row.tier !== "hazardous" && hasPipelineShape) {
+      if (hasPipelineShape) {
         assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
         if (resolvedBaseSha === null || !GIT_OBJECT_ID_PATTERN.test(resolvedBaseSha)) {
           throw new TaskBoardError(
@@ -725,8 +758,8 @@ export class TransparentWorkflow {
           throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
         }
       }
-      if (row.tier === "hazardous") {
-        const result = "hazardous tier needs the Design stage (campaign 5)";
+      if (row.tier === "hazardous" && !hasPipelineShape) {
+        const result = "hazardous tier requires a pipeline plan";
         this.recordPlanningResult(String(row.work_item_id), result, now);
         transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
           workItemId: String(row.work_item_id),
@@ -738,15 +771,34 @@ export class TransparentWorkflow {
         this.event(String(row.project_id), null, null, "plan_confirmed", result, now);
         return Object.freeze({ readyNodes: Object.freeze([]), outcome: "parked_hazardous" });
       }
-      this.db.prepare(`UPDATE work_nodes SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
-        WHERE plan_revision_id=? AND NOT EXISTS(SELECT 1 FROM work_node_dependencies d WHERE d.node_id=work_nodes.node_id)`).run(now, planId);
-      const firstStage = this.db.prepare(
-        "SELECT current_stage FROM work_nodes WHERE plan_revision_id=? AND state='ready' ORDER BY created_at,node_id LIMIT 1",
-      ).get(planId)?.current_stage;
-      if (firstStage === undefined || firstStage === null) {
+      if (row.tier === "hazardous") {
+        if (startDesignInTransaction === undefined) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:design_task_creator_missing");
+        }
+        startDesignInTransaction(String(row.work_item_id));
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(row.work_item_id),
+          to: "designing",
+          actorType: "human",
+          actorId: actor,
+          now,
+          currentStage: "planning",
+        });
+        this.event(
+          String(row.project_id),
+          null,
+          null,
+          "plan_confirmed",
+          `Plan revision ${row.revision} confirmed for design`,
+          now,
+        );
+        return Object.freeze({ readyNodes: Object.freeze([]), outcome: "designing" });
+      }
+      const activation = this.activateDependencyFreeNodesAtTemplateStart(planId, now);
+      if (activation.firstStage === null) {
         throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_without_ready_stage");
       }
-      const firstWorkflowStage = String(firstStage) as WorkflowStage;
+      const firstWorkflowStage = activation.firstStage;
       const firstWorkItemState = workItemStateForStage(firstWorkflowStage);
       transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
         workItemId: String(row.work_item_id),
@@ -757,7 +809,7 @@ export class TransparentWorkflow {
         currentStage: firstWorkflowStage,
       });
       this.event(String(row.project_id), null, null, "plan_confirmed", `Plan revision ${row.revision} confirmed`, now);
-      return Object.freeze({ readyNodes: this.nodes(planId).filter((node) => node.state === "ready") });
+      return Object.freeze({ readyNodes: activation.readyNodes });
     });
   }
 
@@ -1003,6 +1055,58 @@ export class TransparentWorkflow {
     `).run(result, updatedAt, workItemId);
     if (Number(update.changes) !== 1) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_planning_task_missing");
+    }
+  }
+
+  settleDesignInTransaction(
+    taskId: string,
+    result: string,
+    designRecord: DesignRecordDraft,
+    actorId: string,
+  ): readonly WorkNode[] {
+    const row = this.db.prepare(`
+      SELECT link.work_item_id,plan.plan_revision_id,plan.project_id,plan.revision,item.state
+      FROM work_item_design_tasks link
+      JOIN work_items item ON item.work_item_id=link.work_item_id
+      JOIN plan_revisions plan ON plan.work_item_id=link.work_item_id AND plan.state='confirmed'
+      WHERE link.task_id=?
+      ORDER BY plan.revision DESC
+      LIMIT 1
+    `).get(taskId) as Row | undefined;
+    if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_design_task_missing");
+    const workItemId = String(row.work_item_id);
+    const planRevisionId = String(row.plan_revision_id);
+    const projectId = String(row.project_id);
+    const now = this.now().toISOString();
+    this.db.prepare(`
+      INSERT INTO design_records(design_record_id,work_item_id,plan_revision_id,payload_json,created_at)
+      VALUES (?,?,?,?,?)
+    `).run(`design_${randomUUID()}`, workItemId, planRevisionId, JSON.stringify(designRecord), now);
+    const activation = this.activateDependencyFreeNodesAtTemplateStart(planRevisionId, now);
+    if (activation.firstStage !== "implementation") {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:designed_plan_without_implementation_stage");
+    }
+    this.recordDesignResult(workItemId, result, now);
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId,
+      to: "implementing",
+      actorType: "agent",
+      actorId,
+      now,
+      currentStage: "implementation",
+    });
+    this.event(projectId, null, taskId, "design_recorded", `Design recorded for plan revision ${row.revision}`, now);
+    return activation.readyNodes;
+  }
+
+  private recordDesignResult(workItemId: string, result: string, updatedAt: string): void {
+    const update = this.db.prepare(`
+      UPDATE tasks
+      SET result=?,version=version+1,updated_at=?
+      WHERE task_id=(SELECT task_id FROM work_item_design_tasks WHERE work_item_id=?)
+    `).run(result, updatedAt, workItemId);
+    if (Number(update.changes) !== 1) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_design_task_missing");
     }
   }
 

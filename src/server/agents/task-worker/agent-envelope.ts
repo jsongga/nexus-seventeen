@@ -1,5 +1,13 @@
 import {
   AGENT_ROLES,
+  DESIGN_FAILURE_POINTS,
+  DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  DESIGN_RECORD_LABEL_MAX_LENGTH,
+  DESIGN_RECORD_MAX_FAILURE_POINTS,
+  DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+  DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+  DESIGN_RECORD_MAX_STATES,
+  DESIGN_RECORD_MAX_TRANSITIONS,
   IDENTIFIER_PATTERN,
   REVIEW_FINDING_CATEGORIES,
   REVIEW_FINDING_DRAFT_MAX_ITEMS,
@@ -15,6 +23,73 @@ import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";
 
 const MAX_QUEUED_ACTIVITY = 64;
+
+const DESIGN_RECORD_SCHEMA = Object.freeze({
+  anyOf: [
+    { type: "null" },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        states: {
+          type: "array", minItems: 1, maxItems: DESIGN_RECORD_MAX_STATES,
+          items: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
+        },
+        transitions: {
+          type: "array", minItems: 1, maxItems: DESIGN_RECORD_MAX_TRANSITIONS,
+          items: {
+            type: "object", additionalProperties: false,
+            properties: {
+              from: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
+              to: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
+              durablePrecondition: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+              recovery: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+            },
+            required: ["from", "to"],
+          },
+        },
+        failurePoints: {
+          type: "array", minItems: DESIGN_FAILURE_POINTS.length, maxItems: DESIGN_RECORD_MAX_FAILURE_POINTS,
+          items: {
+            type: "object", additionalProperties: false,
+            properties: {
+              point: { type: "string", enum: DESIGN_FAILURE_POINTS },
+              resultingState: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+              recovery: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+            },
+            required: ["point", "resultingState", "recovery"],
+          },
+        },
+        idempotencyKeys: {
+          type: "array", maxItems: DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+          items: {
+            type: "object", additionalProperties: false,
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
+              generatedAt: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+              persistedAt: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+              reuse: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+            },
+            required: ["name", "generatedAt", "persistedAt", "reuse"],
+          },
+        },
+        faultInjectionCases: {
+          type: "array", maxItems: DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+          items: {
+            type: "object", additionalProperties: false,
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
+              scenario: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+              expectation: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
+            },
+            required: ["name", "scenario", "expectation"],
+          },
+        },
+      },
+      required: ["states", "transitions", "failurePoints", "idempotencyKeys", "faultInjectionCases"],
+    },
+  ],
+} as const);
 
 export const RESULT_SCHEMA = Object.freeze({
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -112,6 +187,7 @@ export const RESULT_SCHEMA = Object.freeze({
         required: ["category", "severity", "expected", "actual"],
       },
     },
+    designRecord: DESIGN_RECORD_SCHEMA,
     workflowPlan: {
       anyOf: [
         { type: "null" },
@@ -174,7 +250,7 @@ export const RESULT_SCHEMA = Object.freeze({
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
   required: [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "reviewFindings", "detail",
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "reviewFindings", "designRecord", "detail",
   ],
 } as const);
 
@@ -295,6 +371,16 @@ export function agentPrompt(request: AgentLaunchRequest): string {
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
   const pipeline = request.context.workflow?.pipeline;
+  const designRecord = pipeline?.designRecord ?? null;
+  const renderedDesignRecord = designRecord === null ? null : JSON.stringify(designRecord);
+  const hazardousImplementationDesign = fixedRole === "engineer" &&
+    request.context.workflow?.stage === "implementation" && renderedDesignRecord !== null
+    ? `This is a hazardous-tier task. Design record below. Write each fault-injection case as a test.\n${renderedDesignRecord}`
+    : null;
+  const hazardousReviewDesign = fixedRole === "verifier" &&
+    request.context.workflow?.stage === "verification" && renderedDesignRecord !== null
+    ? `For hazardous tier, trace each failure point in the design record to the line that guarantees it.\n${renderedDesignRecord}`
+    : null;
   const brightLineBlock = "Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
   const pipelineImplementation = fixedRole === "engineer" &&
     request.context.workflow?.stage === "implementation" && pipeline != null
@@ -368,13 +454,17 @@ export function agentPrompt(request: AgentLaunchRequest): string {
         ] as const;
       })()
     : null;
-  const workflow = fixedRole === "engineer"
+  const workflow = request.context.design
     ? [
+        "Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.",
+      ]
+    : fixedRole === "engineer"
+      ? [
         "Follow a research → plan → execute → test loop inside this one run.",
         "Repeat that loop only when a test fails, and stop only when the acceptance criteria pass, work fails, or a human answer is required.",
         "You may modify only the configured development workspace. Never deploy, approve production, or seek production credentials.",
-      ]
-    : fixedRole === "verifier"
+        ]
+      : fixedRole === "verifier"
       ? [
           "Perform independent read-only research, plan the verification, inspect or run non-modifying checks, and report evidence.",
           "Do not edit the workspace, approve production, or deploy.",
@@ -394,7 +484,9 @@ export function agentPrompt(request: AgentLaunchRequest): string {
     request.context.mission.mission,
     ...workflow,
     ...(pipelineImplementation === null ? [] : [pipelineImplementation]),
+    ...(hazardousImplementationDesign === null ? [] : [hazardousImplementationDesign]),
     ...(pipelineReview === null ? [] : pipelineReview),
+    ...(hazardousReviewDesign === null ? [] : [hazardousReviewDesign]),
     "This is a single event-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.",
     "Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.",
     "Proposed child tasks are proposals for humans; do not assign or start them yourself.",
@@ -568,6 +660,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     ...("handoff" in item ? ["handoff"] : []),
     ...("workflowPlan" in item ? ["workflowPlan"] : []),
     ...("reviewFindings" in item ? ["reviewFindings"] : []),
+    ...("designRecord" in item ? ["designRecord"] : []),
     "detail",
   ].sort();
   const actual = Object.keys(item).sort();
@@ -598,6 +691,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     handoff: item.handoff ?? null,
     workflowPlan: item.workflowPlan ?? null,
     ...(item.reviewFindings === undefined ? {} : { reviewFindings: item.reviewFindings }),
+    ...(item.designRecord === undefined || item.designRecord === null ? {} : { designRecord: item.designRecord }),
   });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;

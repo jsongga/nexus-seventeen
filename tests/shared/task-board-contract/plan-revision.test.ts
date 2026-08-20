@@ -34,9 +34,14 @@ test("plan gate responses and stable conflict codes expose the additive contract
     workflow: { plans: [] },
     outcome: "parked_hazardous",
   };
+  const designing: ConfirmPlanRevisionResponse<{ plans: unknown[] }> = {
+    workflow: { plans: [] },
+    outcome: "designing",
+  };
   assert.deepEqual([revising.outcome, parked.outcome], ["revising", "parked"]);
   assert.equal(standard.outcome, undefined);
   assert.equal(hazardous.outcome, "parked_hazardous");
+  assert.equal(designing.outcome, "designing");
   assert.equal(TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "PLAN_NOT_FOUND");
   assert.equal(TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "PLAN_NOT_PROPOSED");
 });

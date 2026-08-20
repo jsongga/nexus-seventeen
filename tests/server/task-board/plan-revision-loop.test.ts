@@ -18,7 +18,7 @@ import {
 } from "./helpers.js";
 
 const REJECTED_TWICE_RESULT = "plan rejected twice — request unclear";
-const HAZARDOUS_RESULT = "hazardous tier needs the Design stage (campaign 5)";
+const HAZARDOUS_RESULT = "hazardous tier requires a pipeline plan";
 
 function standardPlan(suffix: string): WorkflowPlanDraft {
   return {
@@ -60,7 +60,7 @@ function hazardousPlan(): WorkflowPlanDraft {
       objective: "Implement the control only after a Design stage exists.",
       acceptanceCriteria: ["The control is machine verified."],
       dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
+      stageTemplate: ["verification"],
     }],
   };
 }
@@ -234,7 +234,7 @@ test("rejecting a second plan parks the work item and records the bounded reason
   }
 });
 
-test("confirming a hazardous plan parks without activating its node", async () => {
+test("confirming a hazardous non-pipeline plan parks without activating its node", async () => {
   const fixture = await boardFixture();
   try {
     const workItem = startIntake(fixture, "hazardous-plan-confirm-0001");

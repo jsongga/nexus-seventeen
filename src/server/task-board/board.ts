@@ -198,7 +198,16 @@ export class TaskBoard {
   }
 
   confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
-    return this.#projects.confirmWorkflow(planRevisionId, request);
+    return this.#projects.confirmWorkflow(
+      planRevisionId,
+      request,
+      (workItemId) => {
+        const task = this.#workItems.startWorkItemDesignInTransaction(workItemId);
+        if (task === null) {
+          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A design manager is unavailable");
+        }
+      },
+    );
   }
 
   rejectWorkflowPlan(planRevisionId: string, request: RejectPlanRevisionRequest): RejectPlanRevisionResponse {

@@ -4,6 +4,14 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import {
+  DESIGN_FAILURE_POINTS,
+  DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  DESIGN_RECORD_LABEL_MAX_LENGTH,
+  DESIGN_RECORD_MAX_FAILURE_POINTS,
+  DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+  DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+  DESIGN_RECORD_MAX_STATES,
+  DESIGN_RECORD_MAX_TRANSITIONS,
   IDENTIFIER_PATTERN,
   PLAN_CHANGE_SHAPES,
   PLAN_TIERS,
@@ -70,6 +78,26 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.required, ["category", "severity", "expected", "actual"]);
   assert.equal("blocking" in RESULT_SCHEMA.properties.reviewFindings.items.properties, false);
   assert.ok(RESULT_SCHEMA.required.includes("reviewFindings"));
+  assert.ok(RESULT_SCHEMA.required.includes("designRecord"));
+  assert.deepEqual(
+    RESULT_SCHEMA.properties.designRecord.anyOf[1].properties.failurePoints.items.properties.point.enum,
+    DESIGN_FAILURE_POINTS,
+  );
+  assert.deepEqual(
+    RESULT_SCHEMA.properties.designRecord.anyOf[1].required,
+    ["states", "transitions", "failurePoints", "idempotencyKeys", "faultInjectionCases"],
+  );
+  const designProperties = RESULT_SCHEMA.properties.designRecord.anyOf[1].properties;
+  assert.equal(designProperties.states.maxItems, DESIGN_RECORD_MAX_STATES);
+  assert.equal(designProperties.states.items.maxLength, DESIGN_RECORD_LABEL_MAX_LENGTH);
+  assert.equal(designProperties.transitions.maxItems, DESIGN_RECORD_MAX_TRANSITIONS);
+  assert.equal(
+    designProperties.transitions.items.properties.durablePrecondition.maxLength,
+    DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  );
+  assert.equal(designProperties.failurePoints.maxItems, DESIGN_RECORD_MAX_FAILURE_POINTS);
+  assert.equal(designProperties.idempotencyKeys.maxItems, DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS);
+  assert.equal(designProperties.faultInjectionCases.maxItems, DESIGN_RECORD_MAX_FAULT_INJECTION_CASES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum, WORKFLOW_STAGES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.changeShape.enum, PLAN_CHANGE_SHAPES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.tier.enum, PLAN_TIERS);
@@ -86,6 +114,7 @@ test("manager planning prompt branches on intake rather than the task title", ()
     wakeReason: "human_assignment",
     context: context({
       intake: false,
+      design: false,
       mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
       task: { ...context().task, title: "Plan workflow: this is ordinary oversight" },
     }),
@@ -98,6 +127,7 @@ test("manager planning prompt branches on intake rather than the task title", ()
     wakeReason: "human_assignment",
     context: context({
       intake: true,
+      design: false,
       mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
       task: { ...context().task, title: "Refine a request without the legacy prefix" },
     }),
@@ -299,6 +329,7 @@ process.stdin.on("end", () => {
     wakeReason: "human_assignment",
     context: context({
       intake: false,
+      design: false,
       mission: { role: "manager", area: "Release oversight", mission: "Review evidence and risks." },
       task: { ...context().task, title: "Plan workflow: review this without intake authority" },
     }),

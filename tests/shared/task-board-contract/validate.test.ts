@@ -132,6 +132,7 @@ function context(overrides: Record<string, unknown> = {}): Record<string, unknow
     agentId: "agent-one",
     taskId: "task-one",
     intake: false,
+    design: false,
     mission: { role: "engineer", area: "Checkout", mission: "Keep checkout dependable." },
     projectMemory: "Checkout uses idempotency keys.",
     task: {
@@ -279,6 +280,7 @@ test("claim result validation preserves canonical timestamps and the legacy proj
     task: { validatedByTheBoundedContextProjection: true },
     context: {
       intake: false,
+      design: false,
       agent: null,
       projectMemory: null,
       areaMemory: [],

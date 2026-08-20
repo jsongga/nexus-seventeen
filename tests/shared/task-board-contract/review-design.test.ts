@@ -3,6 +3,13 @@ import test from "node:test";
 import {
   BLOCKING_REVIEW_FINDING_CATEGORIES,
   DESIGN_FAILURE_POINTS,
+  DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  DESIGN_RECORD_LABEL_MAX_LENGTH,
+  DESIGN_RECORD_MAX_FAILURE_POINTS,
+  DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+  DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+  DESIGN_RECORD_MAX_STATES,
+  DESIGN_RECORD_MAX_TRANSITIONS,
   REVIEW_FINDING_CATEGORIES,
   REVIEW_FINDING_SEVERITIES,
   TASK_BOARD_ERROR_CODES,
@@ -13,7 +20,9 @@ import {
   ContractValidationError,
   parseDesignRecordDraft,
   parseDesignRecordEntity,
+  parseBoardSettle,
   parseReviewFindingDraft,
+  parseWorkerAgentRunOutcome,
 } from "#shared/task-board-contract/validate";
 
 const NOW = "2026-08-19T12:00:00.000Z";
@@ -121,6 +130,79 @@ test("design records round-trip a complete failure matrix", () => {
   assert.deepEqual(parseDesignRecordEntity(record, "designRecord"), record);
 });
 
+test("board settlements preserve valid design records and use the required-record code for invalid drafts", () => {
+  const draft = designRecordDraft();
+  assert.deepEqual(parseBoardSettle({
+    outcome: "completed",
+    result: "Design complete.",
+    designRecord: draft,
+  }).designRecord, draft);
+  assert.throws(
+    () => parseBoardSettle({
+      outcome: "completed",
+      result: "Design incomplete.",
+      designRecord: {
+        ...draft,
+        failurePoints: (draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
+      },
+    }),
+    (error: unknown) => error instanceof ContractValidationError &&
+      error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED &&
+      error.message === "design record missing failure point: concurrent_invocation",
+  );
+});
+
+test("the maximally sized design settlement fits the 64 KiB outcome and HTTP budget", () => {
+  assert.equal(DESIGN_RECORD_MAX_FAILURE_POINTS, DESIGN_FAILURE_POINTS.length);
+  const maximumRecord = {
+    states: Array.from({ length: DESIGN_RECORD_MAX_STATES }, () => "s".repeat(DESIGN_RECORD_LABEL_MAX_LENGTH)),
+    transitions: Array.from({ length: DESIGN_RECORD_MAX_TRANSITIONS }, () => ({
+      from: "f".repeat(DESIGN_RECORD_LABEL_MAX_LENGTH),
+      to: "t".repeat(DESIGN_RECORD_LABEL_MAX_LENGTH),
+      durablePrecondition: "d".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+    })),
+    failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+      point,
+      resultingState: "s".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+    })),
+    idempotencyKeys: Array.from({ length: DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS }, () => ({
+      name: "n".repeat(DESIGN_RECORD_LABEL_MAX_LENGTH),
+      generatedAt: "g".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      persistedAt: "p".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      reuse: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+    })),
+    faultInjectionCases: Array.from({ length: DESIGN_RECORD_MAX_FAULT_INJECTION_CASES }, () => ({
+      name: "n".repeat(DESIGN_RECORD_LABEL_MAX_LENGTH),
+      scenario: "s".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      expectation: "e".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+    })),
+  } as const;
+  const maximumSettlement = {
+    outcome: "completed",
+    result: "r".repeat(16_000),
+    handoff: null,
+    workflowPlan: null,
+    designRecord: maximumRecord,
+  } as const;
+  const maximumOutcome = {
+    status: "completed",
+    outputs: [{ type: "result", body: "r".repeat(4_000) }],
+    expectedAgentMinutes: null,
+    phases: [],
+    detail: "d".repeat(2_000),
+    handoff: null,
+    workflowPlan: null,
+    designRecord: maximumRecord,
+  } as const;
+
+  assert.deepEqual(parseBoardSettle(maximumSettlement).designRecord, maximumRecord);
+  assert.ok(Buffer.byteLength(JSON.stringify(maximumSettlement), "utf8") < 64 * 1_024);
+  assert.deepEqual(parseWorkerAgentRunOutcome(maximumOutcome).designRecord, maximumRecord);
+  assert.ok(Buffer.byteLength(JSON.stringify(maximumOutcome), "utf8") < 64 * 1_024);
+});
+
 test("design record drafts enforce failure coverage, array bounds, and bounded text", () => {
   const draft = designRecordDraft();
   assert.throws(
@@ -132,7 +214,30 @@ test("design record drafts enforce failure coverage, array bounds, and bounded t
       error.message === "design record missing failure point: concurrent_invocation",
   );
   assert.throws(
-    () => parseDesignRecordDraft({ ...draft, states: Array.from({ length: 65 }, (_, index) => `state-${index}`) }),
+    () => parseDesignRecordDraft({
+      ...draft,
+      states: Array.from({ length: DESIGN_RECORD_MAX_STATES + 1 }, (_, index) => `state-${index}`),
+    }),
+    ContractValidationError,
+  );
+  assert.throws(
+    () => parseDesignRecordDraft({
+      ...draft,
+      transitions: Array.from(
+        { length: DESIGN_RECORD_MAX_TRANSITIONS + 1 },
+        () => (draft.transitions as Array<Record<string, unknown>>)[0],
+      ),
+    }),
+    ContractValidationError,
+  );
+  assert.throws(
+    () => parseDesignRecordDraft({
+      ...draft,
+      transitions: [{
+        ...(draft.transitions as Array<Record<string, unknown>>)[0],
+        recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH + 1),
+      }],
+    }),
     ContractValidationError,
   );
   assert.throws(

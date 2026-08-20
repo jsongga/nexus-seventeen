@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import type { BoundedAgentContext } from "#server/agents/task-worker/types";
+import {
+  DESIGN_FAILURE_POINTS,
+  DESIGN_RECORD_DETAIL_MAX_LENGTH,
+  DESIGN_RECORD_MAX_TRANSITIONS,
+  type DesignRecordDraft,
+} from "#shared/task-board-contract";
 import { context } from "./helpers.js";
 
 function workflow(overrides: Record<string, unknown> = {}): NonNullable<BoundedAgentContext["workflow"]> {
@@ -34,6 +40,7 @@ test("pipeline workflow contexts validate and preserve their branch-bound plan r
     declaredScope: ["src/server"],
     nonGoals: ["Do not push."],
     assumptions: ["The repository remains local."],
+    designRecord: null,
   };
   const parsed = parseBoundedAgentContext(context({
     workflow: workflow({ workspaceKey, pipeline }),
@@ -47,6 +54,66 @@ test("pipeline workflow contexts validate and preserve their branch-bound plan r
     })),
     /pipeline identity is invalid/u,
   );
+});
+
+test("design claims admit their bounded evidence without widening ordinary context budgets", () => {
+  const largeDesignRecord: DesignRecordDraft = {
+    states: ["pending", "sent"],
+    transitions: Array.from({ length: DESIGN_RECORD_MAX_TRANSITIONS }, () => ({
+      from: "pending",
+      to: "sent",
+      durablePrecondition: "p".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+      recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH),
+    })),
+    failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
+      point,
+      resultingState: "sent",
+      recovery: "Resume with the persisted key.",
+    })),
+    idempotencyKeys: [{
+      name: "send-key",
+      generatedAt: "Before the first send.",
+      persistedAt: "With the durable intent.",
+      reuse: "Reuse verbatim on retry.",
+    }],
+    faultInjectionCases: [{
+      name: "Crash after send",
+      scenario: "Terminate after sending and before receiving the response.",
+      expectation: "Recovery resolves the remote outcome with the same key.",
+    }],
+  };
+  const workspaceKey = "work-item-large-design-context";
+  const hazardous = context({
+    workflow: workflow({
+      workspaceKey,
+      pipeline: {
+        branch: `task/${workspaceKey}`,
+        baseSha: "a".repeat(40),
+        changeShape: "feature",
+        tier: "hazardous",
+        declaredScope: ["src/server"],
+        nonGoals: [],
+        assumptions: [],
+        designRecord: largeDesignRecord,
+      },
+    }),
+  });
+  assert.equal(
+    parseBoundedAgentContext(hazardous).workflow?.pipeline?.designRecord?.transitions.length,
+    DESIGN_RECORD_MAX_TRANSITIONS,
+  );
+
+  const oversizedObjective = "x".repeat(270_000);
+  assert.throws(
+    () => parseBoundedAgentContext(context({
+      task: { ...context().task, objective: oversizedObjective },
+    })),
+    /Agent context exceeds its byte bound/u,
+  );
+  assert.equal(parseBoundedAgentContext(context({
+    design: true,
+    task: { ...context().task, objective: oversizedObjective },
+  })).task.objective, oversizedObjective);
 });
 
 test("pipeline workflow contexts accept implementation, verify, and review workspace keys bound to one task branch", () => {

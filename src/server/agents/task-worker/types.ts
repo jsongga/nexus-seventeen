@@ -7,6 +7,7 @@ import {
   type WorkflowStage,
   type StageHandoffDraft,
   type ReviewFindingDraft,
+  type DesignRecordDraft,
   type WorkflowPlanDraft,
   type WorkflowFixContext,
   type WorkflowPipelineContext,
@@ -128,6 +129,7 @@ export interface BoundedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly design: boolean;
   readonly mission: AgentMission;
   readonly projectMemory: string;
   readonly task: AgentTaskContext;
@@ -182,6 +184,7 @@ export interface AgentRunOutcome {
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
+  readonly designRecord?: DesignRecordDraft;
 }
 
 export interface AgentWorkspace { readonly path: string }
@@ -254,6 +257,7 @@ export interface SettleAgentRunRequest {
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
+  readonly designRecord?: DesignRecordDraft;
 }
 
 export interface ReportAgentLaneErrorRequest {

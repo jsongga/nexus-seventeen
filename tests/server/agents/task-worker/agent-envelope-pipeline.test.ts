@@ -3,6 +3,23 @@ import test from "node:test";
 import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
 import { context } from "./helpers.js";
 
+const DESIGNER_PROMPT = "Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.";
+
+const DESIGN_RECORD = {
+  states: ["pending", "committed"],
+  transitions: [{ from: "pending", to: "committed" }],
+  failurePoints: [
+    "crash_before_send",
+    "crash_after_send_before_response",
+    "crash_after_response_before_commit",
+    "crash_after_commit_before_ack",
+    "duplicate_delivery",
+    "concurrent_invocation",
+  ].map((point) => ({ point, resultingState: `state after ${point}`, recovery: `recover ${point}` })),
+  idempotencyKeys: [],
+  faultInjectionCases: [],
+} as const;
+
 const PIPELINE_BLOCK = "Pipeline task on branch task/work-item-one. Declared scope (only these path prefixes): src/server, tests/server. Non-goals: do not change the schema, do not add dependencies. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
 
 function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {
@@ -36,6 +53,40 @@ test("pipeline implementation engineer prompt appends the declared-scope bright-
 
   assert.ok(prompt.includes(PIPELINE_BLOCK));
   assert.equal(prompt.split(PIPELINE_BLOCK).length, 2);
+});
+
+test("design-task manager prompt uses the hazardous designer instructions verbatim", () => {
+  const prompt = agentPrompt({
+    runId: "run-hazardous-design",
+    wakeReason: "human_assignment",
+    context: context({
+      design: true,
+      mission: { role: "manager", area: "Hazard design", mission: "Design the approved hazardous workflow." },
+    } as never),
+  });
+
+  assert.ok(prompt.includes(DESIGNER_PROMPT));
+  assert.equal(prompt.split(DESIGNER_PROMPT).length, 2);
+  assert.doesNotMatch(prompt, /READY_FOR_HUMAN_CHECK/u);
+});
+
+test("hazardous implementation prompt injects the design record and fault-injection requirement", () => {
+  const workflow = {
+    ...pipelineWorkflow("implementation"),
+    pipeline: {
+      ...pipelineWorkflow("implementation").pipeline,
+      tier: "hazardous" as const,
+      designRecord: DESIGN_RECORD,
+    },
+  };
+  const prompt = agentPrompt({
+    runId: "run-hazardous-implementation",
+    wakeReason: "workflow_handoff",
+    context: context({ workflow: workflow as never }),
+  });
+
+  assert.match(prompt, /This is a hazardous-tier task\. Design record below\. Write each fault-injection case as a test\./u);
+  assert.ok(prompt.includes(JSON.stringify(DESIGN_RECORD)));
 });
 
 test("fix-round engineer prompt replaces the plain implementation block and renders findings", () => {
@@ -153,6 +204,30 @@ test("pipeline verification reviewer prompt injects the independent review instr
   assert.match(prompt, /The prior attempt reused the engineer workspace\./u);
   assert.match(prompt, /oldest findings omitted to fit the claim context/u);
   assert.doesNotMatch(prompt, /design record/iu);
+});
+
+test("hazardous reviewer prompt traces the injected design record to guaranteeing lines", () => {
+  const base = pipelineWorkflow("verification");
+  const prompt = agentPrompt({
+    runId: "run-hazardous-review",
+    wakeReason: "workflow_handoff",
+    context: context({
+      mission: {
+        role: "verifier",
+        area: "Hazardous pipeline review",
+        mission: "Review every hazardous recovery guarantee independently.",
+      },
+      workflow: {
+        ...base,
+        workspaceKey: "work-item-one-review",
+        pipeline: { ...base.pipeline, tier: "hazardous", designRecord: DESIGN_RECORD },
+        review: null,
+      } as never,
+    }),
+  });
+
+  assert.match(prompt, /For hazardous tier, trace each failure point in the design record to the line that guarantees it\./u);
+  assert.ok(prompt.includes(JSON.stringify(DESIGN_RECORD)));
 });
 
 test("legacy pipeline review replays mark scope evidence unavailable instead of reporting a violation", () => {

@@ -32,6 +32,7 @@ import type {
 } from "./types.js";
 
 const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 
 export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
@@ -374,6 +375,7 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     agentId: run.agentId,
     taskId: task.taskId,
     intake: context.intake,
+    design: context.design ?? false,
     mission: {
       role: context.agent.role,
       area: bounded(context.agent.area, "agent.area", 256),
@@ -384,7 +386,11 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
       kind: task.kind,
       requiredRole: task.requiredRole,
       title: bounded(task.title, "task.title", 512),
-      objective: bounded(task.objective, "task.objective", 8_000),
+      objective: bounded(
+        task.objective,
+        "task.objective",
+        context.design === true ? MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS : 8_000,
+      ),
       acceptanceCriteria: bounded(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
       version: positive(task.version, "task.version"),
       expectedAgentMinutes: estimateMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes"),
@@ -424,7 +430,12 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
       : {
           ...context.workflow,
           workspaceKey: context.workflow.workspaceKey ?? null,
-          pipeline: context.workflow.pipeline ?? null,
+          pipeline: context.workflow.pipeline === undefined || context.workflow.pipeline === null
+            ? null
+            : {
+                ...context.workflow.pipeline,
+                designRecord: context.workflow.pipeline.designRecord ?? null,
+              },
           review: context.workflow.review === undefined || context.workflow.review === null
             ? null
             : {
@@ -469,6 +480,8 @@ export class HttpTaskBoardClient implements TaskBoardClient {
           replayRun.heartbeatAt,
         );
       }
+      const replayContext = record(replayEnvelope.context, "Claim context");
+      if (!("design" in replayContext)) replayContext.design = false;
       const claimed = parseClaimRunResult(result.body);
       const requestedMessageCursor = claimed.wakeup.taskId === null
         ? null
@@ -680,6 +693,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         handoff: request.handoff ?? null,
         workflowPlan: request.workflowPlan ?? null,
         ...(request.reviewFindings === undefined ? {} : { reviewFindings: request.reviewFindings }),
+        ...(request.designRecord === undefined ? {} : { designRecord: request.designRecord }),
       },
       signal,
     );

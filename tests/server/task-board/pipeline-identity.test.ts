@@ -257,6 +257,7 @@ test("confirm records the pipeline branch and base SHA and claim projects the pi
       declaredScope: ["src/server", "tests/server"],
       nonGoals: ["Do not push the branch."],
       assumptions: ["The registered repository remains on its default branch."],
+      designRecord: null,
     });
 
     const client = new HttpTaskBoardClient({
@@ -357,7 +358,7 @@ test("ordinary workflow claims carry null pipeline fields and legacy claim repla
   }
 });
 
-test("hazardous pipeline confirmation parks without assigning branch identity", async () => {
+test("hazardous pipeline confirmation enters design with branch identity", async () => {
   const fixture = await boardFixture();
   const repository = await fixtureRepo();
   try {
@@ -366,12 +367,12 @@ test("hazardous pipeline confirmation parks without assigning branch identity", 
 
     const result = fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
 
-    assert.equal(result.outcome, "parked_hazardous");
+    assert.equal(result.outcome, "designing");
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       const identity = db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(workItem.workItemId);
-      assert.equal(identity?.pipeline_branch, null);
-      assert.equal(identity?.base_sha, null);
+      assert.equal(identity?.pipeline_branch, `task/${workItem.workItemId}`);
+      assert.equal(identity?.base_sha, repository.head);
     } finally {
       db.close();
     }
