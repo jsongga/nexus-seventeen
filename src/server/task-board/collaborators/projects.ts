@@ -477,9 +477,10 @@ export class ProjectsCollaborator {
     outcome: SettleRunRequest["outcome"],
     result: string,
     handoff: SettleRunRequest["handoff"],
+    reviewFindings: SettleRunRequest["reviewFindings"],
     scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
-    return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, scopeCheck);
+    return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, reviewFindings, scopeCheck);
   }
 
   attemptNeedsSettlementRepair(taskId: string, settledRunId: string): boolean {

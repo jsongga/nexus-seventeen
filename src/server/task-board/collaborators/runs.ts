@@ -634,6 +634,23 @@ export class RunsCollaborator {
     const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
+    if (request.reviewFindings !== undefined) {
+      const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+        SELECT 1
+        FROM stage_attempts attempt
+        JOIN work_nodes node ON node.node_id=attempt.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        JOIN work_items item ON item.work_item_id=plan.work_item_id
+        WHERE attempt.task_id=? AND attempt.stage='verification' AND item.pipeline_branch IS NOT NULL
+      `).get(current.taskId);
+      if (pipelineReview === undefined) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
+          "Review findings are only allowed for pipeline verification",
+        );
+      }
+    }
     if (current.status !== "active") {
       if (current.status === request.outcome && current.result === request.result) {
         let repairedNodes: readonly WorkNode[] = Object.freeze([]);
@@ -649,6 +666,7 @@ export class RunsCollaborator {
                 request.outcome,
                 settlementResult,
                 request.handoff,
+                request.reviewFindings,
                 scopeCheck,
               );
             }
@@ -759,6 +777,7 @@ export class RunsCollaborator {
         request.outcome,
         attemptResult,
         request.handoff,
+        request.reviewFindings,
         attemptPrecheck?.scopeCheck ?? null,
       );
     }

@@ -40,7 +40,7 @@ import type { TaskBoardStore } from "../persistence/store.js";
 import {
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
-  workItemStateForStage,
+  workItemStateForNodeStage,
 } from "./work-item-transitions.js";
 
 export type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
@@ -246,7 +246,7 @@ export class TaskBoardRuntime {
     const recoveryStage = link.currentStage ?? link.taskStage;
     transitionWorkItemInTransaction(this.store, {
       workItemId: link.workItemId,
-      to: workItemStateForStage(recoveryStage),
+      to: workItemStateForNodeStage(this.store.db, link.nodeId, recoveryStage),
       actorType: actor.type,
       actorId: actor.id,
       now,
@@ -338,7 +338,7 @@ export class TaskBoardRuntime {
     if (!isTerminalWorkItemState(stringValue(link, "work_item_state") as WorkItemState)) {
       transitionWorkItemInTransaction(this.store, {
         workItemId: stringValue(link, "work_item_id"),
-        to: workItemStateForStage(stage),
+        to: workItemStateForNodeStage(this.store.db, nodeId, stage),
         actorType: "system",
         actorId: transition === "retry" ? "system:workflow-retry" : "system:workflow-reassign",
         now,
@@ -381,6 +381,7 @@ export class TaskBoardRuntime {
 
   private workItemLinkForTask(taskId: string): Readonly<{
     workItemId: string;
+    nodeId: string | null;
     taskStage: WorkItemStage;
     currentState: WorkItemState;
     currentStage: WorkItemStage | null;
@@ -388,6 +389,7 @@ export class TaskBoardRuntime {
     const row = this.store.db.prepare(`
       SELECT
         planning.work_item_id,
+        NULL AS node_id,
         'planning' AS task_stage,
         work_item.state AS work_item_state,
         work_item.current_stage AS work_item_current_stage
@@ -397,6 +399,7 @@ export class TaskBoardRuntime {
       UNION ALL
       SELECT
         plan.work_item_id,
+        attempt.node_id,
         attempt.stage AS task_stage,
         work_item.state AS work_item_state,
         work_item.current_stage AS work_item_current_stage
@@ -410,6 +413,7 @@ export class TaskBoardRuntime {
     if (row === undefined) return undefined;
     return Object.freeze({
       workItemId: stringValue(row, "work_item_id"),
+      nodeId: nullableString(row, "node_id"),
       taskStage: stringValue(row, "task_stage") as WorkItemStage,
       currentState: stringValue(row, "work_item_state") as WorkItemState,
       currentStage: nullableString(row, "work_item_current_stage") as WorkItemStage | null,

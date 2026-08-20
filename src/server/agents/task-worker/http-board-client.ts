@@ -679,6 +679,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         result: request.result,
         handoff: request.handoff ?? null,
         workflowPlan: request.workflowPlan ?? null,
+        ...(request.reviewFindings === undefined ? {} : { reviewFindings: request.reviewFindings }),
       },
       signal,
     );

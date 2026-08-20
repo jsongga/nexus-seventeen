@@ -6,7 +6,13 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import type { StageHandoffDraft, WorkflowPlanDraft } from "#shared/task-board-contract";
+import {
+  TASK_BOARD_ERROR_CODES,
+  type ReviewFindingDraft,
+  type StageHandoffDraft,
+  type WorkflowPlanDraft,
+} from "#shared/task-board-contract";
+import { TaskBoardError } from "#server/task-board";
 import {
   automationConfigurationRequest,
   automationStages,
@@ -99,6 +105,35 @@ function implementationHandoff(): StageHandoffDraft {
     }],
     blockers: [],
     recommendedReturnStage: null,
+  };
+}
+
+function reviewFinding(
+  round: number,
+  category: ReviewFindingDraft["category"] = "correctness",
+): ReviewFindingDraft {
+  return {
+    file: `src/review-round-${round}.ts`,
+    line: round,
+    category,
+    severity: category === "correctness" ? "major" : "minor",
+    expected: `Review round ${round} meets the approved plan.`,
+    actual: `Review round ${round} found a defect.`,
+  };
+}
+
+function reviewHandoff(
+  outcome: "passed" | "failed",
+  recommendedReturnStage: StageHandoffDraft["recommendedReturnStage"] = outcome === "passed" ? null : "implementation",
+): StageHandoffDraft {
+  return {
+    outcome,
+    summary: outcome === "passed" ? "Independent review passed." : "Independent review found a defect.",
+    evidence: [],
+    artifactIds: [],
+    acceptanceCriteria: [],
+    blockers: outcome === "passed" ? [] : ["The review finding must be fixed."],
+    recommendedReturnStage,
   };
 }
 
@@ -204,6 +239,27 @@ async function driveVerify(
   );
 }
 
+async function reachReview(fixture: Awaited<ReturnType<typeof pipelineFixture>>, claimId: string) {
+  fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
+    outcome: "completed",
+    result: "Implementation complete.",
+    handoff: implementationHandoff(),
+  });
+  await driveVerify(fixture, "reviewing", 1);
+  const verification = fixture.board.claimRun(fixture.verifier.agentId, { claimId, messageCursor: null });
+  assert.ok(verification);
+  return verification;
+}
+
+function persistedFindings(path: string): Array<Record<string, unknown>> {
+  const db = new DatabaseSync(path);
+  try {
+    return db.prepare("SELECT * FROM review_findings ORDER BY round, created_at, finding_id").all() as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
+}
+
 test("pipeline activation, machine verify, and independent review settle into final approval", async () => {
   const fixture = await pipelineFixture("green", true);
   try {
@@ -269,6 +325,425 @@ test("pipeline activation, machine verify, and independent review settle into fi
     workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.nodes[0]?.state, "completed");
     await assert.rejects(access(join(dirname(fixture.path), "verify-workspaces", `${fixture.workItem.workItemId}-verify`)));
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("passed review persists non-blocking findings and reaches final approval", async () => {
+  const fixture = await pipelineFixture("non-blocking-review", true);
+  try {
+    const verification = await reachReview(fixture, "claim-non-blocking-review");
+    fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Independent review passed with documentation feedback.",
+      handoff: reviewHandoff("passed"),
+      reviewFindings: [reviewFinding(1, "docs")],
+    });
+
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
+    const findings = persistedFindings(fixture.path);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0]?.round, 1);
+    assert.equal(findings[0]?.blocking, 0);
+    assert.equal(findings[0]?.category, "docs");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("completed pipeline review rejects blocking findings when the handoff is omitted", async () => {
+  const fixture = await pipelineFixture("blocking-review-without-handoff", true);
+  try {
+    const verification = await reachReview(fixture, "claim-blocking-review-without-handoff");
+    assert.throws(
+      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+        outcome: "completed",
+        result: "Review completed with a blocking correctness finding.",
+        reviewFindings: [reviewFinding(1)],
+      }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 400 &&
+        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+    );
+
+    assert.deepEqual(persistedFindings(fixture.path), []);
+    const workItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(workItem.state, "reviewing");
+    assert.equal(workItem.currentStage, "verification");
+    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "active");
+    assert.equal(workflow.nodes[0]?.currentStage, "verification");
+    const run = fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (candidate) => candidate.runId === verification.run.runId,
+    );
+    assert.equal(run?.status, "active");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("review consistency gates roll back findings before a valid failed review enters fixing", async () => {
+  const fixture = await pipelineFixture("review-consistency", true);
+  try {
+    const verification = await reachReview(fixture, "claim-review-consistency");
+    const blocking = reviewFinding(1);
+    assert.throws(
+      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+        outcome: "completed",
+        result: "Review passed incorrectly.",
+        handoff: reviewHandoff("passed"),
+        reviewFindings: [blocking],
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+    );
+    assert.deepEqual(persistedFindings(fixture.path), []);
+    assert.throws(
+      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+        outcome: "failed",
+        result: "Review failed without a blocking finding.",
+        handoff: reviewHandoff("failed"),
+        reviewFindings: [reviewFinding(1, "docs")],
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED,
+    );
+    assert.deepEqual(persistedFindings(fixture.path), []);
+
+    fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Review found a correctness defect.",
+      handoff: reviewHandoff("failed", "testing"),
+      reviewFindings: [blocking, reviewFinding(1, "docs")],
+    });
+
+    const workItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(workItem.state, "fixing");
+    assert.equal(workItem.currentStage, "implementation");
+    const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
+    assert.equal(workflow.nodes[0]?.state, "active");
+    assert.equal(workflow.nodes[0]?.currentStage, "implementation");
+    assert.equal(workflow.handoffs.at(-1)?.recommendedReturnStage, "implementation");
+    const findings = persistedFindings(fixture.path);
+    assert.deepEqual(findings.map((finding) => [finding.round, finding.category, finding.blocking]), [
+      [1, "correctness", 1],
+      [1, "docs", 0],
+    ]);
+
+    const fixClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-review-consistency-fix",
+      messageCursor: null,
+    });
+    assert.ok(fixClaim);
+    assert.equal(fixClaim.context.workflow?.dependencyHandoffs.at(-1)?.stage, "verification");
+    assert.equal(fixClaim.context.workflow?.fix?.round, 1);
+    assert.deepEqual(fixClaim.context.workflow?.fix?.findings.map((finding) => [finding.category, finding.blocking]), [
+      ["correctness", true],
+      ["docs", false],
+    ]);
+    fixture.board.settleRun(fixClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The first fix attempt needs another pass.",
+      handoff: {
+        ...implementationHandoff(),
+        outcome: "failed",
+        summary: "The first fix attempt needs another pass.",
+        blockers: ["The correctness defect remains."],
+        recommendedReturnStage: "implementation",
+      },
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).currentStage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline verifier infrastructure failures without a handoff re-arm through the review cap", async () => {
+  const fixture = await pipelineFixture("review-infrastructure-failure", true);
+  try {
+    let review = await reachReview(fixture, "claim-review-infrastructure-failure-1");
+    for (let round = 1; round <= 4; round += 1) {
+      const settled = fixture.board.settleRun(review.run.runId, fixture.verifier.agentId, {
+        outcome: "failed",
+        result: `Verifier launcher failed in round ${round}.`,
+      });
+      assert.equal(settled.run.status, "failed");
+      assert.deepEqual(persistedFindings(fixture.path), []);
+      const workItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+      if (round === 4) {
+        assert.equal(workItem.state, "dead_letter");
+        assert.equal(workItem.currentStage, null);
+        assert.notEqual(workItem.endedAt, null);
+        break;
+      }
+      assert.equal(workItem.state, "reviewing");
+      assert.equal(workItem.currentStage, "verification");
+      const nextReview = fixture.board.claimRun(fixture.verifier.agentId, {
+        claimId: `claim-review-infrastructure-failure-${round + 1}`,
+        messageCursor: null,
+      });
+      assert.ok(nextReview);
+      review = nextReview;
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("final-approval rejection fixes the latest blocking round, not a newer non-blocking round", async () => {
+  const fixture = await pipelineFixture("mixed-review-history", true);
+  try {
+    const reviewOne = await reachReview(fixture, "claim-mixed-review-history-1");
+    fixture.board.settleRun(reviewOne.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Review round one found a blocking defect and a documentation note.",
+      handoff: reviewHandoff("failed"),
+      reviewFindings: [reviewFinding(1), reviewFinding(1, "docs")],
+    });
+    const firstFix = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-mixed-review-history-fix-1",
+      messageCursor: null,
+    });
+    assert.ok(firstFix);
+    fixture.board.settleRun(firstFix.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "The blocking defect from review round one is fixed.",
+      handoff: implementationHandoff(),
+    });
+    await driveVerify(fixture, "reviewing", 2);
+    const reviewTwo = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-mixed-review-history-2",
+      messageCursor: null,
+    });
+    assert.ok(reviewTwo);
+    fixture.board.settleRun(reviewTwo.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Review round two passed with a non-blocking documentation note.",
+      handoff: reviewHandoff("passed"),
+      reviewFindings: [reviewFinding(2, "docs")],
+    });
+    const finalApproval = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(finalApproval.state, "final_approval");
+
+    await fixture.board.rejectFinalApproval(fixture.workItem.workItemId, {
+      version: finalApproval.version,
+      note: "Revisit the last blocking review before approval.",
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+    const rejectedFix = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-mixed-review-history-final-rejection",
+      messageCursor: null,
+    });
+    assert.ok(rejectedFix);
+    assert.equal(rejectedFix.context.workflow?.fix?.round, 1);
+    assert.deepEqual(
+      rejectedFix.context.workflow?.fix?.findings.map((finding) => [finding.round, finding.category]),
+      [[1, "correctness"], [1, "docs"]],
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("retry, reassign, and human-answer recovery preserve a fix-round work item", async () => {
+  const fixture = await pipelineFixture("fix-recovery-state", true);
+  try {
+    const review = await reachReview(fixture, "claim-fix-recovery-review");
+    fixture.board.settleRun(review.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Review found a blocking defect.",
+      handoff: reviewHandoff("failed"),
+      reviewFindings: [reviewFinding(1)],
+    });
+    const failFixAttempt = (runId: string, agentId: string): void => {
+      fixture.board.settleRun(runId, agentId, {
+        outcome: "failed",
+        result: "The fix task failed before it could finish.",
+        handoff: {
+          ...implementationHandoff(),
+          outcome: "failed",
+          summary: "The fix task failed before it could finish.",
+          blockers: ["The fix task must be recovered."],
+          recommendedReturnStage: null,
+        },
+      });
+    };
+
+    const firstFix = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-fix-recovery-initial",
+      messageCursor: null,
+    });
+    assert.ok(firstFix?.task);
+    failFixAttempt(firstFix.run.runId, fixture.engineer.agentId);
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+    const failed = fixture.board.requireTask(firstFix.task.taskId);
+    fixture.board.retryTask(failed.taskId, { version: failed.version });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+
+    const retriedFix = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-fix-recovery-retried",
+      messageCursor: null,
+    });
+    assert.ok(retriedFix?.task);
+    failFixAttempt(retriedFix.run.runId, fixture.engineer.agentId);
+    const failedAgain = fixture.board.requireTask(retriedFix.task.taskId);
+    const replacement = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "fix-recovery-replacement-engineer",
+      role: "engineer",
+      area: "fix recovery",
+      mission: "Recover a fix-round task without changing its work-item state.",
+      model: "codex-mini",
+      token: "fix-recovery-replacement-engineer-token-0123456789",
+    });
+    fixture.board.updateTask(failedAgain.taskId, {
+      version: failedAgain.version,
+      assignedAgentId: replacement.agentId,
+      assignedRole: replacement.role,
+    }, { type: "human", id: "human:alice" });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+
+    const reassignedFix = fixture.board.claimRun(replacement.agentId, {
+      claimId: "claim-fix-recovery-reassigned",
+      messageCursor: null,
+    });
+    assert.ok(reassignedFix?.task);
+    const question = fixture.board.askQuestion(reassignedFix.task.taskId, replacement.agentId, {
+      clientEventId: "question-fix-recovery-approval",
+      question: "Should the recovered task preserve the blocking review context?",
+      runId: reassignedFix.run.runId,
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
+    fixture.board.answerQuestion(question.questionId, {
+      answer: "Yes. Continue the same fix round with its review context.",
+      version: question.version,
+    });
+    const recovered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(recovered.state, "fixing");
+    assert.equal(recovered.currentStage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("review findings are rejected outside a pipeline verification settle", async () => {
+  const fixture = await pipelineFixture("findings-not-allowed", true);
+  try {
+    assert.throws(
+      () => fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
+        outcome: "completed",
+        result: "Implementation attempted to submit review findings.",
+        handoff: implementationHandoff(),
+        reviewFindings: [reviewFinding(1)],
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
+    );
+    assert.deepEqual(persistedFindings(fixture.path), []);
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a fix round re-runs machine verify before review and then reaches final approval", async () => {
+  const fixture = await pipelineFixture("full-fix-loop", true);
+  try {
+    const reviewOne = await reachReview(fixture, "claim-full-fix-loop-review-1");
+    fixture.board.settleRun(reviewOne.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Review round one failed.",
+      handoff: reviewHandoff("failed"),
+      reviewFindings: [reviewFinding(1)],
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
+
+    const fix = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-full-fix-loop-implementation-2",
+      messageCursor: null,
+    });
+    assert.ok(fix);
+    await writeFile(join(fixture.repo, "src", "fix-round-1.txt"), "fix round one\n");
+    await git(fixture.repo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "src/fix-round-1.txt"]);
+    await git(fixture.repo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "fix review round one"]);
+    fixture.board.settleRun(fix.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Fix round one complete.",
+      handoff: implementationHandoff(),
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "verifying");
+    await driveVerify(fixture, "reviewing", 2);
+
+    const reviewTwo = fixture.board.claimRun(fixture.verifier.agentId, {
+      claimId: "claim-full-fix-loop-review-2",
+      messageCursor: null,
+    });
+    assert.ok(reviewTwo);
+    assert.deepEqual(reviewTwo.context.workflow?.review?.priorFindings.map((finding) => finding.round), [1]);
+    fixture.board.settleRun(reviewTwo.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Review round two passed.",
+      handoff: reviewHandoff("passed"),
+      reviewFindings: [],
+    });
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
+
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const states = (db.prepare(`
+        SELECT to_state FROM work_item_transitions
+        WHERE work_item_id=? ORDER BY sequence
+      `).all(fixture.workItem.workItemId) as Array<{ to_state: string }>).map((row) => row.to_state);
+      const fixingIndex = states.lastIndexOf("fixing");
+      assert.deepEqual(states.slice(fixingIndex, fixingIndex + 4), ["fixing", "verifying", "reviewing", "final_approval"]);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("pipeline review failures re-arm three fix rounds and dead-letter round four", async () => {
+  const fixture = await pipelineFixture("review-cap", true);
+  try {
+    let review = await reachReview(fixture, "claim-review-cap-review-1");
+    for (let round = 1; round <= 4; round += 1) {
+      fixture.board.settleRun(review.run.runId, fixture.verifier.agentId, {
+        outcome: "failed",
+        result: `Review round ${round} failed.`,
+        handoff: reviewHandoff("failed"),
+        reviewFindings: [reviewFinding(round)],
+      });
+      const workItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+      if (round === 4) {
+        assert.equal(workItem.state, "dead_letter");
+        assert.equal(workItem.currentStage, null);
+        assert.notEqual(workItem.endedAt, null);
+        break;
+      }
+      assert.equal(workItem.state, "fixing");
+      const fix = fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: `claim-review-cap-fix-${round + 1}`,
+        messageCursor: null,
+      });
+      assert.ok(fix);
+      fixture.board.settleRun(fix.run.runId, fixture.engineer.agentId, {
+        outcome: "completed",
+        result: `Fix round ${round} complete.`,
+        handoff: implementationHandoff(),
+      });
+      assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "verifying");
+      await driveVerify(fixture, "reviewing", round + 1);
+      const nextReview = fixture.board.claimRun(fixture.verifier.agentId, {
+        claimId: `claim-review-cap-review-${round + 1}`,
+        messageCursor: null,
+      });
+      assert.ok(nextReview);
+      review = nextReview;
+    }
+    assert.deepEqual(persistedFindings(fixture.path).map((finding) => finding.round), [1, 2, 3, 4]);
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "blocked");
   } finally {
     fixture.board.close();
   }

@@ -14,6 +14,8 @@ import {
   PLAN_TIERS,
   QUESTION_STATUSES,
   REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_DRAFT_MAX_ITEMS,
+  REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
   REVIEW_FINDING_SEVERITIES,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
@@ -107,6 +109,7 @@ import {
   type WorkNode,
   type WorkflowStage,
   type WorkflowPipelineContext,
+  type WorkflowFixContext,
   type WorkflowReviewContext,
   type WorkflowPlanDraft,
 } from "./index.js";
@@ -976,6 +979,7 @@ function reviewFindingDraftFields(
   label: string,
   options: ShapeParserOptions,
   tolerateUnknown: boolean,
+  textMaximum = 2_000,
 ): ReviewFindingDraft | Omit<TolerantReviewFindingEntity, "findingId" | "nodeId" | "stage" | "round" | "blocking" | "createdAt"> {
   const category = tolerateUnknown
     ? entityMember(item.category, REVIEW_FINDING_CATEGORIES, `${label}.category`, options, undefined, true)
@@ -992,8 +996,8 @@ function reviewFindingDraftFields(
     }),
     category,
     severity,
-    expected: boundedRecordText(item.expected, `${label}.expected`, 2_000),
-    actual: boundedRecordText(item.actual, `${label}.actual`, 2_000),
+    expected: boundedRecordText(item.expected, `${label}.expected`, textMaximum),
+    actual: boundedRecordText(item.actual, `${label}.actual`, textMaximum),
   });
 }
 
@@ -1001,7 +1005,22 @@ export function parseReviewFindingDraft(value: unknown): ReviewFindingDraft {
   const item = exact(value, REVIEW_FINDING_DRAFT_FIELDS, "review finding", {
     required: REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
   });
-  return reviewFindingDraftFields(item, "review finding", {}, false) as ReviewFindingDraft;
+  return reviewFindingDraftFields(
+    item,
+    "review finding",
+    {},
+    false,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+  ) as ReviewFindingDraft;
+}
+
+function parseReviewFindingDraftList(value: unknown, label: string): readonly ReviewFindingDraft[] {
+  if (!Array.isArray(value) || value.length > REVIEW_FINDING_DRAFT_MAX_ITEMS) {
+    throw new ContractValidationError(
+      `${label} must be an array with at most ${REVIEW_FINDING_DRAFT_MAX_ITEMS} entries`,
+    );
+  }
+  return Object.freeze(value.map((entry) => parseReviewFindingDraft(entry)));
 }
 
 export function parseReviewFindingEntity(
@@ -1741,11 +1760,14 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   if (context.workflow !== null) {
     const workflow = exact(
       context.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review"],
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review", "fix"],
       "Workflow context",
       { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
     );
-    parseWorkflowPipelineFields(workflow, "Workflow context");
+    const pipelineFields = parseWorkflowPipelineFields(workflow, "Workflow context");
+    if (pipelineFields.fix !== null && workflow.stage !== "implementation") {
+      throw new ContractValidationError("Workflow context.fix is only valid during implementation");
+    }
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   booleanValue(context.intake, "context.intake");
@@ -1845,6 +1867,7 @@ export interface ValidatedAgentContext {
     workspaceKey: string | null;
     pipeline: WorkflowPipelineContext | null;
     review: WorkflowReviewContext | null;
+    fix: WorkflowFixContext | null;
   }> | null;
 }
 
@@ -1862,6 +1885,7 @@ export interface ValidatedAgentRunOutcome {
   readonly detail: string;
   readonly handoff: StageHandoffDraft | null;
   readonly workflowPlan: WorkflowPlanDraft | null;
+  readonly reviewFindings?: readonly ReviewFindingDraft[];
 }
 
 const MAX_CONTEXT_BYTES = 256 * 1_024;
@@ -1999,6 +2023,7 @@ function parseWorkflowPipelineFields(
   workspaceKey: string | null;
   pipeline: WorkflowPipelineContext | null;
   review: WorkflowReviewContext | null;
+  fix: WorkflowFixContext | null;
 }> {
   const workspaceKey = item.workspaceKey === undefined || item.workspaceKey === null
     ? null
@@ -2048,17 +2073,37 @@ function parseWorkflowPipelineFields(
   if (review !== null && (pipeline === null || !workspaceKey?.endsWith("-review"))) {
     throw new ContractValidationError(`${label}.review identity is invalid`);
   }
-  return Object.freeze({ workspaceKey, pipeline, review });
+  const fix = item.fix === undefined || item.fix === null
+    ? null
+    : (() => {
+        const value = exact(item.fix, ["round", "findings"], `${label}.fix`);
+        return Object.freeze({
+          round: integer(value.round, `${label}.fix.round`, 1),
+          findings: Object.freeze(boundedPlanArray(
+            value.findings,
+            `${label}.fix.findings`,
+            1,
+            64,
+            (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel),
+          )),
+        });
+      })();
+  if (fix !== null && (pipeline === null || workspaceKey?.endsWith("-review") === true)) {
+    throw new ContractValidationError(`${label}.fix identity is invalid`);
+  }
+  return Object.freeze({ workspaceKey, pipeline, review, fix });
 }
 
 function parseWorkflowReviewContext(value: unknown, label: string): WorkflowReviewContext {
   const fields = [
     "commits", "diffstat", "filesTouched", "scopeOk", "midRunAssumptions",
     "acceptanceCriteria", "criterionChecks", "mechanicalPortions", "priorFindings",
+    "priorFindingsTruncated",
   ];
   const item = exact(value, fields, label, {
-    // Claims persisted before mechanical portions joined the review block remain replayable.
-    required: fields.filter((field) => field !== "mechanicalPortions"),
+    // Claims persisted before these additive review fields joined the block remain replayable.
+    required: fields.filter((field) =>
+      field !== "mechanicalPortions" && field !== "priorFindingsTruncated"),
   });
   const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
     const commit = exact(entry, ["sha", "subject"], entryLabel);
@@ -2092,6 +2137,9 @@ function parseWorkflowReviewContext(value: unknown, label: string): WorkflowRevi
   const priorFindings = boundedPlanArray(item.priorFindings, `${label}.priorFindings`, 0, 1_000,
     (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel));
   if (typeof item.scopeOk !== "boolean") throw new ContractValidationError(`${label}.scopeOk is invalid`);
+  if (item.priorFindingsTruncated !== undefined && typeof item.priorFindingsTruncated !== "boolean") {
+    throw new ContractValidationError(`${label}.priorFindingsTruncated is invalid`);
+  }
   return Object.freeze({
     commits,
     diffstat: text(item.diffstat, `${label}.diffstat`, {
@@ -2109,6 +2157,7 @@ function parseWorkflowReviewContext(value: unknown, label: string): WorkflowRevi
       ? Object.freeze([])
       : stringList(item.mechanicalPortions, `${label}.mechanicalPortions`, 32, 1_000),
     priorFindings,
+    priorFindingsTruncated: item.priorFindingsTruncated ?? false,
   });
 }
 
@@ -2222,12 +2271,15 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   if (item.workflow !== null) {
     const workflowItem = exact(
       item.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review"],
+      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review", "fix"],
       "Workflow context",
       { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
     );
     const workflowStage = contractMember(workflowItem.stage, WORKFLOW_STAGES, "Workflow stage");
     const pipelineFields = parseWorkflowPipelineFields(workflowItem, "Workflow context");
+    if (pipelineFields.fix !== null && workflowStage !== "implementation") {
+      throw new ContractValidationError("Workflow context.fix is only valid during implementation");
+    }
     if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16) throw new ContractValidationError("Workflow skills are invalid");
     const skills = workflowItem.skills.map((entry, index) => {
       const skill = exact(entry, ["skillId", "name", "description", "digest", "content"], `Workflow skill ${index}`);
@@ -2255,6 +2307,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       workspaceKey: pipelineFields.workspaceKey,
       pipeline: pipelineFields.pipeline,
       review: pipelineFields.review,
+      fix: pipelineFields.fix,
     });
   }
 
@@ -2573,6 +2626,7 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
   const item = exact(value, [
     "status", "outputs", "expectedAgentMinutes", "phases", "detail",
     ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : []),
+    ...("reviewFindings" in raw ? ["reviewFindings"] : []),
   ], "Agent outcome");
   if (item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" && item.status !== "waiting_for_human") {
     throw new ContractValidationError("Agent outcome status is invalid");
@@ -2602,6 +2656,9 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
     phases: Object.freeze(phases), detail: workerProse(item.detail, "outcome.detail", 2_000),
     handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, WORKER_DRAFT_POLICY),
     workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
+    ...(item.reviewFindings === undefined ? {} : {
+      reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "outcome.reviewFindings"),
+    }),
   });
 }
 
@@ -3025,11 +3082,19 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
 
 export function parseBoardSettle(value: unknown): SettleRunRequest {
   const raw = record(value, "Run settlement");
-  const item = boardExact(value, ["outcome", "result", ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : [])], "Run settlement");
+  const item = boardExact(value, [
+    "outcome", "result",
+    ...("handoff" in raw ? ["handoff"] : []),
+    ...("workflowPlan" in raw ? ["workflowPlan"] : []),
+    ...("reviewFindings" in raw ? ["reviewFindings"] : []),
+  ], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") boardFailure("Run outcome is invalid");
   return Object.freeze({ outcome: item.outcome, result: boardText(item.result, "result", 16_000),
     handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, BOARD_DRAFT_POLICY),
-    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY) });
+    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY),
+    ...(item.reviewFindings === undefined ? {} : {
+      reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "reviewFindings"),
+    }) });
 }
 
 export function parseBoardIdempotencyKey(value: string | string[] | undefined): string {

@@ -6,6 +6,8 @@ import {
   IDENTIFIER_PATTERN,
   PLAN_CHANGE_SHAPES,
   PLAN_TIERS,
+  REVIEW_FINDING_DRAFT_MAX_ITEMS,
+  REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
   STAGE_HANDOFF_OUTCOMES,
   TASK_KINDS,
   TASK_BOARD_API_VERSION,
@@ -471,6 +473,56 @@ test("worker outcome shapes accept exactly the shared handoff and workflow enums
       dependencyNodeIds: [], stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
     }],
   })));
+});
+
+test("review finding drafts round-trip through board and worker settlement fields", () => {
+  const reviewFindings = [{
+    file: "src/server/task-board/persistence/workflow.ts",
+    line: 1200,
+    category: "correctness",
+    severity: "major",
+    expected: "A failed review returns to implementation.",
+    actual: "The node remained in review.",
+  }] as const;
+  assert.deepEqual(parseBoardSettle({
+    outcome: "failed",
+    result: "Review failed.",
+    reviewFindings,
+  }).reviewFindings, reviewFindings);
+  assert.deepEqual(parseWorkerAgentRunOutcome({
+    ...(outcome() as Record<string, unknown>),
+    reviewFindings,
+  }).reviewFindings, reviewFindings);
+
+  const tooMany = Array.from({ length: REVIEW_FINDING_DRAFT_MAX_ITEMS + 1 }, () => reviewFindings[0]);
+  assert.throws(() => parseBoardSettle({ outcome: "failed", result: "Review failed.", reviewFindings: tooMany }));
+  assert.throws(() => parseWorkerAgentRunOutcome({
+    ...(outcome() as Record<string, unknown>),
+    reviewFindings: tooMany,
+  }));
+
+  const maximumFinding = {
+    file: "x".repeat(512),
+    line: Number.MAX_SAFE_INTEGER,
+    category: "test_modification",
+    severity: "critical",
+    expected: "e".repeat(REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH),
+    actual: "a".repeat(REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH),
+  } as const;
+  const maximumSettlement = {
+    outcome: "failed",
+    result: "r".repeat(16_000),
+    reviewFindings: Array.from({ length: REVIEW_FINDING_DRAFT_MAX_ITEMS }, () => maximumFinding),
+  } as const;
+  assert.equal(parseBoardSettle(maximumSettlement).reviewFindings?.length, REVIEW_FINDING_DRAFT_MAX_ITEMS);
+  assert.ok(Buffer.byteLength(JSON.stringify(maximumSettlement), "utf8") < 64 * 1_024);
+  assert.throws(() => parseBoardSettle({
+    ...maximumSettlement,
+    reviewFindings: [{
+      ...maximumFinding,
+      expected: "e".repeat(REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH + 1),
+    }],
+  }));
 });
 
 test("pipeline plan-record fields round-trip through board and worker draft validators", () => {

@@ -21,6 +21,7 @@ test("legacy workflow contexts default absent pipeline fields to null", () => {
   assert.equal(parsed.workflow?.workspaceKey, null);
   assert.equal(parsed.workflow?.pipeline, null);
   assert.equal(parsed.workflow?.review, null);
+  assert.equal(parsed.workflow?.fix, null);
 });
 
 test("pipeline workflow contexts validate and preserve their branch-bound plan record", () => {
@@ -99,6 +100,7 @@ test("review workflow contexts validate and preserve branch inspection evidence"
     criterionChecks: [{ criterion: "The reviewer receives branch evidence.", check: "npm run test:runtime" }],
     mechanicalPortions: ["Regenerate the bounded context fixtures."],
     priorFindings: [],
+    priorFindingsTruncated: false,
   } as const;
 
   const parsed = parseBoundedAgentContext(context({
@@ -111,5 +113,46 @@ test("review workflow contexts validate and preserve branch inspection evidence"
       workflow: workflow({ stage: "verification", workspaceKey: "work-item-pipeline-context", pipeline, review }),
     })),
     /review identity is invalid/u,
+  );
+});
+
+test("fix workflow contexts preserve one findings round only during pipeline implementation", () => {
+  const workspaceKey = "work-item-pipeline-context";
+  const pipeline = {
+    branch: `task/${workspaceKey}`,
+    baseSha: "f".repeat(40),
+    changeShape: "feature",
+    tier: "standard",
+    declaredScope: ["src/server"],
+    nonGoals: [],
+    assumptions: [],
+  } as const;
+  const fix = {
+    round: 2,
+    findings: [{
+      findingId: "finding-pipeline-context",
+      nodeId: "node-pipeline-context",
+      stage: "verification",
+      round: 2,
+      file: "src/server/fix.ts",
+      line: 12,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry is safe.",
+      actual: "The retry duplicates work.",
+      blocking: true,
+      createdAt: "2026-08-19T12:00:00.000Z",
+    }],
+  } as const;
+
+  const parsed = parseBoundedAgentContext(context({
+    workflow: workflow({ workspaceKey, pipeline, fix }),
+  }));
+  assert.deepEqual(parsed.workflow?.fix, fix);
+  assert.throws(
+    () => parseBoundedAgentContext(context({
+      workflow: workflow({ stage: "verification", workspaceKey, pipeline, fix }),
+    })),
+    /fix is only valid during implementation/u,
   );
 });

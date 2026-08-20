@@ -347,6 +347,9 @@ test("workflow stages map to the v19 work-item pipeline states", () => {
     "planning",
     "planning",
   ]);
+  assert.equal(workItemStateForStage("implementation", { fixLoop: true }), "fixing");
+  assert.equal(workItemStateForStage("testing", { fixLoop: true }), "verifying");
+  assert.equal(workItemStateForStage("verification", { fixLoop: true }), "reviewing");
 });
 
 test("every workflow stage move has a legal work-item state decision", () => {

@@ -30,11 +30,26 @@ export interface InitialWorkItemTransitionRequest {
   readonly now: string;
 }
 
-export function workItemStateForStage(stage: WorkItemStage | null): WorkItemState {
-  if (stage === "implementation" || stage === "deployment") return "implementing";
+export function workItemStateForStage(
+  stage: WorkItemStage | null,
+  options: Readonly<{ fixLoop?: boolean }> = {},
+): WorkItemState {
+  if (stage === "implementation") return options.fixLoop === true ? "fixing" : "implementing";
+  if (stage === "deployment") return "implementing";
   if (stage === "testing") return "verifying";
   if (stage === "verification") return "reviewing";
   return "planning";
+}
+
+export function workItemStateForNodeStage(
+  db: TaskBoardStore["db"],
+  nodeId: string | null,
+  stage: WorkItemStage | null,
+): WorkItemState {
+  const fixLoop = stage === "implementation" && nodeId !== null && db.prepare(`
+    SELECT 1 FROM review_findings WHERE node_id=? AND blocking=1 LIMIT 1
+  `).get(nodeId) !== undefined;
+  return workItemStateForStage(stage, { fixLoop });
 }
 
 export function registerWorkItemTransitionStore(store: TaskBoardStore): void {

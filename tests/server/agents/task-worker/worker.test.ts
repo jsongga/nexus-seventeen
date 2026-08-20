@@ -831,6 +831,38 @@ test("normalizes every provider-authored carriage return before board writes", a
   }
 });
 
+test("forwards non-empty structured review findings with the run settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push({
+    ...completedOutcome("Independent review found a defect."),
+    reviewFindings: [{
+      file: "src/server/review.ts",
+      line: 42,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry settles once.",
+      actual: "The retry settles twice.",
+    }],
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.deepEqual(board.settlements[0]?.reviewFindings, [{
+      file: "src/server/review.ts",
+      line: 42,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry settles once.",
+      actual: "The retry settles twice.",
+    }]);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("a human answer is included in the next bounded one-shot context", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();

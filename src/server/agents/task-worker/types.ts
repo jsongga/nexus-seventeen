@@ -6,7 +6,9 @@ import {
   type StageHandoff,
   type WorkflowStage,
   type StageHandoffDraft,
+  type ReviewFindingDraft,
   type WorkflowPlanDraft,
+  type WorkflowFixContext,
   type WorkflowPipelineContext,
   type WorkflowReviewContext,
   type TaskKind,
@@ -155,6 +157,7 @@ export interface BoundedAgentContext {
     readonly workspaceKey?: string | null;
     readonly pipeline?: WorkflowPipelineContext | null;
     readonly review?: BoundedWorkflowReviewContext | null;
+    readonly fix?: WorkflowFixContext | null;
   }> | null;
 }
 
@@ -178,6 +181,7 @@ export interface AgentRunOutcome {
   readonly detail: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
+  readonly reviewFindings?: readonly ReviewFindingDraft[];
 }
 
 export interface AgentWorkspace { readonly path: string }
@@ -249,6 +253,7 @@ export interface SettleAgentRunRequest {
   readonly idempotencyKey: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
+  readonly reviewFindings?: readonly ReviewFindingDraft[];
 }
 
 export interface ReportAgentLaneErrorRequest {

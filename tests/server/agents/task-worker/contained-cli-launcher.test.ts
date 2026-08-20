@@ -7,6 +7,10 @@ import {
   IDENTIFIER_PATTERN,
   PLAN_CHANGE_SHAPES,
   PLAN_TIERS,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_DRAFT_MAX_ITEMS,
+  REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+  REVIEW_FINDING_SEVERITIES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
@@ -52,6 +56,20 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.status.enum, TASK_PHASE_STATUSES);
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.outcome.enum, STAGE_HANDOFF_OUTCOMES);
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.recommendedReturnStage.enum, [...WORKFLOW_STAGES, null]);
+  assert.equal(RESULT_SCHEMA.properties.reviewFindings.maxItems, REVIEW_FINDING_DRAFT_MAX_ITEMS);
+  assert.equal(
+    RESULT_SCHEMA.properties.reviewFindings.items.properties.expected.maxLength,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+  );
+  assert.equal(
+    RESULT_SCHEMA.properties.reviewFindings.items.properties.actual.maxLength,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+  );
+  assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.properties.category.enum, REVIEW_FINDING_CATEGORIES);
+  assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.properties.severity.enum, REVIEW_FINDING_SEVERITIES);
+  assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.required, ["category", "severity", "expected", "actual"]);
+  assert.equal("blocking" in RESULT_SCHEMA.properties.reviewFindings.items.properties, false);
+  assert.ok(RESULT_SCHEMA.required.includes("reviewFindings"));
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum, WORKFLOW_STAGES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.changeShape.enum, PLAN_CHANGE_SHAPES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.tier.enum, PLAN_TIERS);

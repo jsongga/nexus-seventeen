@@ -1,6 +1,10 @@
 import {
   AGENT_ROLES,
   IDENTIFIER_PATTERN,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_DRAFT_MAX_ITEMS,
+  REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+  REVIEW_FINDING_SEVERITIES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
@@ -86,6 +90,28 @@ export const RESULT_SCHEMA = Object.freeze({
         },
       ],
     },
+    reviewFindings: {
+      type: "array",
+      maxItems: REVIEW_FINDING_DRAFT_MAX_ITEMS,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          file: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: 512,
+            pattern: "^(?!/)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          line: { type: ["integer", "null"], minimum: 1 },
+          category: { type: "string", enum: REVIEW_FINDING_CATEGORIES },
+          severity: { type: "string", enum: REVIEW_FINDING_SEVERITIES },
+          expected: { type: "string", minLength: 1, maxLength: REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH },
+          actual: { type: "string", minLength: 1, maxLength: REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH },
+        },
+        required: ["category", "severity", "expected", "actual"],
+      },
+    },
     workflowPlan: {
       anyOf: [
         { type: "null" },
@@ -148,7 +174,7 @@ export const RESULT_SCHEMA = Object.freeze({
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
   required: [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "detail",
+    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "reviewFindings", "detail",
   ],
 } as const);
 
@@ -269,9 +295,17 @@ export function agentPrompt(request: AgentLaunchRequest): string {
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
   const pipeline = request.context.workflow?.pipeline;
+  const brightLineBlock = "Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
   const pipelineImplementation = fixedRole === "engineer" &&
     request.context.workflow?.stage === "implementation" && pipeline != null
-    ? `Pipeline task on branch ${pipeline.branch}. Declared scope (only these path prefixes): ${pipeline.declaredScope.join(", ")}. Non-goals: ${pipeline.nonGoals.join(", ")}. Loop: write a failing test where a criterion allows, implement, run \`npm run verify:fast\`, read the failure, fix; repeat until green. Run \`npm run verify:area\` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting \`BRIGHT_LINE:\` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.`
+    ? request.context.workflow.fix == null
+      ? `Pipeline task on branch ${pipeline.branch}. Declared scope (only these path prefixes): ${pipeline.declaredScope.join(", ")}. Non-goals: ${pipeline.nonGoals.join(", ")}. Loop: write a failing test where a criterion allows, implement, run \`npm run verify:fast\`, read the failure, fix; repeat until green. Run \`npm run verify:area\` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. ${brightLineBlock}`
+      : [
+          `Fix round ${request.context.workflow.fix.round} on branch ${pipeline.branch}. A reviewer found the defects below; the diff is on the branch. Fix each finding, then re-trace the whole flow end to end — not just the patch. Loop: run \`npm run verify:fast\`, read the failure, fix; repeat until green. Run \`npm run verify:area\` once before finishing. Commit in staged logical units. The declared scope, non-goals, and BRIGHT_LINE rules from the original task still apply verbatim.`,
+          "Review findings:",
+          request.context.workflow.fix.findings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n"),
+          brightLineBlock,
+        ].join("\n")
     : null;
   const pipelineReview = fixedRole === "verifier" &&
     request.context.workflow?.stage === "verification" && pipeline != null
@@ -326,7 +360,9 @@ export function agentPrompt(request: AgentLaunchRequest): string {
             criterionChecks,
             "Mechanical portions:",
             mechanicalPortions,
-            "Prior review findings:",
+            review.priorFindingsTruncated
+              ? "Prior review findings (oldest findings omitted to fit the claim context):"
+              : "Prior review findings:",
             priorFindings,
           ].join("\n"),
         ] as const;
@@ -531,6 +567,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion",
     ...("handoff" in item ? ["handoff"] : []),
     ...("workflowPlan" in item ? ["workflowPlan"] : []),
+    ...("reviewFindings" in item ? ["reviewFindings"] : []),
     "detail",
   ].sort();
   const actual = Object.keys(item).sort();
@@ -560,6 +597,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     detail: item.detail,
     handoff: item.handoff ?? null,
     workflowPlan: item.workflowPlan ?? null,
+    ...(item.reviewFindings === undefined ? {} : { reviewFindings: item.reviewFindings }),
   });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;

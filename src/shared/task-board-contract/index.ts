@@ -283,6 +283,11 @@ export const BLOCKING_REVIEW_FINDING_CATEGORIES = ["correctness", "security", "p
 export type ReviewFindingCategory = typeof REVIEW_FINDING_CATEGORIES[number];
 export type ReviewFindingSeverity = typeof REVIEW_FINDING_SEVERITIES[number];
 
+// These bounds keep a maximally sized findings list inside the default 64 KiB
+// run-settlement transport, including the settlement's maximally sized result.
+export const REVIEW_FINDING_DRAFT_MAX_ITEMS = 16;
+export const REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH = 1_000;
+
 export function reviewFindingBlocks(category: ReviewFindingCategory): boolean {
   return (BLOCKING_REVIEW_FINDING_CATEGORIES as readonly ReviewFindingCategory[]).includes(category);
 }
@@ -347,6 +352,12 @@ export interface WorkflowReviewContext {
   readonly criterionChecks: readonly PlanCriterionCheck[];
   readonly mechanicalPortions: readonly string[];
   readonly priorFindings: readonly ReviewFinding[];
+  readonly priorFindingsTruncated: boolean;
+}
+
+export interface WorkflowFixContext {
+  readonly round: number;
+  readonly findings: readonly ReviewFinding[];
 }
 
 export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
@@ -954,6 +965,8 @@ export interface ClaimRunResult {
       pipeline?: WorkflowPipelineContext | null;
       /** Absent is accepted from claims created before independent pipeline review. */
       review?: WorkflowReviewContext | null;
+      /** Absent is accepted from claims created before findings-driven fix rounds. */
+      fix?: WorkflowFixContext | null;
     }> | null;
   }>;
 }
@@ -1168,4 +1181,5 @@ export interface SettleRunRequest {
   readonly result: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
+  readonly reviewFindings?: readonly ReviewFindingDraft[];
 }

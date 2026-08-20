@@ -1194,6 +1194,9 @@ export class TaskWorker {
         result,
         handoff: outcome.handoff ?? null,
         workflowPlan: outcome.workflowPlan ?? null,
+        ...(outcome.reviewFindings === undefined || outcome.reviewFindings.length === 0
+          ? {}
+          : { reviewFindings: outcome.reviewFindings }),
         idempotencyKey: settlementIdempotency(active.claim, outcome, result),
       });
     }

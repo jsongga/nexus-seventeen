@@ -38,6 +38,43 @@ test("pipeline implementation engineer prompt appends the declared-scope bright-
   assert.equal(prompt.split(PIPELINE_BLOCK).length, 2);
 });
 
+test("fix-round engineer prompt replaces the plain implementation block and renders findings", () => {
+  const workflow = {
+    ...pipelineWorkflow("implementation"),
+    fix: {
+      round: 2,
+      findings: [{
+        findingId: "finding-two",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 2,
+        file: "src/server/fix.ts",
+        line: 24,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry reaches machine verification.",
+        actual: "The retry skipped machine verification.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      }],
+    },
+  } as const;
+  const prompt = agentPrompt({
+    runId: "run-pipeline-fix",
+    wakeReason: "workflow_handoff",
+    context: context({ workflow: workflow as never }),
+  });
+
+  const fixBlock = "Fix round 2 on branch task/work-item-one. A reviewer found the defects below; the diff is on the branch. Fix each finding, then re-trace the whole flow end to end — not just the patch. Loop: run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units. The declared scope, non-goals, and BRIGHT_LINE rules from the original task still apply verbatim.";
+  assert.ok(prompt.includes(fixBlock));
+  assert.match(prompt, /src\/server\/fix\.ts/u);
+  assert.match(prompt, /The retry skipped machine verification\./u);
+  assert.match(prompt, /Reversible mid-run decisions:/u);
+  assert.doesNotMatch(prompt, /Pipeline task on branch task\/work-item-one/u);
+  assert.ok(prompt.indexOf(fixBlock) < prompt.indexOf("src/server/fix.ts"));
+  assert.ok(prompt.indexOf("src/server/fix.ts") < prompt.indexOf("Reversible mid-run decisions:"));
+});
+
 test("pipeline block is absent outside the engineer implementation stage", () => {
   const cases = [
     context({ workflow: null }),
@@ -89,6 +126,7 @@ test("pipeline verification reviewer prompt injects the independent review instr
         blocking: true,
         createdAt: "2026-08-19T12:00:00.000Z",
       }],
+      priorFindingsTruncated: true,
     },
   } as const;
   const prompt = agentPrompt({
@@ -113,6 +151,7 @@ test("pipeline verification reviewer prompt injects the independent review instr
   assert.match(prompt, /The reviewer receives branch evidence\./u);
   assert.match(prompt, /Mechanical portions:\n- Regenerate the task-board snapshots\./u);
   assert.match(prompt, /The prior attempt reused the engineer workspace\./u);
+  assert.match(prompt, /oldest findings omitted to fit the claim context/u);
   assert.doesNotMatch(prompt, /design record/iu);
 });
 

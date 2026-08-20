@@ -393,6 +393,7 @@ test("verification claims include isolated review context and reject an equal im
         criterionChecks: Array<{ criterion: string; check: string }>;
         mechanicalPortions: string[];
         priorFindings: Array<{ findingId: string; round: number }>;
+        priorFindingsTruncated: boolean;
       };
     };
     assert.equal(workflow.workspaceKey, `${fixture.workItem.workItemId}-review`);
@@ -413,6 +414,7 @@ test("verification claims include isolated review context and reject an equal im
     }]);
     assert.deepEqual(workflow.review.mechanicalPortions, ["Rename generated symbols."]);
     assert.deepEqual(workflow.review.priorFindings.map((finding) => finding.round), [1, 2]);
+    assert.equal(workflow.review.priorFindingsTruncated, false);
     assert.deepEqual(claim.context.areaMemory, []);
   } finally {
     fixture.board.close();
@@ -538,11 +540,13 @@ test("oversized review Git evidence is bounded before persistence and round-trip
     assert.ok(review.filesTouched.length <= 10_000);
     assert.match(review.filesTouched.at(-1)?.path ?? "", /additional files omitted/u);
     assert.deepEqual(review.mechanicalPortions, ["Rename generated symbols."]);
+    assert.equal(review.priorFindingsTruncated, false);
 
     const legacyReplay = JSON.parse(JSON.stringify(replay)) as {
       context: { workflow: { review: Record<string, unknown> } };
     };
     delete legacyReplay.context.workflow.review.mechanicalPortions;
+    delete legacyReplay.context.workflow.review.priorFindingsTruncated;
     const legacyClient = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: "legacy-review-token-0123456789abcdef",
@@ -559,6 +563,77 @@ test("oversized review Git evidence is bounded before persistence and round-trip
       pinned: REVIEW_PIN,
     });
     assert.deepEqual(legacyWorkerClaim?.context?.workflow?.review?.mechanicalPortions, []);
+    assert.equal(legacyWorkerClaim?.context?.workflow?.review?.priorFindingsTruncated, false);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("oversized prior review findings keep the newest evidence and round-trip with truncation", async () => {
+  const fixture = await reviewFixture("oversized-prior-findings");
+  try {
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const insert = db.prepare(`
+        INSERT INTO review_findings(
+          finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (let round = 3; round <= 6; round += 1) {
+        for (let index = 0; index < 16; index += 1) {
+          insert.run(
+            `finding-oversized-${round}-${index}`,
+            fixture.node.nodeId,
+            "verification",
+            round,
+            `src/oversized-round-${round}-${index}.ts`,
+            index + 1,
+            "correctness",
+            "major",
+            `Expected ${round}-${index} ${"e".repeat(1_780)}`,
+            `Actual ${round}-${index} ${"a".repeat(1_784)}`,
+            1,
+            `2026-08-19T18:${String(round).padStart(2, "0")}:${String(index).padStart(2, "0")}.000Z`,
+          );
+        }
+      }
+    } finally {
+      db.close();
+    }
+
+    const request = {
+      claimId: "review-oversized-prior-findings",
+      messageCursor: null,
+      pinned: REVIEW_PIN,
+    } as const;
+    const claim = fixture.board.claimRun(fixture.verifier.agentId, request);
+    assert.ok(claim?.context.workflow?.review);
+    const boardReview = claim.context.workflow.review;
+    assert.equal(boardReview.priorFindingsTruncated, true);
+    assert.ok(boardReview.priorFindings.length > 0);
+    assert.ok(boardReview.priorFindings.every((finding) => finding.round === 6));
+    assert.ok(Buffer.byteLength(JSON.stringify(claim.context), "utf8") < 256 * 1_024);
+
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1:4318",
+      token: "oversized-prior-findings-token-0123456789abcdef",
+      fetchImplementation: (async () => new Response(JSON.stringify(claim), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+    });
+    const workerClaim = await client.claimNextWake({
+      agentId: fixture.verifier.agentId,
+      claimId: request.claimId,
+      messageCursors: {},
+      longPollMs: 0,
+      pinned: REVIEW_PIN,
+    });
+    assert.equal(workerClaim?.context?.workflow?.review?.priorFindingsTruncated, true);
+    assert.deepEqual(
+      workerClaim?.context?.workflow?.review?.priorFindings,
+      boardReview.priorFindings,
+    );
   } finally {
     fixture.board.close();
   }

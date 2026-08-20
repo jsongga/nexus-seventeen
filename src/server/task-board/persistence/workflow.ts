@@ -7,6 +7,7 @@ import {
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
   pipelineTemplateShape,
+  reviewFindingBlocks,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CriterionResult,
@@ -15,6 +16,7 @@ import {
   type ProjectEvent,
   type RejectFinalApprovalRequest,
   type ReviewFinding,
+  type ReviewFindingDraft,
   type RejectPlanRevisionRequest,
   type RejectPlanRevisionResponse,
   type StageHandoff,
@@ -30,6 +32,7 @@ import { SkillRegistry } from "../skills.js";
 import {
   transitionWorkItemInTransaction,
   workItemStateForStage,
+  workItemStateForNodeStage,
   workItemTransitionStoreForDatabase,
 } from "../collaborators/work-item-transitions.js";
 import {
@@ -64,6 +67,7 @@ const REVIEW_FILE_MAX_ITEMS = 10_000;
 // findings, skills, and the rest of the claim envelope.
 const REVIEW_COMMIT_JSON_BUDGET = 32_000;
 const REVIEW_FILE_JSON_BUDGET = 48_000;
+const REVIEW_PRIOR_FINDINGS_JSON_BUDGET = 48_000;
 const REVIEW_DIFFSTAT_TRUNCATION_MARKER = "\n[truncated: additional diffstat output omitted]";
 const REVIEW_COMMIT_TRUNCATION_MARKER = Object.freeze({
   sha: "0".repeat(40),
@@ -102,6 +106,26 @@ function boundedReviewList<T>(
   }
   if (result.length < items.length) result.push(marker);
   return Object.freeze(result);
+}
+
+function boundPriorReviewFindings(items: readonly ReviewFinding[]): Readonly<{
+  findings: readonly ReviewFinding[];
+  truncated: boolean;
+}> {
+  const newestFirst: ReviewFinding[] = [];
+  let consumed = 2;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const itemCost = Buffer.byteLength(JSON.stringify(item), "utf8") + (newestFirst.length === 0 ? 0 : 1);
+    if (consumed + itemCost > REVIEW_PRIOR_FINDINGS_JSON_BUDGET) break;
+    newestFirst.push(item);
+    consumed += itemCost;
+  }
+  newestFirst.reverse();
+  return Object.freeze({
+    findings: Object.freeze(newestFirst),
+    truncated: newestFirst.length < items.length,
+  });
 }
 
 function boundPipelineInspectionForReview(inspection: PipelineInspection): Readonly<{
@@ -149,6 +173,22 @@ function list(value: unknown, field: string, max = 64): string[] {
   return value.map((item, index) => text(item, `${field}[${index}]`, 4_000));
 }
 function json<T>(value: unknown): T { return JSON.parse(String(value)) as T; }
+function reviewFindingFromRow(row: Row): ReviewFinding {
+  return Object.freeze({
+    findingId: String(row.finding_id),
+    nodeId: String(row.node_id),
+    stage: row.stage as WorkflowStage,
+    round: Number(row.round),
+    file: row.file === null ? null : String(row.file),
+    line: row.line === null ? null : Number(row.line),
+    category: row.category as ReviewFinding["category"],
+    severity: row.severity as ReviewFinding["severity"],
+    expected: String(row.expected),
+    actual: String(row.actual),
+    blocking: Number(row.blocking) === 1,
+    createdAt: String(row.created_at),
+  });
+}
 function optionalJsonList<T>(value: unknown): readonly T[] | undefined {
   return value === null ? undefined : Object.freeze(json<T[]>(value));
 }
@@ -519,6 +559,7 @@ export class TransparentWorkflow {
     }
     let pipeline: WorkflowPipelineContext | null = null;
     let review: NonNullable<NonNullable<ClaimRunResult["context"]["workflow"]>["review"]> | null = null;
+    let fix: NonNullable<NonNullable<ClaimRunResult["context"]["workflow"]>["fix"]> | null = null;
     if (hasPipelineBranch) {
       if (
         row.change_shape === null || row.tier === null ||
@@ -541,7 +582,7 @@ export class TransparentWorkflow {
         const latestSameNodeHandoff = this.db.prepare(`
           SELECT payload_json
           FROM stage_handoffs
-          WHERE node_id=? AND stage IN ('implementation','testing')
+          WHERE node_id=? AND stage IN ('implementation','testing','verification')
           ORDER BY created_at DESC, rowid DESC
           LIMIT 1
         `).get(String(row.node_id)) as Row | undefined;
@@ -549,29 +590,32 @@ export class TransparentWorkflow {
           const handoff = Object.freeze(json<StageHandoff>(latestSameNodeHandoff.payload_json));
           if (handoff.outcome === "failed") handoffs.push(handoff);
         }
+        const latestFindingsRound = this.db.prepare(`
+          SELECT MAX(round) AS round
+          FROM review_findings
+          WHERE node_id=? AND blocking=1
+        `).get(String(row.node_id)) as Row | undefined;
+        if (latestFindingsRound?.round !== null && latestFindingsRound?.round !== undefined) {
+          const round = Number(latestFindingsRound.round);
+          const findings = (this.db.prepare(`
+            SELECT *
+            FROM review_findings
+            WHERE node_id=? AND round=?
+            ORDER BY created_at,finding_id
+          `).all(String(row.node_id), round) as Row[]).map(reviewFindingFromRow);
+          fix = Object.freeze({ round, findings: Object.freeze(findings) });
+        }
       }
       if (row.stage === "verification") {
         if (reviewInspection === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:review_inspection");
         const inspection = boundPipelineInspectionForReview(reviewInspection);
-        const priorFindings = (this.db.prepare(`
+        const allPriorFindings = (this.db.prepare(`
           SELECT *
           FROM review_findings
           WHERE node_id=?
           ORDER BY round,created_at,finding_id
-        `).all(String(row.node_id)) as Row[]).map((finding): ReviewFinding => Object.freeze({
-          findingId: String(finding.finding_id),
-          nodeId: String(finding.node_id),
-          stage: finding.stage as WorkflowStage,
-          round: Number(finding.round),
-          file: finding.file === null ? null : String(finding.file),
-          line: finding.line === null ? null : Number(finding.line),
-          category: finding.category as ReviewFinding["category"],
-          severity: finding.severity as ReviewFinding["severity"],
-          expected: String(finding.expected),
-          actual: String(finding.actual),
-          blocking: Number(finding.blocking) === 1,
-          createdAt: String(finding.created_at),
-        }));
+        `).all(String(row.node_id)) as Row[]).map(reviewFindingFromRow);
+        const priorFindings = boundPriorReviewFindings(allPriorFindings);
         review = Object.freeze({
           commits: inspection.commits,
           diffstat: inspection.diffstat,
@@ -585,7 +629,8 @@ export class TransparentWorkflow {
           mechanicalPortions: row.mechanical_portions_json === null
             ? Object.freeze([])
             : Object.freeze(json<string[]>(row.mechanical_portions_json)),
-          priorFindings: Object.freeze(priorFindings),
+          priorFindings: priorFindings.findings,
+          priorFindingsTruncated: priorFindings.truncated,
         });
       }
     }
@@ -597,6 +642,7 @@ export class TransparentWorkflow {
         : row.stage === "verification" ? `${String(row.work_item_id)}-review` : String(row.work_item_id),
       pipeline,
       review,
+      fix,
     });
   }
 
@@ -939,7 +985,7 @@ export class TransparentWorkflow {
     }
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
-      to: "implementing",
+      to: workItemStateForNodeStage(this.db, nodeId, "implementation"),
       actorType: "human",
       actorId: actor,
       now,
@@ -1001,9 +1047,10 @@ export class TransparentWorkflow {
     outcome: "completed" | "failed" | "interrupted",
     result: string,
     draft?: StageHandoffDraft | null,
+    reviewFindings?: readonly ReviewFindingDraft[],
     scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
-    return this.settleAttemptInternal(taskId, outcome, result, draft, scopeCheck);
+    return this.settleAttemptInternal(taskId, outcome, result, draft, reviewFindings, scopeCheck);
   }
 
   settleMachineVerifyAttemptInTransaction(
@@ -1117,7 +1164,7 @@ export class TransparentWorkflow {
           SET state='ready', current_stage='implementation', version=version+1, updated_at=?
           WHERE node_id=?
         `).run(now, nodeId);
-        this.setWorkItemStage(String(attempt.plan_revision_id), "implementation", now);
+        this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, "implementation", now);
         this.event(
           projectId,
           nodeId,
@@ -1151,7 +1198,7 @@ export class TransparentWorkflow {
       this.db.prepare(`
         UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?
       `).run(next, now, nodeId);
-      this.setWorkItemStage(String(attempt.plan_revision_id), next, now);
+      this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, next, now);
       this.event(projectId, nodeId, taskId, "stage_completed", `${stage} completed; ${next} is ready`, now);
       return Object.freeze(this.nodesForIds([nodeId]));
     }
@@ -1248,6 +1295,7 @@ export class TransparentWorkflow {
     outcome: "completed" | "failed" | "interrupted",
     result: string,
     draft: StageHandoffDraft | null | undefined,
+    reviewFindings: readonly ReviewFindingDraft[] | undefined,
     scopeCheck: AttemptScopeCheckResult | null,
   ): readonly WorkNode[] {
     const attempt = this.db.prepare(`
@@ -1285,6 +1333,64 @@ export class TransparentWorkflow {
           throw new TaskBoardError(400, "HANDOFF_ARTIFACT_INVALID", "Handoff references an unavailable artifact");
         }
       }
+      const pipelineReview = stage === "verification" && attempt.pipeline_branch !== null;
+      if (reviewFindings !== undefined && !pipelineReview) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
+          "Review findings are only allowed for pipeline verification",
+        );
+      }
+      const persistedReviewFindings = (reviewFindings ?? []).map((finding, index): ReviewFinding => {
+        const persisted = Object.freeze({
+          ...finding,
+          findingId: `finding_${String(index).padStart(2, "0")}_${randomUUID()}`,
+          nodeId,
+          stage,
+          round: Number(attempt.attempt),
+          blocking: reviewFindingBlocks(finding.category),
+          createdAt: now,
+        });
+        this.db.prepare(`
+          INSERT INTO review_findings(
+            finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          persisted.findingId,
+          persisted.nodeId,
+          persisted.stage,
+          persisted.round,
+          persisted.file ?? null,
+          persisted.line ?? null,
+          persisted.category,
+          persisted.severity,
+          persisted.expected,
+          persisted.actual,
+          persisted.blocking ? 1 : 0,
+          persisted.createdAt,
+        );
+        return persisted;
+      });
+      const blockingReviewFindings = persistedReviewFindings.filter((finding) => finding.blocking);
+      const reviewerResult = pipelineReview && supplied !== null;
+      if (
+        pipelineReview && passed && blockingReviewFindings.length > 0 &&
+        (supplied === null || supplied.outcome === "passed")
+      ) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+          "A passed review cannot contain blocking findings",
+        );
+      }
+      const failedReview = reviewerResult && outcome === "failed" && supplied?.outcome !== "needs_input";
+      if (failedReview && blockingReviewFindings.length === 0) {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED,
+          "A failed review requires at least one blocking finding",
+        );
+      }
       const scopeFailureDetail = passed && stage === "implementation" && attempt.pipeline_branch !== null
         ? scopeCheck === null
           ? "scope check failed"
@@ -1304,7 +1410,9 @@ export class TransparentWorkflow {
           ? supplied?.blockers ?? Object.freeze(passed ? [] : [result])
           : Object.freeze([scopeFailureDetail]),
         recommendedReturnStage: scopeFailureDetail === null
-          ? supplied?.recommendedReturnStage ?? (passed ? null : stage)
+          ? failedReview
+            ? "implementation"
+            : supplied?.recommendedReturnStage ?? (passed ? null : stage)
           : stage,
         createdAt: now,
       });
@@ -1326,7 +1434,7 @@ export class TransparentWorkflow {
         this.event(projectId, nodeId, taskId, "stage_failed", `${stage} blocked: ${detail.slice(0, 240)}`, now);
         return Object.freeze([]);
       };
-      const brightLineDetail = attempt.pipeline_branch !== null && !passed
+      const brightLineDetail = attempt.pipeline_branch !== null && stage === "implementation" && !passed
         ? result.startsWith("BRIGHT_LINE:")
           ? result
           : supplied?.summary.startsWith("BRIGHT_LINE:") === true ? supplied.summary : null
@@ -1334,17 +1442,22 @@ export class TransparentWorkflow {
       if (brightLineDetail !== null) return parkAttempt(brightLineDetail);
       if (scopeFailureDetail !== null) return parkAttempt(scopeFailureDetail);
       if (!passed) {
-        const returnStage = supplied?.recommendedReturnStage ?? null;
+        const returnStage = failedReview
+          ? handoff.recommendedReturnStage
+          : supplied === null && pipelineReview
+            ? handoff.recommendedReturnStage
+            : supplied?.recommendedReturnStage ?? null;
         const attemptNumber = Number(attempt.attempt);
         const template = json<WorkflowStage[]>(attempt.stage_template_json);
-        if (returnStage !== null && template.includes(returnStage) && attemptNumber < 3) {
+        const maxAttempts = stage === "verification" && attempt.pipeline_branch !== null ? 4 : 3;
+        if (returnStage !== null && template.includes(returnStage) && attemptNumber < maxAttempts) {
           this.db.prepare("UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?").run(returnStage, now, nodeId);
-          this.setWorkItemStage(String(attempt.plan_revision_id), returnStage, now);
-          this.event(projectId, nodeId, taskId, "stage_retry_ready", `${stage} failed; returning to ${returnStage} (attempt ${attemptNumber + 1} of 3)`, now);
+          this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, returnStage, now);
+          this.event(projectId, nodeId, taskId, "stage_retry_ready", `${stage} failed; returning to ${returnStage} (attempt ${attemptNumber + 1} of ${maxAttempts})`, now);
           return Object.freeze(this.nodesForIds([nodeId]));
         }
         this.db.prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?").run(now, nodeId);
-        if (attemptNumber >= 3) {
+        if (attemptNumber >= maxAttempts) {
           const plan = this.db.prepare(`
             SELECT plan.work_item_id, work_item.state
             FROM plan_revisions plan
@@ -1372,7 +1485,7 @@ export class TransparentWorkflow {
       const next = template[template.indexOf(stage) + 1] ?? null;
       if (next !== null) {
         this.db.prepare("UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?").run(next, now, nodeId);
-        this.setWorkItemStage(String(attempt.plan_revision_id), next, now);
+        this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, next, now);
         this.event(projectId, nodeId, taskId, "stage_completed", `${stage} completed; ${next} is ready`, now);
         return Object.freeze(this.nodesForIds([nodeId]));
       }
@@ -1388,7 +1501,7 @@ export class TransparentWorkflow {
       if (newlyReady.length > 0) {
         const nextStage = this.db.prepare("SELECT current_stage FROM work_nodes WHERE node_id=?").get(newlyReady[0]!)?.current_stage;
         if (nextStage !== null && nextStage !== undefined) {
-          this.setWorkItemStage(String(attempt.plan_revision_id), String(nextStage) as WorkflowStage, now);
+          this.setWorkItemStage(String(attempt.plan_revision_id), newlyReady[0]!, String(nextStage) as WorkflowStage, now);
         }
       }
       const planRevisionId = String(attempt.plan_revision_id);
@@ -1426,7 +1539,12 @@ export class TransparentWorkflow {
     return [...plans].flatMap((plan) => this.nodes(plan)).filter((node) => ids.includes(node.nodeId));
   }
 
-  private setWorkItemStage(planRevisionId: string, stage: WorkflowStage, updatedAt: string): void {
+  private setWorkItemStage(
+    planRevisionId: string,
+    nodeId: string,
+    stage: WorkflowStage,
+    updatedAt: string,
+  ): void {
     const plan = this.db.prepare(`
       SELECT plan.work_item_id, work_item.state, work_item.current_stage
       FROM plan_revisions plan
@@ -1437,7 +1555,7 @@ export class TransparentWorkflow {
     if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_plan_work_item");
     if (isTerminalWorkItemState(String(plan.state) as WorkItemState)) return;
     const currentState = String(plan.state) as WorkItemState;
-    const mappedState = workItemStateForStage(stage);
+    const mappedState = workItemStateForNodeStage(this.db, nodeId, stage);
     const parkedWithOpenQuestions = currentState === "parked" && this.db.prepare(`
       SELECT 1
       FROM questions question

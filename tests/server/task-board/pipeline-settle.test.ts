@@ -369,3 +369,43 @@ test("in-scope implementation commit advances to machine testing", async () => {
     fixture.board.close();
   }
 });
+
+test("planning settlements reject review findings", async () => {
+  const fixture = await boardFixture();
+  try {
+    const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Reject findings from a planning settlement.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "planning-review-findings").workItem;
+    const planning = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-planning-review-findings",
+      messageCursor: null,
+    });
+    assert.ok(planning);
+
+    assert.throws(
+      () => fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The plan is ready.",
+        workflowPlan: pipelinePlan(["src"]),
+        reviewFindings: [{
+          category: "correctness",
+          severity: "major",
+          expected: "Findings are emitted only by the reviewer.",
+          actual: "The planner attempted to emit a finding.",
+        }],
+      }),
+      (error: unknown) => error instanceof Error &&
+        "code" in error && error.code === "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
+    );
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "planning");
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?").get(planning.run.runId)?.status, "active");
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
