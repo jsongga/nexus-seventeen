@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { join } from "node:path";
 import test from "node:test";
 import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
+import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
@@ -858,6 +859,117 @@ test("forwards non-empty structured review findings with the run settlement", as
       expected: "The retry settles once.",
       actual: "The retry settles twice.",
     }]);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("forwards a provider-authored failed review handoff and findings with the run settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(structuredOutcome({
+    status: "failed",
+    progress: ["Independent review found a blocking defect."],
+    result: "Independent review found a blocking defect.",
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    handoff: {
+      outcome: "failed",
+      summary: "Independent review found a blocking defect.",
+      evidence: [],
+      artifactIds: [],
+      acceptanceCriteria: [],
+      blockers: ["The blocking review finding must be fixed."],
+      recommendedReturnStage: "verification",
+    },
+    workflowPlan: null,
+    reviewFindings: [{
+      file: "src/server/review.ts",
+      line: 42,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry settles once.",
+      actual: "The retry settles twice.",
+    }],
+    detail: "Independent review found a blocking defect.",
+  }));
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.deepEqual(board.outputs.map((entry) => entry.output.type), ["progress"]);
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.deepEqual(board.settlements[0]?.handoff, {
+      outcome: "failed",
+      summary: "Independent review found a blocking defect.",
+      evidence: [],
+      artifactIds: [],
+      acceptanceCriteria: [],
+      blockers: ["The blocking review finding must be fixed."],
+      recommendedReturnStage: "verification",
+    });
+    assert.deepEqual(board.settlements[0]?.reviewFindings, [{
+      file: "src/server/review.ts",
+      line: 42,
+      category: "correctness",
+      severity: "major",
+      expected: "The retry settles once.",
+      actual: "The retry settles twice.",
+    }]);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a provider result summary does not break a waiting outcome or discard its structured metadata", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const handoff = {
+    outcome: "needs_input" as const,
+    summary: "Independent review needs a human policy decision.",
+    evidence: [],
+    artifactIds: [],
+    acceptanceCriteria: [],
+    blockers: ["A human must choose the retry policy."],
+    recommendedReturnStage: "verification" as const,
+  };
+  const reviewFindings = [{
+    file: "src/server/review.ts",
+    line: 51,
+    category: "correctness" as const,
+    severity: "major" as const,
+    expected: "The retry policy is explicit.",
+    actual: "The retry policy is ambiguous.",
+  }];
+  const outcome = structuredOutcome({
+    status: "waiting_for_human",
+    progress: ["Independent review reached a policy boundary."],
+    result: "Independent review needs a human policy decision.",
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: "Should retries remain enabled after a fraud rejection?",
+    handoff,
+    workflowPlan: null,
+    reviewFindings,
+    detail: "Waiting for the product owner to choose retry policy.",
+  });
+  assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "human_question"]);
+  assert.deepEqual(outcome.handoff, handoff);
+  assert.deepEqual(outcome.reviewFindings, reviewFindings);
+  launcher.outcomes.push(outcome);
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.deepEqual(board.outputs.map((entry) => entry.output.type), ["progress", "human_question"]);
+    assert.equal(board.settlements.length, 0);
+    assert.equal(taskWorker.snapshot.activeRunId, null);
   } finally {
     await taskWorker.close();
   }

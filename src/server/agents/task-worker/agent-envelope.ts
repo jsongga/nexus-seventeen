@@ -680,7 +680,9 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
       acceptanceCriteria: task.acceptanceCriteria,
     });
   }
-  if (item.result !== null) outputs.push({ type: "result", body: item.result });
+  // A provider may self-report a non-completed outcome with a result summary.
+  // Those outcomes use detail; result outputs remain reserved for completed runs.
+  if (item.result !== null && item.status === "completed") outputs.push({ type: "result", body: item.result });
   if (item.humanQuestion !== null) outputs.push({ type: "human_question", question: item.humanQuestion });
   const outcome = parseAgentRunOutcome({
     status: item.status,
