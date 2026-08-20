@@ -282,6 +282,24 @@ freeze, and the drift-test projection filter per the established pattern.
   reviewer → dead letter after 3 fix rounds; hazardous plan → design record
   → merged. Human clicks only at the two gates.
 
+## Amendments (ruled during implementation, 2026-08-19)
+
+- **Findings bounds tightened for transport fit.** This spec's "up to 64"
+  findings with 2000-char texts cannot fit the settlement HTTP body limit
+  (64 KiB default). Shipped contract: ≤16 findings per settle,
+  `expected`/`actual`/`file` ≤1000/1000/512 chars
+  (`REVIEW_FINDING_DRAFT_MAX_ITEMS`, `REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH`),
+  worst case asserted under 64 KiB by test. Raising capacity later means
+  raising the route budget with it.
+- **Design-record bounds tightened for the same reason:** states ≤32,
+  transitions ≤64, idempotency keys ≤8, fault-injection cases ≤8, labels
+  ≤96 chars, detail fields ≤128 chars — and `failurePoints` is therefore
+  exactly the six canonical points, one entry each.
+- Prior review evidence injected into later review rounds is byte-budgeted
+  (newest rounds kept, truncation flagged), and review git evidence
+  (commits, diffstat, file lists) is bounded server-side before claim
+  construction.
+
 ## Deferred (recorded, not decided)
 
 - Findings/park **ledger views and category analytics** — campaign 6 (the
