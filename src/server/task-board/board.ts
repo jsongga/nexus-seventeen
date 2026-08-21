@@ -54,6 +54,7 @@ import {
   type UpdateWorkItemRequest,
   type Wakeup,
   type WorkItem,
+  type WorkItemAudit,
   type WorkItemPage,
 } from "#shared/task-board-contract";
 import { tokenMatches } from "./canonical.js";
@@ -288,6 +289,10 @@ export class TaskBoard {
 
   requireWorkItem(workItemId: string): WorkItemDetail {
     return this.#workItems.requireWorkItem(workItemId);
+  }
+
+  workItemAudit(workItemId: string): WorkItemAudit {
+    return this.#workItems.workItemAudit(workItemId);
   }
 
   createWorkItem(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {

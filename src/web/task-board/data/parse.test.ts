@@ -97,6 +97,7 @@ import {
   parseRun,
   parseTask,
   parseWorkItem,
+  parseWorkItemAudit,
   parseWorkItemDetail,
 } from './parse';
 
@@ -383,6 +384,34 @@ describe('browser task-board validator adapter', () => {
     }, 'gateAction');
     expect(gate.gate).toBe('unrecognized');
     expect(gate).not.toHaveProperty('additiveField');
+
+    const audit = parseWorkItemAudit({
+      gateActions: [{
+        gateActionId: 'gate-action-one',
+        workItemId: 'work-item-one',
+        gate: 'future_gate',
+        actorId: 'human:operator',
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: null,
+        createdAt: NOW,
+        additiveGateField: 'ignored',
+      }],
+      transitions: [{
+        fromState: null,
+        toState: 'queued',
+        actorType: 'human',
+        actorId: 'human:operator',
+        createdAt: NOW,
+        additiveTransitionField: 'ignored',
+      }],
+      additiveAuditField: 'ignored',
+    }, 'audit');
+    expect(audit.gateActions[0]).toMatchObject({ gate: 'unrecognized', createdAtMs: Date.parse(NOW) });
+    expect(audit.transitions[0]).toMatchObject({ toState: 'queued', createdAtMs: Date.parse(NOW) });
+    expect(audit).not.toHaveProperty('additiveAuditField');
   });
 
   it('projects pipeline findings and the design record while ignoring additive response fields', () => {

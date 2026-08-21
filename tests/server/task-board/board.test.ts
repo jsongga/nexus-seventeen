@@ -22,6 +22,7 @@ import {
   boardFixture,
   config,
   databasePath,
+  gateActions,
   latestParkRecord,
   taskRequest,
   workItemRequest,
@@ -2793,6 +2794,21 @@ test("cancelling a work item atomically ends its planning task and retires pendi
     assert.equal(cancelled.currentStage, null);
     assert.equal(cancelled.version, created.version + 1);
     assert.equal(cancelled.cancelledReason, request.reason);
+    const cancelAction = gateActions(fixture.path, created.workItemId).find((action) => action.gate === "cancel");
+    assert.ok(cancelAction);
+    assert.match(cancelAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...cancelAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: created.workItemId,
+      gate: "cancel",
+      actorId: "human:alice",
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note: request.reason,
+      createdAt: cancelled.endedAt,
+    });
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
@@ -2820,6 +2836,7 @@ test("cancelling a work item atomically ends its planning task and retires pendi
 
     const replay = fixture.board.updateWorkItem(created.workItemId, request);
     assert.deepEqual(replay, cancelled);
+    assert.equal(gateActions(fixture.path, created.workItemId).filter((action) => action.gate === "cancel").length, 1);
     assert.throws(
       () => fixture.board.updateWorkItem(created.workItemId, {
         ...request,
@@ -3126,6 +3143,23 @@ test("a planning question parks its work item and the human answer resumes plann
       actorType: "human",
       actorId: "human:alice",
       createdAt: planning.updatedAt,
+    });
+    const answerAction = gateActions(fixture.path, created.workItemId).find(
+      (action) => action.gate === "question_answer",
+    );
+    assert.ok(answerAction);
+    assert.match(answerAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...answerAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: created.workItemId,
+      gate: "question_answer",
+      actorId: "human:alice",
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: question.questionId,
+      note: null,
+      createdAt: "2026-07-19T20:00:00.000Z",
     });
   } finally {
     fixture.board.close();

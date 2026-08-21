@@ -122,6 +122,19 @@ export class MessagesCollaborator {
         WHERE question_id = ? AND status = 'open' AND version = ?
       `).run(request.answer, now, this.runtime.config.humanPrincipal, questionId, request.version);
       if (Number(update.changes) !== 1) throw conflict("QUESTION_VERSION_CONFLICT", "Question version changed");
+      const workItemId = this.runtime.workItemIdForTask(current.taskId);
+      if (workItemId !== null) {
+        this.runtime.insertGateActionInTransaction({
+          workItemId,
+          gate: "question_answer",
+          actorId: this.runtime.config.humanPrincipal,
+          planRevisionId: null,
+          verifiedSha: null,
+          mergeSha: null,
+          refId: questionId,
+          note: null,
+        });
+      }
       wakeupId = this.runtime.insertWakeup(
         current.projectId,
         current.agentId,

@@ -545,6 +545,19 @@ export interface GateAction {
   readonly createdAt: string;
 }
 
+export interface WorkItemTransition {
+  readonly fromState: WorkItemState | null;
+  readonly toState: WorkItemState;
+  readonly actorType: ActorType;
+  readonly actorId: string;
+  readonly createdAt: string;
+}
+
+export interface WorkItemAudit {
+  readonly gateActions: readonly GateAction[];
+  readonly transitions: readonly WorkItemTransition[];
+}
+
 export interface ReviewFindingDraft {
   readonly file?: string | null;
   readonly line?: number | null;

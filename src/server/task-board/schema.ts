@@ -31,6 +31,7 @@ import {
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseBoardUpdateWorkItem,
+  parseWorkItemAudit as parseWorkItemAuditContract,
 } from "#shared/task-board-contract/validate";
 import type {
   AnswerHumanQuestionRequest,
@@ -60,6 +61,7 @@ import type {
   UpdateTaskPhaseRequest,
   UpdateTaskRequest,
   UpdateWorkItemRequest,
+  WorkItemAudit,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "./errors.js";
 import { MAX_SAFE_ERROR_DETAIL_CHARACTERS, safeErrorDetail } from "../shared/safe-error-detail.js";
@@ -107,6 +109,9 @@ export function parseInterrupt(value: unknown): InterruptAgentRequest { return a
 export function parseClaim(value: unknown): ClaimRunRequest { return adapt(() => parseBoardClaim(value)); }
 export function parseSettle(value: unknown): SettleRunRequest { return adapt(() => parseBoardSettle(value)); }
 export function parseIdempotencyKey(value: string | string[] | undefined): string { return adapt(() => parseBoardIdempotencyKey(value)); }
+export function parseWorkItemAudit(value: unknown): WorkItemAudit {
+  return adapt(() => parseWorkItemAuditContract(value, "workItemAudit"));
+}
 
 export function parseNotificationRead(value: unknown): Readonly<{ version: number }> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

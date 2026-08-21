@@ -9,6 +9,7 @@ import {
   automationStages,
   boardFixture,
   databasePath,
+  gateActions,
   taskRequest,
   workItemRequest,
 } from "./helpers.js";
@@ -390,6 +391,21 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
     assert.ok(cancelled.endedAt);
     assert.equal(cancelled.cancelledReason, cancelRequest.reason);
     assert.equal(cancelled.archivedAt, null);
+    const cancelAction = gateActions(service.config.dbPath, created.workItemId).find((action) => action.gate === "cancel");
+    assert.ok(cancelAction);
+    assert.match(cancelAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...cancelAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: created.workItemId,
+      gate: "cancel",
+      actorId: "human:alice",
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note: cancelRequest.reason,
+      createdAt: cancelled.endedAt,
+    });
 
     const cancelReplay = await request(
       address.url,

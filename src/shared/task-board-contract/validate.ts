@@ -119,8 +119,10 @@ import {
   type VerifyAttempt,
   type Wakeup,
   type WorkItem,
+  type WorkItemAudit,
   type WorkItemProjectTarget,
   type WorkItemState,
+  type WorkItemTransition,
   type WorkNode,
   type WorkflowStage,
   type WorkflowPipelineContext,
@@ -387,13 +389,11 @@ export type TolerantDesignRecordEntity = Omit<DesignRecord, "failurePoints"> & R
   failurePoints: readonly TolerantDesignFailurePoint[];
 }>;
 
-export interface ParsedWorkItemTransition {
-  readonly fromState: WorkItemState | null;
-  readonly toState: WorkItemState;
-  readonly actorType: "human" | "agent" | "system";
-  readonly actorId: string;
-  readonly createdAt: string;
-}
+export type ParsedWorkItemTransition = WorkItemTransition;
+
+export type TolerantWorkItemAudit = Omit<WorkItemAudit, "gateActions"> & Readonly<{
+  gateActions: readonly TolerantGateAction[];
+}>;
 
 function shape(
   value: unknown,
@@ -1138,6 +1138,33 @@ export function parseGateAction(
     refId: nullableIdentifier(item.refId, `${label}.refId`, options),
     note: item.note === null ? null : ledgerText(item.note, `${label}.note`, 2_000, options, true),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+  });
+}
+
+export function parseWorkItemAudit(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantWorkItemAudit;
+export function parseWorkItemAudit(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): WorkItemAudit;
+export function parseWorkItemAudit(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): WorkItemAudit | TolerantWorkItemAudit {
+  const fields = ["gateActions", "transitions"];
+  const item = shape(value, label, fields, fields, options);
+  const gateActions = arrayOf(item.gateActions, `${label}.gateActions`, (entry, entryLabel) =>
+    parseGateAction(entry, entryLabel, options));
+  const transitions = arrayOf(item.transitions, `${label}.transitions`, (entry, entryLabel) =>
+    parseWorkItemTransitionEntity(entry, entryLabel, options));
+  return Object.freeze({
+    gateActions: Object.freeze(gateActions),
+    transitions: Object.freeze(transitions),
   });
 }
 

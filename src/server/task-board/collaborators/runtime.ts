@@ -9,6 +9,7 @@ import {
   type AgentRole,
   type AgentRun,
   type BoardTask,
+  type GateAction,
   type ProjectEvent,
   type TaskKind,
   type TaskPhase,
@@ -37,6 +38,7 @@ import {
   type Row,
 } from "../persistence/rows.js";
 import type { TaskBoardStore } from "../persistence/store.js";
+import { GateActionWriter, type GateActionInput } from "../persistence/gate-actions.js";
 import {
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
@@ -57,6 +59,7 @@ export class TaskBoardRuntime {
   readonly wakeupEvents = new EventEmitter();
   readonly documentEvents = new EventEmitter();
   readonly projectEvents = new EventEmitter();
+  readonly #gateActionWriter: GateActionWriter;
   readonly #workerConnections = new Map<string, WorkerConnectionCounts>();
 
   constructor(
@@ -64,10 +67,15 @@ export class TaskBoardRuntime {
     readonly store: TaskBoardStore,
   ) {
     registerWorkItemTransitionStore(store);
+    this.#gateActionWriter = new GateActionWriter(store, config.now);
     this.interruptEvents.setMaxListeners(512);
     this.wakeupEvents.setMaxListeners(512);
     this.documentEvents.setMaxListeners(512);
     this.projectEvents.setMaxListeners(512);
+  }
+
+  insertGateActionInTransaction(input: GateActionInput): GateAction {
+    return this.#gateActionWriter.insertGateActionInTransaction(input);
   }
 
   agentFromRow(row: Row): AgentProfile {
@@ -282,6 +290,10 @@ export class TaskBoardRuntime {
         AND COALESCE(planning.work_item_id, plan.work_item_id) = ?
       LIMIT 1
     `).get(link.workItemId) !== undefined;
+  }
+
+  workItemIdForTask(taskId: string): string | null {
+    return this.workItemLinkForTask(taskId)?.workItemId ?? null;
   }
 
   recoverWorkflowTaskInTransaction(

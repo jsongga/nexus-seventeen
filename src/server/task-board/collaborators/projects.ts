@@ -117,6 +117,7 @@ export class ProjectsCollaborator {
       (operation) => runtime.store.transaction(operation),
       (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),
       git,
+      (input) => runtime.insertGateActionInTransaction(input),
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
@@ -318,7 +319,8 @@ export class ProjectsCollaborator {
           { cause: error },
         );
       }
-      if (context.verifiedSha === null || branchTip !== context.verifiedSha) {
+      const verifiedSha = context.verifiedSha;
+      if (verifiedSha === null || branchTip !== verifiedSha) {
         throw new TaskBoardError(
           409,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_MOVED,
@@ -370,6 +372,7 @@ export class ProjectsCollaborator {
           request.version,
           merge,
           this.runtime.config.humanPrincipal,
+          verifiedSha,
         ));
       } catch (error) {
         if (merge.kind !== "merged") throw error;

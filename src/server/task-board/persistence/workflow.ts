@@ -13,6 +13,7 @@ import {
   type CriterionResult,
   type CreatePlanRevisionRequest,
   type DesignRecordDraft,
+  type GateAction,
   type PlanRevision,
   type ProjectEvent,
   type RejectFinalApprovalRequest,
@@ -31,6 +32,7 @@ import {
 import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
 import { TaskBoardError } from "../errors.js";
+import { GateActionWriter, type GateActionInput } from "./gate-actions.js";
 import { SkillRegistry } from "../skills.js";
 import {
   transitionWorkItemInTransaction,
@@ -345,6 +347,8 @@ export type PipelineMergeSettlement =
   | Readonly<{ kind: "conflict"; summary: string }>;
 
 export class TransparentWorkflow {
+  readonly #insertGateActionInTransaction: (input: GateActionInput) => GateAction;
+
   constructor(
     readonly db: DatabaseSync,
     readonly skills: SkillRegistry,
@@ -352,7 +356,14 @@ export class TransparentWorkflow {
     readonly transaction: <T>(operation: () => T) => T,
     readonly queueEvent: ((event: ProjectEvent) => void) | undefined,
     readonly git: GitRunner,
-  ) {}
+    insertGateActionInTransaction?: (input: GateActionInput) => GateAction,
+  ) {
+    const writer = insertGateActionInTransaction === undefined
+      ? new GateActionWriter(workItemTransitionStoreForDatabase(db), now)
+      : null;
+    this.#insertGateActionInTransaction = insertGateActionInTransaction
+      ?? ((input) => writer!.insertGateActionInTransaction(input));
+  }
 
   propose(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
     return this.proposeInternal(raw, "human", actor, false);
@@ -759,6 +770,16 @@ export class TransparentWorkflow {
           throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
         }
       }
+      this.#insertGateActionInTransaction({
+        workItemId: String(row.work_item_id),
+        gate: "plan_confirm",
+        actorId: actor,
+        planRevisionId: planId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: String(row.revision),
+        note: null,
+      });
       if (row.tier === "hazardous" && !hasPipelineShape) {
         const result = "hazardous tier requires a pipeline plan";
         this.recordPlanningResult(String(row.work_item_id), result, now);
@@ -855,6 +876,16 @@ export class TransparentWorkflow {
         : {}),
       ...(outcome === "revising" ? { currentStage: "planning" as const } : {}),
     });
+    this.#insertGateActionInTransaction({
+      workItemId,
+      gate: "plan_reject",
+      actorId: actor,
+      planRevisionId: planId,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note: request.note,
+    });
     this.event(
       projectId,
       null,
@@ -871,6 +902,7 @@ export class TransparentWorkflow {
     version: number,
     settlement: PipelineMergeSettlement,
     actor: string,
+    verifiedSha: string | null = null,
   ): readonly WorkNode[] {
     if (settlement.kind === "conflict") {
       return this.returnFinalApprovalToImplementationInTransaction(
@@ -884,10 +916,11 @@ export class TransparentWorkflow {
           "implementation",
           currentState,
         ),
+        null,
       );
     }
     const row = this.db.prepare(`
-      SELECT item.state,item.version,plan.project_id,node.node_id
+      SELECT item.state,item.version,plan.plan_revision_id,plan.project_id,node.node_id
       FROM work_items item
       JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
@@ -906,6 +939,9 @@ export class TransparentWorkflow {
         "Work item is not awaiting final approval",
       );
     }
+    if (verifiedSha === null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_verified_sha_missing");
+    }
     const now = this.now().toISOString();
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
@@ -915,6 +951,16 @@ export class TransparentWorkflow {
       now,
       endedAt: now,
       currentStage: null,
+    });
+    this.#insertGateActionInTransaction({
+      workItemId,
+      gate: "final_approve",
+      actorId: actor,
+      planRevisionId: String(row.plan_revision_id),
+      verifiedSha,
+      mergeSha: settlement.mergeSha,
+      refId: null,
+      note: null,
     });
     this.event(
       String(row.project_id),
@@ -951,7 +997,13 @@ export class TransparentWorkflow {
     request: RejectFinalApprovalRequest,
     actor: string,
   ): readonly WorkNode[] {
-    return this.returnFinalApprovalToImplementationInTransaction(workItemId, request, actor, "fixing");
+    return this.returnFinalApprovalToImplementationInTransaction(
+      workItemId,
+      request,
+      actor,
+      "fixing",
+      "final_reject",
+    );
   }
 
   private returnFinalApprovalToImplementationInTransaction(
@@ -959,10 +1011,11 @@ export class TransparentWorkflow {
     request: RejectFinalApprovalRequest,
     actor: string,
     targetState: WorkItemState | ((nodeId: string, currentState: WorkItemState) => WorkItemState),
+    gateAction: "final_reject" | null,
   ): readonly WorkNode[] {
     const row = this.db.prepare(`
       SELECT
-        item.state,item.version,plan.project_id,node.node_id,node.title,node.objective,
+        item.state,item.version,plan.plan_revision_id,plan.project_id,node.node_id,node.title,node.objective,
         node.acceptance_criteria_json,node.stage_template_json,node.state AS node_state
       FROM work_items item
       JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
@@ -1014,11 +1067,12 @@ export class TransparentWorkflow {
     );
     this.db.prepare(`
       INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
-      VALUES (?, ?, ?, 'system', 'system:final-approval', 'task_created', ?, ?)
+      VALUES (?, ?, ?, 'human', ?, 'task_created', ?, ?)
     `).run(
       randomUUID(),
       projectId,
       taskId,
+      actor,
       JSON.stringify({ kind: "work", requiresReview: false, status: "failed", workItemId }),
       now,
     );
@@ -1064,6 +1118,18 @@ export class TransparentWorkflow {
       now,
       currentStage: "implementation",
     });
+    if (gateAction !== null) {
+      this.#insertGateActionInTransaction({
+        workItemId,
+        gate: gateAction,
+        actorId: actor,
+        planRevisionId: String(row.plan_revision_id),
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: request.note,
+      });
+    }
     this.event(projectId, nodeId, taskId, "final_approval_rejected", request.note, now);
     return Object.freeze(this.nodesForIds([nodeId]));
   }

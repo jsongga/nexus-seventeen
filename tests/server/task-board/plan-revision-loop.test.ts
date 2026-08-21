@@ -14,6 +14,7 @@ import {
   automationStages,
   boardFixture,
   config,
+  gateActions,
   latestParkRecord,
   workItemRequest,
 } from "./helpers.js";
@@ -127,7 +128,7 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     const originalPlanningTaskId = workItem.planningTaskId;
     assert.ok(originalPlanningTaskId);
     const firstPlan = settlePlanning(fixture, "plan-revision-success-first-claim-0001", standardPlan("first"));
-    const note = "Keep the objective, but make the rollback behavior explicit.";
+    const note = "Keep the objective, but make the rollback behavior explicit. Bearer plan-gate-secret";
 
     assert.deepEqual(fixture.board.rejectWorkflowPlan(firstPlan.planRevisionId, {
       note,
@@ -148,10 +149,45 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     assert.equal(rejected?.state, "rejected");
     assert.equal(rejected?.rejectedNote, note);
 
+    const rejectedAction = gateActions(fixture.path, workItem.workItemId).find(
+      (action) => action.gate === "plan_reject",
+    );
+    assert.ok(rejectedAction);
+    assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: workItem.workItemId,
+      gate: "plan_reject",
+      actorId: "human:alice",
+      planRevisionId: firstPlan.planRevisionId,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note: "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]",
+      createdAt: "2026-07-19T20:00:00.000Z",
+    });
+
     const secondPlan = settlePlanning(fixture, "plan-revision-success-second-claim-0001", standardPlan("second"));
     const confirmed = fixture.board.confirmWorkflow(secondPlan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, undefined);
     assert.equal(confirmed.plans.find((plan) => plan.planRevisionId === secondPlan.planRevisionId)?.state, "confirmed");
+    const confirmedAction = gateActions(fixture.path, workItem.workItemId).find(
+      (action) => action.gate === "plan_confirm",
+    );
+    assert.ok(confirmedAction);
+    assert.match(confirmedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...confirmedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: workItem.workItemId,
+      gate: "plan_confirm",
+      actorId: "human:alice",
+      planRevisionId: secondPlan.planRevisionId,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: String(secondPlan.revision),
+      note: null,
+      createdAt: "2026-07-19T20:00:00.000Z",
+    });
   } finally {
     fixture.board.close();
   }

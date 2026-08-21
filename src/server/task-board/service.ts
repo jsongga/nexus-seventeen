@@ -54,6 +54,7 @@ import {
   parseUpdateTask,
   parseUpdateTaskPhase,
   parseUpdateWorkItem,
+  parseWorkItemAudit,
 } from "./schema.js";
 
 export interface TaskBoardAddress {
@@ -332,6 +333,15 @@ export class TaskBoardService {
         parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, 200, { workItem });
+      return;
+    }
+    const workItemAuditMatch = /^\/v1\/work-items\/([^/]+)\/audit$/u.exec(url.pathname);
+    if (workItemAuditMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, parseWorkItemAudit(this.#board.workItemAudit(
+        parseRouteIdentifier(workItemAuditMatch[1], "workItemId"),
+      )));
       return;
     }
     const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);

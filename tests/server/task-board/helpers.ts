@@ -7,10 +7,12 @@ import type {
   AutomationStageExecutor,
   CreateTaskRequest,
   CreateWorkItemRequest,
+  GateAction,
   UpdateAutomationConfigurationRequest,
   WorkItemStage,
 } from "#shared/task-board-contract";
 import { WORK_ITEM_STAGES } from "#shared/task-board-contract";
+import { parseGateAction } from "#shared/task-board-contract/validate";
 import {
   TaskBoard,
   normalizeTaskBoardConfig,
@@ -40,6 +42,31 @@ export function latestParkRecord(path: string, workItemId: string): Readonly<{
       ORDER BY parked_at DESC, rowid DESC
       LIMIT 1
     `).get(workItemId) } as { category: string; reason: string };
+  } finally {
+    db.close();
+  }
+}
+
+export function gateActions(path: string, workItemId: string): readonly GateAction[] {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return Object.freeze(db.prepare(`
+      SELECT *
+      FROM gate_actions
+      WHERE work_item_id=?
+      ORDER BY created_at, rowid
+    `).all(workItemId).map((row) => parseGateAction({
+      gateActionId: row.gate_action_id,
+      workItemId: row.work_item_id,
+      gate: row.gate,
+      actorId: row.actor_id,
+      planRevisionId: row.plan_revision_id,
+      verifiedSha: row.verified_sha,
+      mergeSha: row.merge_sha,
+      refId: row.ref_id,
+      note: row.note,
+      createdAt: row.created_at,
+    }, "gateAction")));
   } finally {
     db.close();
   }

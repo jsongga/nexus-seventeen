@@ -54,6 +54,7 @@ import {
   parseRunEntity,
   parseTaskEntity,
   parseTaskPhaseEntity,
+  parseWorkItemAudit as parseWorkItemAuditContract,
   parseWorkItemEntity,
   parseWorkItemTransitionEntity,
   prose,
@@ -71,6 +72,7 @@ import {
   type TolerantParkRecord,
   type TolerantReviewFindingEntity,
   type TolerantTaskEntity,
+  type TolerantWorkItemAudit,
   type TolerantWorkItemEntity,
 } from '@shared/task-board-contract/validate';
 import type {
@@ -100,6 +102,11 @@ export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updat
 export type RawWorkItem = WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>;
 export type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
 export type RawWorkItemDetail = RawWorkItem & Readonly<{ transitions: RawWorkItemTransition[] }>;
+export type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
+export interface RawWorkItemAudit {
+  gateActions: RawGateAction[];
+  transitions: RawWorkItemTransition[];
+}
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
 export type RawDocumentPenHolder = WithMs<DocumentPenHolder, 'acquiredAt'>;
 export type RawDocumentSummary = WithMs<WithMs<Omit<WithoutApi<DocumentSummary>, 'penHolder'> & { penHolder: RawDocumentPenHolder | null }, 'createdAt'>, 'updatedAt'>;
@@ -283,6 +290,20 @@ export function parseBoardNotification(value: unknown, path: string): TolerantBo
 
 export function parseGateAction(value: unknown, path: string): TolerantGateAction {
   return parseGateActionContract(value, path, loose);
+}
+
+export function parseWorkItemAudit(value: unknown, path: string): RawWorkItemAudit {
+  const item: TolerantWorkItemAudit = parseWorkItemAuditContract(value, path, loose);
+  return {
+    gateActions: item.gateActions.map((action) => ({
+      ...action,
+      createdAtMs: ms(action.createdAt),
+    })),
+    transitions: item.transitions.map((transition) => ({
+      ...transition,
+      createdAtMs: ms(transition.createdAt),
+    })),
+  };
 }
 
 export function parseReviewFinding(value: unknown, path: string): TolerantReviewFindingEntity {

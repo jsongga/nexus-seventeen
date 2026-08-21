@@ -9,12 +9,15 @@ import {
   type BoardNotification,
   type GateAction,
   type ParkRecord,
+  type WorkItemAudit,
+  type WorkItemTransition,
 } from "#shared/task-board-contract";
 import {
   ContractValidationError,
   parseBoardNotification,
   parseGateAction,
   parseParkRecord,
+  parseWorkItemAudit,
 } from "#shared/task-board-contract/validate";
 
 const NOW = "2026-08-20T12:00:00.000Z";
@@ -56,6 +59,19 @@ const gateAction: GateAction = {
   createdAt: NOW,
 };
 
+const transition: WorkItemTransition = {
+  fromState: "final_approval",
+  toState: "merged",
+  actorType: "human",
+  actorId: "human:operator",
+  createdAt: NOW,
+};
+
+const audit: WorkItemAudit = {
+  gateActions: [gateAction],
+  transitions: [transition],
+};
+
 test("ledger and observability vocabularies and error codes are pinned", () => {
   assert.deepEqual([...PARK_CATEGORIES], [
     "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
@@ -81,9 +97,14 @@ test("park records, notifications, and gate actions round-trip strictly", () => 
   assert.deepEqual(parseParkRecord(parkRecord, "parkRecord"), parkRecord);
   assert.deepEqual(parseBoardNotification(notification, "notification"), notification);
   assert.deepEqual(parseGateAction(gateAction, "gateAction"), gateAction);
+  assert.deepEqual(parseWorkItemAudit(audit, "audit"), audit);
 
   assert.throws(
     () => parseParkRecord({ ...parkRecord, additiveField: true }, "parkRecord"),
+    ContractValidationError,
+  );
+  assert.throws(
+    () => parseWorkItemAudit({ ...audit, additiveField: true }, "audit"),
     ContractValidationError,
   );
 });

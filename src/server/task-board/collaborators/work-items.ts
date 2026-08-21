@@ -5,17 +5,21 @@ import {
   isHardTerminalTaskStatus,
   type BoardTask,
   type CreateWorkItemRequest,
+  type GateAction,
   type UpdateWorkItemRequest,
   type WorkItem,
+  type WorkItemAudit,
   type WorkItemPage,
   type WorkItemState,
+  type WorkItemTransition,
 } from "#shared/task-board-contract";
+import { parseGateAction } from "#shared/task-board-contract/validate";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
 import { decodeWorkItemCursor, encodeWorkItemCursor } from "../persistence/work-item-cursor.js";
 import { workItemPriorityCases } from "../persistence/work-item-priority-sql.js";
-import { stringValue, workItemFromRow } from "../persistence/rows.js";
+import { stringValue, workItemFromRow, type Row } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
@@ -28,13 +32,7 @@ import {
 
 export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
 export type WorkItemDetail = WorkItem & Readonly<{
-  transitions: readonly Readonly<{
-    fromState: WorkItemState | null;
-    toState: WorkItemState;
-    actorType: "human" | "agent" | "system";
-    actorId: string;
-    createdAt: string;
-  }>[];
+  transitions: readonly WorkItemTransition[];
 }>;
 export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
@@ -94,6 +92,24 @@ export class WorkItemsCollaborator {
 
   requireWorkItem(workItemId: string): WorkItemDetail {
     const workItem = this.runtime.requireWorkItem(workItemId);
+    return Object.freeze({ ...workItem, transitions: this.workItemTransitions(workItemId) });
+  }
+
+  workItemAudit(workItemId: string): WorkItemAudit {
+    this.runtime.requireWorkItem(workItemId);
+    const gateActions = this.runtime.store.db.prepare(`
+      SELECT *
+      FROM gate_actions
+      WHERE work_item_id = ?
+      ORDER BY created_at, rowid
+    `).all(workItemId).map((row) => this.gateActionFromRow(row));
+    return Object.freeze({
+      gateActions: Object.freeze(gateActions),
+      transitions: this.workItemTransitions(workItemId),
+    });
+  }
+
+  private workItemTransitions(workItemId: string): readonly WorkItemTransition[] {
     const transitions = this.runtime.store.db.prepare(`
       SELECT from_state, to_state, actor_type, actor_id, created_at
       FROM work_item_transitions
@@ -106,7 +122,22 @@ export class WorkItemsCollaborator {
       actorId: String(row.actor_id),
       createdAt: String(row.created_at),
     }));
-    return Object.freeze({ ...workItem, transitions: Object.freeze(transitions) });
+    return Object.freeze(transitions);
+  }
+
+  private gateActionFromRow(row: Row): GateAction {
+    return parseGateAction({
+      gateActionId: row.gate_action_id,
+      workItemId: row.work_item_id,
+      gate: row.gate,
+      actorId: row.actor_id,
+      planRevisionId: row.plan_revision_id,
+      verifiedSha: row.verified_sha,
+      mergeSha: row.merge_sha,
+      refId: row.ref_id,
+      note: row.note,
+      createdAt: row.created_at,
+    }, "gateAction");
   }
 
   createWorkItem(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {
@@ -550,6 +581,16 @@ export class WorkItemsCollaborator {
         endedAt: now,
         cancelledReason: reason,
         currentStage: null,
+      });
+      this.runtime.insertGateActionInTransaction({
+        workItemId,
+        gate: "cancel",
+        actorId: this.runtime.config.humanPrincipal,
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: reason,
       });
       return this.runtime.requireWorkItem(workItemId);
     });

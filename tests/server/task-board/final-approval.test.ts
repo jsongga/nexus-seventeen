@@ -9,6 +9,7 @@ import {
   DESIGN_FAILURE_POINTS,
   type DesignRecordDraft,
   type StageHandoff,
+  type WorkItemAudit,
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
 import { createTaskBoardService, SkillRegistry, TaskBoard, TaskBoardError } from "#server/task-board";
@@ -26,6 +27,7 @@ import {
   automationStages,
   boardFixture,
   config,
+  gateActions,
   workItemRequest,
 } from "./helpers.js";
 
@@ -274,6 +276,7 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
 async function directFinalApprovalFixture(suffix: string): Promise<{
   path: string;
   workItemId: string;
+  planRevisionId: string;
   version: number;
 }> {
   const fixture = await boardFixture();
@@ -284,7 +287,12 @@ async function directFinalApprovalFixture(suffix: string): Promise<{
     const proposed = proposePipeline(fixture, suffix);
     fixture.board.confirmWorkflow(proposed.planRevisionId, { expectedState: "proposed" });
     const version = forceFinalApproval(fixture.path, proposed.workItemId, "a".repeat(40));
-    return { path: fixture.path, workItemId: proposed.workItemId, version };
+    return {
+      path: fixture.path,
+      workItemId: proposed.workItemId,
+      planRevisionId: proposed.planRevisionId,
+      version,
+    };
   } finally {
     fixture.board.close();
   }
@@ -506,7 +514,7 @@ async function finalApprovalFixture(
     } : {},
   );
   const address = await service.start();
-  return { ...fixture, ...repo, ...proposed, branch, version, service, origin: address.url };
+  return { ...fixture, ...repo, ...proposed, branch, verifiedSha, version, service, origin: address.url };
 }
 
 function request(
@@ -651,6 +659,7 @@ test("approve-merge merges before transitioning the work item to merged", async 
     assert.notEqual(body.workItem.endedAt, null);
     assert.equal(await readFile(join(fixture.repo, "src", "allowed", "change.txt"), "utf8"), "pipeline\n");
     assert.equal((await git(fixture.repo, ["rev-list", "--parents", "-n", "1", "HEAD"])).trim().split(" ").length, 3);
+    const mergeSha = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       const event = db.prepare("SELECT summary FROM project_events WHERE event_type='pipeline_merged' ORDER BY sequence DESC LIMIT 1").get();
@@ -658,6 +667,46 @@ test("approve-merge merges before transitioning the work item to merged", async 
     } finally {
       db.close();
     }
+
+    const actions = gateActions(fixture.path, fixture.workItemId);
+    const approvedAction = actions.find((action) => action.gate === "final_approve");
+    assert.ok(approvedAction);
+    assert.match(approvedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...approvedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: fixture.workItemId,
+      gate: "final_approve",
+      actorId: "human:alice",
+      planRevisionId: fixture.planRevisionId,
+      verifiedSha: fixture.verifiedSha,
+      mergeSha,
+      refId: null,
+      note: null,
+      createdAt: "2026-08-19T17:00:00.000Z",
+    });
+
+    const auditResponse = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/audit`,
+      "GET",
+    );
+    assert.equal(auditResponse.status, 200);
+    const audit = await auditResponse.json() as WorkItemAudit;
+    assert.deepEqual(audit.gateActions, actions);
+    assert.deepEqual(audit.gateActions.map((action) => action.gate), ["plan_confirm", "final_approve"]);
+    assert.equal(audit.transitions.at(-1)?.toState, "merged");
+    assert.equal((await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/audit?unexpected=1`,
+      "GET",
+    )).status, 400);
+    assert.equal((await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}/audit`,
+      "GET",
+      undefined,
+      "not-a-human-token",
+    )).status, 401);
   } finally {
     await fixture.service.close();
   }
@@ -926,7 +975,102 @@ test("merge-conflict settlement with an active blocking findings loop returns to
   );
 });
 
-test("reject-final records a system implementation handoff and re-arms engineering", async () => {
+test("successful approval settlement persists the verified branch tip and merge commit", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "direct-approve-ledger");
+    const proposed = proposePipeline(fixture, "direct-approve-ledger");
+    fixture.board.confirmWorkflow(proposed.planRevisionId, { expectedState: "proposed" });
+    const branch = `task/${proposed.workItemId}`;
+    await git(repo.repo, ["switch", "-c", branch]);
+    await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
+    await writeFile(join(repo.repo, "src", "allowed", "change.txt"), "pipeline\n");
+    await git(repo.repo, ["add", "."]);
+    await git(repo.repo, ["commit", "-m", "pipeline direct approval ledger"]);
+    const verifiedSha = (await git(repo.repo, ["rev-parse", "HEAD"])).trim();
+    await git(repo.repo, ["switch", "main"]);
+    const version = forceFinalApproval(fixture.path, proposed.workItemId, verifiedSha);
+
+    const merged = await fixture.board.approvePipelineMerge(proposed.workItemId, { version });
+    assert.equal(merged.state, "merged");
+    const mergeSha = (await git(repo.repo, ["rev-parse", "HEAD"])).trim();
+    const actions = gateActions(fixture.path, proposed.workItemId);
+    const approvedAction = actions.find((action) => action.gate === "final_approve");
+    assert.ok(approvedAction);
+    assert.match(approvedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...approvedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: proposed.workItemId,
+      gate: "final_approve",
+      actorId: "human:alice",
+      planRevisionId: proposed.planRevisionId,
+      verifiedSha,
+      mergeSha,
+      refId: null,
+      note: null,
+      createdAt: "2026-07-19T20:00:00.000Z",
+    });
+    assert.deepEqual(
+      fixture.board.workItemAudit(proposed.workItemId).gateActions.map((action) => action.gate),
+      ["plan_confirm", "final_approve"],
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("final rejection persists a human-attributed gate action and task event", async () => {
+  const fixture = await directFinalApprovalFixture("direct-reject-ledger");
+  const board = await TaskBoard.open(config(
+    fixture.path,
+    () => new Date("2026-08-19T17:00:00.000Z"),
+  ));
+  try {
+    const note = "Add the missing rollback assertion.";
+    const rejected = await board.rejectFinalApproval(fixture.workItemId, {
+      version: fixture.version,
+      note,
+    });
+    assert.equal(rejected.state, "fixing");
+    const rejectedAction = gateActions(fixture.path, fixture.workItemId).find(
+      (action) => action.gate === "final_reject",
+    );
+    assert.ok(rejectedAction);
+    assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: fixture.workItemId,
+      gate: "final_reject",
+      actorId: "human:alice",
+      planRevisionId: fixture.planRevisionId,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note,
+      createdAt: "2026-08-19T17:00:00.000Z",
+    });
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const event = db.prepare(`
+        SELECT actor_type, actor_id
+        FROM task_events
+        WHERE event_type='task_created'
+          AND json_extract(data_json,'$.workItemId')=?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `).get(fixture.workItemId);
+      assert.deepEqual({ ...event }, { actor_type: "human", actor_id: "human:alice" });
+    } finally {
+      db.close();
+    }
+  } finally {
+    board.close();
+  }
+});
+
+test("reject-final records a human implementation handoff and re-arms engineering", async () => {
   const fixture = await finalApprovalFixture("reject");
   try {
     const note = "Keep the implementation, but add the missing rollback assertion.";
@@ -940,6 +1084,23 @@ test("reject-final records a system implementation handoff and re-arms engineeri
     const body = await response.json() as { workItem: { state: string; currentStage: string } };
     assert.equal(body.workItem.state, "fixing");
     assert.equal(body.workItem.currentStage, "implementation");
+    const rejectedAction = gateActions(fixture.path, fixture.workItemId).find(
+      (action) => action.gate === "final_reject",
+    );
+    assert.ok(rejectedAction);
+    assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: fixture.workItemId,
+      gate: "final_reject",
+      actorId: "human:alice",
+      planRevisionId: fixture.planRevisionId,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note,
+      createdAt: "2026-08-19T17:00:00.000Z",
+    });
 
     const summaryResponse = await request(
       fixture.origin,
@@ -1000,6 +1161,23 @@ test("reject-final records a system implementation handoff and re-arms engineeri
       { answer: "Yes, cover the timed-out retry.", version: question.version },
     );
     assert.equal(answerResponse.status, 201);
+    const answerAction = gateActions(fixture.path, fixture.workItemId).find(
+      (action) => action.gate === "question_answer",
+    );
+    assert.ok(answerAction);
+    assert.match(answerAction.gateActionId, /^[0-9a-f-]{36}$/u);
+    assert.deepEqual({ ...answerAction, gateActionId: undefined }, {
+      gateActionId: undefined,
+      workItemId: fixture.workItemId,
+      gate: "question_answer",
+      actorId: "human:alice",
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: question.questionId,
+      note: null,
+      createdAt: "2026-08-19T17:00:00.000Z",
+    });
     const resumedResponse = await request(
       fixture.origin,
       `/v1/work-items/${fixture.workItemId}`,
@@ -1010,12 +1188,17 @@ test("reject-final records a system implementation handoff and re-arms engineeri
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       const author = db.prepare(`
-        SELECT event.actor_id, handoff.stage, handoff.outcome
+        SELECT event.actor_type, event.actor_id, handoff.stage, handoff.outcome
         FROM stage_handoffs handoff
         JOIN task_events event ON event.task_id=handoff.task_id AND event.event_type='task_created'
         WHERE json_extract(handoff.payload_json,'$.summary')=?
       `).get(note);
-      assert.deepEqual({ ...author }, { actor_id: "system:final-approval", stage: "implementation", outcome: "failed" });
+      assert.deepEqual({ ...author }, {
+        actor_type: "human",
+        actor_id: "human:alice",
+        stage: "implementation",
+        outcome: "failed",
+      });
     } finally {
       db.close();
     }
