@@ -84,7 +84,7 @@ runtime/model; structured findings; files-touched vs predicted; fix rounds
 with its failure-point table. Exit: a seeded defect is caught, fixed, and
 re-verified without human input.
 
-**6. Ledgers + observability** *(§13; item 6)* — findings and park ledgers
+**6. Ledgers + observability** *(spec 2026-08-20, in flight; §13; item 6)* — findings and park ledgers
 with categories; park lifecycle (age, notify, auto-abandon); stage
 timeline / round count / heartbeat default view; audit view; redact before
 persisting. Exit: recurring finding categories are queryable, park reasons
