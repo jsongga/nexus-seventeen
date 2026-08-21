@@ -512,6 +512,10 @@ export class ProjectsCollaborator {
     return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, reviewFindings, scopeCheck);
   }
 
+  suspendAttemptNodeInTransaction(taskId: string, reason: string): void {
+    this.#workflow.suspendAttemptNodeInTransaction(taskId, reason);
+  }
+
   settleDesignInTransaction(
     taskId: string,
     result: string,

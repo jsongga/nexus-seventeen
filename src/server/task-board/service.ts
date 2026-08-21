@@ -27,6 +27,8 @@ import {
   parseAnswer,
   parseApprovePipelineMergeRequest,
   parseBacklogTask,
+  parseBoardPauseRequest,
+  parseBoardResumeRequest,
   parseClaim,
   parseConfirmPlanRevisionRequest,
   parseCreateAgent,
@@ -234,6 +236,43 @@ export class TaskBoardService {
     if (url.pathname === "/health" && request.method === "GET") {
       noQuery(url);
       sendJson(response, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/v1/board/pause" && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, this.#board.getBoardPause());
+      return;
+    }
+    if (url.pathname === "/v1/board/pause" && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const requestBody = parseBoardPauseRequest(await readJsonBody(request, this.config.maxBodyBytes));
+      const pause = this.#board.setBoardPause({
+        paused: true,
+        reason: requestBody.reason,
+        version: requestBody.version,
+        actor: this.config.humanPrincipal,
+      });
+      this.#board.suspendAllActiveRuns(
+        `board paused: ${requestBody.reason ?? "kill switch"}`,
+        { type: "system", id: "system:kill-switch" },
+      );
+      sendJson(response, 200, pause);
+      return;
+    }
+    if (url.pathname === "/v1/board/resume" && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const { version } = parseBoardResumeRequest(await readJsonBody(request, this.config.maxBodyBytes));
+      const pause = this.#board.setBoardPause({
+        paused: false,
+        reason: null,
+        version,
+        actor: this.config.humanPrincipal,
+      });
+      this.#board.resumePausedWork();
+      sendJson(response, 200, pause);
       return;
     }
     if (url.pathname === "/v1/notifications" && request.method === "GET") {

@@ -700,9 +700,11 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
     const run = record(envelope.run, "Settled run");
     const persistedResult = redactForPersistence(request.result);
+    const systemInterruptionAcknowledged =
+      envelope.duplicate === true && run.status === "interrupted" && typeof run.result === "string";
     if (
       typeof envelope.duplicate !== "boolean" || run.runId !== request.claim.runId || run.agentId !== request.claim.agentId ||
-      run.status !== request.outcome || run.result !== persistedResult
+      !systemInterruptionAcknowledged && (run.status !== request.outcome || run.result !== persistedResult)
     ) {
       throw new Error("Task-board settlement response does not match the run outcome");
     }

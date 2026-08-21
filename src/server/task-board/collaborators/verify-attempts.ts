@@ -10,6 +10,7 @@ import { redactForPersistence } from "../../shared/redact.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
+import { BoardPauseCollaborator } from "./board-pause.js";
 import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
 
 const CHECK_TIMEOUT_MS = 120_000;
@@ -216,6 +217,7 @@ export class VerifyAttemptsCollaborator {
   readonly #runnerFactory: (options: VerifyRunnerOptions) => MachineVerifyRunner;
   readonly #executeCheck: (command: string, cwd: string) => Promise<CriterionCheckExecution>;
   readonly #git: GitRunner;
+  readonly #boardPause: BoardPauseCollaborator;
   readonly #inFlightStarts = new Set<string>();
   #sweepInFlight: Promise<number> | null = null;
   #closed = false;
@@ -233,6 +235,7 @@ export class VerifyAttemptsCollaborator {
     this.#runnerFactory = dependencies.runnerFactory ?? ((options) => new VerifyRunner(options));
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
     this.#git = dependencies.git ?? runDeclaredScopeGit;
+    this.#boardPause = new BoardPauseCollaborator(runtime);
   }
 
   listForWorkItem(workItemId: string): readonly VerifyAttempt[] {
@@ -349,6 +352,7 @@ export class VerifyAttemptsCollaborator {
 
   async #start(verifyAttemptId: string): Promise<boolean> {
     if (this.#closed) return false;
+    if (this.#boardPause.isBoardPaused()) return false;
     if (this.#inFlightStarts.has(verifyAttemptId)) return false;
     this.#inFlightStarts.add(verifyAttemptId);
     let current: AttemptContext | undefined;
@@ -370,6 +374,10 @@ export class VerifyAttemptsCollaborator {
         return false;
       }
       const runner = this.#runnerFactory({ repoRoot: workspacePath, supervisorPath: this.#supervisorPath });
+      if (this.#boardPause.isBoardPaused()) {
+        await this.#removeBestEffort(workspace, current.workItemId);
+        return false;
+      }
       const verifyRunId = await runner.startFull();
       if (this.#closed) {
         await this.#removeBestEffort(workspace, current.workItemId);

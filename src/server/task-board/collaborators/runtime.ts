@@ -181,7 +181,7 @@ export class TaskBoardRuntime {
   reconcileTaskPhasesForTerminal(
     task: BoardTask,
     taskStatus: Extract<TaskStatus, "completed" | "failed" | "interrupted" | "cancelled">,
-    actor: Actor,
+    actor: Actor | Readonly<{ type: "system"; id: string }>,
     now: string,
   ): void {
     const phases = this.store.db.prepare(`

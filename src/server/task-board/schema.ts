@@ -123,6 +123,52 @@ export function parseParksLedger(value: unknown): ParksLedger {
   return adapt(() => parseParksLedgerContract(value, "parksLedger"));
 }
 
+function pauseRequestObject(value: unknown, fields: readonly string[], label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${label} request must be an object`);
+  }
+  const item = value as Record<string, unknown>;
+  const keys = Object.keys(item).sort();
+  const expected = [...fields].sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${label} request has unexpected or missing fields`);
+  }
+  return item;
+}
+
+function pauseVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "version is invalid");
+  }
+  return value as number;
+}
+
+export function parseBoardPauseRequest(value: unknown): Readonly<{
+  reason: string | null;
+  version: number;
+}> {
+  const item = pauseRequestObject(value, ["reason", "version"], "Board pause");
+  let reason: string | null = null;
+  if (item.reason !== null) {
+    if (typeof item.reason !== "string") {
+      throw new TaskBoardError(400, "INVALID_REQUEST", "reason is invalid");
+    }
+    reason = item.reason.trim();
+    if (
+      reason.length < 1 || item.reason.length > 500 ||
+      /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(item.reason)
+    ) {
+      throw new TaskBoardError(400, "INVALID_REQUEST", "reason is invalid");
+    }
+  }
+  return Object.freeze({ reason, version: pauseVersion(item.version) });
+}
+
+export function parseBoardResumeRequest(value: unknown): Readonly<{ version: number }> {
+  const item = pauseRequestObject(value, ["version"], "Board resume");
+  return Object.freeze({ version: pauseVersion(item.version) });
+}
+
 export function parseNotificationRead(value: unknown): Readonly<{ version: number }> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Notification read request must be an object");

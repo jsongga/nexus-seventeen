@@ -55,6 +55,7 @@ class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
   readonly creates: Array<{ key: string; baseRef: string | undefined; branchKey: string | undefined }> = [];
   readonly removed: string[] = [];
   readonly retained: string[] = [];
+  onCreate: (() => void | Promise<void>) | null = null;
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -64,6 +65,7 @@ class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
   async create(key: string, baseRef?: string, branchKey?: string): Promise<string> {
     assert.equal(this.runtime.store.hasOpenTransaction, false);
     this.creates.push({ key, baseRef, branchKey });
+    await this.onCreate?.();
     return this.workspace;
   }
 
@@ -488,6 +490,75 @@ test("failed_to_start retries once, while a second start failure settles the ver
   } finally {
     exhausted.runtime.close();
     exhausted.store.close();
+  }
+});
+
+test("starting and failed_to_start verify attempts wait out a board pause", async () => {
+  const starting = await attemptFixture("paused-starting", "starting");
+  try {
+    starting.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
+      .run();
+    await starting.collaborator.sweep();
+    assert.equal(starting.row().state, "starting");
+    assert.deepEqual(starting.runner.starts, []);
+    assert.deepEqual(starting.workspace.creates, []);
+
+    starting.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
+      .run();
+    await starting.collaborator.sweep();
+    assert.equal(starting.row().state, "running");
+    assert.equal(starting.runner.starts.length, 1);
+  } finally {
+    starting.runtime.close();
+    starting.store.close();
+  }
+
+  const failedToStart = await attemptFixture("paused-failed-to-start", "starting");
+  try {
+    failedToStart.runner.startErrors.push(new Error("first spawn failed"));
+    await failedToStart.collaborator.sweep();
+    assert.equal(failedToStart.row().state, "failed_to_start");
+    assert.equal(failedToStart.runner.starts.length, 1);
+
+    failedToStart.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
+      .run();
+    await failedToStart.collaborator.sweep();
+    assert.equal(failedToStart.row().state, "failed_to_start");
+    assert.equal(failedToStart.runner.starts.length, 1);
+
+    failedToStart.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
+      .run();
+    await failedToStart.collaborator.sweep();
+    assert.equal(failedToStart.row().state, "running");
+    assert.equal(failedToStart.runner.starts.length, 2);
+  } finally {
+    failedToStart.runtime.close();
+    failedToStart.store.close();
+  }
+});
+
+test("a pause committed during workspace creation fences the verify supervisor spawn", async () => {
+  const fixture = await attemptFixture("pause-during-workspace", "starting");
+  try {
+    fixture.workspace.onCreate = () => {
+      fixture.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
+        .run();
+    };
+
+    await fixture.collaborator.sweep();
+    assert.equal(fixture.row().state, "starting");
+    assert.deepEqual(fixture.runner.starts, []);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+
+    fixture.workspace.onCreate = null;
+    fixture.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
+      .run();
+    await fixture.collaborator.sweep();
+    assert.equal(fixture.row().state, "running");
+    assert.equal(fixture.runner.starts.length, 1);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
   }
 });
 

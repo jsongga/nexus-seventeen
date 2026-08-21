@@ -1213,6 +1213,33 @@ export class TransparentWorkflow {
     return true;
   }
 
+  suspendAttemptNodeInTransaction(taskId: string, reason: string): void {
+    const attempt = this.db.prepare(`
+      SELECT attempt.node_id,node.project_id,node.state
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      WHERE attempt.task_id=?
+    `).get(taskId) as Row | undefined;
+    if (attempt === undefined) return;
+    const now = this.now().toISOString();
+    const update = this.db.prepare(`
+      UPDATE work_nodes
+      SET state='blocked',version=version+1,updated_at=?
+      WHERE node_id=? AND state='active'
+    `).run(now, String(attempt.node_id));
+    if (Number(update.changes) !== 1) {
+      throw new Error("TASK_BOARD_WORKFLOW_SUSPEND_CONFLICT");
+    }
+    this.event(
+      String(attempt.project_id),
+      String(attempt.node_id),
+      taskId,
+      "node_blocked",
+      reason,
+      now,
+    );
+  }
+
   settleAttemptInTransaction(
     taskId: string,
     outcome: "completed" | "failed" | "interrupted",

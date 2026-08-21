@@ -10,6 +10,7 @@ import {
   type BacklogTaskRequest,
   type BacklogTaskResponse,
   type BoardNotification,
+  type BoardPause,
   type BoardSnapshot,
   type BoardTask,
   type ClaimRunRequest,
@@ -64,6 +65,7 @@ import type { TaskBoardConfig } from "./config.js";
 import { TaskBoardError } from "./errors.js";
 import { AgentsCollaborator } from "./collaborators/agents.js";
 import { AutomationCollaborator } from "./collaborators/automation.js";
+import { BoardPauseCollaborator } from "./collaborators/board-pause.js";
 import { DocumentsCollaborator } from "./collaborators/documents.js";
 import { LedgersCollaborator } from "./collaborators/ledgers.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
@@ -80,7 +82,7 @@ import {
   ProjectsCollaborator,
   type PipelineMergeExecutor,
 } from "./collaborators/projects.js";
-import { RunsCollaborator } from "./collaborators/runs.js";
+import { RunsCollaborator, type SettlementActor } from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import type { GitRunner } from "./collaborators/scope-check.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
@@ -98,6 +100,8 @@ import {
   taskFromRow,
 } from "./persistence/rows.js";
 import { TaskBoardStore } from "./persistence/store.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "./persistence/pending-wakeups.js";
+import { RETIRED_WAKEUP_EVENT_PREFIX } from "./persistence/retired-wakeups.js";
 import type { ProjectWorkflowSnapshot } from "./persistence/workflow.js";
 import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 
@@ -111,6 +115,7 @@ export class TaskBoard {
   readonly #runtime: TaskBoardRuntime;
   readonly #agents: AgentsCollaborator;
   readonly #automation: AutomationCollaborator;
+  readonly #boardPause: BoardPauseCollaborator;
   readonly #documents: DocumentsCollaborator;
   readonly #ledgers: LedgersCollaborator;
   readonly #messages: MessagesCollaborator;
@@ -123,6 +128,7 @@ export class TaskBoard {
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore, dependencies: TaskBoardDependencies) {
     this.#runtime = new TaskBoardRuntime(config, store);
+    this.#boardPause = new BoardPauseCollaborator(this.#runtime);
     this.#ledgers = new LedgersCollaborator(this.#runtime);
     this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
     this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications);
@@ -143,6 +149,7 @@ export class TaskBoard {
       this.#projects,
       this.#tasks,
       dependencies.git,
+      this.#boardPause,
     );
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#documents = new DocumentsCollaborator(this.#runtime);
@@ -192,6 +199,38 @@ export class TaskBoard {
 
   reconcileWorkflowsBestEffort(projectId?: string): void {
     this.#projects.reconcileWorkflowsBestEffort(projectId);
+  }
+
+  getBoardPause(): BoardPause {
+    return this.#boardPause.getBoardPause();
+  }
+
+  setBoardPause(input: {
+    paused: boolean;
+    reason: string | null;
+    version: number;
+    actor: string;
+  }): BoardPause {
+    return this.#boardPause.setBoardPause(input);
+  }
+
+  isBoardPaused(): boolean {
+    return this.#boardPause.isBoardPaused();
+  }
+
+  suspendAllActiveRuns(reason: string, actor: SettlementActor): number {
+    return this.#runs.suspendAllActiveRuns(reason, actor);
+  }
+
+  resumePausedWork(): void {
+    const agentIds = this.#runtime.store.db.prepare(`
+      SELECT DISTINCT wakeup.agent_id
+      FROM wakeups AS wakeup
+      WHERE ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
+      ORDER BY wakeup.agent_id
+    `).all(RETIRED_WAKEUP_EVENT_PREFIX).map((row) => stringValue(row, "agent_id"));
+    for (const agentId of agentIds) this.#runtime.wakeupEvents.emit(agentId);
+    this.#projects.reconcileWorkflowsBestEffort();
   }
 
   sweepVerifyAttempts(): Promise<number> {

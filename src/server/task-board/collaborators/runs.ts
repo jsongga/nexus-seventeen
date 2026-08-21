@@ -46,6 +46,7 @@ import {
 import { exactNow } from "../persistence/timestamps.js";
 import type { AttemptScopeCheckResult } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
+import { BoardPauseCollaborator } from "./board-pause.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
 import {
@@ -62,7 +63,11 @@ type SettlementEffects = Readonly<{
   settledWorkflowNodes: readonly WorkNode[];
 }>;
 
-type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
+export type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
+
+type SettleActiveRunOptions = Readonly<{
+  suspendAttempt?: boolean;
+}>;
 
 type AttemptSettlementPrecheck = Readonly<{
   scopeCheck: AttemptScopeCheckResult | null;
@@ -92,6 +97,7 @@ export class RunsCollaborator {
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
     private readonly git: GitRunner = runDeclaredScopeGit,
+    private readonly boardPause: BoardPauseCollaborator = new BoardPauseCollaborator(runtime),
   ) {}
 
   private scopeCheckForSettlement(taskId: string, outcome: SettleRunRequest["outcome"]): AttemptScopeCheckResult | null {
@@ -136,6 +142,19 @@ export class RunsCollaborator {
     } catch {
       return Object.freeze({ ok: false, error: "scope check failed" });
     }
+  }
+
+  private wasInterruptedBySystem(current: AgentRun): boolean {
+    if (current.status !== "interrupted") return false;
+    return this.runtime.store.db.prepare(`
+      SELECT 1
+      FROM task_events
+      WHERE event_type='agent_run_settled'
+        AND actor_type='system'
+        AND json_extract(data_json,'$.runId')=?
+        AND json_extract(data_json,'$.outcome')='interrupted'
+      LIMIT 1
+    `).get(current.runId) !== undefined;
   }
 
   resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
@@ -209,7 +228,16 @@ export class RunsCollaborator {
     const now = exactNow(this.runtime.config.now);
     let interrupt!: AgentInterrupt;
     this.runtime.store.transaction(() => {
-      interrupt = this.insertInterruptInTransaction(agent.projectId, agentId, runId, idempotencyKey, hash, request.reason, now);
+      interrupt = this.insertInterruptInTransaction(
+        agent.projectId,
+        agentId,
+        runId,
+        idempotencyKey,
+        hash,
+        request.reason,
+        now,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+      );
     });
     if (runId !== null) this.runtime.interruptEvents.emit(runId);
     return { interrupt, duplicate: false };
@@ -226,7 +254,16 @@ export class RunsCollaborator {
     const idempotencyKey = `token-rotation:${version}`;
     const reason = TOKEN_ROTATION_INTERRUPT_REASON;
     const hash = sha256({ action: "token_rotation_interrupt", agentId, version, reason });
-    this.insertInterruptInTransaction(agent.projectId, agentId, current.runId, idempotencyKey, hash, reason, now);
+    this.insertInterruptInTransaction(
+      agent.projectId,
+      agentId,
+      current.runId,
+      idempotencyKey,
+      hash,
+      reason,
+      now,
+      { type: "human", id: this.runtime.config.humanPrincipal },
+    );
     const effects = this.settleActiveRunInTransaction(
       current,
       agentId,
@@ -250,14 +287,15 @@ export class RunsCollaborator {
     hash: string,
     reason: string,
     now: string,
+    actor: SettlementActor,
   ): AgentInterrupt {
     const interruptId = randomUUID();
     this.runtime.store.db.prepare(`
       INSERT INTO interrupts(
         interrupt_id, project_id, agent_id, run_id, idempotency_key, request_hash, reason, requested_by, requested_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(interruptId, projectId, agentId, runId, idempotencyKey, hash, reason, this.runtime.config.humanPrincipal, now);
-    this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_interrupt_requested", {
+    `).run(interruptId, projectId, agentId, runId, idempotencyKey, hash, reason, actor.id, now);
+    this.runtime.insertEvent(projectId, null, actor, "agent_interrupt_requested", {
       interruptId,
       agentId,
       runId,
@@ -329,6 +367,7 @@ export class RunsCollaborator {
     const existing = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
     const candidate = this.runtime.store.transaction(() => {
+      if (this.boardPause.isBoardPaused()) return null;
       this.requireCredentialVersion(agentId, credentialVersion);
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
@@ -359,6 +398,7 @@ export class RunsCollaborator {
     const now = exactNow(this.runtime.config.now);
     let reviewRuntimeConflict: TaskBoardError | null = null;
     const claimed = this.runtime.store.transaction(() => {
+      if (this.boardPause.isBoardPaused()) return null;
       const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
@@ -606,11 +646,82 @@ export class RunsCollaborator {
     return settledCount;
   }
 
+  suspendActiveRunInTransaction(
+    runId: string,
+    reason: string,
+    actor: SettlementActor,
+  ): { workItemId: string | null; projectId: string } | null {
+    const row = this.runtime.store.db.prepare(
+      "SELECT * FROM runs WHERE run_id=? AND status='active'",
+    ).get(runId);
+    if (row === undefined) return null;
+    const current = runFromRow(row);
+    const persistedReason = redactForPersistence(reason);
+    const now = exactNow(this.runtime.config.now);
+    const workItem = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+      SELECT plan.work_item_id
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE attempt.task_id=?
+    `).get(current.taskId);
+    this.insertInterruptInTransaction(
+      current.projectId,
+      current.agentId,
+      current.runId,
+      `suspend:${current.runId}`,
+      sha256({ action: "suspend_run", runId: current.runId, reason: persistedReason, actor }),
+      persistedReason,
+      now,
+      actor,
+    );
+    this.settleActiveRunInTransaction(
+      current,
+      current.agentId,
+      { outcome: "interrupted", result: reason },
+      now,
+      actor,
+      undefined,
+      { suspendAttempt: true },
+    );
+    this.runtime.store.afterCommit(() => this.runtime.interruptEvents.emit(current.runId));
+    return Object.freeze({
+      workItemId: workItem === undefined ? null : stringValue(workItem, "work_item_id"),
+      projectId: current.projectId,
+    });
+  }
+
+  suspendAllActiveRuns(reason: string, actor: SettlementActor): number {
+    // Planning and design runs are deliberately excluded from the board pause: they
+    // are short-lived, and Task 5's started_at cap sweep suspends them individually
+    // before applying its own cap-specific park transition.
+    const runIds = this.runtime.store.db.prepare(`
+      SELECT run.run_id
+      FROM runs run
+      JOIN stage_attempts attempt ON attempt.task_id=run.task_id
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE run.status='active' AND item.pipeline_branch IS NOT NULL
+      ORDER BY run.started_at,run.run_id
+    `).all().map((row) => stringValue(row, "run_id"));
+    let suspended = 0;
+    for (const runId of runIds) {
+      const result = this.runtime.store.transaction(() =>
+        this.suspendActiveRunInTransaction(runId, reason, actor));
+      if (result !== null) suspended += 1;
+    }
+    return suspended;
+  }
+
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {
     const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
     const persistedResult = redactForPersistence(request.result);
+    if (current.status !== "active" && this.wasInterruptedBySystem(current)) {
+      return { run: current, duplicate: true };
+    }
     this.designSettlement(current.taskId, request);
     if (request.reviewFindings !== undefined) {
       const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
@@ -683,6 +794,7 @@ export class RunsCollaborator {
     now: string,
     actor: SettlementActor,
     attemptPrecheck?: AttemptSettlementPrecheck,
+    options: SettleActiveRunOptions = {},
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
@@ -770,6 +882,8 @@ export class RunsCollaborator {
           agentId,
         );
       }
+    } else if (current.taskId !== null && options.suspendAttempt === true) {
+      this.projects.suspendAttemptNodeInTransaction(current.taskId, attemptResult);
     } else if (current.taskId !== null) {
       settledWorkflowNodes = this.projects.settleAttemptInTransaction(
         current.taskId,
@@ -815,7 +929,9 @@ export class RunsCollaborator {
             status: nextStatus,
             version: task.version + 1,
           }, now);
-          if (request.outcome === "completed") {
+          if (options.suspendAttempt === true) {
+            this.runtime.reconcileTaskPhasesForTerminal(task, "interrupted", actor, now);
+          } else if (request.outcome === "completed") {
             if (actor.type === "system") throw new Error("TASK_BOARD_SYSTEM_RUN_COMPLETION_INVALID");
             this.runtime.reconcileTaskPhasesForTerminal(task, "completed", actor, now);
             workflowWakeAgentId = this.runtime.createReviewFollowup(task, now)?.wakeAgentId ?? null;
@@ -828,7 +944,7 @@ export class RunsCollaborator {
         }
       }
     }
-    if (planning && request.outcome !== "completed") {
+    if (planning && request.outcome !== "completed" && options.suspendAttempt !== true) {
       const workItemId = String(planning.work_item_id);
       if (isTerminalWorkItemState(String(planning.state) as WorkItemState)) {
         this.runtime.insertEvent(
@@ -854,7 +970,7 @@ export class RunsCollaborator {
         });
       }
     }
-    if (design.row !== undefined && request.outcome !== "completed") {
+    if (design.row !== undefined && request.outcome !== "completed" && options.suspendAttempt !== true) {
       const workItemId = String(design.row.work_item_id);
       if (!isTerminalWorkItemState(String(design.row.state) as WorkItemState)) {
         transitionWorkItemInTransaction(this.runtime.store, {
