@@ -298,6 +298,22 @@ established pattern.
   group them correctly and the page renders both ledgers — categories
   queryable, park reasons reviewable.
 
+## Amendments (ruled during implementation, 2026-08-20/21)
+
+- `GET /v1/notifications` ships without the `?after` cursor: it returns
+  unread (≤100, newest first) plus recentRead (≤50). The dataset is small
+  and CAS-versioned reads make cursors premature; same §14 intent.
+- The redact-before-persisting class was extended during review to every
+  human- and agent-authored free-text ingress it logically contains:
+  handoff prose, cancellation reasons across all five fan-out writes,
+  plan-rejection notes (column and objective copies), final-reject notes
+  and merge-conflict summaries, agent question text, and human answers.
+  Benign text is byte-identical through the redactor, so the extension
+  costs nothing on clean input.
+- The fix-loop predicate's sticky rule also consults the state held at
+  park time (via transition history), so a `fixing` item that parks on a
+  question resumes as `fixing`.
+
 ## Deferred (recorded, not decided)
 
 - Per-human identity (multi-operator auth) — out of scope by design §12;
