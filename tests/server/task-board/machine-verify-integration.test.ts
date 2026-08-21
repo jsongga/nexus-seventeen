@@ -352,6 +352,33 @@ test("passed review persists non-blocking findings and reaches final approval", 
   }
 });
 
+test("review finding expected and actual text are redacted at settlement persistence", async () => {
+  const fixture = await pipelineFixture("redacted-review-finding", true);
+  const expectedSecret = `review-${"r".repeat(48)}`;
+  const actualSecret = `github_pat_${"g".repeat(48)}`;
+  try {
+    const verification = await reachReview(fixture, "claim-redacted-review-finding");
+    fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+      outcome: "completed",
+      result: "Independent review passed with a redacted observation.",
+      handoff: reviewHandoff("passed"),
+      reviewFindings: [{
+        ...reviewFinding(1, "docs"),
+        expected: `Authorization: Bearer ${expectedSecret}`,
+        actual: `Observed ${actualSecret}`,
+      }],
+    });
+
+    const [finding] = persistedFindings(fixture.path);
+    assert.ok(finding);
+    assert.equal(finding.expected, "Authorization: [redacted:bearer]");
+    assert.equal(finding.actual, "Observed [redacted:token]");
+    assert.doesNotMatch(JSON.stringify(finding), new RegExp(`${expectedSecret}|${actualSecret}`, "u"));
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("completed pipeline review rejects blocking findings when the handoff is omitted", async () => {
   const fixture = await pipelineFixture("blocking-review-without-handoff", true);
   try {

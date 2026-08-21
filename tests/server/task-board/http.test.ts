@@ -851,7 +851,7 @@ test("lane-error is worker-token authenticated, exact, scrubbed, bounded, and cl
     assert.equal(failedBoard.status, 200);
     const failedAgent = (await failedBoard.json() as { agents: Array<{ agentId: string; lastError: string | null }> })
       .agents.find((agent) => agent.agentId === "engineer-one");
-    assert.equal(failedAgent?.lastError, "Board rejected Bearer [redacted]");
+    assert.equal(failedAgent?.lastError, "Board rejected [redacted:bearer]");
 
     assert.equal((await request(address.url, route, "POST", AGENT_ONE_TOKEN, { detail: null })).status, 204);
     const clearedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);

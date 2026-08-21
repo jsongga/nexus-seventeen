@@ -29,6 +29,7 @@ import {
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
+import { redactForPersistence } from "../../shared/redact.js";
 import { TaskBoardError } from "../errors.js";
 import { SkillRegistry } from "../skills.js";
 import {
@@ -1468,6 +1469,8 @@ export class TransparentWorkflow {
       const persistedReviewFindings = (reviewFindings ?? []).map((finding, index): ReviewFinding => {
         const persisted = Object.freeze({
           ...finding,
+          expected: redactForPersistence(finding.expected),
+          actual: redactForPersistence(finding.actual),
           findingId: `finding_${String(index).padStart(2, "0")}_${randomUUID()}`,
           nodeId,
           stage,
@@ -1524,19 +1527,29 @@ export class TransparentWorkflow {
               ? scopeViolationResult(scopeCheck.files)
               : scopeCheck.error.slice(0, 2_000)
         : null;
+      const persistedSupplied = supplied === null ? null : Object.freeze({
+        ...supplied,
+        summary: redactForPersistence(supplied.summary),
+        evidence: Object.freeze(supplied.evidence.map((entry) => redactForPersistence(entry))),
+        acceptanceCriteria: Object.freeze(supplied.acceptanceCriteria.map((criterion) => Object.freeze({
+          ...criterion,
+          evidence: redactForPersistence(criterion.evidence),
+        }))),
+        blockers: Object.freeze(supplied.blockers.map((blocker) => redactForPersistence(blocker))),
+      });
       const handoff: StageHandoff = Object.freeze({
         apiVersion: "steward.task-board/v1", handoffId: `handoff_${randomUUID()}`, nodeId, taskId, stage,
-        outcome: scopeFailureDetail === null ? supplied?.outcome ?? (passed ? "passed" : "failed") : "failed",
-        summary: scopeFailureDetail ?? supplied?.summary ?? result,
-        evidence: supplied?.evidence ?? Object.freeze([]), artifactIds: supplied?.artifactIds ?? Object.freeze([]),
-        acceptanceCriteria: supplied?.acceptanceCriteria ?? Object.freeze([]),
+        outcome: scopeFailureDetail === null ? persistedSupplied?.outcome ?? (passed ? "passed" : "failed") : "failed",
+        summary: scopeFailureDetail ?? persistedSupplied?.summary ?? result,
+        evidence: persistedSupplied?.evidence ?? Object.freeze([]), artifactIds: persistedSupplied?.artifactIds ?? Object.freeze([]),
+        acceptanceCriteria: persistedSupplied?.acceptanceCriteria ?? Object.freeze([]),
         blockers: scopeFailureDetail === null
-          ? supplied?.blockers ?? Object.freeze(passed ? [] : [result])
+          ? persistedSupplied?.blockers ?? Object.freeze(passed ? [] : [result])
           : Object.freeze([scopeFailureDetail]),
         recommendedReturnStage: scopeFailureDetail === null
           ? failedReview
             ? "implementation"
-            : supplied?.recommendedReturnStage ?? (passed ? null : stage)
+            : persistedSupplied?.recommendedReturnStage ?? (passed ? null : stage)
           : stage,
         createdAt: now,
       });
@@ -1565,16 +1578,16 @@ export class TransparentWorkflow {
       const brightLineDetail = attempt.pipeline_branch !== null && stage === "implementation" && !passed
         ? result.startsWith("BRIGHT_LINE:")
           ? result
-          : supplied?.summary.startsWith("BRIGHT_LINE:") === true ? supplied.summary : null
+          : persistedSupplied?.summary.startsWith("BRIGHT_LINE:") === true ? persistedSupplied.summary : null
         : null;
       if (brightLineDetail !== null) return parkAttempt(brightLineDetail);
       if (scopeFailureDetail !== null) return parkAttempt(scopeFailureDetail);
       if (!passed) {
         const returnStage = failedReview
           ? handoff.recommendedReturnStage
-          : supplied === null && pipelineReview
+          : persistedSupplied === null && pipelineReview
             ? handoff.recommendedReturnStage
-            : supplied?.recommendedReturnStage ?? null;
+            : persistedSupplied?.recommendedReturnStage ?? null;
         const attemptNumber = Number(attempt.attempt);
         const template = json<WorkflowStage[]>(attempt.stage_template_json);
         const maxAttempts = stage === "verification" && attempt.pipeline_branch !== null ? 4 : 3;

@@ -201,6 +201,7 @@ async function attemptFixture(
   const checkCalls: Array<{ command: string; cwd: string }> = [];
   const gitCalls: string[][] = [];
   let checkPassed = true;
+  let checkDetails: readonly string[] = ["exit 1"];
   const workflow = settleWorkflow
     ? new TransparentWorkflow(
         store.db,
@@ -221,7 +222,10 @@ async function attemptFixture(
     executeCheck: async (command, cwd) => {
       assert.equal(runtime.store.hasOpenTransaction, false);
       checkCalls.push({ command, cwd });
-      return { passed: checkPassed, detail: checkPassed ? "exit 0" : "exit 1" };
+      return {
+        passed: checkPassed,
+        detail: checkPassed ? "exit 0" : checkDetails[checkCalls.length - 1] ?? checkDetails.at(-1) ?? "exit 1",
+      };
     },
     git: (arguments_) => {
       assert.equal(runtime.store.hasOpenTransaction, false);
@@ -242,6 +246,8 @@ async function attemptFixture(
     runtime, store, collaborator, runner, workspace, settlements, checkCalls, gitCalls, row,
     verifyAttemptId, workItem, nodeId,
     setCheckPassed(value: boolean): void { checkPassed = value; },
+    setCheckFailureDetail(value: string): void { checkDetails = [value]; },
+    setCheckFailureDetails(values: readonly string[]): void { checkDetails = [...values]; },
   };
 }
 
@@ -304,6 +310,63 @@ test("a failed criterion settles the green verify run as failed and retains its 
   }
 });
 
+test("criterion commands and failure output are redacted before verify persistence and evidence", async () => {
+  const commandSecret = `github_pat_${"c".repeat(48)}`;
+  const bearerSecret = `criterion-${"d".repeat(48)}`;
+  const fixture = await attemptFixture("redacted-check", "running", [{
+    criterion: "The secret-bearing check fails safely.",
+    check: `node check.mjs --credential ${commandSecret}`,
+  }]);
+  try {
+    fixture.runner.statusState = "green";
+    fixture.setCheckPassed(false);
+    fixture.setCheckFailureDetail(`Authorization: Bearer ${bearerSecret}`);
+
+    await fixture.collaborator.sweep();
+
+    const checkResults = String(fixture.row().check_results_json);
+    const detail = String(fixture.row().detail);
+    assert.match(checkResults, /\[redacted:token\]/u);
+    assert.doesNotMatch(checkResults, new RegExp(commandSecret, "u"));
+    assert.match(detail, /\[redacted:bearer\]/u);
+    assert.doesNotMatch(detail, new RegExp(bearerSecret, "u"));
+    assert.match(fixture.settlements[0]?.evidence.blockers[0] ?? "", /\[redacted:bearer\]/u);
+    assert.doesNotMatch(JSON.stringify(fixture.settlements[0]?.evidence), new RegExp(bearerSecret, "u"));
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("criterion failure evidence remains aligned by check index when redacted labels collide", async () => {
+  const fixture = await attemptFixture("redacted-label-collision", "running", [
+    {
+      criterion: `Credential sk-ant-${"a".repeat(48)} is rejected.`,
+      check: "node first-check.mjs",
+    },
+    {
+      criterion: `Credential sk-ant-${"b".repeat(48)} is rejected.`,
+      check: "node second-check.mjs",
+    },
+  ]);
+  try {
+    fixture.runner.statusState = "green";
+    fixture.setCheckPassed(false);
+    fixture.setCheckFailureDetails(["first indexed evidence", "second indexed evidence"]);
+
+    await fixture.collaborator.sweep();
+
+    const criteria = fixture.settlements[0]?.evidence.acceptanceCriteria;
+    assert.equal(criteria?.[0]?.criterion, "Credential [redacted:token] is rejected.");
+    assert.equal(criteria?.[1]?.criterion, "Credential [redacted:token] is rejected.");
+    assert.match(criteria?.[0]?.evidence ?? "", /first indexed evidence/u);
+    assert.match(criteria?.[1]?.evidence ?? "", /second indexed evidence/u);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
 for (const terminal of ["failed", "died"] as const) {
   test(`${terminal} verify runs settle with a bounded tail and retain the workspace`, async () => {
     const fixture = await attemptFixture(`terminal-${terminal}`, "running");
@@ -323,6 +386,57 @@ for (const terminal of ["failed", "died"] as const) {
     }
   });
 }
+
+test("a secret-bearing verify tail is redacted before every durable failure projection", async () => {
+  const fixture = await attemptFixture("redacted-tail", "running", [], true);
+  const antToken = `sk-ant-${"a".repeat(48)}`;
+  const bearerToken = `bearer-${"b".repeat(48)}`;
+  const rawTail = `verify failed ${antToken} Authorization: Bearer ${bearerToken} `
+    .padEnd(4_096, "x");
+  assert.equal(rawTail.length, 4_096);
+  try {
+    fixture.store.transaction(() => {
+      fixture.store.db.prepare("UPDATE work_nodes SET stage_template_json='[\"testing\"]' WHERE node_id=?")
+        .run(fixture.nodeId);
+    });
+    fixture.runner.statusState = "failed";
+    fixture.runner.tailText = rawTail;
+
+    await fixture.collaborator.sweep();
+
+    const detail = String(fixture.row().detail);
+    assert.match(detail, /\[redacted:token\]/u);
+    assert.match(detail, /\[redacted:bearer\]/u);
+    assert.doesNotMatch(detail, new RegExp(antToken, "u"));
+    assert.doesNotMatch(detail, new RegExp(bearerToken, "u"));
+
+    const handoffRow = fixture.store.db.prepare(
+      "SELECT payload_json FROM stage_handoffs WHERE node_id=? AND stage='testing'",
+    ).get(fixture.nodeId);
+    assert.ok(handoffRow);
+    const handoffJson = String(handoffRow.payload_json);
+    const handoff = JSON.parse(handoffJson) as { readonly summary: string };
+    assert.match(handoff.summary, /\[redacted:token\]/u);
+    assert.match(handoff.summary, /\[redacted:bearer\]/u);
+    assert.doesNotMatch(handoffJson, new RegExp(antToken, "u"));
+    assert.doesNotMatch(handoffJson, new RegExp(bearerToken, "u"));
+
+    const event = fixture.store.db.prepare(`
+      SELECT summary
+      FROM project_events
+      WHERE node_id=? AND event_type='stage_failed'
+    `).get(fixture.nodeId);
+    assert.ok(event);
+    const eventSummary = String(event.summary);
+    assert.match(eventSummary, /\[redacted:token\]/u);
+    assert.match(eventSummary, /\[redacted:bearer\]/u);
+    assert.doesNotMatch(eventSummary, new RegExp(antToken, "u"));
+    assert.doesNotMatch(eventSummary, new RegExp(bearerToken, "u"));
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
 
 test("failed_to_start retries once, while a second start failure settles the verify round", async () => {
   const retried = await attemptFixture("retry-start", "starting");
@@ -354,6 +468,32 @@ test("failed_to_start retries once, while a second start failure settles the ver
   } finally {
     exhausted.runtime.close();
     exhausted.store.close();
+  }
+});
+
+test("verify start failures are redacted before attempt detail and machine evidence", async () => {
+  const antToken = `sk-ant-${"e".repeat(48)}`;
+  const bearerToken = `start-${"f".repeat(48)}`;
+  const fixture = await attemptFixture("redacted-start", "starting");
+  try {
+    fixture.runner.startErrors.push(
+      new Error(`spawn rejected ${antToken}`),
+      new Error(`Authorization: Bearer ${bearerToken}`),
+    );
+
+    await fixture.collaborator.sweep();
+    assert.match(String(fixture.row().detail), /\[redacted:token\]/u);
+    assert.doesNotMatch(String(fixture.row().detail), new RegExp(antToken, "u"));
+
+    await fixture.collaborator.sweep();
+    const detail = String(fixture.row().detail);
+    assert.match(detail, /\[redacted:bearer\]/u);
+    assert.doesNotMatch(detail, new RegExp(bearerToken, "u"));
+    assert.match(fixture.settlements[0]?.evidence.summary ?? "", /\[redacted:bearer\]/u);
+    assert.doesNotMatch(JSON.stringify(fixture.settlements[0]?.evidence), new RegExp(bearerToken, "u"));
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
   }
 });
 

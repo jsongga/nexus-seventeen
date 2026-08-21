@@ -2650,6 +2650,44 @@ test("a completed run with a valid handoff settles its workflow node", async () 
   }
 });
 
+test("run settlement redacts agent-authored handoff prose before stage-handoff persistence", async () => {
+  const fixture = await activeSettlementWorkflow("redacted-handoff");
+  const secret = `handoff-${"h".repeat(48)}`;
+  const credential = `Authorization: Bearer ${secret}`;
+  try {
+    fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+      outcome: "failed",
+      result: "Verification could not complete.",
+      handoff: {
+        ...settlementHandoff("failed"),
+        summary: `Summary exposed ${credential}`,
+        evidence: [`Evidence exposed ${credential}`],
+        acceptanceCriteria: [{
+          criterion: "The persisted handoff is safe.",
+          passed: false,
+          evidence: `Criterion evidence exposed ${credential}`,
+        }],
+        blockers: [`Blocker exposed ${credential}`],
+      },
+    });
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const row = inspected.prepare("SELECT payload_json FROM stage_handoffs WHERE task_id=?")
+        .get(fixture.claim.task!.taskId);
+      assert.ok(row);
+      const payload = String(row.payload_json);
+      assert.doesNotMatch(payload, new RegExp(secret, "u"));
+      assert.equal((payload.match(/\[redacted:bearer\]/gu) ?? []).length, 4);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("work items preserve explicit intake and enforce idempotent CAS updates", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
@@ -4798,6 +4836,38 @@ test("projects, fixed agents, tasks, messages, and events survive a database res
     assert.equal(reviewClaim.wakeup.createdBy, "system:steward-review-workflow");
   } finally {
     restarted.close();
+  }
+});
+
+test("run settlement redacts a Bearer credential in both run and task results", async () => {
+  const fixture = await boardFixture();
+  const secret = `settle-${"s".repeat(48)}`;
+  const rawResult = `Agent stopped after Authorization: Bearer ${secret}`;
+  try {
+    const task = fixture.board.createTask(fixture.project.projectId, taskRequest());
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-redacted-settlement-result",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: rawResult,
+    });
+
+    const expected = "Agent stopped after Authorization: [redacted:bearer]";
+    assert.equal(settled.run.result, expected);
+    assert.equal(fixture.board.requireTask(task.taskId).result, expected);
+    assert.doesNotMatch(settled.run.result ?? "", new RegExp(secret, "u"));
+    const replay = fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: rawResult,
+    });
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.run.result, expected);
+  } finally {
+    fixture.board.close();
   }
 });
 

@@ -8,6 +8,7 @@ import {
   type WorkItemStage,
   type WorkItemState,
 } from "#shared/task-board-contract";
+import { redactForPersistence } from "../../shared/redact.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import type { TaskBoardStore } from "../persistence/store.js";
 
@@ -135,8 +136,10 @@ function assertParkMetadata(request: WorkItemTransitionRequest): void {
 }
 
 function boundedParkReason(reason: string): string {
-  if (reason.length <= PARK_REASON_MAX_LENGTH) return reason;
-  return `${reason.slice(0, PARK_REASON_MAX_LENGTH - PARK_REASON_TRUNCATION_MARKER.length)}${PARK_REASON_TRUNCATION_MARKER}`;
+  const redacted = redactForPersistence(reason);
+  if (redacted.length <= PARK_REASON_MAX_LENGTH) return redacted;
+  const contentLength = PARK_REASON_MAX_LENGTH - PARK_REASON_TRUNCATION_MARKER.length;
+  return `${redactForPersistence(redacted, contentLength)}${PARK_REASON_TRUNCATION_MARKER}`;
 }
 
 function resolutionForParkExit(

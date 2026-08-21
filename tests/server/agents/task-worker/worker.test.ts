@@ -1132,12 +1132,12 @@ test("redacts credentials from a durable interrupt reason while still terminatin
     await dispatch;
     assert.deepEqual(
       launcher.handles[0]?.interruptReasons,
-      ["Stop after exposing [redacted] in diagnostics"],
+      ["Stop after exposing [redacted:token] in diagnostics"],
     );
-    assert.equal(board.settlements[0]?.result, "Stop after exposing [redacted] in diagnostics");
+    assert.equal(board.settlements[0]?.result, "Stop after exposing [redacted:token] in diagnostics");
     const journal = await readFile(join(root, "state", "journal.json"), "utf8");
     assert.doesNotMatch(journal, /sk-proj-0123456789abcdef/u);
-    assert.match(journal, /\[redacted\]/u);
+    assert.match(journal, /\[redacted:token\]/u);
   } finally {
     await taskWorker.close();
   }
@@ -1252,7 +1252,7 @@ test("shutdown records a rejected termination and completes while the child rema
     await completesWithin(running, 500);
     assert.equal(board.settlements[0]?.outcome, "interrupted");
     assert.match(board.settlements[0]?.result ?? "", /process-group termination failed.*simulated/iu);
-    assert.match(board.settlements[0]?.result ?? "", /Bearer \[redacted\]/u);
+    assert.match(board.settlements[0]?.result ?? "", /\[redacted:bearer\]/u);
     const journal = await readFile(join(root, "state", "journal.json"), "utf8");
     assert.match(journal, /process-group termination failed.*simulated/iu);
     assert.doesNotMatch(journal, /abc123def456/u);
@@ -1492,12 +1492,12 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
       runId: RUN,
       replayedPinned: {
         runtime: "codex",
-        runtimeVersion: "codex 1.2 Bearer [redacted]",
+        runtimeVersion: "codex 1.2 [redacted:bearer]",
         model: "gpt-5.6-old",
       },
       workerPinned: {
         runtime: "codex",
-        runtimeVersion: "codex 1.2 Bearer [redacted]",
+        runtimeVersion: "codex 1.2 [redacted:bearer]",
         model: "gpt-5.6-new",
       },
     }]);
@@ -1837,8 +1837,8 @@ test("quarantine replaces a rejected terminal settlement with a scrubbed failed 
     assert.equal(board.settlementAttempts.length, 2);
     assert.equal(board.settlements.length, 1);
     assert.equal(board.settlements[0]?.outcome, "failed");
-    assert.equal(board.settlements[0]?.result, "Settle rejected Bearer [redacted]");
-    assert.equal(board.laneErrors.find((entry) => entry.detail !== null)?.detail, "Settle rejected Bearer [redacted]");
+    assert.equal(board.settlements[0]?.result, "Settle rejected [redacted:bearer]");
+    assert.equal(board.laneErrors.find((entry) => entry.detail !== null)?.detail, "Settle rejected [redacted:bearer]");
     assert.equal(taskWorker.hasActiveClaim(), false);
     assert.equal(taskWorker.snapshot.completedRuns, 1);
   } finally {

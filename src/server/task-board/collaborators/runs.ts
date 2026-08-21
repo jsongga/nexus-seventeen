@@ -24,6 +24,7 @@ import {
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-board-contract/validate";
+import { redactForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
@@ -636,6 +637,7 @@ export class RunsCollaborator {
     const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
+    const persistedResult = redactForPersistence(request.result);
     this.designSettlement(current.taskId, request);
     if (request.reviewFindings !== undefined) {
       const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
@@ -655,13 +657,13 @@ export class RunsCollaborator {
       }
     }
     if (current.status !== "active") {
-      if (current.status === request.outcome && current.result === request.result) {
+      if (current.status === request.outcome && current.result === persistedResult) {
         let repairedNodes: readonly WorkNode[] = Object.freeze([]);
         const taskId = current.taskId;
         const needsRepair = taskId !== null && this.projects.attemptNeedsSettlementRepair(taskId, current.runId);
         if (taskId !== null && needsRepair) {
           const scopeCheck = this.scopeCheckForSettlement(taskId, request.outcome);
-          const settlementResult = attemptSettlementResult(request, scopeCheck);
+          const settlementResult = redactForPersistence(attemptSettlementResult(request, scopeCheck));
           this.runtime.store.transaction(() => {
             if (this.projects.attemptNeedsSettlementRepair(taskId, current.runId)) {
               repairedNodes = this.projects.settleAttemptInTransaction(
@@ -711,7 +713,8 @@ export class RunsCollaborator {
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
-    const attemptResult = attemptPrecheck?.result ?? request.result;
+    const persistedResult = redactForPersistence(request.result);
+    const attemptResult = redactForPersistence(attemptPrecheck?.result ?? request.result);
     // Keep this planning snapshot: its work-item state is reused after task and workflow settlement below.
     const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
       SELECT w.* FROM work_item_planning_tasks link
@@ -789,7 +792,7 @@ export class RunsCollaborator {
       } else {
         settledWorkflowNodes = this.projects.settleDesignInTransaction(
           current.taskId,
-          request.result,
+          persistedResult,
           design.record,
           agentId,
         );
@@ -809,7 +812,7 @@ export class RunsCollaborator {
     }
     const update = this.runtime.store.db.prepare(`
       UPDATE runs SET status = ?, ended_at = ?, result = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
-    `).run(request.outcome, now, request.result, current.runId, agentId);
+    `).run(request.outcome, now, persistedResult, current.runId, agentId);
     if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     if (current.taskId !== null) {
       const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(current.taskId);

@@ -313,6 +313,52 @@ test("entering parked appends the categorized park record in the transition tran
   }
 });
 
+test("entering parked redacts an embedded token before recording the reason", async () => {
+  const { store, workItemId } = await transitionFixture();
+  const secret = `github_pat_${"p".repeat(48)}`;
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: `Blocked while inspecting ${secret}` },
+    }));
+
+    const [record] = parkRecordRows(store, workItemId);
+    assert.ok(record);
+    assert.equal(record.reason, "Blocked while inspecting [redacted:token]");
+    assert.doesNotMatch(record.reason, new RegExp(secret, "u"));
+  } finally {
+    store.close();
+  }
+});
+
+test("park truncation keeps a redaction marker whole at the length boundary", async () => {
+  const { store, workItemId } = await transitionFixture();
+  const secret = `sk-ant-${"s".repeat(80)}`;
+  const prefix = "p".repeat(1_990);
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: `${prefix} ${secret}${"z".repeat(100)}` },
+    }));
+
+    const [record] = parkRecordRows(store, workItemId);
+    assert.ok(record);
+    assert.equal(record.reason.length, 2_000);
+    assert.match(record.reason, /\[redacted:token\]…$/u);
+    assert.doesNotMatch(record.reason, /\[redacted(?::[^\]]*)?…$/u);
+  } finally {
+    store.close();
+  }
+});
+
 test("leaving parked derives and records every park resolution", async () => {
   const cases = [
     { target: "implementing", actorId: "system:workflow", resolution: "resumed" },

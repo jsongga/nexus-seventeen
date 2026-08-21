@@ -6,6 +6,7 @@ import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager } from "#server/agents/task-workspace";
 import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
 import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
+import { redactForPersistence } from "../../shared/redact.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
@@ -71,6 +72,7 @@ interface AttemptContext {
 interface CheckOutcome {
   readonly results: readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[];
   readonly failures: readonly string[];
+  readonly failureDetailsByIndex: readonly (string | null)[];
 }
 
 export type StartingVerifyAttemptResult =
@@ -80,7 +82,20 @@ export type StartingVerifyAttemptResult =
 
 function errorDetail(error: unknown): string {
   const value = error instanceof Error ? error.message : String(error);
-  return value.slice(0, 4_000);
+  return redactForPersistence(value, 4_000);
+}
+
+function redactedCheckOutcome(checks: CheckOutcome): CheckOutcome {
+  return Object.freeze({
+    results: Object.freeze(checks.results.map((result) => Object.freeze({
+      criterion: redactForPersistence(result.criterion),
+      check: redactForPersistence(result.check),
+      passed: result.passed,
+    }))),
+    failures: Object.freeze(checks.failures.map((failure) => redactForPersistence(failure))),
+    failureDetailsByIndex: Object.freeze(checks.failureDetailsByIndex.map((failure) =>
+      failure === null ? null : redactForPersistence(failure))),
+  });
 }
 
 function startFailureCount(detail: string | null): number {
@@ -154,7 +169,7 @@ function executeCriterionCheck(command: string, cwd: string): Promise<CriterionC
       const output = `${stderr}${stdout}`.trim();
       resolve({
         passed: false,
-        detail: (output.length > 0 ? output : error.message).slice(0, 2_000),
+        detail: redactForPersistence(output.length > 0 ? output : error.message, 2_000),
       });
     });
   });
@@ -379,7 +394,11 @@ export class VerifyAttemptsCollaborator {
       if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) return false;
       const failedAttempt = current;
       const failures = startFailureCount(current.detail) + 1;
-      const detail = `[machine-verify-start-failures:${failures}] ${errorDetail(error)}`;
+      const safeError = errorDetail(error);
+      const detail = redactForPersistence(
+        `[machine-verify-start-failures:${failures}] ${safeError}`,
+        4_000,
+      );
       let settledNodes: readonly WorkNode[] = [];
       this.runtime.store.transaction(() => {
         if (failures < 2) {
@@ -401,10 +420,10 @@ export class VerifyAttemptsCollaborator {
           failedAttempt.stage,
           false,
           Object.freeze({
-            summary: `Machine verify failed to start after two attempts: ${errorDetail(error)}`,
+            summary: `Machine verify failed to start after two attempts: ${safeError}`,
             evidence: Object.freeze([detail]),
             acceptanceCriteria: Object.freeze([]),
-            blockers: Object.freeze([errorDetail(error)]),
+            blockers: Object.freeze([safeError]),
           }),
         );
       });
@@ -461,7 +480,10 @@ export class VerifyAttemptsCollaborator {
     const checks = await this.#runChecks(current);
     if (this.#closed) return false;
     if (checks.failures.length > 0) {
-      const detail = `Machine verify criterion checks failed: ${checks.failures.join("; ")}`.slice(0, 4_000);
+      const detail = redactForPersistence(
+        `Machine verify criterion checks failed: ${checks.failures.join("; ")}`,
+        4_000,
+      );
       await this.#finalize(current, "failed", checks, detail, false);
     } else {
       let verifiedSha: string;
@@ -495,9 +517,16 @@ export class VerifyAttemptsCollaborator {
   }
 
   async #runChecks(current: AttemptContext): Promise<CheckOutcome> {
-    if (current.workspacePath === null) return Object.freeze({ results: Object.freeze([]), failures: Object.freeze([]) });
+    if (current.workspacePath === null) {
+      return Object.freeze({
+        results: Object.freeze([]),
+        failures: Object.freeze([]),
+        failureDetailsByIndex: Object.freeze([]),
+      });
+    }
     const results: Array<{ criterion: string; check: string; passed: boolean }> = [];
     const failures: string[] = [];
+    const failureDetailsByIndex: Array<string | null> = [];
     for (const check of current.criterionChecks) {
       if (this.#closed) break;
       let execution: CriterionCheckExecution;
@@ -506,10 +535,19 @@ export class VerifyAttemptsCollaborator {
       } catch (error) {
         execution = { passed: false, detail: errorDetail(error) };
       }
-      results.push({ criterion: check.criterion, check: check.check, passed: execution.passed });
-      if (!execution.passed) failures.push(`${check.criterion}: ${execution.detail}`);
+      const criterion = redactForPersistence(check.criterion);
+      const command = redactForPersistence(check.check);
+      const detail = redactForPersistence(execution.detail, 2_000);
+      results.push({ criterion, check: command, passed: execution.passed });
+      const failure = execution.passed ? null : `${criterion}: ${detail}`;
+      failureDetailsByIndex.push(failure);
+      if (failure !== null) failures.push(failure);
     }
-    return Object.freeze({ results: Object.freeze(results), failures: Object.freeze(failures) });
+    return Object.freeze({
+      results: Object.freeze(results),
+      failures: Object.freeze(failures),
+      failureDetailsByIndex: Object.freeze(failureDetailsByIndex),
+    });
   }
 
   async #finalizeFailure(
@@ -520,7 +558,11 @@ export class VerifyAttemptsCollaborator {
     await this.#finalize(
       current,
       state,
-      Object.freeze({ results: Object.freeze([]), failures: Object.freeze([detail]) }),
+      Object.freeze({
+        results: Object.freeze([]),
+        failures: Object.freeze([detail]),
+        failureDetailsByIndex: Object.freeze([]),
+      }),
       detail,
       false,
     );
@@ -535,6 +577,9 @@ export class VerifyAttemptsCollaborator {
     storedDetail = detail,
   ): Promise<void> {
     if (this.#closed) return;
+    const safeChecks = redactedCheckOutcome(checks);
+    const safeDetail = redactForPersistence(detail, 4_000);
+    const safeStoredDetail = redactForPersistence(storedDetail, 4_000);
     let settledNodes: readonly WorkNode[] = [];
     let settled = false;
     this.runtime.store.transaction(() => {
@@ -544,28 +589,32 @@ export class VerifyAttemptsCollaborator {
         WHERE verify_attempt_id=? AND state='running'
       `).run(
         state,
-        JSON.stringify(checks.results),
-        storedDetail.slice(0, 4_000),
+        JSON.stringify(safeChecks.results),
+        safeStoredDetail,
         exactNow(this.runtime.config.now),
         current.verifyAttemptId,
       );
       if (Number(update.changes) !== 1) return;
-      const criterionResults = current.criterionChecks.map((criterion, index) => Object.freeze({
-        criterion: criterion.criterion,
-        passed: checks.results[index]?.passed ?? false,
-        evidence: checks.results[index]?.passed === true
-          ? `Passed: ${criterion.check}`
-          : checks.failures.find((failure) => failure.startsWith(`${criterion.criterion}:`)) ?? `Failed: ${criterion.check}`,
-      }));
+      const criterionResults = current.criterionChecks.map((criterion, index) => {
+        const safeCriterion = redactForPersistence(criterion.criterion);
+        const safeCheck = redactForPersistence(criterion.check);
+        return Object.freeze({
+          criterion: safeCriterion,
+          passed: safeChecks.results[index]?.passed ?? false,
+          evidence: safeChecks.results[index]?.passed === true
+            ? `Passed: ${safeCheck}`
+            : safeChecks.failureDetailsByIndex[index] ?? `Failed: ${safeCheck}`,
+        });
+      });
       settledNodes = this.dependencies.settleInTransaction(
         current.nodeId,
         current.stage,
         passed,
         Object.freeze({
-          summary: detail.slice(0, 4_000),
-          evidence: Object.freeze([detail.slice(0, 4_000)]),
+          summary: safeDetail,
+          evidence: Object.freeze([safeDetail]),
           acceptanceCriteria: Object.freeze(criterionResults),
-          blockers: Object.freeze(passed ? [] : [...checks.failures]),
+          blockers: Object.freeze(passed ? [] : [...safeChecks.failures]),
         }),
       );
       settled = true;

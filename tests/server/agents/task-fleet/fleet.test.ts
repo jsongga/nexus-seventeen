@@ -148,7 +148,7 @@ test("a non-transient settle failure quarantines its held claim with a scrubbed 
   await nextClaim.promise;
   await eventually(() => reports.length === 2);
   assert.equal(quarantines.length, 1);
-  assert.match(quarantines[0] ?? "", /Bearer \[redacted\]/u);
+  assert.match(quarantines[0] ?? "", /\[redacted:bearer\]/u);
   assert.doesNotMatch(quarantines[0] ?? "", /sk-proj/u);
   assert.deepEqual(reports, [quarantines[0], null]);
   assert.equal(attempts, 3);

@@ -13,6 +13,7 @@ import {
   record,
   timestamp as contractTimestamp,
 } from "#shared/task-board-contract/validate";
+import { redactForPersistence } from "../../shared/redact.js";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
 import { POISONED_CLAIM_REASON, TaskBoardClaimResponseError } from "./types.js";
 import type {
@@ -699,9 +700,10 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     );
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
     const run = record(envelope.run, "Settled run");
+    const persistedResult = redactForPersistence(request.result);
     if (
       typeof envelope.duplicate !== "boolean" || run.runId !== request.claim.runId || run.agentId !== request.claim.agentId ||
-      run.status !== request.outcome || run.result !== request.result
+      run.status !== request.outcome || run.result !== persistedResult
     ) {
       throw new Error("Task-board settlement response does not match the run outcome");
     }

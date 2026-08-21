@@ -230,3 +230,49 @@ test("claim validation errors retain a minimally validated handle without journa
     },
   );
 });
+
+test("settlement accepts the server-redacted result while sending the original result for replay", async () => {
+  const startedAt = "2026-08-09T20:00:00.000Z";
+  const secret = `settle-${"s".repeat(48)}`;
+  const rawResult = `Agent stopped after Authorization: Bearer ${secret}`;
+  let sentBody: unknown;
+  const client = new HttpTaskBoardClient({
+    baseUrl: "http://127.0.0.1:4318",
+    token: TOKEN,
+    fetchImplementation: (async (_input, init = {}) => {
+      sentBody = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        run: {
+          runId: "run-redacted-settlement",
+          agentId: "engineer-one",
+          status: "failed",
+          result: "Agent stopped after Authorization: [redacted:bearer]",
+        },
+        duplicate: false,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+
+  await client.settleAgentRun({
+    claim: {
+      apiVersion: 1,
+      claimId: "claim-redacted-settlement",
+      runId: "run-redacted-settlement",
+      wakeupId: "wake-redacted-settlement",
+      projectId: "project-one",
+      agentId: "engineer-one",
+      taskId: "task-one",
+      reason: "human_assignment",
+      requestedMessageCursor: null,
+      claimedAt: startedAt,
+    },
+    idempotencyKey: "settle-redacted-result-0001",
+    outcome: "failed",
+    result: rawResult,
+  });
+
+  assert.equal((sentBody as { result?: unknown }).result, rawResult);
+});
