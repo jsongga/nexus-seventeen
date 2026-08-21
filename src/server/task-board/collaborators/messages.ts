@@ -20,6 +20,7 @@ import {
   wakeupFromRow,
 } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
+import { redactForPersistence } from "../../shared/redact.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
 
 export class MessagesCollaborator {
@@ -44,6 +45,7 @@ export class MessagesCollaborator {
   }
 
   askQuestion(taskId: string, agentId: string, request: CreateHumanQuestionRequest): HumanQuestion {
+    const persistedQuestion = redactForPersistence(request.question);
     const task = this.runtime.requireTask(taskId);
     if (task.assignedAgentId !== agentId) throw new TaskBoardError(403, "TASK_NOT_ASSIGNED", "Task is not assigned to this agent");
     const hash = sha256({ action: "ask_question", taskId, agentId, request });
@@ -62,11 +64,11 @@ export class MessagesCollaborator {
           question_id, project_id, task_id, agent_id, run_id, client_event_id, request_hash,
           question, status, answer, asked_at, answered_at, answered_by, version
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, NULL, NULL, 1)
-      `).run(questionId, task.projectId, taskId, agentId, request.runId, request.clientEventId, hash, request.question, now);
+      `).run(questionId, task.projectId, taskId, agentId, request.runId, request.clientEventId, hash, persistedQuestion, now);
       const settled = this.runtime.store.db.prepare(`
         UPDATE runs SET status = 'waiting_for_human', ended_at = ?, result = ?
         WHERE run_id = ? AND agent_id = ? AND status = 'active'
-      `).run(now, `Waiting for human answer: ${request.question}`, request.runId, agentId);
+      `).run(now, `Waiting for human answer: ${persistedQuestion}`, request.runId, agentId);
       if (Number(settled.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is no longer active");
       if (task.status !== "blocked") {
         const blocked = this.runtime.store.db.prepare(`
@@ -87,7 +89,7 @@ export class MessagesCollaborator {
         taskId,
         { type: "agent", id: agentId },
         now,
-        { category: "open_question", reason: request.question },
+        { category: "open_question", reason: persistedQuestion },
       );
       this.runtime.insertEvent(task.projectId, taskId, { type: "agent", id: agentId }, "human_question_opened", {
         questionId,
@@ -98,6 +100,7 @@ export class MessagesCollaborator {
   }
 
   answerQuestion(questionId: string, request: AnswerHumanQuestionRequest): { question: HumanQuestion; wakeup: Wakeup; duplicate: boolean } {
+    const persistedAnswer = redactForPersistence(request.answer);
     const currentRow = this.runtime.store.db.prepare("SELECT * FROM questions WHERE question_id = ?").get(questionId);
     if (!currentRow) throw new TaskBoardError(404, "QUESTION_NOT_FOUND", "Question was not found");
     const current = questionFromRow(currentRow);
@@ -106,7 +109,7 @@ export class MessagesCollaborator {
       throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot accept answers");
     }
     if (current.status === "answered") {
-      if (current.answer !== request.answer || current.version !== request.version + 1) {
+      if (current.answer !== persistedAnswer || current.version !== request.version + 1) {
         throw conflict("QUESTION_ALREADY_ANSWERED", "Question already has another answer");
       }
       const wake = this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE reason = 'human_answer' AND source_key = ?").get(`question:${questionId}`);
@@ -120,7 +123,7 @@ export class MessagesCollaborator {
       const update = this.runtime.store.db.prepare(`
         UPDATE questions SET status = 'answered', answer = ?, answered_at = ?, answered_by = ?, version = version + 1
         WHERE question_id = ? AND status = 'open' AND version = ?
-      `).run(request.answer, now, this.runtime.config.humanPrincipal, questionId, request.version);
+      `).run(persistedAnswer, now, this.runtime.config.humanPrincipal, questionId, request.version);
       if (Number(update.changes) !== 1) throw conflict("QUESTION_VERSION_CONFLICT", "Question version changed");
       const workItemId = this.runtime.workItemIdForTask(current.taskId);
       if (workItemId !== null) {
@@ -142,7 +145,7 @@ export class MessagesCollaborator {
         `question:${questionId}`,
         current.taskId,
         questionId,
-        `Human answered: ${request.answer}`,
+        `Human answered: ${persistedAnswer}`,
         now,
       );
       if (!this.runtime.workItemForTaskHasOpenQuestionsInTransaction(current.taskId)) {

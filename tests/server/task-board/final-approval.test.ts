@@ -345,6 +345,7 @@ async function settleMergeConflict(
   path: string,
   workItemId: string,
   version: number,
+  summary = "merge conflict in shared.txt",
 ): Promise<string> {
   const store = await TaskBoardStore.open(path);
   registerWorkItemTransitionStore(store);
@@ -360,12 +361,51 @@ async function settleMergeConflict(
     store.transaction(() => workflow.settlePipelineMergeInTransaction(
       workItemId,
       version,
-      { kind: "conflict", summary: "merge conflict in shared.txt" },
+      { kind: "conflict", summary },
       "human:alice",
     ));
     return String(store.db.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(workItemId)?.state);
   } finally {
     store.close();
+  }
+}
+
+function finalApprovalReturnPersistence(path: string, workItemId: string): Readonly<{
+  taskResult: string;
+  handoff: StageHandoff;
+  eventSummary: string;
+}> {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const row = db.prepare(`
+      SELECT task.result,handoff.payload_json
+      FROM task_events created
+      JOIN tasks task ON task.task_id=created.task_id
+      JOIN stage_handoffs handoff ON handoff.task_id=task.task_id
+      WHERE created.event_type='task_created'
+        AND json_extract(created.data_json,'$.workItemId')=?
+        AND task.status='failed'
+        AND handoff.stage='implementation'
+        AND handoff.outcome='failed'
+      ORDER BY created.created_at DESC, created.rowid DESC
+      LIMIT 1
+    `).get(workItemId);
+    assert.ok(row);
+    const event = db.prepare(`
+      SELECT summary
+      FROM project_events
+      WHERE event_type='final_approval_rejected'
+      ORDER BY sequence DESC
+      LIMIT 1
+    `).get();
+    assert.ok(event);
+    return Object.freeze({
+      taskResult: String(row.result),
+      handoff: JSON.parse(String(row.payload_json)) as StageHandoff,
+      eventSummary: String(event.summary),
+    });
+  } finally {
+    db.close();
   }
 }
 
@@ -975,6 +1015,26 @@ test("merge-conflict settlement with an active blocking findings loop returns to
   );
 });
 
+test("merge-conflict settlement redacts every durable return-to-implementation projection", async () => {
+  const fixture = await directFinalApprovalFixture("conflict-redaction");
+  const secret = `github_pat_${"m".repeat(48)}`;
+  const summary = `merge conflict in shared.txt exposed ${secret}`;
+  const expected = "merge conflict in shared.txt exposed [redacted:token]";
+
+  assert.equal(
+    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version, summary),
+    "implementing",
+  );
+
+  const persisted = finalApprovalReturnPersistence(fixture.path, fixture.workItemId);
+  assert.equal(persisted.taskResult, expected);
+  assert.equal(persisted.handoff.summary, expected);
+  assert.deepEqual(persisted.handoff.evidence, [expected]);
+  assert.deepEqual(persisted.handoff.blockers, [expected]);
+  assert.equal(persisted.eventSummary, expected);
+  assert.doesNotMatch(JSON.stringify(persisted), new RegExp(secret, "u"));
+});
+
 test("successful approval settlement persists the verified branch tip and merge commit", async () => {
   const fixture = await boardFixture();
   const repo = await repository();
@@ -1065,6 +1125,37 @@ test("final rejection persists a human-attributed gate action and task event", a
     } finally {
       db.close();
     }
+  } finally {
+    board.close();
+  }
+});
+
+test("final rejection redacts its task, handoff, gate-action, and event projections", async () => {
+  const fixture = await directFinalApprovalFixture("direct-reject-redaction");
+  const board = await TaskBoard.open(config(
+    fixture.path,
+    () => new Date("2026-08-19T17:00:00.000Z"),
+  ));
+  const secret = `final-reject-${"r".repeat(48)}`;
+  const note = `Re-run with Authorization: Bearer ${secret}.`;
+  const expected = "Re-run with Authorization: [redacted:bearer]";
+  try {
+    await board.rejectFinalApproval(fixture.workItemId, {
+      version: fixture.version,
+      note,
+    });
+
+    const persisted = finalApprovalReturnPersistence(fixture.path, fixture.workItemId);
+    assert.equal(persisted.taskResult, expected);
+    assert.equal(persisted.handoff.summary, expected);
+    assert.deepEqual(persisted.handoff.evidence, [expected]);
+    assert.deepEqual(persisted.handoff.blockers, [expected]);
+    assert.equal(persisted.eventSummary, expected);
+    assert.equal(
+      gateActions(fixture.path, fixture.workItemId).find((action) => action.gate === "final_reject")?.note,
+      expected,
+    );
+    assert.doesNotMatch(JSON.stringify(persisted), new RegExp(secret, "u"));
   } finally {
     board.close();
   }

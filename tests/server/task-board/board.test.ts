@@ -5486,6 +5486,72 @@ test("the newest human trigger supersedes older unclaimed wakes for the same tas
   }
 });
 
+test("human question and answer prose is redacted across every durable projection", async () => {
+  const fixture = await boardFixture();
+  const questionSecret = `question-${"q".repeat(48)}`;
+  const answerSecret = `github_pat_${"a".repeat(48)}`;
+  const rawQuestion = `Can I use Authorization: Bearer ${questionSecret}?`;
+  const expectedQuestion = "Can I use Authorization: [redacted:bearer]?";
+  const rawAnswer = `Use ${answerSecret} only in the ephemeral process.`;
+  const expectedAnswer = "Use [redacted:token] only in the ephemeral process.";
+  try {
+    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Ask a credential-bearing planning question safely.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "question-answer-redaction-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-question-answer-redaction-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    const question = fixture.board.askQuestion(created.planningTaskId, fixture.manager.agentId, {
+      clientEventId: "question-answer-redaction-0001",
+      question: rawQuestion,
+      runId: claim.run.runId,
+    });
+    assert.equal(question.question, expectedQuestion);
+    assert.deepEqual(latestParkRecord(fixture.path, created.workItemId), {
+      category: "open_question",
+      reason: expectedQuestion,
+    });
+
+    const answered = fixture.board.answerQuestion(question.questionId, {
+      answer: rawAnswer,
+      version: question.version,
+    });
+    assert.equal(answered.question.answer, expectedAnswer);
+    const replay = fixture.board.answerQuestion(question.questionId, {
+      answer: rawAnswer,
+      version: question.version,
+    });
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.question.answer, expectedAnswer);
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const persistedQuestion = inspected.prepare("SELECT question,answer FROM questions WHERE question_id=?")
+        .get(question.questionId);
+      assert.equal(persistedQuestion?.question, expectedQuestion);
+      assert.equal(persistedQuestion?.answer, expectedAnswer);
+      assert.equal(
+        inspected.prepare("SELECT result FROM runs WHERE run_id=?").get(claim.run.runId)?.result,
+        `Waiting for human answer: ${expectedQuestion}`,
+      );
+      assert.equal(
+        inspected.prepare("SELECT detail FROM wakeups WHERE wakeup_id=?").get(answered.wakeup.wakeupId)?.detail,
+        `Human answered: ${expectedAnswer}`,
+      );
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("asking a question atomically releases the run and only the human answer wakes the agent", async () => {
   const fixture = await boardFixture();
   try {
@@ -5510,11 +5576,13 @@ test("asking a question atomically releases the run and only the human answer wa
       messageCursor: null,
     }), null);
 
+    const benignAnswer = "Yes. Preserve it and verify duplicate-submit behavior.";
     const answered = fixture.board.answerQuestion(question.questionId, {
-      answer: "Yes. Preserve it and verify duplicate-submit behavior.",
+      answer: benignAnswer,
       version: question.version,
     });
     assert.equal(answered.duplicate, false);
+    assert.equal(answered.question.answer, benignAnswer);
     assert.equal(answered.wakeup.reason, "human_answer");
     const redundantResume = fixture.board.resumeAgent(fixture.engineer.agentId, {
       reason: "Resume after recording the answer.",

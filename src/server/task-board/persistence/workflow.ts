@@ -999,6 +999,7 @@ export class TransparentWorkflow {
     targetState: WorkItemState | ((nodeId: string, currentState: WorkItemState) => WorkItemState),
     gateAction: "final_reject" | null,
   ): readonly WorkNode[] {
+    const persistedNote = redactForPersistence(request.note);
     const row = this.db.prepare(`
       SELECT
         item.state,item.version,plan.plan_revision_id,plan.project_id,node.node_id,node.title,node.objective,
@@ -1047,7 +1048,7 @@ export class TransparentWorkflow {
       orderKey,
       now,
       now,
-      request.note,
+      persistedNote,
       now,
       now,
     );
@@ -1069,11 +1070,11 @@ export class TransparentWorkflow {
       taskId,
       stage: "implementation",
       outcome: "failed",
-      summary: request.note,
-      evidence: Object.freeze([request.note]),
+      summary: persistedNote,
+      evidence: Object.freeze([persistedNote]),
       artifactIds: Object.freeze([]),
       acceptanceCriteria: Object.freeze([]),
-      blockers: Object.freeze([request.note]),
+      blockers: Object.freeze([persistedNote]),
       recommendedReturnStage: "implementation",
       createdAt: now,
     });
@@ -1113,10 +1114,10 @@ export class TransparentWorkflow {
         verifiedSha: null,
         mergeSha: null,
         refId: null,
-        note: request.note,
+        note: persistedNote,
       });
     }
-    this.event(projectId, nodeId, taskId, "final_approval_rejected", request.note, now);
+    this.event(projectId, nodeId, taskId, "final_approval_rejected", persistedNote, now);
     return Object.freeze(this.nodesForIds([nodeId]));
   }
 
