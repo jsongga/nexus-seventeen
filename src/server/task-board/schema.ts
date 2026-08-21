@@ -108,6 +108,20 @@ export function parseClaim(value: unknown): ClaimRunRequest { return adapt(() =>
 export function parseSettle(value: unknown): SettleRunRequest { return adapt(() => parseBoardSettle(value)); }
 export function parseIdempotencyKey(value: string | string[] | undefined): string { return adapt(() => parseBoardIdempotencyKey(value)); }
 
+export function parseNotificationRead(value: unknown): Readonly<{ version: number }> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Notification read request must be an object");
+  }
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).length !== 1 || !("version" in item)) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Notification read request has unexpected or missing fields");
+  }
+  if (!Number.isSafeInteger(item.version) || (item.version as number) < 1) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "version is invalid");
+  }
+  return Object.freeze({ version: item.version as number });
+}
+
 export function parseLaneError(value: unknown): Readonly<{ detail: string | null }> {
   const detail = adapt(() => parseBoardLaneErrorDetail(value, MAX_SAFE_ERROR_DETAIL_CHARACTERS));
   return Object.freeze({ detail: detail === null ? null : safeErrorDetail(detail, "Task fleet lane failed") });

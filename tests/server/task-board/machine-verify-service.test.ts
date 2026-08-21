@@ -3,40 +3,7 @@ import test from "node:test";
 import { TaskBoard, createTaskBoardService } from "#server/task-board";
 import { HUMAN_TOKEN, databasePath } from "./helpers.js";
 
-test("the reconciler timer invokes the public machine-verify sweep", async (t) => {
-  const originalSetInterval = globalThis.setInterval;
-  const originalClearInterval = globalThis.clearInterval;
-  let intervalCallback: (() => void) | undefined;
-  const fakeTimer = { unref: () => undefined } as unknown as NodeJS.Timeout;
-  globalThis.setInterval = ((callback: () => void) => {
-    intervalCallback = callback;
-    return fakeTimer;
-  }) as typeof setInterval;
-  globalThis.clearInterval = (() => undefined) as typeof clearInterval;
-  const sweep = t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => 0);
-  let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
-  try {
-    service = await createTaskBoardService({
-      dbPath: await databasePath(),
-      humanToken: HUMAN_TOKEN,
-      humanPrincipal: "human:alice",
-      port: 0,
-      reconcileIntervalSeconds: 1,
-    });
-    assert.ok(intervalCallback);
-
-    intervalCallback();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(sweep.mock.callCount(), 1);
-  } finally {
-    await service?.close();
-    globalThis.setInterval = originalSetInterval;
-    globalThis.clearInterval = originalClearInterval;
-  }
-});
-
-test("machine verify keeps its 60-second sweep when stale-run reconciliation is disabled", async (t) => {
+test("the reconciler timers invoke the public machine-verify and park-lifecycle sweeps", async (t) => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const intervals: Array<{ callback: () => void; delay: number | undefined }> = [];
@@ -46,7 +13,72 @@ test("machine verify keeps its 60-second sweep when stale-run reconciliation is 
     return fakeTimer;
   }) as typeof setInterval;
   globalThis.clearInterval = (() => undefined) as typeof clearInterval;
-  const sweep = t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => 0);
+  const verifySweep = t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => 0);
+  const parkSweep = t.mock.method(TaskBoard.prototype, "sweepParkLifecycle", () => ({
+    notified: 0,
+    autoAbandoned: 0,
+  }));
+  let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
+  try {
+    service = await createTaskBoardService({
+      dbPath: await databasePath(),
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      reconcileIntervalSeconds: 1,
+    });
+    assert.equal(intervals.length, 3);
+    assert.equal(intervals.every((interval) => interval.delay === 1_000), true);
+
+    for (const interval of intervals) interval.callback();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(verifySweep.mock.callCount(), 1);
+    assert.equal(parkSweep.mock.callCount(), 1);
+  } finally {
+    await service?.close();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
+test("machine verify and park lifecycle keep 60-second sweeps when stale-run reconciliation is disabled", async (t) => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const intervals: Array<{
+    callback: () => void;
+    delay: number | undefined;
+    timer: NodeJS.Timeout;
+    unrefed: boolean;
+    cleared: boolean;
+  }> = [];
+  globalThis.setInterval = ((callback: () => void, delay?: number) => {
+    const interval = {
+      callback,
+      delay,
+      timer: undefined as unknown as NodeJS.Timeout,
+      unrefed: false,
+      cleared: false,
+    };
+    interval.timer = {
+      unref: () => {
+        interval.unrefed = true;
+        return interval.timer;
+      },
+    } as NodeJS.Timeout;
+    intervals.push(interval);
+    return interval.timer;
+  }) as typeof setInterval;
+  globalThis.clearInterval = ((timer: NodeJS.Timeout) => {
+    const interval = intervals.find((candidate) => candidate.timer === timer);
+    assert.ok(interval);
+    interval.cleared = true;
+  }) as typeof clearInterval;
+  const verifySweep = t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => 0);
+  const parkSweep = t.mock.method(TaskBoard.prototype, "sweepParkLifecycle", () => ({
+    notified: 0,
+    autoAbandoned: 0,
+  }));
   const reconcile = t.mock.method(TaskBoard.prototype, "reconcileStaleRuns", () => 0);
   let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
   try {
@@ -59,13 +91,57 @@ test("machine verify keeps its 60-second sweep when stale-run reconciliation is 
     });
     const reconcileCallsAfterOpen = reconcile.mock.callCount();
 
-    assert.equal(intervals.length, 1);
-    assert.equal(intervals[0]?.delay, 60_000);
-    intervals[0]?.callback();
+    assert.equal(intervals.length, 2);
+    assert.equal(intervals.every((interval) => interval.delay === 60_000), true);
+    assert.equal(intervals.every((interval) => interval.unrefed), true);
+    for (const interval of intervals) interval.callback();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    assert.equal(sweep.mock.callCount(), 1);
+    assert.equal(verifySweep.mock.callCount(), 1);
+    assert.equal(parkSweep.mock.callCount(), 1);
     assert.equal(reconcile.mock.callCount(), reconcileCallsAfterOpen);
+    await service.close();
+    service = undefined;
+    assert.equal(intervals.every((interval) => interval.cleared), true);
+  } finally {
+    await service?.close();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
+test("park lifecycle timer failures are logged without escaping the timer callback", async (t) => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const intervals: Array<() => void> = [];
+  const fakeTimer = { unref: () => undefined } as unknown as NodeJS.Timeout;
+  globalThis.setInterval = ((callback: () => void) => {
+    intervals.push(callback);
+    return fakeTimer;
+  }) as typeof setInterval;
+  globalThis.clearInterval = (() => undefined) as typeof clearInterval;
+  const failure = new Error("expected park lifecycle failure");
+  t.mock.method(TaskBoard.prototype, "sweepParkLifecycle", () => {
+    throw failure;
+  });
+  const logged = t.mock.method(console, "error", () => undefined);
+  let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
+  try {
+    service = await createTaskBoardService({
+      dbPath: await databasePath(),
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      reconcileIntervalSeconds: 0,
+    });
+    assert.equal(intervals.length, 2);
+    for (const callback of intervals) assert.doesNotThrow(callback);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] park-lifecycle sweep failed"
+        && call.arguments[1] === failure),
+      true,
+    );
   } finally {
     await service?.close();
     globalThis.setInterval = originalSetInterval;

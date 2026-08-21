@@ -11,6 +11,7 @@ import { TaskBoard, type TaskBoardDependencies } from "./board.js";
 import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions } from "./config.js";
 import { TaskBoardError } from "./errors.js";
 import { listDirectories, listProjectRoots } from "./host.js";
+import { exactNow } from "./persistence/timestamps.js";
 import {
   applyCors,
   bearerToken,
@@ -39,6 +40,7 @@ import {
   parseIdempotencyKey,
   parseInterrupt,
   parseLaneError,
+  parseNotificationRead,
   parseDocumentPenUpdate,
   parseDocumentUpdate,
   parseQuestion,
@@ -153,6 +155,7 @@ export class TaskBoardService {
   readonly #closingAbort = new AbortController();
   #reconcileTimer: NodeJS.Timeout | undefined;
   #verifyTimer: NodeJS.Timeout | undefined;
+  #parkLifecycleTimer: NodeJS.Timeout | undefined;
   #started = false;
   #closing = false;
 
@@ -186,6 +189,14 @@ export class TaskBoardService {
       });
     }, verifyIntervalSeconds * 1_000);
     this.#verifyTimer.unref();
+    this.#parkLifecycleTimer = setInterval(() => {
+      try {
+        this.#board.sweepParkLifecycle(exactNow(config.now));
+      } catch (error) {
+        console.error("[task-board] park-lifecycle sweep failed", error);
+      }
+    }, verifyIntervalSeconds * 1_000);
+    this.#parkLifecycleTimer.unref();
   }
 
   static async create(
@@ -212,6 +223,24 @@ export class TaskBoardService {
     if (url.pathname === "/health" && request.method === "GET") {
       noQuery(url);
       sendJson(response, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/v1/notifications" && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, this.#board.listNotifications());
+      return;
+    }
+    const notificationReadMatch = /^\/v1\/notifications\/([^/]+)\/read$/u.exec(url.pathname);
+    if (notificationReadMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const { version } = parseNotificationRead(await readJsonBody(request, this.config.maxBodyBytes));
+      const notification = this.#board.markNotificationRead(
+        parseRouteIdentifier(notificationReadMatch[1], "notificationId"),
+        version,
+      );
+      sendJson(response, 200, { notification });
       return;
     }
     if (url.pathname === "/v1/automation-configuration" && request.method === "GET") {
@@ -848,6 +877,10 @@ export class TaskBoardService {
     if (this.#verifyTimer !== undefined) {
       clearInterval(this.#verifyTimer);
       this.#verifyTimer = undefined;
+    }
+    if (this.#parkLifecycleTimer !== undefined) {
+      clearInterval(this.#parkLifecycleTimer);
+      this.#parkLifecycleTimer = undefined;
     }
     this.#closingAbort.abort();
     for (const stream of [...this.#documentStreams]) {

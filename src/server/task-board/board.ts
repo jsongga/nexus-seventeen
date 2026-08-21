@@ -9,6 +9,7 @@ import {
   type AnswerHumanQuestionRequest,
   type BacklogTaskRequest,
   type BacklogTaskResponse,
+  type BoardNotification,
   type BoardSnapshot,
   type BoardTask,
   type ClaimRunRequest,
@@ -63,6 +64,15 @@ import { AutomationCollaborator } from "./collaborators/automation.js";
 import { DocumentsCollaborator } from "./collaborators/documents.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
 import {
+  NotificationsCollaborator,
+  type NotificationDeliveryAdapter,
+  type NotificationList,
+} from "./collaborators/notifications.js";
+import {
+  ParkLifecycleCollaborator,
+  type ParkLifecycleSweepResult,
+} from "./collaborators/park-lifecycle.js";
+import {
   ProjectsCollaborator,
   type PipelineMergeExecutor,
 } from "./collaborators/projects.js";
@@ -90,6 +100,7 @@ import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 export interface TaskBoardDependencies {
   readonly mergePipeline?: PipelineMergeExecutor;
   readonly git?: GitRunner;
+  readonly notificationDelivery?: NotificationDeliveryAdapter;
 }
 
 export class TaskBoard {
@@ -98,6 +109,8 @@ export class TaskBoard {
   readonly #automation: AutomationCollaborator;
   readonly #documents: DocumentsCollaborator;
   readonly #messages: MessagesCollaborator;
+  readonly #notifications: NotificationsCollaborator;
+  readonly #parkLifecycle: ParkLifecycleCollaborator;
   readonly #projects: ProjectsCollaborator;
   readonly #runs: RunsCollaborator;
   readonly #tasks: TasksCollaborator;
@@ -105,6 +118,8 @@ export class TaskBoard {
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore, dependencies: TaskBoardDependencies) {
     this.#runtime = new TaskBoardRuntime(config, store);
+    this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
+    this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications);
     this.#automation = new AutomationCollaborator(this.#runtime);
     this.#tasks = new TasksCollaborator(this.#runtime);
     this.#projects = new ProjectsCollaborator(
@@ -175,6 +190,18 @@ export class TaskBoard {
 
   sweepVerifyAttempts(): Promise<number> {
     return this.#projects.sweepVerifyAttempts();
+  }
+
+  sweepParkLifecycle(now: string): ParkLifecycleSweepResult {
+    return this.#parkLifecycle.sweepParkLifecycle(now);
+  }
+
+  listNotifications(): NotificationList {
+    return this.#notifications.listNotifications();
+  }
+
+  markNotificationRead(notificationId: string, version: number): BoardNotification {
+    return this.#notifications.markNotificationRead(notificationId, version);
   }
 
   createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {

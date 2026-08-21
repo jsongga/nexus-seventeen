@@ -25,6 +25,8 @@ export interface TaskBoardOptions {
   readonly maxBodyBytes?: number;
   readonly heartbeatTimeoutSeconds?: number;
   readonly reconcileIntervalSeconds?: number;
+  readonly parkNotifySeconds?: number;
+  readonly parkAutoAbandonSeconds?: number;
   readonly now?: () => Date;
   readonly artifactRoot?: string;
   readonly verifyWorkspaceRoot?: string;
@@ -41,6 +43,8 @@ export interface TaskBoardConfig {
   readonly maxBodyBytes: number;
   readonly heartbeatTimeoutSeconds: number;
   readonly reconcileIntervalSeconds: number;
+  readonly parkNotifySeconds: number;
+  readonly parkAutoAbandonSeconds: number;
   readonly now: () => Date;
   readonly artifactRoot: string;
   readonly verifyWorkspaceRoot: string;
@@ -143,6 +147,37 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   if (heartbeatTimeoutSeconds !== 0 && heartbeatTimeoutSeconds < 60) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "heartbeatTimeoutSeconds is outside its safe range");
   }
+  const parkNotifySeconds = boundedInteger(
+    options.parkNotifySeconds,
+    86_400,
+    0,
+    MAX_TIMER_SECONDS,
+    "parkNotifySeconds",
+  );
+  if (parkNotifySeconds !== 0 && parkNotifySeconds < 60) {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "parkNotifySeconds is outside its safe range");
+  }
+  const parkAutoAbandonSeconds = boundedInteger(
+    options.parkAutoAbandonSeconds,
+    604_800,
+    0,
+    MAX_TIMER_SECONDS,
+    "parkAutoAbandonSeconds",
+  );
+  if (parkAutoAbandonSeconds !== 0 && parkAutoAbandonSeconds < 60) {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "parkAutoAbandonSeconds is outside its safe range");
+  }
+  if (
+    parkNotifySeconds !== 0
+    && parkAutoAbandonSeconds !== 0
+    && parkAutoAbandonSeconds < parkNotifySeconds
+  ) {
+    throw new TaskBoardError(
+      500,
+      "INVALID_CONFIGURATION",
+      "parkAutoAbandonSeconds must be at least parkNotifySeconds when both are enabled",
+    );
+  }
   return Object.freeze({
     dbPath,
     humanToken,
@@ -160,6 +195,8 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
       MAX_TIMER_SECONDS,
       "reconcileIntervalSeconds",
     ),
+    parkNotifySeconds,
+    parkAutoAbandonSeconds,
     now: options.now ?? (() => new Date()),
     artifactRoot,
     verifyWorkspaceRoot,
