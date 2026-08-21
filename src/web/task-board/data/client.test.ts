@@ -279,7 +279,7 @@ const run = {
   taskId: 'task-one',
   status: 'active',
   startedAt: '2026-07-19T10:15:00.000Z',
-  heartbeatAt: null,
+  heartbeatAt: '2026-07-19T10:24:00.000Z',
   endedAt: null,
   result: null,
   runtime: null,
@@ -433,7 +433,13 @@ describe('task-board protocol projection', () => {
     });
     expect(snapshot.tasks[0]).toMatchObject({ id: 'task-one', status: 'waiting_for_human', expectedAgentMinutes: 30 });
     expect(snapshot.questions[0]).toMatchObject({ id: 'question-one', version: 1 });
-    expect(snapshot.runs[0]).toMatchObject({ id: 'run-one', taskId: 'task-one', wakeReason: 'human_assignment' });
+    expect(snapshot.runs[0]).toMatchObject({
+      id: 'run-one',
+      taskId: 'task-one',
+      wakeReason: 'human_assignment',
+      heartbeatAt: '2026-07-19T10:24:00.000Z',
+      heartbeatAtMs: Date.parse('2026-07-19T10:24:00.000Z'),
+    });
     expect(snapshot.documents[0]).toMatchObject({ id: 'document-release-notes', contentVersion: 2, penEpoch: 1, sequence: 4 });
     expect(snapshot.revision).toBe(7);
   });

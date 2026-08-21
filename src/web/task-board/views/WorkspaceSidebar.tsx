@@ -15,6 +15,7 @@ export type BoardPage =
   | { kind: 'tasks'; taskId?: string }
   | { kind: 'intake'; workItemId: string }
   | { kind: 'automation' }
+  | { kind: 'ledgers' }
   | { kind: 'documents'; documentId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'agent'; agentId: string };
@@ -54,6 +55,7 @@ function RailContent({
   onNavigate,
   onAddProject,
   canAddProject,
+  unreadNotifications,
 }: {
   snapshot: BoardSnapshot | null;
   page: BoardPage;
@@ -61,8 +63,11 @@ function RailContent({
   onNavigate: (page: BoardPage) => void;
   onAddProject: () => void;
   canAddProject: boolean;
+  unreadNotifications: number;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
+  const parkedCount = snapshot?.workItems.filter((workItem) => workItem.state === 'parked').length ?? 0;
+  const finalApprovalCount = snapshot?.workItems.filter((workItem) => workItem.state === 'final_approval').length ?? 0;
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const navRow = 'group flex min-h-11 w-full items-center border-l-2 border-transparent px-3 text-left text-[12px] font-medium transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9';
   const activeRow = 'border-l-taupe bg-surface text-ink';
@@ -92,12 +97,41 @@ function RailContent({
             onClick={() => onNavigate({ kind: 'tasks' })}
           >
             <span className="min-w-0 flex-1">Task List</span>
-            {attentionCount > 0 ? (
-              <span className={cn(
-                'ml-2 inline-flex min-w-5 items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
-                pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
-              )}>{attentionCount}</span>
-            ) : null}
+            <span className="ml-2 flex shrink-0 flex-wrap justify-end gap-1">
+              {parkedCount > 0 ? (
+                <span className={cn(
+                  'inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
+                  pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
+                )}>{parkedCount} parked</span>
+              ) : null}
+              {finalApprovalCount > 0 ? (
+                <span
+                  aria-label={`${finalApprovalCount} ${finalApprovalCount === 1 ? 'work item awaits' : 'work items await'} final approval`}
+                  className={cn(
+                    'inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
+                    pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
+                  )}
+                >{finalApprovalCount} final</span>
+              ) : null}
+              {unreadNotifications > 0 ? (
+                <span
+                  aria-label={`${unreadNotifications} unread ${unreadNotifications === 1 ? 'notification' : 'notifications'}`}
+                  className={cn(
+                    'inline-flex min-w-5 items-center justify-center rounded-[99px] border border-caution/30 px-1.5 py-0.5 font-mono text-[9px] leading-4',
+                    pageIs(page, 'tasks') ? 'bg-caution-soft text-caution' : 'bg-canvas text-caution',
+                  )}
+                >{unreadNotifications}</span>
+              ) : null}
+              {attentionCount > 0 ? (
+                <span
+                  aria-label={`${attentionCount} board ${attentionCount === 1 ? 'task needs' : 'tasks need'} human action`}
+                  className={cn(
+                    'inline-flex min-w-5 items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
+                    pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
+                  )}
+                >{attentionCount}</span>
+              ) : null}
+            </span>
           </button>
           <button
             type="button"
@@ -106,6 +140,14 @@ function RailContent({
             onClick={() => onNavigate({ kind: 'automation' })}
           >
             <span>Automation</span>
+          </button>
+          <button
+            type="button"
+            aria-current={pageIs(page, 'ledgers') ? 'page' : undefined}
+            className={cn(navRow, pageIs(page, 'ledgers') ? activeRow : inactiveRow)}
+            onClick={() => onNavigate({ kind: 'ledgers' })}
+          >
+            <span>Ledgers</span>
           </button>
           <button
             type="button"
@@ -221,6 +263,7 @@ export function WorkspaceFrame({
   onNavigate,
   onAddProject,
   canAddProject,
+  unreadNotifications = 0,
   children,
 }: {
   snapshot: BoardSnapshot | null;
@@ -231,6 +274,7 @@ export function WorkspaceFrame({
   onNavigate: (page: BoardPage) => void;
   onAddProject: () => void;
   canAddProject: boolean;
+  unreadNotifications?: number;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
@@ -298,7 +342,7 @@ export function WorkspaceFrame({
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} />
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} />
       </aside>
 
       {drawerOpen ? (
@@ -306,7 +350,7 @@ export function WorkspaceFrame({
           <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
             <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} />
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} />
           </aside>
         </div>
       ) : null}

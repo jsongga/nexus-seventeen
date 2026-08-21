@@ -33,6 +33,7 @@ function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
     case 'tasks':
       return segmentCount === 1 || segmentCount === 2;
     case 'automation':
+    case 'ledgers':
       return segmentCount === 1;
     case 'documents':
       return segmentCount === 1 || segmentCount === 2;
@@ -75,6 +76,8 @@ export function pageToHash(page: BoardPage): string {
       return pageHashWithId('intake', page.workItemId);
     case 'automation':
       return '#/automation';
+    case 'ledgers':
+      return '#/ledgers';
     case 'documents':
       return page.documentId ? pageHashWithId('documents', page.documentId) : '#/documents';
     case 'project':
@@ -96,6 +99,8 @@ export function hashToPage(hash: string): BoardPage {
       return id === undefined ? tasksPage : { kind: 'tasks', taskId: id };
     case 'automation':
       return { kind: 'automation' };
+    case 'ledgers':
+      return { kind: 'ledgers' };
     case 'documents':
       if (id === null) return tasksPage;
       return id === undefined ? { kind: 'documents' } : { kind: 'documents', documentId: id };

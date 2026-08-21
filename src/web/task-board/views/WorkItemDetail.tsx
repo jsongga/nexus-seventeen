@@ -14,6 +14,7 @@ import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from '@shared/
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import { fieldsAreDirty } from '../../components/dialog-discard';
 import type { TaskBoardClient } from '../data/client';
+import type { RawWorkItemAudit } from '../data/parse';
 import {
   deriveWorkItemDetailAffordances,
   nodesForPlan,
@@ -23,6 +24,7 @@ import {
   proposedPlanForWorkItem,
   type DetailedWorkflowPlan,
 } from '../model/work-item-detail';
+import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
 import {
   prettyStatus,
   unknownStateLabel,
@@ -40,12 +42,14 @@ import type {
   BoardQuestion,
   BoardTask,
   BoardWorkItem,
+  BoardWorkItemTransition,
   ProjectWorkflow,
   WorkflowNode,
 } from '../types';
 
 interface WorkItemDetailProps {
   workItem: BoardWorkItem;
+  snapshotRevision: number;
   projectName: string | null;
   planningTask: BoardTask | null;
   openQuestion: BoardQuestion | null;
@@ -61,55 +65,109 @@ interface WorkItemDetailProps {
   onArchive: () => Promise<ActionResult>;
 }
 
-function StatusTimeline({ workItem }: { workItem: BoardWorkItem }) {
-  const planningSide = workItem.state === 'planning' || workItem.state === 'designing';
-  const executionSide = workItem.state === 'implementing'
-    || workItem.state === 'verifying'
-    || workItem.state === 'reviewing'
-    || workItem.state === 'fixing';
-  const position = workItem.state === 'unrecognized'
-    ? -1
-    : workItem.state === 'queued'
-      ? 0
-      : workItem.endedAt !== null
-        ? 3
-        : workItem.state === 'plan_approval' || workItem.state === 'final_approval' || workItem.state === 'parked'
-          ? 2
-          : planningSide || executionSide
-            ? 1
-            : -1;
-  const checkpoint = workItem.state === 'parked'
-    ? 'Parked'
-    : workItem.state === 'plan_approval'
-      ? 'Plan review'
-      : workItem.state === 'final_approval'
-        ? 'Final review'
-        : 'Human checkpoint';
-  const terminalLabel = workItem.endedAt === null ? 'Terminal' : workItemStateLabel[workItem.state];
-  const steps = ['Queued', 'In progress', checkpoint, terminalLabel];
+const auditDateTime = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+function AuditTimestamp({ value }: { value: string }) {
+  const parsed = new Date(value);
+  return <time dateTime={value}>{Number.isNaN(parsed.valueOf()) ? value : auditDateTime.format(parsed)}</time>;
+}
+
+export function StatusTimeline({
+  workItem,
+  transitions,
+  state = 'ready',
+  nowMs = Date.now(),
+}: {
+  workItem: BoardWorkItem;
+  transitions: readonly BoardWorkItemTransition[];
+  state?: 'loading' | 'ready' | 'error';
+  nowMs?: number;
+}) {
+  const ordered = [...transitions].sort((left, right) => left.createdAtMs - right.createdAtMs);
+  const firstTransition = ordered[0];
+  const timelineEndMs = workItem.endedAtMs ?? nowMs;
+  const total = firstTransition === undefined
+    ? null
+    : formatElapsedDuration(elapsedMilliseconds(firstTransition.createdAtMs, timelineEndMs));
 
   return (
     <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="work-item-timeline-heading">
-      <h3 id="work-item-timeline-heading" className="text-xs font-semibold text-ink">Status timeline</h3>
-      <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-0">
-        {steps.map((label, index) => {
-          const complete = workItem.state !== 'unrecognized'
-            && (index < position || (index === 3 && workItem.endedAt !== null));
-          const current = index === position && workItem.endedAt === null;
-          return (
-            <li key={`${index}-${label}`} className="relative flex items-center gap-3 sm:block sm:pr-3">
-              {index > 0 ? <span className={cn('absolute right-[calc(100%-9px)] top-2 hidden h-px w-[calc(100%-18px)] sm:block', complete || current ? 'bg-taupe' : 'bg-line')} aria-hidden="true" /> : null}
-              <span className={cn(
-                'relative z-[1] flex size-[18px] shrink-0 items-center justify-center rounded-full border bg-card',
-                complete ? 'border-taupe bg-taupe text-white' : current ? 'border-taupe text-taupe' : 'border-line text-muted',
-              )} aria-hidden="true">
-                {complete ? <Check size={10} strokeWidth={2.5} /> : <span className={cn('size-1.5 rounded-full', current ? 'bg-taupe' : 'bg-line')} />}
-              </span>
-              <span className={cn('text-xs capitalize sm:mt-2 sm:block', current || complete ? 'text-ink' : 'text-muted')}>{label}</span>
-            </li>
-          );
-        })}
-      </ol>
+      <div className="flex items-center justify-between gap-3">
+        <h3 id="work-item-timeline-heading" className="text-xs font-semibold text-ink">Status timeline</h3>
+        {total === null ? null : <span className="font-mono text-[11px] text-muted">Total {total}</span>}
+      </div>
+      {state === 'loading' ? (
+        <p className="mt-3 text-xs text-muted" role="status">Loading transition history…</p>
+      ) : state === 'error' ? (
+        <p className="mt-3 text-xs text-muted">Transition history is unavailable.</p>
+      ) : ordered.length === 0 ? (
+        <p className="mt-3 text-xs text-muted">No state transitions were recorded.</p>
+      ) : (
+        <ol className="mt-3 divide-y divide-line rounded-md border border-line">
+          {ordered.map((transition, index) => {
+            const next = ordered[index + 1];
+            const endMs = next?.createdAtMs ?? timelineEndMs;
+            const elapsed = formatElapsedDuration(elapsedMilliseconds(transition.createdAtMs, endMs));
+            return (
+              <li key={`${transition.createdAt}-${index}`} className="grid gap-2 px-3 py-3 text-xs sm:grid-cols-[minmax(120px,.7fr)_minmax(160px,1fr)_auto] sm:items-center">
+                <div>
+                  <p className="font-medium text-ink">{workItemStateLabel[transition.toState]}</p>
+                  <p className="mt-0.5 text-[11px] text-muted"><AuditTimestamp value={transition.createdAt} /></p>
+                </div>
+                <p className="break-words text-muted"><span className="capitalize">{transition.actorType}</span> · {transition.actorId}</p>
+                <p className="font-mono text-[11px] text-ink">{elapsed}</p>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function AuditArtifactReferences({ action }: { action: RawWorkItemAudit['gateActions'][number] }) {
+  const references = [
+    action.planRevisionId === null ? null : <span key="plan">Plan <code className="font-mono text-[11px]">{action.planRevisionId}</code></span>,
+    action.verifiedSha === null ? null : <span key="verified">Verified <code className="font-mono text-[11px]">{action.verifiedSha.slice(0, 10)}</code></span>,
+    action.mergeSha === null ? null : <span key="merge">Merge <code className="font-mono text-[11px]">{action.mergeSha.slice(0, 10)}</code></span>,
+    action.refId === null ? null : <span key="ref">Ref <code className="font-mono text-[11px]">{action.refId}</code></span>,
+  ].filter((reference) => reference !== null);
+  return references.length === 0 ? <span className="text-muted">—</span> : <div className="flex min-w-48 flex-col gap-1 text-ink">{references}</div>;
+}
+
+export function AuditSection({ audit }: { audit: RawWorkItemAudit }) {
+  return (
+    <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="work-item-audit-heading">
+      <h3 id="work-item-audit-heading" className="text-xs font-semibold text-ink">Audit</h3>
+      {audit.gateActions.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">No gate actions were recorded.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-collapse text-left text-xs">
+            <thead className="bg-muted-surface text-[11px] text-muted">
+              <tr>{['Gate', 'Actor', 'Artifact references', 'Note', 'Timestamp'].map((heading) => <th key={heading} scope="col" className="whitespace-nowrap border-b border-line px-3 py-2 font-medium">{heading}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {audit.gateActions.map((action) => (
+                <tr key={action.gateActionId} className="align-top">
+                  <td className="whitespace-nowrap px-3 py-3 font-medium capitalize text-ink">{prettyStatus(action.gate)}</td>
+                  <td className="min-w-36 break-words px-3 py-3 text-ink">{action.actorId}</td>
+                  <td className="px-3 py-3"><AuditArtifactReferences action={action} /></td>
+                  <td className="min-w-52 whitespace-pre-wrap break-words px-3 py-3 leading-5 text-ink">{action.note ?? '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted"><AuditTimestamp value={action.createdAt} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -609,6 +667,7 @@ export function FinalRejectionForm({
 
 export function WorkItemDetail({
   workItem,
+  snapshotRevision,
   projectName,
   planningTask,
   openQuestion,
@@ -639,7 +698,10 @@ export function WorkItemDetail({
   const [pipelineSummaryState, setPipelineSummaryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
   const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
+  const [audit, setAudit] = useState<RawWorkItemAudit | null>(null);
+  const [auditState, setAuditState] = useState<'loading' | 'ready' | 'error'>('loading');
   const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
+  const auditWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
   const actionContexts = {
@@ -659,6 +721,9 @@ export function WorkItemDetail({
   const renderedPipelineSummary = pipelineSummaryBelongsToWorkItem ? pipelineSummary : null;
   const renderedPipelineSummaryState = pipelineSummaryBelongsToWorkItem ? pipelineSummaryState : 'loading';
   const renderedPipelineSummaryError = pipelineSummaryBelongsToWorkItem ? pipelineSummaryError : null;
+  const auditBelongsToWorkItem = auditWorkItemIdRef.current === workItem.id;
+  const renderedAudit = auditBelongsToWorkItem ? audit : null;
+  const renderedAuditState = auditBelongsToWorkItem ? auditState : 'loading';
 
   useEffect(() => {
     setAnswer('');
@@ -678,9 +743,29 @@ export function WorkItemDetail({
   }, [workItem.id]);
 
   useEffect(() => {
+    auditWorkItemIdRef.current = workItem.id;
+    setAudit(null);
+    setAuditState('loading');
+  }, [workItem.id]);
+
+  useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     if (window.matchMedia('(max-width: 1279px)').matches) detailHeadingRef.current?.focus();
   }, [workItem.id]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setAuditState(renderedAudit === null ? 'loading' : 'ready');
+    void client.getWorkItemAudit(workItem.id, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
+      setAudit(next);
+      setAuditState('ready');
+    }).catch(() => {
+      if (controller.signal.aborted) return;
+      setAuditState('error');
+    });
+    return () => controller.abort();
+  }, [client, snapshotRevision, workItem.id, workItem.version]);
 
   useEffect(() => {
     if (workItem.state !== 'plan_approval' || workItem.resolvedProjectId === null) {
@@ -856,7 +941,7 @@ export function WorkItemDetail({
           </dl>
         </header>
 
-        <StatusTimeline workItem={workItem} />
+        <StatusTimeline workItem={workItem} transitions={renderedAudit?.transitions ?? []} state={renderedAuditState} />
 
         <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="original-request-heading">
           <h3 id="original-request-heading" className="text-xs font-semibold text-ink">Original request</h3>
@@ -1003,6 +1088,8 @@ export function WorkItemDetail({
             )}
           </section>
         ) : null}
+
+        {renderedAuditState === 'ready' && renderedAudit !== null ? <AuditSection audit={renderedAudit} /> : null}
 
         <InlineActionErrors
           className={actionErrors.errors.some((entry) => entry.context === answerContext || entry.context === confirmPlanContext) ? 'border-b border-line px-4 py-3 sm:px-5' : undefined}

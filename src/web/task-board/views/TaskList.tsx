@@ -2,11 +2,13 @@ import { Activity, Check, ChevronRight, CircleAlert, HelpCircle } from 'lucide-r
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Button, Card, Pill, Toast, cn } from '../../components/ui';
 import type { ActionError } from '../model/action-errors';
+import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
 import {
   prettyStatus,
   taskStatusTone,
   unknownStateLabel,
   workItemStateTone,
+  workItemStageLabel,
   workItemStatusLabel,
 } from '../model/work-item-labels';
 import type {
@@ -79,12 +81,14 @@ export function WorkItemRow({
   selected,
   onSelect,
   buttonRef,
+  nowMs = Date.now(),
 }: {
   workItem: BoardWorkItem;
   projects: BoardSnapshot['projects'];
   selected: boolean;
   onSelect: () => void;
   buttonRef: (element: HTMLButtonElement | null) => void;
+  nowMs?: number;
 }) {
   const projectId = workItem.resolvedProjectId
     ?? (workItem.projectTarget.mode === 'explicit' ? workItem.projectTarget.projectId : null);
@@ -93,6 +97,12 @@ export function WorkItemRow({
     : projects.find((project) => project.id === projectId)?.name ?? projectId;
   const displayRequest = workItem.refinedObjective?.trim() || workItem.originalRequest;
   const rowTitle = taskTitleFromPrompt(displayRequest);
+  const stateAge = workItem.stateSinceMs === undefined || workItem.stateSinceMs === null
+    ? null
+    : formatElapsedDuration(elapsedMilliseconds(workItem.stateSinceMs, nowMs));
+  const heartbeatAge = workItem.heartbeatAtMs === undefined || workItem.heartbeatAtMs === null
+    ? null
+    : elapsedMilliseconds(workItem.heartbeatAtMs, nowMs);
   return (
     <article aria-label={`Work item: ${rowTitle}`} className="last:[&>button]:border-b-0">
       <button
@@ -116,6 +126,19 @@ export function WorkItemRow({
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
             <Pill tone={workItemStateTone[workItem.state]} dot>{workItemStatusLabel(workItem)}</Pill>
+            {workItem.currentStage === null ? null : <Pill>{workItemStageLabel[workItem.currentStage]}</Pill>}
+            {stateAge === null ? null : <span>in {prettyStatus(workItem.state)} for {stateAge}</span>}
+            {workItem.reviewRound === undefined || workItem.reviewRound === null ? null : <Pill tone="purple">round {workItem.reviewRound}</Pill>}
+            {heartbeatAge === null ? null : (
+              <span
+                className="inline-flex items-center gap-1.5"
+                aria-label={heartbeatAge < 90_000 ? 'Heartbeat current' : 'Heartbeat stale'}
+                title={heartbeatAge < 90_000 ? 'Heartbeat less than 90 seconds old' : 'Heartbeat at least 90 seconds old'}
+              >
+                <span className={cn('size-2 rounded-full', heartbeatAge < 90_000 ? 'bg-success-fill' : 'bg-caution')} aria-hidden="true" />
+                <span className="sr-only">{heartbeatAge < 90_000 ? 'Current heartbeat' : 'Stale heartbeat'}</span>
+              </span>
+            )}
             <span>{projectName}</span>
           </div>
         </div>

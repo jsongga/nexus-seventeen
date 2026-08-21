@@ -22,6 +22,7 @@ const tasklessRun: RawRun = {
   startedAt: '2026-08-09T10:01:00.000Z',
   startedAtMs: Date.parse('2026-08-09T10:01:00.000Z'),
   heartbeatAt: null,
+  heartbeatAtMs: null,
   endedAt: '2026-08-09T10:02:00.000Z',
   endedAtMs: Date.parse('2026-08-09T10:02:00.000Z'),
   runtime: null,
@@ -66,7 +67,7 @@ function normalizeRuns(events: RawEvent[], runs: RawRun[] = [tasklessRun]) {
 describe('run/event projection', () => {
   it('retains a run whose task id is null when no event supplies one', () => {
     expect(normalizeRuns([])).toEqual([
-      expect.objectContaining({ id: tasklessRun.runId, taskId: null, wakeReason: null }),
+      expect.objectContaining({ id: tasklessRun.runId, taskId: null, wakeReason: null, heartbeatAt: null, heartbeatAtMs: null }),
     ]);
   });
 

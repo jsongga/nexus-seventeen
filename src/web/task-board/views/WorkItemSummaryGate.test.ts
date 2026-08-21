@@ -2,6 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PipelineSummary } from '@shared/task-board-contract';
 import type { TaskBoardClient } from '../data/client';
+import type { RawWorkItemAudit } from '../data/parse';
 import type { BoardWorkItem } from '../types';
 
 const hookHarness = vi.hoisted(() => ({
@@ -60,7 +61,7 @@ vi.mock('react', async (importOriginal) => {
   };
 });
 
-import { PipelineSummaryDetails, WorkItemDetail } from './WorkItemDetail';
+import { AuditSection, PipelineSummaryDetails, StatusTimeline, WorkItemDetail } from './WorkItemDetail';
 
 const timestamp = '2026-08-19T12:00:00.000Z';
 const summary: PipelineSummary = {
@@ -77,6 +78,25 @@ const summary: PipelineSummary = {
   findings: [],
   designRecord: null,
 };
+
+function audit(note: string): RawWorkItemAudit {
+  return {
+    transitions: [],
+    gateActions: [{
+      gateActionId: `gate-${note}`,
+      workItemId: 'work-item-reviewing',
+      gate: 'question_answer',
+      actorId: 'human:operator',
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note,
+      createdAt: timestamp,
+      createdAtMs: Date.parse(timestamp),
+    }],
+  };
+}
 
 function reviewingWorkItem(version = 4): BoardWorkItem {
   return {
@@ -113,13 +133,14 @@ function resetHookHarness() {
   hookHarness.effects.length = 0;
 }
 
-function renderDetail(workItem: BoardWorkItem, client: TaskBoardClient): ReactNode {
+function renderDetail(workItem: BoardWorkItem, client: TaskBoardClient, snapshotRevision = 1): ReactNode {
   hookHarness.stateCursor = 0;
   hookHarness.refCursor = 0;
   hookHarness.effectCursor = 0;
   const noop = async () => ({ ok: true as const });
   return WorkItemDetail({
     workItem,
+    snapshotRevision,
     projectName: 'Project one',
     planningTask: null,
     openQuestion: null,
@@ -166,7 +187,8 @@ describe('pipeline summary fetch gate', () => {
 
   it('fetches the pipeline summary while the work item is reviewing', () => {
     const getPipelineSummary = vi.fn().mockResolvedValue(summary);
-    const client = { getPipelineSummary } as unknown as TaskBoardClient;
+    const getWorkItemAudit = vi.fn().mockResolvedValue({ gateActions: [], transitions: [] });
+    const client = { getPipelineSummary, getWorkItemAudit } as unknown as TaskBoardClient;
 
     renderDetail(reviewingWorkItem(), client);
 
@@ -180,7 +202,8 @@ describe('pipeline summary fetch gate', () => {
     const getPipelineSummary = vi.fn()
       .mockResolvedValueOnce(summary)
       .mockImplementationOnce(() => refresh);
-    const client = { getPipelineSummary } as unknown as TaskBoardClient;
+    const getWorkItemAudit = vi.fn().mockResolvedValue({ gateActions: [], transitions: [] });
+    const client = { getPipelineSummary, getWorkItemAudit } as unknown as TaskBoardClient;
 
     renderDetail(reviewingWorkItem(4), client);
     await Promise.resolve();
@@ -198,5 +221,73 @@ describe('pipeline summary fetch gate', () => {
 
     resolveRefresh?.(summary);
     await refresh;
+  });
+});
+
+describe('work-item audit refresh', () => {
+  beforeEach(() => {
+    resetHookHarness();
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
+  });
+
+  afterEach(() => {
+    resetHookHarness();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the rendered audit visible while a version-bump refetch is in flight', async () => {
+    const initialAudit = audit('initial');
+    const refresh = new Promise<RawWorkItemAudit>(() => undefined);
+    const getWorkItemAudit = vi.fn()
+      .mockResolvedValueOnce(initialAudit)
+      .mockImplementationOnce(() => refresh);
+    const client = {
+      getPipelineSummary: vi.fn().mockResolvedValue(summary),
+      getWorkItemAudit,
+    } as unknown as TaskBoardClient;
+
+    renderDetail(reviewingWorkItem(4), client, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+    const loaded = renderDetail(reviewingWorkItem(4), client, 1);
+    expect(findElement(loaded, AuditSection)?.props).toMatchObject({ audit: initialAudit });
+
+    renderDetail(reviewingWorkItem(5), client, 1);
+    const refreshing = renderDetail(reviewingWorkItem(5), client, 1);
+
+    expect(getWorkItemAudit).toHaveBeenCalledTimes(2);
+    expect(findElement(refreshing, AuditSection)?.props).toMatchObject({ audit: initialAudit });
+    expect(findElement(refreshing, StatusTimeline)?.props).toMatchObject({ state: 'ready' });
+  });
+
+  it('refetches on snapshot revision and updates versionless gate actions without clearing the prior audit', async () => {
+    const initialAudit = audit('before-answer');
+    const updatedAudit = audit('question-answered');
+    let resolveRefresh!: (value: RawWorkItemAudit) => void;
+    const refresh = new Promise<RawWorkItemAudit>((resolve) => { resolveRefresh = resolve; });
+    const getWorkItemAudit = vi.fn()
+      .mockResolvedValueOnce(initialAudit)
+      .mockImplementationOnce(() => refresh);
+    const client = {
+      getPipelineSummary: vi.fn().mockResolvedValue(summary),
+      getWorkItemAudit,
+    } as unknown as TaskBoardClient;
+
+    renderDetail(reviewingWorkItem(4), client, 20);
+    await Promise.resolve();
+    await Promise.resolve();
+    renderDetail(reviewingWorkItem(4), client, 20);
+
+    renderDetail(reviewingWorkItem(4), client, 21);
+    const refreshing = renderDetail(reviewingWorkItem(4), client, 21);
+    expect(getWorkItemAudit).toHaveBeenCalledTimes(2);
+    expect(findElement(refreshing, AuditSection)?.props).toMatchObject({ audit: initialAudit });
+    expect(findElement(refreshing, StatusTimeline)?.props).toMatchObject({ state: 'ready' });
+
+    resolveRefresh(updatedAudit);
+    await refresh;
+    await Promise.resolve();
+    const refreshed = renderDetail(reviewingWorkItem(4), client, 21);
+    expect(findElement(refreshed, AuditSection)?.props).toMatchObject({ audit: updatedAudit });
   });
 });

@@ -37,15 +37,19 @@ import {
   parseAutomationConfiguration,
   parseAutomationStage,
   parseAgent,
+  parseBoardNotification,
   parseDocument,
+  parseFindingsLedger,
   parseInterrupt,
   parseMessage,
+  parseParksLedger,
   parseProjectArtifact,
   parsePipelineSummary,
   parseProjectWorkflow,
   parseProject,
   parseRawBoard,
   parseWorkItem,
+  parseWorkItemAudit,
   parseWorkItemDetail,
   parseWorkflowEvent,
   record,
@@ -53,8 +57,12 @@ import {
   validateAutomationParts,
   validateAutomationPayloadSize,
   type JsonRecord,
+  type RawBoardNotification,
+  type RawFindingsLedger,
   type RawMessage,
+  type RawParksLedger,
   type RawTask,
+  type RawWorkItemAudit,
   type RawWorkItem,
 } from './parse';
 import {
@@ -282,9 +290,19 @@ export interface InterruptRunResult {
   readonly runId: string | null;
 }
 
+export interface BoardNotifications {
+  unread: RawBoardNotification[];
+  recentRead: RawBoardNotification[];
+}
+
 export interface TaskBoardClient {
   readonly documentClientId: string;
   getSnapshot(signal?: AbortSignal, requestMarker?: 'foreground' | 'poll' | 'mutation'): Promise<BoardSnapshot>;
+  getFindingsLedger(projectId?: string, signal?: AbortSignal): Promise<RawFindingsLedger>;
+  getParksLedger(signal?: AbortSignal): Promise<RawParksLedger>;
+  getNotifications(signal?: AbortSignal): Promise<BoardNotifications>;
+  markNotificationRead(notificationId: string, version: number): Promise<RawBoardNotification>;
+  getWorkItemAudit(workItemId: string, signal?: AbortSignal): Promise<RawWorkItemAudit>;
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   getDocument(documentId: string, signal?: AbortSignal): Promise<BoardDocument>;
@@ -556,6 +574,43 @@ export function createTaskBoardClient(options: {
 
   return {
     documentClientId,
+    async getFindingsLedger(projectId, signal) {
+      const query = projectId === undefined ? '' : `?projectId=${encodeURIComponent(projectId)}`;
+      return parseFindingsLedger(
+        await json(`/v1/ledgers/findings${query}`, { signal }),
+        'findings ledger response',
+      );
+    },
+    async getParksLedger(signal) {
+      return parseParksLedger(
+        await json('/v1/ledgers/parks', { signal }),
+        'parks ledger response',
+      );
+    },
+    async getNotifications(signal) {
+      const envelope = record(await json('/v1/notifications', { signal }), 'notifications response');
+      const unread = array(envelope.unread, 'notifications response.unread', parseBoardNotification);
+      const recentRead = array(envelope.recentRead, 'notifications response.recentRead', parseBoardNotification);
+      if (unread.length > 100) throw new Error('notifications response.unread cannot contain more than 100 records');
+      if (recentRead.length > 50) throw new Error('notifications response.recentRead cannot contain more than 50 records');
+      return { unread, recentRead };
+    },
+    async markNotificationRead(notificationId, version) {
+      const envelope = record(
+        await json(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
+          method: 'POST',
+          body: JSON.stringify({ version: integer(version, 'notification read.version', 1) }),
+        }),
+        'notification read response',
+      );
+      return parseBoardNotification(envelope.notification, 'notification read response.notification');
+    },
+    async getWorkItemAudit(workItemId, signal) {
+      return parseWorkItemAudit(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/audit`, { signal }),
+        'work item audit response',
+      );
+    },
     async getPipelineSummary(workItemId, signal) {
       return parsePipelineSummary(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/pipeline-summary`, { signal }),

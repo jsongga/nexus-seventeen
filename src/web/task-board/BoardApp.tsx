@@ -1,15 +1,17 @@
-import { ArrowLeft, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Bell, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Button, Card, cn } from '../components/ui';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
-import { BoardApiError, createTaskBoardClient, type TaskBoardClient } from './data/client';
+import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from './data/client';
+import type { RawBoardNotification } from './data/parse';
 import { DocumentsPage } from './views/DocumentsPage';
 import { missingRouteFallback } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
 import { WorkspaceFrame } from './views/WorkspaceSidebar';
 import { WorkItemDetail } from './views/WorkItemDetail';
+import { LedgersPage } from './views/LedgersPage';
 import { CreateDialogs, type DialogName } from './views/CreateDialogs';
 import { ActionErrorToasts, EmptyState, FormError, RemovedTaskDetail, TaskRow, WorkItemRow } from './views/TaskList';
 import { TaskDetail, taskRunsByCreatedAt } from './views/TaskDetail';
@@ -18,7 +20,101 @@ import { isExplicitPointOfContact, selectPointOfContact } from './model/workspac
 import { BOARD_REFRESH_DEADLINE_MS, BoardRefreshCoordinator, SnapshotCommitCoordinator, refreshTimedOut, type BoardRefreshKind } from './model/refresh-coordinator';
 import { createTaskDetailDraftState, taskDetailDraftReducer } from './model/task-detail-drafts';
 import { signInFailure } from './model/sign-in-failure';
+import { NotificationLoadCoordinator } from './model/notification-load';
 import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput } from './types';
+
+const notificationDateTime = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+export function NotificationsBlock({
+  notifications,
+  loading,
+  error,
+  markingId,
+  onMarkRead,
+  onOpenWorkItem,
+  onRetry,
+}: {
+  notifications: BoardNotifications | null;
+  loading: boolean;
+  error: string | null;
+  markingId: string | null;
+  onMarkRead: (notification: RawBoardNotification) => void;
+  onOpenWorkItem: (workItemId: string) => void;
+  onRetry: () => void;
+}) {
+  const unread = notifications?.unread ?? [];
+  return (
+    <section aria-labelledby="notifications-heading" aria-live="polite">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Bell size={15} className="text-muted" aria-hidden="true" />
+          <h2 id="notifications-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">Notifications</h2>
+        </div>
+        <span className="text-xs text-muted">{unread.length} unread</span>
+      </div>
+      {error === null ? null : (
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+          <span>{error}</span>
+          <Button size="sm" onClick={onRetry}>Retry</Button>
+        </div>
+      )}
+      {loading && notifications === null ? (
+        <div className="flex min-h-20 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted" role="status">
+          <RefreshCw size={15} className="animate-spin" /> Loading notifications…
+        </div>
+      ) : unread.length === 0 ? (
+        <p className="rounded-md border border-line bg-muted-surface px-3.5 py-4 text-sm text-muted">No unread notifications.</p>
+      ) : (
+        <ol className="divide-y divide-line rounded-md border border-line bg-card">
+          {unread.map((notification) => {
+            const parsed = new Date(notification.createdAt);
+            return (
+              <li key={notification.notificationId} className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  {notification.workItemId === null ? (
+                    <p className="text-sm leading-6 text-ink">{notification.summary}</p>
+                  ) : (
+                    <button type="button" className="text-left text-sm leading-6 text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" onClick={() => onOpenWorkItem(notification.workItemId!)}>
+                      {notification.summary}
+                    </button>
+                  )}
+                  <p className="mt-1 text-[11px] text-muted">
+                    {notification.kind.replaceAll('_', ' ')} · <time dateTime={notification.createdAt}>{Number.isNaN(parsed.valueOf()) ? notification.createdAt : notificationDateTime.format(parsed)}</time>
+                  </p>
+                </div>
+                <Button size="sm" disabled={markingId !== null} onClick={() => onMarkRead(notification)}>
+                  {markingId === notification.notificationId ? 'Marking…' : 'Mark read'}
+                </Button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+export async function markNotificationReadAndRefresh(
+  client: TaskBoardClient,
+  notification: Pick<RawBoardNotification, 'notificationId' | 'version'>,
+): Promise<Readonly<{ notifications: BoardNotifications | null; refreshError: string | null }>> {
+  await client.markNotificationRead(notification.notificationId, notification.version);
+  try {
+    return { notifications: await client.getNotifications(), refreshError: null };
+  } catch (caught) {
+    return {
+      notifications: null,
+      refreshError: caught instanceof Error
+        ? `Marked read, but notifications could not refresh. ${caught.message}`
+        : 'Marked read, but notifications could not refresh.',
+    };
+  }
+}
 
 export async function runWorkItemDetailMutation(
   operation: () => Promise<unknown>,
@@ -60,6 +156,12 @@ export function BoardApp() {
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
   const [signInExpired, setSignInExpired] = useState(false);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
+  const [notifications, setNotifications] = useState<BoardNotifications | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
+  const [notificationsAttempt, setNotificationsAttempt] = useState(0);
+  const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
   const observedTaskIds = useRef(new Set<string>());
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -72,6 +174,25 @@ export function BoardApp() {
   const workItemFormDirty = useRef(false);
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
 
+  const loadNotifications = useCallback(async (token: number, afterMarkRead = false) => {
+    setNotificationsLoading(true);
+    try {
+      const next = await client.getNotifications();
+      if (!notificationLoads.isLatest(token)) return;
+      setNotifications(next);
+      setNotificationsError(null);
+    } catch (caught) {
+      if (!notificationLoads.isLatest(token)) return;
+      setNotificationsError(afterMarkRead
+        ? caught instanceof Error
+          ? `Marked read, but notifications could not refresh. ${caught.message}`
+          : 'Marked read, but notifications could not refresh.'
+        : caught instanceof Error ? caught.message : 'Notifications could not be loaded.');
+    } finally {
+      if (notificationLoads.isLatest(token)) setNotificationsLoading(false);
+    }
+  }, [client, notificationLoads]);
+
   const commitSnapshot = useCallback((next: BoardSnapshot, signal: AbortSignal): Promise<boolean> => {
     return snapshotCommits.commit(next, signal, setSnapshot);
   }, [snapshotCommits]);
@@ -83,6 +204,11 @@ export function BoardApp() {
   useLayoutEffect(() => () => {
     snapshotCommits.drain();
   }, [snapshotCommits]);
+
+  useEffect(() => {
+    notificationLoads.activate();
+    return () => notificationLoads.deactivate();
+  }, [notificationLoads]);
 
   const performRefresh = useCallback(async (kind: BoardRefreshKind, signal: AbortSignal): Promise<boolean> => {
     try {
@@ -139,6 +265,11 @@ export function BoardApp() {
     const fallback = missingRouteFallback(page, snapshot, observedTaskIds.current);
     if (fallback !== null) navigate(fallback, 'replace');
   }, [navigate, page, snapshot]);
+
+  useEffect(() => {
+    if (snapshot === null) return;
+    void notificationLoads.snapshotArrived(snapshot, (token) => loadNotifications(token));
+  }, [loadNotifications, notificationLoads, notificationsAttempt, snapshot]);
 
   const mutate = useCallback(async (context: string, operation: () => Promise<unknown>): Promise<ActionResult> => {
     dispatchErrorPipeline({ type: 'action-started', context });
@@ -277,6 +408,28 @@ export function BoardApp() {
     navigate({ kind: 'intake', workItemId });
   }
 
+  async function markNotificationRead(notification: RawBoardNotification) {
+    if (markingNotificationId !== null) return;
+    const previous = notifications;
+    notificationLoads.invalidate();
+    setMarkingNotificationId(notification.notificationId);
+    setNotificationsLoading(false);
+    setNotificationsError(null);
+    setNotifications((current) => current === null ? current : {
+      ...current,
+      unread: current.unread.filter((entry) => entry.notificationId !== notification.notificationId),
+    });
+    try {
+      await client.markNotificationRead(notification.notificationId, notification.version);
+      await notificationLoads.refresh((token) => loadNotifications(token, true));
+    } catch (caught) {
+      setNotifications(previous);
+      setNotificationsError(caught instanceof Error ? caught.message : 'The notification could not be marked read.');
+    } finally {
+      setMarkingNotificationId(null);
+    }
+  }
+
   function closeWorkItem() {
     navigate({ kind: 'tasks' }, 'replace');
   }
@@ -337,6 +490,8 @@ export function BoardApp() {
     content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh('mutation')} />;
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorState} />;
+  } else if (page.kind === 'ledgers') {
+    content = <LedgersPage client={client} connected={connected} snapshotRevision={snapshot.revision} />;
   } else if (page.kind === 'project' && pageProject) {
     content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
   } else if (page.kind === 'agent' && pageAgent) {
@@ -362,6 +517,15 @@ export function BoardApp() {
           <div className={cn('grid items-start gap-8', anyDetailOpen ? 'xl:grid-cols-[minmax(360px,.92fr)_minmax(420px,1.08fr)] xl:gap-10' : 'max-w-5xl')}>
             <div className={cn('min-w-0', anyDetailOpen ? 'hidden xl:block' : 'block')}>
               <div className="space-y-8">
+                <NotificationsBlock
+                  notifications={notifications}
+                  loading={notificationsLoading}
+                  error={notificationsError}
+                  markingId={markingNotificationId}
+                  onMarkRead={(notification) => { void markNotificationRead(notification); }}
+                  onOpenWorkItem={openWorkItem}
+                  onRetry={() => setNotificationsAttempt((value) => value + 1)}
+                />
                 {allWorkItems.length > 0 ? (
                   <section aria-labelledby="automation-intake-heading">
                     <div className="mb-2 flex items-center justify-between gap-3">
@@ -436,6 +600,7 @@ export function BoardApp() {
               {selectedWorkItem ? <WorkItemDetail
                 key={selectedWorkItem.id}
                 workItem={selectedWorkItem}
+                snapshotRevision={snapshot.revision}
                 projectName={snapshot.projects.find((project) => project.id === selectedWorkItem.resolvedProjectId)?.name ?? null}
                 planningTask={snapshot.tasks.find((task) => task.id === selectedWorkItem.planningTaskId) ?? null}
                 openQuestion={snapshot.questions.find((question) => question.taskId === selectedWorkItem.planningTaskId && question.status === 'open') ?? null}
@@ -465,16 +630,18 @@ export function BoardApp() {
     ? `project-${page.projectId}`
     : page.kind === 'agent'
       ? `agent-${page.agentId}`
-    : page.kind === 'intake'
+      : page.kind === 'intake'
         ? 'tasks'
-      : page.kind === 'documents'
-        ? 'documents'
-        : page.kind === 'automation'
-          ? 'automation'
-          : 'tasks';
+        : page.kind === 'documents'
+          ? 'documents'
+          : page.kind === 'automation'
+            ? 'automation'
+            : page.kind === 'ledgers'
+              ? 'ledgers'
+              : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0}>
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       {errorPipeline.actionStatus ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><div role="status" aria-live="polite" className="rounded-md border border-success-fill/50 bg-success-soft px-4 py-3 text-sm text-success">{errorPipeline.actionStatus}</div></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>

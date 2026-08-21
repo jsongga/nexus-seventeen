@@ -131,6 +131,11 @@ export interface BoardWorkItem {
   planningTaskId: string | null;
   state: WorkItemState;
   currentStage: WorkItemStage | null;
+  stateSince?: string | null;
+  stateSinceMs?: number | null;
+  reviewRound?: number | null;
+  heartbeatAt?: string | null;
+  heartbeatAtMs?: number | null;
   createdBy: string;
   version: number;
   createdAt: string;
@@ -275,6 +280,8 @@ export interface BoardRun {
   wakeReason: WakeReason | null;
   startedAt: string | null;
   startedAtMs: number | null;
+  heartbeatAt: string | null;
+  heartbeatAtMs: number | null;
   endedAt: string | null;
   endedAtMs: number | null;
   interruptRequestedAt: string | null;

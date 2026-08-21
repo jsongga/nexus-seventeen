@@ -101,9 +101,10 @@ export const maximumRawWorkItems = 10_000;
 
 type WithMs<T, K extends string> = T & Record<`${K}Ms`, number>;
 type WithNullableMs<T, K extends string> = T & Record<`${K}Ms`, number | null>;
+type WithOptionalNullableMs<T, K extends string> = T & Partial<Record<`${K}Ms`, number | null>>;
 type WithoutApi<T> = Omit<T, 'apiVersion'>;
 export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updatedAt'>;
-export type RawWorkItem = WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>;
+export type RawWorkItem = WithOptionalNullableMs<WithOptionalNullableMs<WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>, 'stateSince'>, 'heartbeatAt'>;
 export type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
 export type RawWorkItemDetail = RawWorkItem & Readonly<{ transitions: RawWorkItemTransition[] }>;
 export type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
@@ -111,6 +112,17 @@ export interface RawWorkItemAudit {
   gateActions: RawGateAction[];
   transitions: RawWorkItemTransition[];
 }
+export type RawReviewFinding = WithMs<TolerantReviewFindingEntity, 'createdAt'>;
+export interface RawFindingsLedger extends Omit<TolerantFindingsLedger, 'recent'> {
+  recent: Array<RawReviewFinding & Readonly<{ workItemId: string }>>;
+}
+export type RawParkRecord = WithNullableMs<WithMs<TolerantParkRecord, 'parkedAt'>, 'resolvedAt'>;
+export type RawLedgerParkRecord = RawParkRecord & Readonly<{ workItemTitle: string }>;
+export interface RawParksLedger extends Omit<TolerantParksLedger, 'open' | 'resolved'> {
+  open: RawLedgerParkRecord[];
+  resolved: RawLedgerParkRecord[];
+}
+export type RawBoardNotification = WithNullableMs<WithMs<TolerantBoardNotification, 'createdAt'>, 'readAt'>;
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
 export type RawDocumentPenHolder = WithMs<DocumentPenHolder, 'acquiredAt'>;
 export type RawDocumentSummary = WithMs<WithMs<Omit<WithoutApi<DocumentSummary>, 'penHolder'> & { penHolder: RawDocumentPenHolder | null }, 'createdAt'>, 'updatedAt'>;
@@ -120,7 +132,7 @@ export type RawTask = WithMs<WithMs<WithNullableMs<WithNullableMs<WithNullableMs
   Omit<WithoutApi<TolerantTaskEntity>, 'phases' | 'workspaceRefs'> & { phases: RawTaskPhase[]; workspaceRefs: string[] }, 'estimateRecordedAt'>, 'startedAt'>,
   'expectedCompletedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
 export type RawQuestion = WithMs<WithNullableMs<Omit<WithoutApi<HumanQuestion>, 'runId' | 'answeredBy'>, 'answeredAt'>, 'askedAt'>;
-export type RawRun = WithMs<WithNullableMs<Omit<WithoutApi<AgentRun>, 'claimId' | 'wakeupId' | 'result'>, 'endedAt'>, 'startedAt'>;
+export type RawRun = WithNullableMs<WithMs<WithNullableMs<Omit<WithoutApi<AgentRun>, 'claimId' | 'wakeupId' | 'result'>, 'endedAt'>, 'startedAt'>, 'heartbeatAt'>;
 export type RawInterrupt = WithMs<Pick<AgentInterrupt, 'sequence' | 'agentId' | 'runId' | 'requestedAt'>, 'requestedAt'>;
 export type RawEvent = WithMs<WithoutApi<TaskEvent>, 'createdAt'>;
 export type RawMessage = WithMs<Omit<WithoutApi<TaskMessage>, 'runId'>, 'createdAt'>;
@@ -184,7 +196,15 @@ export function parseProject(value: unknown, path: string): RawProject {
   return projectProject(parseProjectEntity(value, path, loose));
 }
 function projectWorkItem(item: TolerantWorkItemEntity): RawWorkItem {
-  return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt), endedAtMs: nullableMs(item.endedAt), archivedAtMs: nullableMs(item.archivedAt) };
+  return {
+    ...withoutApiVersion(item),
+    ...(item.stateSince === undefined ? {} : { stateSinceMs: nullableMs(item.stateSince) }),
+    ...(item.heartbeatAt === undefined ? {} : { heartbeatAtMs: nullableMs(item.heartbeatAt) }),
+    createdAtMs: ms(item.createdAt),
+    updatedAtMs: ms(item.updatedAt),
+    endedAtMs: nullableMs(item.endedAt),
+    archivedAtMs: nullableMs(item.archivedAt),
+  };
 }
 export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   return projectWorkItem(parseWorkItemEntity(value, path, loose));
@@ -259,7 +279,12 @@ export function parseQuestion(value: unknown, path: string): RawQuestion {
 }
 function projectRun(value: AgentRun): RawRun {
   const { apiVersion: _apiVersion, claimId: _claimId, wakeupId: _wakeupId, result: _result, ...item } = value;
-  return { ...item, startedAtMs: ms(item.startedAt), endedAtMs: nullableMs(item.endedAt) };
+  return {
+    ...item,
+    startedAtMs: ms(item.startedAt),
+    heartbeatAtMs: nullableMs(item.heartbeatAt),
+    endedAtMs: nullableMs(item.endedAt),
+  };
 }
 export function parseRun(value: unknown, path: string): RawRun {
   return projectRun(parseRunEntity(value, path, loose));
@@ -284,20 +309,49 @@ export function parseMessage(value: unknown, path: string): RawMessage {
   return projectMessage(parseMessageEntity(value, path, loose));
 }
 
-export function parseParkRecord(value: unknown, path: string): TolerantParkRecord {
-  return parseParkRecordContract(value, path, loose);
+function projectParkRecord(item: TolerantParkRecord): RawParkRecord {
+  return {
+    ...item,
+    parkedAtMs: ms(item.parkedAt),
+    resolvedAtMs: nullableMs(item.resolvedAt),
+  };
 }
 
-export function parseFindingsLedger(value: unknown, path: string): TolerantFindingsLedger {
-  return parseFindingsLedgerContract(value, path, loose);
+export function parseParkRecord(value: unknown, path: string): RawParkRecord {
+  return projectParkRecord(parseParkRecordContract(value, path, loose));
 }
 
-export function parseParksLedger(value: unknown, path: string): TolerantParksLedger {
-  return parseParksLedgerContract(value, path, loose);
+function projectReviewFinding(item: TolerantReviewFindingEntity): RawReviewFinding {
+  return { ...item, createdAtMs: ms(item.createdAt) };
 }
 
-export function parseBoardNotification(value: unknown, path: string): TolerantBoardNotification {
-  return parseBoardNotificationContract(value, path, loose);
+export function parseFindingsLedger(value: unknown, path: string): RawFindingsLedger {
+  const item = parseFindingsLedgerContract(value, path, loose);
+  return {
+    ...item,
+    recent: item.recent.map((finding) => ({
+      ...projectReviewFinding(finding),
+      workItemId: finding.workItemId,
+    })),
+  };
+}
+
+export function parseParksLedger(value: unknown, path: string): RawParksLedger {
+  const item = parseParksLedgerContract(value, path, loose);
+  return {
+    ...item,
+    open: item.open.map((park) => ({ ...projectParkRecord(park), workItemTitle: park.workItemTitle })),
+    resolved: item.resolved.map((park) => ({ ...projectParkRecord(park), workItemTitle: park.workItemTitle })),
+  };
+}
+
+export function parseBoardNotification(value: unknown, path: string): RawBoardNotification {
+  const item = parseBoardNotificationContract(value, path, loose);
+  return {
+    ...item,
+    createdAtMs: ms(item.createdAt),
+    readAtMs: nullableMs(item.readAt),
+  };
 }
 
 export function parseGateAction(value: unknown, path: string): TolerantGateAction {
@@ -318,8 +372,8 @@ export function parseWorkItemAudit(value: unknown, path: string): RawWorkItemAud
   };
 }
 
-export function parseReviewFinding(value: unknown, path: string): TolerantReviewFindingEntity {
-  return parseReviewFindingEntity(value, path, loose);
+export function parseReviewFinding(value: unknown, path: string): RawReviewFinding {
+  return projectReviewFinding(parseReviewFindingEntity(value, path, loose));
 }
 
 export function parseDesignRecord(value: unknown, path: string): TolerantDesignRecordEntity {

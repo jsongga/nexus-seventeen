@@ -344,8 +344,10 @@ describe('browser task-board validator adapter', () => {
   it('loosely projects ledgers and preserves old work-item payloads without observability fields', () => {
     const oldPayload = parseWorkItem(workItem, 'workItem');
     expect(oldPayload).not.toHaveProperty('stateSince');
+    expect(oldPayload).not.toHaveProperty('stateSinceMs');
     expect(oldPayload).not.toHaveProperty('reviewRound');
     expect(oldPayload).not.toHaveProperty('heartbeatAt');
+    expect(oldPayload).not.toHaveProperty('heartbeatAtMs');
 
     expect(parseWorkItem({
       ...workItem,
@@ -354,8 +356,10 @@ describe('browser task-board validator adapter', () => {
       heartbeatAt: null,
     }, 'workItem')).toMatchObject({
       stateSince: NOW,
+      stateSinceMs: Date.parse(NOW),
       reviewRound: 3,
       heartbeatAt: null,
+      heartbeatAtMs: null,
     });
 
     const finding = {
@@ -387,7 +391,7 @@ describe('browser task-board validator adapter', () => {
     }, 'findingsLedger');
     expect(findings.categories[0]).toMatchObject({ category: 'unrecognized', severity: 'unrecognized' });
     expect(findings.perProject[0]?.category).toBe('unrecognized');
-    expect(findings.recent[0]?.workItemId).toBe('work-item-one');
+    expect(findings.recent[0]).toMatchObject({ workItemId: 'work-item-one', createdAtMs: Date.parse(NOW) });
 
     const parks = parseParksLedger({
       open: [{
@@ -406,6 +410,7 @@ describe('browser task-board validator adapter', () => {
       additiveField: true,
     }, 'parksLedger');
     expect(parks.open[0]?.category).toBe('unrecognized');
+    expect(parks.open[0]).toMatchObject({ parkedAtMs: Date.parse(NOW), resolvedAtMs: null });
     expect(parks.recordsSince).toBe('2026-08-20');
   });
 
@@ -437,6 +442,7 @@ describe('browser task-board validator adapter', () => {
       additiveField: 'ignored',
     }, 'notification');
     expect(notification.kind).toBe('unrecognized');
+    expect(notification).toMatchObject({ createdAtMs: Date.parse(NOW), readAtMs: null });
     expect(notification).not.toHaveProperty('additiveField');
 
     const gate = parseGateAction({

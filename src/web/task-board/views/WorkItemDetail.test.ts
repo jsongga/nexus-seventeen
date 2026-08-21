@@ -82,6 +82,7 @@ function renderParkedDetail(question: BoardQuestion | null): string {
   const ok = async () => ({ ok: true as const });
   return renderToStaticMarkup(createElement(WorkItemDetail, {
     workItem: parkedWorkItem,
+    snapshotRevision: 1,
     projectName: 'Project one',
     planningTask,
     openQuestion: question,

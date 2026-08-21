@@ -7,6 +7,7 @@ const pages: BoardPage[] = [
   { kind: 'tasks', taskId: 'task-1' },
   { kind: 'intake', workItemId: 'work-item-1' },
   { kind: 'automation' },
+  { kind: 'ledgers' },
   { kind: 'documents' },
   { kind: 'documents', documentId: 'doc-1' },
   { kind: 'project', projectId: 'project-1' },
@@ -19,6 +20,7 @@ describe('pageToHash', () => {
     expect(pageToHash({ kind: 'tasks', taskId: 'task-1' })).toBe('#/tasks/task-1');
     expect(pageToHash({ kind: 'intake', workItemId: 'work-item-1' })).toBe('#/intake/work-item-1');
     expect(pageToHash({ kind: 'automation' })).toBe('#/automation');
+    expect(pageToHash({ kind: 'ledgers' })).toBe('#/ledgers');
     expect(pageToHash({ kind: 'documents' })).toBe('#/documents');
     expect(pageToHash({ kind: 'documents', documentId: 'doc-1' })).toBe('#/documents/doc-1');
     expect(pageToHash({ kind: 'project', projectId: 'project-1' })).toBe('#/project/project-1');
@@ -80,6 +82,7 @@ describe('hashToPage', () => {
     expect(hashToPage('#/agent/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/intake/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/automation/ignored')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/ledgers/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/tasks/real/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/documents/doc-1/ignored')).toEqual({ kind: 'tasks' });
     expect(hashToPage('#/tasks/')).toEqual({ kind: 'tasks' });
