@@ -5,8 +5,10 @@ import {
   NOTIFICATION_KINDS,
   PARK_CATEGORIES,
   PARK_RESOLUTIONS,
+  SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
+  type BoardPause,
   type BoardNotification,
   type FindingsLedger,
   type GateAction,
@@ -19,6 +21,7 @@ import {
 } from "#shared/task-board-contract";
 import {
   ContractValidationError,
+  parseBoardPause,
   parseBoardNotification,
   parseFindingsLedger,
   parseGateAction,
@@ -30,6 +33,14 @@ import {
 
 const NOW = "2026-08-20T12:00:00.000Z";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
+
+const boardPause: BoardPause = {
+  paused: false,
+  reason: null,
+  version: 1,
+  updatedAt: "1970-01-01T00:00:00.000Z",
+  updatedBy: "system:steward-default",
+};
 
 const parkRecord: ParkRecord = {
   parkRecordId: "park-record-one",
@@ -138,10 +149,13 @@ const audit: WorkItemAudit = {
 test("ledger and observability vocabularies and error codes are pinned", () => {
   assert.deepEqual([...PARK_CATEGORIES], [
     "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
-    "plan_rejected_twice", "bright_line", "scope_violation",
+    "plan_rejected_twice", "bright_line", "scope_violation", "stage_cap_exceeded",
+    "task_cap_exceeded", "base_diverged",
   ]);
   assert.deepEqual([...PARK_RESOLUTIONS], ["resumed", "abandoned", "auto_abandoned", "dead_letter"]);
-  assert.deepEqual([...NOTIFICATION_KINDS], ["park_aged", "park_auto_abandoned"]);
+  assert.deepEqual([...NOTIFICATION_KINDS], [
+    "park_aged", "park_auto_abandoned", "cap_parked", "final_approval_withdrawn",
+  ]);
   assert.deepEqual([...GATE_KINDS], [
     "plan_confirm", "plan_reject", "final_approve", "final_reject", "cancel", "question_answer",
   ]);
@@ -149,16 +163,41 @@ test("ledger and observability vocabularies and error codes are pinned", () => {
     recordRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_REQUIRED,
     recordInvalid: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_INVALID,
     notificationNotFound: TASK_BOARD_ERROR_CODES.TASK_BOARD_NOTIFICATION_NOT_FOUND,
+    boardPauseVersionConflict: TASK_BOARD_ERROR_CODES.TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT,
+    scopeHoldSummaryPrefix: SCOPE_HOLD_SUMMARY_PREFIX,
   }, {
     recordRequired: "TASK_BOARD_PARK_RECORD_REQUIRED",
     recordInvalid: "TASK_BOARD_PARK_RECORD_INVALID",
     notificationNotFound: "TASK_BOARD_NOTIFICATION_NOT_FOUND",
+    boardPauseVersionConflict: "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT",
+    scopeHoldSummaryPrefix: "scope-hold: ",
   });
+});
+
+test("board pause round-trips strictly and rejects malformed state", () => {
+  assert.deepEqual(parseBoardPause(boardPause, "boardPause"), boardPause);
+  assert.throws(
+    () => parseBoardPause({ ...boardPause, additiveField: true }, "boardPause"),
+    ContractValidationError,
+  );
+  for (const invalid of [
+    { ...boardPause, paused: 0 },
+    { ...boardPause, reason: 42 },
+    { ...boardPause, version: 0 },
+    { ...boardPause, updatedAt: "not-a-timestamp" },
+    { ...boardPause, updatedBy: null },
+  ]) assert.throws(() => parseBoardPause(invalid, "boardPause"), ContractValidationError);
 });
 
 test("park records, notifications, and gate actions round-trip strictly", () => {
   assert.deepEqual(parseParkRecord(parkRecord, "parkRecord"), parkRecord);
   assert.deepEqual(parseBoardNotification(notification, "notification"), notification);
+  for (const category of PARK_CATEGORIES) {
+    assert.equal(parseParkRecord({ ...parkRecord, category }, "parkRecord").category, category);
+  }
+  for (const kind of NOTIFICATION_KINDS) {
+    assert.equal(parseBoardNotification({ ...notification, kind }, "notification").kind, kind);
+  }
   assert.deepEqual(parseGateAction(gateAction, "gateAction"), gateAction);
   assert.deepEqual(parseWorkItemAudit(audit, "audit"), audit);
 

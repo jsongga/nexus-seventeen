@@ -4,7 +4,7 @@ import { Button, Card, Pill } from '../../components/ui';
 import type { TaskBoardClient } from '../data/client';
 import type { RawFindingsLedger, RawParksLedger } from '../data/parse';
 import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
-import { prettyStatus } from '../model/work-item-labels';
+import { parkCategoryLabel, prettyStatus } from '../model/work-item-labels';
 import { pageToHash } from '../routing/routing';
 
 const dateTime = new Intl.DateTimeFormat(undefined, {
@@ -188,7 +188,7 @@ export function ParksLedgerSection({
                 {open.map((park) => (
                   <tr key={park.parkRecordId} className="align-top">
                     <td className="min-w-52 px-3 py-3"><a className="font-medium text-ink underline decoration-line underline-offset-4" href={workItemHref(park.workItemId)}>{park.workItemTitle}</a></td>
-                    <td className="whitespace-nowrap px-3 py-3 text-muted">{displayLabel(park.category)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-muted">{parkCategoryLabel[park.category]}</td>
                     <td className="whitespace-nowrap px-3 py-3 font-mono text-ink">{formatElapsedDuration(elapsedMilliseconds(park.parkedAtMs, nowMs))}</td>
                     <td className="min-w-64 whitespace-pre-wrap break-words px-3 py-3 leading-5 text-ink">{park.reason}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted"><Timestamp value={park.parkedAt} /></td>
@@ -212,7 +212,7 @@ export function ParksLedgerSection({
                 {resolved.map((park) => (
                   <tr key={park.parkRecordId} className="align-top">
                     <td className="min-w-52 px-3 py-3"><a className="font-medium text-ink underline decoration-line underline-offset-4" href={workItemHref(park.workItemId)}>{park.workItemTitle}</a></td>
-                    <td className="whitespace-nowrap px-3 py-3 text-muted">{displayLabel(park.category)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-muted">{parkCategoryLabel[park.category]}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-ink">{displayLabel(park.resolution ?? 'unknown')}</td>
                     <td className="min-w-64 whitespace-pre-wrap break-words px-3 py-3 leading-5 text-ink">{park.reason}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">{park.resolvedAt === null ? 'Not recorded' : <Timestamp value={park.resolvedAt} />}</td>

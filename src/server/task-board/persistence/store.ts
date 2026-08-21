@@ -32,7 +32,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -449,6 +449,18 @@ INSERT INTO automation_configuration(
 );
 `;
 
+const BOARD_PAUSE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS board_pause (
+  pause_id TEXT PRIMARY KEY CHECK (pause_id = 'board'),
+  paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
+  reason TEXT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  updated_at TEXT NOT NULL, updated_by TEXT NOT NULL
+) STRICT;
+INSERT INTO board_pause(pause_id, paused, reason, version, updated_at, updated_by)
+  VALUES ('board', 0, NULL, 1, '1970-01-01T00:00:00.000Z', 'system:steward-default');
+`;
+
 const SCHEMA = `
 CREATE TABLE projects (
   project_id TEXT PRIMARY KEY,
@@ -463,6 +475,7 @@ ${WORK_ITEM_SCHEMA}
 ${WORK_ITEM_TRANSITIONS_SCHEMA}
 
 ${AUTOMATION_CONFIGURATION_SCHEMA}
+${BOARD_PAUSE_SCHEMA}
 ${WORKFLOW_SCHEMA}
 ${WORK_ITEM_PLANNING_SCHEMA}
 
@@ -1083,6 +1096,73 @@ function migrateVersion21To22(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion22To23(db: DatabaseSync): void {
+  const hasBoardPause = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'board_pause'",
+  ).get() !== undefined;
+  db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      CREATE TABLE park_records_v23 (
+        park_record_id TEXT PRIMARY KEY,
+        work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+        category TEXT NOT NULL CHECK (category IN (${sqlStringList(PARK_CATEGORIES)})),
+        reason TEXT NOT NULL,
+        parked_at TEXT NOT NULL,
+        resolved_at TEXT NULL,
+        resolution TEXT NULL CHECK (resolution IN (${sqlStringList(PARK_RESOLUTIONS)}))
+      ) STRICT;
+      INSERT INTO park_records_v23(
+        park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      )
+      SELECT park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      FROM park_records
+      ORDER BY rowid;
+      DROP TABLE park_records;
+      ALTER TABLE park_records_v23 RENAME TO park_records;
+
+      CREATE TABLE notifications_v23 (
+        notification_id TEXT PRIMARY KEY,
+        sequence INTEGER NOT NULL UNIQUE,
+        kind TEXT NOT NULL CHECK (kind IN (${sqlStringList(NOTIFICATION_KINDS)})),
+        dedupe_key TEXT NULL UNIQUE,
+        project_id TEXT NULL,
+        work_item_id TEXT NULL,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        read_at TEXT NULL,
+        version INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO notifications_v23(
+        notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      )
+      SELECT notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      FROM notifications
+      ORDER BY rowid;
+      DROP TABLE notifications;
+      ALTER TABLE notifications_v23 RENAME TO notifications;
+
+      ${hasBoardPause ? "" : BOARD_PAUSE_SCHEMA}
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 23; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1383,6 +1463,8 @@ export class TaskBoardStore {
         // Review findings, design records, and design-task links are added below.
       } else if (version === 21) {
         // Park records, notifications, and gate actions are added below.
+      } else if (version === 22) {
+        // Scheduling caps, board pause, and widened ledger enums are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1406,6 +1488,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 19) migrateVersion19To20(db);
       if (version >= 1 && version <= 20) migrateVersion20To21(db);
       if (version >= 1 && version <= 21) migrateVersion21To22(db);
+      if (version >= 1 && version <= 22) migrateVersion22To23(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

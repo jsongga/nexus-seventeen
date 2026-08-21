@@ -76,7 +76,13 @@ function sqlList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value}'`).join(separator);
 }
 
-function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21): string {
+const V22_PARK_CATEGORIES = [
+  "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
+  "plan_rejected_twice", "bright_line", "scope_violation",
+] as const;
+const V22_NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned"] as const;
+
+function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22): string {
   const rows = store.db.prepare(`
     SELECT type, name, sql
     FROM sqlite_master
@@ -85,7 +91,8 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21): string 
   `).all() as Array<Readonly<{ type: string; name: string; sql: string }>>;
   return `${rows
     .filter((row) => ![
-      "park_records", "notifications", "gate_actions",
+      "board_pause",
+      ...(version <= 21 ? ["park_records", "notifications", "gate_actions"] : []),
       ...(version <= 20 ? ["review_findings", "design_records", "work_item_design_tasks"] : []),
       ...(version === 19 ? ["verify_attempts"] : []),
     ].includes(row.name))
@@ -100,29 +107,43 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21): string 
           "  criterion_checks_json TEXT NULL,\n  rejected_note TEXT NULL,\n",
           "",
         );
+      } else if (version === 22 && row.name === "park_records") {
+        sql = sql.replace(sqlList(PARK_CATEGORIES), sqlList(V22_PARK_CATEGORIES));
+      } else if (version === 22 && row.name === "notifications") {
+        sql = sql.replace(sqlList(NOTIFICATION_KINDS), sqlList(V22_NOTIFICATION_KINDS));
       }
       return `-- ${row.type}: ${row.name}\n${sql};`;
     })
     .join("\n\n")}\n`;
 }
 
-test("fresh v22 DDL preserves the byte-identical frozen v19, v20, and v21 schemas", async () => {
+test("fresh v23 DDL preserves the byte-identical frozen v19 through v22 schemas", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 22);
-    for (const version of [19, 20, 21] as const) {
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 23);
+    for (const version of [19, 20, 21, 22] as const) {
       const golden = await readFile(
         join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`),
         "utf8",
       );
       assert.equal(frozenProjection(store, version), golden);
     }
+    assert.deepEqual({ ...store.db.prepare(`
+      SELECT pause_id, paused, reason, version, updated_at, updated_by FROM board_pause
+    `).get() }, {
+      pause_id: "board",
+      paused: 0,
+      reason: null,
+      version: 1,
+      updated_at: "1970-01-01T00:00:00.000Z",
+      updated_by: "system:steward-default",
+    });
   } finally {
     store.close();
   }
 });
 
-test("v22 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
+test("v23 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
     const tableSql = (name: string): string => {
@@ -232,7 +253,7 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     for (const column of ["pipeline_branch", "base_sha"]) {
@@ -298,6 +319,7 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
       VALUES ('verify-attempt-two', 'pipeline-node', 'testing', 1, 'running', '2026-08-18T12:04:00.000Z')
     `).run(), /UNIQUE/u);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.equal(upgraded.db.prepare("PRAGMA foreign_keys").get()?.foreign_keys, 1);
   } finally {
     upgraded.close();
   }
@@ -369,7 +391,7 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     assert.deepEqual(columns("review_findings"), [
@@ -476,7 +498,7 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     assert.deepEqual(columns("park_records"), [
@@ -535,6 +557,150 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
     assert.equal(upgraded.db.prepare("SELECT count(*) AS count FROM notifications").get()?.count, 1);
     assert.equal(upgraded.db.prepare("SELECT count(*) AS count FROM gate_actions").get()?.count, 1);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    upgraded.close();
+  }
+});
+
+test("v22 migrates to v23 without changing old ledger bytes and widens both enum CHECKs", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const legacy = new DatabaseSync(path);
+  let parkRowsBefore: Array<Record<string, unknown>> = [];
+  let notificationRowsBefore: Array<Record<string, unknown>> = [];
+  try {
+    const frozenV22 = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v22-schema.sql"), "utf8");
+    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
+    const executableV22 = frozenV22
+      .split(/(?=^-- (?:index|table|trigger): )/m)
+      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
+        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .join("");
+    legacy.exec(executableV22);
+    legacy.exec(`
+      INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
+      VALUES ('v23-project', 'Migration project', 'Exercises the v23 rebuild.', 1,
+        '2026-08-21T12:00:00.000Z', '2026-08-21T12:00:00.000Z');
+      INSERT INTO work_items(
+        work_item_id, original_request, refined_objective, priority, project_target_mode,
+        target_project_id, resolved_project_id, pipeline_branch, base_sha, state, current_stage,
+        created_by, idempotency_key, request_hash, version, created_at, updated_at
+      ) VALUES (
+        'v23-work-item', 'Preserve every v22 ledger row.', 'Widen CHECK-backed enums.', 'normal', 'explicit',
+        'v23-project', 'v23-project', 'pipeline/v23-work-item',
+        '0123456789abcdef0123456789abcdef01234567', 'parked', 'planning',
+        'system:migration-test', 'v23-migration-key', 'v23-migration-hash', 1,
+        '2026-08-21T12:01:00.000Z', '2026-08-21T12:01:00.000Z'
+      );
+    `);
+    const insertPark = legacy.prepare(`
+      INSERT INTO park_records(
+        park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      ) VALUES (?, 'v23-work-item', ?, ?, ?, ?, ?)
+    `);
+    for (const [index, category] of V22_PARK_CATEGORIES.entries()) {
+      const resolution = index === 0 ? null : PARK_RESOLUTIONS[(index - 1) % PARK_RESOLUTIONS.length];
+      insertPark.run(
+        `v22-park-${index}`,
+        category,
+        `Preserve ${category} byte-for-byte — café ${index}.`,
+        `2026-08-21T12:${String(index + 2).padStart(2, "0")}:00.000Z`,
+        resolution === null ? null : `2026-08-21T13:${String(index).padStart(2, "0")}:00.000Z`,
+        resolution,
+      );
+    }
+    const insertNotification = legacy.prepare(`
+      INSERT INTO notifications(
+        notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const [index, kind] of V22_NOTIFICATION_KINDS.entries()) {
+      insertNotification.run(
+        `v22-notification-${index}`,
+        11 + index * 18,
+        kind,
+        index === 0 ? `v22-dedupe-${index}` : null,
+        index === 0 ? "v23-project" : null,
+        index === 0 ? "v23-work-item" : null,
+        `Preserve ${kind} byte-for-byte — café ${index}.`,
+        `2026-08-21T14:0${index}:00.000Z`,
+        index === 0 ? null : `2026-08-21T15:0${index}:00.000Z`,
+        index + 3,
+      );
+    }
+    parkRowsBefore = legacy.prepare("SELECT rowid, * FROM park_records ORDER BY rowid").all()
+      .map((row) => ({ ...row }));
+    notificationRowsBefore = legacy.prepare("SELECT rowid, * FROM notifications ORDER BY rowid").all()
+      .map((row) => ({ ...row }));
+    legacy.exec("PRAGMA user_version = 22;");
+  } finally {
+    legacy.close();
+  }
+  await chmod(path, 0o600);
+
+  const upgraded = await TaskBoardStore.open(path);
+  try {
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
+    assert.deepEqual(
+      upgraded.db.prepare("SELECT rowid, * FROM park_records ORDER BY rowid").all().map((row) => ({ ...row })),
+      parkRowsBefore,
+    );
+    assert.deepEqual(
+      upgraded.db.prepare("SELECT rowid, * FROM notifications ORDER BY rowid").all().map((row) => ({ ...row })),
+      notificationRowsBefore,
+    );
+
+    const tableSql = (name: string): string => String(upgraded.db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(name)?.sql);
+    assert.ok(tableSql("park_records").includes(`CHECK (category IN (${sqlList(PARK_CATEGORIES)}))`));
+    assert.ok(tableSql("notifications").includes(`CHECK (kind IN (${sqlList(NOTIFICATION_KINDS)}))`));
+
+    const insertPark = upgraded.db.prepare(`
+      INSERT INTO park_records(
+        park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      ) VALUES (?, 'v23-work-item', ?, 'Migration insertability check.', '2026-08-21T16:00:00.000Z', NULL, NULL)
+    `);
+    for (const [index, category] of [...V22_PARK_CATEGORIES, ...PARK_CATEGORIES.slice(V22_PARK_CATEGORIES.length)].entries()) {
+      insertPark.run(`post-v23-park-${index}`, category);
+    }
+    const insertNotification = upgraded.db.prepare(`
+      INSERT INTO notifications(
+        notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      ) VALUES (?, ?, ?, ?, NULL, NULL, 'Migration insertability check.', '2026-08-21T16:01:00.000Z', NULL, 1)
+    `);
+    for (const [index, kind] of [...V22_NOTIFICATION_KINDS, ...NOTIFICATION_KINDS.slice(V22_NOTIFICATION_KINDS.length)].entries()) {
+      insertNotification.run(`post-v23-notification-${index}`, 100 + index, kind, `post-v23-dedupe-${index}`);
+    }
+    assert.throws(
+      () => insertNotification.run("duplicate-sequence", 100, "cap_parked", "unique-dedupe"),
+      /UNIQUE/u,
+    );
+    assert.throws(
+      () => insertNotification.run("duplicate-dedupe", 999, "cap_parked", "post-v23-dedupe-0"),
+      /UNIQUE/u,
+    );
+
+    assert.deepEqual({ ...upgraded.db.prepare(`
+      SELECT paused, reason, version, updated_at, updated_by
+      FROM board_pause WHERE pause_id = 'board'
+    `).get() }, {
+      paused: 0,
+      reason: null,
+      version: 1,
+      updated_at: "1970-01-01T00:00:00.000Z",
+      updated_by: "system:steward-default",
+    });
+    assert.ok(tableSql("board_pause").includes("pause_id TEXT PRIMARY KEY CHECK (pause_id = 'board')"));
+    assert.throws(
+      () => upgraded.db.prepare("UPDATE board_pause SET pause_id = 'other' WHERE pause_id = 'board'").run(),
+      /CHECK/u,
+    );
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.equal(upgraded.db.prepare("PRAGMA foreign_keys").get()?.foreign_keys, 1);
   } finally {
     upgraded.close();
   }
@@ -629,7 +795,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     assert.deepEqual(
       upgraded.db.prepare(`
         SELECT work_item_id, state, project_target_mode, target_project_id, resolved_project_id, archived_at
@@ -741,7 +907,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
 
   const reopened = await TaskBoardStore.open(path);
   try {
-    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     assert.deepEqual(
       reopened.db.prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id").all()
         .map((row) => ({ work_item_id: row.work_item_id, state: row.state })),
@@ -821,7 +987,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 22);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 23);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
       "CREATE INDEX project_events_node ON project_events(node_id, sequence)",

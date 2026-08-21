@@ -29,6 +29,8 @@ const service = await createTaskBoardService({
   reconcileIntervalSeconds: optionalInteger("STEWARD_TASK_BOARD_RECONCILE_INTERVAL_SECONDS", 60),
   parkNotifySeconds: optionalInteger("STEWARD_TASK_BOARD_PARK_NOTIFY_SECONDS", 86_400),
   parkAutoAbandonSeconds: optionalInteger("STEWARD_TASK_BOARD_PARK_AUTO_ABANDON_SECONDS", 604_800),
+  stageCapSeconds: optionalInteger("STEWARD_TASK_BOARD_STAGE_CAP_SECONDS", 3_600),
+  taskCapSeconds: optionalInteger("STEWARD_TASK_BOARD_TASK_CAP_SECONDS", 10_800),
   verifyWorkspaceRoot: process.env.STEWARD_TASK_BOARD_VERIFY_WORKSPACE_ROOT,
   host: projectRootsRaw === undefined ? undefined : {
     projectRoots: projectRootsRaw.split(":").map((value) => value.trim()).filter((value) => value.length > 0),

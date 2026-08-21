@@ -21,6 +21,7 @@ import { BOARD_REFRESH_DEADLINE_MS, BoardRefreshCoordinator, SnapshotCommitCoord
 import { createTaskDetailDraftState, taskDetailDraftReducer } from './model/task-detail-drafts';
 import { signInFailure } from './model/sign-in-failure';
 import { NotificationLoadCoordinator } from './model/notification-load';
+import { notificationKindLabel } from './model/work-item-labels';
 import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput } from './types';
 
 const notificationDateTime = new Intl.DateTimeFormat(undefined, {
@@ -84,7 +85,7 @@ export function NotificationsBlock({
                     </button>
                   )}
                   <p className="mt-1 text-[11px] text-muted">
-                    {notification.kind.replaceAll('_', ' ')} · <time dateTime={notification.createdAt}>{Number.isNaN(parsed.valueOf()) ? notification.createdAt : notificationDateTime.format(parsed)}</time>
+                    {notificationKindLabel[notification.kind]} · <time dateTime={notification.createdAt}>{Number.isNaN(parsed.valueOf()) ? notification.createdAt : notificationDateTime.format(parsed)}</time>
                   </p>
                 </div>
                 <Button size="sm" disabled={markingId !== null} onClick={() => onMarkRead(notification)}>

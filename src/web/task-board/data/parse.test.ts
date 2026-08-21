@@ -85,6 +85,7 @@ import {
   parseAutomationAgentType,
   parseAutomationExecutor,
   parseBoardNotification,
+  parseBoardPause,
   parseDesignRecord,
   parseDocument,
   parseFindingsLedger,
@@ -224,6 +225,24 @@ const document = {
 };
 
 describe('browser task-board validator adapter', () => {
+  it('loosely projects board pause state with its parsed update instant', () => {
+    expect(parseBoardPause({
+      paused: true,
+      reason: 'Emergency operator hold.',
+      version: 4,
+      updatedAt: NOW,
+      updatedBy: 'human:operator',
+      additiveField: 'ignored',
+    }, 'boardPause')).toEqual({
+      paused: true,
+      reason: 'Emergency operator hold.',
+      version: 4,
+      updatedAt: NOW,
+      updatedAtMs: Date.parse(NOW),
+      updatedBy: 'human:operator',
+    });
+  });
+
   it('keeps response identifiers opaque and omits apiVersion from raw projections', () => {
     const parsed = parseProject({
       ...project,

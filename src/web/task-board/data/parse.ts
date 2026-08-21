@@ -3,6 +3,7 @@ import type {
   AgentInterrupt,
   AgentProfile,
   AgentRun,
+  BoardPause,
   BoardSnapshot,
   DocumentPenHolder,
   DocumentSnapshot,
@@ -32,6 +33,7 @@ import {
   parseAutomationExecutorEntity,
   parseAutomationStageEntity,
   parseBoardNotification as parseBoardNotificationContract,
+  parseBoardPause as parseBoardPauseContract,
   parseBoardSnapshotEntity,
   parseDocumentEntity,
   parseDocumentPenHolderEntity,
@@ -123,6 +125,7 @@ export interface RawParksLedger extends Omit<TolerantParksLedger, 'open' | 'reso
   resolved: RawLedgerParkRecord[];
 }
 export type RawBoardNotification = WithNullableMs<WithMs<TolerantBoardNotification, 'createdAt'>, 'readAt'>;
+export type RawBoardPause = WithMs<BoardPause, 'updatedAt'>;
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
 export type RawDocumentPenHolder = WithMs<DocumentPenHolder, 'acquiredAt'>;
 export type RawDocumentSummary = WithMs<WithMs<Omit<WithoutApi<DocumentSummary>, 'penHolder'> & { penHolder: RawDocumentPenHolder | null }, 'createdAt'>, 'updatedAt'>;
@@ -352,6 +355,11 @@ export function parseBoardNotification(value: unknown, path: string): RawBoardNo
     createdAtMs: ms(item.createdAt),
     readAtMs: nullableMs(item.readAt),
   };
+}
+
+export function parseBoardPause(value: unknown, path: string): RawBoardPause {
+  const item = parseBoardPauseContract(value, path, loose);
+  return { ...item, updatedAtMs: ms(item.updatedAt) };
 }
 
 export function parseGateAction(value: unknown, path: string): TolerantGateAction {

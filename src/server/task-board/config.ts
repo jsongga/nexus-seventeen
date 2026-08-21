@@ -27,6 +27,8 @@ export interface TaskBoardOptions {
   readonly reconcileIntervalSeconds?: number;
   readonly parkNotifySeconds?: number;
   readonly parkAutoAbandonSeconds?: number;
+  readonly stageCapSeconds?: number;
+  readonly taskCapSeconds?: number;
   readonly now?: () => Date;
   readonly artifactRoot?: string;
   readonly verifyWorkspaceRoot?: string;
@@ -45,6 +47,8 @@ export interface TaskBoardConfig {
   readonly reconcileIntervalSeconds: number;
   readonly parkNotifySeconds: number;
   readonly parkAutoAbandonSeconds: number;
+  readonly stageCapSeconds: number;
+  readonly taskCapSeconds: number;
   readonly now: () => Date;
   readonly artifactRoot: string;
   readonly verifyWorkspaceRoot: string;
@@ -178,6 +182,37 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
       "parkAutoAbandonSeconds must be at least parkNotifySeconds when both are enabled",
     );
   }
+  const stageCapSeconds = boundedInteger(
+    options.stageCapSeconds,
+    3_600,
+    0,
+    MAX_TIMER_SECONDS,
+    "stageCapSeconds",
+  );
+  if (stageCapSeconds !== 0 && stageCapSeconds < 60) {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "stageCapSeconds is outside its safe range");
+  }
+  const taskCapSeconds = boundedInteger(
+    options.taskCapSeconds,
+    10_800,
+    0,
+    MAX_TIMER_SECONDS,
+    "taskCapSeconds",
+  );
+  if (taskCapSeconds !== 0 && taskCapSeconds < 60) {
+    throw new TaskBoardError(500, "INVALID_CONFIGURATION", "taskCapSeconds is outside its safe range");
+  }
+  if (
+    stageCapSeconds !== 0
+    && taskCapSeconds !== 0
+    && taskCapSeconds < stageCapSeconds
+  ) {
+    throw new TaskBoardError(
+      500,
+      "INVALID_CONFIGURATION",
+      "taskCapSeconds must be at least stageCapSeconds when both are enabled",
+    );
+  }
   return Object.freeze({
     dbPath,
     humanToken,
@@ -197,6 +232,8 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     ),
     parkNotifySeconds,
     parkAutoAbandonSeconds,
+    stageCapSeconds,
+    taskCapSeconds,
     now: options.now ?? (() => new Date()),
     artifactRoot,
     verifyWorkspaceRoot,

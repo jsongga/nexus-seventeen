@@ -32,6 +32,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_BOARD_PARK_RECORD_REQUIRED: "TASK_BOARD_PARK_RECORD_REQUIRED",
   TASK_BOARD_PARK_RECORD_INVALID: "TASK_BOARD_PARK_RECORD_INVALID",
   TASK_BOARD_NOTIFICATION_NOT_FOUND: "TASK_BOARD_NOTIFICATION_NOT_FOUND",
+  TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT: "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -60,6 +61,7 @@ export const REVIEW_WORKSPACE_SUFFIX = "-review";
 export const VERIFY_WORKSPACE_SUFFIX = "-verify";
 export const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
 
 /**
  * Canonical identifier grammar shared by TypeScript validators and JSON Schema.
@@ -270,9 +272,17 @@ export const PARK_CATEGORIES = [
   "plan_rejected_twice",
   "bright_line",
   "scope_violation",
+  "stage_cap_exceeded",
+  "task_cap_exceeded",
+  "base_diverged",
 ] as const;
 export const PARK_RESOLUTIONS = ["resumed", "abandoned", "auto_abandoned", "dead_letter"] as const;
-export const NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned"] as const;
+export const NOTIFICATION_KINDS = [
+  "park_aged",
+  "park_auto_abandoned",
+  "cap_parked",
+  "final_approval_withdrawn",
+] as const;
 export const GATE_KINDS = [
   "plan_confirm",
   "plan_reject",
@@ -452,6 +462,14 @@ export interface AutomationConfiguration {
   readonly stages: readonly AutomationPipelineStage[];
   readonly version: number;
   readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+export interface BoardPause {
+  readonly paused: boolean;
+  readonly reason: string | null;
+  readonly version: number;
   readonly updatedAt: string;
   readonly updatedBy: string;
 }

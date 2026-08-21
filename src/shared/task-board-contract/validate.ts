@@ -59,6 +59,7 @@ import {
   type AutomationConfiguration,
   type AutomationPipelineStage,
   type AutomationStageExecutor,
+  type BoardPause,
   type BoardNotification,
   type BoardSnapshot,
   type BoardTask,
@@ -1103,6 +1104,22 @@ export function parseParkRecord(
     parkedAt: entityTimestamp(item.parkedAt, `${label}.parkedAt`, options),
     resolvedAt: nullableTimestamp(item.resolvedAt, `${label}.resolvedAt`, options),
     resolution,
+  });
+}
+
+export function parseBoardPause(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): BoardPause {
+  const fields = ["paused", "reason", "version", "updatedAt", "updatedBy"] as const;
+  const item = shape(value, label, fields, fields, options);
+  return Object.freeze({
+    paused: booleanValue(item.paused, `${label}.paused`),
+    reason: nullableString(item.reason, `${label}.reason`),
+    version: integer(item.version, `${label}.version`, 1),
+    updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
+    updatedBy: shapeIdentifier(item.updatedBy, `${label}.updatedBy`, options),
   });
 }
 

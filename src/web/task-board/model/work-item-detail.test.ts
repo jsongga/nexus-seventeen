@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardWorkItem, TaskStatus, WorkItemState } from '../types';
 import { deriveWorkItemDetailAffordances, nodesForPlan, proposedPlanForWorkItem } from './work-item-detail';
-import { workItemStateLabel, workItemStatusLabel } from './work-item-labels';
+import {
+  notificationKindLabel,
+  parkCategoryLabel,
+  workItemStateLabel,
+  workItemStatusLabel,
+} from './work-item-labels';
 
 const workItemStates: readonly WorkItemState[] = [
   'queued',
@@ -113,6 +118,29 @@ describe('work-item workflow selection', () => {
 });
 
 describe('work-item labels', () => {
+  it('labels every park category and notification kind, including scheduling additions', () => {
+    expect(parkCategoryLabel).toEqual({
+      open_question: 'Open question',
+      planning_run_failed: 'Planning run failed',
+      design_run_failed: 'Design run failed',
+      hazardous_without_pipeline: 'Hazardous without pipeline',
+      plan_rejected_twice: 'Plan rejected twice',
+      bright_line: 'Bright line',
+      scope_violation: 'Scope violation',
+      stage_cap_exceeded: 'Stage cap exceeded',
+      task_cap_exceeded: 'Task cap exceeded',
+      base_diverged: 'Base diverged',
+      unrecognized: 'Unknown category',
+    });
+    expect(notificationKindLabel).toEqual({
+      park_aged: 'Park aged',
+      park_auto_abandoned: 'Park auto-abandoned',
+      cap_parked: 'Cap parked',
+      final_approval_withdrawn: 'Final approval withdrawn',
+      unrecognized: 'Unknown notification',
+    });
+  });
+
   it('uses the exhaustive campaign vocabulary in list rows and the detail pane', () => {
     const expected = {
       queued: 'Queued',
