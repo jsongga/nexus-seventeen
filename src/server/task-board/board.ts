@@ -141,9 +141,10 @@ export class TaskBoard {
     this.#boardPause = new BoardPauseCollaborator(this.#runtime);
     this.#ledgers = new LedgersCollaborator(this.#runtime);
     this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
-    this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications);
     this.#automation = new AutomationCollaborator(this.#runtime);
     this.#tasks = new TasksCollaborator(this.#runtime);
+    this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
+    this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications, this.#workItems);
     this.#projects = new ProjectsCollaborator(
       this.#runtime,
       this.#automation,
@@ -158,7 +159,6 @@ export class TaskBoard {
       this.#notifications,
       dependencies.git,
     );
-    this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
     this.#runs = new RunsCollaborator(
       this.#runtime,
       this.#automation,

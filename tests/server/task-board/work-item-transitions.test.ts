@@ -361,10 +361,11 @@ test("park truncation keeps a redaction marker whole at the length boundary", as
 
 test("leaving parked derives and records every park resolution", async () => {
   const cases = [
-    { target: "implementing", actorId: "system:workflow", resolution: "resumed" },
-    { target: "abandoned", actorId: "human:test", resolution: "abandoned" },
-    { target: "abandoned", actorId: "system:park-lifecycle", resolution: "auto_abandoned" },
-    { target: "dead_letter", actorId: "system:workflow", resolution: "dead_letter" },
+    { target: "implementing", actorType: "system", actorId: "system:workflow", resolution: "resumed" },
+    { target: "abandoned", actorType: "human", actorId: "human:test", resolution: "abandoned" },
+    { target: "abandoned", actorType: "system", actorId: "system:park-lifecycle", resolution: "auto_abandoned" },
+    { target: "abandoned", actorType: "system", actorId: "system:another-abandoner", resolution: "auto_abandoned" },
+    { target: "dead_letter", actorType: "system", actorId: "system:workflow", resolution: "dead_letter" },
   ] as const;
 
   for (const [index, scenario] of cases.entries()) {
@@ -378,7 +379,7 @@ test("leaving parked derives and records every park resolution", async () => {
       store.transaction(() => transitionWorkItemInTransaction(store, {
         workItemId,
         to: scenario.target,
-        actorType: scenario.actorId === "human:test" ? "human" : "system",
+        actorType: scenario.actorType,
         actorId: scenario.actorId,
         now,
         ...(scenario.target === "abandoned" || scenario.target === "dead_letter"

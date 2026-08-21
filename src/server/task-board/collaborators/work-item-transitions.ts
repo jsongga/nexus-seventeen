@@ -146,7 +146,7 @@ function resolutionForParkExit(
   request: WorkItemTransitionRequest,
 ): "resumed" | "abandoned" | "auto_abandoned" | "dead_letter" {
   if (request.to === "abandoned") {
-    return request.actorId === "system:park-lifecycle" ? "auto_abandoned" : "abandoned";
+    return request.actorType === "system" ? "auto_abandoned" : "abandoned";
   }
   if (request.to === "dead_letter") return "dead_letter";
   return "resumed";

@@ -289,6 +289,52 @@ test("a completed design is discarded when cancellation wins the settlement race
   }
 });
 
+test("cancelling mid-implementing cancels the stage task and retires its pending wakeup", async () => {
+  const fixture = await prepareHazardousPipeline("cancel-implementing");
+  try {
+    const designClaim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-hazardous-design-cancel-implementing",
+      messageCursor: null,
+    });
+    assert.ok(designClaim?.task);
+    fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The design is ready before cancellation.",
+      designRecord: designRecord(),
+    });
+    const implementing = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(implementing.state, "implementing");
+    const stageTask = fixture.board.snapshot(fixture.project.projectId).tasks.find(
+      (task) => task.status === "queued",
+    );
+    assert.ok(stageTask);
+    assert.equal(stageTask.status, "queued");
+
+    fixture.board.updateWorkItem(fixture.workItem.workItemId, {
+      version: implementing.version,
+      action: "cancel",
+      reason: "Stop the active implementation before it is claimed.",
+    });
+
+    assert.equal(fixture.board.requireTask(stageTask.taskId).status, "cancelled");
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM wakeups wakeup
+        JOIN task_events event ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
+        WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
+          AND event.event_type='agent_wakeup_retired'
+          AND json_extract(event.data_json, '$.retirementReason')='task_cancelled'
+      `).get(stageTask.taskId)?.count, 1);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("completed design settlement requires a record and names the first missing failure point", async () => {
   const fixture = await prepareHazardousPipeline("invalid");
   try {

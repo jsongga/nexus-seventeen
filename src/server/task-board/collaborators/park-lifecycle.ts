@@ -4,6 +4,7 @@ import { exactIsoTimestamp } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { NotificationsCollaborator } from "./notifications.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
+import type { WorkItemsCollaborator } from "./work-items.js";
 
 interface OpenParkRecord {
   readonly parkRecordId: string;
@@ -68,6 +69,7 @@ export class ParkLifecycleCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly notifications: NotificationsCollaborator,
+    private readonly workItems: WorkItemsCollaborator,
   ) {}
 
   sweepParkLifecycle(now: string): ParkLifecycleSweepResult {
@@ -131,14 +133,22 @@ export class ParkLifecycleCollaborator {
           `).get(record.parkRecordId) as (Row & Readonly<{ state: WorkItemState }>) | undefined;
           if (current === undefined || current.state !== "parked") return false;
           const currentRecord = openParkRecordFromRow(current);
+          const cancelledReason = `parked past auto-abandon threshold (${currentRecord.category})`;
+          const actor = { type: "system" as const, id: "system:park-lifecycle" };
+          this.workItems.closeWorkItemWorkInTransaction(
+            currentRecord.workItemId,
+            cancelledReason,
+            actor,
+            now,
+          );
           transitionWorkItemInTransaction(this.runtime.store, {
             workItemId: currentRecord.workItemId,
             to: "abandoned",
-            actorType: "system",
-            actorId: "system:park-lifecycle",
+            actorType: actor.type,
+            actorId: actor.id,
             now,
             endedAt: now,
-            cancelledReason: `parked past auto-abandon threshold (${currentRecord.category})`,
+            cancelledReason,
             currentStage: null,
           });
           this.notifications.insertNotificationAtInTransaction({

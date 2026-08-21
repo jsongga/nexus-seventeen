@@ -224,12 +224,35 @@ test("the clock-driven lifecycle sweep notifies once then auto-abandons an open-
       resolved_at: atAge(8).toISOString(),
       resolution: "auto_abandoned",
     });
-    assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).openQuestions
-        .some((candidate) => candidate.questionId === fixture.question.questionId),
-      true,
-      "open questions must not block auto-abandon",
+    assert.equal(fixture.board.requireTask(fixture.created.planningTaskId!).status, "cancelled");
+    const closedQuestion = fixture.board.snapshot(fixture.project.projectId).openQuestions.find(
+      (candidate) => candidate.questionId === fixture.question.questionId,
     );
+    assert.equal(
+      closedQuestion,
+      undefined,
+      "auto-abandon closes questions on linked work",
+    );
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const question = inspected.prepare(`
+        SELECT status,answer,answered_at,answered_by FROM questions WHERE question_id=?
+      `).get(fixture.question.questionId);
+      assert.deepEqual({ ...question }, {
+        status: "answered",
+        answer: "Closed because the work item was cancelled: parked past auto-abandon threshold (open_question)",
+        answered_at: atAge(8).toISOString(),
+        answered_by: "system:park-lifecycle",
+      });
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM task_events
+        WHERE task_id=? AND event_type='human_question_closed'
+          AND actor_type='system' AND actor_id='system:park-lifecycle'
+          AND json_extract(data_json, '$.reason')='work_item_cancelled'
+      `).get(fixture.created.planningTaskId)?.count, 1);
+    } finally {
+      inspected.close();
+    }
 
     const notifications = fixture.board.listNotifications().unread;
     assert.equal(notifications.length, 2);

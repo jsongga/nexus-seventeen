@@ -511,6 +511,89 @@ export class WorkItemsCollaborator {
     });
   }
 
+  closeWorkItemWorkInTransaction(
+    workItemId: string,
+    reason: string,
+    actor: { type: "human" | "system"; id: string },
+    now: string,
+  ): void {
+    const persistedReason = redactForPersistence(reason);
+    const linkedTasks = this.runtime.store.db.prepare(`
+      SELECT task_id
+      FROM (
+        SELECT task_id
+        FROM work_item_planning_tasks
+        WHERE work_item_id=?
+        UNION
+        SELECT task_id
+        FROM work_item_design_tasks
+        WHERE work_item_id=?
+        UNION
+        SELECT attempt.task_id
+        FROM stage_attempts AS attempt
+        JOIN work_nodes AS node ON node.node_id=attempt.node_id
+        JOIN plan_revisions AS plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=?
+      )
+      ORDER BY task_id
+    `).all(workItemId, workItemId, workItemId);
+    for (const linked of linkedTasks) {
+      const task = this.runtime.requireTask(stringValue(linked, "task_id"));
+      if (!isHardTerminalTaskStatus(task.status)) {
+        const taskUpdate = this.runtime.store.db.prepare(`
+          UPDATE tasks
+          SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result=?,version=version+1,updated_at=?
+          WHERE task_id=? AND version=? AND status NOT IN ('completed','cancelled')
+        `).run(now, now, persistedReason, now, task.taskId, task.version);
+        if (Number(taskUpdate.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Planning task version changed");
+        this.runtime.reconcileTaskPhasesForTerminal(task, "cancelled", actor, now);
+        this.runtime.retirePendingWakeupsForTask(task.taskId, "task_cancelled", now);
+        this.runtime.insertEvent(
+          task.projectId,
+          task.taskId,
+          actor,
+          "task_updated",
+          {
+            kind: task.kind,
+            requiredRole: task.requiredRole,
+            previousVersion: task.version,
+            version: task.version + 1,
+            status: "cancelled",
+            assignedAgentId: task.assignedAgentId,
+            result: persistedReason,
+          },
+          now,
+        );
+      }
+      const openQuestions = this.runtime.store.db.prepare(
+        "SELECT question_id FROM questions WHERE task_id=? AND status='open' ORDER BY asked_at,question_id",
+      ).all(task.taskId);
+      const closedAnswer = `Closed because the work item was cancelled: ${persistedReason}`;
+      const closedQuestions = this.runtime.store.db.prepare(`
+        UPDATE questions
+        SET status='answered',answer=?,answered_at=?,answered_by=?,version=version+1
+        WHERE task_id=? AND status='open'
+      `).run(closedAnswer, now, actor.id, task.taskId);
+      if (Number(closedQuestions.changes) !== openQuestions.length) {
+        throw conflict("QUESTION_VERSION_CONFLICT", "Planning questions changed while the work item was cancelled");
+      }
+      for (const question of openQuestions) {
+        this.runtime.insertEvent(
+          task.projectId,
+          task.taskId,
+          actor,
+          "human_question_closed",
+          {
+            questionId: stringValue(question, "question_id"),
+            workItemId,
+            reason: "work_item_cancelled",
+          },
+          now,
+        );
+      }
+    }
+  }
+
   private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
     const persistedReason = redactForPersistence(reason);
     return this.runtime.store.transaction(() => {
@@ -522,73 +605,18 @@ export class WorkItemsCollaborator {
       if (current.version !== version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
       const now = exactNow(this.runtime.config.now);
+      const actor = { type: "human" as const, id: this.runtime.config.humanPrincipal };
       let planningProjectId: string | null = current.resolvedProjectId;
       if (current.planningTaskId !== null) {
         const planningTask = this.runtime.requireTask(current.planningTaskId);
         planningProjectId = planningTask.projectId;
-        if (!isHardTerminalTaskStatus(planningTask.status)) {
-          const taskUpdate = this.runtime.store.db.prepare(`
-            UPDATE tasks
-            SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result=?,version=version+1,updated_at=?
-            WHERE task_id=? AND version=? AND status NOT IN ('completed','cancelled')
-          `).run(now, now, persistedReason, now, planningTask.taskId, planningTask.version);
-          if (Number(taskUpdate.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Planning task version changed");
-          this.runtime.reconcileTaskPhasesForTerminal(
-            planningTask,
-            "cancelled",
-            { type: "human", id: this.runtime.config.humanPrincipal },
-            now,
-          );
-          this.runtime.retirePendingWakeupsForTask(planningTask.taskId, "task_cancelled", now);
-          this.runtime.insertEvent(
-            planningTask.projectId,
-            planningTask.taskId,
-            { type: "human", id: this.runtime.config.humanPrincipal },
-            "task_updated",
-            {
-              kind: planningTask.kind,
-              requiredRole: planningTask.requiredRole,
-              previousVersion: planningTask.version,
-              version: planningTask.version + 1,
-              status: "cancelled",
-              assignedAgentId: planningTask.assignedAgentId,
-              result: persistedReason,
-            },
-            now,
-          );
-        }
-        const openQuestions = this.runtime.store.db.prepare(
-          "SELECT question_id FROM questions WHERE task_id=? AND status='open' ORDER BY asked_at,question_id",
-        ).all(planningTask.taskId);
-        const closedAnswer = `Closed because the work item was cancelled: ${persistedReason}`;
-        const closedQuestions = this.runtime.store.db.prepare(`
-          UPDATE questions
-          SET status='answered',answer=?,answered_at=?,answered_by=?,version=version+1
-          WHERE task_id=? AND status='open'
-        `).run(closedAnswer, now, this.runtime.config.humanPrincipal, planningTask.taskId);
-        if (Number(closedQuestions.changes) !== openQuestions.length) {
-          throw conflict("QUESTION_VERSION_CONFLICT", "Planning questions changed while the work item was cancelled");
-        }
-        for (const question of openQuestions) {
-          this.runtime.insertEvent(
-            planningTask.projectId,
-            planningTask.taskId,
-            { type: "human", id: this.runtime.config.humanPrincipal },
-            "human_question_closed",
-            {
-              questionId: stringValue(question, "question_id"),
-              workItemId,
-              reason: "work_item_cancelled",
-            },
-            now,
-          );
-        }
       }
+      this.closeWorkItemWorkInTransaction(workItemId, reason, actor, now);
       if (planningProjectId !== null) {
         this.runtime.insertEvent(
           planningProjectId,
           current.planningTaskId,
-          { type: "human", id: this.runtime.config.humanPrincipal },
+          actor,
           "work_item_cancelled",
           {
             workItemId,

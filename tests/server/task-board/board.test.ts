@@ -2118,7 +2118,7 @@ test("retry and recoverable reassignment reactivate a node without reopening its
   }
 });
 
-test("a cancelled work item still allows its live final-stage run and node to settle", async () => {
+test("a cancelled work item keeps its live final-stage task cancelled while its run settles", async () => {
   const fixture = await activeSettlementWorkflow("cancelled-final-stage");
   try {
     const current = fixture.board.requireWorkItem(fixture.workItem.workItemId);
@@ -2136,7 +2136,7 @@ test("a cancelled work item still allows its live final-stage run and node to se
     });
 
     assert.equal(settled.run.status, "completed");
-    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "completed");
+    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "cancelled");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
   } finally {
@@ -2144,7 +2144,7 @@ test("a cancelled work item still allows its live final-stage run and node to se
   }
 });
 
-test("a live workflow task can ask and receive an answer after its work item is cancelled", async () => {
+test("a cancelled work item's stage task rejects new questions", async () => {
   const fixture = await activeSettlementWorkflow("cancelled-question");
   try {
     const taskId = fixture.claim.task!.taskId;
@@ -2156,28 +2156,20 @@ test("a live workflow task can ask and receive an answer after its work item is 
     });
     const cancelled = fixture.board.requireWorkItem(fixture.workItem.workItemId);
 
-    const question = fixture.board.askQuestion(taskId, fixture.verifier.agentId, {
-      clientEventId: "question-after-work-item-cancel-0001",
-      question: "Should the live verification preserve its recorded evidence?",
-      runId: fixture.claim.run.runId,
-    });
-    assert.equal(question.status, "open");
-    assert.equal(fixture.board.requireTask(taskId).status, "blocked");
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === fixture.claim.run.runId,
-    )?.status, "waiting_for_human");
+    assert.equal(fixture.board.requireTask(taskId).status, "cancelled");
+    assert.throws(
+      () => fixture.board.askQuestion(taskId, fixture.verifier.agentId, {
+        clientEventId: "question-after-work-item-cancel-0001",
+        question: "Should the live verification preserve its recorded evidence?",
+        runId: fixture.claim.run.runId,
+      }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 409
+        && error.code === "TASK_TERMINAL",
+    );
     assert.equal(fixture.board.snapshot(fixture.project.projectId).openQuestions.some(
-      (candidate) => candidate.questionId === question.questionId,
-    ), true);
-    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
-
-    const answered = fixture.board.answerQuestion(question.questionId, {
-      answer: "Yes. Preserve the evidence for the terminal work-item record.",
-      version: question.version,
-    });
-    assert.equal(answered.question.status, "answered");
-    assert.equal(answered.wakeup.reason, "human_answer");
-    assert.equal(answered.wakeup.taskId, taskId);
+      (candidate) => candidate.taskId === taskId,
+    ), false);
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
   } finally {
     fixture.board.close();
