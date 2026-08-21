@@ -5,6 +5,10 @@ import {
   ACTOR_TYPES,
   AGENT_ROLES,
   DOCUMENT_ACTOR_TYPES,
+  GATE_KINDS,
+  NOTIFICATION_KINDS,
+  PARK_CATEGORIES,
+  PARK_RESOLUTIONS,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   REVIEW_FINDING_CATEGORIES,
@@ -28,7 +32,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -163,6 +167,42 @@ CREATE TABLE IF NOT EXISTS design_records (
 CREATE TABLE IF NOT EXISTS work_item_design_tasks (
   work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
   task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL
+) STRICT;
+`;
+
+const LEDGER_OBSERVABILITY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS park_records (
+  park_record_id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  category TEXT NOT NULL CHECK (category IN (${sqlStringList(PARK_CATEGORIES)})),
+  reason TEXT NOT NULL,
+  parked_at TEXT NOT NULL,
+  resolved_at TEXT NULL,
+  resolution TEXT NULL CHECK (resolution IN (${sqlStringList(PARK_RESOLUTIONS)}))
+) STRICT;
+CREATE TABLE IF NOT EXISTS notifications (
+  notification_id TEXT PRIMARY KEY,
+  sequence INTEGER NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN (${sqlStringList(NOTIFICATION_KINDS)})),
+  dedupe_key TEXT NULL UNIQUE,
+  project_id TEXT NULL,
+  work_item_id TEXT NULL,
+  summary TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  read_at TEXT NULL,
+  version INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS gate_actions (
+  gate_action_id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  gate TEXT NOT NULL CHECK (gate IN (${sqlStringList(GATE_KINDS)})),
+  actor_id TEXT NOT NULL,
+  plan_revision_id TEXT NULL,
+  verified_sha TEXT NULL,
+  merge_sha TEXT NULL,
+  ref_id TEXT NULL,
+  note TEXT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
 `;
@@ -482,6 +522,8 @@ CREATE UNIQUE INDEX tasks_one_review_stage
   WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
 
 ${REVIEW_DESIGN_SCHEMA}
+
+${LEDGER_OBSERVABILITY_SCHEMA}
 
 ${TASK_PHASE_SCHEMA}
 
@@ -1022,6 +1064,25 @@ function migrateVersion20To21(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion21To22(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(LEDGER_OBSERVABILITY_SCHEMA);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 22; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1320,6 +1381,8 @@ export class TaskBoardStore {
         // Pipeline plan records, branch identity, and machine-verify attempts are added below.
       } else if (version === 20) {
         // Review findings, design records, and design-task links are added below.
+      } else if (version === 21) {
+        // Park records, notifications, and gate actions are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1342,6 +1405,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 18) migrateVersion18To19(db);
       if (version >= 1 && version <= 19) migrateVersion19To20(db);
       if (version >= 1 && version <= 20) migrateVersion20To21(db);
+      if (version >= 1 && version <= 21) migrateVersion21To22(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

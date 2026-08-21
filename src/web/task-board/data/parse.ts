@@ -31,18 +31,21 @@ import {
   parseAutomationConfigurationEntity,
   parseAutomationExecutorEntity,
   parseAutomationStageEntity,
+  parseBoardNotification as parseBoardNotificationContract,
   parseBoardSnapshotEntity,
   parseDocumentEntity,
   parseDocumentPenHolderEntity,
   parseDocumentSummaryEntity,
   parseDesignRecordEntity,
   parseEventEntity,
+  parseGateAction as parseGateActionContract,
   parseHandoffEntity,
   parseInterruptEntity,
   parseMessageEntity,
   parseNodeEntity,
   parsePlanEntity,
   parsePipelineSummaryEntity,
+  parseParkRecord as parseParkRecordContract,
   parseProjectArtifactEntity,
   parseProjectEntity,
   parseProjectEventEntity,
@@ -62,7 +65,10 @@ import {
   versionedRecord,
   type JsonRecord,
   type ParsedWorkItemTransition,
+  type TolerantBoardNotification,
   type TolerantDesignRecordEntity,
+  type TolerantGateAction,
+  type TolerantParkRecord,
   type TolerantReviewFindingEntity,
   type TolerantTaskEntity,
   type TolerantWorkItemEntity,
@@ -265,6 +271,18 @@ function projectMessage(value: TaskMessage): RawMessage {
 }
 export function parseMessage(value: unknown, path: string): RawMessage {
   return projectMessage(parseMessageEntity(value, path, loose));
+}
+
+export function parseParkRecord(value: unknown, path: string): TolerantParkRecord {
+  return parseParkRecordContract(value, path, loose);
+}
+
+export function parseBoardNotification(value: unknown, path: string): TolerantBoardNotification {
+  return parseBoardNotificationContract(value, path, loose);
+}
+
+export function parseGateAction(value: unknown, path: string): TolerantGateAction {
+  return parseGateActionContract(value, path, loose);
 }
 
 export function parseReviewFinding(value: unknown, path: string): TolerantReviewFindingEntity {

@@ -29,6 +29,9 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_BOARD_REVIEW_RUNTIME_CONFLICT: "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
   TASK_BOARD_DESIGN_RECORD_REQUIRED: "TASK_BOARD_DESIGN_RECORD_REQUIRED",
   TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED: "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
+  TASK_BOARD_PARK_RECORD_REQUIRED: "TASK_BOARD_PARK_RECORD_REQUIRED",
+  TASK_BOARD_PARK_RECORD_INVALID: "TASK_BOARD_PARK_RECORD_INVALID",
+  TASK_BOARD_NOTIFICATION_NOT_FOUND: "TASK_BOARD_NOTIFICATION_NOT_FOUND",
   TASK_TERMINAL: "TASK_TERMINAL",
   TASK_UNASSIGNED: "TASK_UNASSIGNED",
   TASK_WORKFLOW_BOUND: "TASK_WORKFLOW_BOUND",
@@ -66,9 +69,10 @@ export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
  * exposed as the column-specific TASK_MESSAGE_ACTOR_TYPES alias),
  * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
  * PLAN_REVISION_STATES, WORK_NODE_STATES, STAGE_HANDOFF_OUTCOMES,
- * REVIEW_FINDING_CATEGORIES, and REVIEW_FINDING_SEVERITIES. Adding or removing a
- * member from one of those arrays also requires a schema-version bump and rebuild
- * migration so existing databases receive the new CHECK constraint.
+ * REVIEW_FINDING_CATEGORIES, REVIEW_FINDING_SEVERITIES, PARK_CATEGORIES,
+ * PARK_RESOLUTIONS, NOTIFICATION_KINDS, and GATE_KINDS. Adding or removing a
+ * member from one of those arrays also requires a schema-version bump and
+ * rebuild migration so existing databases receive the new CHECK constraint.
  * WORK_ITEM_STATES backs state CHECKs in both work_items and
  * work_item_transitions.
  */
@@ -253,6 +257,27 @@ export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
 
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
 export type WorkflowStage = typeof WORKFLOW_STAGES[number];
+
+export const PARK_CATEGORIES = [
+  "open_question",
+  "planning_run_failed",
+  "design_run_failed",
+  "hazardous_without_pipeline",
+  "plan_rejected_twice",
+  "bright_line",
+  "scope_violation",
+] as const;
+export const PARK_RESOLUTIONS = ["resumed", "abandoned", "auto_abandoned", "dead_letter"] as const;
+export const NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned"] as const;
+export const GATE_KINDS = [
+  "plan_confirm",
+  "plan_reject",
+  "final_approve",
+  "final_reject",
+  "cancel",
+  "question_answer",
+] as const;
+export type ParkCategory = typeof PARK_CATEGORIES[number];
 
 export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" | "v2" | null {
   if (
@@ -482,6 +507,42 @@ export interface PlanRevision extends PlanRecordFields {
   readonly createdAt: string;
   readonly confirmedAt: string | null;
   readonly rejectedNote?: string;
+}
+
+export interface ParkRecord {
+  readonly parkRecordId: string;
+  readonly workItemId: string;
+  readonly category: ParkCategory;
+  readonly reason: string;
+  readonly parkedAt: string;
+  readonly resolvedAt: string | null;
+  readonly resolution: typeof PARK_RESOLUTIONS[number] | null;
+}
+
+export interface BoardNotification {
+  readonly notificationId: string;
+  readonly sequence: number;
+  readonly kind: typeof NOTIFICATION_KINDS[number];
+  readonly dedupeKey: string | null;
+  readonly projectId: string | null;
+  readonly workItemId: string | null;
+  readonly summary: string;
+  readonly createdAt: string;
+  readonly readAt: string | null;
+  readonly version: number;
+}
+
+export interface GateAction {
+  readonly gateActionId: string;
+  readonly workItemId: string;
+  readonly gate: typeof GATE_KINDS[number];
+  readonly actorId: string;
+  readonly planRevisionId: string | null;
+  readonly verifiedSha: string | null;
+  readonly mergeSha: string | null;
+  readonly refId: string | null;
+  readonly note: string | null;
+  readonly createdAt: string;
 }
 
 export interface ReviewFindingDraft {

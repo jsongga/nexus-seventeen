@@ -84,8 +84,11 @@ import {
   parseAgent,
   parseAutomationAgentType,
   parseAutomationExecutor,
+  parseBoardNotification,
   parseDesignRecord,
   parseDocument,
+  parseGateAction,
+  parseParkRecord,
   parsePipelineSummary,
   parseProject,
   parseQuestion,
@@ -333,6 +336,53 @@ describe('browser task-board validator adapter', () => {
     expect(design.failurePoints[0]?.point).toBe('unrecognized');
     expect(design.transitions[0]).not.toHaveProperty('additiveField');
     expect(design).not.toHaveProperty('additiveField');
+  });
+
+  it('loosely projects ledger enums as unrecognized across additive response changes', () => {
+    const park = parseParkRecord({
+      parkRecordId: 'park-record-one',
+      workItemId: 'work-item-one',
+      category: 'future_category',
+      reason: 'Waiting for an operator.',
+      parkedAt: NOW,
+      resolvedAt: NOW,
+      resolution: 'future_resolution',
+      additiveField: 'ignored',
+    }, 'parkRecord');
+    expect(park).toMatchObject({ category: 'unrecognized', resolution: 'unrecognized' });
+    expect(park).not.toHaveProperty('additiveField');
+
+    const notification = parseBoardNotification({
+      notificationId: 'notification-one',
+      sequence: 1,
+      kind: 'future_kind',
+      dedupeKey: null,
+      projectId: null,
+      workItemId: 'work-item-one',
+      summary: 'A future notification kind arrived.',
+      createdAt: NOW,
+      readAt: null,
+      version: 1,
+      additiveField: 'ignored',
+    }, 'notification');
+    expect(notification.kind).toBe('unrecognized');
+    expect(notification).not.toHaveProperty('additiveField');
+
+    const gate = parseGateAction({
+      gateActionId: 'gate-action-one',
+      workItemId: 'work-item-one',
+      gate: 'future_gate',
+      actorId: 'human:operator',
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: null,
+      note: null,
+      createdAt: NOW,
+      additiveField: 'ignored',
+    }, 'gateAction');
+    expect(gate.gate).toBe('unrecognized');
+    expect(gate).not.toHaveProperty('additiveField');
   });
 
   it('projects pipeline findings and the design record while ignoring additive response fields', () => {

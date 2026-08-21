@@ -14,8 +14,12 @@ import {
   DOCUMENT_CONTENT_MAX_BYTES,
   DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
+  GATE_KINDS,
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
+  NOTIFICATION_KINDS,
+  PARK_CATEGORIES,
+  PARK_RESOLUTIONS,
   PLAN_CHANGE_SHAPES,
   PLAN_REVISION_STATES,
   PLAN_TIERS,
@@ -51,6 +55,7 @@ import {
   type AutomationConfiguration,
   type AutomationPipelineStage,
   type AutomationStageExecutor,
+  type BoardNotification,
   type BoardSnapshot,
   type BoardTask,
   type BacklogTaskRequest,
@@ -74,10 +79,13 @@ import {
   type DesignFailurePointKind,
   type DesignRecord,
   type DesignRecordDraft,
+  type GateAction,
   type HumanQuestion,
   type InterruptAgentRequest,
   type PlanRecordFields,
   type PlanRevision,
+  type ParkCategory,
+  type ParkRecord,
   type PipelineSummary,
   type Project,
   type ProjectArtifact,
@@ -350,6 +358,19 @@ export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
 
 export type TolerantWorkItemEntity = Omit<WorkItem, "state"> & Readonly<{
   state: WorkItemState | "unrecognized";
+}>;
+
+export type TolerantParkRecord = Omit<ParkRecord, "category" | "resolution"> & Readonly<{
+  category: ParkCategory | "unrecognized";
+  resolution: typeof PARK_RESOLUTIONS[number] | "unrecognized" | null;
+}>;
+
+export type TolerantBoardNotification = Omit<BoardNotification, "kind"> & Readonly<{
+  kind: typeof NOTIFICATION_KINDS[number] | "unrecognized";
+}>;
+
+export type TolerantGateAction = Omit<GateAction, "gate"> & Readonly<{
+  gate: typeof GATE_KINDS[number] | "unrecognized";
 }>;
 
 export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "severity" | "stage"> & Readonly<{
@@ -979,6 +1000,145 @@ function reviewFindingFile(value: unknown, label: string): string {
     throw new ContractValidationError(`${label} is invalid`);
   }
   return parsed;
+}
+
+function ledgerText(
+  value: unknown,
+  label: string,
+  maximum: number,
+  options: ShapeParserOptions,
+  allowEmpty = false,
+): string {
+  return prose(value, label, {
+    maximum,
+    allowEmpty,
+    message: `${label} is invalid`,
+    scalarMessages: options.scalarMessages,
+  });
+}
+
+function nullableGitSha(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  const sha = stringValue(value, label);
+  if (sha.length !== 40 || !GIT_OBJECT_ID_PATTERN.test(sha)) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  return sha;
+}
+
+export function parseParkRecord(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantParkRecord;
+export function parseParkRecord(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): ParkRecord;
+export function parseParkRecord(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): ParkRecord | TolerantParkRecord {
+  const fields = [
+    "parkRecordId", "workItemId", "category", "reason", "parkedAt", "resolvedAt", "resolution",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const category = tolerateUnknown
+    ? entityMember(item.category, PARK_CATEGORIES, `${label}.category`, options, undefined, true)
+    : entityMember(item.category, PARK_CATEGORIES, `${label}.category`, options);
+  const resolution = item.resolution === null
+    ? null
+    : tolerateUnknown
+      ? entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options, undefined, true)
+      : entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options);
+  return Object.freeze({
+    parkRecordId: shapeIdentifier(item.parkRecordId, `${label}.parkRecordId`, options),
+    workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
+    category,
+    reason: ledgerText(item.reason, `${label}.reason`, 2_000, options),
+    parkedAt: entityTimestamp(item.parkedAt, `${label}.parkedAt`, options),
+    resolvedAt: nullableTimestamp(item.resolvedAt, `${label}.resolvedAt`, options),
+    resolution,
+  });
+}
+
+export function parseBoardNotification(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantBoardNotification;
+export function parseBoardNotification(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): BoardNotification;
+export function parseBoardNotification(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): BoardNotification | TolerantBoardNotification {
+  const fields = [
+    "notificationId", "sequence", "kind", "dedupeKey", "projectId", "workItemId",
+    "summary", "createdAt", "readAt", "version",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const kind = tolerateUnknown
+    ? entityMember(item.kind, NOTIFICATION_KINDS, `${label}.kind`, options, undefined, true)
+    : entityMember(item.kind, NOTIFICATION_KINDS, `${label}.kind`, options);
+  return Object.freeze({
+    notificationId: shapeIdentifier(item.notificationId, `${label}.notificationId`, options),
+    sequence: integer(item.sequence, `${label}.sequence`, 1),
+    kind,
+    dedupeKey: nullableString(item.dedupeKey, `${label}.dedupeKey`),
+    projectId: nullableIdentifier(item.projectId, `${label}.projectId`, options),
+    workItemId: nullableIdentifier(item.workItemId, `${label}.workItemId`, options),
+    summary: ledgerText(item.summary, `${label}.summary`, 500, options),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+    readAt: nullableTimestamp(item.readAt, `${label}.readAt`, options),
+    version: integer(item.version, `${label}.version`, 1),
+  });
+}
+
+export function parseGateAction(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantGateAction;
+export function parseGateAction(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): GateAction;
+export function parseGateAction(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): GateAction | TolerantGateAction {
+  const fields = [
+    "gateActionId", "workItemId", "gate", "actorId", "planRevisionId", "verifiedSha",
+    "mergeSha", "refId", "note", "createdAt",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const gate = tolerateUnknown
+    ? entityMember(item.gate, GATE_KINDS, `${label}.gate`, options, undefined, true)
+    : entityMember(item.gate, GATE_KINDS, `${label}.gate`, options);
+  return Object.freeze({
+    gateActionId: shapeIdentifier(item.gateActionId, `${label}.gateActionId`, options),
+    workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
+    gate,
+    actorId: shapeIdentifier(item.actorId, `${label}.actorId`, options),
+    planRevisionId: nullableIdentifier(item.planRevisionId, `${label}.planRevisionId`, options),
+    verifiedSha: nullableGitSha(item.verifiedSha, `${label}.verifiedSha`),
+    mergeSha: nullableGitSha(item.mergeSha, `${label}.mergeSha`),
+    refId: nullableIdentifier(item.refId, `${label}.refId`, options),
+    note: item.note === null ? null : ledgerText(item.note, `${label}.note`, 2_000, options, true),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+  });
 }
 
 function reviewFindingDraftFields(
