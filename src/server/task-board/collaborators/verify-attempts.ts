@@ -5,7 +5,7 @@ import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager } from "#server/agents/task-workspace";
 import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
-import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
+import { GIT_OBJECT_ID_PATTERN, VERIFY_WORKSPACE_SUFFIX } from "#shared/task-board-contract";
 import { redactForPersistence } from "../../shared/redact.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
@@ -361,7 +361,7 @@ export class VerifyAttemptsCollaborator {
       }
       workspace = this.#workspaceManagerFactory(current.repositoryPath);
       workspacePath = await workspace.create(
-        `${current.workItemId}-verify`,
+        `${current.workItemId}${VERIFY_WORKSPACE_SUFFIX}`,
         current.baseSha ?? undefined,
         current.workItemId,
       );
@@ -628,7 +628,7 @@ export class VerifyAttemptsCollaborator {
 
   async #removeBestEffort(workspace: MachineVerifyWorkspaceManager, workItemId: string): Promise<void> {
     try {
-      await workspace.remove(`${workItemId}-verify`);
+      await workspace.remove(`${workItemId}${VERIFY_WORKSPACE_SUFFIX}`);
     } catch (error) {
       console.error(`[task-board] could not remove green verify workspace for ${workItemId}`, error);
     }
@@ -636,7 +636,7 @@ export class VerifyAttemptsCollaborator {
 
   async #retainBestEffort(workspace: MachineVerifyWorkspaceManager, workItemId: string): Promise<void> {
     try {
-      await workspace.retain(`${workItemId}-verify`);
+      await workspace.retain(`${workItemId}${VERIFY_WORKSPACE_SUFFIX}`);
     } catch (error) {
       console.error(`[task-board] could not retain failed verify workspace for ${workItemId}`, error);
     }

@@ -224,6 +224,90 @@ test("ledger collaborators aggregate findings, filter by project, and order park
   }
 });
 
+test("campaign 6 exit criterion exposes categorized findings and parks across work items", async () => {
+  const fixture = await boardFixture(undefined, () => new Date(NOW));
+  try {
+    const firstItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Prove correctness findings are queryable.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "ledger-exit-work-item-one").workItem;
+    const secondItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Prove documentation findings are queryable.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "ledger-exit-work-item-two").workItem;
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const first = insertConfirmedPlanAndNode(db, firstItem.workItemId, fixture.project.projectId, "exit-one");
+      const second = insertConfirmedPlanAndNode(db, secondItem.workItemId, fixture.project.projectId, "exit-two");
+      insertFinding(db, first.nodeId, "exit-correctness", "correctness", "major", true, "2026-08-21T10:00:00.000Z");
+      insertFinding(db, second.nodeId, "exit-docs", "docs", "minor", false, "2026-08-21T11:00:00.000Z");
+      const insertPark = db.prepare(`
+        INSERT INTO park_records(
+          park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+        ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+      `);
+      insertPark.run(
+        "park-exit-question",
+        firstItem.workItemId,
+        "open_question",
+        "Wait for the operator to choose the retry policy.",
+        "2026-08-21T12:00:00.000Z",
+      );
+      insertPark.run(
+        "park-exit-scope",
+        secondItem.workItemId,
+        "scope_violation",
+        "Return the implementation to its declared scope.",
+        "2026-08-21T13:00:00.000Z",
+      );
+    } finally {
+      db.close();
+    }
+
+    const findings = fixture.board.findingsLedger();
+    assert.deepEqual(findings.categories, [
+      { category: "correctness", severity: "major", blocking: true, count: 1 },
+      { category: "docs", severity: "minor", blocking: false, count: 1 },
+    ]);
+    assert.deepEqual(findings.perProject, [
+      { projectId: fixture.project.projectId, category: "correctness", count: 1 },
+      { projectId: fixture.project.projectId, category: "docs", count: 1 },
+    ]);
+    assert.deepEqual(findings.recent.map((finding) => ({
+      findingId: finding.findingId,
+      workItemId: finding.workItemId,
+      category: finding.category,
+    })), [
+      { findingId: "ledger-finding-exit-docs", workItemId: secondItem.workItemId, category: "docs" },
+      { findingId: "ledger-finding-exit-correctness", workItemId: firstItem.workItemId, category: "correctness" },
+    ]);
+
+    const parks = fixture.board.parksLedger();
+    assert.deepEqual(parks.open.map((park) => ({
+      parkRecordId: park.parkRecordId,
+      workItemId: park.workItemId,
+      category: park.category,
+      reason: park.reason,
+    })), [
+      {
+        parkRecordId: "park-exit-question",
+        workItemId: firstItem.workItemId,
+        category: "open_question",
+        reason: "Wait for the operator to choose the retry policy.",
+      },
+      {
+        parkRecordId: "park-exit-scope",
+        workItemId: secondItem.workItemId,
+        category: "scope_violation",
+        reason: "Return the implementation to its declared scope.",
+      },
+    ]);
+    assert.deepEqual(parks.resolved, []);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 function request(origin: string, path: string, token: string): Promise<Response> {
   return fetch(`${origin}${path}`, { headers: { Authorization: `Bearer ${token}` } });
 }

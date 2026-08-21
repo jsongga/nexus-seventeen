@@ -56,6 +56,10 @@ export const DOCUMENT_CONTENT_MAX_BYTES = 48 * 1_024;
 export const TASK_MESSAGE_PAGE_SIZE = 200;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
+export const REVIEW_WORKSPACE_SUFFIX = "-review";
+export const VERIFY_WORKSPACE_SUFFIX = "-verify";
+export const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
+export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
 
 /**
  * Canonical identifier grammar shared by TypeScript validators and JSON Schema.

@@ -289,6 +289,26 @@ test("starting attempts start outside the transaction, then green runs execute a
   }
 });
 
+test("a stored confirmed v1 pipeline reaches final approval after a green machine-verify sweep", async () => {
+  // The fixture inserts ["implementation","testing"] directly to simulate legacy confirmed data.
+  const fixture = await attemptFixture("stored-v1-green", "running", [], true);
+  try {
+    fixture.runner.statusState = "green";
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "green");
+    assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
+    assert.deepEqual({
+      ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
+        .get(fixture.nodeId),
+    }, { state: "completed", current_stage: null });
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
 test("a failed criterion settles the green verify run as failed and retains its workspace", async () => {
   const fixture = await attemptFixture("check-failure", "running", [{
     criterion: "The focused test passes.",

@@ -2867,6 +2867,80 @@ test("cancelling a work item atomically ends its planning task and retires pendi
   }
 });
 
+test("cancelling redacts every durable reason projection and preserves idempotent replay", async () => {
+  const fixture = await boardFixture();
+  const token = `github_pat_${"c".repeat(48)}`;
+  try {
+    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Cancel an intake without persisting its credential.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-cancel-redaction-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "work-item-cancel-redaction-claim-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const question = fixture.board.askQuestion(created.planningTaskId, fixture.manager.agentId, {
+      clientEventId: "work-item-cancel-redaction-question-0001",
+      question: "Should this credential-bearing intake continue?",
+      runId: claim.run.runId,
+    });
+    const parked = fixture.board.requireWorkItem(created.workItemId);
+    const request = {
+      version: parked.version,
+      action: "cancel" as const,
+      reason: `Stop after receiving ${token}.`,
+    };
+    const expectedReason = "Stop after receiving [redacted:token]";
+
+    const cancelled = fixture.board.updateWorkItem(created.workItemId, request);
+
+    assert.equal(cancelled.cancelledReason, expectedReason);
+    assert.deepEqual(fixture.board.updateWorkItem(created.workItemId, request), cancelled);
+    const { DatabaseSync } = await import("node:sqlite");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const projections = [
+        inspected.prepare("SELECT cancelled_reason AS value FROM work_items WHERE work_item_id=?")
+          .get(created.workItemId)?.value,
+        inspected.prepare("SELECT result AS value FROM tasks WHERE task_id=?")
+          .get(created.planningTaskId)?.value,
+        JSON.parse(String(inspected.prepare(`
+          SELECT data_json FROM task_events
+          WHERE task_id=? AND event_type='task_updated'
+          ORDER BY created_at DESC, rowid DESC LIMIT 1
+        `).get(created.planningTaskId)?.data_json)).result,
+        inspected.prepare("SELECT answer AS value FROM questions WHERE question_id=?")
+          .get(question.questionId)?.value,
+        JSON.parse(String(inspected.prepare(`
+          SELECT data_json FROM task_events
+          WHERE task_id=? AND event_type='work_item_cancelled'
+          ORDER BY created_at DESC, rowid DESC LIMIT 1
+        `).get(created.planningTaskId)?.data_json)).reason,
+      ];
+      assert.deepEqual(projections, [
+        expectedReason,
+        expectedReason,
+        expectedReason,
+        `Closed because the work item was cancelled: ${expectedReason}`,
+        expectedReason,
+      ]);
+      for (const projection of projections) {
+        assert.doesNotMatch(String(projection), new RegExp(token, "u"));
+      }
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM task_events
+        WHERE task_id=? AND event_type IN ('task_updated','work_item_cancelled')
+      `).get(created.planningTaskId)?.count, 2);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("a completed planning settlement discards its proposal after the work item is cancelled", async () => {
   const fixture = await boardFixture();
   try {

@@ -141,13 +141,16 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     assert.ok(revising.planningTaskId);
     assert.equal(
       fixture.board.requireTask(revising.planningTaskId).objective,
-      `Prior plan rejected: ${note}\n\n${workItem.originalRequest}`,
+      `Prior plan rejected: Keep the objective, but make the rollback behavior explicit. [redacted:bearer]\n\n${workItem.originalRequest}`,
     );
     const rejected = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
       (plan) => plan.planRevisionId === firstPlan.planRevisionId,
     );
     assert.equal(rejected?.state, "rejected");
-    assert.equal(rejected?.rejectedNote, note);
+    assert.equal(
+      rejected?.rejectedNote,
+      "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]",
+    );
 
     const rejectedAction = gateActions(fixture.path, workItem.workItemId).find(
       (action) => action.gate === "plan_reject",

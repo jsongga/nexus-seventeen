@@ -67,6 +67,26 @@ test("a completed outcome harvests the task branch and removes the workspace", a
   await assert.rejects(access(path));
 });
 
+test("a taskId ending in the review suffix keeps normal workspace semantics without workflow context", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const manager = new TaskWorkspaceManager({ workspaceRoot: join(root, "ws"), repositoryPath: repo });
+  const inner = new FakeLauncher();
+  const launcher = new WorkspaceScopedLauncher(inner, manager);
+  const key = "task-id-review";
+
+  const handle = await launcher.launch(request(key));
+  const path = manager.workspacePath(key);
+  await writeFile(join(path, "work.txt"), "normal task work\n");
+  await run(path, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
+  await run(path, "git", ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "normal task work"]);
+  inner.handles[0]?.resolve(completedOutcome());
+
+  assert.equal((await handle.completion).status, "completed");
+  assert.equal(await run(repo, "git", ["show", `task/${key}:work.txt`]), "normal task work\n");
+  await assert.rejects(access(path));
+});
+
 test("a completed outcome harvests its branch and retains uncommitted workspace changes", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);

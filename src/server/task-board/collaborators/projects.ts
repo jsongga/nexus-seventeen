@@ -14,7 +14,6 @@ import {
   type ProjectArtifact,
   type ProjectEvent,
   type PipelineSummary,
-  type ReviewFinding,
   type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type SettleRunRequest,
@@ -23,7 +22,7 @@ import {
 } from "#shared/task-board-contract";
 import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
 import { ArtifactStore } from "../persistence/artifacts.js";
-import { projectFromRow, type Row } from "../persistence/rows.js";
+import { projectFromRow, reviewFindingFromRow, type Row } from "../persistence/rows.js";
 import {
   TransparentWorkflow,
   type AttemptScopeCheckResult,
@@ -58,23 +57,6 @@ const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
-
-function reviewFindingFromRow(row: Row): ReviewFinding {
-  return Object.freeze({
-    findingId: String(row.finding_id),
-    nodeId: String(row.node_id),
-    stage: String(row.stage) as ReviewFinding["stage"],
-    round: Number(row.round),
-    ...(row.file === null ? { file: null } : { file: String(row.file) }),
-    ...(row.line === null ? { line: null } : { line: Number(row.line) }),
-    category: String(row.category) as ReviewFinding["category"],
-    severity: String(row.severity) as ReviewFinding["severity"],
-    expected: String(row.expected),
-    actual: String(row.actual),
-    blocking: Number(row.blocking) === 1,
-    createdAt: String(row.created_at),
-  });
-}
 
 const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
   encoding: "utf8",

@@ -57,6 +57,7 @@ export class LedgersCollaborator {
   constructor(private readonly runtime: TaskBoardRuntime) {}
 
   findingsLedger(projectId?: string): FindingsLedger {
+    // These joins depend on the no-post-confirm-replanning invariant: one confirmed plan per work item.
     const projectFilter = projectId === undefined ? "" : "WHERE plan.project_id=?";
     const parameters = projectId === undefined ? [] : [projectId];
     const categories = (this.runtime.store.db.prepare(`

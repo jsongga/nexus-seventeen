@@ -14,6 +14,7 @@ import {
   type WorkItemTransition,
 } from "#shared/task-board-contract";
 import { parseGateAction } from "#shared/task-board-contract/validate";
+import { redactForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
@@ -405,7 +406,7 @@ export class WorkItemsCollaborator {
       title: `Plan workflow: ${workItem.originalRequest.slice(0, 160)}`,
       objective: revisionNote === undefined
         ? workItem.originalRequest
-        : `Prior plan rejected: ${revisionNote}\n\n${workItem.originalRequest}`,
+        : `Prior plan rejected: ${redactForPersistence(revisionNote)}\n\n${workItem.originalRequest}`,
       acceptanceCriteria: `${PLANNING_ACCEPTANCE_CRITERIA_PREFIX}${availableStages.join(", ") || "none configured"}.`,
       workspaceRefs: [],
       assignedAgentId: managerId,
@@ -525,10 +526,11 @@ export class WorkItemsCollaborator {
   }
 
   private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
+    const persistedReason = redactForPersistence(reason);
     return this.runtime.store.transaction(() => {
       const current = this.runtime.requireWorkItem(workItemId);
       if (current.state === "abandoned") {
-        if (current.version === version + 1 && current.cancelledReason === reason) return current;
+        if (current.version === version + 1 && current.cancelledReason === persistedReason) return current;
         throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       }
       if (current.version !== version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
@@ -543,7 +545,7 @@ export class WorkItemsCollaborator {
             UPDATE tasks
             SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result=?,version=version+1,updated_at=?
             WHERE task_id=? AND version=? AND status NOT IN ('completed','cancelled')
-          `).run(now, now, reason, now, planningTask.taskId, planningTask.version);
+          `).run(now, now, persistedReason, now, planningTask.taskId, planningTask.version);
           if (Number(taskUpdate.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Planning task version changed");
           this.runtime.reconcileTaskPhasesForTerminal(
             planningTask,
@@ -564,7 +566,7 @@ export class WorkItemsCollaborator {
               version: planningTask.version + 1,
               status: "cancelled",
               assignedAgentId: planningTask.assignedAgentId,
-              result: reason,
+              result: persistedReason,
             },
             now,
           );
@@ -572,7 +574,7 @@ export class WorkItemsCollaborator {
         const openQuestions = this.runtime.store.db.prepare(
           "SELECT question_id FROM questions WHERE task_id=? AND status='open' ORDER BY asked_at,question_id",
         ).all(planningTask.taskId);
-        const closedAnswer = `Closed because the work item was cancelled: ${reason}`;
+        const closedAnswer = `Closed because the work item was cancelled: ${persistedReason}`;
         const closedQuestions = this.runtime.store.db.prepare(`
           UPDATE questions
           SET status='answered',answer=?,answered_at=?,answered_by=?,version=version+1
@@ -606,7 +608,7 @@ export class WorkItemsCollaborator {
             workItemId,
             previousState: current.state,
             previousVersion: current.version,
-            reason,
+            reason: persistedReason,
           },
           now,
         );
@@ -618,7 +620,7 @@ export class WorkItemsCollaborator {
         actorId: this.runtime.config.humanPrincipal,
         now,
         endedAt: now,
-        cancelledReason: reason,
+        cancelledReason: persistedReason,
         currentStage: null,
       });
       this.runtime.insertGateActionInTransaction({
@@ -629,7 +631,7 @@ export class WorkItemsCollaborator {
         verifiedSha: null,
         mergeSha: null,
         refId: null,
-        note: reason,
+        note: persistedReason,
       });
       return this.runtime.requireWorkItem(workItemId);
     });

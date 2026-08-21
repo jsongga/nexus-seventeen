@@ -1,4 +1,6 @@
 import {
+  MAX_AREA_MEMORY_RESULT_CHARACTERS,
+  MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,
   TASK_BOARD_API_VERSION,
   type ClaimRunResult,
   type RunStatus,
@@ -31,9 +33,6 @@ import type {
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,
 } from "./types.js";
-
-const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
-const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 
 export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {

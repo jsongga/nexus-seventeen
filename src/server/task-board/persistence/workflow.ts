@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
+  REVIEW_WORKSPACE_SUFFIX,
   TASK_BOARD_ERROR_CODES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
@@ -50,8 +51,8 @@ import {
   pipelineMidRunAssumptions,
   type PipelineInspection,
 } from "../collaborators/pipeline-inspection.js";
+import { reviewFindingFromRow, type Row } from "./rows.js";
 
-type Row = Record<string, unknown>;
 export type { GitRunner as WorkflowGitRunner } from "../collaborators/scope-check.js";
 export type AttemptScopeCheckResult = DeclaredScopeCheckResult | Readonly<{
   ok: false;
@@ -178,22 +179,6 @@ function list(value: unknown, field: string, max = 64): string[] {
   return value.map((item, index) => text(item, `${field}[${index}]`, 4_000));
 }
 function json<T>(value: unknown): T { return JSON.parse(String(value)) as T; }
-function reviewFindingFromRow(row: Row): ReviewFinding {
-  return Object.freeze({
-    findingId: String(row.finding_id),
-    nodeId: String(row.node_id),
-    stage: row.stage as WorkflowStage,
-    round: Number(row.round),
-    file: row.file === null ? null : String(row.file),
-    line: row.line === null ? null : Number(row.line),
-    category: row.category as ReviewFinding["category"],
-    severity: row.severity as ReviewFinding["severity"],
-    expected: String(row.expected),
-    actual: String(row.actual),
-    blocking: Number(row.blocking) === 1,
-    createdAt: String(row.created_at),
-  });
-}
 function optionalJsonList<T>(value: unknown): readonly T[] | undefined {
   return value === null ? undefined : Object.freeze(json<T[]>(value));
 }
@@ -683,7 +668,7 @@ export class TransparentWorkflow {
       skills: Object.freeze(skills), dependencyHandoffs: Object.freeze(handoffs),
       workspaceKey: pipeline === null
         ? null
-        : row.stage === "verification" ? `${String(row.work_item_id)}-review` : String(row.work_item_id),
+        : row.stage === "verification" ? `${String(row.work_item_id)}${REVIEW_WORKSPACE_SUFFIX}` : String(row.work_item_id),
       pipeline,
       review,
       fix,
@@ -852,12 +837,13 @@ export class TransparentWorkflow {
     }
     const workItemId = String(row.work_item_id);
     const projectId = String(row.project_id);
+    const persistedNote = redactForPersistence(request.note);
     const rejectedBefore = this.db.prepare(
       "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state='rejected' LIMIT 1",
     ).get(workItemId) !== undefined;
     const updated = this.db.prepare(
       "UPDATE plan_revisions SET state='rejected',rejected_note=? WHERE plan_revision_id=? AND state='proposed'",
-    ).run(request.note, planId);
+    ).run(persistedNote, planId);
     if (Number(updated.changes) !== 1) {
       throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
     }
@@ -884,7 +870,7 @@ export class TransparentWorkflow {
       verifiedSha: null,
       mergeSha: null,
       refId: null,
-      note: request.note,
+      note: persistedNote,
     });
     this.event(
       projectId,
@@ -1576,6 +1562,7 @@ export class TransparentWorkflow {
           "A passed review cannot contain blocking findings",
         );
       }
+      // failed + needs_input handoffs bypass FINDINGS_REQUIRED by design: a findings-less retry lane; revisit if it is abused (C5 final review, minor 5)
       const failedReview = reviewerResult && outcome === "failed" && supplied?.outcome !== "needs_input";
       if (failedReview && blockingReviewFindings.length === 0) {
         throw new TaskBoardError(

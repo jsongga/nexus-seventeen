@@ -11,6 +11,7 @@ import {
   type DocumentSummary,
   type HumanQuestion,
   type Project,
+  type ReviewFinding,
   type TaskEvent,
   type TaskKind,
   type TaskMessage,
@@ -51,6 +52,23 @@ export function numberValue(row: Row, key: string): number {
     throw new Error(`TASK_BOARD_DATABASE_CORRUPT:${key}`);
   }
   return number;
+}
+
+export function reviewFindingFromRow(row: Row): ReviewFinding {
+  return Object.freeze({
+    findingId: String(row.finding_id),
+    nodeId: String(row.node_id),
+    stage: String(row.stage) as ReviewFinding["stage"],
+    round: Number(row.round),
+    ...(row.file === null ? { file: null } : { file: String(row.file) }),
+    ...(row.line === null ? { line: null } : { line: Number(row.line) }),
+    category: String(row.category) as ReviewFinding["category"],
+    severity: String(row.severity) as ReviewFinding["severity"],
+    expected: String(row.expected),
+    actual: String(row.actual),
+    blocking: Number(row.blocking) === 1,
+    createdAt: String(row.created_at),
+  });
 }
 
 function nullableNumberValue(row: Row, key: string): number | null {

@@ -17,6 +17,8 @@ import {
   GATE_KINDS,
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
+  MAX_AREA_MEMORY_RESULT_CHARACTERS,
+  MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,
   NOTIFICATION_KINDS,
   PARK_CATEGORIES,
   PARK_RESOLUTIONS,
@@ -28,6 +30,7 @@ import {
   REVIEW_FINDING_DRAFT_MAX_ITEMS,
   REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
   REVIEW_FINDING_SEVERITIES,
+  REVIEW_WORKSPACE_SUFFIX,
   RUN_STATUSES,
   STAGE_HANDOFF_OUTCOMES,
   TASK_BOARD_API_VERSION,
@@ -37,6 +40,7 @@ import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   TASK_STATUSES,
+  VERIFY_WORKSPACE_SUFFIX,
   WAKEUP_REASONS,
   WORKER_CONNECTIONS,
   WORK_ITEM_PRIORITIES,
@@ -1365,8 +1369,7 @@ function parseLedgerPark(
   if (expectedState === "resolved" && (park.resolvedAt === null || park.resolution === null)) {
     throw new ContractValidationError(`${label} must be a resolved park record`);
   }
-  const workItemTitle = stringValue(item.workItemTitle, `${label}.workItemTitle`);
-  if (workItemTitle.length > 220) throw new ContractValidationError(`${label}.workItemTitle is invalid`);
+  const workItemTitle = boundedRecordText(item.workItemTitle, `${label}.workItemTitle`, 220);
   return Object.freeze({ ...park, workItemTitle });
 }
 
@@ -2324,10 +2327,8 @@ const MAX_CONTEXT_BYTES = 256 * 1_024;
 // Design claims may carry their large approved-plan objective, while later
 // pipeline claims add the bounded record to an otherwise full context.
 const MAX_DESIGN_CONTEXT_BYTES = 4 * 1_024 * 1_024;
-const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 const MAX_OUTCOME_BYTES = 64 * 1_024;
 const MAX_AREA_MEMORY_ITEMS = 8;
-const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
 
 function byteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -2482,8 +2483,8 @@ function parseWorkflowPipelineFields(
       branchWorkspaceKey === undefined ||
       (
         workspaceKey !== branchWorkspaceKey &&
-        workspaceKey !== `${branchWorkspaceKey}-verify` &&
-        workspaceKey !== `${branchWorkspaceKey}-review`
+        workspaceKey !== `${branchWorkspaceKey}${VERIFY_WORKSPACE_SUFFIX}` &&
+        workspaceKey !== `${branchWorkspaceKey}${REVIEW_WORKSPACE_SUFFIX}`
       ) ||
       !GIT_OBJECT_ID_PATTERN.test(baseSha)
     ) {
@@ -2511,7 +2512,7 @@ function parseWorkflowPipelineFields(
   const review = item.review === undefined || item.review === null
     ? null
     : parseWorkflowReviewContext(item.review, `${label}.review`);
-  if (review !== null && (pipeline === null || !workspaceKey?.endsWith("-review"))) {
+  if (review !== null && (pipeline === null || !workspaceKey?.endsWith(REVIEW_WORKSPACE_SUFFIX))) {
     throw new ContractValidationError(`${label}.review identity is invalid`);
   }
   const fix = item.fix === undefined || item.fix === null
@@ -2529,7 +2530,7 @@ function parseWorkflowPipelineFields(
           )),
         });
       })();
-  if (fix !== null && (pipeline === null || workspaceKey?.endsWith("-review") === true)) {
+  if (fix !== null && (pipeline === null || workspaceKey?.endsWith(REVIEW_WORKSPACE_SUFFIX) === true)) {
     throw new ContractValidationError(`${label}.fix identity is invalid`);
   }
   return Object.freeze({ workspaceKey, pipeline, review, fix });
