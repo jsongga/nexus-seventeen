@@ -767,6 +767,7 @@ export class TransparentWorkflow {
           actorType: "human",
           actorId: actor,
           now,
+          park: { category: "hazardous_without_pipeline", reason: result },
         });
         this.event(String(row.project_id), null, null, "plan_confirmed", result, now);
         return Object.freeze({ readyNodes: Object.freeze([]), outcome: "parked_hazardous" });
@@ -848,6 +849,9 @@ export class TransparentWorkflow {
       actorType: "human",
       actorId: actor,
       now,
+      ...(outcome === "parked"
+        ? { park: { category: "plan_rejected_twice" as const, reason: "plan rejected twice — request unclear" } }
+        : {}),
       ...(outcome === "revising" ? { currentStage: "planning" as const } : {}),
     });
     this.event(
@@ -868,13 +872,18 @@ export class TransparentWorkflow {
     actor: string,
   ): readonly WorkNode[] {
     if (settlement.kind === "conflict") {
-      // Spec refinement: a cleanly aborted merge conflict is recoverable engineering work.
-      // Use the final-rejection return path verbatim so the implementation node is re-armed
-      // with a system:final-approval failed handoff instead of parking the serial pipeline.
-      return this.rejectFinalApprovalInTransaction(workItemId, {
-        version,
-        note: settlement.summary,
-      }, actor);
+      return this.returnFinalApprovalToImplementationInTransaction(
+        workItemId,
+        { version, note: settlement.summary },
+        actor,
+        (nodeId, currentState) => workItemStateForNodeStage(
+          this.db,
+          workItemId,
+          nodeId,
+          "implementation",
+          currentState,
+        ),
+      );
     }
     const row = this.db.prepare(`
       SELECT item.state,item.version,plan.project_id,node.node_id
@@ -940,6 +949,15 @@ export class TransparentWorkflow {
     workItemId: string,
     request: RejectFinalApprovalRequest,
     actor: string,
+  ): readonly WorkNode[] {
+    return this.returnFinalApprovalToImplementationInTransaction(workItemId, request, actor, "fixing");
+  }
+
+  private returnFinalApprovalToImplementationInTransaction(
+    workItemId: string,
+    request: RejectFinalApprovalRequest,
+    actor: string,
+    targetState: WorkItemState | ((nodeId: string, currentState: WorkItemState) => WorkItemState),
   ): readonly WorkNode[] {
     const row = this.db.prepare(`
       SELECT
@@ -1037,7 +1055,9 @@ export class TransparentWorkflow {
     }
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
-      to: workItemStateForNodeStage(this.db, nodeId, "implementation"),
+      to: typeof targetState === "function"
+        ? targetState(nodeId, String(row.state) as WorkItemState)
+        : targetState,
       actorType: "human",
       actorId: actor,
       now,
@@ -1533,6 +1553,10 @@ export class TransparentWorkflow {
             actorType: "system",
             actorId: "system:workflow",
             now,
+            park: {
+              category: detail.startsWith("BRIGHT_LINE:") ? "bright_line" : "scope_violation",
+              reason: detail,
+            },
           });
         }
         this.event(projectId, nodeId, taskId, "stage_failed", `${stage} blocked: ${detail.slice(0, 240)}`, now);
@@ -1659,7 +1683,13 @@ export class TransparentWorkflow {
     if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_plan_work_item");
     if (isTerminalWorkItemState(String(plan.state) as WorkItemState)) return;
     const currentState = String(plan.state) as WorkItemState;
-    const mappedState = workItemStateForNodeStage(this.db, nodeId, stage);
+    const mappedState = workItemStateForNodeStage(
+      this.db,
+      String(plan.work_item_id),
+      nodeId,
+      stage,
+      currentState,
+    );
     const parkedWithOpenQuestions = currentState === "parked" && this.db.prepare(`
       SELECT 1
       FROM questions question
@@ -1680,6 +1710,9 @@ export class TransparentWorkflow {
       actorId: "system:workflow",
       now: updatedAt,
       currentStage: stage,
+      ...(parkedWithOpenQuestions
+        ? { park: { category: "open_question" as const, reason: "work item remains parked for open questions" } }
+        : {}),
       // Touch only when the stage genuinely moved — an unchanged stage must
       // not bump the version and spuriously invalidate concurrent CAS holders.
       ...(parkedWithOpenQuestions && stage !== plan.current_stage ? { touch: true } : {}),

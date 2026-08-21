@@ -83,7 +83,12 @@ export class MessagesCollaborator {
           version: task.version + 1,
         }, now);
       }
-      this.runtime.parkWorkItemForTaskInTransaction(taskId, { type: "agent", id: agentId }, now);
+      this.runtime.parkWorkItemForTaskInTransaction(
+        taskId,
+        { type: "agent", id: agentId },
+        now,
+        { category: "open_question", reason: request.question },
+      );
       this.runtime.insertEvent(task.projectId, taskId, { type: "agent", id: agentId }, "human_question_opened", {
         questionId,
         runId: request.runId,

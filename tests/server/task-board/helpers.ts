@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type {
   AutomationPipelineStage,
   AutomationStageExecutor,
@@ -24,6 +25,24 @@ export const AGENT_TWO_TOKEN = "task-board-agent-two-token-0123456789";
 export async function databasePath(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "steward-task-board-"));
   return join(root, "private", "task-board.sqlite");
+}
+
+export function latestParkRecord(path: string, workItemId: string): Readonly<{
+  category: string;
+  reason: string;
+}> {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return { ...db.prepare(`
+      SELECT category, reason
+      FROM park_records
+      WHERE work_item_id=?
+      ORDER BY parked_at DESC, rowid DESC
+      LIMIT 1
+    `).get(workItemId) } as { category: string; reason: string };
+  } finally {
+    db.close();
+  }
 }
 
 export function config(path: string, now: () => Date = () => new Date("2026-07-19T20:00:00.000Z")): TaskBoardConfig {

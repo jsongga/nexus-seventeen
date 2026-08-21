@@ -14,6 +14,7 @@ import {
   automationStages,
   boardFixture,
   config,
+  latestParkRecord,
   workItemRequest,
 } from "./helpers.js";
 
@@ -224,6 +225,10 @@ test("rejecting a second plan parks the work item and records the bounded reason
     assert.equal(parked.state, "parked");
     assert.equal(parked.planningTaskId, secondPlanningTaskId);
     assert.equal(fixture.board.requireTask(secondPlanningTaskId).result, REJECTED_TWICE_RESULT);
+    assert.deepEqual(latestParkRecord(fixture.path, workItem.workItemId), {
+      category: "plan_rejected_twice",
+      reason: REJECTED_TWICE_RESULT,
+    });
     const rejected = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
       (plan) => plan.planRevisionId === secondPlan.planRevisionId,
     );

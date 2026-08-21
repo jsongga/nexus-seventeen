@@ -11,13 +11,14 @@ import {
   type StageHandoff,
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
-import { createTaskBoardService, TaskBoard, TaskBoardError } from "#server/task-board";
+import { createTaskBoardService, SkillRegistry, TaskBoard, TaskBoardError } from "#server/task-board";
 import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
 import {
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
 } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
 import {
   AGENT_ONE_TOKEN,
   HUMAN_TOKEN,
@@ -267,6 +268,96 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
     return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?").get(workItemId)?.version);
   } finally {
     db.close();
+  }
+}
+
+async function directFinalApprovalFixture(suffix: string): Promise<{
+  path: string;
+  workItemId: string;
+  version: number;
+}> {
+  const fixture = await boardFixture();
+  try {
+    const repo = await repository();
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, suffix);
+    const proposed = proposePipeline(fixture, suffix);
+    fixture.board.confirmWorkflow(proposed.planRevisionId, { expectedState: "proposed" });
+    const version = forceFinalApproval(fixture.path, proposed.workItemId, "a".repeat(40));
+    return { path: fixture.path, workItemId: proposed.workItemId, version };
+  } finally {
+    fixture.board.close();
+  }
+}
+
+function seedActiveBlockingFixLoop(path: string, workItemId: string): void {
+  const db = new DatabaseSync(path);
+  try {
+    const row = db.prepare(`
+      SELECT node.node_id,handoff.task_id
+      FROM plan_revisions plan
+      JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
+      JOIN stage_handoffs handoff ON handoff.node_id=node.node_id AND handoff.stage='testing'
+      WHERE plan.work_item_id=? AND plan.state='confirmed'
+      LIMIT 1
+    `).get(workItemId);
+    assert.ok(row);
+    db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
+      `attempt-conflict-review-${workItemId}`,
+      String(row.node_id),
+      String(row.task_id),
+      "verification",
+      1,
+      "{}",
+    );
+    db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      `finding-conflict-review-${workItemId}`,
+      String(row.node_id),
+      "verification",
+      1,
+      "src/allowed/change.txt",
+      1,
+      "correctness",
+      "major",
+      "The pipeline branch merges cleanly.",
+      "The merge target conflicts with the pipeline branch.",
+      1,
+      "2026-08-19T16:30:00.000Z",
+    );
+  } finally {
+    db.close();
+  }
+}
+
+async function settleMergeConflict(
+  path: string,
+  workItemId: string,
+  version: number,
+): Promise<string> {
+  const store = await TaskBoardStore.open(path);
+  registerWorkItemTransitionStore(store);
+  try {
+    const workflow = new TransparentWorkflow(
+      store.db,
+      new SkillRegistry("skills"),
+      () => new Date("2026-08-19T17:00:00.000Z"),
+      (operation) => store.transaction(operation),
+      undefined,
+      () => "",
+    );
+    store.transaction(() => workflow.settlePipelineMergeInTransaction(
+      workItemId,
+      version,
+      { kind: "conflict", summary: "merge conflict in shared.txt" },
+      "human:alice",
+    ));
+    return String(store.db.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(workItemId)?.state);
+  } finally {
+    store.close();
   }
 }
 
@@ -654,7 +745,7 @@ test("concurrent approve and reject serialize so exactly one wins without an orp
     const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
     assert.match(
       (await current.json() as { workItem: { state: string } }).workItem.state,
-      /^(?:merged|implementing)$/u,
+      /^(?:merged|fixing)$/u,
     );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -757,12 +848,43 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
     );
     assert.equal(claimResponse.status, 201);
     const claim = await claimResponse.json() as {
+      run: { runId: string };
+      task: { taskId: string };
       context: { workflow: { stage: string; dependencyHandoffs: Array<{ outcome: string; summary: string }> } };
     };
     assert.equal(claim.context.workflow.stage, "implementation");
     assert.equal(claim.context.workflow.dependencyHandoffs.length, 1);
     assert.equal(claim.context.workflow.dependencyHandoffs[0]?.outcome, "failed");
     assert.match(String(claim.context.workflow.dependencyHandoffs[0]?.summary), /merge conflict/iu);
+
+    const questionResponse = await request(
+      conflictFixture.origin,
+      `/v1/tasks/${claim.task.taskId}/questions`,
+      "POST",
+      {
+        clientEventId: "question-merge-conflict-implementation-0001",
+        question: "Should the conflict resolution preserve the pipeline branch behavior?",
+        runId: claim.run.runId,
+      },
+      AGENT_ONE_TOKEN,
+    );
+    assert.equal(questionResponse.status, 201);
+    const question = (await questionResponse.json() as {
+      question: { questionId: string; version: number };
+    }).question;
+    const answerResponse = await request(
+      conflictFixture.origin,
+      `/v1/questions/${question.questionId}/answer`,
+      "POST",
+      { answer: "Yes, preserve the reviewed behavior.", version: question.version },
+    );
+    assert.equal(answerResponse.status, 201);
+    const resumedResponse = await request(
+      conflictFixture.origin,
+      `/v1/work-items/${conflictFixture.workItemId}`,
+      "GET",
+    );
+    assert.equal((await resumedResponse.json() as { workItem: { state: string } }).workItem.state, "implementing");
   } finally {
     await conflictFixture.service.close();
   }
@@ -785,6 +907,25 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
   }
 });
 
+test("merge-conflict settlement without findings history returns to implementing", async () => {
+  const fixture = await directFinalApprovalFixture("conflict-no-findings");
+
+  assert.equal(
+    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version),
+    "implementing",
+  );
+});
+
+test("merge-conflict settlement with an active blocking findings loop returns to fixing", async () => {
+  const fixture = await directFinalApprovalFixture("conflict-active-fix-loop");
+  seedActiveBlockingFixLoop(fixture.path, fixture.workItemId);
+
+  assert.equal(
+    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version),
+    "fixing",
+  );
+});
+
 test("reject-final records a system implementation handoff and re-arms engineering", async () => {
   const fixture = await finalApprovalFixture("reject");
   try {
@@ -797,7 +938,7 @@ test("reject-final records a system implementation handoff and re-arms engineeri
     );
     assert.equal(response.status, 200);
     const body = await response.json() as { workItem: { state: string; currentStage: string } };
-    assert.equal(body.workItem.state, "implementing");
+    assert.equal(body.workItem.state, "fixing");
     assert.equal(body.workItem.currentStage, "implementation");
 
     const summaryResponse = await request(
@@ -820,6 +961,8 @@ test("reject-final records a system implementation handoff and re-arms engineeri
     );
     assert.equal(claimResponse.status, 201);
     const claim = await claimResponse.json() as {
+      run: { runId: string };
+      task: { taskId: string };
       context: { workflow: { stage: string; dependencyHandoffs: Array<{ outcome: string; summary: string }> } };
     };
     assert.equal(claim.context.workflow.stage, "implementation");
@@ -827,6 +970,42 @@ test("reject-final records a system implementation handoff and re-arms engineeri
       outcome: handoff.outcome,
       summary: handoff.summary,
     })), [{ outcome: "failed", summary: note }]);
+
+    const questionResponse = await request(
+      fixture.origin,
+      `/v1/tasks/${claim.task.taskId}/questions`,
+      "POST",
+      {
+        clientEventId: "question-final-rejection-fix-0001",
+        question: "Should the missing rollback assertion cover a timed-out retry?",
+        runId: claim.run.runId,
+      },
+      AGENT_ONE_TOKEN,
+    );
+    assert.equal(questionResponse.status, 201);
+    const question = (await questionResponse.json() as {
+      question: { questionId: string; version: number };
+    }).question;
+    const parkedResponse = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}`,
+      "GET",
+    );
+    assert.equal((await parkedResponse.json() as { workItem: { state: string } }).workItem.state, "parked");
+
+    const answerResponse = await request(
+      fixture.origin,
+      `/v1/questions/${question.questionId}/answer`,
+      "POST",
+      { answer: "Yes, cover the timed-out retry.", version: question.version },
+    );
+    assert.equal(answerResponse.status, 201);
+    const resumedResponse = await request(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItemId}`,
+      "GET",
+    );
+    assert.equal((await resumedResponse.json() as { workItem: { state: string } }).workItem.state, "fixing");
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {

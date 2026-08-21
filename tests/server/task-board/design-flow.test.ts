@@ -11,6 +11,7 @@ import {
   automationConfigurationRequest,
   automationStages,
   boardFixture,
+  latestParkRecord,
   workItemRequest,
 } from "./helpers.js";
 
@@ -394,6 +395,10 @@ test("a failed design run parks the hazardous work item", async () => {
     });
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
     assert.equal(fixture.board.requireTask(designClaim.task!.taskId).result, "The design could not establish a safe recovery path.");
+    assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
+      category: "design_run_failed",
+      reason: "The design could not establish a safe recovery path.",
+    });
   } finally {
     fixture.board.close();
   }
@@ -441,6 +446,10 @@ test("hazardous non-pipeline confirmation remains parked with the pipeline-plan 
       fixture.board.requireTask(workItem.planningTaskId!).result,
       "hazardous tier requires a pipeline plan",
     );
+    assert.deepEqual(latestParkRecord(fixture.path, workItem.workItemId), {
+      category: "hazardous_without_pipeline",
+      reason: "hazardous tier requires a pipeline plan",
+    });
   } finally {
     fixture.board.close();
   }

@@ -9,6 +9,7 @@ import { TaskBoardError } from "#server/task-board/errors";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   transitionWorkItemInTransaction,
+  workItemStateForNodeStage,
   workItemStateForStage,
 } from "#server/task-board/collaborators/work-item-transitions";
 import { databasePath } from "./helpers.js";
@@ -82,6 +83,32 @@ function transitionRows(store: TaskBoardStore, workItemId: string): readonly Tra
     FROM work_item_transitions WHERE work_item_id = ? ORDER BY sequence
   `).all(workItemId) as unknown as readonly TransitionRow[];
   return rows.map((row) => ({ ...row }));
+}
+
+type ParkRecordRow = Readonly<{
+  park_record_id: string;
+  category: string;
+  reason: string;
+  parked_at: string;
+  resolved_at: string | null;
+  resolution: string | null;
+}>;
+
+function parkRecordRows(store: TaskBoardStore, workItemId: string): readonly ParkRecordRow[] {
+  return (store.db.prepare(`
+    SELECT park_record_id, category, reason, parked_at, resolved_at, resolution
+    FROM park_records
+    WHERE work_item_id = ?
+    ORDER BY parked_at, rowid
+  `).all(workItemId) as unknown as readonly ParkRecordRow[]).map((row) => ({ ...row }));
+}
+
+function seedOpenParkRecord(store: TaskBoardStore, workItemId: string, suffix: string): void {
+  store.db.prepare(`
+    INSERT INTO park_records(
+      park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+    ) VALUES (?, ?, 'open_question', 'test park', ?, NULL, NULL)
+  `).run(`park-record-${suffix}`, workItemId, CREATED_AT);
 }
 
 test("an allowed work-item edge bumps the version and appends its actor-attributed transition", async () => {
@@ -203,6 +230,179 @@ test("terminal targets require endedAt and non-terminal targets reject it", asyn
     })), TaskBoardError);
     assert.equal(workItemRow(store, workItemId).version, 1);
     assert.equal(transitionRows(store, workItemId).length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("park transition metadata is required only for parked targets and is validated", async () => {
+  const { store, workItemId } = await transitionFixture();
+  try {
+    assert.throws(
+      () => store.transaction(() => transitionWorkItemInTransaction(store, {
+        workItemId,
+        to: "parked",
+        actorType: "system",
+        actorId: "system:test",
+        now: "2026-08-15T12:01:00.000Z",
+      })),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "TASK_BOARD_PARK_RECORD_REQUIRED",
+    );
+    assert.throws(
+      () => store.transaction(() => transitionWorkItemInTransaction(store, {
+        workItemId,
+        to: "planning",
+        actorType: "system",
+        actorId: "system:test",
+        now: "2026-08-15T12:01:00.000Z",
+        park: { category: "open_question", reason: "test park" },
+      })),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "TASK_BOARD_PARK_RECORD_INVALID",
+    );
+    for (const park of [
+      null,
+      { category: "not-a-category", reason: "test park" },
+      { category: "open_question", reason: "" },
+    ]) {
+      assert.throws(
+        () => store.transaction(() => transitionWorkItemInTransaction(store, {
+          workItemId,
+          to: "parked",
+          actorType: "system",
+          actorId: "system:test",
+          now: "2026-08-15T12:01:00.000Z",
+          park: park as never,
+        })),
+        (error: unknown) => error instanceof TaskBoardError &&
+          error.status === 400 &&
+          error.code === "TASK_BOARD_PARK_RECORD_INVALID",
+      );
+    }
+    assert.deepEqual(parkRecordRows(store, workItemId), []);
+    assert.equal(workItemRow(store, workItemId).state, "queued");
+  } finally {
+    store.close();
+  }
+});
+
+test("entering parked appends the categorized park record in the transition transaction", async () => {
+  const { store, workItemId } = await transitionFixture();
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: "Which rollback path should be preserved?" },
+    }));
+
+    const [record] = parkRecordRows(store, workItemId);
+    assert.ok(record);
+    assert.equal(record.category, "open_question");
+    assert.equal(record.reason, "Which rollback path should be preserved?");
+    assert.equal(record.parked_at, "2026-08-15T12:01:00.000Z");
+    assert.equal(record.resolved_at, null);
+    assert.equal(record.resolution, null);
+  } finally {
+    store.close();
+  }
+});
+
+test("leaving parked derives and records every park resolution", async () => {
+  const cases = [
+    { target: "implementing", actorId: "system:workflow", resolution: "resumed" },
+    { target: "abandoned", actorId: "human:test", resolution: "abandoned" },
+    { target: "abandoned", actorId: "system:park-lifecycle", resolution: "auto_abandoned" },
+    { target: "dead_letter", actorId: "system:workflow", resolution: "dead_letter" },
+  ] as const;
+
+  for (const [index, scenario] of cases.entries()) {
+    const { store, workItemId } = await transitionFixture({
+      initialState: "parked",
+      initialStage: "implementation",
+    });
+    try {
+      seedOpenParkRecord(store, workItemId, String(index));
+      const now = `2026-08-15T12:0${index + 1}:00.000Z`;
+      store.transaction(() => transitionWorkItemInTransaction(store, {
+        workItemId,
+        to: scenario.target,
+        actorType: scenario.actorId === "human:test" ? "human" : "system",
+        actorId: scenario.actorId,
+        now,
+        ...(scenario.target === "abandoned" || scenario.target === "dead_letter"
+          ? { endedAt: now }
+          : { currentStage: "implementation" as const }),
+      }));
+
+      const [record] = parkRecordRows(store, workItemId);
+      assert.ok(record);
+      assert.equal(record.resolved_at, now);
+      assert.equal(record.resolution, scenario.resolution);
+    } finally {
+      store.close();
+    }
+  }
+});
+
+test("each repeated park exit resolves only its newest open ledger record", async () => {
+  const { store, workItemId } = await transitionFixture({
+    initialState: "implementing",
+    initialStage: "implementation",
+  });
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: "First question" },
+    }));
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "implementing",
+      actorType: "human",
+      actorId: "human:test",
+      now: "2026-08-15T12:02:00.000Z",
+      currentStage: "implementation",
+    }));
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:03:00.000Z",
+      park: { category: "open_question", reason: "Second question" },
+    }));
+
+    const beforeSecondExit = parkRecordRows(store, workItemId);
+    assert.equal(beforeSecondExit.length, 2);
+    const firstResolved = beforeSecondExit[0];
+    assert.ok(firstResolved);
+    assert.equal(firstResolved.resolved_at, "2026-08-15T12:02:00.000Z");
+    assert.equal(firstResolved.resolution, "resumed");
+    assert.equal(beforeSecondExit[1]?.resolved_at, null);
+    assert.equal(beforeSecondExit[1]?.resolution, null);
+
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "implementing",
+      actorType: "human",
+      actorId: "human:test",
+      now: "2026-08-15T12:04:00.000Z",
+      currentStage: "implementation",
+    }));
+
+    const afterSecondExit = parkRecordRows(store, workItemId);
+    assert.deepEqual(afterSecondExit[0], firstResolved);
+    assert.equal(afterSecondExit[1]?.resolved_at, "2026-08-15T12:04:00.000Z");
+    assert.equal(afterSecondExit[1]?.resolution, "resumed");
   } finally {
     store.close();
   }
@@ -350,6 +550,123 @@ test("workflow stages map to the v19 work-item pipeline states", () => {
   assert.equal(workItemStateForStage("implementation", { fixLoop: true }), "fixing");
   assert.equal(workItemStateForStage("testing", { fixLoop: true }), "verifying");
   assert.equal(workItemStateForStage("verification", { fixLoop: true }), "reviewing");
+});
+
+test("the fix-loop predicate is round-scoped and sticky only while already fixing", async () => {
+  const { store, workItemId } = await transitionFixture();
+  try {
+    const nodeId = "predicate-node";
+    store.db.exec("PRAGMA foreign_keys = OFF");
+    store.db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
+      "predicate-verification-1",
+      nodeId,
+      "predicate-verification-task-1",
+      "verification",
+      1,
+      "{}",
+    );
+    store.db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      "predicate-finding-1",
+      nodeId,
+      "verification",
+      1,
+      null,
+      null,
+      "correctness",
+      "major",
+      "The implementation is correct.",
+      "A defect remains.",
+      1,
+      CREATED_AT,
+    );
+
+    assert.equal(workItemStateForNodeStage(store.db, workItemId, nodeId, "implementation", "implementing"), "fixing");
+
+    store.db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
+      "predicate-verification-2",
+      nodeId,
+      "predicate-verification-task-2",
+      "verification",
+      2,
+      "{}",
+    );
+    store.db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      "predicate-finding-2",
+      nodeId,
+      "verification",
+      2,
+      null,
+      null,
+      "docs",
+      "minor",
+      "The documentation is complete.",
+      "A non-blocking note remains.",
+      0,
+      "2026-08-15T12:02:00.000Z",
+    );
+
+    assert.equal(workItemStateForNodeStage(store.db, workItemId, nodeId, "implementation", "parked"), "implementing");
+    assert.equal(workItemStateForNodeStage(store.db, workItemId, nodeId, "implementation", "fixing"), "fixing");
+    assert.equal(workItemStateForNodeStage(store.db, workItemId, nodeId, "testing", "fixing"), "verifying");
+  } finally {
+    store.close();
+  }
+});
+
+test("implementation recovery keeps fixing sticky across a parked transition", async () => {
+  const { store, workItemId } = await transitionFixture({
+    initialState: "fixing",
+    initialStage: "implementation",
+  });
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: "Should the fix preserve the retry behavior?" },
+    }));
+
+    assert.equal(
+      workItemStateForNodeStage(store.db, workItemId, "fixing-park-node", "implementation", "parked"),
+      "fixing",
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("implementation recovery from an ordinary implementing park remains implementing", async () => {
+  const { store, workItemId } = await transitionFixture({
+    initialState: "implementing",
+    initialStage: "implementation",
+  });
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId,
+      to: "parked",
+      actorType: "agent",
+      actorId: "agent:test",
+      now: "2026-08-15T12:01:00.000Z",
+      park: { category: "open_question", reason: "Should implementation preserve the retry behavior?" },
+    }));
+
+    assert.equal(
+      workItemStateForNodeStage(store.db, workItemId, "implementing-park-node", "implementation", "parked"),
+      "implementing",
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test("every workflow stage move has a legal work-item state decision", () => {

@@ -22,6 +22,7 @@ import {
   boardFixture,
   config,
   databasePath,
+  latestParkRecord,
   taskRequest,
   workItemRequest,
 } from "./helpers.js";
@@ -2960,6 +2961,10 @@ test("cancelling a work item hard-terminates a failed planning task against retr
     assert.equal(failed.status, "failed");
     const needsInput = fixture.board.requireWorkItem(created.workItemId);
     assert.equal(needsInput.state, "parked");
+    assert.deepEqual(latestParkRecord(fixture.path, created.workItemId), {
+      category: "planning_run_failed",
+      reason: "Planning failed with recoverable evidence.",
+    });
 
     fixture.board.updateWorkItem(created.workItemId, {
       version: needsInput.version,
@@ -3039,6 +3044,7 @@ test("planning retry returns a parked work item to planning with transition hist
 
 test("a planning question parks its work item and the human answer resumes planning", async () => {
   const fixture = await boardFixture();
+  const questionText = "q".repeat(8_000);
   try {
     const created = postWorkItem(fixture.board, workItemRequest({
       originalRequest: "Ask for a missing planning constraint before proposing the workflow.",
@@ -3052,12 +3058,16 @@ test("a planning question parks its work item and the human answer resumes plann
     assert.ok(claim);
     const question = fixture.board.askQuestion(created.planningTaskId, fixture.manager.agentId, {
       clientEventId: "question-planning-work-item-0001",
-      question: "Which rollback constraint should the plan preserve?",
+      question: questionText,
       runId: claim.run.runId,
     });
 
     const parked = fixture.board.requireWorkItem(created.workItemId);
     assert.equal(parked.state, "parked");
+    assert.deepEqual(latestParkRecord(fixture.path, created.workItemId), {
+      category: "open_question",
+      reason: `${questionText.slice(0, 1_999)}…`,
+    });
     assert.deepEqual(parked.transitions.at(-1), {
       fromState: "planning",
       toState: "parked",
@@ -3078,6 +3088,37 @@ test("a planning question parks its work item and the human answer resumes plann
       actorType: "human",
       actorId: "human:alice",
       createdAt: planning.updatedAt,
+    });
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a failed planning settlement parks with its 16000-character result truncated for the ledger", async () => {
+  const fixture = await boardFixture();
+  const result = "r".repeat(16_000);
+  try {
+    const created = postWorkItem(fixture.board, workItemRequest({
+      originalRequest: "Park planning after a maximum-length failed settlement.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "work-item-long-failed-planning-0001").workItem;
+    assert.ok(created.planningTaskId);
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-long-failed-planning-0001",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+      outcome: "failed",
+      result,
+    });
+
+    assert.equal(settled.run.status, "failed");
+    assert.equal(fixture.board.requireWorkItem(created.workItemId).state, "parked");
+    assert.deepEqual(latestParkRecord(fixture.path, created.workItemId), {
+      category: "planning_run_failed",
+      reason: `${result.slice(0, 1_999)}…`,
     });
   } finally {
     fixture.board.close();

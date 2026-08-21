@@ -871,6 +871,10 @@ export class RunsCollaborator {
           actorId: actor.id,
           now,
           currentStage: "planning",
+          park: {
+            category: "planning_run_failed",
+            reason: attemptResult.length > 0 ? attemptResult : "planning run failed",
+          },
         });
       }
     }
@@ -884,6 +888,10 @@ export class RunsCollaborator {
           actorId: actor.id,
           now,
           currentStage: "planning",
+          park: {
+            category: "design_run_failed",
+            reason: attemptResult.length > 0 ? attemptResult : "design run failed",
+          },
         });
       }
     }

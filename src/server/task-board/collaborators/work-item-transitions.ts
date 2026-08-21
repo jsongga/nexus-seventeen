@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
+  PARK_CATEGORIES,
   TASK_BOARD_ERROR_CODES,
   isTerminalWorkItemState,
   isWorkItemTransitionAllowed,
+  type ParkCategory,
   type WorkItemStage,
   type WorkItemState,
 } from "#shared/task-board-contract";
@@ -9,6 +12,8 @@ import { conflict, TaskBoardError } from "../errors.js";
 import type { TaskBoardStore } from "../persistence/store.js";
 
 const STORES_BY_DATABASE = new WeakMap<TaskBoardStore["db"], TaskBoardStore>();
+const PARK_REASON_MAX_LENGTH = 2_000;
+const PARK_REASON_TRUNCATION_MARKER = "…";
 
 export interface WorkItemTransitionRequest {
   readonly workItemId: string;
@@ -19,6 +24,7 @@ export interface WorkItemTransitionRequest {
   readonly endedAt?: string;
   readonly cancelledReason?: string | null;
   readonly currentStage?: WorkItemStage | null;
+  readonly park?: { readonly category: ParkCategory; readonly reason: string };
   /** Another work-item column was changed earlier in this transaction. */
   readonly touch?: boolean;
 }
@@ -43,12 +49,34 @@ export function workItemStateForStage(
 
 export function workItemStateForNodeStage(
   db: TaskBoardStore["db"],
+  workItemId: string,
   nodeId: string | null,
   stage: WorkItemStage | null,
+  currentState: WorkItemState | null,
 ): WorkItemState {
-  const fixLoop = stage === "implementation" && nodeId !== null && db.prepare(`
-    SELECT 1 FROM review_findings WHERE node_id=? AND blocking=1 LIMIT 1
-  `).get(nodeId) !== undefined;
+  let loopActive = false;
+  if (stage === "implementation" && nodeId !== null) {
+    const rounds = db.prepare(`
+      SELECT
+        (SELECT MAX(round) FROM review_findings WHERE node_id=? AND blocking=1) AS blocking_round,
+        (SELECT MAX(attempt) FROM stage_attempts WHERE node_id=? AND stage='verification') AS verification_attempt
+    `).get(nodeId, nodeId) as Readonly<{
+      blocking_round: number | null;
+      verification_attempt: number | null;
+    }>;
+    loopActive = rounds.blocking_round !== null &&
+      rounds.verification_attempt !== null &&
+      rounds.blocking_round === rounds.verification_attempt;
+  }
+  const parkedFromFixing = stage === "implementation" && currentState === "parked" &&
+    (db.prepare(`
+      SELECT from_state
+      FROM work_item_transitions
+      WHERE work_item_id=? AND to_state='parked'
+      ORDER BY sequence DESC
+      LIMIT 1
+    `).get(workItemId) as Readonly<{ from_state: WorkItemState | null }> | undefined)?.from_state === "fixing";
+  const fixLoop = stage === "implementation" && (currentState === "fixing" || parkedFromFixing || loopActive);
   return workItemStateForStage(stage, { fixLoop });
 }
 
@@ -70,6 +98,55 @@ function assertInStoreTransaction(store: TaskBoardStore): void {
       "work-item transitions require an open store transaction",
     );
   }
+}
+
+function assertParkMetadata(request: WorkItemTransitionRequest): void {
+  if (request.to !== "parked") {
+    if (request.park !== undefined) {
+      throw new TaskBoardError(
+        400,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_INVALID,
+        "Park metadata is only valid for parked work items",
+      );
+    }
+    return;
+  }
+  if (request.park === undefined) {
+    throw new TaskBoardError(
+      400,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_REQUIRED,
+      "Park metadata is required for parked work items",
+    );
+  }
+  const park = request.park as unknown;
+  if (
+    typeof park !== "object" ||
+    park === null ||
+    !(PARK_CATEGORIES as readonly unknown[]).includes((park as { category?: unknown }).category) ||
+    typeof (park as { reason?: unknown }).reason !== "string" ||
+    (park as { reason: string }).reason.length < 1
+  ) {
+    throw new TaskBoardError(
+      400,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_INVALID,
+      "Park metadata category and reason are invalid",
+    );
+  }
+}
+
+function boundedParkReason(reason: string): string {
+  if (reason.length <= PARK_REASON_MAX_LENGTH) return reason;
+  return `${reason.slice(0, PARK_REASON_MAX_LENGTH - PARK_REASON_TRUNCATION_MARKER.length)}${PARK_REASON_TRUNCATION_MARKER}`;
+}
+
+function resolutionForParkExit(
+  request: WorkItemTransitionRequest,
+): "resumed" | "abandoned" | "auto_abandoned" | "dead_letter" {
+  if (request.to === "abandoned") {
+    return request.actorId === "system:park-lifecycle" ? "auto_abandoned" : "abandoned";
+  }
+  if (request.to === "dead_letter") return "dead_letter";
+  return "resumed";
 }
 
 export function recordInitialWorkItemTransitionInTransaction(
@@ -107,6 +184,7 @@ export function transitionWorkItemInTransaction(
     version: number;
   }> | undefined;
   if (row === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+  assertParkMetadata(request);
 
   const terminal = isTerminalWorkItemState(request.to);
   if (terminal && request.endedAt === undefined) {
@@ -199,5 +277,30 @@ export function transitionWorkItemInTransaction(
     request.actorId,
     request.now,
   );
+  if (request.to === "parked") {
+    store.db.prepare(`
+      INSERT INTO park_records(
+        park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+    `).run(
+      randomUUID(),
+      request.workItemId,
+      request.park!.category,
+      boundedParkReason(request.park!.reason),
+      request.now,
+    );
+  } else if (fromState === "parked") {
+    store.db.prepare(`
+      UPDATE park_records
+      SET resolved_at = ?, resolution = ?
+      WHERE park_record_id = (
+        SELECT park_record_id
+        FROM park_records
+        WHERE work_item_id = ? AND resolved_at IS NULL
+        ORDER BY parked_at DESC, rowid DESC
+        LIMIT 1
+      )
+    `).run(request.now, resolutionForParkExit(request), request.workItemId);
+  }
   return { fromState, version };
 }

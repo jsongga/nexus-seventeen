@@ -17,6 +17,7 @@ import {
   automationStages,
   boardFixture,
   config,
+  latestParkRecord,
   workItemRequest,
 } from "./helpers.js";
 
@@ -166,6 +167,10 @@ test("out-of-scope implementation commit parks the pipeline and names the file",
 
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
     assert.equal(fixture.board.requireTask(fixture.implementationClaim.task!.taskId).result, "scope violation: docs/outside.md");
+    assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
+      category: "scope_violation",
+      reason: "scope violation: docs/outside.md",
+    });
     const node = fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]!;
     assert.equal(node.state, "blocked");
     assert.equal(node.currentStage, "implementation");
@@ -249,9 +254,33 @@ test("failed implementation with BRIGHT_LINE detail parks instead of retrying", 
 
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
     assert.equal(fixture.board.requireTask(fixture.implementationClaim.task!.taskId).result, detail);
+    assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
+      category: "bright_line",
+      reason: detail,
+    });
     const node = fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]!;
     assert.equal(node.state, "blocked");
     assert.equal(node.currentStage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("P6 bright-line parking delegates marked truncation to the park ledger", async () => {
+  const fixture = await pipelineFixture("bright-line-truncation");
+  const detail = `BRIGHT_LINE:${"b".repeat(3_000)}`;
+  try {
+    fixture.board.settleRun(fixture.implementationClaim.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: detail,
+      handoff: handoff("failed"),
+    });
+
+    assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
+    assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
+      category: "bright_line",
+      reason: `${detail.slice(0, 1_999)}…`,
+    });
   } finally {
     fixture.board.close();
   }

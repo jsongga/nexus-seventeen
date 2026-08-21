@@ -41,6 +41,7 @@ import {
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
+  type WorkItemTransitionRequest,
 } from "./work-item-transitions.js";
 
 export type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
@@ -227,7 +228,12 @@ export class TaskBoardRuntime {
     return this.store.db.prepare("SELECT 1 FROM stage_attempts WHERE task_id = ?").get(taskId) !== undefined;
   }
 
-  parkWorkItemForTaskInTransaction(taskId: string, actor: WorkItemTransitionActor, now: string): boolean {
+  parkWorkItemForTaskInTransaction(
+    taskId: string,
+    actor: WorkItemTransitionActor,
+    now: string,
+    park: NonNullable<WorkItemTransitionRequest["park"]>,
+  ): boolean {
     const link = this.workItemLinkForTask(taskId);
     if (link === undefined || isTerminalWorkItemState(link.currentState)) return false;
     transitionWorkItemInTransaction(this.store, {
@@ -236,6 +242,7 @@ export class TaskBoardRuntime {
       actorType: actor.type,
       actorId: actor.id,
       now,
+      park,
     });
     return true;
   }
@@ -246,7 +253,13 @@ export class TaskBoardRuntime {
     const recoveryStage = link.currentStage ?? link.taskStage;
     transitionWorkItemInTransaction(this.store, {
       workItemId: link.workItemId,
-      to: workItemStateForNodeStage(this.store.db, link.nodeId, recoveryStage),
+      to: workItemStateForNodeStage(
+        this.store.db,
+        link.workItemId,
+        link.nodeId,
+        recoveryStage,
+        link.currentState,
+      ),
       actorType: actor.type,
       actorId: actor.id,
       now,
@@ -338,7 +351,13 @@ export class TaskBoardRuntime {
     if (!isTerminalWorkItemState(stringValue(link, "work_item_state") as WorkItemState)) {
       transitionWorkItemInTransaction(this.store, {
         workItemId: stringValue(link, "work_item_id"),
-        to: workItemStateForNodeStage(this.store.db, nodeId, stage),
+        to: workItemStateForNodeStage(
+          this.store.db,
+          stringValue(link, "work_item_id"),
+          nodeId,
+          stage,
+          stringValue(link, "work_item_state") as WorkItemState,
+        ),
         actorType: "system",
         actorId: transition === "retry" ? "system:workflow-retry" : "system:workflow-reassign",
         now,
