@@ -17,4 +17,10 @@ export type {
 } from "./collaborators/notifications.js";
 export { ParkLifecycleCollaborator } from "./collaborators/park-lifecycle.js";
 export type { ParkLifecycleSweepResult } from "./collaborators/park-lifecycle.js";
+export {
+  WallClockCollaborator,
+  stageElapsedSeconds,
+  taskActiveSeconds,
+} from "./collaborators/wall-clock.js";
+export type { WallClockSweepResult } from "./collaborators/wall-clock.js";
 export * from "#shared/task-board-contract";

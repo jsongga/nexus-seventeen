@@ -87,6 +87,10 @@ import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import type { GitRunner } from "./collaborators/scope-check.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
 import {
+  WallClockCollaborator,
+  type WallClockSweepResult,
+} from "./collaborators/wall-clock.js";
+import {
   WorkItemsCollaborator,
   type CreateWorkItemResult,
   type WorkItemDetail,
@@ -124,6 +128,7 @@ export class TaskBoard {
   readonly #projects: ProjectsCollaborator;
   readonly #runs: RunsCollaborator;
   readonly #tasks: TasksCollaborator;
+  readonly #wallClock: WallClockCollaborator;
   readonly #workItems: WorkItemsCollaborator;
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore, dependencies: TaskBoardDependencies) {
@@ -151,6 +156,7 @@ export class TaskBoard {
       dependencies.git,
       this.#boardPause,
     );
+    this.#wallClock = new WallClockCollaborator(this.#runtime, this.#runs, this.#notifications);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);
@@ -239,6 +245,10 @@ export class TaskBoard {
 
   sweepParkLifecycle(now: string): ParkLifecycleSweepResult {
     return this.#parkLifecycle.sweepParkLifecycle(now);
+  }
+
+  sweepWallClockCaps(now: string): WallClockSweepResult {
+    return this.#wallClock.sweepWallClockCaps(now);
   }
 
   listNotifications(): NotificationList {

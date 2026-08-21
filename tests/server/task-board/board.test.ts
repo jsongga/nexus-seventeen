@@ -2184,7 +2184,7 @@ test("a live workflow task can ask and receive an answer after its work item is 
   }
 });
 
-test("a sibling node settles after another node dead-letters their work item", async () => {
+test("an already queued sibling settles but its next stage stays inert after dead-letter", async () => {
   const fixture = await parallelStageWorkflow("dead-letter-sibling");
   try {
     const failedClaim = fixture.board.claimRun(fixture.verifier.agentId, {
@@ -2227,8 +2227,17 @@ test("a sibling node settles after another node dead-letters their work item", a
     const researchNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find((node) => (
       node.title === "Parallel research dead-letter-sibling"
     ));
-    assert.equal(researchNode?.state, "active");
+    assert.equal(researchNode?.state, "ready");
     assert.equal(researchNode?.currentStage, "verification");
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM stage_attempts
+        WHERE node_id=? AND stage='verification'
+      `).get(researchNode?.nodeId)?.count, 0);
+    } finally {
+      inspected.close();
+    }
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
   } finally {
     fixture.board.close();
@@ -3334,7 +3343,7 @@ test("a work item stays parked until every open question across its tasks is ans
   }
 });
 
-test("an open question keeps the work item parked while another node advances its recovery stage", async () => {
+test("an open question defers a sibling retry until its answer unparks the work item", async () => {
   const fixture = await parallelStageWorkflow("parked-stage-advance", true);
   try {
     const researchClaim = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -3381,6 +3390,29 @@ test("an open question keeps the work item parked while another node advances it
     assert.equal(sameStage.version, parked.version);
     assert.deepEqual(sameStage.transitions, parked.transitions);
 
+    fixture.board.reconcileWorkflowsBestEffort(fixture.project.projectId);
+    const parkedRetryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-parked-stage-advance-research-still-parked-0001",
+      messageCursor: null,
+    });
+    assert.equal(parkedRetryClaim, null);
+
+    fixture.board.answerQuestion(question.questionId, {
+      answer: "Yes. Resume the sibling from its current research stage.",
+      version: question.version,
+    });
+    const recovered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
+    assert.equal(recovered.state, "planning");
+    assert.equal(recovered.currentStage, "research");
+    assert.deepEqual(recovered.transitions.at(-1), {
+      fromState: "parked",
+      toState: "planning",
+      actorType: "human",
+      actorId: "human:alice",
+      createdAt: recovered.updatedAt,
+    });
+
+    fixture.board.reconcileWorkflowsBestEffort(fixture.project.projectId);
     const retryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-parked-stage-advance-research-retry-0001",
       messageCursor: null,
@@ -3392,25 +3424,9 @@ test("an open question keeps the work item parked while another node advances it
       handoff: settlementHandoff("passed"),
     });
     const advanced = fixture.board.requireWorkItem(fixture.workItem.workItemId);
-    assert.equal(advanced.state, "parked");
+    assert.equal(advanced.state, "implementing");
     assert.equal(advanced.currentStage, "implementation");
-    assert.equal(advanced.version, sameStage.version + 1);
-    assert.deepEqual(advanced.transitions, parked.transitions);
-
-    fixture.board.answerQuestion(question.questionId, {
-      answer: "Yes. Recover from the sibling's newer implementation stage.",
-      version: question.version,
-    });
-    const recovered = fixture.board.requireWorkItem(fixture.workItem.workItemId);
-    assert.equal(recovered.state, "implementing");
-    assert.equal(recovered.currentStage, "implementation");
-    assert.deepEqual(recovered.transitions.at(-1), {
-      fromState: "parked",
-      toState: "implementing",
-      actorType: "human",
-      actorId: "human:alice",
-      createdAt: recovered.updatedAt,
-    });
+    assert.equal(advanced.version, recovered.version + 1);
   } finally {
     fixture.board.close();
   }

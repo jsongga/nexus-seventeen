@@ -169,6 +169,7 @@ export class TaskBoardService {
   #reconcileTimer: NodeJS.Timeout | undefined;
   #verifyTimer: NodeJS.Timeout | undefined;
   #parkLifecycleTimer: NodeJS.Timeout | undefined;
+  #wallClockTimer: NodeJS.Timeout | undefined;
   #started = false;
   #closing = false;
 
@@ -210,6 +211,14 @@ export class TaskBoardService {
       }
     }, verifyIntervalSeconds * 1_000);
     this.#parkLifecycleTimer.unref();
+    this.#wallClockTimer = setInterval(() => {
+      try {
+        this.#board.sweepWallClockCaps(exactNow(config.now));
+      } catch (error) {
+        console.error("[task-board] wall-clock cap sweep failed", error);
+      }
+    }, verifyIntervalSeconds * 1_000);
+    this.#wallClockTimer.unref();
   }
 
   static async create(
@@ -952,6 +961,10 @@ export class TaskBoardService {
     if (this.#parkLifecycleTimer !== undefined) {
       clearInterval(this.#parkLifecycleTimer);
       this.#parkLifecycleTimer = undefined;
+    }
+    if (this.#wallClockTimer !== undefined) {
+      clearInterval(this.#wallClockTimer);
+      this.#wallClockTimer = undefined;
     }
     this.#closingAbort.abort();
     for (const stream of [...this.#documentStreams]) {

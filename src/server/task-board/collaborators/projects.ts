@@ -5,6 +5,7 @@ import {
   SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
+  isTerminalWorkItemState,
   pipelineTemplateShape,
   type ApprovePipelineMergeRequest,
   type ClaimRunResult,
@@ -20,6 +21,7 @@ import {
   type RejectPlanRevisionRequest,
   type SettleRunRequest,
   type WorkItem,
+  type WorkItemState,
   type WorkNode,
 } from "#shared/task-board-contract";
 import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
@@ -545,8 +547,10 @@ export class ProjectsCollaborator {
       SELECT node.node_id
       FROM work_nodes node
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE plan.state='confirmed'
         ${projectFilter}
+        AND item.state NOT IN ('parked','merged','abandoned','dead_letter')
         AND node.current_stage IS NOT NULL
         AND (
           (
@@ -622,6 +626,17 @@ export class ProjectsCollaborator {
     this.runtime.store.transaction(() => {
       const current = this.#workflow.nodesForIds([node.nodeId])[0];
       if (current === undefined || !["ready", "blocked"].includes(current.state)) return;
+      const owner = this.runtime.store.db.prepare(`
+        SELECT item.state
+        FROM plan_revisions plan
+        JOIN work_items item ON item.work_item_id=plan.work_item_id
+        WHERE plan.plan_revision_id=?
+      `).get(current.planRevisionId) as Row | undefined;
+      if (owner === undefined || typeof owner.state !== "string") {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_owner");
+      }
+      const ownerState = owner.state as WorkItemState;
+      if (ownerState === "parked" || isTerminalWorkItemState(ownerState)) return;
       if (current.state === "blocked") {
         const latestLifecycleEvent = this.runtime.store.db.prepare(`
           SELECT event.event_type

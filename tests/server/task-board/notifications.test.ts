@@ -6,7 +6,10 @@ import {
   TaskBoardError,
   normalizeTaskBoardConfig,
 } from "#server/task-board";
-import { HUMAN_TOKEN, databasePath } from "./helpers.js";
+import { NotificationsCollaborator } from "#server/task-board/collaborators/notifications";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { HUMAN_TOKEN, config, databasePath } from "./helpers.js";
 
 const NOW = "2026-08-21T16:00:00.000Z";
 
@@ -68,5 +71,30 @@ test("notification lists are bounded and read updates use versioned CAS", async 
     );
   } finally {
     board.close();
+  }
+});
+
+test("duplicate cap notification inserts exercise INSERT OR IGNORE and return null", async () => {
+  const path = await databasePath();
+  const store = await TaskBoardStore.open(path);
+  const runtime = new TaskBoardRuntime(config(path), store);
+  const notifications = new NotificationsCollaborator(runtime);
+  const input = {
+    kind: "cap_parked" as const,
+    dedupeKey: "cap_parked:direct-item:direct-attempt",
+    projectId: null,
+    workItemId: null,
+    summary: "Direct cap notification dedupe test.",
+  };
+  try {
+    const first = store.transaction(() => notifications.insertNotificationAtInTransaction(input, NOW));
+    const second = store.transaction(() => notifications.insertNotificationAtInTransaction(input, NOW));
+    assert.ok(first);
+    assert.equal(second, null);
+    assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE dedupe_key=?")
+      .get(input.dedupeKey)?.count, 1);
+  } finally {
+    runtime.close();
+    store.close();
   }
 });
