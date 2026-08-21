@@ -245,25 +245,6 @@ function pipelineExecutorDrift(): TaskBoardError {
   );
 }
 
-function assertPipelineSerialAvailability(db: DatabaseSync, projectId: string, workItemId: string): void {
-  const active = db.prepare(`
-    SELECT 1
-    FROM work_items
-    WHERE resolved_project_id=?
-      AND work_item_id<>?
-      AND pipeline_branch IS NOT NULL
-      AND state IN ('implementing','verifying','reviewing','fixing','designing','final_approval','parked')
-    LIMIT 1
-  `).get(projectId, workItemId);
-  if (active !== undefined) {
-    throw new TaskBoardError(
-      409,
-      TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_SERIAL_CONFLICT,
-      "Another pipeline work item is still active for this project",
-    );
-  }
-}
-
 function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
   try {
     const output = git([
@@ -688,7 +669,6 @@ export class TransparentWorkflow {
         (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
     ) throw pipelineExecutorDrift();
     if (!hasPipelineShape) return null;
-    assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
     const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
     if (project === undefined) {
       throw new TaskBoardError(
@@ -722,7 +702,6 @@ export class TransparentWorkflow {
       ) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
       if (hasPipelineShape) {
-        assertPipelineSerialAvailability(this.db, String(row.project_id), String(row.work_item_id));
         if (resolvedBaseSha === null || !GIT_OBJECT_ID_PATTERN.test(resolvedBaseSha)) {
           throw new TaskBoardError(
             409,
@@ -1209,9 +1188,23 @@ export class TransparentWorkflow {
   }
 
   blockNodeInTransaction(nodeId: string, summary: string): boolean {
-    const row = this.db.prepare("SELECT project_id,title FROM work_nodes WHERE node_id=? AND state='ready'").get(nodeId) as Row | undefined;
+    const row = this.db.prepare(
+      "SELECT project_id,title,state FROM work_nodes WHERE node_id=? AND state IN ('ready','blocked')",
+    ).get(nodeId) as Row | undefined;
     if (row === undefined) return false;
     const now = this.now().toISOString();
+    if (row.state === "blocked") {
+      const latest = this.db.prepare(`
+        SELECT summary
+        FROM project_events
+        WHERE node_id=? AND event_type='node_blocked'
+        ORDER BY sequence DESC
+        LIMIT 1
+      `).get(nodeId);
+      if (latest?.summary === summary) return false;
+      this.event(String(row.project_id), nodeId, null, "node_blocked", summary, now);
+      return true;
+    }
     const update = this.db.prepare(
       "UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=? AND state='ready'",
     ).run(now, nodeId);

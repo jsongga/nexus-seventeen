@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   checkDeclaredScope,
+  declaredScopesOverlap,
   runDeclaredScopeGit,
   scopeViolationResult,
 } from "#server/task-board/collaborators/scope-check";
@@ -38,6 +39,28 @@ async function commitFile(repo: string, branch: string, path: string): Promise<v
   await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "--", path]);
   await git(repo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", `change ${path}`]);
 }
+
+test("declared-scope overlap matches exact and nested path prefixes", async (t) => {
+  const cases = [
+    { name: "equal prefixes", a: ["src/server"], b: ["src/server"], expected: true },
+    { name: "first prefix is the parent", a: ["src"], b: ["src/server"], expected: true },
+    { name: "second prefix is the parent", a: ["src/server"], b: ["src"], expected: true },
+    { name: "disjoint siblings", a: ["src/server"], b: ["src/web"], expected: false },
+    { name: "trailing slashes are normalized", a: ["src/server///"], b: ["src/server/routes/"], expected: true },
+    { name: "any pair may overlap", a: ["docs", "src/server"], b: ["tests", "src"], expected: true },
+  ] as const;
+
+  for (const item of cases) {
+    await t.test(item.name, () => {
+      assert.equal(declaredScopesOverlap(item.a, item.b), item.expected);
+    });
+  }
+});
+
+test("declared-scope overlap rejects empty normalized prefixes", () => {
+  assert.throws(() => declaredScopesOverlap([""], ["src"]), /empty path prefix/u);
+  assert.throws(() => declaredScopesOverlap(["src"], ["///"]), /empty path prefix/u);
+});
 
 test("declared-scope matching is exact at prefix boundaries", async (t) => {
   const cases = [

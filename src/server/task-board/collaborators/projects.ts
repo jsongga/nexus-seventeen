@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
+  SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
+  pipelineTemplateShape,
   type ApprovePipelineMergeRequest,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
@@ -52,6 +54,7 @@ import {
   type MergePipelineResult,
 } from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
+import { declaredScopesOverlap } from "./scope-check.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
@@ -629,6 +632,56 @@ export class ProjectsCollaborator {
       }
       const stage = current.currentStage;
       if (stage === null) return;
+      const pipeline = pipelineTemplateShape(current.stageTemplate) === null
+        ? undefined
+        : this.runtime.store.db.prepare(`
+            SELECT plan.work_item_id,plan.declared_scope_json,plan.confirmed_at
+            FROM plan_revisions plan
+            JOIN work_items item ON item.work_item_id=plan.work_item_id
+            WHERE plan.plan_revision_id=?
+              AND plan.state='confirmed'
+              AND item.pipeline_branch IS NOT NULL
+          `).get(current.planRevisionId) as Row | undefined;
+      if (pipeline !== undefined) {
+        if (pipeline.declared_scope_json === null || pipeline.confirmed_at === null) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
+        }
+        const declaredScope = JSON.parse(String(pipeline.declared_scope_json)) as string[];
+        const otherPipelineItems = this.runtime.store.db.prepare(`
+          SELECT item.work_item_id,plan.declared_scope_json
+          FROM work_items item
+          JOIN plan_revisions plan
+            ON plan.work_item_id=item.work_item_id
+            AND plan.state='confirmed'
+          WHERE item.resolved_project_id=?
+            AND item.work_item_id<>?
+            AND item.pipeline_branch IS NOT NULL
+            AND item.state IN ('implementing','verifying','reviewing','fixing','designing','final_approval','parked')
+            AND (
+              plan.confirmed_at<?
+              OR (plan.confirmed_at=? AND item.work_item_id<?)
+            )
+          ORDER BY plan.confirmed_at,item.work_item_id
+        `).all(
+          current.projectId,
+          String(pipeline.work_item_id),
+          String(pipeline.confirmed_at),
+          String(pipeline.confirmed_at),
+          String(pipeline.work_item_id),
+        ) as Row[];
+        for (const other of otherPipelineItems) {
+          if (other.declared_scope_json === null) {
+            throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
+          }
+          const otherDeclaredScope = JSON.parse(String(other.declared_scope_json)) as string[];
+          if (!declaredScopesOverlap(declaredScope, otherDeclaredScope)) continue;
+          this.#workflow.blockNodeInTransaction(
+            current.nodeId,
+            `${SCOPE_HOLD_SUMMARY_PREFIX}overlaps ${String(other.work_item_id)}`,
+          );
+          return;
+        }
+      }
       const configuration = this.automation.getConfiguration();
       const configuredExecutor = configuration.stages.find((item) => item.stage === stage)?.executor;
       if (configuredExecutor?.kind === "machine_verify") {

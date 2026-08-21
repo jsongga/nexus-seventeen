@@ -4,15 +4,17 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import {
   DESIGN_FAILURE_POINTS,
   type DesignRecordDraft,
+  type StageHandoffDraft,
   type StageHandoff,
   type WorkItemAudit,
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
-import { createTaskBoardService, SkillRegistry, TaskBoard, TaskBoardError } from "#server/task-board";
+import { createTaskBoardService, SkillRegistry, TaskBoard } from "#server/task-board";
 import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
 import {
   registerWorkItemTransitionStore,
@@ -32,6 +34,11 @@ import {
 } from "./helpers.js";
 
 type Fixture = Awaited<ReturnType<typeof boardFixture>>;
+type OrderedFixture = Fixture & {
+  confirmAt(planRevisionId: string, confirmedAt: string): void;
+  now(): Date;
+  setNow(value: string): void;
+};
 
 function git(cwd: string, arguments_: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -42,19 +49,53 @@ function git(cwd: string, arguments_: readonly string[]): Promise<string> {
   });
 }
 
-async function repository(): Promise<{ repo: string; baseSha: string }> {
+async function repository(machineVerify = false): Promise<{ repo: string; baseSha: string }> {
   const root = await mkdtemp(join(tmpdir(), "steward-final-approval-"));
   const repo = join(root, "repo");
   await git(root, ["init", "-b", "main", repo]);
   await git(repo, ["config", "user.name", "Task Board Test"]);
   await git(repo, ["config", "user.email", "task-board@test.invalid"]);
   await writeFile(join(repo, "shared.txt"), "base\n");
+  if (machineVerify) {
+    await mkdir(join(repo, "docs"), { recursive: true });
+    await writeFile(
+      join(repo, "docs", "workflow.md"),
+      `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
+        version: 1,
+        compile: ["node check.mjs"],
+        rules: [{ match: "**", action: { kind: "none" } }],
+        full: ["node verify-full.mjs"],
+      }, null, 2)}\n\`\`\`\n`,
+    );
+    await writeFile(join(repo, "check.mjs"), "process.exit(0);\n");
+    await writeFile(join(repo, "unmatched.mjs"), "process.exit(0);\n");
+    await writeFile(join(repo, "verify-full.mjs"), "process.exit(0);\n");
+  }
   await git(repo, ["add", "."]);
   await git(repo, ["commit", "-m", "base"]);
   return { repo, baseSha: (await git(repo, ["rev-parse", "HEAD"])).trim() };
 }
 
-function plan(suffix: string): WorkflowPlanDraft {
+async function orderedBoardFixture(): Promise<OrderedFixture> {
+  let now = "2026-08-19T15:59:59.000Z";
+  const fixture = await boardFixture(undefined, () => new Date(now));
+  return {
+    ...fixture,
+    confirmAt(planRevisionId: string, confirmedAt: string): void {
+      now = confirmedAt;
+      fixture.board.confirmWorkflow(planRevisionId, { expectedState: "proposed" });
+    },
+    now: () => new Date(now),
+    setNow(value: string): void {
+      now = value;
+    },
+  };
+}
+
+function plan(
+  suffix: string,
+  declaredScope: readonly string[] = ["src/allowed"],
+): WorkflowPlanDraft {
   return {
     objective: `Review and merge pipeline ${suffix}.`,
     assumptions: ["The default branch stays available."],
@@ -64,7 +105,7 @@ function plan(suffix: string): WorkflowPlanDraft {
     ],
     changeShape: "feature",
     tier: "standard",
-    declaredScope: ["src/allowed"],
+    declaredScope,
     nonGoals: ["Do not push a remote branch."],
     mechanicalPortions: ["Merge the reviewed local branch."],
     blockingQuestions: [],
@@ -120,7 +161,11 @@ function setProjectRepository(fixture: Fixture, repo: string): void {
   }
 }
 
-function proposePipeline(fixture: Fixture, suffix: string): { workItemId: string; planRevisionId: string } {
+function proposePipeline(
+  fixture: Fixture,
+  suffix: string,
+  declaredScope: readonly string[] = ["src/allowed"],
+): { workItemId: string; planRevisionId: string } {
   const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
     originalRequest: `Prepare final approval ${suffix}.`,
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
@@ -133,13 +178,43 @@ function proposePipeline(fixture: Fixture, suffix: string): { workItemId: string
   fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
     outcome: "completed",
     result: "The pipeline plan is ready.",
-    workflowPlan: plan(suffix),
+    workflowPlan: plan(suffix, declaredScope),
   });
   const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
     (candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed",
   );
   assert.ok(revision);
   return { workItemId: workItem.workItemId, planRevisionId: revision.planRevisionId };
+}
+
+function implementationHandoff(): StageHandoffDraft {
+  return {
+    outcome: "passed",
+    summary: "The scoped implementation is ready for machine verification.",
+    evidence: ["The task branch contains the scoped commit."],
+    artifactIds: [],
+    acceptanceCriteria: [{
+      criterion: "The implementation is committed.",
+      passed: true,
+      evidence: "The task branch contains the implementation commit.",
+    }],
+    blockers: [],
+    recommendedReturnStage: null,
+  };
+}
+
+async function waitForWorkItemState(
+  fixture: Fixture,
+  workItemId: string,
+  expectedState: "reviewing" | "final_approval",
+): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    await fixture.board.sweepVerifyAttempts();
+    if (fixture.board.requireWorkItem(workItemId).state === expectedState) return;
+    await delay(25);
+  }
+  assert.fail(`work item ${workItemId} did not reach ${expectedState}`);
 }
 
 function forceFinalApproval(path: string, workItemId: string, verifiedSha: string): number {
@@ -1298,13 +1373,13 @@ test("reject-final records a human implementation handoff and re-arms engineerin
   }
 });
 
-test("confirming a second pipeline plan returns the serial-project conflict while the first is reviewing", async () => {
-  const fixture = await boardFixture();
+test("confirming a second overlapping pipeline plan holds its node while the first is reviewing", async () => {
+  const fixture = await orderedBoardFixture();
   const repo = await repository();
   setProjectRepository(fixture, repo.repo);
   configurePipeline(fixture, "serial");
   const first = proposePipeline(fixture, "serial-first");
-  fixture.board.confirmWorkflow(first.planRevisionId, { expectedState: "proposed" });
+  fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
   const second = proposePipeline(fixture, "serial-second");
   fixture.board.close();
   const store = await TaskBoardStore.open(fixture.path);
@@ -1321,27 +1396,232 @@ test("confirming a second pipeline plan returns the serial-project conflict whil
   } finally {
     store.close();
   }
-  const board = await TaskBoard.open(config(fixture.path));
+  fixture.setNow("2026-08-19T16:00:01.000Z");
+  const board = await TaskBoard.open(config(fixture.path, fixture.now));
   try {
-    assert.throws(
-      () => board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 409 &&
-        error.code === "TASK_BOARD_PIPELINE_SERIAL_CONFLICT"
-      ),
+    board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" });
+    const node = board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
     );
+    assert.equal(node?.state, "blocked");
+    const blockedEvent = board.listProjectEvents(fixture.project.projectId)
+      .filter((event) => event.nodeId === node?.nodeId && event.eventType === "node_blocked")
+      .at(-1);
+    assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.deepEqual({
         ...db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(second.workItemId),
       }, {
-        pipeline_branch: null,
-        base_sha: null,
+        pipeline_branch: `task/${second.workItemId}`,
+        base_sha: repo.baseSha,
       });
     } finally {
       db.close();
     }
+  } finally {
+    board.close();
+  }
+});
+
+test("an older overlapping pipeline proceeds to testing, merges, and releases the held newer item", async () => {
+  const fixture = await orderedBoardFixture();
+  const repo = await repository(true);
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "scope-deadlock");
+    const verifier = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "scope-deadlock-verifier",
+      role: "verifier",
+      area: "scope-order-review",
+      mission: "Review the older overlapping pipeline after machine verification.",
+      model: "codex-mini",
+      token: "scope-deadlock-verifier-token-0123456789",
+    });
+    const first = proposePipeline(fixture, "scope-deadlock-first");
+    fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
+    const second = proposePipeline(fixture, "scope-deadlock-second");
+    fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
+
+    const blockedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    );
+    assert.equal(blockedNode?.state, "blocked");
+    const blockedEvent = fixture.board.listProjectEvents(fixture.project.projectId)
+      .filter((event) => event.nodeId === blockedNode?.nodeId && event.eventType === "node_blocked")
+      .at(-1);
+    assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);
+
+    await git(repo.repo, ["switch", "-c", `task/${first.workItemId}`]);
+    await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
+    await writeFile(join(repo.repo, "src", "allowed", "scope-deadlock.txt"), "released\n");
+    await git(repo.repo, ["add", "."]);
+    await git(repo.repo, ["commit", "-m", "complete first overlapping pipeline"]);
+    const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-scope-deadlock-first",
+      messageCursor: null,
+    });
+    assert.ok(implementation);
+    assert.equal(implementation.context.workflow?.planRevisionId, first.planRevisionId);
+    fixture.board.settleRun(implementation.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Implementation complete.",
+      handoff: implementationHandoff(),
+    });
+
+    const testingNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === first.planRevisionId,
+    );
+    assert.equal(testingNode?.state, "active");
+    assert.equal(testingNode?.currentStage, "testing");
+    assert.equal(
+      fixture.board.listProjectEvents(fixture.project.projectId).some(
+        (event) => event.nodeId === testingNode?.nodeId &&
+          event.eventType === "node_blocked" &&
+          event.summary.startsWith("scope-hold: "),
+      ),
+      false,
+    );
+
+    await waitForWorkItemState(fixture, first.workItemId, "reviewing");
+    const verification = fixture.board.claimRun(verifier.agentId, {
+      claimId: "claim-scope-deadlock-verification",
+      messageCursor: null,
+    });
+    assert.ok(verification);
+    assert.equal(verification.context.workflow?.planRevisionId, first.planRevisionId);
+    assert.equal(verification.context.workflow?.stage, "verification");
+    fixture.board.settleRun(verification.run.runId, verifier.agentId, {
+      outcome: "completed",
+      result: "Independent verification passed.",
+      handoff: {
+        outcome: "passed",
+        summary: "Independent verification passed.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
+      },
+    });
+    assert.equal(fixture.board.requireWorkItem(first.workItemId).state, "final_approval");
+    await git(repo.repo, ["switch", "main"]);
+    const version = fixture.board.requireWorkItem(first.workItemId).version;
+    assert.equal((await fixture.board.approvePipelineMerge(first.workItemId, { version })).state, "merged");
+    fixture.board.reconcileWorkflowsBestEffort(fixture.project.projectId);
+
+    const activatedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    );
+    assert.equal(activatedNode?.state, "active");
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-scope-release-second",
+      messageCursor: null,
+    });
+    assert.equal(claim?.context.workflow?.planRevisionId, second.planRevisionId);
+    assert.equal(claim?.context.workflow?.stage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("three overlapping pipelines advance in confirmation order after the oldest merges", async () => {
+  const fixture = await orderedBoardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "scope-order");
+    const first = proposePipeline(fixture, "scope-order-first");
+    fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
+    const second = proposePipeline(fixture, "scope-order-second");
+    fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
+    const third = proposePipeline(fixture, "scope-order-third");
+    fixture.confirmAt(third.planRevisionId, "2026-08-19T16:00:02.000Z");
+
+    await git(repo.repo, ["switch", "-c", `task/${first.workItemId}`]);
+    await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
+    await writeFile(join(repo.repo, "src", "allowed", "scope-order.txt"), "ordered\n");
+    await git(repo.repo, ["add", "."]);
+    await git(repo.repo, ["commit", "-m", "complete oldest overlapping pipeline"]);
+    const verifiedSha = (await git(repo.repo, ["rev-parse", "HEAD"])).trim();
+    await git(repo.repo, ["switch", "main"]);
+    const version = forceFinalApproval(fixture.path, first.workItemId, verifiedSha);
+
+    assert.equal((await fixture.board.approvePipelineMerge(first.workItemId, { version })).state, "merged");
+    fixture.board.reconcileWorkflowsBestEffort(fixture.project.projectId);
+
+    const nodes = fixture.board.projectWorkflow(fixture.project.projectId).nodes;
+    const secondNode = nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
+    const thirdNode = nodes.find((candidate) => candidate.planRevisionId === third.planRevisionId);
+    assert.equal(secondNode?.state, "active");
+    assert.equal(thirdNode?.state, "blocked");
+    const thirdBlock = fixture.board.listProjectEvents(fixture.project.projectId)
+      .filter((event) => event.nodeId === thirdNode?.nodeId && event.eventType === "node_blocked")
+      .at(-1);
+    assert.equal(thirdBlock?.summary, `scope-hold: overlaps ${second.workItemId}`);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("disjoint pipeline scopes activate immediately in the same project", async () => {
+  const fixture = await orderedBoardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "scope-disjoint");
+    const first = proposePipeline(fixture, "scope-disjoint-first", ["src/first"]);
+    fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
+    const second = proposePipeline(fixture, "scope-disjoint-second", ["src/second"]);
+    fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
+
+    const nodes = fixture.board.projectWorkflow(fixture.project.projectId).nodes.filter(
+      (candidate) => [first.planRevisionId, second.planRevisionId].includes(candidate.planRevisionId),
+    );
+    assert.equal(nodes.length, 2);
+    assert.equal(nodes.every((node) => node.state === "active"), true);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a parked pipeline item still holds an overlapping pipeline node", async () => {
+  const fixture = await orderedBoardFixture();
+  const repo = await repository();
+  setProjectRepository(fixture, repo.repo);
+  configurePipeline(fixture, "scope-parked");
+  const first = proposePipeline(fixture, "scope-parked-first");
+  fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
+  const second = proposePipeline(fixture, "scope-parked-second");
+  fixture.board.close();
+
+  const store = await TaskBoardStore.open(fixture.path);
+  registerWorkItemTransitionStore(store);
+  try {
+    store.transaction(() => transitionWorkItemInTransaction(store, {
+      workItemId: first.workItemId,
+      to: "parked",
+      actorType: "system",
+      actorId: "system:test",
+      now: "2026-08-19T16:00:00.000Z",
+      park: { category: "open_question", reason: "Waiting for an operator decision." },
+    }));
+  } finally {
+    store.close();
+  }
+
+  fixture.setNow("2026-08-19T16:00:01.000Z");
+  const board = await TaskBoard.open(config(fixture.path, fixture.now));
+  try {
+    board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" });
+    const node = board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    );
+    assert.equal(node?.state, "blocked");
+    const blockedEvent = board.listProjectEvents(fixture.project.projectId)
+      .filter((event) => event.nodeId === node?.nodeId && event.eventType === "node_blocked")
+      .at(-1);
+    assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);
   } finally {
     board.close();
   }

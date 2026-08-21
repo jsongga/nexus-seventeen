@@ -23,6 +23,21 @@ export function scopeViolationResult(files: readonly string[]): string {
   return `scope violation: ${files.join(", ")}`.slice(0, SETTLEMENT_RESULT_LIMIT);
 }
 
+function normalizeDeclaredScope(declaredScope: readonly string[]): readonly string[] {
+  const normalizedScope = declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
+  if (normalizedScope.some((prefix) => prefix.length === 0)) {
+    throw new Error("declared scope contains an empty path prefix");
+  }
+  return normalizedScope;
+}
+
+export function declaredScopesOverlap(a: readonly string[], b: readonly string[]): boolean {
+  const normalizedA = normalizeDeclaredScope(a);
+  const normalizedB = normalizeDeclaredScope(b);
+  return normalizedA.some((x) => normalizedB.some((y) =>
+    x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
+}
+
 export function checkDeclaredScope(request: Readonly<{
   repoPath: string;
   baseSha: string;
@@ -30,10 +45,7 @@ export function checkDeclaredScope(request: Readonly<{
   declaredScope: readonly string[];
   git: GitRunner;
 }>): DeclaredScopeCheckResult {
-  const normalizedScope = request.declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
-  if (normalizedScope.some((prefix) => prefix.length === 0)) {
-    throw new Error("declared scope contains an empty path prefix");
-  }
+  const normalizedScope = normalizeDeclaredScope(request.declaredScope);
   const output = request.git([
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=",
@@ -50,10 +62,7 @@ export function checkDeclaredScopePaths(
   files: readonly string[],
   declaredScope: readonly string[],
 ): DeclaredScopeCheckResult {
-  const normalizedScope = declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
-  if (normalizedScope.some((prefix) => prefix.length === 0)) {
-    throw new Error("declared scope contains an empty path prefix");
-  }
+  const normalizedScope = normalizeDeclaredScope(declaredScope);
   const outsideScope = files
     .filter((file) => !normalizedScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)));
   return outsideScope.length === 0
