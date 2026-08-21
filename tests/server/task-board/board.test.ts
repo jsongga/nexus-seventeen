@@ -4307,6 +4307,31 @@ test("duplicate work-item intake repairs a missing manager before starting plann
   }
 });
 
+test("work-item planning uses the oldest manager when multiple manager identities exist", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "manager-two",
+      role: "manager",
+      area: "planning overflow",
+      mission: "Provide another manager lane without changing deterministic planning assignment.",
+      model: "claude-haiku",
+      token: "manager-two-token-oldest-selection-0123456789",
+    });
+
+    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Start planning with the oldest registered manager.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "multiple-manager-oldest-planning-0001").workItem;
+
+    assert.equal(created.state, "planning");
+    assert.ok(created.planningTaskId);
+    assert.equal(fixture.board.requireTask(created.planningTaskId).assignedAgentId, fixture.manager.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("registering a manager drains queued work items that previously had no manager", async () => {
   const path = await databasePath();
   const board = await TaskBoard.open(config(path));

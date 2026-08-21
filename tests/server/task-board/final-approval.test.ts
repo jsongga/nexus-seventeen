@@ -187,6 +187,43 @@ function proposePipeline(
   return { workItemId: workItem.workItemId, planRevisionId: revision.planRevisionId };
 }
 
+function assignedImplementationAgent(path: string, planRevisionId: string): string {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const assignment = db.prepare(`
+      SELECT task.assigned_agent_id
+      FROM work_nodes node
+      JOIN stage_attempts attempt
+        ON attempt.node_id=node.node_id
+        AND attempt.stage='implementation'
+      JOIN tasks task ON task.task_id=attempt.task_id
+      WHERE node.plan_revision_id=?
+      ORDER BY attempt.attempt DESC
+      LIMIT 1
+    `).get(planRevisionId);
+    assert.ok(assignment);
+    return String(assignment.assigned_agent_id);
+  } finally {
+    db.close();
+  }
+}
+
+function startEngineerRun(fixture: Fixture, agentId: string, suffix: string): void {
+  fixture.board.createTask(fixture.project.projectId, {
+    parentTaskId: null,
+    title: `Keep engineer busy ${suffix}`,
+    objective: `Exercise idle-preferred selection ${suffix}.`,
+    acceptanceCriteria: "The run remains active while a workflow node is assigned.",
+    workspaceRefs: [],
+    assignedAgentId: agentId,
+    assignedRole: "engineer",
+  });
+  assert.ok(fixture.board.claimRun(agentId, {
+    claimId: `claim-busy-engineer-${suffix}`,
+    messageCursor: null,
+  }));
+}
+
 function implementationHandoff(): StageHandoffDraft {
   return {
     outcome: "passed",
@@ -1424,6 +1461,141 @@ test("confirming a second overlapping pipeline plan holds its node while the fir
   }
 });
 
+test("workflow activation prefers an idle engineer over the oldest engineer with an active run", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "idle-over-active");
+    const secondEngineer = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "engineer-two",
+      role: "engineer",
+      area: "checkout concurrency",
+      mission: "Take disjoint implementation work while the first lane is occupied.",
+      model: "codex-mini",
+      token: "engineer-two-token-idle-over-active-0123456789",
+    });
+    startEngineerRun(fixture, fixture.engineer.agentId, "idle-over-active");
+
+    const pipeline = proposePipeline(fixture, "idle-over-active");
+    fixture.board.confirmWorkflow(pipeline.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(assignedImplementationAgent(fixture.path, pipeline.planRevisionId), secondEngineer.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("workflow activation falls back to the oldest engineer when every engineer has an active run", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "all-busy");
+    const secondEngineer = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "engineer-two",
+      role: "engineer",
+      area: "checkout concurrency",
+      mission: "Provide a second bounded implementation lane.",
+      model: "codex-mini",
+      token: "engineer-two-token-all-busy-0123456789012345",
+    });
+    startEngineerRun(fixture, fixture.engineer.agentId, "all-busy-one");
+    startEngineerRun(fixture, secondEngineer.agentId, "all-busy-two");
+
+    const pipeline = proposePipeline(fixture, "all-busy");
+    fixture.board.confirmWorkflow(pipeline.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(assignedImplementationAgent(fixture.path, pipeline.planRevisionId), fixture.engineer.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("workflow activation does not treat an engineer with an unclaimed live wakeup as idle", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "pending-wakeup");
+    const secondEngineer = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "engineer-two",
+      role: "engineer",
+      area: "checkout concurrency",
+      mission: "Take work while another lane has a pending claim candidate.",
+      model: "codex-mini",
+      token: "engineer-two-token-pending-wakeup-0123456789",
+    });
+    fixture.board.createTask(fixture.project.projectId, {
+      parentTaskId: null,
+      title: "Reserve the oldest engineer",
+      objective: "Leave a live wakeup waiting for the oldest engineer.",
+      acceptanceCriteria: "The wakeup remains unclaimed.",
+      workspaceRefs: [],
+      assignedAgentId: fixture.engineer.agentId,
+      assignedRole: "engineer",
+    });
+
+    const pipeline = proposePipeline(fixture, "pending-wakeup");
+    fixture.board.confirmWorkflow(pipeline.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(assignedImplementationAgent(fixture.path, pipeline.planRevisionId), secondEngineer.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a retired wakeup does not keep the oldest engineer from being selected as idle", async () => {
+  const fixture = await boardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "retired-wakeup");
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "engineer-two",
+      role: "engineer",
+      area: "checkout concurrency",
+      mission: "Provide a second bounded implementation lane.",
+      model: "codex-mini",
+      token: "engineer-two-token-retired-wakeup-0123456789",
+    });
+    const reserved = fixture.board.createTask(fixture.project.projectId, {
+      parentTaskId: null,
+      title: "Retire the oldest engineer wakeup",
+      objective: "Prove retired wakeups do not reserve an agent lane.",
+      acceptanceCriteria: "The retired wakeup is excluded from idle selection.",
+      workspaceRefs: [],
+      assignedAgentId: fixture.engineer.agentId,
+      assignedRole: "engineer",
+    });
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const wakeup = db.prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
+        .get(reserved.taskId);
+      assert.ok(wakeup);
+      db.prepare(`
+        INSERT INTO task_events(
+          event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at
+        ) VALUES (?,?,?,'system','test:wakeup-retirement','agent_wakeup_retired','{}',?)
+      `).run(
+        `retired-wakeup:${String(wakeup.wakeup_id)}`,
+        fixture.project.projectId,
+        reserved.taskId,
+        "2026-08-19T16:00:00.000Z",
+      );
+    } finally {
+      db.close();
+    }
+
+    const pipeline = proposePipeline(fixture, "retired-wakeup");
+    fixture.board.confirmWorkflow(pipeline.planRevisionId, { expectedState: "proposed" });
+
+    assert.equal(assignedImplementationAgent(fixture.path, pipeline.planRevisionId), fixture.engineer.agentId);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("an older overlapping pipeline proceeds to testing, merges, and releases the held newer item", async () => {
   const fixture = await orderedBoardFixture();
   const repo = await repository(true);
@@ -1570,6 +1742,14 @@ test("disjoint pipeline scopes activate immediately in the same project", async 
   try {
     setProjectRepository(fixture, repo.repo);
     configurePipeline(fixture, "scope-disjoint");
+    const secondEngineer = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "scope-disjoint-engineer-two",
+      role: "engineer",
+      area: "disjoint pipeline concurrency",
+      mission: "Implement a second disjoint pipeline concurrently.",
+      model: "codex-mini",
+      token: "scope-disjoint-engineer-two-token-0123456789",
+    });
     const first = proposePipeline(fixture, "scope-disjoint-first", ["src/first"]);
     fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
     const second = proposePipeline(fixture, "scope-disjoint-second", ["src/second"]);
@@ -1580,6 +1760,44 @@ test("disjoint pipeline scopes activate immediately in the same project", async 
     );
     assert.equal(nodes.length, 2);
     assert.equal(nodes.every((node) => node.state === "active"), true);
+    const firstAgentId = assignedImplementationAgent(fixture.path, first.planRevisionId);
+    const secondAgentId = assignedImplementationAgent(fixture.path, second.planRevisionId);
+    assert.deepEqual(new Set([firstAgentId, secondAgentId]), new Set([
+      fixture.engineer.agentId,
+      secondEngineer.agentId,
+    ]));
+
+    const firstClaim = fixture.board.claimRun(firstAgentId, {
+      claimId: "claim-scope-disjoint-first",
+      messageCursor: null,
+    });
+    const secondClaim = fixture.board.claimRun(secondAgentId, {
+      claimId: "claim-scope-disjoint-second",
+      messageCursor: null,
+    });
+    assert.ok(firstClaim);
+    assert.ok(secondClaim);
+    assert.equal(firstClaim.context.workflow?.planRevisionId, first.planRevisionId);
+    assert.equal(secondClaim.context.workflow?.planRevisionId, second.planRevisionId);
+    assert.equal(firstClaim.run.status, "active");
+    assert.equal(secondClaim.run.status, "active");
+    assert.notEqual(firstClaim.run.runId, secondClaim.run.runId);
+    assert.notEqual(firstClaim.run.agentId, secondClaim.run.agentId);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.filter(
+        (run) => [firstClaim.run.runId, secondClaim.run.runId].includes(run.runId) && run.status === "active",
+      ).length,
+      2,
+    );
+
+    fixture.board.settleRun(firstClaim.run.runId, firstClaim.run.agentId, {
+      outcome: "interrupted",
+      result: "Settled after proving two-lane concurrency.",
+    });
+    fixture.board.settleRun(secondClaim.run.runId, secondClaim.run.agentId, {
+      outcome: "interrupted",
+      result: "Settled after proving two-lane concurrency.",
+    });
   } finally {
     fixture.board.close();
   }

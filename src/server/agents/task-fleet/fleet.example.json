@@ -14,6 +14,15 @@
       "model": "replace-with-a-codex-model-id",
       "workingDirectory": "/absolute/path/to/repository",
       "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer.json"
+    },
+    {
+      "workerId": "worker-platform-engineer-2",
+      "agentId": "platform-engineer-2",
+      "token": "replace-with-the-one-time-agent-token-0000000002",
+      "provider": "codex",
+      "model": "replace-with-a-codex-model-id",
+      "workingDirectory": "/absolute/path/to/repository",
+      "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer-2.json"
     }
   ]
 }

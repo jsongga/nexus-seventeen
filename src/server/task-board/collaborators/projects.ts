@@ -33,6 +33,7 @@ import {
   type WorkflowGitRunner,
 } from "../persistence/workflow.js";
 import { SkillRegistry } from "../skills.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
 import { exactNow } from "../persistence/timestamps.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
 import type { AutomationCollaborator } from "./automation.js";
@@ -730,7 +731,23 @@ export class ProjectsCollaborator {
         this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} executor is unavailable`);
         return;
       }
-      let agent = this.runtime.store.db.prepare(
+      let agent = this.runtime.store.db.prepare(`
+        SELECT *
+        FROM agents
+        WHERE project_id=? AND role=?
+          AND NOT EXISTS (
+            SELECT 1 FROM runs
+            WHERE runs.agent_id=agents.agent_id AND runs.status='active'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM wakeups AS wakeup
+            WHERE wakeup.agent_id=agents.agent_id
+              AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
+          )
+        ORDER BY created_at,agent_id
+        LIMIT 1
+      `).get(current.projectId, agentType.role, RETIRED_WAKEUP_EVENT_PREFIX);
+      agent ??= this.runtime.store.db.prepare(
         "SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1",
       ).get(current.projectId, agentType.role);
       if (!agent) {

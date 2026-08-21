@@ -76,8 +76,18 @@ function hazardousPlan(stageTemplate: WorkflowPlanDraft["nodes"][number]["stageT
   };
 }
 
-async function prepareHazardousPipeline(suffix: string) {
+async function prepareHazardousPipeline(suffix: string, duplicateManagers = false) {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  if (duplicateManagers) {
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: `manager-two-hazardous-${suffix}`,
+      role: "manager",
+      area: "hazardous design overflow",
+      mission: "Provide another manager lane without changing deterministic design assignment.",
+      model: "claude-haiku",
+      token: `manager-two-hazardous-token-${suffix}-0123456789`,
+    });
+  }
   const implementer = {
     agentTypeId: `hazardous-implementer-${suffix}`,
     name: "Hazardous implementer",
@@ -150,6 +160,23 @@ test("hazardous pipeline confirmation enters designing with identity and a claim
     assert.match(claim.task.objective, /"tier":"hazardous"/u);
     assert.match(claim.task.objective, /"nodes":\[/u);
     assert.match(claim.task.objective, new RegExp(RAW_REQUEST, "u"));
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("hazardous pipeline confirmation assigns design to the oldest duplicate manager", async () => {
+  const fixture = await prepareHazardousPipeline("duplicate-managers", true);
+  try {
+    assert.equal(fixture.confirmation.outcome, "designing");
+    const claim = fixture.board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-hazardous-design-duplicate-managers",
+      messageCursor: null,
+    });
+    assert.ok(claim?.task);
+    assert.equal(claim.run.agentId, fixture.manager.agentId);
+    assert.equal(claim.task.assignedAgentId, fixture.manager.agentId);
+    assert.equal((claim.context as { design?: boolean }).design, true);
   } finally {
     fixture.board.close();
   }

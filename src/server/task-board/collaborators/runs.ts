@@ -27,6 +27,7 @@ import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-bo
 import { redactForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
 import {
   claimMessageCursor,
@@ -337,21 +338,7 @@ export class RunsCollaborator {
         FROM wakeups AS wakeup
         LEFT JOIN tasks AS ordered_task ON ordered_task.task_id = wakeup.task_id
         WHERE wakeup.agent_id = ?
-          AND wakeup.claimed_at IS NULL
-          AND (
-            wakeup.task_id IS NULL OR EXISTS (
-              SELECT 1 FROM tasks AS task
-              WHERE task.task_id = wakeup.task_id
-                AND task.project_id = wakeup.project_id
-                AND task.assigned_agent_id = wakeup.agent_id
-                AND task.ended_at IS NULL
-                AND task.status IN ('queued', 'blocked')
-            )
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM task_events AS event
-            WHERE event.event_id = ? || wakeup.wakeup_id
-          )
+          AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
         ORDER BY
           CASE WHEN ordered_task.task_id IS NULL THEN 1 ELSE 0 END,
           ordered_task.order_key,
@@ -380,21 +367,7 @@ export class RunsCollaborator {
         FROM wakeups AS wakeup
         WHERE wakeup.wakeup_id = ?
           AND wakeup.agent_id = ?
-          AND wakeup.claimed_at IS NULL
-          AND (
-            wakeup.task_id IS NULL OR EXISTS (
-              SELECT 1 FROM tasks AS task
-              WHERE task.task_id = wakeup.task_id
-                AND task.project_id = wakeup.project_id
-                AND task.assigned_agent_id = wakeup.agent_id
-                AND task.ended_at IS NULL
-                AND task.status IN ('queued', 'blocked')
-            )
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM task_events AS event
-            WHERE event.event_id = ? || wakeup.wakeup_id
-          )
+          AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
       `).get(candidate.wakeupId, agentId, RETIRED_WAKEUP_EVENT_PREFIX);
       if (wakeupRow === undefined) return null;
       const wakeup = wakeupFromRow(wakeupRow);

@@ -70,11 +70,11 @@ export function insertAgentIdentityInTransaction(
   return runtime.requireAgent(input.agentId);
 }
 
-export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projectId: string): AgentProfile | null {
+export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projectId: string): AgentProfile {
   const existing = runtime.store.db.prepare(
-    "SELECT * FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
-  ).all(projectId);
-  if (existing.length > 0) return existing.length === 1 ? runtime.agentFromRow(existing[0]!) : null;
+    "SELECT * FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id LIMIT 1",
+  ).get(projectId);
+  if (existing !== undefined) return runtime.agentFromRow(existing);
   const project = runtime.requireProject(projectId);
   return insertAgentIdentityInTransaction(runtime, projectId, {
     agentId: availableIdentityId(runtime, project.name, "manager"),

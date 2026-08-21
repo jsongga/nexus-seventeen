@@ -282,14 +282,7 @@ export class WorkItemsCollaborator {
       "SELECT task_id FROM work_item_design_tasks WHERE work_item_id=?",
     ).get(workItemId);
     if (existing !== undefined) return this.runtime.requireTask(String(existing.task_id));
-    let managers = this.runtime.store.db.prepare(
-      "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
-    ).all(workItem.resolvedProjectId);
-    if (managers.length === 0) {
-      const created = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
-      managers = created === null ? [] : [{ agent_id: created.agentId }];
-    }
-    if (managers.length !== 1) return null;
+    const manager = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
     const confirmed = this.runtime.store.db.prepare(`
       SELECT *
       FROM plan_revisions
@@ -349,7 +342,7 @@ export class WorkItemsCollaborator {
       confirmedAt: confirmed.confirmed_at === null ? null : String(confirmed.confirmed_at),
       nodes,
     };
-    const managerId = String(managers[0]!.agent_id);
+    const managerId = manager.agentId;
     const workItemTitle = workItemTitleProjection(workItem);
     const task = this.tasks.createTaskInTransaction(workItem.resolvedProjectId, {
       parentTaskId: null,
@@ -387,15 +380,8 @@ export class WorkItemsCollaborator {
       }
       this.runtime.store.db.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(workItemId);
     }
-    let managers = this.runtime.store.db.prepare(
-      "SELECT agent_id FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id",
-    ).all(workItem.resolvedProjectId);
-    if (managers.length === 0) {
-      const created = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
-      managers = created === null ? [] : [{ agent_id: created.agentId }];
-    }
-    if (managers.length !== 1) return Object.freeze({ task: null, wakeAgentId: null });
-    const managerId = String(managers[0]!.agent_id);
+    const manager = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
+    const managerId = manager.agentId;
     const configuration = this.automation.getConfiguration();
     const enabledTypes = new Set(configuration.agentTypes.filter((agentType) => agentType.enabled).map((agentType) => agentType.agentTypeId));
     const availableStages = configuration.stages.flatMap((stage) =>

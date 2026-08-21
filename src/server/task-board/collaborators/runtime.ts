@@ -24,6 +24,7 @@ import {
 import { canonicalJson } from "../canonical.js";
 import type { TaskBoardConfig } from "../config.js";
 import { conflict, TaskBoardError } from "../errors.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX, retiredWakeupEventId } from "../persistence/retired-wakeups.js";
 import {
   nullableString,
@@ -89,21 +90,7 @@ export class TaskBoardRuntime {
       SELECT 1
       FROM wakeups AS wakeup
       WHERE wakeup.agent_id = ?
-        AND wakeup.claimed_at IS NULL
-        AND (
-          wakeup.task_id IS NULL OR EXISTS (
-            SELECT 1 FROM tasks AS task
-            WHERE task.task_id = wakeup.task_id
-              AND task.project_id = wakeup.project_id
-              AND task.assigned_agent_id = wakeup.agent_id
-              AND task.ended_at IS NULL
-              AND task.status IN ('queued', 'blocked')
-          )
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM task_events AS event
-          WHERE event.event_id = ? || wakeup.wakeup_id
-        )
+        AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
       LIMIT 1
     `).get(agentId, RETIRED_WAKEUP_EVENT_PREFIX)) {
       status = "ready";
