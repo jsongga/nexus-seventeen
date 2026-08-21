@@ -29,6 +29,57 @@ export type MergePipelineResult =
   | Readonly<{ kind: "empty" }>
   | Readonly<{ kind: "repo_busy" }>;
 
+export type PipelineMergeTarget =
+  | Readonly<{ kind: "ready"; branch: string; head: string }>
+  | Readonly<{ kind: "repo_busy" }>;
+
+export function inspectPipelineMergeTarget(request: Readonly<{
+  repoPath: string;
+  branch: string;
+  git: GitRunner;
+}>): PipelineMergeTarget {
+  let currentBranch: string;
+  let dirty: string;
+  try {
+    currentBranch = request.git(neutralized(request.repoPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+    dirty = request.git(neutralized(request.repoPath, ["status", "--porcelain", "-z"]));
+  } catch {
+    return Object.freeze({ kind: "repo_busy" });
+  }
+  if (
+    dirty.length > 0 ||
+    currentBranch === "HEAD" ||
+    currentBranch === request.branch ||
+    currentBranch.startsWith("task/")
+  ) return Object.freeze({ kind: "repo_busy" });
+
+  const head = request.git(neutralized(request.repoPath, ["rev-parse", "HEAD"])).trim();
+  if (!GIT_OBJECT_ID_PATTERN.test(head)) throw new Error("git returned an invalid merge target object id");
+  return Object.freeze({ kind: "ready", branch: currentBranch, head });
+}
+
+export function isPipelineBaseAncestor(request: Readonly<{
+  repoPath: string;
+  baseSha: string;
+  target: string;
+  git: GitRunner;
+}>): boolean {
+  try {
+    request.git(neutralized(request.repoPath, [
+      "merge-base", "--is-ancestor", request.baseSha, request.target,
+    ]));
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: unknown }).status === 1
+    ) return false;
+    throw error;
+  }
+}
+
 export function resolvePipelineBranchTip(request: Readonly<{
   repoPath: string;
   branch: string;
@@ -69,28 +120,24 @@ export function mergePipelineBranch(request: Readonly<{
   if (!GIT_OBJECT_ID_PATTERN.test(request.branchSha)) {
     throw new Error("pipeline branch object id is invalid");
   }
-  let currentBranch: string;
-  let dirty: string;
+  const target = inspectPipelineMergeTarget(request);
+  if (target.kind === "repo_busy") return target;
+  let baseIsAncestor = false;
   try {
-    currentBranch = request.git(neutralized(request.repoPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-    dirty = request.git(neutralized(request.repoPath, ["status", "--porcelain", "-z"]));
+    baseIsAncestor = isPipelineBaseAncestor({
+      repoPath: request.repoPath,
+      baseSha: request.baseSha,
+      target: "HEAD",
+      git: request.git,
+    });
   } catch {
-    return Object.freeze({ kind: "repo_busy" });
+    // Preserve the merge executor's established behavior. The poller calls the
+    // helper directly so non-ancestry and operational Git failures stay distinct.
   }
-  if (
-    dirty.length > 0 ||
-    currentBranch === "HEAD" ||
-    currentBranch === request.branch ||
-    currentBranch.startsWith("task/")
-  ) return Object.freeze({ kind: "repo_busy" });
-
-  const head = request.git(neutralized(request.repoPath, ["rev-parse", "HEAD"])).trim();
-  try {
-    request.git(neutralized(request.repoPath, ["merge-base", "--is-ancestor", request.baseSha, "HEAD"]));
-  } catch {
+  if (!baseIsAncestor) {
     return Object.freeze({
       kind: "diverged",
-      detail: `Pipeline base ${request.baseSha} is not an ancestor of merge target ${currentBranch} at ${head}.`,
+      detail: `Pipeline base ${request.baseSha} is not an ancestor of merge target ${target.branch} at ${target.head}.`,
     });
   }
   const commitCount = request.git(neutralized(request.repoPath, [

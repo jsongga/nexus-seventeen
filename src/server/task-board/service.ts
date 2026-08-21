@@ -170,6 +170,7 @@ export class TaskBoardService {
   #verifyTimer: NodeJS.Timeout | undefined;
   #parkLifecycleTimer: NodeJS.Timeout | undefined;
   #wallClockTimer: NodeJS.Timeout | undefined;
+  #baseBranchTimer: NodeJS.Timeout | undefined;
   #started = false;
   #closing = false;
 
@@ -219,6 +220,14 @@ export class TaskBoardService {
       }
     }, verifyIntervalSeconds * 1_000);
     this.#wallClockTimer.unref();
+    this.#baseBranchTimer = setInterval(() => {
+      try {
+        this.#board.sweepBaseBranch(exactNow(config.now));
+      } catch (error) {
+        console.error("[task-board] base-branch sweep failed", error);
+      }
+    }, verifyIntervalSeconds * 1_000);
+    this.#baseBranchTimer.unref();
   }
 
   static async create(
@@ -965,6 +974,10 @@ export class TaskBoardService {
     if (this.#wallClockTimer !== undefined) {
       clearInterval(this.#wallClockTimer);
       this.#wallClockTimer = undefined;
+    }
+    if (this.#baseBranchTimer !== undefined) {
+      clearInterval(this.#baseBranchTimer);
+      this.#baseBranchTimer = undefined;
     }
     this.#closingAbort.abort();
     for (const stream of [...this.#documentStreams]) {

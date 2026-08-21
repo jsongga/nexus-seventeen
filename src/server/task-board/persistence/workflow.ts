@@ -882,6 +882,7 @@ export class TransparentWorkflow {
           currentState,
         ),
         null,
+        "human",
       );
     }
     const row = this.db.prepare(`
@@ -968,15 +969,18 @@ export class TransparentWorkflow {
       actor,
       "fixing",
       "final_reject",
+      "human",
     );
   }
 
-  private returnFinalApprovalToImplementationInTransaction(
+  returnFinalApprovalToImplementationInTransaction(
     workItemId: string,
     request: RejectFinalApprovalRequest,
     actor: string,
     targetState: WorkItemState | ((nodeId: string, currentState: WorkItemState) => WorkItemState),
     gateAction: "final_reject" | null,
+    actorType: "human" | "system",
+    newBaseSha?: string,
   ): readonly WorkNode[] {
     const persistedNote = redactForPersistence(request.note);
     const row = this.db.prepare(`
@@ -1033,11 +1037,12 @@ export class TransparentWorkflow {
     );
     this.db.prepare(`
       INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
-      VALUES (?, ?, ?, 'human', ?, 'task_created', ?, ?)
+      VALUES (?, ?, ?, ?, ?, 'task_created', ?, ?)
     `).run(
       randomUUID(),
       projectId,
       taskId,
+      actorType,
       actor,
       JSON.stringify({ kind: "work", requiresReview: false, status: "failed", workItemId }),
       now,
@@ -1074,12 +1079,25 @@ export class TransparentWorkflow {
     if (Number(nodeUpdate.changes) !== 1) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:final_approval_node_not_completed");
     }
+    if (newBaseSha !== undefined) {
+      if (!GIT_OBJECT_ID_PATTERN.test(newBaseSha)) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:base_sha_invalid");
+      }
+      const baseUpdate = this.db.prepare(`
+        UPDATE work_items
+        SET base_sha=?
+        WHERE work_item_id=? AND state='final_approval' AND version=?
+      `).run(newBaseSha, workItemId, request.version);
+      if (Number(baseUpdate.changes) !== 1) {
+        throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      }
+    }
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
       to: typeof targetState === "function"
         ? targetState(nodeId, String(row.state) as WorkItemState)
         : targetState,
-      actorType: "human",
+      actorType,
       actorId: actor,
       now,
       currentStage: "implementation",

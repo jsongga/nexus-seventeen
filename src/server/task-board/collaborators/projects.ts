@@ -58,13 +58,17 @@ import {
 } from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
 import { declaredScopesOverlap } from "./scope-check.js";
+import {
+  transitionWorkItemInTransaction,
+  workItemStateForNodeStage,
+} from "./work-item-transitions.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
 
-const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
+export const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
   encoding: "utf8",
   timeout: GIT_TIMEOUT_MS,
   maxBuffer: GIT_MAX_BYTES,
@@ -389,6 +393,119 @@ export class ProjectsCollaborator {
       this.activateWorkflowNodes(readyNodes);
       return this.runtime.requireWorkItem(workItemId);
     });
+  }
+
+  withdrawFinalApprovalForBaseAdvance(
+    input: Readonly<{
+      workItemId: string;
+      expectedVersion: number;
+      expectedBaseSha: string;
+      head: string;
+      note: string;
+    }>,
+    afterWithdrawalInTransaction: () => void,
+  ): boolean {
+    const locked = this.withFinalApprovalLockIfAvailable(input.workItemId, () => {
+      const readyNodes = this.runtime.store.transaction(() => {
+        const current = this.runtime.store.db.prepare(`
+          SELECT state,version,base_sha
+          FROM work_items
+          WHERE work_item_id=?
+        `).get(input.workItemId) as Row | undefined;
+        if (
+          current === undefined ||
+          current.state !== "final_approval" ||
+          Number(current.version) !== input.expectedVersion ||
+          current.base_sha !== input.expectedBaseSha
+        ) return null;
+        const nodes = this.#workflow.returnFinalApprovalToImplementationInTransaction(
+          input.workItemId,
+          { version: input.expectedVersion, note: input.note },
+          "system:base-branch-poll",
+          (nodeId, currentState) => workItemStateForNodeStage(
+            this.runtime.store.db,
+            input.workItemId,
+            nodeId,
+            "implementation",
+            currentState,
+          ),
+          null,
+          "system",
+          input.head,
+        );
+        afterWithdrawalInTransaction();
+        return nodes;
+      });
+      if (readyNodes === null) return false;
+      this.activateWorkflowNodes(readyNodes);
+      return true;
+    });
+    return locked.acquired && locked.value;
+  }
+
+  parkFinalApprovalForBaseDivergence(input: Readonly<{
+    workItemId: string;
+    expectedVersion: number;
+    expectedBaseSha: string;
+    reason: string;
+    now: string;
+  }>): boolean {
+    const locked = this.withFinalApprovalLockIfAvailable(input.workItemId, () =>
+      this.runtime.store.transaction(() => {
+        const current = this.runtime.store.db.prepare(`
+          SELECT state,version,base_sha,current_stage
+          FROM work_items
+          WHERE work_item_id=?
+        `).get(input.workItemId) as Row | undefined;
+        if (
+          current === undefined ||
+          current.state !== "final_approval" ||
+          Number(current.version) !== input.expectedVersion ||
+          current.base_sha !== input.expectedBaseSha
+        ) return false;
+        if (current.current_stage !== null) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:final_approval_current_stage");
+        }
+        const activeRun = this.runtime.store.db.prepare(`
+          SELECT run.run_id
+          FROM runs run
+          JOIN stage_attempts attempt ON attempt.task_id=run.task_id
+          JOIN work_nodes node ON node.node_id=attempt.node_id
+          JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+          WHERE plan.work_item_id=? AND plan.state='confirmed' AND run.status='active'
+          LIMIT 1
+        `).get(input.workItemId);
+        if (activeRun !== undefined) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:active_run_in_final_approval");
+        }
+        transitionWorkItemInTransaction(this.runtime.store, {
+          workItemId: input.workItemId,
+          to: "parked",
+          actorType: "system",
+          actorId: "system:base-branch-poll",
+          now: input.now,
+          currentStage: null,
+          park: { category: "base_diverged", reason: input.reason },
+        });
+        return true;
+      }));
+    return locked.acquired && locked.value;
+  }
+
+  private withFinalApprovalLockIfAvailable<T>(
+    workItemId: string,
+    operation: () => T,
+  ): Readonly<{ acquired: false }> | Readonly<{ acquired: true; value: T }> {
+    if (this.#finalApprovalLocks.has(workItemId)) return Object.freeze({ acquired: false });
+    let release!: () => void;
+    const current = new Promise<void>((resolveCurrent) => { release = resolveCurrent; });
+    this.#finalApprovalLocks.set(workItemId, current);
+    try {
+      return Object.freeze({ acquired: true, value: operation() });
+    } finally {
+      release();
+      if (this.#finalApprovalLocks.get(workItemId) === current) this.#finalApprovalLocks.delete(workItemId);
+    }
   }
 
   private async withFinalApprovalLock<T>(workItemId: string, operation: () => T | Promise<T>): Promise<T> {

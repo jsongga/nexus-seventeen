@@ -3,7 +3,7 @@ import test from "node:test";
 import { TaskBoard, createTaskBoardService } from "#server/task-board";
 import { HUMAN_TOKEN, databasePath } from "./helpers.js";
 
-test("the reconciler timers invoke the public verify, park-lifecycle, and wall-clock sweeps", async (t) => {
+test("the reconciler timers invoke the public verify, park-lifecycle, wall-clock, and base-branch sweeps", async (t) => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const intervals: Array<{ callback: () => void; delay: number | undefined }> = [];
@@ -22,6 +22,10 @@ test("the reconciler timers invoke the public verify, park-lifecycle, and wall-c
     suspended: 0,
     parked: 0,
   }));
+  const baseBranchSweep = t.mock.method(TaskBoard.prototype, "sweepBaseBranch", () => ({
+    withdrawn: 0,
+    diverged: 0,
+  }));
   let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
   try {
     service = await createTaskBoardService({
@@ -31,7 +35,7 @@ test("the reconciler timers invoke the public verify, park-lifecycle, and wall-c
       port: 0,
       reconcileIntervalSeconds: 1,
     });
-    assert.equal(intervals.length, 4);
+    assert.equal(intervals.length, 5);
     assert.equal(intervals.every((interval) => interval.delay === 1_000), true);
 
     for (const interval of intervals) interval.callback();
@@ -40,6 +44,7 @@ test("the reconciler timers invoke the public verify, park-lifecycle, and wall-c
     assert.equal(verifySweep.mock.callCount(), 1);
     assert.equal(parkSweep.mock.callCount(), 1);
     assert.equal(wallClockSweep.mock.callCount(), 1);
+    assert.equal(baseBranchSweep.mock.callCount(), 1);
   } finally {
     await service?.close();
     globalThis.setInterval = originalSetInterval;
@@ -47,7 +52,7 @@ test("the reconciler timers invoke the public verify, park-lifecycle, and wall-c
   }
 });
 
-test("verify, park lifecycle, and wall clock keep 60-second sweeps when stale-run reconciliation is disabled", async (t) => {
+test("verify, park lifecycle, wall clock, and base branch keep 60-second sweeps when stale-run reconciliation is disabled", async (t) => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const intervals: Array<{
@@ -88,6 +93,10 @@ test("verify, park lifecycle, and wall clock keep 60-second sweeps when stale-ru
     suspended: 0,
     parked: 0,
   }));
+  const baseBranchSweep = t.mock.method(TaskBoard.prototype, "sweepBaseBranch", () => ({
+    withdrawn: 0,
+    diverged: 0,
+  }));
   const reconcile = t.mock.method(TaskBoard.prototype, "reconcileStaleRuns", () => 0);
   let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
   try {
@@ -100,7 +109,7 @@ test("verify, park lifecycle, and wall clock keep 60-second sweeps when stale-ru
     });
     const reconcileCallsAfterOpen = reconcile.mock.callCount();
 
-    assert.equal(intervals.length, 3);
+    assert.equal(intervals.length, 4);
     assert.equal(intervals.every((interval) => interval.delay === 60_000), true);
     assert.equal(intervals.every((interval) => interval.unrefed), true);
     for (const interval of intervals) interval.callback();
@@ -109,6 +118,7 @@ test("verify, park lifecycle, and wall clock keep 60-second sweeps when stale-ru
     assert.equal(verifySweep.mock.callCount(), 1);
     assert.equal(parkSweep.mock.callCount(), 1);
     assert.equal(wallClockSweep.mock.callCount(), 1);
+    assert.equal(baseBranchSweep.mock.callCount(), 1);
     assert.equal(reconcile.mock.callCount(), reconcileCallsAfterOpen);
     await service.close();
     service = undefined;
@@ -120,7 +130,7 @@ test("verify, park lifecycle, and wall clock keep 60-second sweeps when stale-ru
   }
 });
 
-test("park lifecycle and wall-clock timer failures are logged without escaping their callbacks", async (t) => {
+test("park lifecycle, wall-clock, and base-branch timer failures are logged without escaping their callbacks", async (t) => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const intervals: Array<() => void> = [];
@@ -132,11 +142,15 @@ test("park lifecycle and wall-clock timer failures are logged without escaping t
   globalThis.clearInterval = (() => undefined) as typeof clearInterval;
   const failure = new Error("expected park lifecycle failure");
   const wallClockFailure = new Error("expected wall-clock failure");
+  const baseBranchFailure = new Error("expected base-branch failure");
   t.mock.method(TaskBoard.prototype, "sweepParkLifecycle", () => {
     throw failure;
   });
   t.mock.method(TaskBoard.prototype, "sweepWallClockCaps", () => {
     throw wallClockFailure;
+  });
+  t.mock.method(TaskBoard.prototype, "sweepBaseBranch", () => {
+    throw baseBranchFailure;
   });
   const logged = t.mock.method(console, "error", () => undefined);
   let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
@@ -148,7 +162,7 @@ test("park lifecycle and wall-clock timer failures are logged without escaping t
       port: 0,
       reconcileIntervalSeconds: 0,
     });
-    assert.equal(intervals.length, 3);
+    assert.equal(intervals.length, 4);
     for (const callback of intervals) assert.doesNotThrow(callback);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(
@@ -159,6 +173,11 @@ test("park lifecycle and wall-clock timer failures are logged without escaping t
     assert.equal(
       logged.mock.calls.some((call) => call.arguments[0] === "[task-board] wall-clock cap sweep failed"
         && call.arguments[1] === wallClockFailure),
+      true,
+    );
+    assert.equal(
+      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] base-branch sweep failed"
+        && call.arguments[1] === baseBranchFailure),
       true,
     );
   } finally {

@@ -66,6 +66,10 @@ import { TaskBoardError } from "./errors.js";
 import { AgentsCollaborator } from "./collaborators/agents.js";
 import { AutomationCollaborator } from "./collaborators/automation.js";
 import { BoardPauseCollaborator } from "./collaborators/board-pause.js";
+import {
+  BaseBranchPollCollaborator,
+  type BaseBranchSweepResult,
+} from "./collaborators/base-branch-poll.js";
 import { DocumentsCollaborator } from "./collaborators/documents.js";
 import { LedgersCollaborator } from "./collaborators/ledgers.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
@@ -119,6 +123,7 @@ export class TaskBoard {
   readonly #runtime: TaskBoardRuntime;
   readonly #agents: AgentsCollaborator;
   readonly #automation: AutomationCollaborator;
+  readonly #baseBranchPoll: BaseBranchPollCollaborator;
   readonly #boardPause: BoardPauseCollaborator;
   readonly #documents: DocumentsCollaborator;
   readonly #ledgers: LedgersCollaborator;
@@ -146,6 +151,12 @@ export class TaskBoard {
       dependencies.git,
       {},
       dependencies.mergePipeline,
+    );
+    this.#baseBranchPoll = new BaseBranchPollCollaborator(
+      this.#runtime,
+      this.#projects,
+      this.#notifications,
+      dependencies.git,
     );
     this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
     this.#runs = new RunsCollaborator(
@@ -249,6 +260,10 @@ export class TaskBoard {
 
   sweepWallClockCaps(now: string): WallClockSweepResult {
     return this.#wallClock.sweepWallClockCaps(now);
+  }
+
+  sweepBaseBranch(now: string): BaseBranchSweepResult {
+    return this.#baseBranchPoll.sweepBaseBranch(now);
   }
 
   listNotifications(): NotificationList {

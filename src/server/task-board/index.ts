@@ -17,6 +17,8 @@ export type {
 } from "./collaborators/notifications.js";
 export { ParkLifecycleCollaborator } from "./collaborators/park-lifecycle.js";
 export type { ParkLifecycleSweepResult } from "./collaborators/park-lifecycle.js";
+export { BaseBranchPollCollaborator } from "./collaborators/base-branch-poll.js";
+export type { BaseBranchSweepResult } from "./collaborators/base-branch-poll.js";
 export {
   WallClockCollaborator,
   stageElapsedSeconds,
