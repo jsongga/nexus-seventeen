@@ -35,14 +35,16 @@ import {
   parseCreateTask,
   parseCreateTaskPhase,
   parseCreateWorkItem,
+  parseDocumentPenUpdate,
+  parseDocumentUpdate,
+  parseFindingsLedger,
   parseHumanMessage,
   parseIdentifier,
   parseIdempotencyKey,
   parseInterrupt,
   parseLaneError,
   parseNotificationRead,
-  parseDocumentPenUpdate,
-  parseDocumentUpdate,
+  parseParksLedger,
   parseQuestion,
   parseRejectPlanRevisionRequest,
   parseRejectFinalApprovalRequest,
@@ -120,6 +122,14 @@ function workItemListQuery(url: URL): { cursor: string | undefined; includeArchi
     throw new TaskBoardError(400, "INVALID_REQUEST", "cursor is invalid");
   }
   return { cursor, includeArchived: archivedValues[0] === "1" };
+}
+
+function findingsLedgerQuery(url: URL): string | undefined {
+  const values = url.searchParams.getAll("projectId");
+  if ([...url.searchParams.keys()].some((key) => key !== "projectId") || values.length > 1) {
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
+  }
+  return values[0] === undefined ? undefined : parseIdentifier(values[0], "projectId");
 }
 
 function hostDirectoriesQuery(url: URL): string | undefined {
@@ -230,6 +240,18 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, this.#board.listNotifications());
+      return;
+    }
+    if (url.pathname === "/v1/ledgers/findings" && request.method === "GET") {
+      const projectId = findingsLedgerQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, parseFindingsLedger(this.#board.findingsLedger(projectId)));
+      return;
+    }
+    if (url.pathname === "/v1/ledgers/parks" && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, parseParksLedger(this.#board.parksLedger()));
       return;
     }
     const notificationReadMatch = /^\/v1\/notifications\/([^/]+)\/read$/u.exec(url.pathname);

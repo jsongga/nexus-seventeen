@@ -102,6 +102,15 @@ export function workItemFromRow(row: Row): WorkItem {
     baseSha: nullableString(row, "base_sha"),
     state: stringValue(row, "state") as WorkItemState,
     currentStage: nullableString(row, "current_stage") as WorkItemStage | null,
+    ...(Object.hasOwn(row, "state_since")
+      ? { stateSince: nullableString(row, "state_since") }
+      : {}),
+    ...(Object.hasOwn(row, "review_round")
+      ? { reviewRound: nullableNumberValue(row, "review_round") }
+      : {}),
+    ...(Object.hasOwn(row, "heartbeat_at")
+      ? { heartbeatAt: nullableString(row, "heartbeat_at") }
+      : {}),
     createdBy: stringValue(row, "created_by"),
     version: numberValue(row, "version"),
     createdAt: stringValue(row, "created_at"),

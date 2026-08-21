@@ -79,6 +79,7 @@ import {
   type DesignFailurePointKind,
   type DesignRecord,
   type DesignRecordDraft,
+  type FindingsLedger,
   type GateAction,
   type HumanQuestion,
   type InterruptAgentRequest,
@@ -86,6 +87,7 @@ import {
   type PlanRevision,
   type ParkCategory,
   type ParkRecord,
+  type ParksLedger,
   type PipelineSummary,
   type Project,
   type ProjectArtifact,
@@ -381,6 +383,27 @@ export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "seve
   stage: WorkflowStage | "unrecognized";
 }>;
 
+export interface TolerantFindingsLedger {
+  readonly categories: readonly {
+    readonly category: ReviewFindingCategory | "unrecognized";
+    readonly severity: ReviewFindingSeverity | "unrecognized";
+    readonly blocking: boolean;
+    readonly count: number;
+  }[];
+  readonly perProject: readonly {
+    readonly projectId: string;
+    readonly category: ReviewFindingCategory | "unrecognized";
+    readonly count: number;
+  }[];
+  readonly recent: readonly (TolerantReviewFindingEntity & { readonly workItemId: string })[];
+}
+
+export interface TolerantParksLedger {
+  readonly open: readonly (TolerantParkRecord & { readonly workItemTitle: string })[];
+  readonly resolved: readonly (TolerantParkRecord & { readonly workItemTitle: string })[];
+  readonly recordsSince: string;
+}
+
 export type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> & Readonly<{
   point: DesignFailurePointKind | "unrecognized";
 }>;
@@ -577,10 +600,11 @@ export function parseWorkItemEntity(
 ): WorkItem | TolerantWorkItemEntity {
   const fields = [
     "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "projectTarget", "resolvedProjectId",
-    "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "createdBy", "version", "createdAt",
-    "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
+    "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "stateSince", "reviewRound", "heartbeatAt",
+    "createdBy", "version", "createdAt", "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
   ];
-  const required = fields.filter((field) => field !== "transitions" && field !== "pipelineBranch" && field !== "baseSha");
+  const optional = new Set(["transitions", "pipelineBranch", "baseSha", "stateSince", "reviewRound", "heartbeatAt"]);
+  const required = fields.filter((field) => !optional.has(field));
   const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
@@ -620,6 +644,19 @@ export function parseWorkItemEntity(
     currentStage: item.currentStage === null
       ? null
       : entityMember(item.currentStage, WORK_ITEM_STAGES, `${label}.currentStage`, options),
+    ...(item.stateSince === undefined
+      ? {}
+      : { stateSince: nullableTimestamp(item.stateSince, `${label}.stateSince`, options) }),
+    ...(item.reviewRound === undefined
+      ? {}
+      : {
+          reviewRound: item.reviewRound === null
+            ? null
+            : integer(item.reviewRound, `${label}.reviewRound`, 1),
+        }),
+    ...(item.heartbeatAt === undefined
+      ? {}
+      : { heartbeatAt: nullableTimestamp(item.heartbeatAt, `${label}.heartbeatAt`, options) }),
     createdBy: shapeIdentifier(item.createdBy, `${label}.createdBy`, options),
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
@@ -1251,6 +1288,174 @@ export function parseReviewFindingEntity(
     blocking: booleanValue(item.blocking, `${label}.blocking`),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
   });
+}
+
+type ParsedLedgerFinding = (ReviewFinding | TolerantReviewFindingEntity) & Readonly<{ workItemId: string }>;
+type ParsedLedgerPark = (ParkRecord | TolerantParkRecord) & Readonly<{ workItemTitle: string }>;
+
+function boundedLedgerArray<T>(
+  value: unknown,
+  label: string,
+  maximum: number | null,
+  parser: (entry: unknown, entryLabel: string) => T,
+): readonly T[] {
+  if (!Array.isArray(value) || (maximum !== null && value.length > maximum)) {
+    const bound = maximum === null ? "an array" : `an array with at most ${maximum} entries`;
+    throw new ContractValidationError(`${label} must be ${bound}`);
+  }
+  return Object.freeze(value.map((entry, index) => parser(entry, `${label}[${index}]`)));
+}
+
+function parseLedgerFinding(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions,
+): ParsedLedgerFinding {
+  const fields = [
+    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_FIELDS,
+    "blocking", "createdAt", "workItemId",
+  ];
+  const required = [
+    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
+    "blocking", "createdAt", "workItemId",
+  ];
+  const item = shape(value, label, fields, required, options);
+  const finding = parseReviewFindingEntity({
+    findingId: item.findingId,
+    nodeId: item.nodeId,
+    stage: item.stage,
+    round: item.round,
+    ...(item.file === undefined ? {} : { file: item.file }),
+    ...(item.line === undefined ? {} : { line: item.line }),
+    category: item.category,
+    severity: item.severity,
+    expected: item.expected,
+    actual: item.actual,
+    blocking: item.blocking,
+    createdAt: item.createdAt,
+  }, label, options) as ReviewFinding | TolerantReviewFindingEntity;
+  return Object.freeze({
+    ...finding,
+    workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
+  });
+}
+
+function parseLedgerPark(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions,
+  expectedState: "open" | "resolved",
+): ParsedLedgerPark {
+  const fields = [
+    "parkRecordId", "workItemId", "category", "reason", "parkedAt", "resolvedAt", "resolution", "workItemTitle",
+  ];
+  const item = shape(value, label, fields, fields, options);
+  const park = parseParkRecord({
+    parkRecordId: item.parkRecordId,
+    workItemId: item.workItemId,
+    category: item.category,
+    reason: item.reason,
+    parkedAt: item.parkedAt,
+    resolvedAt: item.resolvedAt,
+    resolution: item.resolution,
+  }, label, options) as ParkRecord | TolerantParkRecord;
+  if (expectedState === "open" && (park.resolvedAt !== null || park.resolution !== null)) {
+    throw new ContractValidationError(`${label} must be an open park record`);
+  }
+  if (expectedState === "resolved" && (park.resolvedAt === null || park.resolution === null)) {
+    throw new ContractValidationError(`${label} must be a resolved park record`);
+  }
+  const workItemTitle = stringValue(item.workItemTitle, `${label}.workItemTitle`);
+  if (workItemTitle.length > 220) throw new ContractValidationError(`${label}.workItemTitle is invalid`);
+  return Object.freeze({ ...park, workItemTitle });
+}
+
+function ledgerRecordsSince(value: unknown, label: string): string {
+  const parsed = stringValue(value, label);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(parsed)) throw new ContractValidationError(`${label} is invalid`);
+  const date = new Date(`${parsed}T00:00:00.000Z`);
+  if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== parsed) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  return parsed;
+}
+
+export function parseFindingsLedger(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantFindingsLedger;
+export function parseFindingsLedger(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): FindingsLedger;
+export function parseFindingsLedger(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): FindingsLedger | TolerantFindingsLedger {
+  const fields = ["categories", "perProject", "recent"];
+  const item = shape(value, label, fields, fields, options);
+  const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
+  const categories = boundedLedgerArray(item.categories, `${label}.categories`, null, (entry, entryLabel) => {
+    const aggregate = shape(entry, entryLabel, ["category", "severity", "blocking", "count"], [
+      "category", "severity", "blocking", "count",
+    ], options);
+    return Object.freeze({
+      category: tolerateUnknown
+        ? entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options, undefined, true)
+        : entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options),
+      severity: tolerateUnknown
+        ? entityMember(aggregate.severity, REVIEW_FINDING_SEVERITIES, `${entryLabel}.severity`, options, undefined, true)
+        : entityMember(aggregate.severity, REVIEW_FINDING_SEVERITIES, `${entryLabel}.severity`, options),
+      blocking: booleanValue(aggregate.blocking, `${entryLabel}.blocking`),
+      count: integer(aggregate.count, `${entryLabel}.count`, 1),
+    });
+  });
+  const perProject = boundedLedgerArray(item.perProject, `${label}.perProject`, null, (entry, entryLabel) => {
+    const aggregate = shape(entry, entryLabel, ["projectId", "category", "count"], [
+      "projectId", "category", "count",
+    ], options);
+    return Object.freeze({
+      projectId: shapeIdentifier(aggregate.projectId, `${entryLabel}.projectId`, options),
+      category: tolerateUnknown
+        ? entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options, undefined, true)
+        : entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options),
+      count: integer(aggregate.count, `${entryLabel}.count`, 1),
+    });
+  });
+  const recent = boundedLedgerArray(item.recent, `${label}.recent`, 50, (entry, entryLabel) =>
+    parseLedgerFinding(entry, entryLabel, options));
+  return Object.freeze({ categories, perProject, recent }) as FindingsLedger | TolerantFindingsLedger;
+}
+
+export function parseParksLedger(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantParksLedger;
+export function parseParksLedger(
+  value: unknown,
+  label: string,
+  options?: ShapeParserOptions,
+): ParksLedger;
+export function parseParksLedger(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): ParksLedger | TolerantParksLedger {
+  const fields = ["open", "resolved", "recordsSince"];
+  const item = shape(value, label, fields, fields, options);
+  const open = boundedLedgerArray(item.open, `${label}.open`, null, (entry, entryLabel) =>
+    parseLedgerPark(entry, entryLabel, options, "open"));
+  const resolved = boundedLedgerArray(item.resolved, `${label}.resolved`, 100, (entry, entryLabel) =>
+    parseLedgerPark(entry, entryLabel, options, "resolved"));
+  return Object.freeze({
+    open,
+    resolved,
+    recordsSince: ledgerRecordsSince(item.recordsSince, `${label}.recordsSince`),
+  }) as ParksLedger | TolerantParksLedger;
 }
 
 const DESIGN_RECORD_FIELDS = [

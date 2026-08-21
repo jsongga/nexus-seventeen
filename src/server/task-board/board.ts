@@ -29,12 +29,14 @@ import {
   type DocumentEvent,
   type DocumentSnapshot,
   type DocumentSummary,
+  type FindingsLedger,
   type HumanQuestion,
   type InterruptAgentRequest,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
   type PipelineSummary,
+  type ParksLedger,
   type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
   type RejectPlanRevisionResponse,
@@ -63,6 +65,7 @@ import { TaskBoardError } from "./errors.js";
 import { AgentsCollaborator } from "./collaborators/agents.js";
 import { AutomationCollaborator } from "./collaborators/automation.js";
 import { DocumentsCollaborator } from "./collaborators/documents.js";
+import { LedgersCollaborator } from "./collaborators/ledgers.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
 import {
   NotificationsCollaborator,
@@ -109,6 +112,7 @@ export class TaskBoard {
   readonly #agents: AgentsCollaborator;
   readonly #automation: AutomationCollaborator;
   readonly #documents: DocumentsCollaborator;
+  readonly #ledgers: LedgersCollaborator;
   readonly #messages: MessagesCollaborator;
   readonly #notifications: NotificationsCollaborator;
   readonly #parkLifecycle: ParkLifecycleCollaborator;
@@ -119,6 +123,7 @@ export class TaskBoard {
 
   private constructor(config: TaskBoardConfig, store: TaskBoardStore, dependencies: TaskBoardDependencies) {
     this.#runtime = new TaskBoardRuntime(config, store);
+    this.#ledgers = new LedgersCollaborator(this.#runtime);
     this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
     this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications);
     this.#automation = new AutomationCollaborator(this.#runtime);
@@ -199,6 +204,14 @@ export class TaskBoard {
 
   listNotifications(): NotificationList {
     return this.#notifications.listNotifications();
+  }
+
+  findingsLedger(projectId?: string): FindingsLedger {
+    return this.#ledgers.findingsLedger(projectId);
+  }
+
+  parksLedger(): ParksLedger {
+    return this.#ledgers.parksLedger();
   }
 
   markNotificationRead(notificationId: string, version: number): BoardNotification {

@@ -87,8 +87,10 @@ import {
   parseBoardNotification,
   parseDesignRecord,
   parseDocument,
+  parseFindingsLedger,
   parseGateAction,
   parseParkRecord,
+  parseParksLedger,
   parsePipelineSummary,
   parseProject,
   parseQuestion,
@@ -337,6 +339,74 @@ describe('browser task-board validator adapter', () => {
     expect(design.failurePoints[0]?.point).toBe('unrecognized');
     expect(design.transitions[0]).not.toHaveProperty('additiveField');
     expect(design).not.toHaveProperty('additiveField');
+  });
+
+  it('loosely projects ledgers and preserves old work-item payloads without observability fields', () => {
+    const oldPayload = parseWorkItem(workItem, 'workItem');
+    expect(oldPayload).not.toHaveProperty('stateSince');
+    expect(oldPayload).not.toHaveProperty('reviewRound');
+    expect(oldPayload).not.toHaveProperty('heartbeatAt');
+
+    expect(parseWorkItem({
+      ...workItem,
+      stateSince: NOW,
+      reviewRound: 3,
+      heartbeatAt: null,
+    }, 'workItem')).toMatchObject({
+      stateSince: NOW,
+      reviewRound: 3,
+      heartbeatAt: null,
+    });
+
+    const finding = {
+      findingId: 'finding-one',
+      nodeId: 'node-one',
+      stage: 'verification',
+      round: 1,
+      file: null,
+      line: null,
+      category: 'correctness',
+      severity: 'major',
+      expected: 'The retry is idempotent.',
+      actual: 'The retry duplicates a write.',
+      blocking: true,
+      createdAt: NOW,
+      workItemId: 'work-item-one',
+    };
+    const findings = parseFindingsLedger({
+      categories: [{
+        category: 'future_category',
+        severity: 'future_severity',
+        blocking: true,
+        count: 1,
+        additiveField: true,
+      }],
+      perProject: [{ projectId: 'project-one', category: 'future_category', count: 1 }],
+      recent: [{ ...finding, additiveField: true }],
+      additiveField: true,
+    }, 'findingsLedger');
+    expect(findings.categories[0]).toMatchObject({ category: 'unrecognized', severity: 'unrecognized' });
+    expect(findings.perProject[0]?.category).toBe('unrecognized');
+    expect(findings.recent[0]?.workItemId).toBe('work-item-one');
+
+    const parks = parseParksLedger({
+      open: [{
+        parkRecordId: 'park-one',
+        workItemId: 'work-item-one',
+        category: 'future_category',
+        reason: 'Wait for an operator decision.',
+        parkedAt: NOW,
+        resolvedAt: null,
+        resolution: null,
+        workItemTitle: 'Make retry behavior observable.',
+        additiveField: true,
+      }],
+      resolved: [],
+      recordsSince: '2026-08-20',
+      additiveField: true,
+    }, 'parksLedger');
+    expect(parks.open[0]?.category).toBe('unrecognized');
+    expect(parks.recordsSince).toBe('2026-08-20');
   });
 
   it('loosely projects ledger enums as unrecognized across additive response changes', () => {

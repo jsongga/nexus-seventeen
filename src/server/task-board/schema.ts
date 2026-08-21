@@ -31,6 +31,8 @@ import {
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseBoardUpdateWorkItem,
+  parseFindingsLedger as parseFindingsLedgerContract,
+  parseParksLedger as parseParksLedgerContract,
   parseWorkItemAudit as parseWorkItemAuditContract,
 } from "#shared/task-board-contract/validate";
 import type {
@@ -48,7 +50,9 @@ import type {
   CreateTaskPhaseRequest,
   CreateTaskRequest,
   CreateWorkItemRequest,
+  FindingsLedger,
   InterruptAgentRequest,
+  ParksLedger,
   RejectPlanRevisionRequest,
   RejectFinalApprovalRequest,
   ResumeAgentRequest,
@@ -111,6 +115,12 @@ export function parseSettle(value: unknown): SettleRunRequest { return adapt(() 
 export function parseIdempotencyKey(value: string | string[] | undefined): string { return adapt(() => parseBoardIdempotencyKey(value)); }
 export function parseWorkItemAudit(value: unknown): WorkItemAudit {
   return adapt(() => parseWorkItemAuditContract(value, "workItemAudit"));
+}
+export function parseFindingsLedger(value: unknown): FindingsLedger {
+  return adapt(() => parseFindingsLedgerContract(value, "findingsLedger"));
+}
+export function parseParksLedger(value: unknown): ParksLedger {
+  return adapt(() => parseParksLedgerContract(value, "parksLedger"));
 }
 
 export function parseNotificationRead(value: unknown): Readonly<{ version: number }> {

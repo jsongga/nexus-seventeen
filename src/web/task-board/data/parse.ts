@@ -38,6 +38,7 @@ import {
   parseDocumentSummaryEntity,
   parseDesignRecordEntity,
   parseEventEntity,
+  parseFindingsLedger as parseFindingsLedgerContract,
   parseGateAction as parseGateActionContract,
   parseHandoffEntity,
   parseInterruptEntity,
@@ -46,6 +47,7 @@ import {
   parsePlanEntity,
   parsePipelineSummaryEntity,
   parseParkRecord as parseParkRecordContract,
+  parseParksLedger as parseParksLedgerContract,
   parseProjectArtifactEntity,
   parseProjectEntity,
   parseProjectEventEntity,
@@ -69,7 +71,9 @@ import {
   type TolerantBoardNotification,
   type TolerantDesignRecordEntity,
   type TolerantGateAction,
+  type TolerantFindingsLedger,
   type TolerantParkRecord,
+  type TolerantParksLedger,
   type TolerantReviewFindingEntity,
   type TolerantTaskEntity,
   type TolerantWorkItemAudit,
@@ -282,6 +286,14 @@ export function parseMessage(value: unknown, path: string): RawMessage {
 
 export function parseParkRecord(value: unknown, path: string): TolerantParkRecord {
   return parseParkRecordContract(value, path, loose);
+}
+
+export function parseFindingsLedger(value: unknown, path: string): TolerantFindingsLedger {
+  return parseFindingsLedgerContract(value, path, loose);
+}
+
+export function parseParksLedger(value: unknown, path: string): TolerantParksLedger {
+  return parseParksLedgerContract(value, path, loose);
 }
 
 export function parseBoardNotification(value: unknown, path: string): TolerantBoardNotification {

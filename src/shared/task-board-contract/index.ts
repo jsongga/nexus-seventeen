@@ -467,6 +467,12 @@ export interface WorkItem {
   readonly baseSha?: string | null;
   readonly state: WorkItemState;
   readonly currentStage: WorkItemStage | null;
+  /** List projection only; absent from older and detail payloads. */
+  readonly stateSince?: string | null;
+  /** List projection only; absent from older and detail payloads. */
+  readonly reviewRound?: number | null;
+  /** List projection only; absent from older and detail payloads. */
+  readonly heartbeatAt?: string | null;
   readonly createdBy: string;
   readonly version: number;
   readonly createdAt: string;
@@ -574,6 +580,27 @@ export interface ReviewFinding extends ReviewFindingDraft {
   readonly round: number;
   readonly blocking: boolean;
   readonly createdAt: string;
+}
+
+export interface FindingsLedger {
+  readonly categories: readonly {
+    readonly category: ReviewFindingCategory;
+    readonly severity: ReviewFindingSeverity;
+    readonly blocking: boolean;
+    readonly count: number;
+  }[];
+  readonly perProject: readonly {
+    readonly projectId: string;
+    readonly category: ReviewFindingCategory;
+    readonly count: number;
+  }[];
+  readonly recent: readonly (ReviewFinding & { readonly workItemId: string })[];
+}
+
+export interface ParksLedger {
+  readonly open: readonly (ParkRecord & { readonly workItemTitle: string })[];
+  readonly resolved: readonly (ParkRecord & { readonly workItemTitle: string })[];
+  readonly recordsSince: string;
 }
 
 export interface DesignTransition {

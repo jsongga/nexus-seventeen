@@ -42,6 +42,12 @@ const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
   ${workItemPriorityCases("  ")}
 END`;
 
+export function workItemTitleProjection(
+  workItem: Pick<WorkItem, "originalRequest" | "refinedObjective">,
+): string {
+  return (workItem.refinedObjective ?? workItem.originalRequest).slice(0, 220);
+}
+
 export class WorkItemsCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -54,6 +60,39 @@ export class WorkItemsCollaborator {
     const select = `
       SELECT work_item.*,
         (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id,
+        (SELECT MAX(transition.created_at)
+          FROM work_item_transitions transition
+          WHERE transition.work_item_id=work_item.work_item_id
+        ) AS state_since,
+        (SELECT MAX(attempt.attempt)
+          FROM stage_attempts attempt
+          JOIN work_nodes node ON node.node_id=attempt.node_id
+          JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+          WHERE plan.work_item_id=work_item.work_item_id
+            AND plan.state='confirmed'
+            AND attempt.stage='verification'
+        ) AS review_round,
+        (SELECT MAX(COALESCE(run.heartbeat_at, run.started_at))
+          FROM runs run
+          WHERE run.status='active'
+            AND (
+              EXISTS(
+                SELECT 1 FROM work_item_planning_tasks planning
+                WHERE planning.work_item_id=work_item.work_item_id AND planning.task_id=run.task_id
+              )
+              OR EXISTS(
+                SELECT 1 FROM work_item_design_tasks design
+                WHERE design.work_item_id=work_item.work_item_id AND design.task_id=run.task_id
+              )
+              OR EXISTS(
+                SELECT 1
+                FROM stage_attempts attempt
+                JOIN work_nodes node ON node.node_id=attempt.node_id
+                JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+                WHERE plan.work_item_id=work_item.work_item_id AND attempt.task_id=run.task_id
+              )
+            )
+        ) AS heartbeat_at,
         ${WORK_ITEM_TERMINAL_RANK_SQL} AS work_item_terminal_rank,
         ${WORK_ITEM_PRIORITY_RANK_SQL} AS work_item_priority_rank
       FROM work_items work_item
@@ -310,7 +349,7 @@ export class WorkItemsCollaborator {
       nodes,
     };
     const managerId = String(managers[0]!.agent_id);
-    const workItemTitle = (workItem.refinedObjective ?? workItem.originalRequest).slice(0, 220);
+    const workItemTitle = workItemTitleProjection(workItem);
     const task = this.tasks.createTaskInTransaction(workItem.resolvedProjectId, {
       parentTaskId: null,
       title: `Design workflow: ${workItemTitle}`,
