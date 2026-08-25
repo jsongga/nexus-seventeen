@@ -318,8 +318,52 @@ function board() {
 }
 
 async function installDefaultBoard(page: Page): Promise<void> {
+  let boardPause = {
+    paused: false,
+    reason: null as string | null,
+    version: 1,
+    updatedAt: '2026-07-19T18:00:00.000Z',
+    updatedBy: 'system:steward-default',
+  };
   await page.route('**/board-api/v1/**', async (route) => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/board/pause' && request.method() === 'GET') {
+      await route.fulfill({ json: boardPause });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/board/pause' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { reason: string | null; version: number };
+      if (body.version !== boardPause.version) {
+        await route.fulfill({ status: 409, json: { error: { code: 'BOARD_PAUSE_VERSION_CONFLICT', message: 'Pause state changed' } } });
+        return;
+      }
+      boardPause = {
+        paused: true,
+        reason: body.reason,
+        version: boardPause.version + 1,
+        updatedAt: '2026-07-19T18:30:00.000Z',
+        updatedBy: 'human:operator',
+      };
+      await route.fulfill({ json: boardPause });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/board/resume' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { version: number };
+      if (body.version !== boardPause.version) {
+        await route.fulfill({ status: 409, json: { error: { code: 'BOARD_PAUSE_VERSION_CONFLICT', message: 'Pause state changed' } } });
+        return;
+      }
+      boardPause = {
+        paused: false,
+        reason: null,
+        version: boardPause.version + 1,
+        updatedAt: '2026-07-19T18:31:00.000Z',
+        updatedBy: 'human:operator',
+      };
+      await route.fulfill({ json: boardPause });
+      return;
+    }
     if (url.pathname === '/board-api/v1/work-items') {
       await route.fulfill({ json: { workItems: [] } });
       return;
@@ -339,6 +383,23 @@ async function installDefaultBoard(page: Page): Promise<void> {
     await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
   });
 }
+
+test('the board control pauses with a reason and resumes orchestration', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+  await expect(pause).toBeVisible();
+
+  page.once('dialog', (dialog) => { void dialog.accept('Database maintenance window.'); });
+  await pause.click();
+  await expect(page.getByText('Board paused', { exact: true })).toBeVisible();
+  await expect(page.getByText('Database maintenance window.', { exact: true })).toBeVisible();
+
+  await companyRail.getByRole('button', { name: 'Resume board', exact: true }).click();
+  await expect(companyRail.getByRole('button', { name: 'Pause board', exact: true })).toBeVisible();
+  await expect(page.getByText('Board paused', { exact: true })).toHaveCount(0);
+});
 
 async function openCompanyRail(page: Page): Promise<Locator> {
   if ((page.viewportSize()?.width ?? 1_000) < 1_024) {

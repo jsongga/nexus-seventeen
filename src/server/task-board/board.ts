@@ -143,8 +143,6 @@ export class TaskBoard {
     this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
     this.#automation = new AutomationCollaborator(this.#runtime);
     this.#tasks = new TasksCollaborator(this.#runtime);
-    this.#workItems = new WorkItemsCollaborator(this.#runtime, this.#automation, this.#tasks);
-    this.#parkLifecycle = new ParkLifecycleCollaborator(this.#runtime, this.#notifications, this.#workItems);
     this.#projects = new ProjectsCollaborator(
       this.#runtime,
       this.#automation,
@@ -152,6 +150,21 @@ export class TaskBoard {
       dependencies.git,
       {},
       dependencies.mergePipeline,
+    );
+    const reconcileProjectWorkflows = (projectId: string) => {
+      this.#projects.reconcileWorkflowsBestEffort(projectId);
+    };
+    this.#workItems = new WorkItemsCollaborator(
+      this.#runtime,
+      this.#automation,
+      this.#tasks,
+      reconcileProjectWorkflows,
+    );
+    this.#parkLifecycle = new ParkLifecycleCollaborator(
+      this.#runtime,
+      this.#notifications,
+      this.#workItems,
+      reconcileProjectWorkflows,
     );
     this.#baseBranchPoll = new BaseBranchPollCollaborator(
       this.#runtime,

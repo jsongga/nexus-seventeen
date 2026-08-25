@@ -108,6 +108,18 @@ async function installProjectPickerApi(page: Page): Promise<{ projectRequests: A
       await route.fulfill({ json: { workItems: [] } });
       return;
     }
+    if (url.pathname === '/board-api/v1/board/pause' && method === 'GET') {
+      await route.fulfill({
+        json: {
+          paused: false,
+          reason: null,
+          version: 1,
+          updatedAt: '2026-08-15T12:00:00.000Z',
+          updatedBy: 'system:steward-default',
+        },
+      });
+      return;
+    }
     if (url.pathname === '/board-api/v1/projects' && method === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
       projectRequests.push(body);

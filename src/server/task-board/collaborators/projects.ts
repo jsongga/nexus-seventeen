@@ -379,6 +379,7 @@ export class ProjectsCollaborator {
         );
       }
       this.activateWorkflowNodes(readyNodes);
+      this.reconcileWorkflowsBestEffort(context.projectId);
       return this.runtime.requireWorkItem(workItemId);
     });
   }
@@ -523,6 +524,7 @@ export class ProjectsCollaborator {
   }
 
   private pipelineMergeContext(workItemId: string, version: number): Readonly<{
+    projectId: string;
     repoPath: string;
     branch: string;
     baseSha: string;
@@ -570,6 +572,7 @@ export class ProjectsCollaborator {
       ? null
       : VERIFIED_SHA_DETAIL.exec(String(latestGreen.detail))?.[1] ?? null;
     return Object.freeze({
+      projectId: project.projectId,
       repoPath: project.description,
       branch: workItem.pipelineBranch,
       baseSha: workItem.baseSha,

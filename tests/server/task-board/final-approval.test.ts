@@ -1680,7 +1680,6 @@ test("an older overlapping pipeline proceeds to testing, merges, and releases th
     await git(repo.repo, ["switch", "main"]);
     const version = fixture.board.requireWorkItem(first.workItemId).version;
     assert.equal((await fixture.board.approvePipelineMerge(first.workItemId, { version })).state, "merged");
-    fixture.board.reconcileWorkflowsBestEffort(fixture.project.projectId);
 
     const activatedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
       (candidate) => candidate.planRevisionId === second.planRevisionId,
@@ -1688,6 +1687,43 @@ test("an older overlapping pipeline proceeds to testing, merges, and releases th
     assert.equal(activatedNode?.state, "active");
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-scope-release-second",
+      messageCursor: null,
+    });
+    assert.equal(claim?.context.workflow?.planRevisionId, second.planRevisionId);
+    assert.equal(claim?.context.workflow?.stage, "implementation");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("cancelling an older overlapping pipeline immediately releases the held newer item", async () => {
+  const fixture = await orderedBoardFixture();
+  const repo = await repository();
+  try {
+    setProjectRepository(fixture, repo.repo);
+    configurePipeline(fixture, "scope-cancel-release");
+    const first = proposePipeline(fixture, "scope-cancel-release-first");
+    fixture.confirmAt(first.planRevisionId, "2026-08-19T16:00:00.000Z");
+    const second = proposePipeline(fixture, "scope-cancel-release-second");
+    fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
+
+    const blockedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    );
+    assert.equal(blockedNode?.state, "blocked");
+    const firstItem = fixture.board.requireWorkItem(first.workItemId);
+    assert.equal(fixture.board.updateWorkItem(first.workItemId, {
+      action: "cancel",
+      version: firstItem.version,
+      reason: "Cancel the older overlapping pipeline.",
+    }).state, "abandoned");
+
+    const activatedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
+      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    );
+    assert.equal(activatedNode?.state, "active");
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-scope-cancel-release-second",
       messageCursor: null,
     });
     assert.equal(claim?.context.workflow?.planRevisionId, second.planRevisionId);

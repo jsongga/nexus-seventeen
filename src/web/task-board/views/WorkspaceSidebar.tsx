@@ -1,6 +1,8 @@
 import {
   ChevronDown,
   CircleAlert,
+  CirclePause,
+  CirclePlay,
   CircleX,
   Menu,
   Plus,
@@ -9,6 +11,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../../components/ui';
 import type { BoardAgent, BoardSnapshot } from '../types';
+import type { RawBoardPause } from '../data/parse';
 import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
 
 export type BoardPage =
@@ -56,6 +59,11 @@ function RailContent({
   onAddProject,
   canAddProject,
   unreadNotifications,
+  boardPause,
+  pauseBusy,
+  pauseControlError,
+  onPauseBoard,
+  onResumeBoard,
 }: {
   snapshot: BoardSnapshot | null;
   page: BoardPage;
@@ -64,6 +72,11 @@ function RailContent({
   onAddProject: () => void;
   canAddProject: boolean;
   unreadNotifications: number;
+  boardPause: RawBoardPause | null;
+  pauseBusy: boolean;
+  pauseControlError: string | null;
+  onPauseBoard: () => void;
+  onResumeBoard: () => void;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
   const parkedCount = snapshot?.workItems.filter((workItem) => workItem.state === 'parked').length ?? 0;
@@ -250,6 +263,25 @@ function RailContent({
           </nav>
         </section>
       </div>
+
+      {boardPause === null ? null : <section aria-label="Board controls" className="border-t border-line p-3">
+        <div className="flex items-center justify-between gap-3 px-3 pb-2">
+          <p className="text-[11px] font-semibold text-ink">Orchestration</p>
+          {boardPause?.paused ? (
+            <span className="rounded-[99px] border border-caution/30 bg-caution-soft px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-caution">Paused</span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45 lg:min-h-9"
+          disabled={pauseBusy}
+          onClick={boardPause?.paused ? onResumeBoard : onPauseBoard}
+        >
+          {boardPause?.paused ? <CirclePlay size={14} aria-hidden="true" /> : <CirclePause size={14} aria-hidden="true" />}
+          {pauseBusy ? (boardPause.paused ? 'Resuming…' : 'Pausing…') : boardPause.paused ? 'Resume board' : 'Pause board'}
+        </button>
+        {pauseControlError === null ? null : <p className="px-3 pt-2 text-[11px] leading-4 text-urgent" role="alert">{pauseControlError}</p>}
+      </section>}
     </div>
   );
 }
@@ -264,6 +296,11 @@ export function WorkspaceFrame({
   onAddProject,
   canAddProject,
   unreadNotifications = 0,
+  boardPause = null,
+  pauseBusy = false,
+  pauseControlError = null,
+  onPauseBoard = () => undefined,
+  onResumeBoard = () => undefined,
   children,
 }: {
   snapshot: BoardSnapshot | null;
@@ -275,6 +312,11 @@ export function WorkspaceFrame({
   onAddProject: () => void;
   canAddProject: boolean;
   unreadNotifications?: number;
+  boardPause?: RawBoardPause | null;
+  pauseBusy?: boolean;
+  pauseControlError?: string | null;
+  onPauseBoard?: () => void;
+  onResumeBoard?: () => void;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
@@ -342,7 +384,7 @@ export function WorkspaceFrame({
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} />
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pauseBusy={pauseBusy} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onResumeBoard={onResumeBoard} />
       </aside>
 
       {drawerOpen ? (
@@ -350,7 +392,7 @@ export function WorkspaceFrame({
           <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
             <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} />
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pauseBusy={pauseBusy} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onResumeBoard={onResumeBoard} />
           </aside>
         </div>
       ) : null}

@@ -1,13 +1,90 @@
 import { describe, expect, it, vi } from 'vitest';
+import { BoardPauseVersionGuard, refreshBoardSnapshot } from './BoardApp';
+import type { TaskBoardClient } from './data/client';
+import type { RawBoardPause } from './data/parse';
 import { NotificationLoadCoordinator } from './model/notification-load';
 import { taskPhasesByOrder, taskRunsByCreatedAt } from './views/TaskDetail';
-import type { BoardRun, BoardTaskPhase } from './types';
+import type { BoardRun, BoardSnapshot, BoardTaskPhase } from './types';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
 }
+
+const pauseTimestamp = '2026-08-21T12:00:00.000Z';
+
+function pauseState(version: number, paused: boolean): RawBoardPause {
+  return {
+    paused,
+    reason: paused ? 'Maintenance window.' : null,
+    version,
+    updatedAt: pauseTimestamp,
+    updatedAtMs: Date.parse(pauseTimestamp),
+    updatedBy: 'human:operator',
+  };
+}
+
+describe('board pause refresh coordination', () => {
+  it('commits and renders a valid snapshot when the independent pause GET fails', async () => {
+    const generatedAt = '2026-08-21T12:00:00.000Z';
+    const snapshot: BoardSnapshot = {
+      revision: 1,
+      generatedAt,
+      generatedAtMs: Date.parse(generatedAt),
+      projects: [],
+      agents: [],
+      tasks: [],
+      messages: [],
+      questions: [],
+      runs: [],
+      workItems: [],
+      documents: [],
+    };
+    const client = {
+      getSnapshot: vi.fn().mockResolvedValue(snapshot),
+      getBoardPause: vi.fn().mockRejectedValue(new Error('pause route unavailable')),
+    } as unknown as TaskBoardClient;
+    const rendered: BoardSnapshot[] = [];
+    const pauseUpdates: Array<RawBoardPause | null> = [];
+    const signal = new AbortController().signal;
+
+    const result = await refreshBoardSnapshot(
+      client,
+      'foreground',
+      signal,
+      async (next) => {
+        rendered.push(next);
+        return true;
+      },
+      (next) => pauseUpdates.push(next),
+    );
+    await result.pauseLoad;
+
+    expect(result.committed).toBe(true);
+    expect(rendered).toEqual([snapshot]);
+    expect(pauseUpdates).toEqual([null]);
+  });
+
+  it('ignores a stale poll response that resolves after a newer mutation response', async () => {
+    const guard = new BoardPauseVersionGuard();
+    const stalePoll = deferred<RawBoardPause>();
+    const mutation = deferred<RawBoardPause>();
+    let stored: RawBoardPause | null = null;
+    const store = (next: RawBoardPause) => {
+      if (guard.accept(next)) stored = next;
+    };
+    const pollAssignment = stalePoll.promise.then(store);
+    const mutationAssignment = mutation.promise.then(store);
+
+    mutation.resolve(pauseState(2, true));
+    await mutationAssignment;
+    stalePoll.resolve(pauseState(1, false));
+    await pollAssignment;
+
+    expect(stored).toEqual(pauseState(2, true));
+  });
+});
 
 describe('notification refresh coordination', () => {
   it('loads again for an unchanged-revision snapshot arrival without overlapping snapshot reads', async () => {

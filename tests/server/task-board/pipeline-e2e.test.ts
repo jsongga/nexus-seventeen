@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import {
   DESIGN_FAILURE_POINTS,
+  SCOPE_HOLD_SUMMARY_PREFIX,
   type BoardSnapshot,
   type ClaimRunResult,
   type ConfirmPlanRevisionResponse,
@@ -36,6 +37,7 @@ import { automationConfigurationRequest, automationStages } from "./helpers.js";
 const HUMAN_TOKEN = "pipeline-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "pipeline-e2e-manager-token-0123456789abcdef";
 const ENGINEER_TOKEN = "pipeline-e2e-engineer-token-0123456789abcdef";
+const ENGINEER_TWO_TOKEN = "pipeline-e2e-engineer-two-token-0123456789abcdef";
 const VERIFIER_TOKEN = "pipeline-e2e-verifier-token-0123456789abcdef";
 const RAW_REQUEST = "Deliver the scoped Pipeline v2 fixture change.";
 const REJECTION_NOTE = "Make the second plan explicitly identify the two reviewable commits.";
@@ -79,6 +81,11 @@ interface WorkflowSnapshot {
   readonly plans: readonly PlanRevision[];
   readonly nodes: readonly WorkNode[];
   readonly handoffs: readonly StageHandoff[];
+  readonly events: ReadonlyArray<{
+    readonly nodeId: string | null;
+    readonly eventType: string;
+    readonly summary: string;
+  }>;
 }
 
 interface FakeCliFixture {
@@ -101,6 +108,12 @@ interface PipelineFixture {
   readonly verifierId: string;
   readonly managerWorker: TaskWorker;
   readonly engineerWorker: TaskWorker;
+  readonly secondEngineer: Readonly<{
+    id: string;
+    token: string;
+    worker: TaskWorker;
+    scratch: string;
+  }> | null;
   readonly verifierWorker: TaskWorker;
   readonly managerScratch: string;
   readonly engineerScratch: string;
@@ -117,6 +130,15 @@ interface FixtureOptions {
   readonly tier?: PlanTier;
   readonly verifyPasses: boolean;
   readonly declaredScope?: readonly string[];
+  readonly scopeRoutes?: ReadonlyArray<Readonly<{
+    marker: string;
+    declaredScope: readonly string[];
+  }>>;
+  readonly twoEngineerLanes?: boolean;
+  readonly engineerDelayMs?: number;
+  readonly stageCapSeconds?: number;
+  readonly taskCapSeconds?: number;
+  readonly now?: () => Date;
 }
 
 function git(cwd: string, arguments_: readonly string[]): Promise<string> {
@@ -163,7 +185,12 @@ async function fakeCodex(root: string, label: string, source: string): Promise<F
   return { bin, working, scratch };
 }
 
-function managerCliSource(suffix: string, declaredScope: readonly string[], tier: PlanTier): string {
+function managerCliSource(
+  suffix: string,
+  declaredScope: readonly string[],
+  tier: PlanTier,
+  scopeRoutes: FixtureOptions["scopeRoutes"] = [],
+): string {
   return `
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -175,6 +202,8 @@ process.stdin.on("end", () => {
   let previous = 0;
   try { previous = Number(fs.readFileSync(statePath, "utf8")); } catch {}
   const revision = previous + 1;
+  const routedScope = ${JSON.stringify(scopeRoutes)}.find((route) => input.includes(route.marker));
+  const declaredScope = routedScope === undefined ? ${JSON.stringify(declaredScope)} : routedScope.declaredScope;
   fs.writeFileSync(statePath, String(revision));
   fs.writeFileSync(path.join(process.env.TMPDIR, "prompt-" + revision + ".txt"), input);
   if (input.includes('"design":true')) {
@@ -201,7 +230,7 @@ process.stdin.on("end", () => {
     acceptanceCriteria: [${JSON.stringify(CHECKED_CRITERION)}, ${JSON.stringify(HUMAN_CRITERION)}],
     changeShape: "feature",
     tier: ${JSON.stringify(tier)},
-    declaredScope: ${JSON.stringify(declaredScope)},
+    declaredScope,
     nonGoals: ["Do not change files outside the declared scope."],
     mechanicalPortions: ["Add two deterministic fixture files."],
     blockingQuestions: [{
@@ -236,7 +265,7 @@ process.stdin.on("end", () => {
 `;
 }
 
-function engineerCliSource(mode: EngineerMode): string {
+function engineerCliSource(mode: EngineerMode, delayMs = 0): string {
   const secondPath = mode === "outside_scope"
     ? "docs/outside.md"
     : mode === "merge_conflict" ? "shared.txt" : "src/allowed/second.txt";
@@ -248,6 +277,7 @@ process.stdin.on("end", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const child = require("node:child_process");
+  if (${delayMs} > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${delayMs});
   const statePath = path.join(process.env.TMPDIR, "engineer-runs.txt");
   let previous = 0;
   try { previous = Number(fs.readFileSync(statePath, "utf8")); } catch {}
@@ -265,6 +295,8 @@ process.stdin.on("end", () => {
     runGit(["-c", "user.name=Pipeline Test", "-c", "user.email=pipeline@test.invalid", "commit", "-m", subject]);
   };
   const mode = ${JSON.stringify(mode)};
+  const scopeMatch = /Declared scope \\(only these path prefixes\\): ([^.]*)\\./u.exec(input);
+  const scopedRoot = scopeMatch === null ? "src/allowed" : scopeMatch[1].split(",")[0].trim();
   const fixMatch = /Fix round (\\d+) on branch/u.exec(input);
   const fixRound = fixMatch === null ? null : Number(fixMatch[1]);
   if (fixRound !== null) {
@@ -281,8 +313,8 @@ process.stdin.on("end", () => {
     commit("src/allowed/first.txt", "first scoped change\\n", "pipeline step one");
     commit("src/feature.txt", "SEEDED_DEFECT\\n", "seed reviewable defect");
   } else {
-    commit("src/allowed/first.txt", "first scoped change\\n", "pipeline step one");
-    commit(${JSON.stringify(secondPath)}, "second pipeline change\\n", "pipeline step two");
+    commit(mode === "scoped" ? scopedRoot + "/first.txt" : "src/allowed/first.txt", "first scoped change\\n", "pipeline step one");
+    commit(mode === "scoped" ? scopedRoot + "/second.txt" : ${JSON.stringify(secondPath)}, "second pipeline change\\n", "pipeline step two");
   }
   const result = {
     status: "completed",
@@ -420,6 +452,9 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     port: 0,
     reconcileIntervalSeconds: 0,
     verifyWorkspaceRoot,
+    stageCapSeconds: options.stageCapSeconds ?? 0,
+    taskCapSeconds: options.taskCapSeconds ?? 0,
+    now: options.now,
   } as const;
   const service = await createTaskBoardService(boardOptions);
   const address = await service.start();
@@ -460,6 +495,21 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
       token: ENGINEER_TOKEN,
     },
   });
+  const secondEngineerId = options.twoEngineerLanes === true
+    ? `pipeline-${options.suffix}-engineer-two`
+    : null;
+  if (secondEngineerId !== null) {
+    await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
+      body: {
+        agentId: secondEngineerId,
+        role: "engineer",
+        area: "parallel pipeline implementation",
+        mission: "Provide a second bounded implementation lane for exit-criterion coverage.",
+        model: ENGINEER_RUN_PIN.model,
+        token: ENGINEER_TWO_TOKEN,
+      },
+    });
+  }
   const engineerType = {
     agentTypeId: `pipeline-${options.suffix}-engineer-type`,
     name: "Pipeline engineer",
@@ -489,8 +539,23 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   });
 
   const declaredScope = options.declaredScope ?? ["src/allowed"];
-  const managerCli = await fakeCodex(root, "manager-cli", managerCliSource(options.suffix, declaredScope, tier));
-  const engineerCli = await fakeCodex(root, "engineer-cli", engineerCliSource(options.engineerMode));
+  const managerCli = await fakeCodex(
+    root,
+    "manager-cli",
+    managerCliSource(options.suffix, declaredScope, tier, options.scopeRoutes),
+  );
+  const engineerCli = await fakeCodex(
+    root,
+    "engineer-cli",
+    engineerCliSource(options.engineerMode, options.engineerDelayMs),
+  );
+  const secondEngineerCli = secondEngineerId === null
+    ? null
+    : await fakeCodex(
+        root,
+        "engineer-two-cli",
+        engineerCliSource(options.engineerMode, options.engineerDelayMs),
+      );
   const verifierCli = await fakeCodex(root, "verifier-cli", verifierCliSource(reviewerMode));
   const managerWorker = await TaskWorker.create({
     identity: { workerId: `pipeline-${options.suffix}-manager-worker`, agentId: managerId },
@@ -534,6 +599,30 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     pinned: ENGINEER_RUN_PIN,
     longPollMs: 1,
   });
+  const secondEngineerWorker = secondEngineerId === null || secondEngineerCli === null
+    ? null
+    : await TaskWorker.create({
+        identity: { workerId: `pipeline-${options.suffix}-engineer-two-worker`, agentId: secondEngineerId },
+        statePath: join(root, "engineer-two-worker", "journal.json"),
+        board: new HttpTaskBoardClient({ baseUrl: address.url, token: ENGINEER_TWO_TOKEN }),
+        launcher: new WorkspaceScopedLauncher(
+          new ContainedCliAgentLauncher({
+            provider: "codex",
+            model: ENGINEER_RUN_PIN.model,
+            workingDirectory: secondEngineerCli.working,
+            environment: {
+              PATH: `${secondEngineerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+              TMPDIR: secondEngineerCli.scratch,
+            },
+            timeoutMs: 5_000,
+            terminationGraceMs: 10,
+            groupAbsenceTimeoutMs: 2_000,
+          }),
+          new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo }),
+        ),
+        pinned: ENGINEER_RUN_PIN,
+        longPollMs: 1,
+      });
   const verifierWorker = await TaskWorker.create({
     identity: { workerId: `pipeline-${options.suffix}-verifier-worker`, agentId: verifierId },
     statePath: join(root, "verifier-worker", "journal.json"),
@@ -576,6 +665,14 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     verifierId,
     managerWorker,
     engineerWorker,
+    secondEngineer: secondEngineerId === null || secondEngineerCli === null || secondEngineerWorker === null
+      ? null
+      : {
+          id: secondEngineerId,
+          token: ENGINEER_TWO_TOKEN,
+          worker: secondEngineerWorker,
+          scratch: secondEngineerCli.scratch,
+        },
     verifierWorker,
     managerScratch: managerCli.scratch,
     engineerScratch: engineerCli.scratch,
@@ -589,6 +686,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
 async function closeFixture(fixture: PipelineFixture): Promise<void> {
   await fixture.managerWorker.close();
   await fixture.engineerWorker.close();
+  await fixture.secondEngineer?.worker.close();
   await fixture.verifierWorker.close();
   fixture.sweepBoard.close();
   await fixture.service.close();
@@ -603,13 +701,36 @@ async function workflow(fixture: PipelineFixture): Promise<WorkflowSnapshot> {
   )).workflow;
 }
 
-async function currentWorkItem(fixture: PipelineFixture): Promise<WorkItem> {
+async function currentWorkItem(fixture: PipelineFixture, workItemId = fixture.workItem.workItemId): Promise<WorkItem> {
   return (await jsonRequest<{ workItem: WorkItem }>(
     fixture.origin,
-    `/v1/work-items/${fixture.workItem.workItemId}`,
+    `/v1/work-items/${workItemId}`,
     "GET",
     200,
   )).workItem;
+}
+
+async function createPipelineWorkItem(
+  fixture: PipelineFixture,
+  originalRequest: string,
+  idempotencyKey: string,
+): Promise<WorkItem> {
+  const { workItem } = await jsonRequest<{ workItem: WorkItem }>(
+    fixture.origin,
+    "/v1/work-items",
+    "POST",
+    201,
+    {
+      idempotencyKey,
+      body: {
+        originalRequest,
+        priority: "normal",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
+    },
+  );
+  assert.equal(workItem.state, "planning");
+  return workItem;
 }
 
 function proposedPlan(snapshot: WorkflowSnapshot, workItemId: string): PlanRevision {
@@ -705,6 +826,35 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
   return selected;
 }
 
+async function proposeAndConfirmItem(
+  fixture: PipelineFixture,
+  workItem: WorkItem,
+  declaredScope: readonly string[],
+): Promise<PlanRevision> {
+  assert.equal(await fixture.managerWorker.dispatchOnce(), true);
+  assert.equal((await currentWorkItem(fixture, workItem.workItemId)).state, "plan_approval");
+  const snapshot = await workflow(fixture);
+  const plan = proposedPlan(snapshot, workItem.workItemId);
+  assertCompletePlan(plan, declaredScope, "standard");
+  assert.deepEqual(snapshot.nodes.find((node) => node.planRevisionId === plan.planRevisionId)?.stageTemplate, [
+    "implementation",
+    "testing",
+    "verification",
+  ]);
+  await jsonRequest<ConfirmPlanRevisionResponse>(
+    fixture.origin,
+    `/v1/plans/${plan.planRevisionId}/confirm`,
+    "POST",
+    200,
+    { body: { expectedState: "proposed" } },
+  );
+  const confirmed = await currentWorkItem(fixture, workItem.workItemId);
+  assert.equal(confirmed.state, "implementing");
+  assert.equal(confirmed.pipelineBranch, `task/${workItem.workItemId}`);
+  assert.match(confirmed.baseSha ?? "", /^[0-9a-f]{40,64}$/u);
+  return plan;
+}
+
 async function driveVerify(
   fixture: PipelineFixture,
   expectedState: "implementing" | "reviewing",
@@ -738,6 +888,122 @@ async function driveVerify(
   assert.fail(
     `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`,
   );
+}
+
+async function driveVerifyItem(
+  fixture: PipelineFixture,
+  workItemId: string,
+  expectedState: "implementing" | "reviewing",
+): Promise<WorkItem> {
+  await waitForServiceVerifyLaunches(fixture, [workItemId]);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    await fixture.sweepBoard.sweepVerifyAttempts();
+    const item = fixture.sweepBoard.requireWorkItem(workItemId);
+    if (item.state === expectedState) return item;
+    if (item.state === "parked" || item.state === "dead_letter" || item.state === "abandoned") {
+      const park = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const reason = park.prepare(`
+          SELECT category,reason
+          FROM park_records
+          WHERE work_item_id=?
+          ORDER BY parked_at DESC,rowid DESC
+          LIMIT 1
+        `).get(workItemId) as { category?: unknown; reason?: unknown } | undefined;
+        assert.fail(
+          `verify sweep did not reach ${expectedState}; current=${item.state}` +
+          (reason === undefined ? "" : `; park=${String(reason.category)}: ${String(reason.reason)}`),
+        );
+      } finally {
+        park.close();
+      }
+    }
+    await delay(25);
+  }
+  assert.fail(
+    `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(workItemId).state}`,
+  );
+}
+
+async function waitForServiceVerifyLaunches(
+  fixture: PipelineFixture,
+  workItemIds: readonly string[],
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  let states = new Map<string, string>();
+  while (Date.now() < deadline) {
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      const rows = db.prepare(`
+        SELECT plan.work_item_id,verify.state
+        FROM verify_attempts verify
+        JOIN work_nodes node ON node.node_id=verify.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id IN (${workItemIds.map(() => "?").join(",")})
+          AND verify.attempt=(
+            SELECT MAX(latest.attempt)
+            FROM verify_attempts latest
+            WHERE latest.node_id=verify.node_id AND latest.stage=verify.stage
+          )
+      `).all(...workItemIds) as unknown as ReadonlyArray<{ work_item_id: string; state: string }>;
+      states = new Map(rows.map((row) => [row.work_item_id, row.state]));
+    } finally {
+      db.close();
+    }
+    if (workItemIds.every((workItemId) => {
+      const state = states.get(workItemId);
+      return state !== undefined && state !== "starting";
+    })) return;
+    await delay(25);
+  }
+  assert.fail(`service-owned verify launch did not finish: ${workItemIds.map(
+    (workItemId) => `${workItemId}=${states.get(workItemId) ?? "missing"}`,
+  ).join(", ")}`);
+}
+
+async function reviewApproveAndMerge(fixture: PipelineFixture, workItemIds: readonly string[]): Promise<void> {
+  // The direct sweep board and service each own a verify collaborator. Let the
+  // service finish every after-commit launch before the direct board polls any
+  // attempt, otherwise its global sweep can race a sibling attempt still in
+  // `starting` and make both launch the same workspace.
+  await waitForServiceVerifyLaunches(fixture, workItemIds);
+  for (const workItemId of workItemIds) await driveVerifyItem(fixture, workItemId, "reviewing");
+  for (const _workItemId of workItemIds) assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+  for (const workItemId of workItemIds) {
+    const finalApproval = await currentWorkItem(fixture, workItemId);
+    assert.equal(finalApproval.state, "final_approval");
+    const approved = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${workItemId}/approve-merge`,
+      "POST",
+      200,
+      { body: { version: finalApproval.version } },
+    );
+    assert.equal(approved.workItem.state, "merged");
+  }
+}
+
+async function waitForActiveEngineerRuns(
+  fixture: PipelineFixture,
+  expectedAgentIds: ReadonlySet<string>,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      const active = new Set((db.prepare(`
+        SELECT DISTINCT agent_id
+        FROM runs
+        WHERE status='active' AND agent_id IN (${[...expectedAgentIds].map(() => "?").join(",")})
+      `).all(...expectedAgentIds) as unknown as ReadonlyArray<{ agent_id: string }>).map((row) => row.agent_id));
+      if (active.size === expectedAgentIds.size && [...expectedAgentIds].every((id) => active.has(id))) return;
+    } finally {
+      db.close();
+    }
+    await delay(10);
+  }
+  assert.fail("both engineer lanes were not active together");
 }
 
 async function claimImplementationRetry(fixture: PipelineFixture, claimId: string): Promise<ClaimRunResult> {
@@ -1158,6 +1424,281 @@ test("an approve-merge conflict returns to implementation with a conflict handof
     assert.equal(handoffs[0]?.stage, "implementation");
     assert.equal(handoffs[0]?.outcome, "failed");
     assert.match(handoffs[0]?.summary ?? "", /merge conflict/iu);
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 7 exit: concurrent disjoint pipelines use both engineer lanes and merge", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-disjoint",
+    engineerMode: "scoped",
+    verifyPasses: true,
+    declaredScope: ["src/disjoint/a"],
+    scopeRoutes: [{ marker: "DISJOINT_SCOPE_B", declaredScope: ["src/disjoint/b"] }],
+    twoEngineerLanes: true,
+    engineerDelayMs: 250,
+  });
+  try {
+    const secondEngineer = fixture.secondEngineer;
+    assert.ok(secondEngineer);
+    const firstPlan = await proposeAndConfirmItem(fixture, fixture.workItem, ["src/disjoint/a"]);
+    const second = await createPipelineWorkItem(
+      fixture,
+      "Deliver the DISJOINT_SCOPE_B pipeline fixture change.",
+      "pipeline-e2e-exit-disjoint-second",
+    );
+    const secondPlan = await proposeAndConfirmItem(fixture, second, ["src/disjoint/b"]);
+    const nodes = (await workflow(fixture)).nodes.filter((node) =>
+      [firstPlan.planRevisionId, secondPlan.planRevisionId].includes(node.planRevisionId));
+    assert.equal(nodes.length, 2);
+    assert.equal(nodes.every((node) => node.state === "active"), true);
+
+    const dispatches = Promise.all([
+      fixture.engineerWorker.dispatchOnce(),
+      secondEngineer.worker.dispatchOnce(),
+    ]);
+    const engineerIds = new Set([fixture.engineerId, secondEngineer.id]);
+    await waitForActiveEngineerRuns(fixture, engineerIds);
+    assert.deepEqual(await dispatches, [true, true]);
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      const runAgentIds = new Set((db.prepare(`
+        SELECT DISTINCT agent_id FROM runs WHERE agent_id IN (?,?)
+      `).all(fixture.engineerId, secondEngineer.id) as unknown as ReadonlyArray<{ agent_id: string }>)
+        .map((row) => row.agent_id));
+      assert.deepEqual(runAgentIds, engineerIds);
+    } finally {
+      db.close();
+    }
+
+    await reviewApproveAndMerge(fixture, [fixture.workItem.workItemId, second.workItemId]);
+    assert.equal((await currentWorkItem(fixture)).state, "merged");
+    assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "merged");
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 7 exit: overlapping pipelines serialize until the older item merges", async () => {
+  let now = new Date(Date.now() - 1_000);
+  const fixture = await createFixture({
+    suffix: "exit-overlap",
+    engineerMode: "scoped",
+    verifyPasses: true,
+    declaredScope: ["src/overlap"],
+    scopeRoutes: [{ marker: "OVERLAP_SCOPE_B", declaredScope: ["src/overlap/b"] }],
+    now: () => now,
+  });
+  try {
+    const firstPlan = await proposeAndConfirmItem(fixture, fixture.workItem, ["src/overlap"]);
+    now = new Date(now.getTime() + 1);
+    const second = await createPipelineWorkItem(
+      fixture,
+      "Deliver the nested OVERLAP_SCOPE_B pipeline fixture change.",
+      "pipeline-e2e-exit-overlap-second",
+    );
+    const secondPlan = await proposeAndConfirmItem(fixture, second, ["src/overlap/b"]);
+    let snapshot = await workflow(fixture);
+    const heldNode = snapshot.nodes.find((node) => node.planRevisionId === secondPlan.planRevisionId);
+    assert.equal(heldNode?.state, "blocked");
+    assert.equal(snapshot.events.filter((event) =>
+      event.nodeId === heldNode?.nodeId && event.eventType === "node_blocked").at(-1)?.summary,
+    `${SCOPE_HOLD_SUMMARY_PREFIX}overlaps ${fixture.workItem.workItemId}`);
+
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await driveVerifyItem(fixture, fixture.workItem.workItemId, "reviewing");
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture)).state, "final_approval");
+    assert.equal((await workflow(fixture)).nodes.find(
+      (node) => node.planRevisionId === secondPlan.planRevisionId)?.state, "blocked");
+    const firstFinal = await currentWorkItem(fixture);
+    const firstMerged = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
+      "POST",
+      200,
+      { body: { version: firstFinal.version } },
+    );
+    assert.equal(firstMerged.workItem.state, "merged");
+
+    snapshot = await workflow(fixture);
+    assert.equal(snapshot.nodes.find((node) => node.planRevisionId === secondPlan.planRevisionId)?.state, "active");
+    assert.equal(snapshot.nodes.find((node) => node.planRevisionId === firstPlan.planRevisionId)?.state, "completed");
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await reviewApproveAndMerge(fixture, [second.workItemId]);
+    assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "merged");
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 7 exit: a runaway implementation is stage-capped, notified, retried, and merged", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-runaway",
+    engineerMode: "scoped",
+    verifyPasses: true,
+    declaredScope: ["src/runaway"],
+    stageCapSeconds: 60,
+    taskCapSeconds: 0,
+  });
+  try {
+    const plan = await proposeAndConfirmItem(fixture, fixture.workItem, ["src/runaway"]);
+    const stub = new HttpTaskBoardClient({ baseUrl: fixture.origin, token: ENGINEER_TOKEN });
+    const claimed = await stub.claimNextWake({
+      agentId: fixture.engineerId,
+      claimId: "pipeline-e2e-exit-runaway-never-settles",
+      messageCursors: {},
+      longPollMs: 0,
+    });
+    assert.ok(claimed);
+    assert.equal(claimed.context?.workflow?.stage, "implementation");
+    const node = (await workflow(fixture)).nodes.find((candidate) =>
+      candidate.planRevisionId === plan.planRevisionId);
+    assert.ok(node);
+    const capClock = new DatabaseSync(fixture.dbPath);
+    try {
+      const stageStartedAt = new Date(Date.now() - 62_000).toISOString();
+      const updated = capClock.prepare(`
+        UPDATE project_events
+        SET created_at=?
+        WHERE sequence=(
+          SELECT sequence
+          FROM project_events
+          WHERE node_id=? AND event_type='stage_started'
+          ORDER BY sequence DESC
+          LIMIT 1
+        )
+      `).run(stageStartedAt, node.nodeId);
+      assert.equal(Number(updated.changes), 1);
+    } finally {
+      capClock.close();
+    }
+    const sweepNow = new Date().toISOString();
+    assert.deepEqual(fixture.sweepBoard.sweepWallClockCaps(sweepNow), { suspended: 1, parked: 1 });
+    const parked = await currentWorkItem(fixture);
+    assert.equal(parked.state, "parked");
+    assert.equal(parked.currentStage, "implementation");
+    const snapshot = await workflow(fixture);
+    assert.equal(snapshot.nodes.find((candidate) => candidate.nodeId === node.nodeId)?.state, "blocked");
+    const blockedSummary = snapshot.events.filter((event) =>
+      event.nodeId === node.nodeId && event.eventType === "node_blocked").at(-1)?.summary;
+    assert.match(blockedSummary ?? "", /^stage cap exceeded: implementation ran \d+s \(cap 60s\)$/u);
+    const parks = await jsonRequest<{ open: Array<{ workItemId: string; category: string; reason: string }> }>(
+      fixture.origin,
+      "/v1/ledgers/parks",
+      "GET",
+      200,
+    );
+    assert.ok(parks.open.some((record) =>
+      record.workItemId === fixture.workItem.workItemId &&
+      record.category === "stage_cap_exceeded" &&
+      record.reason === blockedSummary));
+    const notifications = await jsonRequest<{ unread: Array<{ workItemId: string | null; kind: string }> }>(
+      fixture.origin,
+      "/v1/notifications",
+      "GET",
+      200,
+    );
+    assert.ok(notifications.unread.some((notification) =>
+      notification.workItemId === fixture.workItem.workItemId && notification.kind === "cap_parked"));
+
+    assert.ok(claimed.claim.taskId);
+    const suspendedTask = fixture.sweepBoard.requireTask(claimed.claim.taskId);
+    const retried = await jsonRequest<{ task: { status: string } }>(
+      fixture.origin,
+      `/v1/tasks/${suspendedTask.taskId}/retry`,
+      "POST",
+      200,
+      { body: { version: suspendedTask.version } },
+    );
+    assert.equal(retried.task.status, "queued");
+    assert.equal((await currentWorkItem(fixture)).state, "implementing");
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await reviewApproveAndMerge(fixture, [fixture.workItem.workItemId]);
+    assert.equal((await currentWorkItem(fixture)).state, "merged");
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 7 exit: the kill switch drains an active run, gates claims, resumes, and merges", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-kill-switch",
+    engineerMode: "scoped",
+    verifyPasses: true,
+    declaredScope: ["src/kill-switch"],
+  });
+  try {
+    const plan = await proposeAndConfirmItem(fixture, fixture.workItem, ["src/kill-switch"]);
+    const stub = new HttpTaskBoardClient({ baseUrl: fixture.origin, token: ENGINEER_TOKEN });
+    const claimed = await stub.claimNextWake({
+      agentId: fixture.engineerId,
+      claimId: "pipeline-e2e-exit-kill-switch-active",
+      messageCursors: {},
+      longPollMs: 0,
+    });
+    assert.ok(claimed);
+    assert.equal(claimed.context?.workflow?.stage, "implementation");
+
+    const paused = await jsonRequest<{ paused: boolean; reason: string | null; version: number }>(
+      fixture.origin,
+      "/v1/board/pause",
+      "POST",
+      200,
+      { body: { reason: "Exit criterion maintenance", version: 1 } },
+    );
+    assert.deepEqual({ paused: paused.paused, reason: paused.reason }, {
+      paused: true,
+      reason: "Exit criterion maintenance",
+    });
+    await stub.settleAgentRun({
+      claim: claimed.claim,
+      outcome: "completed",
+      result: "Buffered implementation output flushed after the board pause.",
+      idempotencyKey: "pipeline-e2e-exit-kill-switch-flush",
+    });
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?").get(claimed.claim.runId)?.status, "interrupted");
+    } finally {
+      db.close();
+    }
+    const suspendedSnapshot = await workflow(fixture);
+    const node = suspendedSnapshot.nodes.find((candidate) => candidate.planRevisionId === plan.planRevisionId);
+    assert.equal(node?.state, "blocked");
+    assert.equal(suspendedSnapshot.events.filter((event) =>
+      event.nodeId === node?.nodeId && event.eventType === "node_blocked").at(-1)?.summary,
+    "board paused: Exit criterion maintenance");
+
+    const gatedResponse = await fetch(
+      `${fixture.origin}/v1/agents/${fixture.engineerId}/runs/claim?waitMs=0`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${ENGINEER_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ claimId: "pipeline-e2e-exit-kill-switch-gated", messageCursor: null }),
+      },
+    );
+    assert.equal(gatedResponse.status, 204);
+    assert.equal(await gatedResponse.text(), "");
+    assert.equal(await stub.claimNextWake({
+      agentId: fixture.engineerId,
+      claimId: "pipeline-e2e-exit-kill-switch-gated-client",
+      messageCursors: {},
+      longPollMs: 0,
+    }), null);
+
+    const resumed = await jsonRequest<{ paused: boolean; reason: string | null; version: number }>(
+      fixture.origin,
+      "/v1/board/resume",
+      "POST",
+      200,
+      { body: { version: paused.version } },
+    );
+    assert.deepEqual({ paused: resumed.paused, reason: resumed.reason }, { paused: false, reason: null });
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await reviewApproveAndMerge(fixture, [fixture.workItem.workItemId]);
+    assert.equal((await currentWorkItem(fixture)).state, "merged");
   } finally {
     await closeFixture(fixture);
   }

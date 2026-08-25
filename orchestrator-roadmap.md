@@ -90,7 +90,7 @@ timeline / round count / heartbeat default view; audit view; redact before
 persisting. Exit: recurring finding categories are queryable, park reasons
 reviewable.
 
-**7. Scheduling + budgets** *(spec 2026-08-21, in flight; §8, §12)* — scope-overlap claim gating;
+**7. Scheduling + budgets** *(shipped 2026-08-21; §8, §12)* — scope-overlap claim gating;
 per-stage and per-task wall-clock caps; kill switch; base-branch-push
 webhook withdrawing a pending final approval. Concurrency >1 turns on here.
 Exit: overlapping tasks serialize, a runaway stage is caught by its cap, the

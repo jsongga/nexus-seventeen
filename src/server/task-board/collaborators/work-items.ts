@@ -54,6 +54,7 @@ export class WorkItemsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
+    private readonly reconcileWorkflowsBestEffort: (projectId: string) => void = () => undefined,
   ) {}
 
   listWorkItemsPage(cursor?: string, includeArchived = false): WorkItemPage {
@@ -596,7 +597,7 @@ export class WorkItemsCollaborator {
 
   private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
     const persistedReason = redactForPersistence(reason);
-    return this.runtime.store.transaction(() => {
+    const cancelled = this.runtime.store.transaction(() => {
       const current = this.runtime.requireWorkItem(workItemId);
       if (current.state === "abandoned") {
         if (current.version === version + 1 && current.cancelledReason === persistedReason) return current;
@@ -649,6 +650,10 @@ export class WorkItemsCollaborator {
       });
       return this.runtime.requireWorkItem(workItemId);
     });
+    if (cancelled.resolvedProjectId !== null) {
+      this.reconcileWorkflowsBestEffort(cancelled.resolvedProjectId);
+    }
+    return cancelled;
   }
 
   private archiveWorkItem(workItemId: string, version: number): WorkItem {

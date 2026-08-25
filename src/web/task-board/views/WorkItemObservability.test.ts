@@ -2,11 +2,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BoardPauseBanner,
   NotificationsBlock,
+  changeBoardPause,
   markNotificationReadAndRefresh,
 } from '../BoardApp';
 import type { BoardNotifications, TaskBoardClient } from '../data/client';
-import type { RawBoardNotification, RawWorkItemAudit } from '../data/parse';
+import type { RawBoardNotification, RawBoardPause, RawWorkItemAudit } from '../data/parse';
 import type { BoardSnapshot, BoardWorkItem, BoardWorkItemTransition } from '../types';
 import { WorkItemRow } from './TaskList';
 import { AuditSection, StatusTimeline } from './WorkItemDetail';
@@ -57,6 +59,14 @@ const notification: RawBoardNotification = {
 };
 
 const notifications: BoardNotifications = { unread: [notification], recentRead: [] };
+const pausedBoard: RawBoardPause = {
+  paused: true,
+  reason: 'Database maintenance window.',
+  version: 2,
+  updatedAt: now,
+  updatedAtMs: nowMs,
+  updatedBy: 'human:operator',
+};
 
 describe('default observability view', () => {
   it('renders unread notifications and dispatches mark-read before refreshing', async () => {
@@ -125,6 +135,11 @@ describe('default observability view', () => {
       onAddProject: vi.fn(),
       canAddProject: true,
       unreadNotifications: 4,
+      boardPause: pausedBoard,
+      pauseBusy: false,
+      pauseControlError: null,
+      onPauseBoard: vi.fn(),
+      onResumeBoard: vi.fn(),
       children: createElement('div', null, 'Content'),
     }));
 
@@ -133,6 +148,51 @@ describe('default observability view', () => {
     expect(markup).toContain('aria-label="1 work item awaits final approval"');
     expect(markup).toContain('aria-label="4 unread notifications"');
     expect(markup).toContain('Ledgers');
+    expect(markup).toContain('Resume board');
+
+    const unavailableMarkup = renderToStaticMarkup(createElement(WorkspaceFrame, {
+      snapshot,
+      page: { kind: 'tasks' },
+      pointOfContact: null,
+      drawerOpen: false,
+      onDrawerChange: vi.fn(),
+      onNavigate: vi.fn(),
+      onAddProject: vi.fn(),
+      canAddProject: true,
+      boardPause: null,
+      children: createElement('div', null, 'Content'),
+    }));
+    expect(unavailableMarkup).not.toContain('Board controls');
+    expect(unavailableMarkup).not.toContain('Pause board');
+  });
+
+  it('renders the paused banner with its reason and dispatches pause and resume controls', async () => {
+    const markup = renderToStaticMarkup(createElement(BoardPauseBanner, { boardPause: pausedBoard }));
+    expect(markup).toContain('Board paused');
+    expect(markup).toContain('Database maintenance window.');
+    expect(renderToStaticMarkup(createElement(BoardPauseBanner, {
+      boardPause: { ...pausedBoard, paused: false, reason: null },
+    }))).toBe('');
+
+    const setBoardPause = vi.fn().mockResolvedValue(pausedBoard);
+    const resumeBoard = vi.fn().mockResolvedValue({ ...pausedBoard, paused: false, reason: null, version: 3 });
+    const client = { setBoardPause, resumeBoard } as unknown as TaskBoardClient;
+    await expect(changeBoardPause(client, { ...pausedBoard, paused: false, reason: null, version: 1 }, () => '  Maintenance  ')).resolves.toEqual(pausedBoard);
+    expect(setBoardPause).toHaveBeenCalledWith({ reason: 'Maintenance', version: 1 });
+    await expect(changeBoardPause(client, pausedBoard, () => { throw new Error('resume must not prompt'); })).resolves.toMatchObject({ paused: false, version: 3 });
+    expect(resumeBoard).toHaveBeenCalledWith({ version: 2 });
+  });
+
+  it('does not mutate when the pause-reason prompt is cancelled', async () => {
+    const setBoardPause = vi.fn();
+    const client = { setBoardPause } as unknown as TaskBoardClient;
+
+    await expect(changeBoardPause(
+      client,
+      { ...pausedBoard, paused: false, reason: null },
+      () => null,
+    )).resolves.toBeNull();
+    expect(setBoardPause).not.toHaveBeenCalled();
   });
 
   it('renders work-item stage, state age, round, and heartbeat freshness', () => {

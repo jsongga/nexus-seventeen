@@ -38,6 +38,7 @@ import {
   parseAutomationStage,
   parseAgent,
   parseBoardNotification,
+  parseBoardPause,
   parseDocument,
   parseFindingsLedger,
   parseInterrupt,
@@ -58,6 +59,7 @@ import {
   validateAutomationPayloadSize,
   type JsonRecord,
   type RawBoardNotification,
+  type RawBoardPause,
   type RawFindingsLedger,
   type RawMessage,
   type RawParksLedger,
@@ -298,6 +300,9 @@ export interface BoardNotifications {
 export interface TaskBoardClient {
   readonly documentClientId: string;
   getSnapshot(signal?: AbortSignal, requestMarker?: 'foreground' | 'poll' | 'mutation'): Promise<BoardSnapshot>;
+  getBoardPause(signal?: AbortSignal): Promise<RawBoardPause>;
+  setBoardPause(input: { reason: string | null; version: number }): Promise<RawBoardPause>;
+  resumeBoard(input: { version: number }): Promise<RawBoardPause>;
   getFindingsLedger(projectId?: string, signal?: AbortSignal): Promise<RawFindingsLedger>;
   getParksLedger(signal?: AbortSignal): Promise<RawParksLedger>;
   getNotifications(signal?: AbortSignal): Promise<BoardNotifications>;
@@ -574,6 +579,36 @@ export function createTaskBoardClient(options: {
 
   return {
     documentClientId,
+    async getBoardPause(signal) {
+      return parseBoardPause(
+        await json('/v1/board/pause', { signal }),
+        'board pause response',
+      );
+    },
+    async setBoardPause(input) {
+      const reason = input.reason === null
+        ? null
+        : boundedText(input.reason.trim(), 'board pause reason', 500);
+      return parseBoardPause(
+        await json('/v1/board/pause', {
+          method: 'POST',
+          body: JSON.stringify({
+            reason,
+            version: integer(input.version, 'board pause.version', 1),
+          }),
+        }),
+        'board pause response',
+      );
+    },
+    async resumeBoard(input) {
+      return parseBoardPause(
+        await json('/v1/board/resume', {
+          method: 'POST',
+          body: JSON.stringify({ version: integer(input.version, 'board resume.version', 1) }),
+        }),
+        'board resume response',
+      );
+    },
     async getFindingsLedger(projectId, signal) {
       const query = projectId === undefined ? '' : `?projectId=${encodeURIComponent(projectId)}`;
       return parseFindingsLedger(

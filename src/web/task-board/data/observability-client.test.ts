@@ -43,6 +43,14 @@ const notification = {
   version: 3,
 };
 
+const boardPause = {
+  paused: false,
+  reason: null,
+  version: 1,
+  updatedAt: now,
+  updatedBy: 'human:operator',
+};
+
 const gateAction = {
   gateActionId: 'gate-action-one',
   workItemId: 'work-item-one',
@@ -83,6 +91,18 @@ describe('observability HTTP client', () => {
         expect(JSON.parse(String(init?.body))).toEqual({ version: 3 });
         return new Response(JSON.stringify({ notification: { ...notification, readAt: now, version: 4 } }));
       }
+      if (url.endsWith('/v1/board/resume')) {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({ version: 2 });
+        return new Response(JSON.stringify({ ...boardPause, version: 3 }));
+      }
+      if (url.endsWith('/v1/board/pause')) {
+        if (init?.method === 'POST') {
+          expect(JSON.parse(String(init.body))).toEqual({ reason: 'Maintenance', version: 1 });
+          return new Response(JSON.stringify({ ...boardPause, paused: true, reason: 'Maintenance', version: 2 }));
+        }
+        return new Response(JSON.stringify(boardPause));
+      }
       if (url.endsWith('/v1/notifications')) {
         return new Response(JSON.stringify({ unread: [notification], recentRead: [] }));
       }
@@ -115,6 +135,20 @@ describe('observability HTTP client', () => {
     await expect(client.getWorkItemAudit('work-item/one')).resolves.toMatchObject({
       gateActions: [expect.objectContaining({ gateActionId: gateAction.gateActionId, createdAtMs: Date.parse(now) })],
       transitions: [expect.objectContaining({ toState: 'final_approval', createdAtMs: Date.parse(now) })],
+    });
+    await expect(client.getBoardPause()).resolves.toMatchObject({
+      paused: false,
+      version: 1,
+      updatedAtMs: Date.parse(now),
+    });
+    await expect(client.setBoardPause({ reason: '  Maintenance  ', version: 1 })).resolves.toMatchObject({
+      paused: true,
+      reason: 'Maintenance',
+      version: 2,
+    });
+    await expect(client.resumeBoard({ version: 2 })).resolves.toMatchObject({
+      paused: false,
+      version: 3,
     });
   });
 

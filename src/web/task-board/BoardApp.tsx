@@ -4,7 +4,7 @@ import { Button, Card, cn } from '../components/ui';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from './data/client';
-import type { RawBoardNotification } from './data/parse';
+import type { RawBoardNotification, RawBoardPause } from './data/parse';
 import { DocumentsPage } from './views/DocumentsPage';
 import { missingRouteFallback } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
@@ -138,6 +138,68 @@ export async function runWorkItemDetailMutation(
   }
 }
 
+export function BoardPauseBanner({ boardPause }: { boardPause: RawBoardPause | null }) {
+  if (boardPause?.paused !== true) return null;
+  return (
+    <div className="border-b border-caution-border bg-caution-soft px-4 py-3 text-caution sm:px-8 lg:px-12" role="status" aria-live="polite">
+      <div className="flex items-start gap-2.5">
+        <CirclePause className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+        <div>
+          <p className="text-sm font-semibold">Board paused</p>
+          <p className="mt-0.5 text-xs leading-5">{boardPause.reason ?? 'No reason was provided.'}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export async function changeBoardPause(
+  client: TaskBoardClient,
+  boardPause: RawBoardPause,
+  promptForReason: () => string | null,
+): Promise<RawBoardPause | null> {
+  if (boardPause.paused) return client.resumeBoard({ version: boardPause.version });
+  const response = promptForReason();
+  if (response === null) return null;
+  const reason = response.trim();
+  return client.setBoardPause({ reason: reason.length === 0 ? null : reason, version: boardPause.version });
+}
+
+/** Keeps delayed reads from replacing a newer pause mutation response. */
+export class BoardPauseVersionGuard {
+  #latestVersion: number | null = null;
+
+  accept(next: RawBoardPause): boolean {
+    if (this.#latestVersion !== null && next.version < this.#latestVersion) return false;
+    this.#latestVersion = next.version;
+    return true;
+  }
+}
+
+export async function refreshBoardSnapshot(
+  client: TaskBoardClient,
+  kind: BoardRefreshKind,
+  signal: AbortSignal,
+  commitSnapshot: (next: BoardSnapshot, signal: AbortSignal) => Promise<boolean>,
+  updateBoardPause: (next: RawBoardPause | null) => void,
+): Promise<Readonly<{
+  snapshot: BoardSnapshot;
+  committed: boolean;
+  pauseLoad: Promise<void>;
+}>> {
+  const pauseLoad = client.getBoardPause(signal).then(
+    (next) => {
+      if (!signal.aborted) updateBoardPause(next);
+    },
+    () => {
+      if (!signal.aborted || refreshTimedOut(signal)) updateBoardPause(null);
+    },
+  );
+  const snapshot = await client.getSnapshot(signal, kind);
+  const committed = await commitSnapshot(snapshot, signal);
+  return { snapshot, committed, pauseLoad };
+}
+
 export function BoardApp() {
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: '/board-api' }), []);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
@@ -162,8 +224,12 @@ export function BoardApp() {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
   const [notificationsAttempt, setNotificationsAttempt] = useState(0);
+  const [boardPause, setBoardPause] = useState<RawBoardPause | null>(null);
+  const [pauseBusy, setPauseBusy] = useState(false);
+  const [pauseControlError, setPauseControlError] = useState<string | null>(null);
   const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
+  const pauseVersions = useMemo(() => new BoardPauseVersionGuard(), []);
   const observedTaskIds = useRef(new Set<string>());
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const taskRowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -198,6 +264,14 @@ export function BoardApp() {
     return snapshotCommits.commit(next, signal, setSnapshot);
   }, [snapshotCommits]);
 
+  const updateBoardPause = useCallback((next: RawBoardPause | null) => {
+    if (next === null) {
+      setBoardPause(null);
+      return;
+    }
+    if (pauseVersions.accept(next)) setBoardPause(next);
+  }, [pauseVersions]);
+
   useLayoutEffect(() => {
     if (snapshot !== null) snapshotCommits.acknowledge(snapshot);
   }, [snapshot, snapshotCommits]);
@@ -213,8 +287,15 @@ export function BoardApp() {
 
   const performRefresh = useCallback(async (kind: BoardRefreshKind, signal: AbortSignal): Promise<boolean> => {
     try {
-      const next = await client.getSnapshot(signal, kind);
-      if (!await commitSnapshot(next, signal)) {
+      const refreshResult = await refreshBoardSnapshot(
+        client,
+        kind,
+        signal,
+        commitSnapshot,
+        updateBoardPause,
+      );
+      const next = refreshResult.snapshot;
+      if (!refreshResult.committed) {
         if (refreshTimedOut(signal)) throw signal.reason;
         return false;
       }
@@ -234,7 +315,7 @@ export function BoardApp() {
         : signIn?.message ?? (caught instanceof Error ? caught.message : 'Could not connect to the task board'));
       return false;
     }
-  }, [client, commitSnapshot]);
+  }, [client, commitSnapshot, updateBoardPause]);
 
   const refreshCoordinator = useMemo(() => new BoardRefreshCoordinator(performRefresh, {
     onForegroundLoadingChange: setLoading,
@@ -475,6 +556,29 @@ export function BoardApp() {
     return result;
   }
 
+  async function toggleBoardPause() {
+    if (boardPause === null || pauseBusy) return;
+    setPauseBusy(true);
+    setPauseControlError(null);
+    try {
+      const next = await changeBoardPause(
+        client,
+        boardPause,
+        () => globalThis.prompt('Why are you pausing the board?'),
+      );
+      if (next !== null) updateBoardPause(next);
+    } catch (caught) {
+      setPauseControlError(caught instanceof Error ? caught.message : 'The board pause state could not be changed.');
+      try {
+        updateBoardPause(await client.getBoardPause());
+      } catch {
+        // Keep the last authoritative state visible with the mutation error.
+      }
+    } finally {
+      setPauseBusy(false);
+    }
+  }
+
   let content: ReactNode;
   if (loading && snapshot === null) {
     content = <main className="p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8"><Card><EmptyState icon={<RefreshCw className="animate-spin" size={20} />} title="Locating your agents" body="Reading durable projects, tasks, questions, and progress from the task board." /></Card></main>;
@@ -642,7 +746,8 @@ export function BoardApp() {
               : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0} boardPause={boardPause} pauseBusy={pauseBusy || !connected} pauseControlError={pauseControlError} onPauseBoard={() => { void toggleBoardPause(); }} onResumeBoard={() => { void toggleBoardPause(); }}>
+      <BoardPauseBanner boardPause={boardPause} />
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       {errorPipeline.actionStatus ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><div role="status" aria-live="polite" className="rounded-md border border-success-fill/50 bg-success-soft px-4 py-3 text-sm text-success">{errorPipeline.actionStatus}</div></div> : null}
       <div key={pageTransitionKey} className="cicada-page-enter">{content}</div>

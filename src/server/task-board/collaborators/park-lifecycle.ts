@@ -70,6 +70,7 @@ export class ParkLifecycleCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly notifications: NotificationsCollaborator,
     private readonly workItems: WorkItemsCollaborator,
+    private readonly reconcileWorkflowsBestEffort: (projectId: string) => void,
   ) {}
 
   sweepParkLifecycle(now: string): ParkLifecycleSweepResult {
@@ -117,7 +118,7 @@ export class ParkLifecycleCollaborator {
         const ageSeconds = (nowMilliseconds - Date.parse(record.parkedAt)) / 1_000;
         if (!Number.isFinite(ageSeconds)) throw new Error("TASK_BOARD_DATABASE_CORRUPT:parked_at");
         if (ageSeconds <= this.runtime.config.parkAutoAbandonSeconds) continue;
-        const abandoned = this.runtime.store.transaction(() => {
+        const abandonment = this.runtime.store.transaction(() => {
           const current = this.runtime.store.db.prepare(`
             SELECT
               park_record.park_record_id,
@@ -131,7 +132,7 @@ export class ParkLifecycleCollaborator {
             JOIN work_items AS work_item ON work_item.work_item_id=park_record.work_item_id
             WHERE park_record.park_record_id=? AND park_record.resolved_at IS NULL
           `).get(record.parkRecordId) as (Row & Readonly<{ state: WorkItemState }>) | undefined;
-          if (current === undefined || current.state !== "parked") return false;
+          if (current === undefined || current.state !== "parked") return null;
           const currentRecord = openParkRecordFromRow(current);
           const cancelledReason = `parked past auto-abandon threshold (${currentRecord.category})`;
           const actor = { type: "system" as const, id: "system:park-lifecycle" };
@@ -158,9 +159,14 @@ export class ParkLifecycleCollaborator {
             workItemId: currentRecord.workItemId,
             summary: notificationSummary(currentRecord, nowMilliseconds),
           }, now);
-          return true;
+          return Object.freeze({ projectId: currentRecord.projectId });
         });
-        if (abandoned) autoAbandoned += 1;
+        if (abandonment !== null) {
+          autoAbandoned += 1;
+          if (abandonment.projectId !== null) {
+            this.reconcileWorkflowsBestEffort(abandonment.projectId);
+          }
+        }
       }
     }
     return Object.freeze({ notified, autoAbandoned });
