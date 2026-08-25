@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENT_ROLES } from "../../../../src/shared/task-board-contract/index.js";
-import type { ProviderArgumentOptions } from "../../../../src/server/agents/task-worker/agent-envelope.js";
+import { AGENT_ROLES, type AgentRole } from "../../../../src/shared/task-board-contract/index.js";
+import {
+  RESULT_SCHEMA,
+  type ProviderArgumentOptions,
+} from "../../../../src/server/agents/task-worker/agent-envelope.js";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import { RuntimeCapabilityError, type RuntimeProfile } from "../../../../src/server/agents/runtime/profiles.js";
 import { defaultRuntimeRegistry, runtimeRegistry } from "../../../../src/server/agents/runtime/registry.js";
+import { CLAUDE_PROFILE, CODEX_PROFILE } from "./profile-fixtures.js";
 
 const OPTION_CASES: readonly ProviderArgumentOptions[] = [
   {
@@ -23,10 +28,107 @@ const OPTION_CASES: readonly ProviderArgumentOptions[] = [
   },
 ];
 
+function legacyCodexArgs(options: ProviderArgumentOptions, role: AgentRole): readonly string[] {
+  const includedEnvironment = options.proxyEgress === true
+    ? ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY"]
+    : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
+  return [
+    "exec",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--config",
+    'approval_policy="never"',
+    "--config",
+    `sandbox_workspace_write.network_access=${options.proxyEgress === true ? "true" : "false"}`,
+    "--config",
+    'shell_environment_policy.inherit="none"',
+    "--config",
+    `shell_environment_policy.include_only=${JSON.stringify(includedEnvironment)}`,
+    "--model",
+    options.model,
+    "--sandbox",
+    role === "engineer" ? "workspace-write" : "read-only",
+    "--cd",
+    options.workingDirectory,
+    "--color",
+    "never",
+    "--json",
+    "--output-schema",
+    options.schemaPath,
+    "-",
+  ];
+}
+
+function legacyClaudeArgs(options: ProviderArgumentOptions, role: AgentRole): readonly string[] {
+  const tools = role === "engineer"
+    ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+    : role === "verifier"
+      ? ["Read", "Glob", "Grep", "Bash"]
+      : ["Read", "Glob", "Grep"];
+  const settings = {
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      filesystem: {
+        denyRead: ["~/"],
+        allowRead: [options.workingDirectory],
+        ...(role === "engineer"
+          ? { allowWrite: [options.workingDirectory] }
+          : { denyWrite: [options.workingDirectory] }),
+      },
+      credentials: {
+        files: [
+          { path: "~/.ssh", mode: "deny" },
+          { path: "~/.aws", mode: "deny" },
+          { path: "~/.config/gcloud", mode: "deny" },
+        ],
+        envVars: [
+          { name: "ANTHROPIC_API_KEY", mode: "deny" },
+          { name: "ANTHROPIC_AUTH_TOKEN", mode: "deny" },
+          { name: "CODEX_API_KEY", mode: "deny" },
+          { name: "OPENAI_API_KEY", mode: "deny" },
+        ],
+      },
+    },
+  };
+  const args = [
+    "--print",
+    ...(options.bareApiKey ? ["--bare"] : []),
+    "--safe-mode",
+    "--disable-slash-commands",
+    "--exclude-dynamic-system-prompt-sections",
+    "--model",
+    options.model,
+    "--effort",
+    "low",
+    "--no-session-persistence",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--settings",
+    JSON.stringify(settings),
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--json-schema",
+    JSON.stringify(RESULT_SCHEMA),
+    "--permission-mode",
+    role === "engineer" ? "acceptEdits" : role === "verifier" ? "dontAsk" : "plan",
+    "--tools",
+    tools.join(","),
+  ];
+  if (tools.includes("Bash")) args.push("--allowedTools", "Bash");
+  return args;
+}
+
 test("runtime adapters define bounded argv for every fixed agent role", () => {
   for (const options of OPTION_CASES) {
     for (const role of AGENT_ROLES) {
-      const codex = codexAdapter.args(options, role);
+      const codex = codexAdapter.args(options, role, CODEX_PROFILE);
+      assert.deepEqual(codex, legacyCodexArgs(options, role));
       assert.deepEqual(codex.slice(0, 5), ["exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--strict-config"]);
       assert.equal(codex[codex.indexOf("--model") + 1], options.model);
       assert.equal(codex[codex.indexOf("--cd") + 1], options.workingDirectory);
@@ -35,7 +137,8 @@ test("runtime adapters define bounded argv for every fixed agent role", () => {
       assert.ok(codex.includes(`sandbox_workspace_write.network_access=${options.proxyEgress === true ? "true" : "false"}`));
       assert.deepEqual(codex.slice(-2), [options.schemaPath, "-"]);
 
-      const claude = claudeAdapter.args(options, role);
+      const claude = claudeAdapter.args(options, role, CLAUDE_PROFILE);
+      assert.deepEqual(claude, legacyClaudeArgs(options, role));
       assert.deepEqual(claude.slice(0, options.bareApiKey ? 2 : 1), options.bareApiKey ? ["--print", "--bare"] : ["--print"]);
       assert.equal(claude[claude.indexOf("--model") + 1], options.model);
       assert.equal(claude[claude.indexOf("--output-format") + 1], "stream-json");
@@ -51,6 +154,46 @@ test("runtime adapters define bounded argv for every fixed agent role", () => {
       assert.equal(claude.includes("--allowedTools"), role !== "manager");
     }
   }
+});
+
+test("runtime profiles drive sandbox argv and reject missing or unknown capabilities", () => {
+  const options = OPTION_CASES[0]!;
+  const readOnlyEngineer: RuntimeProfile = {
+    ...CODEX_PROFILE,
+    roles: { ...CODEX_PROFILE.roles, engineer: { sandbox: "read-only" } },
+  };
+  const codex = codexAdapter.args(options, "engineer", readOnlyEngineer);
+  assert.equal(codex[codex.indexOf("--sandbox") + 1], "read-only");
+
+  const missingEngineer: RuntimeProfile = {
+    ...CODEX_PROFILE,
+    roles: { manager: { sandbox: "read-only" }, verifier: { sandbox: "read-only" } },
+  };
+  assert.throws(
+    () => codexAdapter.args(options, "engineer", missingEngineer),
+    (error: unknown) => error instanceof RuntimeCapabilityError
+      && error.runtime === "codex"
+      && error.role === "engineer"
+      && /role is missing/u.test(error.message),
+  );
+
+  const unknownCodexSandbox: RuntimeProfile = {
+    ...CODEX_PROFILE,
+    roles: { ...CODEX_PROFILE.roles, engineer: { sandbox: "full-access" } },
+  };
+  assert.throws(
+    () => codexAdapter.args(options, "engineer", unknownCodexSandbox),
+    (error: unknown) => error instanceof RuntimeCapabilityError && /unknown sandbox full-access/u.test(error.message),
+  );
+
+  const unknownClaudeSandbox: RuntimeProfile = {
+    ...CLAUDE_PROFILE,
+    roles: { ...CLAUDE_PROFILE.roles, manager: { sandbox: "auto-approve" } },
+  };
+  assert.throws(
+    () => claudeAdapter.args(options, "manager", unknownClaudeSandbox),
+    (error: unknown) => error instanceof RuntimeCapabilityError && /unknown sandbox auto-approve/u.test(error.message),
+  );
 });
 
 test("runtime adapters preserve provider environment filtering", () => {

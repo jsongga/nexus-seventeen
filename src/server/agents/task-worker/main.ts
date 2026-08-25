@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { loadRuntimeProfiles } from "../runtime/profiles.js";
 import { defaultRuntimeRegistry } from "../runtime/registry.js";
 import { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
 import { HttpTaskBoardClient } from "./http-board-client.js";
@@ -17,9 +19,15 @@ function optionalInteger(name: string): number | undefined {
 }
 
 const provider = required("STEWARD_TASK_WORKER_PROVIDER");
-if (provider !== "codex" && provider !== "claude") throw new Error("STEWARD_TASK_WORKER_PROVIDER is invalid");
 const adapter = defaultRuntimeRegistry().get(provider);
 if (adapter === null) throw new Error(`Unknown runtime adapter: ${provider}`);
+const runtimesConfigSource = process.env.STEWARD_TASK_WORKER_RUNTIMES_CONFIG;
+if (runtimesConfigSource !== undefined && runtimesConfigSource.length === 0) {
+  throw new Error("STEWARD_TASK_WORKER_RUNTIMES_CONFIG must not be empty");
+}
+const runtimesConfigPath = resolve(runtimesConfigSource ?? "config/runtimes.json");
+const profile = (await loadRuntimeProfiles(runtimesConfigPath)).runtimes.get(provider);
+if (profile === undefined) throw new Error(`Unknown runtime profile: ${provider}`);
 const longPollMs = optionalInteger("STEWARD_TASK_WORKER_LONG_POLL_MS");
 const timeoutMs = optionalInteger("STEWARD_TASK_WORKER_AGENT_TIMEOUT_MS");
 const terminationGraceMs = optionalInteger("STEWARD_TASK_WORKER_TERMINATION_GRACE_MS");
@@ -36,6 +44,7 @@ const worker = await TaskWorker.create({
   }),
   launcher: new ContainedCliAgentLauncher({
     adapter,
+    profile,
     model: required("STEWARD_TASK_WORKER_MODEL"),
     workingDirectory: required("STEWARD_TASK_WORKER_WORKING_DIRECTORY"),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),

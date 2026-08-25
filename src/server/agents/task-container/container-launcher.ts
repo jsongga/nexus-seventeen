@@ -2,8 +2,10 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
+import type { AgentRole } from "#shared/task-board-contract";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
 import { AgentProcessError } from "../runtime/errors.js";
+import { RuntimeCapabilityError, type RuntimeProfile } from "../runtime/profiles.js";
 import {
   ActivityChannel,
   agentPrompt,
@@ -51,9 +53,11 @@ class DockerCommandError extends Error {
 
 export interface ContainerAgentLauncherOptions {
   readonly adapter: RuntimeAdapter;
+  readonly profile: RuntimeProfile;
+  readonly role?: AgentRole;
   readonly model: string;
   readonly image: string;
-  /** Executable inside the image. Default: the adapter runtime. Tests pass "steward-stub". */
+  /** Executable inside the image. Default: the profile binary. Tests pass "steward-stub". */
   readonly agentCommand?: string;
   readonly networkName: string;
   readonly proxyUrl: string;
@@ -207,6 +211,18 @@ export class ContainerAgentLauncher implements AgentLauncher {
       terminationGraceMs: boundedInteger(options.terminationGraceMs, 2_000, 10, 60_000, "terminationGraceMs"),
       dockerBinary: options.dockerBinary ?? "docker",
     };
+    if (options.role !== undefined) options.adapter.assertRole(options.profile, options.role);
+  }
+
+  assertRole(role: AgentRole): void {
+    if (this.#options.role !== undefined && role !== this.#options.role) {
+      throw new RuntimeCapabilityError(
+        this.#options.profile.runtime,
+        role,
+        `claim role does not match configured lane role ${this.#options.role}`,
+      );
+    }
+    this.#options.adapter.assertRole(this.#options.profile, role);
   }
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {

@@ -12,6 +12,7 @@ import {
 } from "#server/agents/task-container";
 import { AgentProcessError, type AgentLaunchRequest } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
+import { CODEX_PROFILE } from "../server/agents/runtime/profile-fixtures.js";
 import {
   agentImage,
   context,
@@ -58,6 +59,7 @@ function launcher(
 ): WorkspaceScopedLauncher {
   const inner = new ContainerAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "stub-model",
     image,
     agentCommand: "steward-stub",

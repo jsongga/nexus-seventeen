@@ -213,6 +213,8 @@ export interface AgentRunHandle {
 
 /** One launch call represents one complete, one-shot agent process. */
 export interface AgentLauncher {
+  /** Fails closed before any launch-side effect when the runtime cannot serve this role. */
+  assertRole(role: AgentRole): void;
   launch(request: AgentLaunchRequest): Promise<AgentRunHandle>;
 }
 

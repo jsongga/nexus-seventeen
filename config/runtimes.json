@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "runtimes": {
+    "codex": {
+      "binary": "codex",
+      "permissionModel": "cli-sandbox-flags",
+      "roles": {
+        "engineer": { "sandbox": "workspace-write" },
+        "verifier": { "sandbox": "read-only" },
+        "manager": { "sandbox": "read-only" }
+      },
+      "mcp": false,
+      "toolCallGranularity": "command",
+      "contextNotes": "JSONL item stream; schema via --output-schema file"
+    },
+    "claude": {
+      "binary": "claude",
+      "permissionModel": "permission-modes",
+      "roles": {
+        "engineer": { "sandbox": "acceptEdits" },
+        "verifier": { "sandbox": "dontAsk" },
+        "manager": { "sandbox": "plan" }
+      },
+      "mcp": true,
+      "toolCallGranularity": "tool",
+      "contextNotes": "stream-json; schema inline via --json-schema"
+    }
+  }
+}

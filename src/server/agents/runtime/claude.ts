@@ -6,6 +6,7 @@ import {
 import type { RuntimeAdapter } from "./adapter.js";
 import { AgentProcessError } from "./errors.js";
 import type { RuntimeEvent } from "./events.js";
+import { RuntimeCapabilityError, type RuntimeProfile } from "./profiles.js";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const MAX_RESULT_EVENT_CHARACTERS = 1024 * 1024;
@@ -141,7 +142,26 @@ function claudeEvents(line: string): readonly RuntimeEvent[] {
   }
 }
 
-function claudeArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): readonly string[] {
+function claudeSandbox(profile: RuntimeProfile, role: AgentRole): string {
+  if (profile.runtime !== "claude") {
+    throw new RuntimeCapabilityError("claude", role, `profile ${profile.runtime} does not match the adapter`);
+  }
+  const sandbox = profile.roles[role]?.sandbox;
+  if (sandbox !== "acceptEdits" && sandbox !== "dontAsk" && sandbox !== "plan") {
+    throw new RuntimeCapabilityError(
+      profile.runtime,
+      role,
+      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`,
+    );
+  }
+  return sandbox;
+}
+
+function claudeArgs(
+  options: ProviderArgumentOptions,
+  fixedRole: AgentRole,
+  profile: RuntimeProfile,
+): readonly string[] {
   const tools = fixedRole === "engineer"
     ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
     : fixedRole === "verifier"
@@ -196,7 +216,7 @@ function claudeArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): rea
     "--json-schema",
     JSON.stringify(RESULT_SCHEMA),
     "--permission-mode",
-    fixedRole === "engineer" ? "acceptEdits" : fixedRole === "verifier" ? "dontAsk" : "plan",
+    claudeSandbox(profile, fixedRole),
     "--tools",
     tools.join(","),
   ];
@@ -256,6 +276,9 @@ function claudeResult(stdout: string): unknown {
 
 export const claudeAdapter: RuntimeAdapter = Object.freeze({
   runtime: "claude",
+  assertRole(profile: RuntimeProfile, role: AgentRole): void {
+    claudeSandbox(profile, role);
+  },
   args: claudeArgs,
   environment: claudeEnvironment,
   events: claudeEvents,

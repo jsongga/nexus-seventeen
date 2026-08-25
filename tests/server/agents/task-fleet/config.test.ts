@@ -46,6 +46,7 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
 
   assert.equal(config.version, 1);
   assert.equal(config.boardUrl, "http://127.0.0.1:4318");
+  assert.equal(config.runtimesConfigPath, undefined);
   assert.deepEqual(config.retry, { initialDelayMs: 1_000, maximumDelayMs: 60_000 });
   assert.equal(config.agents[0]?.longPollMs, 30_000);
   assert.equal(config.agents[0]?.agentTimeoutMs, undefined);
@@ -55,6 +56,18 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
   assert.ok(Object.isFrozen(config));
   assert.ok(Object.isFrozen(config.agents));
   assert.ok(Object.isFrozen(config.agents[0]));
+});
+
+test("accepts registry-resolved provider ids and an optional runtime profile path", () => {
+  const input = validConfig();
+  input.runtimesConfigPath = "config/custom-runtimes.json";
+  (input.agents as Array<Record<string, unknown>>)[0]!.provider = "third-runtime";
+  (input.agents as Array<Record<string, unknown>>)[0]!.role = "verifier";
+
+  const config = parseTaskFleetConfig(input);
+  assert.equal(config.runtimesConfigPath, "config/custom-runtimes.json");
+  assert.equal(config.agents[0]?.provider, "third-runtime");
+  assert.equal(config.agents[0]?.role, "verifier");
 });
 
 test("parses a container lane and applies container defaults", () => {
@@ -86,7 +99,9 @@ test("rejects ambiguous, duplicated, unsafe, and unbounded fleet configuration",
     ["retry inversion", (value) => { value.retry = { initialDelayMs: 500, maximumDelayMs: 100 }; }, /between 500 and 300000/u],
     ["agent unknown", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.extra = true; }, /unknown field extra/u],
     ["short token", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.token = "short"; }, /at least 32/u],
-    ["bad provider", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.provider = "other"; }, /codex or claude/u],
+    ["bad provider", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.provider = " invalid "; }, /provider is invalid/u],
+    ["bad role", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.role = "administrator"; }, /role must be one of/u],
+    ["empty runtime profile path", (value) => { value.runtimesConfigPath = ""; }, /runtimesConfigPath is invalid/u],
     ["container lane without config", (value) => {
       (value.agents as Array<Record<string, unknown>>)[0]!.runtime = "container";
     }, /container is required for container lanes/u],

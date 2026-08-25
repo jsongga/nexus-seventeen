@@ -1,4 +1,5 @@
 import { safeErrorDetail } from "../../shared/safe-error-detail.js";
+import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,
@@ -187,6 +188,15 @@ export class TaskFleet {
         if (classification === "TRANSIENT") {
           await this.#retryLane(lane, detail, signal);
           continue;
+        }
+
+        if (error instanceof RuntimeCapabilityError) {
+          await this.#reportLaneError(lane, detail, signal);
+          if (lane.worker.hasActiveClaim()) await this.#quarantineClaim(lane, detail, signal);
+          lane.status = "closed";
+          lane.restartCount = 0;
+          lane.retryDelayMs = null;
+          return;
         }
 
         await this.#reportLaneError(lane, detail, signal);

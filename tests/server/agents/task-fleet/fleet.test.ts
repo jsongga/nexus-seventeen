@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
-import { CREDENTIAL_REVOKED_MESSAGE, TaskFleet } from "#server/agents/task-fleet/fleet";
-import { classifyTaskFleetError, createTaskFleetWorker, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
+import { join } from "node:path";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import type { RuntimeProfile } from "../../../../src/server/agents/runtime/profiles.js";
+import { parseTaskFleetConfig } from "../../../../src/server/agents/task-fleet/config.js";
+import { CREDENTIAL_REVOKED_MESSAGE, TaskFleet } from "../../../../src/server/agents/task-fleet/fleet.js";
+import {
+  classifyTaskFleetError,
+  createTaskFleetWorker,
+  isTransientTaskFleetError,
+} from "../../../../src/server/agents/task-fleet/runtime.js";
+import { ContainedCliAgentLauncher } from "../../../../src/server/agents/task-worker/contained-cli-launcher.js";
+import { TaskWorker } from "../../../../src/server/agents/task-worker/worker.js";
+import type { AgentRole } from "#shared/task-board-contract";
+import { TaskBoardHttpError } from "#server/agents/task-worker";
 import type {
   ManagedTaskWorker,
   TaskFleetEvent,
   TaskFleetWorkerFactory,
-} from "#server/agents/task-fleet/types";
-import { TaskBoardHttpError } from "#server/agents/task-worker";
+} from "../../../../src/server/agents/task-fleet/types.js";
+import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
+import { FakeBoard, claimed, tempRoot } from "../task-worker/helpers.js";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -21,7 +33,7 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-function fleetConfig(agentCount = 1) {
+function fleetConfig(agentCount = 1, role?: AgentRole) {
   return parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
@@ -32,6 +44,7 @@ function fleetConfig(agentCount = 1) {
         agentId: "engineer-one",
         token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
         provider: "codex",
+        ...(role === undefined ? {} : { role }),
         model: "codex-model",
         workingDirectory: "/work/one",
         statePath: "/state/one.json",
@@ -48,6 +61,90 @@ function fleetConfig(agentCount = 1) {
     ],
   });
 }
+
+async function runCapabilityLane(profile: RuntimeProfile, role?: AgentRole): Promise<Readonly<{
+  board: FakeBoard;
+  classifications: string[];
+  secondClaimAttempted: boolean;
+}>> {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const stop = new AbortController();
+  let secondClaimAttempted = false;
+  board.onClaim = () => {
+    if (board.claimRequests.length === 1) {
+      secondClaimAttempted = true;
+      stop.abort();
+    }
+  };
+  const classifications: string[] = [];
+  const fleet = new TaskFleet({
+    config: fleetConfig(1, role),
+    workerFactory: async (config) => {
+      const launcher = new ContainedCliAgentLauncher({
+        adapter: codexAdapter,
+        profile,
+        ...(config.role === undefined ? {} : { role: config.role }),
+        model: config.model,
+        workingDirectory: root,
+      });
+      const worker = await TaskWorker.create({
+        identity: { workerId: config.workerId, agentId: config.agentId },
+        statePath: join(root, "state", "journal.json"),
+        board,
+        launcher,
+        longPollMs: 1,
+      });
+      return {
+        run: (signal) => worker.dispatchOnce(signal),
+        hasActiveClaim: () => worker.hasActiveClaim(),
+        quarantineActiveClaim: (detail, signal) => worker.quarantineActiveClaim(detail, signal),
+        dropActiveClaim: (detail) => worker.dropActiveClaim(detail),
+        reportLaneError: (detail, signal) => worker.reportLaneError(detail, signal),
+        close: () => worker.close(),
+      };
+    },
+    classifyError: (error) => {
+      const classification = classifyTaskFleetError(error);
+      classifications.push(classification);
+      return classification;
+    },
+    logger: () => undefined,
+  });
+
+  await fleet.run(stop.signal);
+  return { board, classifications, secondClaimAttempted };
+}
+
+test("a missing claimed-role capability is quarantined through the real worker and stops its fleet lane", async () => {
+  const profile: RuntimeProfile = Object.freeze({
+    ...CODEX_PROFILE,
+    roles: Object.freeze({
+      manager: CODEX_PROFILE.roles.manager,
+      verifier: CODEX_PROFILE.roles.verifier,
+    }),
+  });
+
+  const result = await runCapabilityLane(profile);
+
+  assert.deepEqual(result.classifications, ["POISONED"]);
+  assert.equal(result.secondClaimAttempted, false);
+  assert.equal(result.board.claimRequests.length, 1);
+  assert.equal(result.board.settlements.length, 1);
+  assert.equal(result.board.settlements[0]?.outcome, "failed");
+  assert.match(result.board.settlements[0]?.result ?? "", /Runtime capability validation failed before launch/u);
+});
+
+test("a claim role that differs from the configured lane role is quarantined and stops the lane", async () => {
+  const result = await runCapabilityLane(CODEX_PROFILE, "verifier");
+
+  assert.deepEqual(result.classifications, ["POISONED"]);
+  assert.equal(result.secondClaimAttempted, false);
+  assert.equal(result.board.claimRequests.length, 1);
+  assert.equal(result.board.settlements.length, 1);
+  assert.match(result.board.settlements[0]?.result ?? "", /does not match configured lane role verifier/u);
+});
 
 function idleRun(signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return Promise.resolve(false);

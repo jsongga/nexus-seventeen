@@ -21,6 +21,7 @@ import type {
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,
 } from "#server/agents/task-worker/types";
+import type { AgentRole } from "#shared/task-board-contract";
 import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
 import { InactiveClaimReplayError } from "#server/agents/task-worker/http-board-client";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
@@ -429,6 +430,8 @@ export class FakeLauncher implements AgentLauncher {
   readonly requests: AgentLaunchRequest[] = [];
   readonly handles: DeferredRunHandle[] = [];
   readonly outcomes: AgentRunOutcome[] = [];
+
+  assertRole(_role: AgentRole): void {}
 
   launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
     this.requests.push(structuredClone(request));

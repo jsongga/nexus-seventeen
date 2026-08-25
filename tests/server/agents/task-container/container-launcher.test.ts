@@ -7,6 +7,7 @@ import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import { ContainerAgentLauncher } from "#server/agents/task-container";
 import { AgentProcessError } from "#server/agents/task-worker";
+import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "../task-worker/helpers.js";
 
 async function fakeDocker(
@@ -46,6 +47,7 @@ function launcher(
 ): ContainerAgentLauncher {
   return new ContainerAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "gpt-test",
     image: "steward-agent:test",
     networkName: "steward-agents",
@@ -73,6 +75,7 @@ async function launch(
 test("constructor accepts an immutable image ID without allowing option injection", () => {
   const options = {
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "gpt-test",
     networkName: "steward-agents",
     proxyUrl: "http://steward-egress-proxy:3128",

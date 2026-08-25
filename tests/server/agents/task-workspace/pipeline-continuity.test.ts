@@ -139,6 +139,7 @@ test("two completed launches preserve both commits on one harvested task branch"
   const commits: string[] = [];
   let launches = 0;
   const inner: AgentLauncher = {
+    assertRole: () => undefined,
     async launch(request): Promise<AgentRunHandle> {
       launches += 1;
       assert.ok(request.workspace);
@@ -194,6 +195,7 @@ test("a completed review launch clones the implementation branch without harvest
   await manager.remove(branchKey);
   const branchBeforeReview = (await git(repo, ["rev-parse", `task/${branchKey}`])).trim();
   const inner: AgentLauncher = {
+    assertRole: () => undefined,
     async launch(request): Promise<AgentRunHandle> {
       assert.ok(request.workspace);
       assert.equal(await readFile(join(request.workspace.path, "implementation.txt"), "utf8"), "implementation result\n");

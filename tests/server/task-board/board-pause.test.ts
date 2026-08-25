@@ -314,6 +314,7 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
     statePath,
     board: client,
     launcher: {
+      assertRole: () => undefined,
       launch: async () => { throw new Error("outputs_pending recovery must not launch"); },
     },
     longPollMs: 1,

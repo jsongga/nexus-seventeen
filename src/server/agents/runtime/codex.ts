@@ -3,6 +3,7 @@ import type { ProviderArgumentOptions } from "../task-worker/agent-envelope.js";
 import type { RuntimeAdapter } from "./adapter.js";
 import { AgentProcessError } from "./errors.js";
 import type { RuntimeEvent } from "./events.js";
+import { RuntimeCapabilityError, type RuntimeProfile } from "./profiles.js";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const MAX_RESULT_EVENT_CHARACTERS = 1024 * 1024;
@@ -112,7 +113,26 @@ function codexEvents(line: string): readonly RuntimeEvent[] {
   }
 }
 
-function codexArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): readonly string[] {
+function codexSandbox(profile: RuntimeProfile, role: AgentRole): string {
+  if (profile.runtime !== "codex") {
+    throw new RuntimeCapabilityError("codex", role, `profile ${profile.runtime} does not match the adapter`);
+  }
+  const sandbox = profile.roles[role]?.sandbox;
+  if (sandbox !== "workspace-write" && sandbox !== "read-only") {
+    throw new RuntimeCapabilityError(
+      profile.runtime,
+      role,
+      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`,
+    );
+  }
+  return sandbox;
+}
+
+function codexArgs(
+  options: ProviderArgumentOptions,
+  fixedRole: AgentRole,
+  profile: RuntimeProfile,
+): readonly string[] {
   const includedEnvironment = options.proxyEgress === true
     ? ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY"]
     : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
@@ -133,7 +153,7 @@ function codexArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): read
     "--model",
     options.model,
     "--sandbox",
-    fixedRole === "engineer" ? "workspace-write" : "read-only",
+    codexSandbox(profile, fixedRole),
     "--cd",
     options.workingDirectory,
     "--color",
@@ -191,6 +211,9 @@ function codexResult(stdout: string): unknown {
 
 export const codexAdapter: RuntimeAdapter = Object.freeze({
   runtime: "codex",
+  assertRole(profile: RuntimeProfile, role: AgentRole): void {
+    codexSandbox(profile, role);
+  },
   args: codexArgs,
   environment: codexEnvironment,
   events: codexEvents,

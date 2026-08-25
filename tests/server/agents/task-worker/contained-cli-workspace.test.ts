@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { ContainedCliAgentLauncher } from "#server/agents/task-worker/contained-cli-launcher";
+import { CLAUDE_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot } from "./helpers.js";
 
 test("a contained launch uses the per-run workspace for cwd and sandbox roots", async () => {
@@ -28,6 +29,7 @@ process.stdin.on("end", () => {
   await chmod(executable, 0o700);
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
+    profile: CLAUDE_PROFILE,
     model: "claude-test-model",
     workingDirectory: fallback,
     environment: {

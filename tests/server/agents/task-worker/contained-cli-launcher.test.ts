@@ -6,6 +6,7 @@ import test from "node:test";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import { RuntimeCapabilityError } from "../../../../src/server/agents/runtime/profiles.js";
 import {
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
@@ -29,11 +30,12 @@ import {
 } from "#shared/task-board-contract";
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
 
 async function fakeCli(
   root: string,
-  command: "codex" | "claude",
+  command: string,
   source: string,
 ): Promise<{ bin: string; working: string; scratch: string }> {
   const bin = join(root, "bin");
@@ -172,6 +174,7 @@ process.stdin.on("end", () => {
 `);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -223,6 +226,38 @@ process.stdin.on("end", () => {
   assert.equal(codexSchema.$schema, RESULT_SCHEMA.$schema);
 });
 
+test("spawns the binary selected by the runtime profile", async () => {
+  const root = await tempRoot();
+  const fixture = await fakeCli(root, "profile-codex", `
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
+  console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
+  console.log(JSON.stringify({type:"turn.completed"}));
+});
+`);
+  const launcher = new ContainedCliAgentLauncher({
+    adapter: codexAdapter,
+    profile: { ...CODEX_PROFILE, binary: "profile-codex" },
+    model: "codex-test-model",
+    workingDirectory: fixture.working,
+    environment: {
+      PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`,
+      TMPDIR: fixture.scratch,
+    },
+    timeoutMs: 5_000,
+    terminationGraceMs: 10,
+    groupAbsenceTimeoutMs: 2_000,
+  });
+
+  const handle = await launcher.launch({
+    runId: "run-profile-binary",
+    wakeReason: "human_assignment",
+    context: context(),
+  });
+  assert.equal((await handle.completion).status, "completed");
+});
+
 test("parses Claude stream-json activity while preserving its terminal structured result", async () => {
   const root = await tempRoot();
   const fixture = await fakeCli(root, "claude", [
@@ -240,6 +275,7 @@ test("parses Claude stream-json activity while preserving its terminal structure
   ].join("\n"));
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
+    profile: CLAUDE_PROFILE,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -296,6 +332,7 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
   ].join("\n"));
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
+    profile: CLAUDE_PROFILE,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -334,6 +371,7 @@ process.stdin.on("end", () => {
 `);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -358,6 +396,33 @@ process.stdin.on("end", () => {
   assert.match(await readFile(join(fixture.scratch, "prompt.txt"), "utf8"), /READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED/u);
 });
 
+test("rejects a missing role capability at launch before spawning the runtime", async () => {
+  const root = await tempRoot();
+  const workingDirectory = join(root, "workspace");
+  await mkdir(workingDirectory);
+  const launcher = new ContainedCliAgentLauncher({
+    adapter: codexAdapter,
+    profile: {
+      ...CODEX_PROFILE,
+      roles: { manager: { sandbox: "read-only" }, verifier: { sandbox: "read-only" } },
+    },
+    model: "codex-test-model",
+    workingDirectory,
+    environment: { PATH: process.env.PATH },
+  });
+
+  await assert.rejects(
+    launcher.launch({
+      runId: "run-missing-capability",
+      wakeReason: "human_assignment",
+      context: context(),
+    }),
+    (error: unknown) => error instanceof RuntimeCapabilityError
+      && error.runtime === "codex"
+      && error.role === "engineer",
+  );
+});
+
 test("direct interrupt kills and confirms absence of the entire OS process group", async () => {
   const root = await tempRoot();
   const fixture = await fakeCodex(root, `
@@ -372,6 +437,7 @@ setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -408,6 +474,7 @@ setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -446,6 +513,7 @@ setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
+    profile: CODEX_PROFILE,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },

@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";
+import { AGENT_ROLES, IDENTIFIER_PATTERN, type AgentRole } from "#shared/task-board-contract";
 import type {
   TaskFleetAgentConfig,
   TaskFleetConfig,
@@ -44,6 +44,13 @@ function identifier(value: unknown, label: string): string {
   const parsed = text(value, label, 128);
   if (!IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`);
   return parsed;
+}
+
+function agentRole(value: unknown, label: string): AgentRole {
+  if (!(AGENT_ROLES as readonly unknown[]).includes(value)) {
+    throw new Error(`${label} must be one of ${AGENT_ROLES.join(", ")}`);
+  }
+  return value as AgentRole;
 }
 
 function integer(value: unknown, label: string, minimum: number, maximum: number): number {
@@ -115,7 +122,7 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
   const item = exact(
     value,
     ["workerId", "agentId", "token", "provider", "model", "workingDirectory", "statePath"],
-    ["longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container", "workspaceRoot"],
+    ["role", "longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container", "workspaceRoot"],
     label,
   );
   const runtime = item.runtime === undefined ? "local-process" : item.runtime;
@@ -125,8 +132,7 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
   if (runtime === "container" && item.workspaceRoot !== undefined) {
     throw new Error(`${label}.workspaceRoot is only valid for local-process lanes`);
   }
-  const provider = item.provider;
-  if (provider !== "codex" && provider !== "claude") throw new Error(`${label}.provider must be codex or claude`);
+  const provider = identifier(item.provider, `${label}.provider`);
   const token = text(item.token, `${label}.token`, 512);
   if (token.length < 32) throw new Error(`${label}.token must contain at least 32 characters`);
   return Object.freeze({
@@ -134,6 +140,7 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
     agentId: identifier(item.agentId, `${label}.agentId`),
     token,
     provider,
+    ...(item.role === undefined ? {} : { role: agentRole(item.role, `${label}.role`) }),
     model: text(item.model, `${label}.model`, 128),
     workingDirectory: absolutePath(item.workingDirectory, `${label}.workingDirectory`),
     ...(item.workspaceRoot === undefined
@@ -159,7 +166,7 @@ function unique(values: readonly TaskFleetAgentConfig[], field: "workerId" | "ag
 }
 
 export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
-  const item = exact(value, ["version", "boardUrl", "agents"], ["retry"], "config");
+  const item = exact(value, ["version", "boardUrl", "agents"], ["retry", "runtimesConfigPath"], "config");
   if (item.version !== 1) throw new Error("config.version must be 1");
   if (!Array.isArray(item.agents) || item.agents.length < 1 || item.agents.length > 128) {
     throw new Error("config.agents must contain between 1 and 128 agents");
@@ -171,6 +178,9 @@ export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
   return Object.freeze({
     version: 1,
     boardUrl: boardUrl(item.boardUrl),
+    runtimesConfigPath: item.runtimesConfigPath === undefined
+      ? undefined
+      : text(item.runtimesConfigPath, "config.runtimesConfigPath", 4_096),
     retry: retryConfig(item.retry),
     agents,
   });

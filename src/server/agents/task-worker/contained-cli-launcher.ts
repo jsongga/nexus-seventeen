@@ -4,8 +4,10 @@ import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import type { AgentRole } from "#shared/task-board-contract";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
 import { AgentProcessError } from "../runtime/errors.js";
+import { RuntimeCapabilityError, type RuntimeProfile } from "../runtime/profiles.js";
 import {
   ActivityChannel,
   agentPrompt,
@@ -25,6 +27,8 @@ const GROUP_POLL_MS = 20;
 
 export interface ContainedCliAgentLauncherOptions {
   readonly adapter: RuntimeAdapter;
+  readonly profile: RuntimeProfile;
+  readonly role?: AgentRole;
   readonly model: string;
   readonly workingDirectory: string;
   readonly environment?: NodeJS.ProcessEnv;
@@ -85,6 +89,18 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       groupAbsenceTimeoutMs: boundedInteger(options.groupAbsenceTimeoutMs, 5_000, 100, 60_000, "groupAbsenceTimeoutMs"),
       environment: options.adapter.environment(options.environment ?? process.env),
     };
+    if (options.role !== undefined) options.adapter.assertRole(options.profile, options.role);
+  }
+
+  assertRole(role: AgentRole): void {
+    if (this.#options.role !== undefined && role !== this.#options.role) {
+      throw new RuntimeCapabilityError(
+        this.#options.profile.runtime,
+        role,
+        `claim role does not match configured lane role ${this.#options.role}`,
+      );
+    }
+    this.#options.adapter.assertRole(this.#options.profile, role);
   }
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
@@ -100,9 +116,9 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       schemaPath: RESULT_SCHEMA_PATH,
       bareApiKey: typeof this.#options.environment.ANTHROPIC_API_KEY === "string",
     };
-    const args = this.#options.adapter.args(argumentOptions, fixedRole);
+    const args = this.#options.adapter.args(argumentOptions, fixedRole, this.#options.profile);
     const stdin = agentPrompt(request);
-    const command = this.#options.adapter.runtime;
+    const command = this.#options.profile.binary;
     let child: ChildProcess;
     try {
       child = spawn(command, [...args], {

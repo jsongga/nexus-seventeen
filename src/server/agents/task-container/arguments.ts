@@ -23,7 +23,7 @@ export interface ContainerRunPlan {
 }
 
 export function buildContainerRunPlan(input: {
-  readonly options: Required<Pick<ContainerAgentLauncherOptions, "adapter" | "model" | "image" | "networkName" | "proxyUrl">>
+  readonly options: Required<Pick<ContainerAgentLauncherOptions, "adapter" | "profile" | "model" | "image" | "networkName" | "proxyUrl">>
     & Pick<ContainerAgentLauncherOptions, "agentCommand" | "extraContainerEnv">;
   readonly runId: string;
   readonly taskId: string;
@@ -34,14 +34,14 @@ export function buildContainerRunPlan(input: {
   readonly runtimeEnvironment: NodeJS.ProcessEnv;
 }): ContainerRunPlan {
   const containerName = `steward-task-${input.runId}`;
-  const { adapter, model } = input.options;
+  const { adapter, model, profile } = input.options;
   const cliArgs = adapter.args({
     model,
     workingDirectory: "/workspace",
     schemaPath: "/opt/steward/agent-result.schema.json",
     bareApiKey: input.bareApiKey,
     proxyEgress: true,
-  }, input.fixedRole);
+  }, input.fixedRole, profile);
   const runtimeKeys = runtimeEnvironmentKeys(input.runtimeEnvironment);
   return {
     containerName,
@@ -65,7 +65,7 @@ export function buildContainerRunPlan(input: {
       ...runtimeKeys.flatMap((key) => ["-e", key]),
       ...Object.entries(input.options.extraContainerEnv ?? {}).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
       input.options.image,
-      input.options.agentCommand ?? adapter.runtime,
+      input.options.agentCommand ?? profile.binary,
       ...cliArgs,
     ],
   };

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { AgentRole } from "#shared/task-board-contract";
 import { safeErrorDetail } from "../../shared/safe-error-detail.js";
+import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import {
   ActivityBuffer,
   activityFromEvent,
@@ -491,8 +493,8 @@ export class TaskWorker {
       }
       if (replayingPendingClaim) this.#logReplayPinningDivergence(parsed);
       await this.#recordClaim(parsed);
-      await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
+        await this.#clearLaneErrorBestEffort(signal);
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
         await this.#flushAndFinish();
       } else {
@@ -636,8 +638,8 @@ export class TaskWorker {
         throw new Error("Task board replayed another run for the active claim");
       }
       this.#logReplayPinningDivergence(parsed);
-      await this.#clearLaneErrorBestEffort(signal);
       if (parsed.context === null) {
+        await this.#clearLaneErrorBestEffort(signal);
         await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
         await this.#flushAndFinish();
       } else {
@@ -703,6 +705,22 @@ export class TaskWorker {
     const context = parseBoundedAgentContext(contextInput);
     const active = this.#state.active;
     if (active === null || active.phase !== "claimed") throw new Error("Task worker has no claimed run to execute");
+    try {
+      this.#options.launcher.assertRole(context.mission.role as AgentRole);
+    } catch (error) {
+      if (!(error instanceof RuntimeCapabilityError)) throw error;
+      try {
+        await this.quarantineActiveClaim(
+          `Runtime capability validation failed before launch: ${error.message}`,
+          signal,
+        );
+      } catch {
+        // Preserve the capability classification. The fleet sees the still-active
+        // claim and retries quarantine settlement with its established bounds.
+      }
+      throw error;
+    }
+    await this.#clearLaneErrorBestEffort(signal);
     const control = new AbortController();
     const liveTask: LiveTaskState = {
       taskVersion: context.task.version,

@@ -1,5 +1,5 @@
 import type { AgentLauncher, AgentLaunchRequest, AgentRunHandle, AgentRunOutcome } from "#server/agents/task-worker/types";
-import { REVIEW_WORKSPACE_SUFFIX } from "#shared/task-board-contract";
+import { REVIEW_WORKSPACE_SUFFIX, type AgentRole } from "#shared/task-board-contract";
 import { TaskWorkspaceError } from "./manager.js";
 import type { TaskWorkspaceManager } from "./manager.js";
 
@@ -10,6 +10,10 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
   constructor(inner: AgentLauncher, manager: TaskWorkspaceManager) {
     this.#inner = inner;
     this.#manager = manager;
+  }
+
+  assertRole(role: AgentRole): void {
+    this.#inner.assertRole(role);
   }
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {

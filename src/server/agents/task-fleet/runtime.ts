@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
+import { resolve } from "node:path";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
+import {
+  loadRuntimeProfiles,
+  RuntimeCapabilityError,
+  type RuntimeProfile,
+  type RuntimeProfiles,
+} from "../runtime/profiles.js";
 import { defaultRuntimeRegistry, type RuntimeRegistry } from "../runtime/registry.js";
 import {
   ContainedCliAgentLauncher,
@@ -36,6 +43,25 @@ export interface ContainerRuntimeIdentity {
 
 export interface CreateTaskFleetWorkerOptions {
   readonly registry?: RuntimeRegistry;
+  readonly profiles?: RuntimeProfiles;
+  readonly runtimesConfigPath?: string;
+  /** Test seam for observing cache behavior while still invoking the real disk loader. */
+  readonly loadProfiles?: (path: string) => Promise<RuntimeProfiles>;
+}
+
+const profileLoads = new Map<string, Promise<RuntimeProfiles>>();
+
+function runtimeProfiles(options: CreateTaskFleetWorkerOptions): Promise<RuntimeProfiles> {
+  if (options.profiles !== undefined) return Promise.resolve(options.profiles);
+  const path = resolve(options.runtimesConfigPath ?? "config/runtimes.json");
+  const existing = profileLoads.get(path);
+  if (existing !== undefined) return existing;
+  const loading = (options.loadProfiles ?? loadRuntimeProfiles)(path);
+  profileLoads.set(path, loading);
+  void loading.catch(() => {
+    if (profileLoads.get(path) === loading) profileLoads.delete(path);
+  });
+  return loading;
 }
 
 const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new Promise((resolve, reject) => {
@@ -71,12 +97,12 @@ export async function captureTaskFleetRuntimeVersion(
 
 /** Runtime pin and full immutable image ID from one `docker image inspect`; null when unreadable. */
 export async function captureContainerRuntimeVersion(
-  provider: TaskFleetProvider,
+  runtimeId: TaskFleetProvider,
   image: string,
   runner: TaskFleetVersionRunner = runDockerInspect,
 ): Promise<ContainerRuntimeIdentity | null> {
   try {
-    const format = `{{index .Config.Labels "steward.cli.${provider}"}}|{{.Id}}`;
+    const format = `{{index .Config.Labels "steward.cli.${runtimeId}"}}|{{.Id}}`;
     const output = await runner("docker", ["image", "inspect", "-f", format, image]);
     const firstLine = output.split(/\r?\n/u, 1)[0]?.trim() ?? "";
     const separator = firstLine.indexOf("|");
@@ -96,10 +122,13 @@ async function createLocalProcessTaskFleetWorker(
   config: TaskFleetAgentConfig,
   boardUrl: string,
   adapter: RuntimeAdapter,
+  profile: RuntimeProfile,
 ): Promise<ManagedTaskWorker> {
-  const runtimeVersion = await captureTaskFleetRuntimeVersion(adapter.runtime);
+  const runtimeVersion = await captureTaskFleetRuntimeVersion(profile.binary);
   let launcher: AgentLauncher = new ContainedCliAgentLauncher({
     adapter,
+    profile,
+    ...(config.role === undefined ? {} : { role: config.role }),
     model: config.model,
     workingDirectory: config.workingDirectory,
     ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
@@ -143,6 +172,7 @@ async function createContainerTaskFleetWorker(
   config: TaskFleetAgentConfig,
   boardUrl: string,
   adapter: RuntimeAdapter,
+  profile: RuntimeProfile,
 ): Promise<ManagedTaskWorker> {
   const lane = config.container;
   if (lane === undefined) throw new Error("container lane config missing");
@@ -160,6 +190,8 @@ async function createContainerTaskFleetWorker(
   const launcher = new WorkspaceScopedLauncher(
     new ContainerAgentLauncher({
       adapter,
+      profile,
+      ...(config.role === undefined ? {} : { role: config.role }),
       model: config.model,
       image: runtimeIdentity.imageId,
       ...(lane.agentCommand === undefined ? {} : { agentCommand: lane.agentCommand }),
@@ -203,12 +235,16 @@ export async function createTaskFleetWorker(
 ): Promise<ManagedTaskWorker> {
   const adapter = (options.registry ?? defaultRuntimeRegistry()).get(config.provider);
   if (adapter === null) throw new Error(`Unknown runtime adapter: ${config.provider}`);
+  const profile = (await runtimeProfiles(options)).runtimes.get(config.provider);
+  if (profile === undefined) throw new Error(`Unknown runtime profile: ${config.provider}`);
+  if (config.role !== undefined) adapter.assertRole(profile, config.role);
   return config.runtime === "container"
-    ? createContainerTaskFleetWorker(config, boardUrl, adapter)
-    : createLocalProcessTaskFleetWorker(config, boardUrl, adapter);
+    ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile)
+    : createLocalProcessTaskFleetWorker(config, boardUrl, adapter, profile);
 }
 
 export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
+  if (error instanceof RuntimeCapabilityError) return "POISONED";
   if (error instanceof TaskBoardHttpError) {
     if (error.status === 401) return "CREDENTIAL_REVOKED";
     return error.status === null || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500

@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { codexAdapter } from "../../../src/server/agents/runtime/codex.js";
+import { CODEX_PROFILE } from "../agents/runtime/profile-fixtures.js";
 import {
   DESIGN_FAILURE_POINTS,
   SCOPE_HOLD_SUMMARY_PREFIX,
@@ -564,6 +565,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     board: new HttpTaskBoardClient({ baseUrl: address.url, token: MANAGER_TOKEN }),
     launcher: new ContainedCliAgentLauncher({
       adapter: codexAdapter,
+      profile: CODEX_PROFILE,
       model: "fake-codex",
       workingDirectory: managerCli.working,
       environment: {
@@ -580,6 +582,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const engineerLauncher = new WorkspaceScopedLauncher(
     new ContainedCliAgentLauncher({
       adapter: codexAdapter,
+      profile: CODEX_PROFILE,
       model: ENGINEER_RUN_PIN.model,
       workingDirectory: engineerCli.working,
       environment: {
@@ -609,6 +612,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
         launcher: new WorkspaceScopedLauncher(
           new ContainedCliAgentLauncher({
             adapter: codexAdapter,
+            profile: CODEX_PROFILE,
             model: ENGINEER_RUN_PIN.model,
             workingDirectory: secondEngineerCli.working,
             environment: {
@@ -630,6 +634,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     board: new HttpTaskBoardClient({ baseUrl: address.url, token: VERIFIER_TOKEN }),
     launcher: new ContainedCliAgentLauncher({
       adapter: codexAdapter,
+      profile: CODEX_PROFILE,
       model: VERIFIER_RUN_PIN.model,
       workingDirectory: verifierCli.working,
       environment: {

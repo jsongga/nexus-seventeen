@@ -8,10 +8,12 @@ import {
   ContainerAgentLauncher,
 } from "#server/agents/task-container";
 import { AgentProcessError } from "#server/agents/task-worker";
+import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context } from "../task-worker/helpers.js";
 
 const baseOptions = {
   adapter: codexAdapter,
+  profile: CODEX_PROFILE,
   model: "gpt-test",
   image: "steward-agent:test",
   networkName: "steward-agents",
@@ -115,6 +117,7 @@ test("builds Claude plans with the default command and bare mode selected by inp
     options: {
       ...baseOptions,
       adapter: claudeAdapter,
+      profile: CLAUDE_PROFILE,
       model: "claude-test",
     },
     runId: "run-claude",
@@ -145,6 +148,7 @@ test("forwards fixed literal entries from a runtime adapter environment", () => 
   const adapter: RuntimeAdapter = {
     ...codexAdapter,
     runtime: "third-runtime",
+    args: () => [],
     environment: () => ({
       THIRD_RUNTIME_TOKEN: "unit-test-token",
       THIRD_RUNTIME_MODE: "container",
@@ -154,6 +158,11 @@ test("forwards fixed literal entries from a runtime adapter environment", () => 
     options: {
       ...baseOptions,
       adapter,
+      profile: {
+        ...CODEX_PROFILE,
+        runtime: "third-runtime",
+        binary: "third-runtime",
+      },
       agentCommand: undefined,
       extraContainerEnv: undefined,
     },

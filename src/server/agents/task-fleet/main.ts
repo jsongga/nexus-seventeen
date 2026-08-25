@@ -14,7 +14,12 @@ function configPath(): string {
 }
 
 const config = await loadTaskFleetConfig(configPath());
-const fleet = new TaskFleet({ config, workerFactory: createTaskFleetWorker, classifyError: classifyTaskFleetError });
+const runtimesConfigPath = resolve(config.runtimesConfigPath ?? "config/runtimes.json");
+const fleet = new TaskFleet({
+  config,
+  workerFactory: (agent, boardUrl) => createTaskFleetWorker(agent, boardUrl, { runtimesConfigPath }),
+  classifyError: classifyTaskFleetError,
+});
 const stop = new AbortController();
 process.once("SIGINT", () => stop.abort());
 process.once("SIGTERM", () => stop.abort());
