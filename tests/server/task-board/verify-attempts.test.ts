@@ -4,8 +4,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import type { WorkflowPlanDraft } from "#shared/task-board-contract";
 import type { VerifyRunStatus } from "#server/agents/verify";
 import { normalizeTaskBoardConfig } from "#server/task-board";
+import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
+import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
 import {
   DEFAULT_SUPERVISOR_PATH,
   VerifyAttemptsCollaborator,
@@ -13,19 +16,50 @@ import {
   type MachineVerifyWorkspaceManager,
 } from "#server/task-board/collaborators/verify-attempts";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   TransparentWorkflow,
   type MachineVerifyEvidence,
 } from "#server/task-board/persistence/workflow";
 import { SkillRegistry } from "#server/task-board/skills";
-import { HUMAN_TOKEN, boardFixture, config, workItemRequest } from "./helpers.js";
+import {
+  HUMAN_TOKEN,
+  automationConfigurationRequest,
+  automationStages,
+  boardFixture,
+  config,
+  workItemRequest,
+} from "./helpers.js";
 
 type AttemptState = "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
 
 interface Settlement {
   readonly passed: boolean;
   readonly evidence: MachineVerifyEvidence;
+}
+
+function heldVerifyPlan(suffix: string): WorkflowPlanDraft {
+  return {
+    objective: `Exercise verify scope release ${suffix}.`,
+    assumptions: ["The older overlapping pipeline owns the shared scope."],
+    acceptanceCriteria: ["Dead-letter settlement releases the newer pipeline immediately."],
+    changeShape: "feature",
+    tier: "standard",
+    declaredScope: ["src/shared"],
+    nonGoals: ["Do not wait for periodic reconciliation."],
+    mechanicalPortions: [],
+    blockingQuestions: [],
+    criterionChecks: [],
+    nodes: [{
+      nodeId: `verify-scope-release-${suffix}`,
+      title: `Verify scope release ${suffix}`,
+      objective: "Run the standard pipeline through machine verification.",
+      acceptanceCriteria: ["The held sibling can activate when this item exits the in-flight set."],
+      dependencyNodeIds: [],
+      stageTemplate: ["implementation", "testing", "verification"],
+    }],
+  };
 }
 
 test("the default machine-verify supervisor path exists in the runtime build tree", () => {
@@ -240,6 +274,7 @@ async function attemptFixture(
       return workflow?.settleMachineVerifyAttemptInTransaction(_nodeId, _stage, passed, evidence) ?? [];
     },
     activateNodes: () => undefined,
+    reconcileProject: () => undefined,
   });
 
   const row = () => store.db.prepare("SELECT * FROM verify_attempts WHERE verify_attempt_id=?")
@@ -731,5 +766,175 @@ test("three failed or died verify rounds exhaust the verify retry budget", async
   } finally {
     fixture.runtime.close();
     fixture.store.close();
+  }
+});
+
+test("a third machine-verify failure dead-letters the scope holder and immediately activates its sibling", async () => {
+  let now = new Date("2026-08-19T12:00:00.000Z");
+  const baseSha = "a".repeat(40);
+  const fixture = await boardFixture(undefined, () => now, { git: () => baseSha });
+  let closed = false;
+  try {
+    const implementationType = {
+      agentTypeId: "verify-scope-release-implementation",
+      name: "Verify scope release implementation",
+      description: "Runs implementation while testing uses machine verify.",
+      role: "engineer" as const,
+      supplementalInstructions: "Preserve the declared scope ordering.",
+      skillIds: [],
+      evaluatorProfile: "tests" as const,
+      enabled: true,
+    };
+    const verificationType = {
+      ...implementationType,
+      agentTypeId: "verify-scope-release-verification",
+      name: "Verify scope release verification",
+      role: "verifier" as const,
+    };
+    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    }));
+    fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "verify-scope-release-second-engineer",
+      role: "engineer",
+      area: "scope-release",
+      mission: "Activate the held sibling without a reconciliation timer.",
+      model: "codex-mini",
+      token: "verify-scope-release-second-engineer-token-0123456789",
+    });
+
+    const propose = (suffix: string) => {
+      const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
+        originalRequest: `Machine verify scope holder ${suffix}.`,
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }), `verify-scope-release-${suffix}`).workItem;
+      const planning = fixture.board.claimRun(fixture.manager.agentId, {
+        claimId: `verify-scope-release-planning-${suffix}`,
+        messageCursor: null,
+      });
+      assert.ok(planning);
+      fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The overlapping pipeline plan is ready.",
+        workflowPlan: heldVerifyPlan(suffix),
+      });
+      const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
+        (candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed",
+      );
+      assert.ok(plan);
+      return { plan, workItem };
+    };
+
+    const holder = propose("holder");
+    fixture.board.confirmWorkflow(holder.plan.planRevisionId, { expectedState: "proposed" });
+    now = new Date("2026-08-19T12:00:01.000Z");
+    const held = propose("held");
+    fixture.board.confirmWorkflow(held.plan.planRevisionId, { expectedState: "proposed" });
+    const before = fixture.board.projectWorkflow(fixture.project.projectId);
+    const holderNode = before.nodes.find((node) => node.planRevisionId === holder.plan.planRevisionId);
+    const heldNode = before.nodes.find((node) => node.planRevisionId === held.plan.planRevisionId);
+    assert.equal(holderNode?.state, "active");
+    assert.equal(heldNode?.state, "blocked");
+    fixture.board.close();
+    closed = true;
+
+    const boardConfig = config(fixture.path, () => now);
+    const store = await TaskBoardStore.open(boardConfig.dbPath);
+    const runtime = new TaskBoardRuntime(boardConfig, store);
+    const automation = new AutomationCollaborator(runtime);
+    const tasks = new TasksCollaborator(runtime);
+    assert.ok(holderNode);
+    assert.ok(heldNode);
+    store.transaction(() => {
+      store.db.prepare(`
+        UPDATE work_items SET state='verifying',current_stage='testing',version=version+1
+        WHERE work_item_id=?
+      `).run(holder.workItem.workItemId);
+      store.db.prepare(`
+        UPDATE work_nodes SET state='active',current_stage='testing',version=version+1,updated_at=?
+        WHERE node_id=?
+      `).run(now.toISOString(), holderNode.nodeId);
+      const insert = store.db.prepare(`
+        INSERT INTO verify_attempts(
+          verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+          check_results_json,detail,created_at,ended_at
+        ) VALUES (?,?,'testing',?,?,?,?,'[]',?,?,?)
+      `);
+      insert.run(
+        "verify-scope-release-prior-failed",
+        holderNode.nodeId,
+        1,
+        null,
+        null,
+        "failed",
+        "prior verify failure",
+        "2026-08-19T11:00:00.000Z",
+        "2026-08-19T11:01:00.000Z",
+      );
+      insert.run(
+        "verify-scope-release-prior-died",
+        holderNode.nodeId,
+        3,
+        null,
+        null,
+        "died",
+        "prior verify death",
+        "2026-08-19T11:30:00.000Z",
+        "2026-08-19T11:31:00.000Z",
+      );
+      insert.run(
+        "verify-scope-release-current",
+        holderNode.nodeId,
+        5,
+        "verify-scope-release-run",
+        "/tmp/verify-scope-release-workspace",
+        "running",
+        null,
+        now.toISOString(),
+        null,
+      );
+    });
+    const projects = new ProjectsCollaborator(
+      runtime,
+      automation,
+      tasks,
+      () => baseSha,
+      {
+        workspaceManagerFactory: () => ({
+          create: async () => "/tmp/verify-scope-release-workspace",
+          remove: async () => undefined,
+          retain: async () => undefined,
+        }),
+        runnerFactory: () => ({
+          startFull: async () => "unused-verify-run",
+          status: async () => ({
+            id: "verify-scope-release-run",
+            state: "failed",
+            startedAt: "2026-08-19T12:00:00.000Z",
+            endedAt: now.toISOString(),
+            exitCode: 1,
+            command: "npm test",
+          }),
+          tail: async () => "third verify failure",
+        }),
+      },
+    );
+    try {
+      assert.equal(await projects.sweepVerifyAttempts(), 1);
+      assert.equal(runtime.requireWorkItem(holder.workItem.workItemId).state, "dead_letter");
+      const after = projects.projectWorkflow(fixture.project.projectId);
+      assert.equal(after.nodes.find((node) => node.nodeId === heldNode.nodeId)?.state, "active");
+    } finally {
+      projects.close();
+      runtime.close();
+      store.close();
+    }
+  } finally {
+    if (!closed) fixture.board.close();
   }
 });

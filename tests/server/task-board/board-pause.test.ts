@@ -168,10 +168,10 @@ test("kill-switch suspension blocks an attempt-three node without failure accoun
       actor: "human:alice",
     });
     assert.equal(paused.version, 2);
-    assert.equal(fixture.board.suspendAllActiveRuns(
+    assert.deepEqual(fixture.board.suspendAllActiveRuns(
       "board paused: operator maintenance",
       { type: "system", id: "system:kill-switch" },
-    ), 1);
+    ), { suspended: 1, failed: 0 });
     const interruptBatch = await within(interruptWatch, 2_000);
     assert.equal(interruptBatch?.items[0]?.reason, "board paused: operator maintenance");
     assert.equal(interruptBatch?.items[0]?.requestedBy, "system:kill-switch");
@@ -296,10 +296,10 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
     fetchImplementation: (async (input, init = {}) => {
       assert.match(String(input), new RegExp(`/v1/runs/${claim.runId}/settle$`, "u"));
       settleCalls += 1;
-      assert.equal(fixture.board.suspendAllActiveRuns(
+      assert.deepEqual(fixture.board.suspendAllActiveRuns(
         "board paused: output flush race",
         { type: "system", id: "system:kill-switch" },
-      ), 1);
+      ), { suspended: 1, failed: 0 });
       const request = JSON.parse(String(init.body)) as SettleRunRequest;
       const acknowledged = fixture.board.settleRun(claim.runId, claim.agentId, request);
       acknowledgments.push(acknowledged);
@@ -368,6 +368,76 @@ test("system suspension closes an in-progress task phase inside the settlement t
     });
   } finally {
     closeRuns(opened);
+  }
+});
+
+test("one conflicting run does not stop the pause drain from suspending the rest", async (t) => {
+  const fixture = await activePipelineFixture();
+  let closed = false;
+  try {
+    const secondEngineer = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "suspend-second-engineer",
+      role: "engineer",
+      area: "parallel-pause-drain",
+      mission: "Keep a second pipeline run active during the pause drain.",
+      model: "codex-mini",
+      token: "suspend-second-engineer-token-0123456789",
+    });
+    const secondItem = fixture.board.createWorkItem(workItemRequest({
+      originalRequest: "Suspend a second active implementation run after a peer conflicts.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "suspend-second-active-pipeline").workItem;
+    const proposed = fixture.board.proposeWorkflow({
+      ...suspendPlan(),
+      workItemId: secondItem.workItemId,
+      projectId: fixture.project.projectId,
+      declaredScope: ["tests"],
+      skillIds: [],
+    });
+    const plan = proposed.plans.find((candidate) => candidate.workItemId === secondItem.workItemId);
+    assert.ok(plan);
+    fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
+    const secondRun = fixture.board.claimRun(secondEngineer.agentId, {
+      claimId: "claim-suspend-second-active-pipeline",
+      messageCursor: null,
+    });
+    assert.ok(secondRun);
+    fixture.board.close();
+    closed = true;
+
+    const opened = await openRuns(fixture.path);
+    try {
+      const activeRunIds = opened.store.db.prepare(`
+        SELECT run_id FROM runs WHERE status='active' AND task_id IS NOT NULL ORDER BY started_at,run_id
+      `).all().map((row) => String(row.run_id)).filter((runId) =>
+        runId !== fixture.planning.run.runId);
+      assert.equal(activeRunIds.length, 2);
+      const conflictRunId = activeRunIds[0]!;
+      const drainRunId = activeRunIds[1]!;
+      const suspend = opened.runs.suspendActiveRunInTransaction.bind(opened.runs);
+      t.mock.method(opened.runs, "suspendActiveRunInTransaction", (
+        ...arguments_: Parameters<typeof opened.runs.suspendActiveRunInTransaction>
+      ) => {
+        const [runId] = arguments_;
+        if (runId === conflictRunId) throw new Error("synthetic run settlement conflict");
+        return suspend(...arguments_);
+      });
+      const logged = t.mock.method(console, "error", () => undefined);
+
+      assert.deepEqual(opened.runs.suspendAllActiveRuns(
+        "board paused: drain despite conflict",
+        { type: "system", id: "system:kill-switch" },
+      ), { suspended: 1, failed: 1 });
+      assert.equal(logged.mock.callCount(), 1);
+      assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
+        .get(conflictRunId)?.status, "active");
+      assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
+        .get(drainRunId)?.status, "interrupted");
+    } finally {
+      closeRuns(opened);
+    }
+  } finally {
+    if (!closed) fixture.board.close();
   }
 });
 

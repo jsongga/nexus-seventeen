@@ -83,7 +83,7 @@ export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
 
 export type ProjectsVerifyDependencies = Omit<
   VerifyAttemptsDependencies,
-  "git" | "settleInTransaction" | "activateNodes"
+  "git" | "settleInTransaction" | "activateNodes" | "reconcileProject"
 >;
 export type PipelineMergeExecutor = typeof mergePipelineBranch;
 
@@ -118,6 +118,7 @@ export class ProjectsCollaborator {
       settleInTransaction: (nodeId, stage, passed, evidence) =>
         this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, stage, passed, evidence),
       activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
+      reconcileProject: (projectId) => this.reconcileWorkflowsBestEffort(projectId),
     });
   }
 

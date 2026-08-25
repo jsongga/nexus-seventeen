@@ -65,6 +65,11 @@ type SettlementEffects = Readonly<{
 
 export type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
 
+export interface SuspendAllActiveRunsResult {
+  readonly suspended: number;
+  readonly failed: number;
+}
+
 type SettleActiveRunOptions = Readonly<{
   suspendAttempt?: boolean;
 }>;
@@ -691,7 +696,7 @@ export class RunsCollaborator {
     });
   }
 
-  suspendAllActiveRuns(reason: string, actor: SettlementActor): number {
+  suspendAllActiveRuns(reason: string, actor: SettlementActor): SuspendAllActiveRunsResult {
     // Planning and design runs are deliberately excluded from the board pause: they
     // are short-lived, and Task 5's started_at cap sweep suspends them individually
     // before applying its own cap-specific park transition.
@@ -706,12 +711,18 @@ export class RunsCollaborator {
       ORDER BY run.started_at,run.run_id
     `).all().map((row) => stringValue(row, "run_id"));
     let suspended = 0;
+    let failed = 0;
     for (const runId of runIds) {
-      const result = this.runtime.store.transaction(() =>
-        this.suspendActiveRunInTransaction(runId, reason, actor));
-      if (result !== null) suspended += 1;
+      try {
+        const result = this.runtime.store.transaction(() =>
+          this.suspendActiveRunInTransaction(runId, reason, actor));
+        if (result !== null) suspended += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(`[task-board] active-run suspension failed for run ${runId}`, error);
+      }
     }
-    return suspended;
+    return Object.freeze({ suspended, failed });
   }
 
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {

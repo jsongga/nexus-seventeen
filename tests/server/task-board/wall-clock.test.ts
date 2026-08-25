@@ -201,7 +201,7 @@ async function startDesign(fixture: Awaited<ReturnType<typeof capFixture>>, suff
   return { design, workItem };
 }
 
-test("stage and task wall clocks use the required transition boundaries", () => {
+test("stage clock uses retry boundaries and task clock sums post-resume run intervals", () => {
   const db = new DatabaseSync(":memory:");
   try {
     db.exec(`
@@ -217,6 +217,18 @@ test("stage and task wall clocks use the required transition boundaries", () => 
         to_state TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE runs(
+        run_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+      );
+      CREATE TABLE work_item_planning_tasks(work_item_id TEXT NOT NULL, task_id TEXT NOT NULL);
+      CREATE TABLE work_item_design_tasks(work_item_id TEXT NOT NULL, task_id TEXT NOT NULL);
+      CREATE TABLE plan_revisions(plan_revision_id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL);
+      CREATE TABLE work_nodes(node_id TEXT PRIMARY KEY, plan_revision_id TEXT NOT NULL);
+      CREATE TABLE stage_attempts(node_id TEXT NOT NULL, task_id TEXT NOT NULL);
+      CREATE TABLE park_records(work_item_id TEXT NOT NULL, resolved_at TEXT, resolution TEXT);
     `);
     const event = db.prepare("INSERT INTO project_events VALUES(?,?,?,?)");
     event.run(1, "node-1", "stage_started", "2026-08-21T11:00:00.000Z");
@@ -235,7 +247,20 @@ test("stage and task wall clocks use the required transition boundaries", () => 
     transition.run(7, "verifying", "2026-08-21T11:25:00.000Z");
     transition.run(8, "parked", "2026-08-21T11:30:00.000Z");
     transition.run(9, "reviewing", "2026-08-21T11:50:00.000Z");
-    assert.equal(taskActiveSeconds(db, "item-1", "2026-08-21T12:00:00.000Z"), 1_800);
+    db.prepare("INSERT INTO work_item_planning_tasks VALUES('item-1','planning-task')").run();
+    db.prepare("INSERT INTO work_item_design_tasks VALUES('item-1','design-task')").run();
+    db.prepare("INSERT INTO plan_revisions VALUES('plan-1','item-1')").run();
+    db.prepare("INSERT INTO work_nodes VALUES('node-1','plan-1')").run();
+    db.prepare("INSERT INTO stage_attempts VALUES('node-1','stage-task')").run();
+    db.prepare("INSERT INTO park_records VALUES('item-1',?,'resumed')")
+      .run("2026-08-21T11:00:00.000Z");
+    const run = db.prepare("INSERT INTO runs VALUES(?,?,?,?)");
+    run.run("pre-resume-planning", "planning-task", "2026-08-21T10:00:00.000Z", "2026-08-21T10:10:00.000Z");
+    run.run("cross-resume-design", "design-task", "2026-08-21T10:59:00.000Z", "2026-08-21T11:05:00.000Z");
+    run.run("post-resume-stage", "stage-task", "2026-08-21T11:10:00.000Z", "2026-08-21T11:20:00.000Z");
+    run.run("post-resume-planning", "planning-task", "2026-08-21T11:30:00.000Z", "2026-08-21T11:35:00.000Z");
+    run.run("active-stage", "stage-task", "2026-08-21T11:50:00.000Z", null);
+    assert.equal(taskActiveSeconds(db, "item-1", "2026-08-21T12:00:00.000Z"), 1_500);
   } finally {
     db.close();
   }
@@ -343,7 +368,7 @@ test("cap notifications use the sweep's injected timestamp", async () => {
   }
 });
 
-test("task cap sums agent-active time and parks with the task cap actor", async () => {
+test("task cap resets after human retry and does not immediately re-park the new run", async () => {
   const fixture = await capFixture({ stageCapSeconds: 0, taskCapSeconds: 60 });
   try {
     const active = await startPipeline(fixture, "task-cap");
@@ -365,6 +390,67 @@ test("task cap sums agent-active time and parks with the task cap actor", async 
     } finally {
       db.close();
     }
+
+    fixture.setNow(61);
+    const suspended = fixture.board.requireTask(active.implementation.task!.taskId);
+    fixture.board.retryTask(suspended.taskId, { version: suspended.version });
+    const resumed = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "wall-clock-task-cap-resumed-run",
+      messageCursor: null,
+    });
+    assert.ok(resumed);
+    fixture.setNow(120);
+    assert.deepEqual(fixture.board.sweepWallClockCaps(at(120).toISOString()), { suspended: 0, parked: 0 });
+    assert.equal(fixture.board.requireWorkItem(active.workItem.workItemId).state, "implementing");
+    assert.equal(fixture.delivered.length, 1);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("task cap sums genuine run time across stage retries within one resumed epoch and parks once", async () => {
+  const fixture = await capFixture({ stageCapSeconds: 0, taskCapSeconds: 60 });
+  try {
+    const active = await startPipeline(fixture, "task-cap-cumulative-runs");
+    fixture.setNow(40);
+    fixture.board.settleRun(active.implementation.run.runId, fixture.engineer.agentId, {
+      outcome: "failed",
+      result: "The first implementation attempt needs another pass.",
+      handoff: {
+        outcome: "failed",
+        summary: "The first implementation attempt needs another pass.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: ["Retry the implementation."],
+        recommendedReturnStage: "implementation",
+      },
+    });
+    fixture.setNow(1_000);
+    const retried = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "wall-clock-task-cap-cumulative-retry",
+      messageCursor: null,
+    });
+    assert.ok(retried);
+    fixture.setNow(1_030);
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(taskActiveSeconds(
+        inspected,
+        active.workItem.workItemId,
+        at(1_030).toISOString(),
+      ), 70);
+    } finally {
+      inspected.close();
+    }
+    const reason = "task cap exceeded: 70s agent-active (cap 60s)";
+    assert.deepEqual(fixture.board.sweepWallClockCaps(at(1_030).toISOString()), { suspended: 1, parked: 1 });
+    assert.deepEqual(latestParkRecord(fixture.path, active.workItem.workItemId), {
+      category: "task_cap_exceeded",
+      reason,
+    });
+    assert.deepEqual(fixture.board.sweepWallClockCaps(at(1_030).toISOString()), { suspended: 0, parked: 0 });
+    assert.equal(fixture.delivered.length, 1);
   } finally {
     fixture.board.close();
   }
@@ -436,8 +522,8 @@ test("disabled caps leave active work untouched", async () => {
   }
 });
 
-test("a scope-held node with a stale stage event is not capped without an active run", async () => {
-  const fixture = await capFixture({ stageCapSeconds: 60, taskCapSeconds: 0 });
+test("a scope-held item aged four hours with no runs accrues no task-cap time", async () => {
+  const fixture = await capFixture({ stageCapSeconds: 60, taskCapSeconds: 60 });
   try {
     const confirmWithoutClaim = async (suffix: string) => {
       const { planning, workItem } = await startPlanning(fixture, suffix);
@@ -492,7 +578,8 @@ test("a scope-held node with a stale stage event is not capped without an active
     assert.equal(latestBlock?.summary, `scope-hold: overlaps ${holder.workItem.workItemId}`);
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(stageElapsedSeconds(inspected, held.node.nodeId, at(10_000).toISOString()), 10_000);
+      assert.equal(stageElapsedSeconds(inspected, held.node.nodeId, at(14_400).toISOString()), 14_400);
+      assert.equal(taskActiveSeconds(inspected, held.workItem.workItemId, at(14_400).toISOString()), 0);
       assert.equal(inspected.prepare(`
         SELECT COUNT(*) AS count
         FROM runs run
@@ -503,7 +590,7 @@ test("a scope-held node with a stale stage event is not capped without an active
       inspected.close();
     }
 
-    assert.deepEqual(fixture.board.sweepWallClockCaps(at(10_000).toISOString()), { suspended: 0, parked: 0 });
+    assert.deepEqual(fixture.board.sweepWallClockCaps(at(14_400).toISOString()), { suspended: 0, parked: 0 });
     assert.equal(fixture.board.requireWorkItem(held.workItem.workItemId).state, "implementing");
     assert.equal(fixture.delivered.length, 0);
   } finally {

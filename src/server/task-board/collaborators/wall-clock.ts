@@ -7,14 +7,6 @@ import type { RunsCollaborator } from "./runs.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
 
-const AGENT_ACTIVE_STATES = new Set<WorkItemState>([
-  "implementing",
-  "verifying",
-  "reviewing",
-  "fixing",
-  "designing",
-]);
-
 interface WallClockCandidate {
   readonly runId: string;
   readonly workItemId: string;
@@ -75,27 +67,39 @@ export function taskActiveSeconds(
 ): number {
   if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
   const rows = db.prepare(`
-    SELECT to_state,created_at
-    FROM work_item_transitions
-    WHERE work_item_id=?
-    ORDER BY sequence
-  `).all(workItemId) as Row[];
-  let activeSince: number | null = null;
+    WITH resumed_epoch AS (
+      SELECT MAX(resolved_at) AS resumed_at
+      FROM park_records
+      WHERE work_item_id=? AND resolution='resumed'
+    ), item_tasks AS (
+      SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?
+      UNION
+      SELECT task_id FROM work_item_design_tasks WHERE work_item_id=?
+      UNION
+      SELECT attempt.task_id
+      FROM stage_attempts AS attempt
+      JOIN work_nodes AS node ON node.node_id=attempt.node_id
+      JOIN plan_revisions AS plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE plan.work_item_id=?
+    )
+    SELECT run.started_at,run.ended_at
+    FROM runs AS run
+    JOIN item_tasks AS task ON task.task_id=run.task_id
+    CROSS JOIN resumed_epoch AS epoch
+    WHERE epoch.resumed_at IS NULL OR run.started_at>=epoch.resumed_at
+    ORDER BY run.started_at,run.run_id
+  `).all(workItemId, workItemId, workItemId, workItemId) as Row[];
   let activeMilliseconds = 0;
   for (const row of rows) {
-    if (typeof row.to_state !== "string") {
-      throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_transition_state");
+    if (typeof row.started_at !== "string") {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:task_run_started_at");
     }
-    const transitionedAt = timestampMilliseconds(row.created_at, "work_item_transition_created_at");
-    const active = AGENT_ACTIVE_STATES.has(row.to_state as WorkItemState);
-    if (active && activeSince === null) activeSince = transitionedAt;
-    if (!active && activeSince !== null) {
-      activeMilliseconds += Math.max(0, transitionedAt - activeSince);
-      activeSince = null;
+    if (row.ended_at !== null && typeof row.ended_at !== "string") {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:task_run_ended_at");
     }
-  }
-  if (activeSince !== null) {
-    activeMilliseconds += Math.max(0, timestampMilliseconds(now, "wall_clock_now") - activeSince);
+    const startedAt = timestampMilliseconds(row.started_at, "task_run_started_at");
+    const endedAt = timestampMilliseconds(row.ended_at ?? now, "task_run_ended_at");
+    activeMilliseconds += Math.max(0, endedAt - startedAt);
   }
   return Math.floor(activeMilliseconds / 1_000);
 }
@@ -140,6 +144,7 @@ export class WallClockCollaborator {
     if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
 
     const candidates = (this.runtime.store.db.prepare(`
+      -- Mirrors pipelineTemplateShape in src/shared/task-board-contract/index.ts.
       WITH pipeline_plans AS (
         SELECT plan.plan_revision_id,plan.work_item_id
         FROM plan_revisions AS plan

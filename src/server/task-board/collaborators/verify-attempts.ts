@@ -53,6 +53,7 @@ export interface VerifyAttemptsDependencies {
     evidence: MachineVerifyEvidence,
   ) => readonly WorkNode[];
   readonly activateNodes: (nodes: readonly WorkNode[]) => void;
+  readonly reconcileProject: (projectId: string) => void;
 }
 
 interface AttemptContext {
@@ -65,6 +66,7 @@ interface AttemptContext {
   readonly state: VerifyAttempt["state"];
   readonly detail: string | null;
   readonly workItemId: string;
+  readonly projectId: string;
   readonly repositoryPath: string;
   readonly baseSha: string | null;
   readonly criterionChecks: readonly PlanCriterionCheck[];
@@ -187,6 +189,7 @@ function attemptContext(row: Row): AttemptContext {
     state: String(row.state) as VerifyAttempt["state"],
     detail: row.detail === null ? null : String(row.detail),
     workItemId: String(row.work_item_id),
+    projectId: String(row.project_id),
     repositoryPath: String(row.repository_path),
     baseSha: row.base_sha === null ? null : String(row.base_sha),
     criterionChecks: Object.freeze(JSON.parse(String(row.criterion_checks_json ?? "[]")) as PlanCriterionCheck[]),
@@ -339,6 +342,7 @@ export class VerifyAttemptsCollaborator {
         plan.work_item_id,
         plan.criterion_checks_json,
         item.base_sha,
+        node.project_id,
         project.description AS repository_path
       FROM verify_attempts verify
       JOIN work_nodes node ON node.node_id=verify.node_id
@@ -437,6 +441,7 @@ export class VerifyAttemptsCollaborator {
       });
       if (failures >= 2) {
         this.dependencies.activateNodes(settledNodes);
+        this.dependencies.reconcileProject(failedAttempt.projectId);
         if (workspace !== null) await this.#retainBestEffort(workspace, current.workItemId);
       }
       return true;
@@ -629,6 +634,7 @@ export class VerifyAttemptsCollaborator {
     });
     if (!settled) return;
     this.dependencies.activateNodes(settledNodes);
+    this.dependencies.reconcileProject(current.projectId);
     const workspace = this.#workspaceManagerFactory(current.repositoryPath);
     if (passed) await this.#removeBestEffort(workspace, current.workItemId);
     else await this.#retainBestEffort(workspace, current.workItemId);

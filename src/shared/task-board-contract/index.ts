@@ -294,6 +294,8 @@ export const GATE_KINDS = [
 ] as const;
 export type ParkCategory = typeof PARK_CATEGORIES[number];
 
+// The pipeline_plans CTE in src/server/task-board/collaborators/wall-clock.ts
+// mirrors this predicate in SQL when discovering capped pipeline runs.
 export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" | "v2" | null {
   if (
     template.length === 2 &&

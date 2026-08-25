@@ -86,7 +86,11 @@ import {
   ProjectsCollaborator,
   type PipelineMergeExecutor,
 } from "./collaborators/projects.js";
-import { RunsCollaborator, type SettlementActor } from "./collaborators/runs.js";
+import {
+  RunsCollaborator,
+  type SettlementActor,
+  type SuspendAllActiveRunsResult,
+} from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import type { GitRunner } from "./collaborators/scope-check.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
@@ -248,7 +252,7 @@ export class TaskBoard {
     return this.#boardPause.isBoardPaused();
   }
 
-  suspendAllActiveRuns(reason: string, actor: SettlementActor): number {
+  suspendAllActiveRuns(reason: string, actor: SettlementActor): SuspendAllActiveRunsResult {
     return this.#runs.suspendAllActiveRuns(reason, actor);
   }
 
