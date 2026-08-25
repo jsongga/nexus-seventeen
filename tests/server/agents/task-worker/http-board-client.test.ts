@@ -44,7 +44,12 @@ test("claim pinning is sent verbatim and heartbeat uses the body-less run route"
       });
     }) as typeof fetch,
   });
-  const pinned = { runtime: "codex", runtimeVersion: "codex-cli 1.2.3", model: "gpt-5.6-codex" };
+  const pinned = {
+    runtime: "codex",
+    runtimeVersion: "codex-cli 1.2.3",
+    model: "gpt-5.6-codex",
+    promptsSha: "sha256:claim-prompts",
+  };
 
   await client.claimNextWake({
     agentId: "engineer-one",
@@ -87,6 +92,7 @@ test("claim responses expose the immutable run pinning instead of the replay req
         runtime: "codex",
         runtimeVersion: "codex-cli 1.2.3",
         model: "gpt-5.6-old",
+        promptsSha: "sha256:old-prompts",
       },
     });
     assert.ok(replay);
@@ -108,6 +114,7 @@ test("claim responses expose the immutable run pinning instead of the replay req
         runtime: "codex",
         runtimeVersion: "codex-cli 2.0.0",
         model: "gpt-5.6-new",
+        promptsSha: "sha256:new-prompts",
       },
     });
 
@@ -115,6 +122,7 @@ test("claim responses expose the immutable run pinning instead of the replay req
       runtime: "codex",
       runtimeVersion: "codex-cli 1.2.3",
       model: "gpt-5.6-old",
+      promptsSha: "sha256:old-prompts",
     });
   } finally {
     fixture.board.close();

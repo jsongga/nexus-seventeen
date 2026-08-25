@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -25,6 +25,7 @@ import {
 import {
   ContainedCliAgentLauncher,
   HttpTaskBoardClient,
+  PromptRegistry,
   TaskWorker,
 } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
@@ -48,6 +49,7 @@ const HUMAN_CRITERION = "The implementation uses two reviewable commits.";
 const MID_RUN_ASSUMPTION = "Implementation selected a plain-text fixture marker.";
 const ENGINEER_RUN_PIN = { runtime: "codex", model: "fake-engineer" } as const;
 const VERIFIER_RUN_PIN = { runtime: "codex", model: "fake-reviewer" } as const;
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 type EngineerMode = "scoped" | "outside_scope" | "merge_conflict" | "seeded_defect";
 type ReviewerMode = "passed" | "seeded_defect" | "always_blocking";
@@ -566,6 +568,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     launcher: new ContainedCliAgentLauncher({
       adapter: codexAdapter,
       profile: CODEX_PROFILE,
+      prompts: PROMPTS,
       model: "fake-codex",
       workingDirectory: managerCli.working,
       environment: {
@@ -583,6 +586,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     new ContainedCliAgentLauncher({
       adapter: codexAdapter,
       profile: CODEX_PROFILE,
+      prompts: PROMPTS,
       model: ENGINEER_RUN_PIN.model,
       workingDirectory: engineerCli.working,
       environment: {
@@ -613,6 +617,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
           new ContainedCliAgentLauncher({
             adapter: codexAdapter,
             profile: CODEX_PROFILE,
+            prompts: PROMPTS,
             model: ENGINEER_RUN_PIN.model,
             workingDirectory: secondEngineerCli.working,
             environment: {
@@ -635,6 +640,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     launcher: new ContainedCliAgentLauncher({
       adapter: codexAdapter,
       profile: CODEX_PROFILE,
+      prompts: PROMPTS,
       model: VERIFIER_RUN_PIN.model,
       workingDirectory: verifierCli.working,
       environment: {

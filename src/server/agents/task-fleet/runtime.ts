@@ -11,6 +11,7 @@ import { defaultRuntimeRegistry, type RuntimeRegistry } from "../runtime/registr
 import {
   ContainedCliAgentLauncher,
   HttpTaskBoardClient,
+  PromptRegistry,
   TaskBoardHttpError,
   TaskWorker,
   type AgentLauncher,
@@ -45,8 +46,11 @@ export interface CreateTaskFleetWorkerOptions {
   readonly registry?: RuntimeRegistry;
   readonly profiles?: RuntimeProfiles;
   readonly runtimesConfigPath?: string;
+  readonly promptsRoot?: string;
   /** Test seam for observing cache behavior while still invoking the real disk loader. */
   readonly loadProfiles?: (path: string) => Promise<RuntimeProfiles>;
+  /** Test seam for observing the once-per-lane prompt load. */
+  readonly loadPrompts?: (root: string) => PromptRegistry;
 }
 
 const profileLoads = new Map<string, Promise<RuntimeProfiles>>();
@@ -123,11 +127,13 @@ async function createLocalProcessTaskFleetWorker(
   boardUrl: string,
   adapter: RuntimeAdapter,
   profile: RuntimeProfile,
+  prompts: PromptRegistry,
 ): Promise<ManagedTaskWorker> {
   const runtimeVersion = await captureTaskFleetRuntimeVersion(profile.binary);
   let launcher: AgentLauncher = new ContainedCliAgentLauncher({
     adapter,
     profile,
+    prompts,
     ...(config.role === undefined ? {} : { role: config.role }),
     model: config.model,
     workingDirectory: config.workingDirectory,
@@ -151,6 +157,7 @@ async function createLocalProcessTaskFleetWorker(
       runtime: config.provider,
       ...(runtimeVersion === null ? {} : { runtimeVersion }),
       model: config.model,
+      promptsSha: prompts.promptsSha,
     },
     longPollMs: config.longPollMs,
   });
@@ -173,6 +180,7 @@ async function createContainerTaskFleetWorker(
   boardUrl: string,
   adapter: RuntimeAdapter,
   profile: RuntimeProfile,
+  prompts: PromptRegistry,
 ): Promise<ManagedTaskWorker> {
   const lane = config.container;
   if (lane === undefined) throw new Error("container lane config missing");
@@ -191,6 +199,7 @@ async function createContainerTaskFleetWorker(
     new ContainerAgentLauncher({
       adapter,
       profile,
+      prompts,
       ...(config.role === undefined ? {} : { role: config.role }),
       model: config.model,
       image: runtimeIdentity.imageId,
@@ -211,6 +220,7 @@ async function createContainerTaskFleetWorker(
       runtime: config.provider,
       runtimeVersion: runtimeIdentity.runtimeVersion,
       model: config.model,
+      promptsSha: prompts.promptsSha,
     },
     longPollMs: config.longPollMs,
   });
@@ -238,9 +248,10 @@ export async function createTaskFleetWorker(
   const profile = (await runtimeProfiles(options)).runtimes.get(config.provider);
   if (profile === undefined) throw new Error(`Unknown runtime profile: ${config.provider}`);
   if (config.role !== undefined) adapter.assertRole(profile, config.role);
+  const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsRoot ?? "prompts"));
   return config.runtime === "container"
-    ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile)
-    : createLocalProcessTaskFleetWorker(config, boardUrl, adapter, profile);
+    ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile, prompts)
+    : createLocalProcessTaskFleetWorker(config, boardUrl, adapter, profile, prompts);
 }
 
 export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {

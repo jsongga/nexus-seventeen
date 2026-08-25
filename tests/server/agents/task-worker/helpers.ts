@@ -148,6 +148,7 @@ export function claimed(
       runtime: request.pinned?.runtime ?? null,
       runtimeVersion: request.pinned?.runtimeVersion ?? null,
       model: request.pinned?.model ?? null,
+      promptsSha: request.pinned?.promptsSha ?? null,
     },
   };
 }

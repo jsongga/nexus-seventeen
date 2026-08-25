@@ -6,6 +6,7 @@ export type { HttpTaskBoardClientOptions } from "./http-board-client.js";
 export { AgentProcessError } from "../runtime/errors.js";
 export { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
 export type { ContainedCliAgentLauncherOptions } from "./contained-cli-launcher.js";
+export { PromptRegistry } from "./prompt-registry.js";
 export {
   parseAgentRunOutcome,
   parseAgentRunOutput,

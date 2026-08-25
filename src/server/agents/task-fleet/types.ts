@@ -39,6 +39,7 @@ export interface TaskFleetConfig {
   readonly version: 1;
   readonly boardUrl: string;
   readonly runtimesConfigPath: string | undefined;
+  readonly promptsRoot: string | undefined;
   readonly retry: TaskFleetRetryConfig;
   readonly agents: readonly TaskFleetAgentConfig[];
 }

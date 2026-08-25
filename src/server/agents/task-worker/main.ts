@@ -3,6 +3,7 @@ import { loadRuntimeProfiles } from "../runtime/profiles.js";
 import { defaultRuntimeRegistry } from "../runtime/registry.js";
 import { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
 import { HttpTaskBoardClient } from "./http-board-client.js";
+import { PromptRegistry } from "./prompt-registry.js";
 import { TaskWorker } from "./worker.js";
 
 function required(name: string): string {
@@ -28,10 +29,16 @@ if (runtimesConfigSource !== undefined && runtimesConfigSource.length === 0) {
 const runtimesConfigPath = resolve(runtimesConfigSource ?? "config/runtimes.json");
 const profile = (await loadRuntimeProfiles(runtimesConfigPath)).runtimes.get(provider);
 if (profile === undefined) throw new Error(`Unknown runtime profile: ${provider}`);
+const promptsRootSource = process.env.STEWARD_TASK_WORKER_PROMPTS_ROOT;
+if (promptsRootSource !== undefined && promptsRootSource.length === 0) {
+  throw new Error("STEWARD_TASK_WORKER_PROMPTS_ROOT must not be empty");
+}
+const prompts = PromptRegistry.loadSync(resolve(promptsRootSource ?? "prompts"));
 const longPollMs = optionalInteger("STEWARD_TASK_WORKER_LONG_POLL_MS");
 const timeoutMs = optionalInteger("STEWARD_TASK_WORKER_AGENT_TIMEOUT_MS");
 const terminationGraceMs = optionalInteger("STEWARD_TASK_WORKER_TERMINATION_GRACE_MS");
 
+const model = required("STEWARD_TASK_WORKER_MODEL");
 const worker = await TaskWorker.create({
   identity: {
     workerId: required("STEWARD_TASK_WORKER_ID"),
@@ -45,11 +52,13 @@ const worker = await TaskWorker.create({
   launcher: new ContainedCliAgentLauncher({
     adapter,
     profile,
-    model: required("STEWARD_TASK_WORKER_MODEL"),
+    prompts,
+    model,
     workingDirectory: required("STEWARD_TASK_WORKER_WORKING_DIRECTORY"),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(terminationGraceMs === undefined ? {} : { terminationGraceMs }),
   }),
+  pinned: { runtime: provider, model, promptsSha: prompts.promptsSha },
   ...(longPollMs === undefined ? {} : { longPollMs }),
 });
 

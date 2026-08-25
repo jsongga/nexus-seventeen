@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import test from "node:test";
 import type { RuntimeAdapter } from "../../../../src/server/agents/runtime/adapter.js";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
@@ -7,13 +8,16 @@ import {
   buildContainerRunPlan,
   ContainerAgentLauncher,
 } from "#server/agents/task-container";
-import { AgentProcessError } from "#server/agents/task-worker";
+import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context } from "../task-worker/helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 const baseOptions = {
   adapter: codexAdapter,
   profile: CODEX_PROFILE,
+  prompts: PROMPTS,
   model: "gpt-test",
   image: "steward-agent:test",
   networkName: "steward-agents",

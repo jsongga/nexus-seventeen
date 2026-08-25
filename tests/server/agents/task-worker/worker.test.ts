@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
@@ -9,6 +9,7 @@ import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.
 import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskWorker } from "#server/agents/task-worker/worker";
 import type {
@@ -33,6 +34,7 @@ import {
 } from "./helpers.js";
 
 type WorkerDiagnostic = TaskWorkerDiagnosticEvent;
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 function phaseEvent(signal: Readonly<{
   key: string;
@@ -107,13 +109,14 @@ test("idle dispatch long-polls the board without starting a model process", asyn
   }
 });
 
-test("claims pin the configured runtime identity and model", async () => {
+test("claims pin the configured runtime identity, model, and prompt bundle", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
   const taskWorker = await worker(root, board, new FakeLauncher(), undefined, {
     runtime: "codex",
     runtimeVersion: "codex-cli 1.2.3",
     model: "gpt-5.6-codex",
+    promptsSha: PROMPTS.promptsSha,
   });
   try {
     assert.equal(await taskWorker.dispatchOnce(), false);
@@ -121,7 +124,9 @@ test("claims pin the configured runtime identity and model", async () => {
       runtime: "codex",
       runtimeVersion: "codex-cli 1.2.3",
       model: "gpt-5.6-codex",
+      promptsSha: PROMPTS.promptsSha,
     });
+    assert.match(board.claimRequests[0]!.pinned!.promptsSha!, /^sha256:[a-f0-9]{64}$/u);
   } finally {
     await taskWorker.close();
   }
@@ -1594,6 +1599,7 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
     runtime: "codex",
     runtimeVersion: "codex 1.2 Bearer abc123def456",
     model: "gpt-5.6-old",
+    promptsSha: "sha256:historical-prompts",
   };
   const activeClaim = claimed(request, { pinned: historicalPins }).claim;
   const store = await TaskWorkerJournalStore.open(statePath, identity);
@@ -1620,7 +1626,8 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
   const restarted = await worker(root, board, launcher, (event) => diagnostics.push(event), {
     runtime: "codex",
     runtimeVersion: historicalPins.runtimeVersion,
-    model: "gpt-5.6-new",
+    model: historicalPins.model,
+    promptsSha: "sha256:current-prompts",
   });
   try {
     assert.equal(await restarted.dispatchOnce(), true);
@@ -1634,11 +1641,13 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
         runtime: "codex",
         runtimeVersion: "codex 1.2 [redacted:bearer]",
         model: "gpt-5.6-old",
+        promptsSha: "sha256:historical-prompts",
       },
       workerPinned: {
         runtime: "codex",
         runtimeVersion: "codex 1.2 [redacted:bearer]",
-        model: "gpt-5.6-new",
+        model: "gpt-5.6-old",
+        promptsSha: "sha256:current-prompts",
       },
     }]);
     assert.equal(board.settlements[0]?.outcome, "completed");

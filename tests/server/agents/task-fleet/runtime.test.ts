@@ -11,6 +11,7 @@ import {
 } from "../../../../src/server/agents/runtime/profiles.js";
 import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
 import { TaskBoardHttpError } from "#server/agents/task-worker";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import {
   captureTaskFleetRuntimeVersion,
   classifyTaskFleetError,
@@ -50,6 +51,8 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
     }],
   }).agents[0]!;
   let environmentCalls = 0;
+  let promptLoads = 0;
+  const promptsRoot = resolve("prompts");
   const selected = Object.freeze({
     ...codexAdapter,
     environment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -60,9 +63,16 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
   const worker = await createTaskFleetWorker(config, "http://127.0.0.1:4318", {
     registry: runtimeRegistry([selected]),
     profiles: SHIPPED_RUNTIME_PROFILES,
+    promptsRoot,
+    loadPrompts: (root) => {
+      promptLoads += 1;
+      assert.equal(root, promptsRoot);
+      return PromptRegistry.loadSync(root);
+    },
   });
   try {
     assert.equal(environmentCalls, 1);
+    assert.equal(promptLoads, 1);
   } finally {
     await worker.close();
   }

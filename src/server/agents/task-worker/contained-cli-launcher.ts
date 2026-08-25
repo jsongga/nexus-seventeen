@@ -18,6 +18,7 @@ import {
   delay,
   structuredOutcome,
 } from "./agent-envelope.js";
+import type { PromptRegistry } from "./prompt-registry.js";
 import type { AgentLaunchRequest, AgentLauncher, AgentRunHandle, AgentRunOutcome } from "./types.js";
 
 const RESULT_SCHEMA_PATH = fileURLToPath(new URL("./agent-result.schema.json", import.meta.url));
@@ -28,6 +29,7 @@ const GROUP_POLL_MS = 20;
 export interface ContainedCliAgentLauncherOptions {
   readonly adapter: RuntimeAdapter;
   readonly profile: RuntimeProfile;
+  readonly prompts: PromptRegistry;
   readonly role?: AgentRole;
   readonly model: string;
   readonly workingDirectory: string;
@@ -117,7 +119,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       bareApiKey: typeof this.#options.environment.ANTHROPIC_API_KEY === "string",
     };
     const args = this.#options.adapter.args(argumentOptions, fixedRole, this.#options.profile);
-    const stdin = agentPrompt(request);
+    const stdin = agentPrompt(request, this.#options.prompts);
     const command = this.#options.profile.binary;
     let child: ChildProcess;
     try {

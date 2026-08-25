@@ -16,6 +16,7 @@ import {
   delay,
   structuredOutcome,
 } from "#server/agents/task-worker/agent-envelope";
+import type { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import type {
   AgentLaunchRequest,
   AgentLauncher,
@@ -54,6 +55,7 @@ class DockerCommandError extends Error {
 export interface ContainerAgentLauncherOptions {
   readonly adapter: RuntimeAdapter;
   readonly profile: RuntimeProfile;
+  readonly prompts: PromptRegistry;
   readonly role?: AgentRole;
   readonly model: string;
   readonly image: string;
@@ -242,7 +244,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       bareApiKey: typeof this.#environment.ANTHROPIC_API_KEY === "string",
       runtimeEnvironment: this.#environment,
     });
-    const stdin = agentPrompt(request);
+    const stdin = agentPrompt(request, this.#options.prompts);
     let child: ChildProcess;
     try {
       child = spawn(this.#options.dockerBinary, [...plan.args], {

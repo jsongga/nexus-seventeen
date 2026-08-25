@@ -505,6 +505,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
           runtime: claimed.run.runtime,
           runtimeVersion: claimed.run.runtimeVersion,
           model: claimed.run.model,
+          promptsSha: claimed.run.promptsSha,
         }),
       });
     } catch (error) {

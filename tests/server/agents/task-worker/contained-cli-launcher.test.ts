@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
@@ -30,8 +30,15 @@ import {
 } from "#shared/task-board-contract";
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+
+function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
+  return agentPrompt(request, PROMPTS);
+}
 
 async function fakeCli(
   root: string,
@@ -114,7 +121,7 @@ test("generated provider schema is the launcher schema and derives contract enum
 });
 
 test("manager planning prompt branches on intake rather than the task title", () => {
-  const titlePrefixed = agentPrompt({
+  const titlePrefixed = renderPrompt({
     runId: "run-title-prefix",
     wakeReason: "human_assignment",
     context: context({
@@ -127,7 +134,7 @@ test("manager planning prompt branches on intake rather than the task title", ()
   assert.match(titlePrefixed, /Perform read-only oversight/u);
   assert.doesNotMatch(titlePrefixed, /single-implementation pipeline plan/u);
 
-  const intakePrompt = agentPrompt({
+  const intakePrompt = renderPrompt({
     runId: "run-intake",
     wakeReason: "human_assignment",
     context: context({
@@ -175,6 +182,7 @@ process.stdin.on("end", () => {
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -239,6 +247,7 @@ process.stdin.on("end", () => {
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: { ...CODEX_PROFILE, binary: "profile-codex" },
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -276,6 +285,7 @@ test("parses Claude stream-json activity while preserving its terminal structure
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
     profile: CLAUDE_PROFILE,
+    prompts: PROMPTS,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -333,6 +343,7 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
     profile: CLAUDE_PROFILE,
+    prompts: PROMPTS,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -372,6 +383,7 @@ process.stdin.on("end", () => {
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -406,6 +418,7 @@ test("rejects a missing role capability at launch before spawning the runtime", 
       ...CODEX_PROFILE,
       roles: { manager: { sandbox: "read-only" }, verifier: { sandbox: "read-only" } },
     },
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory,
     environment: { PATH: process.env.PATH },
@@ -438,6 +451,7 @@ setInterval(() => {}, 1000);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -475,6 +489,7 @@ setInterval(() => {}, 1000);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -514,6 +529,7 @@ setInterval(() => {}, 1000);
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },

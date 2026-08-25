@@ -230,6 +230,7 @@ export interface ClaimedRunPinning {
   readonly runtime: string | null;
   readonly runtimeVersion: string | null;
   readonly model: string | null;
+  readonly promptsSha: string | null;
 }
 
 export interface ClaimedAgentRun {

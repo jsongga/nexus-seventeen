@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { context } from "./helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+
+function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
+  return agentPrompt(request, PROMPTS);
+}
 
 const DESIGNER_PROMPT = "Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.";
 
@@ -44,8 +53,168 @@ function pipelineWorkflow(stage: "implementation" | "testing" | "verification") 
 
 const REVIEWER_BLOCK = "Pipeline review on branch task/work-item-one. You are reviewing the diff against the approved plan — injected below — never the implementer's reasoning. Review depth follows change shape (feature): spot-check a mechanical sweep; read feature work line by line; review a blast-radius change per consumer. Check in order: (1) files touched vs declared scope — pre-computed as scopeOk=true, files below; (2) each acceptance criterion actually met in the code; (3) docs updated in the same diff where the plan requires; (4) any modified or deleted existing test — emit a test_modification finding for each unless the plan's mechanicalPortions declared it. Emit reviewFindings [{file, line, category, severity, expected, actual}]; categories correctness|security|plan_deviation block, others do not. If any blocking finding exists return handoff outcome failed with recommendedReturnStage implementation; otherwise outcome passed. Do not edit the workspace.";
 
+const GOLDEN_FIXTURE_ROOT = resolve("tests/server/agents/task-worker/fixtures/agent-prompts");
+
+function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }>[] {
+  const fixWorkflow = {
+    ...pipelineWorkflow("implementation"),
+    fix: {
+      round: 2,
+      findings: [{
+        findingId: "finding-two",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 2,
+        file: "src/server/fix.ts",
+        line: 24,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry reaches machine verification.",
+        actual: "The retry skipped machine verification.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      }],
+    },
+  } as const;
+  const reviewWorkflow = {
+    ...pipelineWorkflow("verification"),
+    workspaceKey: "work-item-one-review",
+    review: {
+      commits: [{ sha: "b".repeat(40), subject: "Implement review context" }],
+      diffstat: " 2 files changed, 8 insertions(+), 1 deletion(-)\n",
+      filesTouched: [
+        { path: "src/server/review.ts", status: "added" },
+        { path: "tests/server/review.test.ts", status: "modified" },
+      ],
+      scopeOk: true,
+      midRunAssumptions: ["The review workspace remains read-only."],
+      acceptanceCriteria: ["The reviewer receives branch evidence."],
+      criterionChecks: [{ criterion: "The reviewer receives branch evidence.", check: "npm run test:runtime" }],
+      mechanicalPortions: ["Regenerate the task-board snapshots."],
+      priorFindings: [{
+        findingId: "finding-one",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 1,
+        file: "src/server/review.ts",
+        line: 12,
+        category: "correctness",
+        severity: "major",
+        expected: "The context is isolated.",
+        actual: "The prior attempt reused the engineer workspace.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      }],
+      priorFindingsTruncated: true,
+    },
+  } as const;
+  return [
+    {
+      name: "manager-intake",
+      prompt: renderPrompt({
+        runId: "run-golden-manager-intake",
+        wakeReason: "human_assignment",
+        context: context({
+          intake: true,
+          mission: {
+            role: "manager",
+            area: "Campaign intake",
+            mission: "Turn the campaign request into an observable workflow plan.",
+          },
+        }),
+      }),
+    },
+    {
+      name: "engineer-pipeline-implementation",
+      prompt: renderPrompt({
+        runId: "run-golden-pipeline-implementation",
+        wakeReason: "workflow_handoff",
+        context: context({ workflow: pipelineWorkflow("implementation") }),
+      }),
+    },
+    {
+      name: "engineer-fix-round",
+      prompt: renderPrompt({
+        runId: "run-golden-fix-round",
+        wakeReason: "workflow_handoff",
+        context: context({ workflow: fixWorkflow as never }),
+      }),
+    },
+    {
+      name: "verifier-machine",
+      prompt: renderPrompt({
+        runId: "run-golden-verifier-machine",
+        wakeReason: "workflow_handoff",
+        context: context({
+          mission: {
+            role: "verifier",
+            area: "Machine verification",
+            mission: "Verify the implementation with the configured non-modifying checks.",
+          },
+          workflow: pipelineWorkflow("testing"),
+        }),
+      }),
+    },
+    {
+      name: "reviewer-prior-findings",
+      prompt: renderPrompt({
+        runId: "run-golden-reviewer",
+        wakeReason: "workflow_handoff",
+        context: context({
+          mission: {
+            role: "verifier",
+            area: "Pipeline review",
+            mission: "Review the implementation independently.",
+          },
+          workflow: reviewWorkflow as never,
+        }),
+      }),
+    },
+    {
+      name: "designer-hazardous",
+      prompt: renderPrompt({
+        runId: "run-golden-designer",
+        wakeReason: "human_assignment",
+        context: context({
+          design: true,
+          mission: {
+            role: "manager",
+            area: "Hazard design",
+            mission: "Design the approved hazardous workflow.",
+          },
+        } as never),
+      }),
+    },
+    {
+      name: "oversight",
+      prompt: renderPrompt({
+        runId: "run-golden-oversight",
+        wakeReason: "human_resume",
+        context: context({
+          mission: {
+            role: "manager",
+            area: "Release oversight",
+            mission: "Review the supplied evidence and risks for human judgment.",
+          },
+        }),
+      }),
+    },
+  ];
+}
+
+test("agent prompt context matrix matches byte-identical golden fixtures", () => {
+  const cases = goldenPromptCases();
+  for (const fixture of cases) {
+    assert.equal(
+      fixture.prompt,
+      readFileSync(join(GOLDEN_FIXTURE_ROOT, `${fixture.name}.txt`), "utf8"),
+      fixture.name,
+    );
+  }
+});
+
 test("pipeline implementation engineer prompt appends the declared-scope bright-line block verbatim", () => {
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-pipeline-implementation",
     wakeReason: "human_assignment",
     context: context({ workflow: pipelineWorkflow("implementation") }),
@@ -56,7 +225,7 @@ test("pipeline implementation engineer prompt appends the declared-scope bright-
 });
 
 test("design-task manager prompt uses the hazardous designer instructions verbatim", () => {
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-hazardous-design",
     wakeReason: "human_assignment",
     context: context({
@@ -79,7 +248,7 @@ test("hazardous implementation prompt injects the design record and fault-inject
       designRecord: DESIGN_RECORD,
     },
   };
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-hazardous-implementation",
     wakeReason: "workflow_handoff",
     context: context({ workflow: workflow as never }),
@@ -110,7 +279,7 @@ test("fix-round engineer prompt replaces the plain implementation block and rend
       }],
     },
   } as const;
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-pipeline-fix",
     wakeReason: "workflow_handoff",
     context: context({ workflow: workflow as never }),
@@ -137,7 +306,7 @@ test("pipeline block is absent outside the engineer implementation stage", () =>
   ];
 
   for (const boundedContext of cases) {
-    const prompt = agentPrompt({
+    const prompt = renderPrompt({
       runId: `run-without-pipeline-block-${boundedContext.mission.role}-${boundedContext.workflow?.stage ?? "none"}`,
       wakeReason: "human_assignment",
       context: boundedContext,
@@ -180,7 +349,7 @@ test("pipeline verification reviewer prompt injects the independent review instr
       priorFindingsTruncated: true,
     },
   } as const;
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-pipeline-review",
     wakeReason: "workflow_handoff",
     context: context({
@@ -208,7 +377,7 @@ test("pipeline verification reviewer prompt injects the independent review instr
 
 test("hazardous reviewer prompt traces the injected design record to guaranteeing lines", () => {
   const base = pipelineWorkflow("verification");
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-hazardous-review",
     wakeReason: "workflow_handoff",
     context: context({
@@ -231,7 +400,7 @@ test("hazardous reviewer prompt traces the injected design record to guaranteein
 });
 
 test("legacy pipeline review replays mark scope evidence unavailable instead of reporting a violation", () => {
-  const prompt = agentPrompt({
+  const prompt = renderPrompt({
     runId: "run-legacy-pipeline-review",
     wakeReason: "workflow_handoff",
     context: context({

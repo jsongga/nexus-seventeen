@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { ContainedCliAgentLauncher } from "#server/agents/task-worker/contained-cli-launcher";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { CLAUDE_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot } from "./helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 test("a contained launch uses the per-run workspace for cwd and sandbox roots", async () => {
   const root = await tempRoot();
@@ -30,6 +33,7 @@ process.stdin.on("end", () => {
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
     profile: CLAUDE_PROFILE,
+    prompts: PROMPTS,
     model: "claude-test-model",
     workingDirectory: fallback,
     environment: {

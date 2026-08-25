@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadVerifyContract, parseVerifyContract, VerifyContractError } from "#server/agents/verify";
+import {
+  loadVerifyContract,
+  mapChangedFiles,
+  parseVerifyContract,
+  VerifyContractError,
+} from "#server/agents/verify";
 
 test("parses the real repo contract from docs/workflow.md", async () => {
   const contract = await loadVerifyContract(process.cwd());
@@ -14,6 +19,31 @@ test("parses the real repo contract from docs/workflow.md", async () => {
     { kind: "fixed", nodeTestDirs: ["tests/server/agents/verify"], vitest: undefined },
   );
   assert.ok(contract.rules.length >= 10);
+});
+
+test("prompt-only diffs select the registry and golden envelope suites", async () => {
+  const contract = await loadVerifyContract(process.cwd());
+  const promptTestDirectory = "tests/server/agents/task-worker";
+  const promptTestFiles = [
+    `${promptTestDirectory}/agent-envelope-pipeline.test.ts`,
+    `${promptTestDirectory}/prompt-registry.test.ts`,
+  ];
+  const host = {
+    fileExists: (path: string) => promptTestFiles.includes(path),
+    directoryExists: (path: string) => path === promptTestDirectory,
+  };
+
+  for (const tier of ["fast", "area"] as const) {
+    const selection = mapChangedFiles(["prompts/engineer.md"], contract.rules, tier, host);
+    assert.deepEqual(selection, {
+      nodeTestFiles: [],
+      nodeTestDirs: [promptTestDirectory],
+      vitestTargets: [],
+      escalations: [],
+      unmatched: [],
+    });
+    assert.ok(promptTestFiles.every((file) => file.startsWith(`${selection.nodeTestDirs[0]}/`)));
+  }
 });
 
 test("rejects malformed contracts closed-world", () => {

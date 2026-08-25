@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { codexAdapter } from "../../src/server/agents/runtime/codex.js";
 import {
@@ -10,7 +10,7 @@ import {
   prepareContainerInfrastructure,
   type ContainerInfrastructure,
 } from "#server/agents/task-container";
-import { AgentProcessError, type AgentLaunchRequest } from "#server/agents/task-worker";
+import { AgentProcessError, PromptRegistry, type AgentLaunchRequest } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
 import { CODEX_PROFILE } from "../server/agents/runtime/profile-fixtures.js";
 import {
@@ -24,6 +24,7 @@ import {
 } from "./helpers.js";
 
 const DIRECT_EGRESS_PROBE = "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 const CONNECT_PROBE = [
   "const net=require('node:net');",
   "const proxy=new URL(process.env.STEWARD_PROXY_URL);",
@@ -60,6 +61,7 @@ function launcher(
   const inner = new ContainerAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "stub-model",
     image,
     agentCommand: "steward-stub",

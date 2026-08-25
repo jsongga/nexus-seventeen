@@ -47,6 +47,7 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
   assert.equal(config.version, 1);
   assert.equal(config.boardUrl, "http://127.0.0.1:4318");
   assert.equal(config.runtimesConfigPath, undefined);
+  assert.equal(config.promptsRoot, undefined);
   assert.deepEqual(config.retry, { initialDelayMs: 1_000, maximumDelayMs: 60_000 });
   assert.equal(config.agents[0]?.longPollMs, 30_000);
   assert.equal(config.agents[0]?.agentTimeoutMs, undefined);
@@ -61,11 +62,13 @@ test("parses a bounded multi-agent fleet and applies idle/retry defaults", () =>
 test("accepts registry-resolved provider ids and an optional runtime profile path", () => {
   const input = validConfig();
   input.runtimesConfigPath = "config/custom-runtimes.json";
+  input.promptsRoot = "config/custom-prompts";
   (input.agents as Array<Record<string, unknown>>)[0]!.provider = "third-runtime";
   (input.agents as Array<Record<string, unknown>>)[0]!.role = "verifier";
 
   const config = parseTaskFleetConfig(input);
   assert.equal(config.runtimesConfigPath, "config/custom-runtimes.json");
+  assert.equal(config.promptsRoot, "config/custom-prompts");
   assert.equal(config.agents[0]?.provider, "third-runtime");
   assert.equal(config.agents[0]?.role, "verifier");
 });
@@ -102,6 +105,7 @@ test("rejects ambiguous, duplicated, unsafe, and unbounded fleet configuration",
     ["bad provider", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.provider = " invalid "; }, /provider is invalid/u],
     ["bad role", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.role = "administrator"; }, /role must be one of/u],
     ["empty runtime profile path", (value) => { value.runtimesConfigPath = ""; }, /runtimesConfigPath is invalid/u],
+    ["empty prompts root", (value) => { value.promptsRoot = ""; }, /promptsRoot is invalid/u],
     ["container lane without config", (value) => {
       (value.agents as Array<Record<string, unknown>>)[0]!.runtime = "container";
     }, /container is required for container lanes/u],

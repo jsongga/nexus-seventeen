@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue, StatementResultingChanges } from "node:sqlite";
 import { test } from "node:test";
 import { Worker } from "node:worker_threads";
@@ -14,6 +14,7 @@ import {
   type AgentRole,
 } from "#server/task-board";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { parseClaimRunResult } from "#shared/task-board-contract/validate";
 import {
   AGENT_ONE_TOKEN,
@@ -1523,6 +1524,7 @@ test("happy-path claim keeps the existing complete response shape", async () => 
 test("claim pinning round-trips verbatim and replay echoes the original pinned values", async () => {
   const fixture = await boardFixture();
   try {
+    const productionPromptsSha = PromptRegistry.loadSync(resolve("prompts")).promptsSha;
     fixture.board.createTask(fixture.project.projectId, taskRequest({
       title: "Pin the claim execution identity",
     }));
@@ -1533,7 +1535,7 @@ test("claim pinning round-trips verbatim and replay echoes the original pinned v
         runtime: " node ",
         runtimeVersion: "22.18.0",
         model: "gpt-5",
-        promptsSha: "prompt-bundle-sha-original",
+        promptsSha: productionPromptsSha,
       },
     } as const;
     const first = fixture.board.claimRun(fixture.engineer.agentId, originalRequest);

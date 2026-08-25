@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import { ContainerAgentLauncher } from "#server/agents/task-container";
-import { AgentProcessError } from "#server/agents/task-worker";
+import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "../task-worker/helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 async function fakeDocker(
   root: string,
@@ -48,6 +50,7 @@ function launcher(
   return new ContainerAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "gpt-test",
     image: "steward-agent:test",
     networkName: "steward-agents",
@@ -76,6 +79,7 @@ test("constructor accepts an immutable image ID without allowing option injectio
   const options = {
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
+    prompts: PROMPTS,
     model: "gpt-test",
     networkName: "steward-agents",
     proxyUrl: "http://steward-egress-proxy:3128",

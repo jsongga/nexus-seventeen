@@ -290,13 +290,15 @@ function configuredRunPinning(pinned: TaskWorkerOptions["pinned"]): ClaimedRunPi
     runtime: pinned?.runtime ?? null,
     runtimeVersion: pinned?.runtimeVersion ?? null,
     model: pinned?.model ?? null,
+    promptsSha: pinned?.promptsSha ?? null,
   });
 }
 
 function sameRunPinning(left: ClaimedRunPinning, right: ClaimedRunPinning): boolean {
   return left.runtime === right.runtime &&
     left.runtimeVersion === right.runtimeVersion &&
-    left.model === right.model;
+    left.model === right.model &&
+    left.promptsSha === right.promptsSha;
 }
 
 function scrubRunPinning(pinned: ClaimedRunPinning): ClaimedRunPinning {
@@ -306,6 +308,7 @@ function scrubRunPinning(pinned: ClaimedRunPinning): ClaimedRunPinning {
       ? null
       : safeDetail(pinned.runtimeVersion, "Invalid runtime-version pin"),
     model: pinned.model === null ? null : safeDetail(pinned.model, "Invalid model pin"),
+    promptsSha: pinned.promptsSha === null ? null : safeDetail(pinned.promptsSha, "Invalid prompts SHA pin"),
   });
 }
 

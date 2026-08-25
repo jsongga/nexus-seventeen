@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import type { RuntimeProfile } from "../../../../src/server/agents/runtime/profiles.js";
 import { parseTaskFleetConfig } from "../../../../src/server/agents/task-fleet/config.js";
@@ -12,6 +12,7 @@ import {
 } from "../../../../src/server/agents/task-fleet/runtime.js";
 import { ContainedCliAgentLauncher } from "../../../../src/server/agents/task-worker/contained-cli-launcher.js";
 import { TaskWorker } from "../../../../src/server/agents/task-worker/worker.js";
+import { PromptRegistry } from "../../../../src/server/agents/task-worker/prompt-registry.js";
 import type { AgentRole } from "#shared/task-board-contract";
 import { TaskBoardHttpError } from "#server/agents/task-worker";
 import type {
@@ -21,6 +22,8 @@ import type {
 } from "../../../../src/server/agents/task-fleet/types.js";
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { FakeBoard, claimed, tempRoot } from "../task-worker/helpers.js";
+
+const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -85,6 +88,7 @@ async function runCapabilityLane(profile: RuntimeProfile, role?: AgentRole): Pro
       const launcher = new ContainedCliAgentLauncher({
         adapter: codexAdapter,
         profile,
+        prompts: PROMPTS,
         ...(config.role === undefined ? {} : { role: config.role }),
         model: config.model,
         workingDirectory: root,
