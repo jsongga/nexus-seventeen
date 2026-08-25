@@ -5,8 +5,10 @@ import {
   TASK_PHASE_STATUSES,
   WAKEUP_REASONS,
 } from "#shared/task-board-contract";
-import { phaseSignalFromProviderLine } from "#server/agents/task-worker/provider-activity";
 import { TASK_WAKE_REASONS } from "#server/agents/task-worker/types";
+import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import { phaseSignalFromEvent, type LivePhaseSignal } from "../../../../src/server/agents/runtime/derive.js";
 
 test("worker wake reasons mirror the shared contract", () => {
   assert.deepEqual([...TASK_WAKE_REASONS], [...WAKEUP_REASONS]);
@@ -16,7 +18,7 @@ function providerPhase(
   provider: "codex" | "claude",
   stage: string,
   status: string,
-): ReturnType<typeof phaseSignalFromProviderLine> {
+): LivePhaseSignal | null {
   const marker = `STEWARD_PHASE_JSON=${JSON.stringify({
     key: "phase-one",
     title: "Inspect",
@@ -30,7 +32,8 @@ function providerPhase(
         type: "user",
         message: { content: [{ type: "tool_result", content: [{ type: "text", text: marker }] }] },
       });
-  return phaseSignalFromProviderLine(provider, line);
+  const adapter = provider === "codex" ? codexAdapter : claudeAdapter;
+  return adapter.events(line).map(phaseSignalFromEvent).find((value) => value !== null) ?? null;
 }
 
 test("provider phase-signal extraction accepts exactly the shared phase enums", () => {

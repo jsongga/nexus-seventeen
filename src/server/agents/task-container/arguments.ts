@@ -1,9 +1,21 @@
 import type { AgentRole } from "#shared/task-board-contract";
-import {
-  claudeProviderArgs,
-  codexProviderArgs,
-} from "#server/agents/task-worker/agent-envelope";
 import type { ContainerAgentLauncherOptions } from "./container-launcher.js";
+
+const HOST_ONLY_ENVIRONMENT_KEYS = new Set([
+  "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  // These Claude controls configure the host launcher only. They were not part
+  // of the shipped Claude container environment before runtime adapters.
+  "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+  "CLAUDE_CODE_SKIP_PROMPT_HISTORY",
+  "CLAUDE_CODE_ATTRIBUTION_HEADER",
+  "DISABLE_AUTOUPDATER",
+]);
+
+function runtimeEnvironmentKeys(environment: NodeJS.ProcessEnv): readonly string[] {
+  return Object.entries(environment)
+    .filter(([key, value]) => typeof value === "string" && !HOST_ONLY_ENVIRONMENT_KEYS.has(key))
+    .map(([key]) => key);
+}
 
 export interface ContainerRunPlan {
   readonly args: readonly string[];
@@ -11,22 +23,26 @@ export interface ContainerRunPlan {
 }
 
 export function buildContainerRunPlan(input: {
-  readonly options: Required<Pick<ContainerAgentLauncherOptions, "provider" | "model" | "image" | "networkName" | "proxyUrl">>
+  readonly options: Required<Pick<ContainerAgentLauncherOptions, "adapter" | "model" | "image" | "networkName" | "proxyUrl">>
     & Pick<ContainerAgentLauncherOptions, "agentCommand" | "extraContainerEnv">;
   readonly runId: string;
   readonly taskId: string;
   readonly fixedRole: AgentRole;
   readonly workspacePath: string;
   readonly bareApiKey: boolean;
+  /** The adapter environment already computed by the launcher for this spawn. */
+  readonly runtimeEnvironment: NodeJS.ProcessEnv;
 }): ContainerRunPlan {
   const containerName = `steward-task-${input.runId}`;
-  const { model } = input.options;
-  const cliArgs = input.options.provider === "codex"
-    ? codexProviderArgs({ model, workingDirectory: "/workspace", schemaPath: "/opt/steward/agent-result.schema.json", bareApiKey: input.bareApiKey, proxyEgress: true }, input.fixedRole)
-    : claudeProviderArgs({ model, workingDirectory: "/workspace", schemaPath: "/opt/steward/agent-result.schema.json", bareApiKey: input.bareApiKey }, input.fixedRole);
-  const providerKeys = input.options.provider === "codex"
-    ? ["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ORGANIZATION", "OPENAI_PROJECT"]
-    : ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"];
+  const { adapter, model } = input.options;
+  const cliArgs = adapter.args({
+    model,
+    workingDirectory: "/workspace",
+    schemaPath: "/opt/steward/agent-result.schema.json",
+    bareApiKey: input.bareApiKey,
+    proxyEgress: true,
+  }, input.fixedRole);
+  const runtimeKeys = runtimeEnvironmentKeys(input.runtimeEnvironment);
   return {
     containerName,
     args: [
@@ -46,10 +62,10 @@ export function buildContainerRunPlan(input: {
       "-e", `http_proxy=${input.options.proxyUrl}`,
       "-e", `https_proxy=${input.options.proxyUrl}`,
       "-e", "NO_PROXY=localhost,127.0.0.1",
-      ...providerKeys.flatMap((key) => ["-e", key]),
+      ...runtimeKeys.flatMap((key) => ["-e", key]),
       ...Object.entries(input.options.extraContainerEnv ?? {}).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
       input.options.image,
-      input.options.agentCommand ?? input.options.provider,
+      input.options.agentCommand ?? adapter.runtime,
       ...cliArgs,
     ],
   };

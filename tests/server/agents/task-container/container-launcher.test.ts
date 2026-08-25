@@ -3,8 +3,10 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import { ContainerAgentLauncher } from "#server/agents/task-container";
-import { AgentProcessError } from "#server/agents/task-worker/agent-envelope";
+import { AgentProcessError } from "#server/agents/task-worker";
 import { context, tempRoot, until } from "../task-worker/helpers.js";
 
 async function fakeDocker(
@@ -43,7 +45,7 @@ function launcher(
   terminationGraceMs = 20,
 ): ContainerAgentLauncher {
   return new ContainerAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "gpt-test",
     image: "steward-agent:test",
     networkName: "steward-agents",
@@ -70,7 +72,7 @@ async function launch(
 
 test("constructor accepts an immutable image ID without allowing option injection", () => {
   const options = {
-    provider: "codex" as const,
+    adapter: codexAdapter,
     model: "gpt-test",
     networkName: "steward-agents",
     proxyUrl: "http://steward-egress-proxy:3128",
@@ -123,14 +125,14 @@ test("interrupt waits for docker run to close before accepting explicit absence"
     `,
   });
   const handle = await launch(launcher(fixture), fixture.workspace, "run-explicit-absence");
-  const activityLabels: string[] = [];
-  const collectedActivity = (async (): Promise<string[]> => {
-    for await (const label of handle.activity) activityLabels.push(label);
-    return activityLabels;
+  const activityEvents: RuntimeEvent[] = [];
+  const collectedActivity = (async (): Promise<RuntimeEvent[]> => {
+    for await (const event of handle.activity) activityEvents.push(event);
+    return activityEvents;
   })();
   void handle.completion.catch(() => undefined);
   await until(() => existsSync(fixture.marker), "fake docker run client");
-  await until(() => activityLabels.includes("Task container attached"), "container attachment activity");
+  await until(() => activityEvents.some((event) => event.type === "tool_call" && event.name === "container_attached"), "container attachment activity");
 
   await handle.interrupt("Human interrupted this agent run");
   await assert.rejects(handle.completion, /interrupted directly/u);
@@ -138,9 +140,9 @@ test("interrupt waits for docker run to close before accepting explicit absence"
     "run", "stop", "inspect", "rm", "inspect",
   ]);
   assert.deepEqual(await collectedActivity, [
-    "Task container starting",
-    "Task container attached",
-    "Task container teardown",
+    { type: "tool_call", name: "container_starting", detail: "" },
+    { type: "tool_call", name: "container_attached", detail: "" },
+    { type: "tool_call", name: "container_teardown", detail: "" },
   ]);
 });
 

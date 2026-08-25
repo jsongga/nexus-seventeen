@@ -19,6 +19,8 @@ import {
   WORKFLOW_STAGES,
   type AgentRole,
 } from "#shared/task-board-contract";
+import { AgentProcessError } from "../runtime/errors.js";
+import type { RuntimeEvent } from "../runtime/events.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";
 
@@ -262,8 +264,6 @@ const SECRET_PATTERNS = Object.freeze([
   /\bhttps?:\/\/[^\s/:@]{1,128}:[^\s/@]{4,256}@/iu,
 ] as const);
 
-export type AgentProvider = "codex" | "claude";
-
 export interface ProviderArgumentOptions {
   readonly model: string;
   readonly workingDirectory: string;
@@ -275,20 +275,13 @@ export interface ProviderArgumentOptions {
   readonly proxyEgress?: boolean;
 }
 
-export class AgentProcessError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "AgentProcessError";
-  }
-}
-
-export class ActivityChannel implements AsyncIterable<string> {
-  readonly #queued: string[] = [];
-  readonly #waiters: Array<(result: IteratorResult<string>) => void> = [];
+export class ActivityChannel implements AsyncIterable<RuntimeEvent> {
+  readonly #queued: RuntimeEvent[] = [];
+  readonly #waiters: Array<(result: IteratorResult<RuntimeEvent>) => void> = [];
   #closed = false;
   #iteratorCreated = false;
 
-  publish(value: string): void {
+  publish(value: RuntimeEvent): void {
     if (this.#closed) return;
     const waiter = this.#waiters.shift();
     if (waiter !== undefined) {
@@ -305,13 +298,13 @@ export class ActivityChannel implements AsyncIterable<string> {
     for (const waiter of this.#waiters.splice(0)) waiter({ done: true, value: undefined });
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<string> {
+  [Symbol.asyncIterator](): AsyncIterator<RuntimeEvent> {
     if (this.#iteratorCreated) throw new Error("Agent activity stream can only be consumed once");
     this.#iteratorCreated = true;
     return { next: () => this.#next() };
   }
 
-  #next(): Promise<IteratorResult<string>> {
+  #next(): Promise<IteratorResult<RuntimeEvent>> {
     const value = this.#queued.shift();
     if (value !== undefined) return Promise.resolve({ done: false, value });
     if (this.#closed) return Promise.resolve({ done: true, value: undefined });
@@ -338,25 +331,6 @@ export function assertCredentialSafe(value: string, label: string): void {
 
 export function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-export function providerEnvironment(provider: AgentProvider, source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const common = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"] as const;
-  const providerKeys = provider === "codex"
-    ? (["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ORGANIZATION", "OPENAI_PROJECT"] as const)
-    : (["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] as const);
-  const result: NodeJS.ProcessEnv = Object.create(null) as NodeJS.ProcessEnv;
-  for (const key of [...common, ...providerKeys]) {
-    const value = source[key];
-    if (typeof value === "string" && value.length > 0 && !value.includes("\0")) result[key] = value;
-  }
-  if (provider === "claude") {
-    result.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1";
-    result.CLAUDE_CODE_SKIP_PROMPT_HISTORY = "1";
-    result.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
-    result.DISABLE_AUTOUPDATER = "1";
-  }
-  return result;
 }
 
 export function agentRole(request: AgentLaunchRequest): AgentRole {
@@ -508,149 +482,9 @@ export function agentPrompt(request: AgentLaunchRequest): string {
   ].join("\n");
 }
 
-export function codexProviderArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): readonly string[] {
-  const includedEnvironment = options.proxyEgress === true
-    ? ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY"]
-    : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
-  return Object.freeze([
-    "exec",
-    "--ephemeral",
-    "--ignore-user-config",
-    "--ignore-rules",
-    "--strict-config",
-    "--config",
-    'approval_policy="never"',
-    "--config",
-    `sandbox_workspace_write.network_access=${options.proxyEgress === true ? "true" : "false"}`,
-    "--config",
-    'shell_environment_policy.inherit="none"',
-    "--config",
-    `shell_environment_policy.include_only=${JSON.stringify(includedEnvironment)}`,
-    "--model",
-    options.model,
-    "--sandbox",
-    fixedRole === "engineer" ? "workspace-write" : "read-only",
-    "--cd",
-    options.workingDirectory,
-    "--color",
-    "never",
-    "--json",
-    "--output-schema",
-    options.schemaPath,
-    "-",
-  ]);
-}
-
-export function claudeProviderArgs(options: ProviderArgumentOptions, fixedRole: AgentRole): readonly string[] {
-  const tools = fixedRole === "engineer"
-    ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
-    : fixedRole === "verifier"
-      ? ["Read", "Glob", "Grep", "Bash"]
-      : ["Read", "Glob", "Grep"];
-  const settings = {
-    sandbox: {
-      enabled: true,
-      failIfUnavailable: true,
-      allowUnsandboxedCommands: false,
-      filesystem: {
-        denyRead: ["~/"],
-        allowRead: [options.workingDirectory],
-        ...(fixedRole === "engineer"
-          ? { allowWrite: [options.workingDirectory] }
-          : { denyWrite: [options.workingDirectory] }),
-      },
-      credentials: {
-        files: [
-          { path: "~/.ssh", mode: "deny" },
-          { path: "~/.aws", mode: "deny" },
-          { path: "~/.config/gcloud", mode: "deny" },
-        ],
-        envVars: [
-          { name: "ANTHROPIC_API_KEY", mode: "deny" },
-          { name: "ANTHROPIC_AUTH_TOKEN", mode: "deny" },
-          { name: "CODEX_API_KEY", mode: "deny" },
-          { name: "OPENAI_API_KEY", mode: "deny" },
-        ],
-      },
-    },
-  };
-  const args = [
-    "--print",
-    // Bare mode deliberately skips OAuth/keychain reads, so enable it only when explicit API-key auth is available.
-    ...(options.bareApiKey ? ["--bare"] : []),
-    "--safe-mode",
-    "--disable-slash-commands",
-    "--exclude-dynamic-system-prompt-sections",
-    "--model",
-    options.model,
-    "--effort",
-    "low",
-    "--no-session-persistence",
-    "--strict-mcp-config",
-    "--mcp-config",
-    '{"mcpServers":{}}',
-    "--settings",
-    JSON.stringify(settings),
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--json-schema",
-    JSON.stringify(RESULT_SCHEMA),
-    "--permission-mode",
-    fixedRole === "engineer" ? "acceptEdits" : fixedRole === "verifier" ? "dontAsk" : "plan",
-    "--tools",
-    tools.join(","),
-  ];
-  if (tools.includes("Bash")) args.push("--allowedTools", "Bash");
-  return Object.freeze(args);
-}
-
-export function decodeJson(value: string, label: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    throw new AgentProcessError(`${label} was not valid JSON`);
-  }
-}
-
-export function outputObject(value: unknown, label: string): Record<string, unknown> {
+function outputObject(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new AgentProcessError(`${label} is invalid`);
   return value as Record<string, unknown>;
-}
-
-export function providerResult(provider: AgentProvider, stdout: string): unknown {
-  if (provider === "claude") {
-    let envelope: Record<string, unknown> | null = null;
-    for (const line of stdout.split(/\r?\n/u)) {
-      if (line.trim().length === 0) continue;
-      if (line.length > 1024 * 1024) throw new AgentProcessError("Claude emitted an oversized stream event");
-      const event = outputObject(decodeJson(line, "Claude stream event"), "Claude stream event");
-      if (event.type === "result") envelope = event;
-    }
-    if (envelope === null) throw new AgentProcessError("Claude ended without a terminal result event");
-    if (
-      envelope.is_error === true ||
-      typeof envelope.subtype === "string" && envelope.subtype.toLowerCase().includes("error")
-    ) {
-      throw new AgentProcessError("Claude reported a failed run");
-    }
-    if (envelope.structured_output !== undefined) return envelope.structured_output;
-    return typeof envelope.result === "string" ? decodeJson(envelope.result, "Claude result") : envelope.result;
-  }
-  let message: string | undefined;
-  let completed = false;
-  for (const line of stdout.split(/\r?\n/u)) {
-    if (line.trim().length === 0) continue;
-    if (line.length > 1024 * 1024) throw new AgentProcessError("Codex emitted an oversized JSONL event");
-    const event = outputObject(decodeJson(line, "Codex event"), "Codex event");
-    if (event.type === "turn.failed" || event.type === "error") throw new AgentProcessError("Codex reported a failed run");
-    if (event.type === "turn.completed") completed = true;
-    if (event.type !== "item.completed") continue;
-    const item = outputObject(event.item, "Codex item");
-    if (item.type === "agent_message" && typeof item.text === "string") message = item.text;
-  }
-  if (!completed || message === undefined) throw new AgentProcessError("Codex ended without a completed structured result");
-  return decodeJson(message, "Codex result");
 }
 
 export function structuredOutcome(value: unknown): AgentRunOutcome {

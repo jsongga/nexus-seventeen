@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
-import { estimateActivity, phaseActivity } from "#server/agents/task-worker/provider-activity";
 import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskWorker } from "#server/agents/task-worker/worker";
 import type {
@@ -32,6 +33,16 @@ import {
 } from "./helpers.js";
 
 type WorkerDiagnostic = TaskWorkerDiagnosticEvent;
+
+function phaseEvent(signal: Readonly<{
+  key: string;
+  title: string;
+  stage: string;
+  status: string;
+  parallelGroup: string | null;
+}>): RuntimeEvent {
+  return { type: "tool_result", name: "command", output: `STEWARD_PHASE_JSON=${JSON.stringify(signal)}\n` };
+}
 
 async function worker(
   root: string,
@@ -493,7 +504,7 @@ test("records idempotent live activity before terminal output and settlement", a
     assert.ok(handle);
 
     board.appendFailures = 1;
-    handle.emitActivity("Agent process started.");
+    handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity output");
 
     assert.equal(taskWorker.snapshot.activePhase, "running");
@@ -511,6 +522,127 @@ test("records idempotent live activity before terminal output and settlement", a
       ["progress", "progress", "proposed_child_task", "result"],
     );
     assert.equal(board.settlements[0]?.outcome, "completed");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("redacts raw runtime payloads at the worker persistence boundary", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  const privatePath = "/Users/alice/private.txt";
+  const credential = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+  const command = `cat ${privatePath}`;
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+
+    handle.emitActivity({
+      type: "tool_call",
+      name: "command",
+      detail: `${command}; export TOKEN=${credential}`,
+    });
+    handle.emitActivity({
+      type: "tool_result",
+      name: "command",
+      output: `${command}\nread ${privatePath}\n${credential}\n`,
+      failed: false,
+    });
+    handle.emitActivity({
+      type: "tool_result",
+      name: "command",
+      output: `diagnostic ${privatePath} ${credential}\nSTEWARD_ESTIMATE_MINUTES=45\n`,
+      failed: false,
+    });
+    handle.resolve({ ...completedOutcome("Safe result."), outputs: [] });
+    await dispatch;
+
+    assert.deepEqual(board.appendAttempts.map((entry) => entry.output), [
+      { type: "progress", body: "Running a development check." },
+      { type: "progress", body: "Agent estimated 45 minutes of work remaining." },
+      { type: "progress", body: "A development check completed." },
+    ]);
+    assert.deepEqual(board.estimateUpdates.map((entry) => entry.expectedAgentMinutes), [45]);
+    assert.deepEqual([...new Set([
+      ...board.phaseCreates.map((entry) => entry.title),
+      ...board.phaseUpdates.flatMap((entry) => [
+        entry.phase.title,
+        ...(entry.title === undefined ? [] : [entry.title]),
+      ]),
+    ])], ["Review task", "Test work"]);
+
+    const persistencePayload = JSON.stringify({
+      appendRunOutput: board.appendAttempts,
+      estimateApis: board.estimateUpdates,
+      phaseApis: { creates: board.phaseCreates, updates: board.phaseUpdates },
+    });
+    assert.doesNotMatch(persistencePayload, /alice|private|sk-proj|cat\s/iu);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("uses a normalized runtime error as the scrubbed terminal failure detail", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+
+    handle.emitActivity({
+      type: "error",
+      detail: "Runtime failed after Bearer abc123def456 exposed a malformed result",
+    });
+    await until(() => board.outputs.length === 1, "runtime error activity");
+    handle.reject(new Error("generic terminal parser failure"));
+    await dispatch;
+
+    assert.deepEqual(board.outputs[0]?.output, {
+      type: "progress",
+      body: "The run encountered a problem and needs attention.",
+    });
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.equal(board.settlements[0]?.result, "Runtime failed after [redacted:bearer] exposed a malformed result");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("preserves unbuffered container lifecycle activity labels", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+
+    handle.emitActivity({ type: "tool_call", name: "container_starting", detail: "" });
+    handle.emitActivity({ type: "tool_call", name: "container_attached", detail: "" });
+    handle.emitActivity({ type: "tool_call", name: "container_teardown", detail: "" });
+    handle.resolve(completedOutcome());
+    await dispatch;
+
+    assert.deepEqual(board.outputs.slice(0, 3).map((entry) => entry.output), [
+      { type: "progress", body: "Task container starting" },
+      { type: "progress", body: "Task container attached" },
+      { type: "progress", body: "Task container teardown" },
+    ]);
   } finally {
     await taskWorker.close();
   }
@@ -535,30 +667,34 @@ test("structured phase markers replace inference without creating an interleaved
     );
     assert.equal(board.phaseUpdates[0]?.status, "in_progress");
 
-    handle.emitActivity("Preparing the implementation plan.");
+    handle.emitActivity({ type: "tool_call", name: "plan", detail: "" });
     await until(() => board.phaseCreates.length === 2, "planning phase");
     assert.equal(board.phaseCreates[1]?.stage, "planning");
     assert.ok(board.phaseUpdates.some((update) => (
       update.phase.stage === "research" && update.stage === undefined && update.status === "completed"
     )));
 
-    handle.emitActivity(estimateActivity(60));
+    handle.emitActivity({ type: "tool_result", name: "command", output: "STEWARD_ESTIMATE_MINUTES=60\n" });
     await until(() => board.estimateUpdates.length === 1, "live estimate");
     assert.equal(board.estimateUpdates[0]?.expectedAgentMinutes, 60);
+    assert.ok(board.outputs.some((entry) => (
+      entry.output.type === "progress" && entry.output.body === "Agent estimated 60 minutes of work remaining."
+    )));
     assert.equal(board.settlements.length, 0, "live state is visible before terminal settlement");
 
-    handle.emitActivity("Running a development check.");
+    await delay(1_525);
+    handle.emitActivity({ type: "tool_call", name: "command", detail: "npm test" });
     await until(() => board.phaseCreates.length === 3, "inferred testing phase");
     assert.equal(board.phaseCreates[2]?.stage, "testing");
 
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "api",
       title: "Implement retry API",
       stage: "execution",
       status: "in_progress",
       parallelGroup: "delivery",
     }));
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "tests",
       title: "Verify retry API",
       stage: "testing",
@@ -566,6 +702,9 @@ test("structured phase markers replace inference without creating an interleaved
       parallelGroup: "delivery",
     }));
     await until(() => board.phaseCreates.length === 4, "parallel live phases");
+    assert.ok(board.outputs.some((entry) => (
+      entry.output.type === "progress" && entry.output.body === "Agent updated a task phase."
+    )));
     assert.ok(board.phaseUpdates.some((update) => (
       update.phase.phaseId === "phase-3" && update.title === "Implement retry API" &&
       update.stage === "execution" && update.parallelGroup === "delivery"
@@ -574,7 +713,8 @@ test("structured phase markers replace inference without creating an interleaved
     assert.equal(board.settlements.length, 0, "parallel phases are visible before terminal settlement");
 
     const activityCount = board.outputs.length;
-    handle.emitActivity("Updating the implementation.");
+    await delay(1_525);
+    handle.emitActivity({ type: "tool_call", name: "file_change", detail: "" });
     await until(() => board.outputs.length === activityCount + 1, "post-marker provider activity");
     assert.equal(board.phaseCreates.length, 4, "inference stays disabled after structured telemetry begins");
     const outcome = completedOutcome("Customers can retry without duplicate work.");
@@ -624,7 +764,7 @@ test("repeated and parallel live phases append history without rewriting a compl
     const handle = launcher.handles[0];
     assert.ok(handle);
 
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-1-execution",
       title: "First implementation cycle",
       stage: "execution",
@@ -636,7 +776,7 @@ test("repeated and parallel live phases append history without rewriting a compl
     )), "first cycle phase");
     assert.equal(board.phaseCreates.length, 1, "the first marker adopts the inferred phase");
     const firstCycleId = "phase-1";
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-1-execution",
       title: "First implementation cycle",
       stage: "execution",
@@ -650,14 +790,14 @@ test("repeated and parallel live phases append history without rewriting a compl
       update.phase.phaseId === firstCycleId
     )).length;
 
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-1-execution",
       title: "An invalid attempt to reuse completed history",
       stage: "planning",
       status: "in_progress",
       parallelGroup: null,
     }));
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-2-planning",
       title: "Second planning cycle",
       stage: "planning",
@@ -668,14 +808,14 @@ test("repeated and parallel live phases append history without rewriting a compl
     assert.equal(board.phaseCreates[1]?.title, "Second planning cycle");
     assert.equal(board.phaseCreates[1]?.stage, "planning");
 
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-2-api",
       title: "Parallel API pass",
       stage: "execution",
       status: "in_progress",
       parallelGroup: "cycle-2-delivery",
     }));
-    handle.emitActivity(phaseActivity({
+    handle.emitActivity(phaseEvent({
       key: "cycle-2-tests",
       title: "Parallel test pass",
       stage: "testing",
@@ -1159,7 +1299,7 @@ test("starts process-group termination before an interrupt journal write can rej
     await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
     const handle = launcher.handles[0];
     assert.ok(handle);
-    handle.emitActivity("Agent process started.");
+    handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity forwarding");
     handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
 
@@ -1202,7 +1342,7 @@ test("shares concurrent interrupt settlement and retries only after the in-fligh
     await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
     const handle = launcher.handles[0];
     assert.ok(handle);
-    handle.emitActivity("Agent process started.");
+    handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity forwarding");
     let releaseInterrupt!: () => void;
     handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
@@ -1242,7 +1382,7 @@ test("shutdown records a rejected termination and completes while the child rema
     await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
     const handle = launcher.handles[0];
     assert.ok(handle);
-    handle.emitActivity("Agent process started.");
+    handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity forwarding");
     handle.interruptFailures = 1;
     handle.interruptFailureMessage = "Simulated process-group termination failure after Bearer abc123def456";

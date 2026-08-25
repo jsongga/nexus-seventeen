@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { join } from "node:path";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import { runtimeRegistry } from "../../../../src/server/agents/runtime/registry.js";
+import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
 import { TaskBoardHttpError } from "#server/agents/task-worker";
 import {
   captureTaskFleetRuntimeVersion,
   classifyTaskFleetError,
+  createTaskFleetWorker,
   isTransientTaskFleetError,
 } from "#server/agents/task-fleet/runtime";
+import { tempRoot } from "../task-worker/helpers.js";
 
 test("captures the first CLI version line once and treats failures or invalid output as unavailable", async () => {
   const calls: Array<{ command: string; arguments_: readonly string[] }> = [];
@@ -19,6 +25,44 @@ test("captures the first CLI version line once and treats failures or invalid ou
   assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => { throw new Error("missing"); }), null);
   assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "\nsecond line"), null);
   assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "v".repeat(129)), null);
+});
+
+test("constructs a worker with the registry-selected adapter and rejects an unknown runtime id", async () => {
+  const root = await tempRoot();
+  const config = parseTaskFleetConfig({
+    version: 1,
+    boardUrl: "http://127.0.0.1:4318",
+    agents: [{
+      workerId: "worker-one",
+      agentId: "engineer-one",
+      token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+      provider: "codex",
+      model: "codex-test",
+      workingDirectory: root,
+      statePath: join(root, "journal", "state.json"),
+    }],
+  }).agents[0]!;
+  let environmentCalls = 0;
+  const selected = Object.freeze({
+    ...codexAdapter,
+    environment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+      environmentCalls += 1;
+      return codexAdapter.environment(source);
+    },
+  });
+  const worker = await createTaskFleetWorker(config, "http://127.0.0.1:4318", {
+    registry: runtimeRegistry([selected]),
+  });
+  try {
+    assert.equal(environmentCalls, 1);
+  } finally {
+    await worker.close();
+  }
+
+  await assert.rejects(
+    createTaskFleetWorker(config, "http://127.0.0.1:4318", { registry: runtimeRegistry([]) }),
+    /Unknown runtime adapter: codex/u,
+  );
 });
 
 test("retries transport, throttling, server, and journal I/O failures", () => {

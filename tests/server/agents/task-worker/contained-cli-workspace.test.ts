@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
+import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { ContainedCliAgentLauncher } from "#server/agents/task-worker/contained-cli-launcher";
 import { context, tempRoot } from "./helpers.js";
 
@@ -26,7 +27,7 @@ process.stdin.on("end", () => {
 `, { mode: 0o700 });
   await chmod(executable, 0o700);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "claude",
+    adapter: claudeAdapter,
     model: "claude-test-model",
     workingDirectory: fallback,
     environment: {

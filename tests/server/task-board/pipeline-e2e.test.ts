@@ -6,6 +6,7 @@ import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { codexAdapter } from "../../../src/server/agents/runtime/codex.js";
 import {
   DESIGN_FAILURE_POINTS,
   SCOPE_HOLD_SUMMARY_PREFIX,
@@ -562,7 +563,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     statePath: join(root, "manager-worker", "journal.json"),
     board: new HttpTaskBoardClient({ baseUrl: address.url, token: MANAGER_TOKEN }),
     launcher: new ContainedCliAgentLauncher({
-      provider: "codex",
+      adapter: codexAdapter,
       model: "fake-codex",
       workingDirectory: managerCli.working,
       environment: {
@@ -578,7 +579,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const workspaceRoot = join(root, "implementation-workspaces");
   const engineerLauncher = new WorkspaceScopedLauncher(
     new ContainedCliAgentLauncher({
-      provider: "codex",
+      adapter: codexAdapter,
       model: ENGINEER_RUN_PIN.model,
       workingDirectory: engineerCli.working,
       environment: {
@@ -607,7 +608,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
         board: new HttpTaskBoardClient({ baseUrl: address.url, token: ENGINEER_TWO_TOKEN }),
         launcher: new WorkspaceScopedLauncher(
           new ContainedCliAgentLauncher({
-            provider: "codex",
+            adapter: codexAdapter,
             model: ENGINEER_RUN_PIN.model,
             workingDirectory: secondEngineerCli.working,
             environment: {
@@ -628,7 +629,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     statePath: join(root, "verifier-worker", "journal.json"),
     board: new HttpTaskBoardClient({ baseUrl: address.url, token: VERIFIER_TOKEN }),
     launcher: new ContainedCliAgentLauncher({
-      provider: "codex",
+      adapter: codexAdapter,
       model: VERIFIER_RUN_PIN.model,
       workingDirectory: verifierCli.working,
       environment: {

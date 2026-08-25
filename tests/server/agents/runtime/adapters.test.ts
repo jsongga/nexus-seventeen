@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AGENT_ROLES } from "../../../../src/shared/task-board-contract/index.js";
-import {
-  claudeProviderArgs,
-  codexProviderArgs,
-  providerEnvironment,
-  providerResult,
-  type AgentProvider,
-  type ProviderArgumentOptions,
-} from "../../../../src/server/agents/task-worker/agent-envelope.js";
+import type { ProviderArgumentOptions } from "../../../../src/server/agents/task-worker/agent-envelope.js";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import { defaultRuntimeRegistry, runtimeRegistry } from "../../../../src/server/agents/runtime/registry.js";
@@ -30,20 +23,32 @@ const OPTION_CASES: readonly ProviderArgumentOptions[] = [
   },
 ];
 
-function invocation(call: () => unknown): unknown {
-  try {
-    return { returned: call() };
-  } catch (error) {
-    assert.ok(error instanceof Error);
-    return { threw: { name: error.name, message: error.message } };
-  }
-}
-
-test("runtime adapters preserve provider argv for every fixed agent role", () => {
+test("runtime adapters define bounded argv for every fixed agent role", () => {
   for (const options of OPTION_CASES) {
     for (const role of AGENT_ROLES) {
-      assert.deepEqual(codexAdapter.args(options, role), codexProviderArgs(options, role));
-      assert.deepEqual(claudeAdapter.args(options, role), claudeProviderArgs(options, role));
+      const codex = codexAdapter.args(options, role);
+      assert.deepEqual(codex.slice(0, 5), ["exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--strict-config"]);
+      assert.equal(codex[codex.indexOf("--model") + 1], options.model);
+      assert.equal(codex[codex.indexOf("--cd") + 1], options.workingDirectory);
+      assert.equal(codex[codex.indexOf("--output-schema") + 1], options.schemaPath);
+      assert.equal(codex[codex.indexOf("--sandbox") + 1], role === "engineer" ? "workspace-write" : "read-only");
+      assert.ok(codex.includes(`sandbox_workspace_write.network_access=${options.proxyEgress === true ? "true" : "false"}`));
+      assert.deepEqual(codex.slice(-2), [options.schemaPath, "-"]);
+
+      const claude = claudeAdapter.args(options, role);
+      assert.deepEqual(claude.slice(0, options.bareApiKey ? 2 : 1), options.bareApiKey ? ["--print", "--bare"] : ["--print"]);
+      assert.equal(claude[claude.indexOf("--model") + 1], options.model);
+      assert.equal(claude[claude.indexOf("--output-format") + 1], "stream-json");
+      assert.equal(claude[claude.indexOf("--permission-mode") + 1], role === "engineer" ? "acceptEdits" : role === "verifier" ? "dontAsk" : "plan");
+      assert.equal(claude[claude.indexOf("--tools") + 1], role === "engineer"
+        ? "Read,Glob,Grep,Edit,Write,Bash"
+        : role === "verifier" ? "Read,Glob,Grep,Bash" : "Read,Glob,Grep");
+      const settings = JSON.parse(claude[claude.indexOf("--settings") + 1]!) as {
+        sandbox: { filesystem: { allowRead: readonly string[]; allowWrite?: readonly string[]; denyWrite?: readonly string[] } };
+      };
+      assert.deepEqual(settings.sandbox.filesystem.allowRead, [options.workingDirectory]);
+      assert.deepEqual(settings.sandbox.filesystem[role === "engineer" ? "allowWrite" : "denyWrite"], [options.workingDirectory]);
+      assert.equal(claude.includes("--allowedTools"), role !== "manager");
     }
   }
 });
@@ -69,49 +74,58 @@ test("runtime adapters preserve provider environment filtering", () => {
     UNRELATED_SECRET: "must-not-pass",
   };
 
-  assert.deepEqual(codexAdapter.environment(source), providerEnvironment("codex", source));
-  assert.deepEqual(claudeAdapter.environment(source), providerEnvironment("claude", source));
+  assert.deepEqual({ ...codexAdapter.environment(source) }, {
+    PATH: "/usr/local/bin:/usr/bin",
+    HOME: "/home/agent",
+    TMPDIR: "/tmp/runtime",
+    LANG: "en_US.UTF-8",
+    LC_ALL: "C",
+    SSL_CERT_FILE: "/etc/ssl/cert.pem",
+    SSL_CERT_DIR: "/etc/ssl/certs",
+    CODEX_HOME: "/home/agent/.codex",
+    CODEX_API_KEY: "codex-key",
+    OPENAI_API_KEY: "openai-key",
+    OPENAI_ORGANIZATION: "org-one",
+    OPENAI_PROJECT: "project-one",
+  });
+  assert.deepEqual({ ...claudeAdapter.environment(source) }, {
+    PATH: "/usr/local/bin:/usr/bin",
+    HOME: "/home/agent",
+    TMPDIR: "/tmp/runtime",
+    LANG: "en_US.UTF-8",
+    LC_ALL: "C",
+    SSL_CERT_FILE: "/etc/ssl/cert.pem",
+    SSL_CERT_DIR: "/etc/ssl/certs",
+    ANTHROPIC_API_KEY: "anthropic-key",
+    CLAUDE_CONFIG_DIR: "/home/agent/.claude",
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1",
+    CLAUDE_CODE_SKIP_PROMPT_HISTORY: "1",
+    CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
+    DISABLE_AUTOUPDATER: "1",
+  });
 });
 
-test("runtime adapters preserve successful and failing terminal result parsing", () => {
+test("runtime adapters parse successful terminal results and reject malformed or failed streams", () => {
   const structured = { status: "completed", result: "runtime parity" };
-  const fixtures: ReadonlyArray<{
-    readonly provider: AgentProvider;
-    readonly stdout: string;
-  }> = [
-    {
-      provider: "codex",
-      stdout: [
-        JSON.stringify({ type: "thread.started", thread_id: "thread-one" }),
-        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(structured) } }),
-        JSON.stringify({ type: "turn.completed" }),
-      ].join("\n"),
-    },
-    {
-      provider: "claude",
-      stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, structured_output: structured }),
-    },
-    {
-      provider: "claude",
-      stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify(structured) }),
-    },
-    { provider: "codex", stdout: JSON.stringify({ type: "turn.failed", error: { message: "failed" } }) },
-    { provider: "codex", stdout: JSON.stringify({ type: "error", message: "failed" }) },
-    { provider: "codex", stdout: JSON.stringify({ type: "turn.completed" }) },
-    { provider: "codex", stdout: "not-json" },
-    { provider: "claude", stdout: JSON.stringify({ type: "result", subtype: "error_during_execution", result: "failed" }) },
-    { provider: "claude", stdout: JSON.stringify({ type: "assistant", message: { content: [] } }) },
-    { provider: "claude", stdout: "not-json" },
-  ];
+  assert.deepEqual(codexAdapter.result([
+    JSON.stringify({ type: "thread.started", thread_id: "thread-one" }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(structured) } }),
+    JSON.stringify({ type: "turn.completed" }),
+  ].join("\n")), structured);
+  assert.deepEqual(claudeAdapter.result(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, structured_output: structured,
+  })), structured);
+  assert.deepEqual(claudeAdapter.result(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, result: JSON.stringify(structured),
+  })), structured);
 
-  for (const fixture of fixtures) {
-    const adapter = fixture.provider === "codex" ? codexAdapter : claudeAdapter;
-    assert.deepEqual(
-      invocation(() => adapter.result(fixture.stdout)),
-      invocation(() => providerResult(fixture.provider, fixture.stdout)),
-      `${fixture.provider}: ${fixture.stdout}`,
-    );
-  }
+  assert.throws(() => codexAdapter.result(JSON.stringify({ type: "turn.failed", error: { message: "failed" } })), /Codex reported a failed run/u);
+  assert.throws(() => codexAdapter.result(JSON.stringify({ type: "error", message: "failed" })), /Codex reported a failed run/u);
+  assert.throws(() => codexAdapter.result(JSON.stringify({ type: "turn.completed" })), /without a completed structured result/u);
+  assert.throws(() => codexAdapter.result("not-json"), /Codex event was not valid JSON/u);
+  assert.throws(() => claudeAdapter.result(JSON.stringify({ type: "result", subtype: "error_during_execution", result: "failed" })), /Claude reported a failed run/u);
+  assert.throws(() => claudeAdapter.result(JSON.stringify({ type: "assistant", message: { content: [] } })), /without a terminal result event/u);
+  assert.throws(() => claudeAdapter.result("not-json"), /Claude stream event was not valid JSON/u);
 });
 
 test("Codex lines map to the internal runtime event shapes", () => {

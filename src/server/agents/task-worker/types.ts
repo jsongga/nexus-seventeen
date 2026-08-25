@@ -16,6 +16,7 @@ import {
   type TaskPhaseStage,
   type TaskPhaseStatus,
 } from "#shared/task-board-contract";
+import type { RuntimeEvent } from "../runtime/events.js";
 
 /**
  * Backward-compatible worker name. Per the WAKEUP_REASONS contract, additions
@@ -201,11 +202,12 @@ export interface AgentLaunchRequest {
 export interface AgentRunHandle {
   readonly completion: Promise<AgentRunOutcome>;
   /**
-   * Sanitized, bounded lifecycle labels only; raw provider payloads never cross
-   * this boundary. The stream closes when provider output ends, including after
-   * interruption.
+   * Normalized runtime events. Raw tool detail and output may cross the
+   * launcher-to-worker boundary in process; the worker must redact them into
+   * fixed labels before any persistence API receives activity or phase data.
+   * The stream closes when runtime output ends.
    */
-  readonly activity: AsyncIterable<string>;
+  readonly activity: AsyncIterable<RuntimeEvent>;
   interrupt(reason: string): Promise<void>;
 }
 

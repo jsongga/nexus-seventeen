@@ -1,14 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { safeErrorDetail } from "../../shared/safe-error-detail.js";
-import { TaskWorkerJournalStore } from "./journal.js";
-import { InactiveClaimReplayError } from "./http-board-client.js";
 import {
-  estimateMinutesFromActivity,
+  ActivityBuffer,
+  activityFromEvent,
+  estimateActivity,
+  estimateMinutesFromEvent,
+  phaseSignalFromEvent,
   phaseStageFromActivity,
-  phaseSignalFromActivity,
   sanitizeActivity,
   type LivePhaseSignal,
-} from "./provider-activity.js";
+} from "../runtime/derive.js";
+import type { RuntimeEvent } from "../runtime/events.js";
+import { TaskWorkerJournalStore } from "./journal.js";
+import { InactiveClaimReplayError } from "./http-board-client.js";
 import {
   parseAgentRunOutcome,
   parseBoundedAgentContext,
@@ -219,6 +223,14 @@ function livePhaseTitle(stage: Exclude<AgentTaskPhase["stage"], "done">): string
     case "testing": return "Test work";
     case "review": return "Review result";
   }
+}
+
+function isUnbufferedLauncherLifecycle(event: RuntimeEvent): boolean {
+  return event.type === "tool_call" && (
+    event.name === "container_starting" ||
+    event.name === "container_attached" ||
+    event.name === "container_teardown"
+  );
 }
 
 function samePhaseState(phase: AgentTaskPhase, update: AgentTaskPhaseUpdate): boolean {
@@ -781,10 +793,7 @@ export class TaskWorker {
           await this.#saveState(next);
         });
 
-        const activityForwarding = this.#forwardActivity(active.claim, handle.activity, liveTask).then(
-          () => null,
-          (error: unknown) => error,
-        );
+        const activityForwarding = this.#forwardActivity(active.claim, handle.activity, liveTask).catch(() => null);
 
         let resolveInterrupted!: () => void;
         const interrupted = new Promise<void>((resolve) => { resolveInterrupted = resolve; });
@@ -812,11 +821,13 @@ export class TaskWorker {
         // updates before any terminal output or settlement can make the run inactive.
         // A failed shutdown kill can leave that stream open indefinitely, so its
         // recorded terminal path must not wait for process completion.
-        if (shutdownError === null) await activityForwarding;
+        const runtimeFailureDetail = shutdownError === null ? await activityForwarding : null;
         control.abort();
         await watch;
         if (this.#state.active?.interruptReason !== null || terminal.type === "interrupted") {
           outcome = interruptedOutcome(this.#state.active?.interruptReason ?? "The agent run was interrupted.");
+        } else if (runtimeFailureDetail !== null) {
+          outcome = failedOutcome(runtimeFailureDetail, "The one-shot agent process failed.");
         } else if (terminal.type === "failed") {
           outcome = failedOutcome(terminal.error, "The one-shot agent process failed.");
         } else {
@@ -1103,35 +1114,19 @@ export class TaskWorker {
 
   async #forwardActivity(
     claim: TaskWakeClaim,
-    activity: AsyncIterable<string>,
+    activity: AsyncIterable<RuntimeEvent>,
     liveTask: LiveTaskState,
-  ): Promise<void> {
-    if (claim.taskId === null) return;
+  ): Promise<string | null> {
+    if (claim.taskId === null) return null;
     let sequence = 0;
-    for await (const observed of activity) {
-      const phaseSignal = phaseSignalFromActivity(observed);
-      if (phaseSignal !== null) await this.#applyLivePhaseSignal(claim, liveTask, phaseSignal);
-      const body = phaseSignal === null ? sanitizeActivity(observed) : "Agent updated a task phase.";
-      if (body === null) continue;
+    let runtimeFailureDetail: string | null = null;
+    const buffer = new ActivityBuffer();
+    const appendActivity = async (bodyInput: string): Promise<boolean> => {
+      const body = sanitizeActivity(bodyInput);
+      if (body === null) return true;
       const current = this.#state.active;
-      if (current === null || current.claim.runId !== claim.runId || current.phase === "outputs_pending") return;
+      if (current === null || current.claim.runId !== claim.runId || current.phase === "outputs_pending") return false;
       sequence += 1;
-      const estimate = estimateMinutesFromActivity(body);
-      if (
-        estimate !== null && liveTask.estimateTracking &&
-        estimate !== liveTask.expectedAgentMinutes
-      ) {
-        try {
-          liveTask.taskVersion = await this.#options.board.updateTaskEstimate({
-            claim,
-            version: liveTask.taskVersion,
-            expectedAgentMinutes: estimate,
-          });
-          liveTask.expectedAgentMinutes = estimate;
-        } catch {
-          liveTask.estimateTracking = false;
-        }
-      }
       const stage = phaseStageFromActivity(body);
       if (stage !== null) await this.#advanceLivePhase(claim, liveTask, stage);
       const request = {
@@ -1147,7 +1142,42 @@ export class TaskWorker {
         // sequence, and sanitized body. Activity remains secondary to the run result.
         await this.#options.board.appendRunOutput(request);
       }
+      return true;
+    };
+    for await (const event of activity) {
+      if (event.type === "error") runtimeFailureDetail = event.detail;
+      const estimate = estimateMinutesFromEvent(event);
+      if (estimate !== null) {
+        if (liveTask.estimateTracking && estimate !== liveTask.expectedAgentMinutes) {
+          try {
+            liveTask.taskVersion = await this.#options.board.updateTaskEstimate({
+              claim,
+              version: liveTask.taskVersion,
+              expectedAgentMinutes: estimate,
+            });
+            liveTask.expectedAgentMinutes = estimate;
+          } catch {
+            liveTask.estimateTracking = false;
+          }
+        }
+        if (!await appendActivity(estimateActivity(estimate))) return runtimeFailureDetail;
+      }
+      const phaseSignal = phaseSignalFromEvent(event);
+      if (phaseSignal !== null) {
+        await this.#applyLivePhaseSignal(claim, liveTask, phaseSignal);
+        if (!await appendActivity("Agent updated a task phase.")) return runtimeFailureDetail;
+      }
+      const derivedActivity = activityFromEvent(event);
+      if (isUnbufferedLauncherLifecycle(event)) {
+        if (derivedActivity !== null && !await appendActivity(derivedActivity)) return runtimeFailureDetail;
+      } else {
+        const ready = buffer.push(derivedActivity);
+        if (ready !== null && !await appendActivity(ready)) return runtimeFailureDetail;
+      }
     }
+    const final = buffer.drain();
+    if (final !== null) await appendActivity(final);
+    return runtimeFailureDetail;
   }
 
   async #recordOutcome(outcomeInput: AgentRunOutcome, design = false): Promise<void> {

@@ -2,28 +2,18 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
+import type { RuntimeAdapter } from "../runtime/adapter.js";
+import { AgentProcessError } from "../runtime/errors.js";
 import {
   ActivityChannel,
-  AgentProcessError,
   agentPrompt,
   agentRole,
   assertCredentialSafe,
   boundedInteger,
   configText,
   delay,
-  providerEnvironment,
-  providerResult,
   structuredOutcome,
-  type AgentProvider,
 } from "#server/agents/task-worker/agent-envelope";
-import {
-  ActivityBuffer,
-  activityFromProviderLine,
-  estimateActivity,
-  estimateMinutesFromProviderLine,
-  phaseActivity,
-  phaseSignalFromProviderLine,
-} from "#server/agents/task-worker/provider-activity";
 import type {
   AgentLaunchRequest,
   AgentLauncher,
@@ -60,10 +50,10 @@ class DockerCommandError extends Error {
 }
 
 export interface ContainerAgentLauncherOptions {
-  readonly provider: "codex" | "claude";
+  readonly adapter: RuntimeAdapter;
   readonly model: string;
   readonly image: string;
-  /** Executable inside the image. Default: the provider name. Tests pass "steward-stub". */
+  /** Executable inside the image. Default: the adapter runtime. Tests pass "steward-stub". */
   readonly agentCommand?: string;
   readonly networkName: string;
   readonly proxyUrl: string;
@@ -186,7 +176,6 @@ async function terminateContainer(
 
 export class ContainerAgentLauncher implements AgentLauncher {
   readonly #options: ContainerAgentLauncherOptions & {
-    readonly provider: AgentProvider;
     readonly timeoutMs: number;
     readonly terminationGraceMs: number;
     readonly dockerBinary: string;
@@ -203,7 +192,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       : configText(options.agentCommand, "agentCommand", 256);
     if (agentCommand?.startsWith("-") === true) throw new Error("agentCommand is invalid");
     const sourceEnvironment = options.environment ?? process.env;
-    this.#environment = providerEnvironment(options.provider, sourceEnvironment);
+    this.#environment = options.adapter.environment(sourceEnvironment);
     this.#dockerEnvironment = { ...this.#environment };
     for (const key of DOCKER_ENVIRONMENT_KEYS) {
       const value = sourceEnvironment[key];
@@ -235,6 +224,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       fixedRole: agentRole(request),
       workspacePath: request.workspace.path,
       bareApiKey: typeof this.#environment.ANTHROPIC_API_KEY === "string",
+      runtimeEnvironment: this.#environment,
     });
     const stdin = agentPrompt(request);
     let child: ChildProcess;
@@ -264,7 +254,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
     });
     child.once("spawn", () => {
       childSpawned = true;
-      activity.publish("Task container starting");
+      activity.publish({ type: "tool_call", name: "container_starting", detail: "" });
     });
     child.once("error", (error) => {
       spawnFailed = !childSpawned;
@@ -273,18 +263,12 @@ export class ContainerAgentLauncher implements AgentLauncher {
         { cause: error },
       );
     });
-    const activityBuffer = new ActivityBuffer();
     const decoder = new StringDecoder("utf8");
     let pendingLine = "";
     let activityFinished = false;
     let containerAttached = false;
     const observeLine = (line: string): void => {
-      const estimate = estimateMinutesFromProviderLine(this.#options.provider, line);
-      if (estimate !== null) activity.publish(estimateActivity(estimate));
-      const phase = phaseSignalFromProviderLine(this.#options.provider, line);
-      if (phase !== null) activity.publish(phaseActivity(phase));
-      const ready = activityBuffer.push(activityFromProviderLine(this.#options.provider, line));
-      if (ready !== null) activity.publish(ready);
+      for (const event of this.#options.adapter.events(line)) activity.publish(event);
     };
     const observeChunk = (chunk: Buffer): void => {
       pendingLine += decoder.write(chunk);
@@ -297,8 +281,6 @@ export class ContainerAgentLauncher implements AgentLauncher {
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
-      const final = activityBuffer.drain();
-      if (final !== null) activity.publish(final);
       activity.close();
     };
     let termination: Promise<void> | null = null;
@@ -307,7 +289,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       if (termination === null) {
         if (!teardownPublished) {
           teardownPublished = true;
-          activity.publish("Task container teardown");
+          activity.publish({ type: "tool_call", name: "container_teardown", detail: "" });
         }
         const attempt = terminateContainer(
           this.#options.dockerBinary,
@@ -338,7 +320,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
       if (!containerAttached) {
         containerAttached = true;
-        activity.publish("Task container attached");
+        activity.publish({ type: "tool_call", name: "container_attached", detail: "" });
       }
       stdoutBytes += chunk.length;
       if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
@@ -373,7 +355,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
         const output = Buffer.concat(stdout).toString("utf8");
         const diagnostic = Buffer.concat(stderr).toString("utf8");
         assertCredentialSafe(diagnostic, "Agent diagnostics");
-        return structuredOutcome(providerResult(this.#options.provider, output));
+        return structuredOutcome(this.#options.adapter.result(output));
       } finally {
         this.#active = false;
       }

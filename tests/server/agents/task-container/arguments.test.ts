@@ -1,24 +1,45 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { RuntimeAdapter } from "../../../../src/server/agents/runtime/adapter.js";
+import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import {
   buildContainerRunPlan,
   ContainerAgentLauncher,
 } from "#server/agents/task-container";
-import { AgentProcessError } from "#server/agents/task-worker/agent-envelope";
+import { AgentProcessError } from "#server/agents/task-worker";
 import { context } from "../task-worker/helpers.js";
 
 const baseOptions = {
-  provider: "codex" as const,
+  adapter: codexAdapter,
   model: "gpt-test",
   image: "steward-agent:test",
   networkName: "steward-agents",
   proxyUrl: "http://steward-egress-proxy:3128",
 };
 
+const sourceEnvironment = {
+  PATH: "/usr/bin",
+  HOME: "/home/node",
+  CODEX_HOME: "/home/node/.codex",
+  CODEX_API_KEY: "unit-test-codex-key",
+  OPENAI_API_KEY: "unit-test-openai-key",
+  OPENAI_ORGANIZATION: "unit-test-organization",
+  OPENAI_PROJECT: "unit-test-project",
+  ANTHROPIC_API_KEY: "unit-test-anthropic-key",
+  CLAUDE_CONFIG_DIR: "/home/node/.claude",
+};
+
 function assertPair(args: readonly string[], name: string, value: string): void {
   const index = args.findIndex((argument, candidate) => argument === name && args[candidate + 1] === value);
   assert.notEqual(index, -1, `${name} is present`);
   assert.equal(args[index + 1], value);
+}
+
+function bareEnvironmentKeys(args: readonly string[]): readonly string[] {
+  return args.flatMap((argument, index) => (
+    argument === "-e" && args[index + 1]?.includes("=") === false ? [args[index + 1]] : []
+  ));
 }
 
 test("builds a hardened Codex docker run plan without credential values in argv", () => {
@@ -33,6 +54,7 @@ test("builds a hardened Codex docker run plan without credential values in argv"
     fixedRole: "engineer",
     workspacePath: "/tmp/worktree-one",
     bareApiKey: false,
+    runtimeEnvironment: codexAdapter.environment(sourceEnvironment),
   });
 
   assert.equal(plan.containerName, "steward-task-run-one");
@@ -68,6 +90,13 @@ test("builds a hardened Codex docker run plan without credential values in argv"
     assertPair(plan.args, "-e", key);
     assert.ok(plan.args.includes(key), `${key} is passed by bare name`);
   }
+  assert.deepEqual(bareEnvironmentKeys(plan.args), [
+    "CODEX_HOME",
+    "CODEX_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_ORGANIZATION",
+    "OPENAI_PROJECT",
+  ]);
   assert.ok(!plan.args.some((argument) => /OPENAI_API_KEY=/u.test(argument)));
   assert.ok(plan.args.includes("STEWARD_STUB_MODE=fail"));
 
@@ -85,13 +114,14 @@ test("builds Claude plans with the default command and bare mode selected by inp
   const input = {
     options: {
       ...baseOptions,
-      provider: "claude" as const,
+      adapter: claudeAdapter,
       model: "claude-test",
     },
     runId: "run-claude",
     taskId: "task-claude",
     fixedRole: "verifier" as const,
     workspacePath: "/tmp/worktree-claude",
+    runtimeEnvironment: claudeAdapter.environment(sourceEnvironment),
   };
   const barePlan = buildContainerRunPlan({ ...input, bareApiKey: true });
   const oauthPlan = buildContainerRunPlan({ ...input, bareApiKey: false });
@@ -105,6 +135,42 @@ test("builds Claude plans with the default command and bare mode selected by inp
   assert.ok(!barePlan.args.includes("/opt/steward/agent-result.schema.json"));
   assertPair(barePlan.args, "-e", "ANTHROPIC_API_KEY");
   assertPair(barePlan.args, "-e", "CLAUDE_CONFIG_DIR");
+  assert.deepEqual(bareEnvironmentKeys(barePlan.args), [
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CONFIG_DIR",
+  ]);
+});
+
+test("forwards fixed literal entries from a runtime adapter environment", () => {
+  const adapter: RuntimeAdapter = {
+    ...codexAdapter,
+    runtime: "third-runtime",
+    environment: () => ({
+      THIRD_RUNTIME_TOKEN: "unit-test-token",
+      THIRD_RUNTIME_MODE: "container",
+    }),
+  };
+  const plan = buildContainerRunPlan({
+    options: {
+      ...baseOptions,
+      adapter,
+      agentCommand: undefined,
+      extraContainerEnv: undefined,
+    },
+    runId: "run-third-runtime",
+    taskId: "task-third-runtime",
+    fixedRole: "engineer",
+    workspacePath: "/tmp/worktree-third-runtime",
+    bareApiKey: false,
+    runtimeEnvironment: adapter.environment(sourceEnvironment),
+  });
+
+  assert.deepEqual(bareEnvironmentKeys(plan.args), [
+    "THIRD_RUNTIME_TOKEN",
+    "THIRD_RUNTIME_MODE",
+  ]);
+  assert.ok(!plan.args.includes("THIRD_RUNTIME_MODE=container"));
+  assert.equal(plan.args[plan.args.indexOf("steward-agent:test") + 1], "third-runtime");
 });
 
 test("validates container launcher configuration", () => {

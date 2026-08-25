@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { access, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { codexAdapter } from "../../src/server/agents/runtime/codex.js";
 import {
   ContainerAgentLauncher,
   DEFAULT_ALLOWED_HOSTS,
@@ -56,7 +57,7 @@ function launcher(
   options: Readonly<{ hang?: boolean; timeoutMs?: number; terminationGraceMs?: number }> = {},
 ): WorkspaceScopedLauncher {
   const inner = new ContainerAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "stub-model",
     image,
     agentCommand: "steward-stub",

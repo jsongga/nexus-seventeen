@@ -1,9 +1,7 @@
 import type { AgentRole } from "#shared/task-board-contract";
-import {
-  AgentProcessError,
-  type ProviderArgumentOptions,
-} from "../task-worker/agent-envelope.js";
+import type { ProviderArgumentOptions } from "../task-worker/agent-envelope.js";
 import type { RuntimeAdapter } from "./adapter.js";
+import { AgentProcessError } from "./errors.js";
 import type { RuntimeEvent } from "./events.js";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;

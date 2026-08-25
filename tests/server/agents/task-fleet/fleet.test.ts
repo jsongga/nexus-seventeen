@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
 import { CREDENTIAL_REVOKED_MESSAGE, TaskFleet } from "#server/agents/task-fleet/fleet";
-import { classifyTaskFleetError, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
+import { classifyTaskFleetError, createTaskFleetWorker, isTransientTaskFleetError } from "#server/agents/task-fleet/runtime";
 import type {
   ManagedTaskWorker,
   TaskFleetEvent,
@@ -65,6 +65,11 @@ function managed(overrides: Partial<ManagedTaskWorker> = {}): ManagedTaskWorker 
     ...overrides,
   };
 }
+
+test("the registry-aware default worker factory remains fleet-compatible", () => {
+  const factory: TaskFleetWorkerFactory = createTaskFleetWorker;
+  assert.equal(factory, createTaskFleetWorker);
+});
 
 async function eventually(predicate: () => boolean): Promise<void> {
   for (let index = 0; index < 100; index += 1) {

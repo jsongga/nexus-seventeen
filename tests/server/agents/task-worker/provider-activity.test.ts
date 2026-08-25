@@ -1,60 +1,73 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { RuntimeAdapter } from "../../../../src/server/agents/runtime/adapter.js";
+import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import {
   ActivityBuffer,
-  activityFromClaudeStreamLine,
-  activityFromCodexJsonLine,
-  activityFromProviderLine,
+  activityFromEvent,
   estimateActivity,
   estimateMinutesFromActivity,
-  estimateMinutesFromProviderLine,
+  estimateMinutesFromEvent,
   phaseActivity,
   phaseSignalFromActivity,
-  phaseSignalFromProviderLine,
+  phaseSignalFromEvent,
   phaseStageFromActivity,
   sanitizeActivity,
-} from "#server/agents/task-worker/provider-activity";
+} from "../../../../src/server/agents/runtime/derive.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+
+function firstDerived<Value>(
+  adapter: RuntimeAdapter,
+  line: string,
+  derive: (event: RuntimeEvent) => Value | null,
+): Value | null {
+  return adapter.events(line).map(derive).find((value) => value !== null) ?? null;
+}
+
+const codexActivity = (line: string): string | null => firstDerived(codexAdapter, line, activityFromEvent);
+const claudeActivity = (line: string): string | null => firstDerived(claudeAdapter, line, activityFromEvent);
 
 test("maps Codex lifecycle and development events without copying provider payloads", () => {
-  assert.equal(activityFromCodexJsonLine('{"type":"thread.started","thread_id":"secret-thread"}'), "Agent process started.");
-  assert.equal(activityFromCodexJsonLine('{"type":"turn.started","prompt":"do not expose this prompt"}'), "Work started.");
+  assert.equal(codexActivity('{"type":"thread.started","thread_id":"secret-thread"}'), "Agent process started.");
+  assert.equal(codexActivity('{"type":"turn.started","prompt":"do not expose this prompt"}'), "Work started.");
   assert.equal(
-    activityFromCodexJsonLine(JSON.stringify({
+    codexActivity(JSON.stringify({
       type: "item.started",
       item: { type: "command_execution", command: "cat /Users/alice/private.txt", aggregated_output: "sk-proj-super-secret-token" },
     })),
     "Running a development check.",
   );
   assert.equal(
-    activityFromCodexJsonLine(JSON.stringify({
+    codexActivity(JSON.stringify({
       type: "item.completed",
       item: { type: "file_change", changes: [{ path: "/Users/alice/repo/secret.ts", diff: "private source" }] },
     })),
     "Updated the implementation.",
   );
-  assert.equal(activityFromCodexJsonLine('{"type":"turn.completed","usage":{"input_tokens":100}}'), "Work finished; preparing the recorded result.");
+  assert.equal(codexActivity('{"type":"turn.completed","usage":{"input_tokens":100}}'), "Work finished; preparing the recorded result.");
 });
 
 test("reports Codex check failures but ignores reasoning and agent-message text", () => {
   assert.equal(
-    activityFromCodexJsonLine('{"type":"item.completed","item":{"type":"command_execution","exit_code":1,"aggregated_output":"full failing output"}}'),
+    codexActivity('{"type":"item.completed","item":{"type":"command_execution","exit_code":1,"aggregated_output":"full failing output"}}'),
     "A development check found more work.",
   );
   assert.equal(
-    activityFromCodexJsonLine('{"type":"item.completed","item":{"type":"reasoning","text":"private chain of thought"}}'),
+    codexActivity('{"type":"item.completed","item":{"type":"reasoning","text":"private chain of thought"}}'),
     null,
   );
   assert.equal(
-    activityFromCodexJsonLine('{"type":"item.completed","item":{"type":"agent_message","text":"raw final answer"}}'),
+    codexActivity('{"type":"item.completed","item":{"type":"agent_message","text":"raw final answer"}}'),
     null,
   );
-  assert.equal(activityFromCodexJsonLine("not-json"), null);
+  assert.equal(codexActivity("not-json"), null);
 });
 
 test("maps Claude stream-json tool activity without exposing tool inputs", () => {
-  assert.equal(activityFromClaudeStreamLine('{"type":"system","subtype":"init","cwd":"/Users/alice/repo"}'), "Agent process started.");
+  assert.equal(claudeActivity('{"type":"system","subtype":"init","cwd":"/Users/alice/repo"}'), "Agent process started.");
   assert.equal(
-    activityFromClaudeStreamLine(JSON.stringify({
+    claudeActivity(JSON.stringify({
       type: "stream_event",
       event: {
         type: "content_block_start",
@@ -64,7 +77,7 @@ test("maps Claude stream-json tool activity without exposing tool inputs", () =>
     "Inspecting the relevant code and context.",
   );
   assert.equal(
-    activityFromClaudeStreamLine(JSON.stringify({
+    claudeActivity(JSON.stringify({
       type: "assistant",
       message: { content: [{ type: "tool_use", name: "Bash", input: { command: "printenv OPENAI_API_KEY" } }] },
     })),
@@ -74,30 +87,30 @@ test("maps Claude stream-json tool activity without exposing tool inputs", () =>
 
 test("ignores Claude text and thinking while reporting safe completion states", () => {
   assert.equal(
-    activityFromClaudeStreamLine('{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"private reasoning"}}}'),
+    claudeActivity('{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"private reasoning"}}}'),
     null,
   );
   assert.equal(
-    activityFromClaudeStreamLine('{"type":"assistant","message":{"content":[{"type":"text","text":"raw assistant response"}]}}'),
+    claudeActivity('{"type":"assistant","message":{"content":[{"type":"text","text":"raw assistant response"}]}}'),
     null,
   );
   assert.equal(
-    activityFromClaudeStreamLine('{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"raw command output"}]}}'),
+    claudeActivity('{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"raw command output"}]}}'),
     "A development step found more work.",
   );
   assert.equal(
-    activityFromClaudeStreamLine('{"type":"result","subtype":"success","result":"raw final result"}'),
+    claudeActivity('{"type":"result","subtype":"success","result":"raw final result"}'),
     "Work finished; preparing the recorded result.",
   );
   assert.equal(
-    activityFromClaudeStreamLine('{"type":"result","subtype":"error_during_execution","result":"sensitive error"}'),
+    claudeActivity('{"type":"result","subtype":"error_during_execution","result":"sensitive error"}'),
     "The run encountered a problem and needs attention.",
   );
 });
 
-test("dispatches lines through the selected provider parser", () => {
-  assert.equal(activityFromProviderLine("codex", '{"type":"item.started","item":{"type":"web_search","query":"private"}}'), "Researching relevant information.");
-  assert.equal(activityFromProviderLine("claude", '{"type":"tool_progress","tool_name":"Edit","input":{"path":"/tmp/private"}}'), "Updating the implementation.");
+test("derives activity from each adapter's normalized events", () => {
+  assert.equal(codexActivity('{"type":"item.started","item":{"type":"web_search","query":"private"}}'), "Researching relevant information.");
+  assert.equal(claudeActivity('{"type":"tool_progress","tool_name":"Edit","input":{"path":"/tmp/private"}}'), "Updating the implementation.");
 });
 
 test("maps only fixed safe activity labels to durable task stages", () => {
@@ -118,17 +131,17 @@ test("extracts a bounded agent estimate only from completed tool output", () => 
     type: "user",
     message: { content: [{ type: "tool_result", content: "STEWARD_ESTIMATE_MINUTES=90\n" }] },
   });
-  assert.equal(estimateMinutesFromProviderLine("codex", codex), 45);
-  assert.equal(estimateMinutesFromProviderLine("claude", claude), 90);
-  assert.equal(activityFromProviderLine("codex", codex), null, "estimate command is not mislabeled as testing");
-  assert.equal(estimateMinutesFromProviderLine("codex", JSON.stringify({
+  assert.equal(firstDerived(codexAdapter, codex, estimateMinutesFromEvent), 45);
+  assert.equal(firstDerived(claudeAdapter, claude, estimateMinutesFromEvent), 90);
+  assert.equal(codexActivity(codex), null, "estimate command is not mislabeled as testing");
+  assert.equal(firstDerived(codexAdapter, JSON.stringify({
     type: "item.started",
     item: { type: "command_execution", command: "printf STEWARD_ESTIMATE_MINUTES=45" },
-  })), null);
-  assert.equal(estimateMinutesFromProviderLine("codex", JSON.stringify({
+  }), estimateMinutesFromEvent), null);
+  assert.equal(firstDerived(codexAdapter, JSON.stringify({
     type: "item.completed",
     item: { type: "command_execution", aggregated_output: "STEWARD_ESTIMATE_MINUTES=17\n" },
-  })), null);
+  }), estimateMinutesFromEvent), null);
   assert.equal(estimateMinutesFromActivity(estimateActivity(120)), 120);
   assert.equal(estimateMinutesFromActivity("Agent guessed 120 minutes."), null);
 });
@@ -146,17 +159,17 @@ test("extracts bounded parallel phase signals only from completed tool output", 
     type: "item.completed",
     item: { type: "command_execution", aggregated_output: marker },
   });
-  assert.deepEqual(phaseSignalFromProviderLine("codex", line), signal);
-  assert.equal(activityFromProviderLine("codex", line), null);
+  assert.deepEqual(firstDerived(codexAdapter, line, phaseSignalFromEvent), signal);
+  assert.equal(codexActivity(line), null);
   assert.deepEqual(phaseSignalFromActivity(phaseActivity(signal)), signal);
-  assert.deepEqual(phaseSignalFromProviderLine("codex", JSON.stringify({
+  assert.deepEqual(firstDerived(codexAdapter, JSON.stringify({
     type: "item.completed",
     item: { type: "command_execution", aggregated_output: marker.replace("in_progress", "completed") },
-  })), { ...signal, status: "completed" }, "completed status preserves its semantic stage");
-  assert.equal(phaseSignalFromProviderLine("codex", JSON.stringify({
+  }), phaseSignalFromEvent), { ...signal, status: "completed" }, "completed status preserves its semantic stage");
+  assert.equal(firstDerived(codexAdapter, JSON.stringify({
     type: "item.completed",
     item: { type: "command_execution", aggregated_output: marker.replace("execution", "done") },
-  })), null, "the legacy done stage requires completed status");
+  }), phaseSignalFromEvent), null, "the legacy done stage requires completed status");
 });
 
 test("activity sanitizer removes likely credentials, links, and local paths and enforces a bound", () => {

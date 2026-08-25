@@ -3,7 +3,8 @@ export type { TaskWorkerSnapshot } from "./worker.js";
 export { TaskWorkerJournalStore } from "./journal.js";
 export { HttpTaskBoardClient, TaskBoardHttpError } from "./http-board-client.js";
 export type { HttpTaskBoardClientOptions } from "./http-board-client.js";
-export { ContainedCliAgentLauncher, AgentProcessError } from "./contained-cli-launcher.js";
+export { AgentProcessError } from "../runtime/errors.js";
+export { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
 export type { ContainedCliAgentLauncherOptions } from "./contained-cli-launcher.js";
 export {
   parseAgentRunOutcome,

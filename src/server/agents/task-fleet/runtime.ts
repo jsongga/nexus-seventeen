@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import type { RuntimeAdapter } from "../runtime/adapter.js";
+import { defaultRuntimeRegistry, type RuntimeRegistry } from "../runtime/registry.js";
 import {
   ContainedCliAgentLauncher,
   HttpTaskBoardClient,
@@ -20,7 +22,6 @@ import type {
   TaskFleetErrorClassifier,
   TaskFleetProvider,
   TaskFleetTransientClassifier,
-  TaskFleetWorkerFactory,
 } from "./types.js";
 
 const VERSION_COMMAND_TIMEOUT_MS = 5_000;
@@ -31,6 +32,10 @@ export type TaskFleetVersionRunner = (command: string, arguments_: readonly stri
 export interface ContainerRuntimeIdentity {
   readonly runtimeVersion: string;
   readonly imageId: string;
+}
+
+export interface CreateTaskFleetWorkerOptions {
+  readonly registry?: RuntimeRegistry;
 }
 
 const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new Promise((resolve, reject) => {
@@ -51,11 +56,11 @@ const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new P
 const runDockerInspect: TaskFleetVersionRunner = runVersionCommand;
 
 export async function captureTaskFleetRuntimeVersion(
-  provider: TaskFleetProvider,
+  runtime: string,
   runner: TaskFleetVersionRunner = runVersionCommand,
 ): Promise<string | null> {
   try {
-    const output = await runner(provider, ["--version"]);
+    const output = await runner(runtime, ["--version"]);
     const firstLine = output.split(/\r?\n/u, 1)[0]?.trim() ?? "";
     if (firstLine.length < 1 || firstLine.length > 128 || /[\u0000-\u001f\u007f]/u.test(firstLine)) return null;
     return firstLine;
@@ -90,10 +95,11 @@ export async function captureContainerRuntimeVersion(
 async function createLocalProcessTaskFleetWorker(
   config: TaskFleetAgentConfig,
   boardUrl: string,
+  adapter: RuntimeAdapter,
 ): Promise<ManagedTaskWorker> {
-  const runtimeVersion = await captureTaskFleetRuntimeVersion(config.provider);
+  const runtimeVersion = await captureTaskFleetRuntimeVersion(adapter.runtime);
   let launcher: AgentLauncher = new ContainedCliAgentLauncher({
-    provider: config.provider,
+    adapter,
     model: config.model,
     workingDirectory: config.workingDirectory,
     ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
@@ -136,6 +142,7 @@ async function createLocalProcessTaskFleetWorker(
 async function createContainerTaskFleetWorker(
   config: TaskFleetAgentConfig,
   boardUrl: string,
+  adapter: RuntimeAdapter,
 ): Promise<ManagedTaskWorker> {
   const lane = config.container;
   if (lane === undefined) throw new Error("container lane config missing");
@@ -152,7 +159,7 @@ async function createContainerTaskFleetWorker(
   await manager.retainStrays([]);
   const launcher = new WorkspaceScopedLauncher(
     new ContainerAgentLauncher({
-      provider: config.provider,
+      adapter,
       model: config.model,
       image: runtimeIdentity.imageId,
       ...(lane.agentCommand === undefined ? {} : { agentCommand: lane.agentCommand }),
@@ -189,11 +196,17 @@ async function createContainerTaskFleetWorker(
   });
 }
 
-export const createTaskFleetWorker: TaskFleetWorkerFactory = async (config, boardUrl) => (
-  config.runtime === "container"
-    ? createContainerTaskFleetWorker(config, boardUrl)
-    : createLocalProcessTaskFleetWorker(config, boardUrl)
-);
+export async function createTaskFleetWorker(
+  config: TaskFleetAgentConfig,
+  boardUrl: string,
+  options: CreateTaskFleetWorkerOptions = {},
+): Promise<ManagedTaskWorker> {
+  const adapter = (options.registry ?? defaultRuntimeRegistry()).get(config.provider);
+  if (adapter === null) throw new Error(`Unknown runtime adapter: ${config.provider}`);
+  return config.runtime === "container"
+    ? createContainerTaskFleetWorker(config, boardUrl, adapter)
+    : createLocalProcessTaskFleetWorker(config, boardUrl, adapter);
+}
 
 export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
   if (error instanceof TaskBoardHttpError) {

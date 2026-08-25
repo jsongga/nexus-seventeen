@@ -23,6 +23,7 @@ import type {
 } from "#server/agents/task-worker/types";
 import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
 import { InactiveClaimReplayError } from "#server/agents/task-worker/http-board-client";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
 export const PROJECT = "project-one";
@@ -365,13 +366,13 @@ export class FakeBoard implements TaskBoardClient {
 
 export class DeferredRunHandle implements AgentRunHandle {
   readonly completion: Promise<AgentRunOutcome>;
-  readonly activity: AsyncIterable<string>;
+  readonly activity: AsyncIterable<RuntimeEvent>;
   interruptReasons: string[] = [];
   interruptFailures = 0;
   interruptFailureMessage = "Simulated process-group termination failure";
   interruptBarrier: Promise<void> | null = null;
-  readonly #activityQueued: string[] = [];
-  readonly #activityWaiters: Array<(result: IteratorResult<string>) => void> = [];
+  readonly #activityQueued: RuntimeEvent[] = [];
+  readonly #activityWaiters: Array<(result: IteratorResult<RuntimeEvent>) => void> = [];
   #activityClosed = false;
   #resolve!: (value: AgentRunOutcome) => void;
   #reject!: (error: unknown) => void;
@@ -386,7 +387,7 @@ export class DeferredRunHandle implements AgentRunHandle {
     };
   }
 
-  emitActivity(value: string): void {
+  emitActivity(value: RuntimeEvent): void {
     if (this.#activityClosed) throw new Error("Activity stream is closed");
     const waiter = this.#activityWaiters.shift();
     if (waiter === undefined) this.#activityQueued.push(value);
@@ -412,7 +413,7 @@ export class DeferredRunHandle implements AgentRunHandle {
     this.closeActivity();
   }
 
-  #nextActivity(): Promise<IteratorResult<string>> {
+  #nextActivity(): Promise<IteratorResult<RuntimeEvent>> {
     const value = this.#activityQueued.shift();
     if (value !== undefined) return Promise.resolve({ done: false, value });
     if (this.#activityClosed) return Promise.resolve({ done: true, value: undefined });
@@ -420,7 +421,7 @@ export class DeferredRunHandle implements AgentRunHandle {
   }
 }
 
-async function* noActivity(): AsyncGenerator<string> {
+async function* noActivity(): AsyncGenerator<RuntimeEvent> {
   return;
 }
 

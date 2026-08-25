@@ -3,6 +3,9 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
+import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
+import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import {
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
@@ -49,8 +52,8 @@ function fakeCodex(root: string, source: string): Promise<{ bin: string; working
   return fakeCli(root, "codex", source);
 }
 
-async function collectActivity(activity: AsyncIterable<string>): Promise<string[]> {
-  const result: string[] = [];
+async function collectActivity(activity: AsyncIterable<RuntimeEvent>): Promise<RuntimeEvent[]> {
+  const result: RuntimeEvent[] = [];
   for await (const item of activity) result.push(item);
   return result;
 }
@@ -168,7 +171,7 @@ process.stdin.on("end", () => {
 });
 `);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -192,11 +195,21 @@ process.stdin.on("end", () => {
   assert.equal(outcome.status, "completed");
   assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "result"]);
   assert.deepEqual(observedActivity, [
-    "Agent process started.",
-    "Agent estimated 45 minutes of work remaining.",
-    "Work finished; preparing the recorded result.",
+    { type: "stage_started" },
+    { type: "tool_call", name: "command", detail: "cat /Users/alice/private.txt" },
+    { type: "tool_result", name: "command", output: "STEWARD_ESTIMATE_MINUTES=45\n", failed: false },
+    { type: "message_delta", text: JSON.stringify({
+      status: "completed",
+      progress: ["The focused retry checks pass."],
+      result: "Customers can retry checkout without a duplicate charge.",
+      proposedChildTasks: [],
+      expectedAgentMinutes: 45,
+      phases: [],
+      humanQuestion: null,
+      detail: "Checkout retries are now idempotent and tested.",
+    }) },
+    { type: "stage_finished" },
   ]);
-  assert.doesNotMatch(observedActivity.join(" "), /secret|alice|private|cat /iu);
   const prompt = await readFile(join(fixture.scratch, "prompt.txt"), "utf8");
   assert.match(prompt, /research → plan → execute → test/u);
   assert.match(prompt, /single event-triggered run/u);
@@ -226,7 +239,7 @@ test("parses Claude stream-json activity while preserving its terminal structure
     '});',
   ].join("\n"));
   const launcher = new ContainedCliAgentLauncher({
-    provider: "claude",
+    adapter: claudeAdapter,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -252,10 +265,14 @@ test("parses Claude stream-json activity while preserving its terminal structure
   const result = outcome.outputs.at(-1);
   assert.equal(result?.type === "result" ? result.body : null, "Customers see a reliable checkout retry.");
   assert.deepEqual(observedActivity, [
-    "Agent process started.",
-    "Work finished; preparing the recorded result.",
+    { type: "stage_started" },
+    {
+      type: "tool_call",
+      name: "Read",
+      detail: '{"file_path":"/Users/alice/private.ts","token":"sk-ant-provider-secret"}',
+    },
+    { type: "stage_finished" },
   ]);
-  assert.doesNotMatch(observedActivity.join(" "), /secret|alice|private|token/iu);
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];
   const outputFormat = args.indexOf("--output-format");
   assert.notEqual(outputFormat, -1);
@@ -278,7 +295,7 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
     '});',
   ].join("\n"));
   const launcher = new ContainedCliAgentLauncher({
-    provider: "claude",
+    adapter: claudeAdapter,
     model: "claude-test-model",
     workingDirectory: fixture.working,
     environment: {
@@ -316,7 +333,7 @@ process.stdin.on("end", () => {
 });
 `);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -354,7 +371,7 @@ process.stdin.resume();
 setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -390,7 +407,7 @@ process.stdin.resume();
 setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },
@@ -428,7 +445,7 @@ process.stdin.resume();
 setInterval(() => {}, 1000);
 `);
   const launcher = new ContainedCliAgentLauncher({
-    provider: "codex",
+    adapter: codexAdapter,
     model: "codex-test-model",
     workingDirectory: fixture.working,
     environment: { PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`, TMPDIR: fixture.scratch },

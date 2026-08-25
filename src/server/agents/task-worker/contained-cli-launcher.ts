@@ -4,30 +4,18 @@ import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import type { RuntimeAdapter } from "../runtime/adapter.js";
+import { AgentProcessError } from "../runtime/errors.js";
 import {
   ActivityChannel,
-  AgentProcessError,
   agentPrompt,
   agentRole,
   assertCredentialSafe,
   boundedInteger,
-  claudeProviderArgs,
-  codexProviderArgs,
   configText,
   delay,
-  providerEnvironment,
-  providerResult,
   structuredOutcome,
-  type AgentProvider,
 } from "./agent-envelope.js";
-import {
-  ActivityBuffer,
-  activityFromProviderLine,
-  estimateActivity,
-  estimateMinutesFromProviderLine,
-  phaseActivity,
-  phaseSignalFromProviderLine,
-} from "./provider-activity.js";
 import type { AgentLaunchRequest, AgentLauncher, AgentRunHandle, AgentRunOutcome } from "./types.js";
 
 const RESULT_SCHEMA_PATH = fileURLToPath(new URL("./agent-result.schema.json", import.meta.url));
@@ -36,7 +24,7 @@ const MAX_STDERR_BYTES = 512 * 1024;
 const GROUP_POLL_MS = 20;
 
 export interface ContainedCliAgentLauncherOptions {
-  readonly provider: AgentProvider;
+  readonly adapter: RuntimeAdapter;
   readonly model: string;
   readonly workingDirectory: string;
   readonly environment?: NodeJS.ProcessEnv;
@@ -95,7 +83,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       timeoutMs: boundedInteger(options.timeoutMs, 60 * 60_000, 1_000, 24 * 60 * 60_000, "timeoutMs"),
       terminationGraceMs: boundedInteger(options.terminationGraceMs, 2_000, 10, 60_000, "terminationGraceMs"),
       groupAbsenceTimeoutMs: boundedInteger(options.groupAbsenceTimeoutMs, 5_000, 100, 60_000, "groupAbsenceTimeoutMs"),
-      environment: providerEnvironment(options.provider, options.environment ?? process.env),
+      environment: options.adapter.environment(options.environment ?? process.env),
     };
   }
 
@@ -112,11 +100,9 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       schemaPath: RESULT_SCHEMA_PATH,
       bareApiKey: typeof this.#options.environment.ANTHROPIC_API_KEY === "string",
     };
-    const args = this.#options.provider === "codex"
-      ? codexProviderArgs(argumentOptions, fixedRole)
-      : claudeProviderArgs(argumentOptions, fixedRole);
+    const args = this.#options.adapter.args(argumentOptions, fixedRole);
     const stdin = agentPrompt(request);
-    const command = this.#options.provider === "codex" ? "codex" : "claude";
+    const command = this.#options.adapter.runtime;
     let child: ChildProcess;
     try {
       child = spawn(command, [...args], {
@@ -142,17 +128,11 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     let stderrBytes = 0;
     let failure: Error | null = null;
     const activity = new ActivityChannel();
-    const activityBuffer = new ActivityBuffer();
     const decoder = new StringDecoder("utf8");
     let pendingLine = "";
     let activityFinished = false;
     const observeLine = (line: string): void => {
-      const estimate = estimateMinutesFromProviderLine(this.#options.provider, line);
-      if (estimate !== null) activity.publish(estimateActivity(estimate));
-      const phase = phaseSignalFromProviderLine(this.#options.provider, line);
-      if (phase !== null) activity.publish(phaseActivity(phase));
-      const ready = activityBuffer.push(activityFromProviderLine(this.#options.provider, line));
-      if (ready !== null) activity.publish(ready);
+      for (const event of this.#options.adapter.events(line)) activity.publish(event);
     };
     const observeChunk = (chunk: Buffer): void => {
       pendingLine += decoder.write(chunk);
@@ -165,8 +145,6 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
-      const final = activityBuffer.drain();
-      if (final !== null) activity.publish(final);
       activity.close();
     };
     let termination: Promise<void> | null = null;
@@ -232,7 +210,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
             const output = Buffer.concat(stdout).toString("utf8");
             const diagnostic = Buffer.concat(stderr).toString("utf8");
             assertCredentialSafe(diagnostic, "Agent diagnostics");
-            resolve(structuredOutcome(providerResult(this.#options.provider, output)));
+            resolve(structuredOutcome(this.#options.adapter.result(output)));
           } catch (error) {
             reject(error);
           }
@@ -250,4 +228,4 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
   }
 }
 
-export { RESULT_SCHEMA, AgentProcessError } from "./agent-envelope.js";
+export { RESULT_SCHEMA } from "./agent-envelope.js";
