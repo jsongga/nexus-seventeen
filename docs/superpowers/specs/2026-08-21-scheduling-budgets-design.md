@@ -268,6 +268,38 @@ unknowns for old tabs — new tabs get labels).
   sweep; (4) pause mid-flight drains cleanly (claims 204), resume completes
   the run to merged. Humans only at the gates.
 
+## Amendments (ruled during implementation, 2026-08-21/25)
+
+- **Hold ownership is strictly-older confirmation order** — the naive
+  "any overlapping in-flight item holds you" predicate deadlocks (a held
+  waiter still counts as an owner and holds the running item at its next
+  stage). The hold fires only when the overlapping item's confirmed plan
+  is strictly older by `(confirmed_at, work_item_id)`; the wait graph is
+  acyclic by construction.
+- **A parked or terminal item's nodes never activate** — a general
+  activation guard (parked + merged/abandoned/dead_letter blocklist),
+  added when review showed the reconciler-resumable suspend would
+  silently restart cap-parked stages. Kill-switch resume and unpark
+  recovery are unaffected (paused items are not parked; recovery moves
+  the item out of parked before re-activation).
+- **The task cap bills run intervals, not state intervals** — summing
+  agent-active *states* charged scope-holds and pauses (no run) against
+  the cap and livelocked cap parks on retry (the cumulative clock never
+  reset). Shipped: sum of run intervals for the item's tasks, anchored at
+  the latest `resumed` park resolution, so human retry restarts the
+  budget; runs straddling the anchor are dropped wholesale (conservative).
+- **Release-on-settle is wired at every in-flight-set exit** — approve-
+  merge, cancel, auto-abandon, and the machine-verify settle paths each
+  reconcile the project post-commit; held siblings release on the settle
+  that clears the overlap, not the next timer tick.
+- The kill switch suspends **pipeline stage-attempt runs** only:
+  planning/design runs (suspension would park them via the non-completed
+  settle) and non-pipeline runs finish on their own; the cap sweep bounds
+  planning runs for all items (a runaway planner is still a runaway).
+- Cap-arc tests backdate durable rows and invoke sweeps explicitly rather
+  than skewing the live board clock against worker clocks (mixing clocks
+  corrupts worker journal time ordering).
+
 ## Deferred (recorded, not decided)
 
 - The push webhook + reachable endpoint (GitHub slice; roadmap names the
