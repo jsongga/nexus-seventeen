@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +23,25 @@ import {
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
 export const AGENT_ONE_TOKEN = "task-board-agent-one-token-0123456789";
 export const AGENT_TWO_TOKEN = "task-board-agent-two-token-0123456789";
+
+export interface FakeCliFixture {
+  readonly bin: string;
+  readonly working: string;
+  readonly scratch: string;
+}
+
+export async function fakeCli(root: string, command: string, source: string): Promise<FakeCliFixture> {
+  const bin = join(root, "bin");
+  const working = join(root, "working");
+  const scratch = join(root, "scratch");
+  await mkdir(bin, { recursive: true });
+  await mkdir(working, { recursive: true });
+  await mkdir(scratch, { recursive: true });
+  const executable = join(bin, command);
+  await writeFile(executable, `#!/usr/bin/env node\n${source}\n`, { mode: 0o700 });
+  await chmod(executable, 0o700);
+  return Object.freeze({ bin, working, scratch });
+}
 
 export async function databasePath(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "steward-task-board-"));
