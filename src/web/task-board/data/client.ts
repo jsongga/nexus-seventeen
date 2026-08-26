@@ -878,6 +878,7 @@ export function createTaskBoardClient(options: {
           body: JSON.stringify({
             originalRequest,
             priority: input.priority,
+            taskType: input.taskType,
             projectTarget: { mode: 'explicit', projectId },
           }),
           headers: { 'idempotency-key': idempotencyKey },

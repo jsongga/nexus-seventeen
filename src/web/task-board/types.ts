@@ -14,6 +14,7 @@ import {
   workItemPriorityValues,
   workItemStageValues,
   workItemStateValues,
+  workItemTaskTypeValues,
   type WorkflowStage,
 } from './data/wire';
 
@@ -63,6 +64,7 @@ export type WakeReason = typeof wakeReasonValues[number];
 export type WorkItemPriority = typeof workItemPriorityValues[number];
 export type WorkItemState = typeof workItemStateValues[number] | typeof unrecognizedState;
 export type WorkItemStage = typeof workItemStageValues[number];
+export type WorkItemTaskType = typeof workItemTaskTypeValues[number];
 export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
 export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = {
   refinement: ['manager'],
@@ -126,6 +128,8 @@ export interface BoardWorkItem {
   originalRequest: string;
   refinedObjective: string | null;
   priority: WorkItemPriority;
+  /** Unknown server values remain visible during rolling upgrades. */
+  taskType: string;
   projectTarget: WorkItemProjectTarget;
   resolvedProjectId: string | null;
   planningTaskId: string | null;
@@ -454,6 +458,7 @@ export interface CreateTaskInput {
 export interface CreateWorkItemInput {
   originalRequest: string;
   priority: Exclude<WorkItemPriority, 'opportunistic'>;
+  taskType: WorkItemTaskType;
   projectId: string;
   idempotencyKey: string;
 }

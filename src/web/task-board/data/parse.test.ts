@@ -182,6 +182,7 @@ const workItem = {
   originalRequest: 'Keep browser parsing forward compatible.',
   refinedObjective: null,
   priority: 'normal',
+  taskType: 'standard',
   projectTarget: { mode: 'auto' },
   resolvedProjectId: null,
   planningTaskId: null,
@@ -314,6 +315,11 @@ describe('browser task-board validator adapter', () => {
       archivedAt: NOW,
       cancelledReason: 'A future state may carry terminal metadata.',
     }, 'workItems[0]').state).toBe('unrecognized');
+  });
+
+  it('preserves unknown work-item task types verbatim for rolling compatibility', () => {
+    expect(parseWorkItem({ ...workItem, taskType: 'future_onboarding' }, 'workItems[0]').taskType)
+      .toBe('future_onboarding');
   });
 
   it('loosely projects review findings and design records across additive response changes', () => {

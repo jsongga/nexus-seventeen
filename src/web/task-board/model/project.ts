@@ -145,6 +145,7 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     originalRequest: raw.originalRequest,
     refinedObjective: raw.refinedObjective,
     priority: raw.priority,
+    taskType: raw.taskType,
     projectTarget: { ...raw.projectTarget },
     resolvedProjectId: raw.resolvedProjectId,
     planningTaskId: raw.planningTaskId,

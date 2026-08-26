@@ -21,6 +21,15 @@ function workflow(overrides: Record<string, unknown> = {}): NonNullable<BoundedA
   } as NonNullable<BoundedAgentContext["workflow"]>;
 }
 
+test("onboarding context is optional and accepts only the true discriminator", () => {
+  assert.equal(Object.hasOwn(parseBoundedAgentContext(context()), "onboarding"), false);
+  assert.equal(parseBoundedAgentContext(context({ onboarding: true })).onboarding, true);
+  assert.throws(
+    () => parseBoundedAgentContext({ ...context(), onboarding: false }),
+    /context\.onboarding must be true when present/u,
+  );
+});
+
 test("legacy workflow contexts default absent pipeline fields to null", () => {
   const parsed = parseBoundedAgentContext(context({ workflow: workflow() }));
 

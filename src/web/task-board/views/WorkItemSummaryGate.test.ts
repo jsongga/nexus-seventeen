@@ -104,6 +104,7 @@ function reviewingWorkItem(version = 4): BoardWorkItem {
     originalRequest: 'Review the pipeline evidence.',
     refinedObjective: null,
     priority: 'normal',
+    taskType: 'standard',
     projectTarget: { mode: 'explicit', projectId: 'project-one' },
     resolvedProjectId: 'project-one',
     planningTaskId: 'planning-one',

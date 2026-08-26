@@ -928,6 +928,10 @@ export function WorkItemDetail({
           <h2 ref={detailHeadingRef} id={detailHeadingId} tabIndex={-1} className="mt-4 break-words font-display text-xl font-light tracking-[0.01em] text-ink">Work-item details</h2>
           <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
             <div>
+              <dt className="text-xs font-medium text-muted">Task type</dt>
+              <dd className="mt-1 break-words text-ink">{workItem.taskType}</dd>
+            </div>
+            <div>
               <dt className="text-xs font-medium text-muted">Resolved project</dt>
               <dd className="mt-1 break-words text-ink">{projectName ?? (workItem.resolvedProjectId === null ? 'Not resolved yet' : workItem.resolvedProjectId)}</dd>
             </div>

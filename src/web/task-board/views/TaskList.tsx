@@ -122,6 +122,7 @@ export function WorkItemRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{rowTitle}</h3>
+            <Pill>{workItem.taskType}</Pill>
             <Pill tone={workItemPriorityTone[workItem.priority]}>{workItem.priority} priority</Pill>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">

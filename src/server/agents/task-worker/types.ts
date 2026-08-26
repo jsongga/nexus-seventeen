@@ -130,6 +130,7 @@ export interface BoundedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly onboarding?: true;
   readonly design: boolean;
   readonly mission: AgentMission;
   readonly projectMemory: string;

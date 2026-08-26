@@ -46,6 +46,7 @@ import {
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
+  WORK_ITEM_TASK_TYPES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
@@ -365,8 +366,9 @@ export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
   status: TaskStatus | "unrecognized";
 }>;
 
-export type TolerantWorkItemEntity = Omit<WorkItem, "state"> & Readonly<{
+export type TolerantWorkItemEntity = Omit<WorkItem, "state" | "taskType"> & Readonly<{
   state: WorkItemState | "unrecognized";
+  taskType: string;
 }>;
 
 export type TolerantParkRecord = Omit<ParkRecord, "category" | "resolution"> & Readonly<{
@@ -604,7 +606,7 @@ export function parseWorkItemEntity(
   options: ShapeParserOptions = {},
 ): WorkItem | TolerantWorkItemEntity {
   const fields = [
-    "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "projectTarget", "resolvedProjectId",
+    "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "taskType", "projectTarget", "resolvedProjectId",
     "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "stateSince", "reviewRound", "heartbeatAt",
     "createdBy", "version", "createdAt", "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
   ];
@@ -612,6 +614,9 @@ export function parseWorkItemEntity(
   const required = fields.filter((field) => !optional.has(field));
   const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
+  const taskType = options.projection === "browser" && options.tolerantEnums === true
+    ? stringValue(item.taskType, `${label}.taskType`)
+    : entityMember(item.taskType, WORK_ITEM_TASK_TYPES, `${label}.taskType`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
   const state = entityMember(item.state, WORK_ITEM_STATES, `${label}.state`, options, undefined, true);
   const endedAt = nullableTimestamp(item.endedAt, `${label}.endedAt`, options);
@@ -638,6 +643,7 @@ export function parseWorkItemEntity(
     originalRequest: stringValue(item.originalRequest, `${label}.originalRequest`),
     refinedObjective: nullableString(item.refinedObjective, `${label}.refinedObjective`),
     priority: entityMember(item.priority, WORK_ITEM_PRIORITIES, `${label}.priority`, options),
+    taskType,
     projectTarget,
     resolvedProjectId,
     planningTaskId: nullableIdentifier(item.planningTaskId, `${label}.planningTaskId`, options),
@@ -2166,9 +2172,14 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     "createdAt", "claimedAt", "runId",
   ], "Claim wakeup");
   const context = exact(envelope.context, [
-    "intake", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+    "intake", "onboarding", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
     "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
-  ], "Claim context");
+  ], "Claim context", {
+    required: [
+      "intake", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+      "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
+    ],
+  });
   if (
     run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
     run.status !== "active" || run.endedAt !== null || run.result !== null ||
@@ -2220,6 +2231,9 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   booleanValue(context.intake, "context.intake");
+  if (context.onboarding !== undefined && context.onboarding !== true) {
+    throw new ContractValidationError("context.onboarding must be true when present");
+  }
   booleanValue(context.design, "context.design");
   return value as ClaimRunResult;
 }
@@ -2259,6 +2273,7 @@ export interface ValidatedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly onboarding?: true;
   readonly design: boolean;
   readonly mission: Readonly<{ role: string; area: string; mission: string }>;
   readonly projectMemory: string;
@@ -2656,10 +2671,18 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     "Agent context",
   );
   const item = exact(value, [
-    "apiVersion", "projectId", "agentId", "taskId", "intake", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
+    "apiVersion", "projectId", "agentId", "taskId", "intake", "onboarding", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
     "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
-  ], "Agent context");
+  ], "Agent context", {
+    required: [
+      "apiVersion", "projectId", "agentId", "taskId", "intake", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
+      "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
+    ],
+  });
   if (item.apiVersion !== 1) throw new ContractValidationError("Agent context version is invalid");
+  if (item.onboarding !== undefined && item.onboarding !== true) {
+    throw new ContractValidationError("context.onboarding must be true when present");
+  }
   const mission = exact(item.mission, ["role", "area", "mission"], "Agent mission");
   const task = exact(item.task,
     ["kind", "requiredRole", "title", "objective", "acceptanceCriteria", "version", "expectedAgentMinutes", "phases"],
@@ -2828,6 +2851,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     apiVersion: 1,
     projectId: identifier(item.projectId, "context.projectId"), agentId: identifier(item.agentId, "context.agentId"), taskId: currentTaskId,
     intake: booleanValue(item.intake, "context.intake"),
+    ...(item.onboarding === true ? { onboarding: true as const } : {}),
     design: booleanValue(item.design, "context.design"),
     mission: Object.freeze({ role: workerProse(mission.role, "mission.role", 64), area: workerProse(mission.area, "mission.area", 256), mission: workerProse(mission.mission, "mission.mission", 2_000) }),
     projectMemory: workerProse(item.projectMemory, "projectMemory", 8_000),
@@ -3236,11 +3260,20 @@ export function parseBoardRejectFinalApproval(value: unknown): RejectFinalApprov
 }
 
 export function parseBoardCreateWorkItem(value: unknown): CreateWorkItemRequest {
-  const item = boardAllowed(value, ["originalRequest", "priority", "projectTarget"], ["originalRequest"], "Work item");
-  if (item.projectTarget === undefined) boardFailure("Choose a project", TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED);
+  const item = boardAllowed(value, ["originalRequest", "priority", "taskType", "projectTarget"], ["originalRequest"], "Work item");
+  const taskType = item.taskType === undefined
+    ? "standard"
+    : contractMember(item.taskType, WORK_ITEM_TASK_TYPES, "taskType", "taskType is invalid");
+  if (item.projectTarget === undefined) {
+    boardFailure(
+      "Choose a project",
+      taskType === "onboarding" ? TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED : TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED,
+    );
+  }
   return Object.freeze({
     originalRequest: boardText(item.originalRequest, "originalRequest", 16_000),
     priority: item.priority === undefined ? "normal" : contractMember(item.priority, WORK_ITEM_PRIORITIES, "priority", "priority is invalid"),
+    taskType,
     projectTarget: boardProjectTarget(item.projectTarget),
   });
 }

@@ -356,6 +356,7 @@ function promptBlock(
 export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry): string {
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
+  const onboarding = request.context.onboarding === true;
   const pipeline = request.context.workflow?.pipeline;
   const designRecord = pipeline?.designRecord ?? null;
   const renderedDesignRecord = designRecord === null ? null : JSON.stringify(designRecord);
@@ -370,20 +371,33 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
   const brightLineBlock = promptBlock(prompts, "bright-line");
   const pipelineImplementation = fixedRole === "engineer" &&
     request.context.workflow?.stage === "implementation" && pipeline != null
-    ? request.context.workflow.fix == null
-      ? promptBlock(prompts, "pipeline-implementation", {
+    ? (() => {
+        const onboardingBlock = onboarding
+          ? promptBlock(prompts, "onboarding-engineer", {
+              branch: pipeline.branch,
+              declaredScope: pipeline.declaredScope.join(", "),
+              nonGoals: pipeline.nonGoals.join(", ") || "none",
+              brightLine: brightLineBlock,
+            })
+          : null;
+        const fix = request.context.workflow?.fix;
+        if (fix !== null && fix !== undefined) {
+          const fixBlock = promptBlock(prompts, "engineer-fix", {
+            round: String(fix.round),
+            branch: pipeline.branch,
+            findings: fix.findings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n"),
+            brightLine: brightLineBlock,
+          });
+          return onboardingBlock === null ? [fixBlock] : [fixBlock, onboardingBlock];
+        }
+        return [onboardingBlock ?? promptBlock(prompts, "pipeline-implementation", {
           branch: pipeline.branch,
           declaredScope: pipeline.declaredScope.join(", "),
           nonGoals: pipeline.nonGoals.join(", "),
           brightLine: brightLineBlock,
-        })
-      : promptBlock(prompts, "engineer-fix", {
-          round: String(request.context.workflow.fix.round),
-          branch: pipeline.branch,
-          findings: request.context.workflow.fix.findings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n"),
-          brightLine: brightLineBlock,
-        })
-    : null;
+        })];
+      })()
+    : [];
   const pipelineReview = fixedRole === "verifier" &&
     request.context.workflow?.stage === "verification" && pipeline != null
     ? (() => {
@@ -448,7 +462,9 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
       ? [promptBlock(prompts, "engineer")]
       : fixedRole === "verifier"
       ? [promptBlock(prompts, "verifier")]
-      : planningRun ? [promptBlock(prompts, "intake")] : [promptBlock(prompts, "oversight")];
+      : planningRun
+        ? [promptBlock(prompts, onboarding ? "onboarding-intake" : "intake")]
+        : [promptBlock(prompts, "oversight")];
   const trailer = promptBlock(prompts, "trailer", {
     planningInstruction: promptBlock(prompts, planningRun ? "intake-return" : "workflow-plan-return"),
     wakeReason: request.wakeReason,
@@ -461,7 +477,7 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
       mission: request.context.mission.mission,
     }),
     ...workflow,
-    ...(pipelineImplementation === null ? [] : [pipelineImplementation]),
+    ...pipelineImplementation,
     ...(hazardousImplementationDesign === null ? [] : [hazardousImplementationDesign]),
     ...(pipelineReview === null ? [] : pipelineReview),
     ...(hazardousReviewDesign === null ? [] : [hazardousReviewDesign]),

@@ -26,6 +26,7 @@ import {
   type WorkItemProjectTarget,
   type WorkItemStage,
   type WorkItemState,
+  type WorkItemTaskType,
 } from "#shared/task-board-contract";
 import { parseUpdateAutomationConfiguration } from "../schema.js";
 import { expectedCompletedAt } from "./timestamps.js";
@@ -113,6 +114,7 @@ export function workItemFromRow(row: Row): WorkItem {
     originalRequest: stringValue(row, "original_request"),
     refinedObjective: nullableString(row, "refined_objective"),
     priority: stringValue(row, "priority") as WorkItemPriority,
+    taskType: stringValue(row, "task_type") as WorkItemTaskType,
     projectTarget,
     resolvedProjectId: nullableString(row, "resolved_project_id"),
     planningTaskId: nullableString(row, "planning_task_id"),

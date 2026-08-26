@@ -7,6 +7,7 @@ import {
   WAKEUP_REASONS,
   RUN_STATUSES,
   WORK_ITEM_STATES,
+  WORK_ITEM_TASK_TYPES,
   WORK_ITEM_TERMINAL_STATES,
   WORK_ITEM_TRANSITIONS,
   isHardTerminalTaskStatus,
@@ -41,6 +42,8 @@ test('run statuses include active rather than running', () => {
 
 test('task recovery adds stable error and wakeup vocabulary', () => {
   assert.equal(TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, 'PROJECT_REQUIRED');
+  assert.equal(TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED, 'ONBOARDING_PROJECT_REQUIRED');
+  assert.equal(TASK_BOARD_ERROR_CODES.ONBOARDING_EXISTS, 'ONBOARDING_EXISTS');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, 'TASK_TERMINAL');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_UNASSIGNED, 'TASK_UNASSIGNED');
   assert.equal(TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_BOUND, 'TASK_WORKFLOW_BOUND');
@@ -58,6 +61,10 @@ test('task recovery adds stable error and wakeup vocabulary', () => {
   assert.equal(isHardTerminalTaskStatus('failed'), false);
   assert.ok(WAKEUP_REASONS.includes('assigned'));
   assert.ok(WAKEUP_REASONS.includes('resumed'));
+});
+
+test('work-item task types expose the standard default and onboarding discriminator', () => {
+  assert.deepEqual([...WORK_ITEM_TASK_TYPES], ['standard', 'onboarding']);
 });
 
 test('work item states cover the durable lifecycle', () => {

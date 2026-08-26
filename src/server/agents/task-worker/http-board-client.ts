@@ -375,6 +375,7 @@ function mapContext(result: ClaimRunResult, requestedCursor: number | null): Bou
     agentId: run.agentId,
     taskId: task.taskId,
     intake: context.intake,
+    ...(context.onboarding === true ? { onboarding: true as const } : {}),
     design: context.design ?? false,
     mission: {
       role: context.agent.role,

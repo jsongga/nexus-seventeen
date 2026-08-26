@@ -32,7 +32,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -140,6 +140,17 @@ CREATE TABLE IF NOT EXISTS work_item_planning_tasks (
   task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE RESTRICT,
   created_at TEXT NOT NULL
 ) STRICT;
+`;
+
+const WORK_ITEM_ONBOARDING_SCHEMA = `
+CREATE TABLE IF NOT EXISTS work_item_onboarding_tasks (
+  work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id),
+  project_id   TEXT NOT NULL REFERENCES projects(project_id),
+  task_id      TEXT NOT NULL REFERENCES tasks(task_id),
+  created_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS onboarding_once_per_project ON work_item_onboarding_tasks(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS onboarding_task_link ON work_item_onboarding_tasks(task_id);
 `;
 
 const REVIEW_DESIGN_SCHEMA = `
@@ -533,6 +544,8 @@ CREATE INDEX tasks_agent ON tasks(assigned_agent_id, status, updated_at);
 CREATE UNIQUE INDEX tasks_one_review_stage
   ON tasks(parent_task_id, task_kind)
   WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
+
+${WORK_ITEM_ONBOARDING_SCHEMA}
 
 ${REVIEW_DESIGN_SCHEMA}
 
@@ -1163,6 +1176,25 @@ function migrateVersion22To23(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion23To24(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(WORK_ITEM_ONBOARDING_SCHEMA);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 24; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1465,6 +1497,8 @@ export class TaskBoardStore {
         // Park records, notifications, and gate actions are added below.
       } else if (version === 22) {
         // Scheduling caps, board pause, and widened ledger enums are added below.
+      } else if (version === 23) {
+        // Onboarding work-item links are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1489,6 +1523,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 20) migrateVersion20To21(db);
       if (version >= 1 && version <= 21) migrateVersion21To22(db);
       if (version >= 1 && version <= 22) migrateVersion22To23(db);
+      if (version >= 1 && version <= 23) migrateVersion23To24(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

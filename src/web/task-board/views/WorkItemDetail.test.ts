@@ -12,6 +12,7 @@ const parkedWorkItem: BoardWorkItem = {
   originalRequest: 'Plan the next campaign.',
   refinedObjective: null,
   priority: 'normal',
+  taskType: 'standard',
   projectTarget: { mode: 'auto' },
   resolvedProjectId: 'project-one',
   planningTaskId: 'planning-task-one',

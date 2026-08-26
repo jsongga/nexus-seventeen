@@ -11,6 +11,7 @@ import {
   type WorkItemAudit,
   type WorkItemPage,
   type WorkItemState,
+  type WorkItemTaskType,
   type WorkItemTransition,
 } from "#shared/task-board-contract";
 import { parseGateAction } from "#shared/task-board-contract/validate";
@@ -38,10 +39,15 @@ export type WorkItemDetail = WorkItem & Readonly<{
 export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
-const WORK_ITEM_TERMINAL_RANK_SQL = "(ended_at IS NOT NULL)";
-const WORK_ITEM_PRIORITY_RANK_SQL = `CASE priority
+const ONBOARDING_ACCEPTANCE_CRITERIA = "Return a single-node v2 workflowPlan with stageTemplate [\"implementation\",\"testing\",\"verification\"], declaredScope covering README.md, docs/**, and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.";
+const WORK_ITEM_TERMINAL_RANK_SQL = "(work_item.ended_at IS NOT NULL)";
+const WORK_ITEM_PRIORITY_RANK_SQL = `CASE work_item.priority
   ${workItemPriorityCases("  ")}
 END`;
+
+function onboardingUniqueConstraint(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed: work_item_onboarding_tasks\.project_id/u.test(error.message);
+}
 
 export function workItemTitleProjection(
   workItem: Pick<WorkItem, "originalRequest" | "refinedObjective">,
@@ -61,6 +67,7 @@ export class WorkItemsCollaborator {
     const tuple = cursor === undefined ? null : decodeWorkItemCursor(cursor);
     const select = `
       SELECT work_item.*,
+        CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
         (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id,
         (SELECT MAX(transition.created_at)
           FROM work_item_transitions transition
@@ -98,24 +105,25 @@ export class WorkItemsCollaborator {
         ${WORK_ITEM_TERMINAL_RANK_SQL} AS work_item_terminal_rank,
         ${WORK_ITEM_PRIORITY_RANK_SQL} AS work_item_priority_rank
       FROM work_items work_item
+      LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
     `;
     const orderAndLimit = `
       ORDER BY
         ${WORK_ITEM_TERMINAL_RANK_SQL},
         ${WORK_ITEM_PRIORITY_RANK_SQL},
-        created_at,
-        work_item_id
+        work_item.created_at,
+        work_item.work_item_id
       LIMIT ${WORK_ITEM_PAGE_SIZE + 1}
     `;
     const rows = tuple === null
-      ? this.runtime.store.db.prepare(`${select} WHERE ${includeArchived ? "1=1" : "archived_at IS NULL"} ${orderAndLimit}`).all()
+      ? this.runtime.store.db.prepare(`${select} WHERE ${includeArchived ? "1=1" : "work_item.archived_at IS NULL"} ${orderAndLimit}`).all()
       : this.runtime.store.db.prepare(`
           ${select}
-          WHERE ${includeArchived ? "1=1" : "archived_at IS NULL"} AND (
+          WHERE ${includeArchived ? "1=1" : "work_item.archived_at IS NULL"} AND (
             ${WORK_ITEM_TERMINAL_RANK_SQL},
             ${WORK_ITEM_PRIORITY_RANK_SQL},
-            created_at,
-            work_item_id
+            work_item.created_at,
+            work_item.work_item_id
           ) > (?, ?, ?, ?)
           ${orderAndLimit}
         `).all(tuple.terminalRank, tuple.priorityRank, tuple.createdAt, tuple.workItemId);
@@ -182,21 +190,33 @@ export class WorkItemsCollaborator {
   }
 
   createWorkItem(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {
+    if ((request.taskType ?? "standard") === "onboarding") {
+      return this.createWorkItemAndStartPlanning(request, idempotencyKey);
+    }
     return this.createWorkItemInternal(request, idempotencyKey, false);
   }
 
   createWorkItemAndStartPlanning(request: CreateWorkItemRequest, idempotencyKey: string): CreateWorkItemResult {
     let planning: PlanningStartResult = Object.freeze({ task: null, wakeAgentId: null });
-    const result = this.runtime.store.transaction(() => {
-      const created = this.createWorkItemInternal(request, idempotencyKey, true);
-      if (created.workItem.state === "queued") {
-        planning = this.startWorkItemPlanningInTransaction(created.workItem.workItemId, created.duplicate);
-      }
-      return Object.freeze({
-        workItem: this.runtime.requireWorkItem(created.workItem.workItemId),
-        duplicate: created.duplicate,
+    const taskType = request.taskType ?? "standard";
+    let result: CreateWorkItemResult;
+    try {
+      result = this.runtime.store.transaction(() => {
+        const created = this.createWorkItemInternal(request, idempotencyKey, true);
+        if (created.workItem.state === "queued") {
+          planning = this.startWorkItemPlanningInTransaction(created.workItem.workItemId, created.duplicate, undefined, taskType);
+        }
+        return Object.freeze({
+          workItem: this.runtime.requireWorkItem(created.workItem.workItemId),
+          duplicate: created.duplicate,
+        });
       });
-    });
+    } catch (error) {
+      if (taskType === "onboarding" && onboardingUniqueConstraint(error)) {
+        throw conflict(TASK_BOARD_ERROR_CODES.ONBOARDING_EXISTS, "This project already has an onboarding work item");
+      }
+      throw error;
+    }
     if (planning.wakeAgentId !== null) this.runtime.wakeupEvents.emit(planning.wakeAgentId);
     return result;
   }
@@ -207,9 +227,19 @@ export class WorkItemsCollaborator {
     inTransaction: boolean,
   ): CreateWorkItemResult {
     const priority = request.priority ?? "normal";
+    const taskType = request.taskType ?? "standard";
     const projectTarget = request.projectTarget;
     if (projectTarget === undefined || projectTarget.mode !== "explicit") {
-      throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED, "Choose a project");
+      throw new TaskBoardError(
+        400,
+        taskType === "onboarding" ? TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED : TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED,
+        "Choose a project",
+      );
+    }
+    if (taskType === "onboarding" && this.runtime.store.db.prepare(
+      "SELECT 1 FROM projects WHERE project_id=?",
+    ).get(projectTarget.projectId) === undefined) {
+      throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED, "Choose an existing project");
     }
     this.runtime.requireProject(projectTarget.projectId);
     const createdBy = this.runtime.config.humanPrincipal;
@@ -218,6 +248,7 @@ export class WorkItemsCollaborator {
       createdBy,
       originalRequest: request.originalRequest,
       priority,
+      ...(taskType === "onboarding" ? { taskType } : {}),
       projectTarget,
     });
     const workItemId = randomUUID();
@@ -225,14 +256,22 @@ export class WorkItemsCollaborator {
     const apply = (): CreateWorkItemResult => {
       const prior = this.runtime.store.db.prepare(`
         SELECT work_item.*,
+          CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
           (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id
-        FROM work_items work_item WHERE created_by = ? AND idempotency_key = ?
+        FROM work_items work_item
+        LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
+        WHERE created_by = ? AND idempotency_key = ?
       `).get(createdBy, idempotencyKey);
       if (prior) {
         if (stringValue(prior, "request_hash") !== requestHash) {
           throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another work item");
         }
         return Object.freeze({ workItem: workItemFromRow(prior), duplicate: true });
+      }
+      if (taskType === "onboarding" && this.runtime.store.db.prepare(
+        "SELECT 1 FROM work_item_onboarding_tasks WHERE project_id=?",
+      ).get(targetProjectId) !== undefined) {
+        throw conflict(TASK_BOARD_ERROR_CODES.ONBOARDING_EXISTS, "This project already has an onboarding work item");
       }
       const now = exactNow(this.runtime.config.now);
       this.runtime.store.db.prepare(`
@@ -365,6 +404,7 @@ export class WorkItemsCollaborator {
     workItemId: string,
     repairLegacyOrphan: boolean,
     revisionNote?: string,
+    requestedTaskType?: WorkItemTaskType,
   ): PlanningStartResult {
     const workItem = this.runtime.requireWorkItem(workItemId);
     if (workItem.resolvedProjectId === null || workItem.endedAt !== null) {
@@ -383,6 +423,8 @@ export class WorkItemsCollaborator {
     }
     const manager = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
     const managerId = manager.agentId;
+    const onboarding = requestedTaskType === "onboarding" || workItem.taskType === "onboarding";
+    const project = onboarding ? this.runtime.requireProject(workItem.resolvedProjectId) : null;
     const configuration = this.automation.getConfiguration();
     const enabledTypes = new Set(configuration.agentTypes.filter((agentType) => agentType.enabled).map((agentType) => agentType.agentTypeId));
     const availableStages = configuration.stages.flatMap((stage) =>
@@ -391,10 +433,16 @@ export class WorkItemsCollaborator {
     const taskRequest = {
       parentTaskId: null,
       title: `Plan workflow: ${workItem.originalRequest.slice(0, 160)}`,
-      objective: revisionNote === undefined
-        ? workItem.originalRequest
-        : `Prior plan rejected: ${redactForPersistence(revisionNote)}\n\n${workItem.originalRequest}`,
-      acceptanceCriteria: `${PLANNING_ACCEPTANCE_CRITERIA_PREFIX}${availableStages.join(", ") || "none configured"}.`,
+      objective: onboarding
+        ? revisionNote === undefined
+          ? `Onboard project: ${project!.name}`
+          : `Prior plan rejected: ${redactForPersistence(revisionNote)}\n\nOnboard project: ${project!.name}`
+        : revisionNote === undefined
+          ? workItem.originalRequest
+          : `Prior plan rejected: ${redactForPersistence(revisionNote)}\n\n${workItem.originalRequest}`,
+      acceptanceCriteria: onboarding
+        ? ONBOARDING_ACCEPTANCE_CRITERIA
+        : `${PLANNING_ACCEPTANCE_CRITERIA_PREFIX}${availableStages.join(", ") || "none configured"}.`,
       workspaceRefs: [],
       assignedAgentId: managerId,
       assignedRole: "manager",
@@ -448,8 +496,8 @@ export class WorkItemsCollaborator {
       workItem.resolvedProjectId,
       taskRequest.title,
       taskRequest.objective,
-      PLANNING_ACCEPTANCE_CRITERIA_PREFIX.length,
-      PLANNING_ACCEPTANCE_CRITERIA_PREFIX,
+      (onboarding ? ONBOARDING_ACCEPTANCE_CRITERIA : PLANNING_ACCEPTANCE_CRITERIA_PREFIX).length,
+      onboarding ? ONBOARDING_ACCEPTANCE_CRITERIA : PLANNING_ACCEPTANCE_CRITERIA_PREFIX,
       managerId,
       RETIRED_WAKEUP_EVENT_PREFIX,
     ) : undefined;
@@ -458,6 +506,21 @@ export class WorkItemsCollaborator {
       : this.tasks.createTaskInTransaction(workItem.resolvedProjectId, taskRequest);
     const now = exactNow(this.runtime.config.now);
     this.runtime.store.db.prepare("INSERT INTO work_item_planning_tasks VALUES(?,?,?)").run(workItemId, task.taskId, now);
+    if (onboarding) {
+      const onboardingLink = this.runtime.store.db.prepare(
+        "SELECT 1 FROM work_item_onboarding_tasks WHERE work_item_id=?",
+      ).get(workItemId);
+      if (onboardingLink === undefined) {
+        this.runtime.store.db.prepare(`
+          INSERT INTO work_item_onboarding_tasks(work_item_id,project_id,task_id,created_at)
+          VALUES(?,?,?,?)
+        `).run(workItemId, workItem.resolvedProjectId, task.taskId, now);
+      } else {
+        this.runtime.store.db.prepare(
+          "UPDATE work_item_onboarding_tasks SET task_id=? WHERE work_item_id=?",
+        ).run(task.taskId, workItemId);
+      }
+    }
     transitionWorkItemInTransaction(this.runtime.store, {
       workItemId,
       to: "planning",

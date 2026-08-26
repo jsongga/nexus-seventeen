@@ -23,6 +23,7 @@ function workItem(overrides: Partial<BoardWorkItem> = {}): BoardWorkItem {
     originalRequest: 'Make operational state visible.',
     refinedObjective: null,
     priority: 'normal',
+    taskType: 'standard',
     projectTarget: { mode: 'explicit', projectId: 'project-one' },
     resolvedProjectId: 'project-one',
     planningTaskId: null,
@@ -224,6 +225,19 @@ describe('default observability view', () => {
       nowMs,
     }));
     expect(staleMarkup).toContain('aria-label="Heartbeat stale"');
+  });
+
+  it('renders an unknown work-item task type verbatim', () => {
+    const markup = renderToStaticMarkup(createElement(WorkItemRow, {
+      workItem: workItem({ taskType: 'future_onboarding' }),
+      projects: [],
+      selected: false,
+      onSelect: vi.fn(),
+      buttonRef: vi.fn(),
+      nowMs,
+    }));
+
+    expect(markup).toContain('future_onboarding');
   });
 
   it('renders nothing for absent optional work-item observability fields', () => {

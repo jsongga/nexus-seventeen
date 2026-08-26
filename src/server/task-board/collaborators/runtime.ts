@@ -124,8 +124,10 @@ export class TaskBoardRuntime {
   requireWorkItem(workItemId: string) {
     const row = this.store.db.prepare(`
       SELECT work_item.*,
+        CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
         (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id
       FROM work_items work_item
+      LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
       WHERE work_item.work_item_id = ?
     `).get(workItemId);
     if (!row) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");

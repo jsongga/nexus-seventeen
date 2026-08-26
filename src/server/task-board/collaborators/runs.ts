@@ -1107,6 +1107,19 @@ export class RunsCollaborator {
         intake: task !== null && this.runtime.store.db.prepare(
           "SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?",
         ).get(task.taskId) !== undefined,
+        ...(task !== null && this.runtime.store.db.prepare(`
+          SELECT 1
+          FROM work_item_onboarding_tasks onboarding
+          WHERE onboarding.task_id = ?
+             OR onboarding.work_item_id = (
+               SELECT plan.work_item_id
+               FROM stage_attempts attempt
+               JOIN work_nodes node ON node.node_id=attempt.node_id
+               JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+               WHERE attempt.task_id=?
+             )
+          LIMIT 1
+        `).get(task.taskId, task.taskId) !== undefined ? { onboarding: true as const } : {}),
         design: task !== null && this.runtime.store.db.prepare(
           "SELECT 1 FROM work_item_design_tasks WHERE task_id = ?",
         ).get(task.taskId) !== undefined,

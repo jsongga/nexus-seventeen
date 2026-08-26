@@ -18,10 +18,12 @@ import {
   WORKFLOW_STAGES,
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
+  WORK_ITEM_TASK_TYPES,
   type VerifyAttempt,
 } from "#shared/task-board-contract";
 import {
   BROWSER_SCALAR_MESSAGES,
+  ContractValidationError,
   NAMED_EXACT_MESSAGES,
   PATH_EXACT_MESSAGES,
   exact,
@@ -92,6 +94,7 @@ function workItemEntity(state: string): Record<string, unknown> {
     originalRequest: "Keep future work-item states visible.",
     refinedObjective: null,
     priority: "normal",
+    taskType: "standard",
     projectTarget: { mode: "auto" },
     resolvedProjectId: null,
     planningTaskId: null,
@@ -324,11 +327,19 @@ test("strict entity parsing rejects unknown task statuses and work-item states",
   );
 });
 
-test("the browser profile buckets only task statuses and work-item states as unrecognized", () => {
+test("the browser profile buckets state enums and preserves unknown work-item task types verbatim", () => {
   assert.equal(parseTaskEntity(taskEntity("future_task_state"), "tasks[0]", browserProfile).status, "unrecognized");
   assert.equal(
     parseWorkItemEntity(workItemEntity("future_work_item_state"), "workItems[0]", browserProfile).state,
     "unrecognized",
+  );
+  assert.equal(
+    parseWorkItemEntity({ ...workItemEntity("queued"), taskType: "future_task_type" }, "workItems[0]", browserProfile).taskType,
+    "future_task_type",
+  );
+  assert.throws(
+    () => parseWorkItemEntity({ ...workItemEntity("queued"), taskType: "future_task_type" }, "workItems[0]"),
+    /taskType has an unsupported value/u,
   );
 
   assert.throws(() => parseTaskEntity({
@@ -378,6 +389,18 @@ test("board request shapes accept exactly the shared contract enum members", () 
   assertAcceptedSet(WORK_ITEM_PRIORITIES, (priority) => parseBoardCreateWorkItem({
     originalRequest: "Make checkout safe.", priority, projectTarget: { mode: "explicit", projectId: "project-one" },
   }));
+  assertAcceptedSet(WORK_ITEM_TASK_TYPES, (taskType) => parseBoardCreateWorkItem({
+    originalRequest: "Make checkout safe.", taskType, projectTarget: { mode: "explicit", projectId: "project-one" },
+  }));
+  assert.equal(parseBoardCreateWorkItem({
+    originalRequest: "Make checkout safe.", projectTarget: { mode: "explicit", projectId: "project-one" },
+  }).taskType, "standard");
+  assert.throws(
+    () => parseBoardCreateWorkItem({ originalRequest: "Onboard checkout.", taskType: "onboarding" }),
+    (error: unknown) => error instanceof ContractValidationError
+      && error.code === "ONBOARDING_PROJECT_REQUIRED"
+      && error.message === "Choose a project",
+  );
   assertAcceptedSet(EVALUATOR_PROFILES, (evaluatorProfile) => parseBoardAutomationUpdate({
     version: 1,
     agentTypes: [{ agentTypeId: "type-one", name: "Type one", description: "Disabled drift-test type.", role: "engineer",

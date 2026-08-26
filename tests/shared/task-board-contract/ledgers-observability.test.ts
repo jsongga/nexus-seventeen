@@ -91,6 +91,7 @@ const oldWorkItem: WorkItem = {
   originalRequest: "Make retry behavior observable.",
   refinedObjective: null,
   priority: "normal",
+  taskType: "standard",
   projectTarget: { mode: "explicit", projectId: "project-one" },
   resolvedProjectId: "project-one",
   planningTaskId: null,

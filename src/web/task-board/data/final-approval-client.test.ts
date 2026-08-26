@@ -9,6 +9,7 @@ const workItem = {
   originalRequest: 'Review the pipeline.',
   refinedObjective: null,
   priority: 'normal',
+  taskType: 'standard',
   projectTarget: { mode: 'explicit', projectId: 'project-one' },
   resolvedProjectId: 'project-one',
   planningTaskId: 'planning-one',

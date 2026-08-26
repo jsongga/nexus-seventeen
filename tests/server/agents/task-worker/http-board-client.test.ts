@@ -81,7 +81,7 @@ test("claim pinning is sent verbatim and heartbeat uses the body-less run route"
   assert.equal(requests[1]?.init.body, undefined);
 });
 
-test("claim responses expose the immutable run pinning instead of the replay request", async () => {
+test("claim responses expose immutable run pinning and preserve the onboarding discriminator", async () => {
   const fixture = await boardFixture();
   try {
     fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Retain replay pinning" }));
@@ -96,10 +96,14 @@ test("claim responses expose the immutable run pinning instead of the replay req
       },
     });
     assert.ok(replay);
+    const onboardingReplay = {
+      ...replay,
+      context: { ...replay.context, onboarding: true as const },
+    };
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,
-      fetchImplementation: (async () => new Response(JSON.stringify(replay), {
+      fetchImplementation: (async () => new Response(JSON.stringify(onboardingReplay), {
         status: 200,
         headers: { "content-type": "application/json" },
       })) as typeof fetch,
@@ -124,6 +128,7 @@ test("claim responses expose the immutable run pinning instead of the replay req
       model: "gpt-5.6-old",
       promptsSha: "sha256:old-prompts",
     });
+    assert.equal(claimed?.context?.onboarding, true);
   } finally {
     fixture.board.close();
   }

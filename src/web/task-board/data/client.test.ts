@@ -97,6 +97,7 @@ const workItem = {
   originalRequest: 'Improve invoice recovery for customers.',
   refinedObjective: null,
   priority: 'normal',
+  taskType: 'standard',
   projectTarget: { mode: 'auto' },
   resolvedProjectId: null,
   planningTaskId: null,
@@ -1067,6 +1068,7 @@ describe('task-board HTTP client', () => {
     await expect(client.createWorkItem({
       originalRequest: '  Improve invoice recovery for customers.  ',
       priority: 'normal',
+      taskType: 'onboarding',
       projectId: project.projectId,
       idempotencyKey: 'work-item:create:one',
     })).resolves.toMatchObject({
@@ -1093,6 +1095,7 @@ describe('task-board HTTP client', () => {
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
       originalRequest: 'Improve invoice recovery for customers.',
       priority: 'normal',
+      taskType: 'onboarding',
       projectTarget: { mode: 'explicit', projectId: project.projectId },
     });
   });
@@ -1104,18 +1107,21 @@ describe('task-board HTTP client', () => {
     await expect(client.createWorkItem({
       originalRequest: '   ',
       priority: 'normal',
+      taskType: 'standard',
       projectId: project.projectId,
       idempotencyKey: 'work-item:create:one',
     })).rejects.toThrow(/enter a task/iu);
     await expect(client.createWorkItem({
       originalRequest: 'A valid task',
       priority: 'normal',
+      taskType: 'standard',
       projectId: project.projectId,
       idempotencyKey: 'short',
     })).rejects.toThrow(/idempotency key/iu);
     await expect(client.createWorkItem({
       originalRequest: 'A valid task',
       priority: 'normal',
+      taskType: 'standard',
       projectId: '   ',
       idempotencyKey: 'work-item:create:one',
     })).rejects.toThrow(/choose a project/iu);

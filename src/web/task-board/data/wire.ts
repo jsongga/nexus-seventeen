@@ -38,6 +38,7 @@ import {
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
+  WORK_ITEM_TASK_TYPES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
   isHardTerminalTaskStatus,
@@ -81,6 +82,7 @@ export const questionStatusValues = QUESTION_STATUSES;
 export const wakeReasonValues = WAKEUP_REASONS;
 export const workItemPriorityValues = WORK_ITEM_PRIORITIES;
 export const workItemStateValues = WORK_ITEM_STATES;
+export const workItemTaskTypeValues = WORK_ITEM_TASK_TYPES;
 export const workItemStageValues = WORK_ITEM_STAGES;
 export const evaluatorProfileValues = EVALUATOR_PROFILES;
 export const planRevisionStateValues = PLAN_REVISION_STATES;

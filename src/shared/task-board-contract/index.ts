@@ -7,6 +7,8 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   HOST_PATH_OUTSIDE_ROOTS: "HOST_PATH_OUTSIDE_ROOTS",
   HOST_PATH_UNREADABLE: "HOST_PATH_UNREADABLE",
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  ONBOARDING_EXISTS: "ONBOARDING_EXISTS",
+  ONBOARDING_PROJECT_REQUIRED: "ONBOARDING_PROJECT_REQUIRED",
   PLAN_NOT_FOUND: "PLAN_NOT_FOUND",
   PLAN_NOT_PROPOSED: "PLAN_NOT_PROPOSED",
   PLANNING_UNAVAILABLE: "PLANNING_UNAVAILABLE",
@@ -144,6 +146,9 @@ export const TASK_MESSAGE_ACTOR_TYPES = DOCUMENT_ACTOR_TYPES;
 
 export const WORK_ITEM_PRIORITIES = ["urgent", "high", "normal", "low", "opportunistic"] as const;
 export type WorkItemPriority = typeof WORK_ITEM_PRIORITIES[number];
+
+export const WORK_ITEM_TASK_TYPES = ["standard", "onboarding"] as const;
+export type WorkItemTaskType = typeof WORK_ITEM_TASK_TYPES[number];
 
 export const WORK_ITEM_STATES = [
   "queued",
@@ -484,6 +489,7 @@ export interface WorkItem {
   readonly originalRequest: string;
   readonly refinedObjective: string | null;
   readonly priority: WorkItemPriority;
+  readonly taskType: WorkItemTaskType;
   readonly projectTarget: WorkItemProjectTarget;
   readonly resolvedProjectId: string | null;
   /** Durable link to the manager task that refines and proposes this work item's workflow. */
@@ -1073,6 +1079,7 @@ export interface ClaimRunResult {
   readonly task: BoardTask | null;
   readonly context: Readonly<{
     intake: boolean;
+    onboarding?: true;
     design: boolean;
     agent: AgentProfile;
     projectMemory: Readonly<{
@@ -1121,6 +1128,8 @@ export interface CreateWorkItemRequest {
   readonly originalRequest: string;
   /** Defaults to normal. */
   readonly priority?: WorkItemPriority;
+  /** Defaults to standard. */
+  readonly taskType?: WorkItemTaskType;
   /** Required by the current server; automatic targets are rejected with PROJECT_REQUIRED. */
   readonly projectTarget?: WorkItemProjectTarget;
 }

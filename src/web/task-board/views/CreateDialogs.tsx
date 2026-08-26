@@ -459,6 +459,7 @@ function WorkItemForm({
 }) {
   const [prompt, setPrompt] = useState('');
   const [priority, setPriority] = useState<CreateWorkItemInput['priority']>('normal');
+  const [taskType, setTaskType] = useState<CreateWorkItemInput['taskType']>('standard');
   const [projectId, setProjectId] = useState(defaultProjectId ?? '');
   const [idempotencyKey, setIdempotencyKey] = useState(randomUuid);
   const normalizedPrompt = prompt.trim();
@@ -468,11 +469,13 @@ function WorkItemForm({
   const reportDirty = (next: {
     prompt?: string;
     priority?: CreateWorkItemInput['priority'];
+    taskType?: CreateWorkItemInput['taskType'];
     projectId?: string;
   }) => {
     onDirtyChange(
       fieldsAreDirty([next.prompt ?? prompt])
       || (next.priority ?? priority) !== 'normal'
+      || (next.taskType ?? taskType) !== 'standard'
       || (next.projectId ?? projectId) !== initialProjectId,
     );
   };
@@ -485,6 +488,7 @@ function WorkItemForm({
         void onSubmit({
           originalRequest: normalizedPrompt,
           priority,
+          taskType,
           projectId,
           idempotencyKey,
         });
@@ -507,7 +511,24 @@ function WorkItemForm({
           placeholder="What should be done?"
         />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div>
+          <FieldLabel htmlFor="work-item-task-type">Task type</FieldLabel>
+          <select
+            id="work-item-task-type"
+            className={inputClass}
+            value={taskType}
+            onChange={(event) => {
+              const nextTaskType = event.target.value as CreateWorkItemInput['taskType'];
+              setTaskType(nextTaskType);
+              reportDirty({ taskType: nextTaskType });
+              regenerateIdempotencyKey();
+            }}
+          >
+            <option value="standard">Standard</option>
+            <option value="onboarding">Onboarding</option>
+          </select>
+        </div>
         <div>
           <FieldLabel htmlFor="work-item-priority">Priority</FieldLabel>
           <select

@@ -125,6 +125,22 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
       }),
     },
     {
+      name: "onboarding-intake",
+      prompt: renderPrompt({
+        runId: "run-golden-onboarding-intake",
+        wakeReason: "human_assignment",
+        context: context({
+          intake: true,
+          onboarding: true,
+          mission: {
+            role: "manager",
+            area: "Project onboarding",
+            mission: "Plan the repository onboarding deliverables for human confirmation.",
+          },
+        }),
+      }),
+    },
+    {
       name: "engineer-pipeline-implementation",
       prompt: renderPrompt({
         runId: "run-golden-pipeline-implementation",
@@ -133,11 +149,27 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
       }),
     },
     {
+      name: "onboarding-engineer",
+      prompt: renderPrompt({
+        runId: "run-golden-onboarding-engineer",
+        wakeReason: "workflow_handoff",
+        context: context({ onboarding: true, workflow: pipelineWorkflow("implementation") }),
+      }),
+    },
+    {
       name: "engineer-fix-round",
       prompt: renderPrompt({
         runId: "run-golden-fix-round",
         wakeReason: "workflow_handoff",
         context: context({ workflow: fixWorkflow as never }),
+      }),
+    },
+    {
+      name: "onboarding-fix-round",
+      prompt: renderPrompt({
+        runId: "run-golden-onboarding-fix-round",
+        wakeReason: "workflow_handoff",
+        context: context({ onboarding: true, workflow: fixWorkflow as never }),
       }),
     },
     {
@@ -293,6 +325,46 @@ test("fix-round engineer prompt replaces the plain implementation block and rend
   assert.doesNotMatch(prompt, /Pipeline task on branch task\/work-item-one/u);
   assert.ok(prompt.indexOf(fixBlock) < prompt.indexOf("src/server/fix.ts"));
   assert.ok(prompt.indexOf("src/server/fix.ts") < prompt.indexOf("Reversible mid-run decisions:"));
+});
+
+test("onboarding fix-round prompt leads with fix findings and retains onboarding guidance", () => {
+  const workflow = {
+    ...pipelineWorkflow("implementation"),
+    fix: {
+      round: 2,
+      findings: [{
+        findingId: "finding-two",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 2,
+        file: "src/server/fix.ts",
+        line: 24,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry reaches machine verification.",
+        actual: "The retry skipped machine verification.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      }],
+    },
+  } as const;
+  const prompt = renderPrompt({
+    runId: "run-onboarding-fix",
+    wakeReason: "workflow_handoff",
+    context: context({ onboarding: true, workflow: workflow as never }),
+  });
+
+  const fixInstruction = "Fix round 2 on branch task/work-item-one.";
+  const finding = "The retry skipped machine verification.";
+  const onboardingInstruction = "Onboard the repository on branch task/work-item-one";
+  assert.match(prompt, /Review findings:/u);
+  assert.ok(prompt.includes(finding));
+  assert.match(prompt, /preserve existing documentation/u);
+  assert.match(prompt, /create each missing slot/u);
+  assert.equal(prompt.split("Review findings:").length, 2);
+  assert.ok(prompt.indexOf(fixInstruction) < prompt.indexOf(finding));
+  assert.ok(prompt.indexOf(finding) < prompt.indexOf(onboardingInstruction));
+  assert.doesNotMatch(prompt, /Pipeline task on branch task\/work-item-one/u);
 });
 
 test("pipeline block is absent outside the engineer implementation stage", () => {
