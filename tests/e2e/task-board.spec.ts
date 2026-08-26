@@ -1076,12 +1076,16 @@ test('creating a task requires and records one explicit project with priority', 
   const taskListActions = page.getByRole('group', { name: 'Task list actions' });
   await taskListActions.getByRole('button', { name: 'Add task' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('textbox')).toHaveCount(1);
+  const taskPrompt = dialog.getByRole('textbox', { name: 'Task', exact: true });
+  const taskType = dialog.getByLabel('Task type', { exact: true });
+  await expect(taskPrompt).toHaveCount(1);
+  await expect(taskType).toHaveCount(1);
+  await expect(taskType).toHaveValue('standard');
   await expect(dialog.getByLabel('Priority')).toHaveValue('normal');
   await expect(dialog.getByLabel('Project')).toHaveValue('');
   await expect(dialog.getByRole('option', { name: 'Auto' })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Choose a project' })).toBeDisabled();
-  await dialog.getByRole('textbox').fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
+  await taskPrompt.fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
   await expect(dialog.getByRole('button', { name: 'Choose a project' })).toBeDisabled();
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
@@ -1095,7 +1099,7 @@ test('creating a task requires and records one explicit project with priority', 
 
   await taskListActions.getByRole('button', { name: 'Add task' }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
-  await dialog.getByRole('textbox').fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
+  await taskPrompt.fill('Make invoice recovery clear\nCustomers should know what to do after a failed payment.');
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
   await expect.poll(() => createdRequest).not.toBeNull();
@@ -1103,6 +1107,7 @@ test('creating a task requires and records one explicit project with priority', 
   expect(createdRequest).toEqual({
     originalRequest: 'Make invoice recovery clear\nCustomers should know what to do after a failed payment.',
     priority: 'normal',
+    taskType: 'standard',
     projectTarget: { mode: 'explicit', projectId: project.projectId },
   });
   expect(createdIdempotencyKey).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u);
@@ -1127,6 +1132,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   let workItemListRequests = 0;
   let answerRequest: Record<string, unknown> | null = null;
   let confirmRequest: Record<string, unknown> | null = null;
+  let rejectRequest: Record<string, unknown> | null = null;
   let archiveRequest: Record<string, unknown> | null = null;
   let cancelRequest: Record<string, unknown> | null = null;
   let rejectAttempts = 0;
@@ -1286,6 +1292,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
         originalRequest: input.originalRequest,
         refinedObjective: null,
         priority: input.priority,
+        taskType: input.taskType,
         projectTarget: input.projectTarget,
         resolvedProjectId: project.projectId,
         currentStage: 'planning',
@@ -1349,16 +1356,17 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
       }
       return;
     }
+    if (url.pathname === `/board-api/v1/plans/${planRevisionId}/reject` && method === 'POST') {
+      rejectAttempts += 1;
+      rejectRequest = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 409,
+        json: { error: { code: 'WORK_ITEM_VERSION_CONFLICT', message: 'Work item changed' } },
+      });
+      return;
+    }
     if (url.pathname === `/board-api/v1/work-items/work-item-detail-primary` && method === 'PATCH') {
       const input = request.postDataJSON() as Record<string, unknown>;
-      if (input.action === 'cancel') {
-        rejectAttempts += 1;
-        await route.fulfill({
-          status: 409,
-          json: { error: { code: 'WORK_ITEM_VERSION_CONFLICT', message: 'Work item changed' } },
-        });
-        return;
-      }
       archiveAttempts += 1;
       if (archiveAttempts === 1) {
         await route.fulfill({
@@ -1498,7 +1506,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   const taskListActions = page.getByRole('group', { name: 'Task list actions' });
   await taskListActions.getByRole('button', { name: 'Add task' }).click();
   let dialog = page.getByRole('dialog', { name: 'Add a task' });
-  await dialog.getByLabel('Task').fill('Prepare a customer recovery workflow');
+  await dialog.getByLabel('Task', { exact: true }).fill('Prepare a customer recovery workflow');
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
 
@@ -1540,16 +1548,20 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
 
   await pane.getByRole('button', { name: 'Reject plan' }).click();
   dialog = page.getByRole('dialog', { name: 'Reject proposed plan' });
-  await dialog.getByLabel('Reason').fill('The dependency ordering needs another pass.');
-  await dialog.getByRole('button', { name: 'Reject and cancel' }).click();
+  await dialog.getByLabel('Revision note').fill('The dependency ordering needs another pass.');
+  await dialog.getByRole('button', { name: 'Reject and revise' }).click();
   await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
+  await expect.poll(() => rejectRequest).toEqual({
+    note: 'The dependency ordering needs another pass.',
+    expectedState: 'proposed',
+  });
   await expect.poll(() => rejectAttempts).toBe(1);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await discardDirtyDialog(page);
   await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Reject plan' }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Keep work item' }).click();
+  await dialog.getByRole('button', { name: 'Keep proposed plan' }).click();
 
   const requestsBeforeConflict = workItemListRequests;
   await pane.getByRole('button', { name: 'Confirm plan' }).click();
@@ -1578,7 +1590,7 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
 
   await taskListActions.getByRole('button', { name: 'Add task' }).click();
   dialog = page.getByRole('dialog', { name: 'Add a task' });
-  await dialog.getByLabel('Task').fill('Cancel this superseded intake');
+  await dialog.getByLabel('Task', { exact: true }).fill('Cancel this superseded intake');
   await dialog.getByLabel('Project').selectOption(project.projectId);
   await dialog.getByRole('button', { name: 'Submit task' }).click();
   const cancellableRow = page.getByRole('article', { name: 'Work item: Cancel this superseded intake' });
@@ -1817,6 +1829,7 @@ test('project intake lazily creates a manager whose lane token can be rotated an
     originalRequest: 'Add a health check to payment tools',
     refinedObjective: null,
     priority: 'normal',
+    taskType: 'standard',
     projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
     resolvedProjectId: importedProject.projectId,
     planningTaskId: planningTask.taskId,
@@ -1976,13 +1989,14 @@ test('project intake lazily creates a manager whose lane token can be rotated an
 
   await page.getByRole('button', { name: 'Add task' }).click();
   const taskDialog = page.getByRole('dialog');
-  await taskDialog.getByRole('textbox').fill(createdWorkItem.originalRequest);
+  await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(createdWorkItem.originalRequest);
   await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
   await taskDialog.getByRole('button', { name: 'Submit task' }).click();
   await expect.poll(() => createdWorkItemRequest).not.toBeNull();
   expect(createdWorkItemRequest).toEqual({
     originalRequest: createdWorkItem.originalRequest,
     priority: 'normal',
+    taskType: 'standard',
     projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
   });
 
