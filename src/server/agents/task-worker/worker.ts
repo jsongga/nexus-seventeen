@@ -14,7 +14,7 @@ import {
 } from "../runtime/derive.js";
 import type { RuntimeEvent } from "../runtime/events.js";
 import { TaskWorkerJournalStore } from "./journal.js";
-import { InactiveClaimReplayError } from "./http-board-client.js";
+import { InactiveClaimReplayError, RetryableSettlementError } from "./http-board-client.js";
 import {
   parseAgentRunOutcome,
   parseBoundedAgentContext,
@@ -154,6 +154,7 @@ function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome, r
     taskId: claim.taskId,
     outcome: outcome.status,
     result,
+    ...(outcome.gapReport === undefined ? {} : { gapReport: outcome.gapReport }),
   })).digest("hex");
   return `tws_${digest}`;
 }
@@ -1246,18 +1247,25 @@ export class TaskWorker {
       if (active === null) throw new Error("Active run disappeared while outputs were pending");
     }
     if (outcome.status !== "waiting_for_human") {
-      await this.#options.board.settleAgentRun({
-        claim: active.claim,
-        outcome: outcome.status,
-        result,
-        handoff: outcome.handoff ?? null,
-        workflowPlan: outcome.workflowPlan ?? null,
-        ...(outcome.reviewFindings === undefined || outcome.reviewFindings.length === 0
-          ? {}
-          : { reviewFindings: outcome.reviewFindings }),
-        ...(outcome.designRecord === undefined ? {} : { designRecord: outcome.designRecord }),
-        idempotencyKey: settlementIdempotency(active.claim, outcome, result),
-      });
+      try {
+        await this.#options.board.settleAgentRun({
+          claim: active.claim,
+          outcome: outcome.status,
+          result,
+          ...(outcome.gapReport === undefined ? {} : { gapReport: outcome.gapReport }),
+          handoff: outcome.handoff ?? null,
+          workflowPlan: outcome.workflowPlan ?? null,
+          ...(outcome.reviewFindings === undefined || outcome.reviewFindings.length === 0
+            ? {}
+            : { reviewFindings: outcome.reviewFindings }),
+          ...(outcome.designRecord === undefined ? {} : { designRecord: outcome.designRecord }),
+          idempotencyKey: settlementIdempotency(active.claim, outcome, result),
+        });
+      } catch (error) {
+        if (!(error instanceof RetryableSettlementError)) throw error;
+        await this.#resetRejectedSettlement(active.claim);
+        return;
+      }
     }
     await this.#serial.run(async () => {
       const current = this.#state.active;
@@ -1272,6 +1280,30 @@ export class TaskWorker {
         endedAt: exactNow(this.#options.now),
       })].slice(-MAX_HISTORY);
       const next: TaskWorkerJournal = { ...this.#state, active: null, completed };
+      await this.#saveState(next);
+    });
+  }
+
+  async #resetRejectedSettlement(claim: TaskWakeClaim): Promise<void> {
+    await this.#serial.run(async () => {
+      const current = this.#state.active;
+      if (
+        current === null || current.claim.runId !== claim.runId ||
+        current.phase !== "outputs_pending" || current.outcome === null
+      ) {
+        throw new Error("Active run changed while a correctable settlement was rejected");
+      }
+      const next: TaskWorkerJournal = {
+        ...this.#state,
+        active: {
+          ...current,
+          phase: "claimed",
+          contextDigest: null,
+          launchStartedAt: null,
+          outcome: null,
+          nextOutputIndex: 0,
+        },
+      };
       await this.#saveState(next);
     });
   }

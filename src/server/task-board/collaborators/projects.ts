@@ -139,11 +139,27 @@ export class ProjectsCollaborator {
     return this.#workflow.snapshot(projectId);
   }
 
-  createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
-    return this.#artifacts.create(projectId, request, this.runtime.config.humanPrincipal).then((artifact) => {
-      this.#workflow.event(projectId, artifact.nodeId, artifact.taskId, "artifact_created", artifact.caption);
-      return artifact;
-    });
+  async createArtifact(projectId: string, request: CreateProjectArtifactRequest): Promise<ProjectArtifact> {
+    const artifact = this.#artifacts.create(projectId, request, this.runtime.config.humanPrincipal);
+    this.#workflow.event(projectId, artifact.nodeId, artifact.taskId, "artifact_created", artifact.caption);
+    return artifact;
+  }
+
+  recordOnboardingGapReportInTransaction(input: Readonly<{
+    projectId: string;
+    nodeId: string;
+    taskId: string;
+    content: string;
+    caption: string;
+    actorId: string;
+  }>): ProjectArtifact {
+    return this.#artifacts.create(input.projectId, {
+      nodeId: input.nodeId,
+      taskId: input.taskId,
+      mediaType: "text/markdown",
+      caption: input.caption,
+      contentBase64: Buffer.from(input.content, "utf8").toString("base64"),
+    }, input.actorId);
   }
 
   listArtifacts(projectId: string): readonly ProjectArtifact[] {

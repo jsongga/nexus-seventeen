@@ -183,6 +183,7 @@ export interface AgentRunOutcome {
   readonly expectedAgentMinutes: number | null;
   readonly phases: readonly AgentTaskPhaseUpdate[];
   readonly detail: string;
+  readonly gapReport?: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
@@ -259,6 +260,7 @@ export interface SettleAgentRunRequest {
   readonly claim: TaskWakeClaim;
   readonly outcome: AgentRunTerminalStatus;
   readonly result: string;
+  readonly gapReport?: string;
   readonly idempotencyKey: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;

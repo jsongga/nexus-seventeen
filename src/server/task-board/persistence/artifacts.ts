@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
@@ -38,7 +39,7 @@ export class ArtifactStore {
     readonly now: () => Date,
   ) {}
 
-  async create(projectId: string, request: CreateProjectArtifactRequest, actor: string): Promise<ProjectArtifact> {
+  create(projectId: string, request: CreateProjectArtifactRequest, actor: string): ProjectArtifact {
     if (!MEDIA.has(request.mediaType) || typeof request.caption !== "string" || request.caption.trim() !== request.caption || request.caption.length < 1 || request.caption.length > 1_000) {
       throw new TaskBoardError(400, "ARTIFACT_INVALID", "Artifact metadata is invalid");
     }
@@ -68,16 +69,20 @@ export class ArtifactStore {
     const storageKey = `${artifactId}.blob`;
     const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}` as const;
     const createdAt = this.now().toISOString();
-    await mkdir(this.root, { recursive: true, mode: 0o700 });
+    mkdirSync(this.root, { recursive: true, mode: 0o700 });
     const path = join(this.root, storageKey);
-    await writeFile(path, bytes, { flag: "wx", mode: 0o600 });
+    writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
     try {
       this.db.prepare("INSERT INTO artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(
         artifactId, projectId, request.nodeId, request.taskId, request.mediaType, bytes.length,
         digest, storageKey, request.caption, actor, createdAt,
       );
     } catch (error) {
-      await unlink(path).catch(() => undefined);
+      try {
+        unlinkSync(path);
+      } catch {
+        // Preserve the database error; a missing cleanup target is harmless.
+      }
       throw error;
     }
     return this.require(artifactId);

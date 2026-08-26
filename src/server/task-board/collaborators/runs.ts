@@ -47,6 +47,7 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { AttemptScopeCheckResult } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
+import { onboardingDeliverablesCheck } from "./onboarding-check.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
 import {
@@ -77,7 +78,23 @@ type SettleActiveRunOptions = Readonly<{
 type AttemptSettlementPrecheck = Readonly<{
   scopeCheck: AttemptScopeCheckResult | null;
   result: string;
+  onboarding: OnboardingSettlementContext | null;
 }>;
+
+type OnboardingSettlementContext = Readonly<{
+  workItemId: string;
+  projectId: string;
+  nodeId: string;
+  taskId: string;
+  gapReport: string;
+}>;
+
+const ONBOARDING_GAP_REPORT_CAPTION = "Onboarding gap report";
+
+function onboardingMissingDetail(missing: readonly string[]): string {
+  const boundedItems = missing.map((item) => redactForPersistence(item, 220));
+  return redactForPersistence(`Onboarding deliverables are missing: ${boundedItems.join("; ")}`, 2_000);
+}
 
 function attemptSettlementResult(
   request: SettleRunRequest,
@@ -147,6 +164,57 @@ export class RunsCollaborator {
     } catch {
       return Object.freeze({ ok: false, error: "scope check failed" });
     }
+  }
+
+  private onboardingCheckForSettlement(
+    taskId: string,
+    outcome: SettleRunRequest["outcome"],
+    gapReport: string | undefined,
+  ): OnboardingSettlementContext | null {
+    if (outcome !== "completed") return null;
+    const row = this.runtime.store.db.prepare(`
+      SELECT
+        item.work_item_id,
+        project.project_id,
+        project.description AS repo_path,
+        item.pipeline_branch,
+        node.node_id
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=item.work_item_id
+      JOIN projects project ON project.project_id=node.project_id
+      WHERE attempt.task_id=? AND attempt.stage='implementation'
+    `).get(taskId);
+    if (row === undefined) return null;
+    const repoPath = typeof row.repo_path === "string" ? row.repo_path : "";
+    const branch = typeof row.pipeline_branch === "string" ? row.pipeline_branch : "";
+    const check = onboardingDeliverablesCheck(repoPath, branch, gapReport, this.git);
+    if (!check.ok) {
+      throw new TaskBoardError(
+        400,
+        TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
+        onboardingMissingDetail(check.missing),
+      );
+    }
+    if (
+      typeof row.work_item_id !== "string" || typeof row.project_id !== "string" || typeof row.node_id !== "string" ||
+      typeof gapReport !== "string"
+    ) {
+      throw new TaskBoardError(
+        400,
+        TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
+        onboardingMissingDetail(["settlement linkage is invalid"]),
+      );
+    }
+    return Object.freeze({
+      workItemId: row.work_item_id,
+      projectId: row.project_id,
+      nodeId: row.node_id,
+      taskId,
+      gapReport,
+    });
   }
 
   private wasInterruptedBySystem(current: AgentRun): boolean {
@@ -758,6 +826,7 @@ export class RunsCollaborator {
         const needsRepair = taskId !== null && this.projects.attemptNeedsSettlementRepair(taskId, current.runId);
         if (taskId !== null && needsRepair) {
           const scopeCheck = this.scopeCheckForSettlement(taskId, request.outcome);
+          const onboarding = this.onboardingCheckForSettlement(taskId, request.outcome, request.gapReport);
           const settlementResult = redactForPersistence(attemptSettlementResult(request, scopeCheck));
           this.runtime.store.transaction(() => {
             if (this.projects.attemptNeedsSettlementRepair(taskId, current.runId)) {
@@ -769,6 +838,9 @@ export class RunsCollaborator {
                 request.reviewFindings,
                 scopeCheck,
               );
+              if (onboarding !== null && scopeCheck?.ok === true) {
+                this.recordOnboardingGapReportInTransaction(onboarding, agentId);
+              }
             }
           });
           this.projects.activateWorkflowNodes(repairedNodes);
@@ -779,9 +851,13 @@ export class RunsCollaborator {
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
     const scopeCheck = current.taskId === null ? null : this.scopeCheckForSettlement(current.taskId, request.outcome);
+    const onboarding = current.taskId === null
+      ? null
+      : this.onboardingCheckForSettlement(current.taskId, request.outcome, request.gapReport);
     const attemptPrecheck = Object.freeze({
       scopeCheck,
       result: attemptSettlementResult(request, scopeCheck),
+      onboarding,
     });
     const now = exactNow(this.runtime.config.now);
     const effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
@@ -1002,7 +1078,37 @@ export class RunsCollaborator {
       runId: current.runId,
       outcome: request.outcome,
     }, now);
+    if (attemptPrecheck?.onboarding !== null && attemptPrecheck?.onboarding !== undefined && attemptPrecheck.scopeCheck?.ok === true) {
+      this.recordOnboardingGapReportInTransaction(attemptPrecheck.onboarding, agentId);
+    }
     return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes });
+  }
+
+  private recordOnboardingGapReportInTransaction(
+    onboarding: OnboardingSettlementContext,
+    agentId: string,
+  ): void {
+    const link = this.runtime.store.db.prepare(`
+      SELECT gap_report_artifact_id
+      FROM work_item_onboarding_tasks
+      WHERE work_item_id=?
+    `).get(onboarding.workItemId);
+    if (link === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_link");
+    if (link.gap_report_artifact_id !== null) return;
+    const artifact = this.projects.recordOnboardingGapReportInTransaction({
+      projectId: onboarding.projectId,
+      nodeId: onboarding.nodeId,
+      taskId: onboarding.taskId,
+      content: redactForPersistence(onboarding.gapReport),
+      caption: ONBOARDING_GAP_REPORT_CAPTION,
+      actorId: agentId,
+    });
+    const update = this.runtime.store.db.prepare(`
+      UPDATE work_item_onboarding_tasks
+      SET gap_report_artifact_id=?
+      WHERE work_item_id=? AND gap_report_artifact_id IS NULL
+    `).run(artifact.artifactId, onboarding.workItemId);
+    if (Number(update.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_identity");
   }
 
   private designSettlement(

@@ -65,6 +65,45 @@ interface WorkItemDetailProps {
   onArchive: () => Promise<ActionResult>;
 }
 
+export function GapReportSection({
+  state,
+  content,
+  error,
+  onRetry,
+}: {
+  state: 'loading' | 'ready' | 'error';
+  content: string | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="onboarding-gap-report-heading">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 id="onboarding-gap-report-heading" className="text-xs font-semibold text-ink">Gap report</h3>
+          <p className="mt-1 text-xs leading-5 text-muted">Items the onboarding pass could not complete automatically.</p>
+        </div>
+        {state === 'error' ? <Button size="sm" icon={<RefreshCw size={14} />} onClick={onRetry}>Retry</Button> : null}
+      </div>
+      {state === 'loading' ? (
+        <div className="mt-3 flex min-h-20 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted" role="status">
+          <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> Loading gap report…
+        </div>
+      ) : state === 'error' ? (
+        <p className="mt-3 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+          {error ?? 'The gap report could not be loaded.'}
+        </p>
+      ) : content === null ? (
+        <p className="mt-3 rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted">
+          No gap report has been recorded yet.
+        </p>
+      ) : (
+        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-muted-surface px-3.5 py-3 font-mono text-xs leading-6 text-ink">{content}</pre>
+      )}
+    </section>
+  );
+}
+
 const auditDateTime = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
@@ -700,6 +739,10 @@ export function WorkItemDetail({
   const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
   const [audit, setAudit] = useState<RawWorkItemAudit | null>(null);
   const [auditState, setAuditState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [gapReportContent, setGapReportContent] = useState<string | null>(null);
+  const [gapReportState, setGapReportState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [gapReportError, setGapReportError] = useState<string | null>(null);
+  const [gapReportAttempt, setGapReportAttempt] = useState(0);
   const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
   const auditWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -747,6 +790,36 @@ export function WorkItemDetail({
     setAudit(null);
     setAuditState('loading');
   }, [workItem.id]);
+
+  useEffect(() => {
+    if (workItem.taskType !== 'onboarding') {
+      setGapReportContent(null);
+      setGapReportError(null);
+      setGapReportState('idle');
+      return;
+    }
+    const controller = new AbortController();
+    setGapReportContent(null);
+    setGapReportError(null);
+    setGapReportState('loading');
+    void client.getWorkItem(workItem.id, controller.signal).then(async (detail) => {
+      if (controller.signal.aborted) return;
+      if (detail.gapReportArtifactId === null) {
+        setGapReportState('ready');
+        return;
+      }
+      const blob = await client.getArtifactBlob(detail.gapReportArtifactId, controller.signal);
+      const content = await blob.text();
+      if (controller.signal.aborted) return;
+      setGapReportContent(content);
+      setGapReportState('ready');
+    }).catch((caught: unknown) => {
+      if (controller.signal.aborted) return;
+      setGapReportError(caught instanceof Error ? caught.message : 'The gap report could not be loaded.');
+      setGapReportState('error');
+    });
+    return () => controller.abort();
+  }, [client, gapReportAttempt, workItem.id, workItem.taskType, workItem.version]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -951,6 +1024,15 @@ export function WorkItemDetail({
           <h3 id="original-request-heading" className="text-xs font-semibold text-ink">Original request</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">{workItem.originalRequest}</p>
         </section>
+
+        {workItem.taskType === 'onboarding' ? (
+          <GapReportSection
+            state={gapReportState === 'idle' ? 'loading' : gapReportState}
+            content={gapReportContent}
+            error={gapReportError}
+            onRetry={() => setGapReportAttempt((value) => value + 1)}
+          />
+        ) : null}
 
         {workItem.cancelledReason !== null ? (
           <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="cancellation-reason-heading">

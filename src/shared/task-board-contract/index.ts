@@ -7,6 +7,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   HOST_PATH_OUTSIDE_ROOTS: "HOST_PATH_OUTSIDE_ROOTS",
   HOST_PATH_UNREADABLE: "HOST_PATH_UNREADABLE",
   INVALID_IDENTIFIER: "INVALID_IDENTIFIER",
+  ONBOARDING_DELIVERABLES_MISSING: "ONBOARDING_DELIVERABLES_MISSING",
   ONBOARDING_EXISTS: "ONBOARDING_EXISTS",
   ONBOARDING_PROJECT_REQUIRED: "ONBOARDING_PROJECT_REQUIRED",
   PLAN_NOT_FOUND: "PLAN_NOT_FOUND",
@@ -64,6 +65,7 @@ export const REVIEW_WORKSPACE_SUFFIX = "-review";
 export const VERIFY_WORKSPACE_SUFFIX = "-verify";
 export const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+export const AGENT_GAP_REPORT_MAX_CHARACTERS = 32_000;
 export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
 
 /**
@@ -1329,6 +1331,7 @@ export interface InterruptAgentRequest {
 export interface SettleRunRequest {
   readonly outcome: "completed" | "failed" | "interrupted";
   readonly result: string;
+  readonly gapReport?: string;
   readonly handoff?: StageHandoffDraft | null;
   readonly workflowPlan?: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];

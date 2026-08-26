@@ -1,5 +1,6 @@
 import {
   ACTOR_TYPES,
+  AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
@@ -2349,6 +2350,7 @@ export interface ValidatedAgentRunOutcome {
   readonly expectedAgentMinutes: number | null;
   readonly phases: readonly ValidatedAgentTaskPhaseUpdate[];
   readonly detail: string;
+  readonly gapReport?: string;
   readonly handoff: StageHandoffDraft | null;
   readonly workflowPlan: WorkflowPlanDraft | null;
   readonly reviewFindings?: readonly ReviewFindingDraft[];
@@ -3125,6 +3127,7 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
   const raw = record(value, "Agent outcome");
   const item = exact(value, [
     "status", "outputs", "expectedAgentMinutes", "phases", "detail",
+    ...("gapReport" in raw ? ["gapReport"] : []),
     ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : []),
     ...("reviewFindings" in raw ? ["reviewFindings"] : []),
     ...("designRecord" in raw ? ["designRecord"] : []),
@@ -3155,6 +3158,9 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
       message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
     }),
     phases: Object.freeze(phases), detail: workerProse(item.detail, "outcome.detail", 2_000),
+    ...(item.gapReport === undefined ? {} : {
+      gapReport: workerProse(item.gapReport, "outcome.gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
+    }),
     handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, WORKER_DRAFT_POLICY),
     workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
     ...(item.reviewFindings === undefined ? {} : {
@@ -3597,6 +3603,7 @@ export function parseBoardSettle(value: unknown): SettleRunRequest {
   const raw = record(value, "Run settlement");
   const item = boardExact(value, [
     "outcome", "result",
+    ...("gapReport" in raw ? ["gapReport"] : []),
     ...("handoff" in raw ? ["handoff"] : []),
     ...("workflowPlan" in raw ? ["workflowPlan"] : []),
     ...("reviewFindings" in raw ? ["reviewFindings"] : []),
@@ -3604,6 +3611,9 @@ export function parseBoardSettle(value: unknown): SettleRunRequest {
   ], "Run settlement");
   if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") boardFailure("Run outcome is invalid");
   return Object.freeze({ outcome: item.outcome, result: boardText(item.result, "result", 16_000),
+    ...(item.gapReport === undefined ? {} : {
+      gapReport: boardText(item.gapReport, "gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
+    }),
     handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, BOARD_DRAFT_POLICY),
     workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY),
     ...(item.reviewFindings === undefined ? {} : {

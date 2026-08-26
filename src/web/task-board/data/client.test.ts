@@ -887,6 +887,38 @@ describe('task-board HTTP client', () => {
     }]);
   });
 
+  it('loads the onboarding gap-report artifact id from work-item detail and fetches its content', async () => {
+    const artifactId = 'artifact-onboarding-gap-report';
+    const report = '# Gaps\n\n- Branch protection is deferred.';
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith('/v1/work-items/work-item-one')) {
+        return new Response(JSON.stringify({
+          workItem: {
+            ...workItemDetail,
+            taskType: 'onboarding',
+            gapReportArtifactId: artifactId,
+          },
+        }));
+      }
+      if (path.endsWith(`/v1/artifacts/${artifactId}`)) {
+        return new Response(report, { headers: { 'content-type': 'text/markdown' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.getWorkItem(workItem.workItemId)).resolves.toMatchObject({
+      id: workItem.workItemId,
+      taskType: 'onboarding',
+      gapReportArtifactId: artifactId,
+    });
+    await expect((await client.getArtifactBlob(artifactId)).text()).resolves.toBe(report);
+  });
+
   it('rejects an unknown workflow enum member at the response boundary', async () => {
     const request = vi.fn(async () => new Response(JSON.stringify({
       workflow: workflowSnapshot({ nodes: [{ ...workflowNode, state: 'paused' }] }),

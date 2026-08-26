@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { TaskBoardClient } from '../data/client';
 import type { BoardQuestion, BoardTask, BoardWorkItem } from '../types';
-import { WorkItemDetail } from './WorkItemDetail';
+import { GapReportSection, WorkItemDetail } from './WorkItemDetail';
 
 const timestamp = '2026-08-16T00:00:00.000Z';
 
@@ -111,5 +111,42 @@ describe('parked work-item detail', () => {
     expect(markup).toContain('Planning needs your input');
     expect(markup).toContain('Which audience should this target?');
     expect(markup).not.toContain('Parked — no open question. Retry or reassign from the task view.');
+  });
+});
+
+describe('onboarding gap report section', () => {
+  it('renders distinct loading, recorded, empty, and recoverable error states', () => {
+    const loading = renderToStaticMarkup(createElement(GapReportSection, {
+      state: 'loading',
+      content: null,
+      error: null,
+      onRetry: () => undefined,
+    }));
+    const recorded = renderToStaticMarkup(createElement(GapReportSection, {
+      state: 'ready',
+      content: '# Gaps\n\n- Branch protection is deferred.',
+      error: null,
+      onRetry: () => undefined,
+    }));
+    const empty = renderToStaticMarkup(createElement(GapReportSection, {
+      state: 'ready',
+      content: null,
+      error: null,
+      onRetry: () => undefined,
+    }));
+    const failed = renderToStaticMarkup(createElement(GapReportSection, {
+      state: 'error',
+      content: null,
+      error: 'Artifact content could not be loaded.',
+      onRetry: () => undefined,
+    }));
+
+    expect(loading).toContain('Loading gap report…');
+    expect(recorded).toContain('Gap report');
+    expect(recorded).toContain('# Gaps');
+    expect(recorded).toContain('Branch protection is deferred.');
+    expect(empty).toContain('No gap report has been recorded yet.');
+    expect(failed).toContain('Artifact content could not be loaded.');
+    expect(failed).toContain('Retry');
   });
 });

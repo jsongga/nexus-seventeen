@@ -1,4 +1,5 @@
 import {
+  AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
@@ -102,6 +103,7 @@ export const RESULT_SCHEMA = Object.freeze({
     status: { type: "string", enum: ["completed", "failed", "waiting_for_human"] },
     progress: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
     result: { type: ["string", "null"], maxLength: 4_000 },
+    gapReport: { type: "string", minLength: 1, maxLength: AGENT_GAP_REPORT_MAX_CHARACTERS },
     proposedChildTasks: {
       type: "array",
       maxItems: 16,
@@ -498,6 +500,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     ...("workflowPlan" in item ? ["workflowPlan"] : []),
     ...("reviewFindings" in item ? ["reviewFindings"] : []),
     ...("designRecord" in item ? ["designRecord"] : []),
+    ...("gapReport" in item ? ["gapReport"] : []),
     "detail",
   ].sort();
   const actual = Object.keys(item).sort();
@@ -531,6 +534,7 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     workflowPlan: item.workflowPlan ?? null,
     ...(item.reviewFindings === undefined ? {} : { reviewFindings: item.reviewFindings }),
     ...(item.designRecord === undefined || item.designRecord === null ? {} : { designRecord: item.designRecord }),
+    ...(item.gapReport === undefined ? {} : { gapReport: item.gapReport }),
   });
   assertCredentialSafe(JSON.stringify(outcome), "Provider output");
   return outcome;

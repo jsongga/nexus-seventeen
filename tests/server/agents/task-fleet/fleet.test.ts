@@ -11,6 +11,7 @@ import {
   isTransientTaskFleetError,
 } from "../../../../src/server/agents/task-fleet/runtime.js";
 import { ContainedCliAgentLauncher } from "../../../../src/server/agents/task-worker/contained-cli-launcher.js";
+import { HttpTaskBoardClient } from "../../../../src/server/agents/task-worker/http-board-client.js";
 import { TaskWorker } from "../../../../src/server/agents/task-worker/worker.js";
 import { PromptRegistry } from "../../../../src/server/agents/task-worker/prompt-registry.js";
 import type { AgentRole } from "#shared/task-board-contract";
@@ -20,8 +21,12 @@ import type {
   TaskFleetEvent,
   TaskFleetWorkerFactory,
 } from "../../../../src/server/agents/task-fleet/types.js";
+import type {
+  SettleAgentRunRequest,
+  TaskBoardClient,
+} from "../../../../src/server/agents/task-worker/types.js";
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
-import { FakeBoard, claimed, tempRoot } from "../task-worker/helpers.js";
+import { FakeBoard, FakeLauncher, claimed, completedOutcome, tempRoot } from "../task-worker/helpers.js";
 
 const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
 
@@ -148,6 +153,106 @@ test("a claim role that differs from the configured lane role is quarantined and
   assert.equal(result.board.claimRequests.length, 1);
   assert.equal(result.board.settlements.length, 1);
   assert.match(result.board.settlements[0]?.result ?? "", /does not match configured lane role verifier/u);
+});
+
+test("a missing-onboarding settle 400 retries the real worker and HTTP path without poisoning or quarantine", async () => {
+  const root = await tempRoot();
+  const controller = new AbortController();
+  const httpSettlements: Array<Record<string, unknown>> = [];
+  const http = new HttpTaskBoardClient({
+    baseUrl: "http://127.0.0.1:4318",
+    token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+    fetchImplementation: (async (_input, init = {}) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      httpSettlements.push(body);
+      if (body.outcome === "completed" && body.gapReport === undefined) {
+        return new Response(JSON.stringify({
+          error: {
+            code: "ONBOARDING_DELIVERABLES_MISSING",
+            message: "Onboarding deliverables are missing: gap report is missing or empty",
+          },
+        }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        run: {
+          runId: "run-one",
+          agentId: "engineer-one",
+          status: body.outcome,
+          result: body.result,
+        },
+        duplicate: false,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+  class HttpSettlementBoard extends FakeBoard {
+    override settleAgentRun(request: SettleAgentRunRequest, signal?: AbortSignal): Promise<void> {
+      return http.settleAgentRun(request, signal);
+    }
+  }
+  const board = new HttpSettlementBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(
+    completedOutcome("The first onboarding result omitted its gap report."),
+    {
+      ...completedOutcome("The corrected onboarding result is complete."),
+      gapReport: "# Gaps\n\n- Branch protection is deferred.",
+    },
+  );
+  const classifications: string[] = [];
+  const activePhases: Array<string | null> = [];
+  let worker: TaskWorker | null = null;
+  const fleet = new TaskFleet({
+    config: fleetConfig(),
+    workerFactory: async (config) => {
+      worker = await TaskWorker.create({
+        identity: { workerId: config.workerId, agentId: config.agentId },
+        statePath: join(root, "state", "journal.json"),
+        board: board as TaskBoardClient,
+        launcher,
+        longPollMs: 1,
+      });
+      return {
+        run: async (signal) => {
+          const result = await worker!.dispatchOnce(signal);
+          activePhases.push(worker!.snapshot.activePhase);
+          if (httpSettlements.some((settlement) => settlement.gapReport !== undefined) && !worker!.hasActiveClaim()) {
+            controller.abort();
+          }
+          return result;
+        },
+        hasActiveClaim: () => worker!.hasActiveClaim(),
+        quarantineActiveClaim: (detail, signal) => worker!.quarantineActiveClaim(detail, signal),
+        dropActiveClaim: (detail) => worker!.dropActiveClaim(detail),
+        reportLaneError: (detail, signal) => worker!.reportLaneError(detail, signal),
+        close: () => worker!.close(),
+      };
+    },
+    classifyError: (error) => {
+      const classification = classifyTaskFleetError(error);
+      classifications.push(classification);
+      return classification;
+    },
+    logger: () => undefined,
+  });
+
+  await fleet.run(controller.signal);
+
+  assert.deepEqual(activePhases, ["claimed", null]);
+  assert.equal(launcher.requests.length, 2);
+  assert.equal(board.claimRequests.length, 2);
+  assert.equal(board.claimRequests[1]?.claimId, board.claimRequests[0]?.claimId);
+  assert.deepEqual(classifications, []);
+  assert.deepEqual(httpSettlements.map((settlement) => settlement.outcome), ["completed", "completed"]);
+  assert.equal(httpSettlements.some((settlement) => settlement.outcome === "failed"), false);
+  assert.equal(httpSettlements[0]?.gapReport, undefined);
+  assert.equal(httpSettlements[1]?.gapReport, "# Gaps\n\n- Branch protection is deferred.");
 });
 
 function idleRun(signal: AbortSignal): Promise<boolean> {

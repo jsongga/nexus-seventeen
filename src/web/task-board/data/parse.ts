@@ -108,7 +108,10 @@ type WithoutApi<T> = Omit<T, 'apiVersion'>;
 export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updatedAt'>;
 export type RawWorkItem = WithOptionalNullableMs<WithOptionalNullableMs<WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>, 'stateSince'>, 'heartbeatAt'>;
 export type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
-export type RawWorkItemDetail = RawWorkItem & Readonly<{ transitions: RawWorkItemTransition[] }>;
+export type RawWorkItemDetail = RawWorkItem & Readonly<{
+  transitions: RawWorkItemTransition[];
+  gapReportArtifactId: string | null;
+}>;
 export type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
 export interface RawWorkItemAudit {
   gateActions: RawGateAction[];
@@ -223,6 +226,9 @@ export function parseWorkItemDetail(value: unknown, path: string): RawWorkItemDe
   return {
     ...projectWorkItem(parseWorkItemEntity(item, path, loose)),
     transitions: parseWorkItemTransitions(item.transitions, `${path}.transitions`),
+    gapReportArtifactId: item.gapReportArtifactId === undefined || item.gapReportArtifactId === null
+      ? null
+      : identifier(item.gapReportArtifactId, `${path}.gapReportArtifactId`),
   };
 }
 function projectAgent(item: AgentProfile): RawAgent {

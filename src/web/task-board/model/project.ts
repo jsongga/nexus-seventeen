@@ -178,6 +178,7 @@ export function workItemDetailProjection(raw: RawWorkItemDetail): BoardWorkItemD
   return {
     ...workItemProjection(raw),
     transitions: raw.transitions.map((transition) => ({ ...transition })),
+    gapReportArtifactId: raw.gapReportArtifactId,
   };
 }
 

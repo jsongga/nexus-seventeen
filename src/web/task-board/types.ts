@@ -164,6 +164,7 @@ export interface BoardWorkItemTransition {
 
 export interface BoardWorkItemDetail extends BoardWorkItem {
   transitions: BoardWorkItemTransition[];
+  gapReportArtifactId: string | null;
 }
 
 export interface BoardProject {

@@ -308,6 +308,7 @@ export interface TaskBoardClient {
   getNotifications(signal?: AbortSignal): Promise<BoardNotifications>;
   markNotificationRead(notificationId: string, version: number): Promise<RawBoardNotification>;
   getWorkItemAudit(workItemId: string, signal?: AbortSignal): Promise<RawWorkItemAudit>;
+  getWorkItem(workItemId: string, signal?: AbortSignal): Promise<BoardWorkItemDetail>;
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   getDocument(documentId: string, signal?: AbortSignal): Promise<BoardDocument>;
@@ -644,6 +645,12 @@ export function createTaskBoardClient(options: {
       return parseWorkItemAudit(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/audit`, { signal }),
         'work item audit response',
+      );
+    },
+    async getWorkItem(workItemId, signal) {
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, { signal }),
+        'work item detail response',
       );
     },
     async getPipelineSummary(workItemId, signal) {

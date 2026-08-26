@@ -1,7 +1,11 @@
 export { TaskWorker } from "./worker.js";
 export type { TaskWorkerSnapshot } from "./worker.js";
 export { TaskWorkerJournalStore } from "./journal.js";
-export { HttpTaskBoardClient, TaskBoardHttpError } from "./http-board-client.js";
+export {
+  HttpTaskBoardClient,
+  RetryableSettlementError,
+  TaskBoardHttpError,
+} from "./http-board-client.js";
 export type { HttpTaskBoardClientOptions } from "./http-board-client.js";
 export { AgentProcessError } from "../runtime/errors.js";
 export { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";

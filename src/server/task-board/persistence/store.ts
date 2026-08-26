@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS work_item_onboarding_tasks (
   work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id),
   project_id   TEXT NOT NULL REFERENCES projects(project_id),
   task_id      TEXT NOT NULL REFERENCES tasks(task_id),
+  gap_report_artifact_id TEXT NULL,
   created_at   TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS onboarding_once_per_project ON work_item_onboarding_tasks(project_id);

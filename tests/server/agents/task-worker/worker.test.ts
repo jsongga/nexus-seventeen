@@ -1009,6 +1009,25 @@ test("forwards non-empty structured review findings with the run settlement", as
   }
 });
 
+test("forwards an optional gap report with the run settlement", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const gapReport = "# Gaps\n\n- Branch protection is deferred.";
+  launcher.outcomes.push({
+    ...completedOutcome("Onboarding implementation completed."),
+    gapReport,
+  });
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    await taskWorker.dispatchOnce();
+    assert.equal(board.settlements[0]?.gapReport, gapReport);
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("forwards a provider-authored failed review handoff and findings with the run settlement", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();

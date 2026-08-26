@@ -2,6 +2,7 @@ import {
   MAX_AREA_MEMORY_RESULT_CHARACTERS,
   MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,
   TASK_BOARD_API_VERSION,
+  TASK_BOARD_ERROR_CODES,
   type ClaimRunResult,
   type RunStatus,
 } from "#shared/task-board-contract";
@@ -38,6 +39,23 @@ export class TaskBoardHttpError extends Error {
   constructor(message: string, readonly status: number | null, readonly code: string | null) {
     super(message);
     this.name = "TaskBoardHttpError";
+  }
+}
+
+export type RetryableSettlementErrorCode =
+  | "WORKFLOW_PLAN_REQUIRED"
+  | typeof TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING;
+
+const RETRYABLE_SETTLEMENT_ERROR_CODES = new Set<string>([
+  "WORKFLOW_PLAN_REQUIRED",
+  TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
+]);
+
+/** A board validation rejection that requires a fresh model result for the same active run. */
+export class RetryableSettlementError extends Error {
+  constructor(readonly code: RetryableSettlementErrorCode, cause: TaskBoardHttpError) {
+    super(`Task-board settlement requires correction: ${code}`, { cause });
+    this.name = "RetryableSettlementError";
   }
 }
 
@@ -686,19 +704,31 @@ export class HttpTaskBoardClient implements TaskBoardClient {
 
   async settleAgentRun(request: SettleAgentRunRequest, signal?: AbortSignal): Promise<void> {
     if (request.outcome === "waiting_for_human") throw new Error("Human questions settle atomically through the question endpoint");
-    const result = await this.#http.request(
-      "POST",
-      `/v1/runs/${encodeURIComponent(request.claim.runId)}/settle`,
-      {
-        outcome: request.outcome,
-        result: request.result,
-        handoff: request.handoff ?? null,
-        workflowPlan: request.workflowPlan ?? null,
-        ...(request.reviewFindings === undefined ? {} : { reviewFindings: request.reviewFindings }),
-        ...(request.designRecord === undefined ? {} : { designRecord: request.designRecord }),
-      },
-      signal,
-    );
+    let result: HttpResult;
+    try {
+      result = await this.#http.request(
+        "POST",
+        `/v1/runs/${encodeURIComponent(request.claim.runId)}/settle`,
+        {
+          outcome: request.outcome,
+          result: request.result,
+          ...(request.gapReport === undefined ? {} : { gapReport: request.gapReport }),
+          handoff: request.handoff ?? null,
+          workflowPlan: request.workflowPlan ?? null,
+          ...(request.reviewFindings === undefined ? {} : { reviewFindings: request.reviewFindings }),
+          ...(request.designRecord === undefined ? {} : { designRecord: request.designRecord }),
+        },
+        signal,
+      );
+    } catch (error) {
+      if (
+        error instanceof TaskBoardHttpError && error.status === 400 && error.code !== null &&
+        RETRYABLE_SETTLEMENT_ERROR_CODES.has(error.code)
+      ) {
+        throw new RetryableSettlementError(error.code as RetryableSettlementErrorCode, error);
+      }
+      throw error;
+    }
     const envelope = exact(result.body, ["run", "duplicate"], "Run settlement response");
     const run = record(envelope.run, "Settled run");
     const persistedResult = redactForPersistence(request.result);

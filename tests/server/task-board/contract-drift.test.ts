@@ -171,10 +171,18 @@ test("v23 fixture migrates to the same v24 schema as a fresh database", async ()
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    const onboardingColumns = upgraded.db.prepare("PRAGMA table_info(work_item_onboarding_tasks)").all();
     assert.deepEqual(
-      upgraded.db.prepare("PRAGMA table_info(work_item_onboarding_tasks)").all().map((row) => String(row.name)),
-      ["work_item_id", "project_id", "task_id", "created_at"],
+      onboardingColumns.map((row) => String(row.name)),
+      ["work_item_id", "project_id", "task_id", "gap_report_artifact_id", "created_at"],
     );
+    const gapReportColumn = onboardingColumns.find((row) => row.name === "gap_report_artifact_id");
+    assert.ok(gapReportColumn);
+    assert.deepEqual({
+      type: gapReportColumn.type,
+      notnull: gapReportColumn.notnull,
+      defaultValue: gapReportColumn.dflt_value,
+    }, { type: "TEXT", notnull: 0, defaultValue: null });
     for (const [name, sql] of [
       [
         "onboarding_once_per_project",

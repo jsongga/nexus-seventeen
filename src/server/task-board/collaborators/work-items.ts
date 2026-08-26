@@ -35,6 +35,7 @@ import {
 export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
 export type WorkItemDetail = WorkItem & Readonly<{
   transitions: readonly WorkItemTransition[];
+  gapReportArtifactId?: string | null;
 }>;
 export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
@@ -141,7 +142,21 @@ export class WorkItemsCollaborator {
 
   requireWorkItem(workItemId: string): WorkItemDetail {
     const workItem = this.runtime.requireWorkItem(workItemId);
-    return Object.freeze({ ...workItem, transitions: this.workItemTransitions(workItemId) });
+    const transitions = this.workItemTransitions(workItemId);
+    if (workItem.taskType !== "onboarding") return Object.freeze({ ...workItem, transitions });
+    const gapReport = this.runtime.store.db.prepare(`
+      SELECT gap_report_artifact_id
+      FROM work_item_onboarding_tasks
+      WHERE work_item_id=?
+    `).get(workItemId);
+    if (gapReport === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_detail_link");
+    return Object.freeze({
+      ...workItem,
+      transitions,
+      gapReportArtifactId: gapReport.gap_report_artifact_id === null
+        ? null
+        : stringValue(gapReport, "gap_report_artifact_id"),
+    });
   }
 
   workItemAudit(workItemId: string): WorkItemAudit {

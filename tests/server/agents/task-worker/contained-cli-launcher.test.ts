@@ -8,6 +8,7 @@ import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 import { RuntimeCapabilityError } from "../../../../src/server/agents/runtime/profiles.js";
 import {
+  AGENT_GAP_REPORT_MAX_CHARACTERS,
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
   DESIGN_RECORD_LABEL_MAX_LENGTH,
@@ -29,7 +30,7 @@ import {
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
-import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
@@ -72,6 +73,8 @@ test("generated provider schema is the launcher schema and derives contract enum
   const generated = JSON.parse(await readFile(join(process.cwd(), "build/server/agents/task-worker/agent-result.schema.json"), "utf8")) as unknown;
   assert.deepEqual(generated, RESULT_SCHEMA);
   assert.equal(RESULT_SCHEMA.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.equal(RESULT_SCHEMA.properties.gapReport.maxLength, AGENT_GAP_REPORT_MAX_CHARACTERS);
+  assert.equal((RESULT_SCHEMA.required as readonly string[]).includes("gapReport"), false);
   assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.stage.enum, TASK_PHASE_STAGES);
   assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.status.enum, TASK_PHASE_STATUSES);
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.outcome.enum, STAGE_HANDOFF_OUTCOMES);
@@ -118,6 +121,42 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.criterionChecks.maxItems, 32);
   assert.equal(RESULT_SCHEMA.properties.phases.items.properties.phaseId.pattern, IDENTIFIER_PATTERN);
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern, IDENTIFIER_PATTERN);
+});
+
+test("structured provider outcomes accept and thread an optional bounded gap report", () => {
+  const gapReport = "# Gaps\n\n- Branch protection is deferred.";
+  const outcome = structuredOutcome({
+    status: "completed",
+    progress: [],
+    result: "Onboarding implementation completed.",
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    handoff: null,
+    workflowPlan: null,
+    reviewFindings: [],
+    designRecord: null,
+    gapReport,
+    detail: "Onboarding implementation completed.",
+  });
+
+  assert.equal(outcome.gapReport, gapReport);
+  assert.throws(() => structuredOutcome({
+    status: "completed",
+    progress: [],
+    result: "Onboarding implementation completed.",
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    handoff: null,
+    workflowPlan: null,
+    reviewFindings: [],
+    designRecord: null,
+    gapReport: "x".repeat(AGENT_GAP_REPORT_MAX_CHARACTERS + 1),
+    detail: "Onboarding implementation completed.",
+  }), /gapReport/u);
 });
 
 test("manager planning prompt branches on intake rather than the task title", () => {

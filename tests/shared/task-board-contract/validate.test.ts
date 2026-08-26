@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
   EVALUATOR_PROFILES,
   IDENTIFIER_PATTERN,
@@ -498,6 +499,28 @@ test("worker outcome shapes accept exactly the shared handoff and workflow enums
       dependencyNodeIds: [], stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
     }],
   })));
+});
+
+test("gap reports round-trip through worker outcomes and board settlements with a shared bound", () => {
+  const gapReport = "# Gaps\n\n- Branch protection is deferred.";
+  assert.equal(parseWorkerAgentRunOutcome({
+    ...(outcome() as Record<string, unknown>),
+    gapReport,
+  }).gapReport, gapReport);
+  assert.equal(parseBoardSettle({
+    outcome: "completed",
+    result: "Onboarding completed.",
+    gapReport,
+  }).gapReport, gapReport);
+  assert.throws(() => parseWorkerAgentRunOutcome({
+    ...(outcome() as Record<string, unknown>),
+    gapReport: "x".repeat(AGENT_GAP_REPORT_MAX_CHARACTERS + 1),
+  }));
+  assert.throws(() => parseBoardSettle({
+    outcome: "completed",
+    result: "Onboarding completed.",
+    gapReport: "x".repeat(AGENT_GAP_REPORT_MAX_CHARACTERS + 1),
+  }));
 });
 
 test("review finding drafts round-trip through board and worker settlement fields", () => {

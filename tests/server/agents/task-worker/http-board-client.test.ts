@@ -4,8 +4,9 @@ import { TASK_BOARD_API_VERSION } from "#shared/task-board-contract";
 import {
   HttpTaskBoardClient,
   InactiveClaimReplayError,
-} from "#server/agents/task-worker/http-board-client";
-import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
+  RetryableSettlementError,
+} from "../../../../src/server/agents/task-worker/http-board-client.js";
+import { TaskBoardClaimResponseError } from "../../../../src/server/agents/task-worker/types.js";
 import { boardFixture, taskRequest } from "../../task-board/helpers.js";
 
 const TOKEN = "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz";
@@ -244,10 +245,11 @@ test("claim validation errors retain a minimally validated handle without journa
   );
 });
 
-test("settlement accepts the server-redacted result while sending the original result for replay", async () => {
+test("settlement accepts the server-redacted result while sending the original result and gap report for replay", async () => {
   const startedAt = "2026-08-09T20:00:00.000Z";
   const secret = `settle-${"s".repeat(48)}`;
   const rawResult = `Agent stopped after Authorization: Bearer ${secret}`;
+  const gapReport = "# Gaps\n\n- Branch protection is deferred.";
   let sentBody: unknown;
   const client = new HttpTaskBoardClient({
     baseUrl: "http://127.0.0.1:4318",
@@ -285,7 +287,42 @@ test("settlement accepts the server-redacted result while sending the original r
     idempotencyKey: "settle-redacted-result-0001",
     outcome: "failed",
     result: rawResult,
+    gapReport,
   });
 
   assert.equal((sentBody as { result?: unknown }).result, rawResult);
+  assert.equal((sentBody as { gapReport?: unknown }).gapReport, gapReport);
+});
+
+test("typed correctable settle 400s are distinguished from poisoned HTTP failures", async () => {
+  for (const code of ["WORKFLOW_PLAN_REQUIRED", "ONBOARDING_DELIVERABLES_MISSING"] as const) {
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1:4318",
+      token: TOKEN,
+      fetchImplementation: (async () => new Response(JSON.stringify({
+        error: { code, message: "The model result needs correction." },
+      }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+    });
+
+    await assert.rejects(client.settleAgentRun({
+      claim: {
+        apiVersion: 1,
+        claimId: `claim-${code.toLowerCase()}`,
+        runId: `run-${code.toLowerCase()}`,
+        wakeupId: `wake-${code.toLowerCase()}`,
+        projectId: "project-one",
+        agentId: "engineer-one",
+        taskId: "task-one",
+        reason: "human_assignment",
+        requestedMessageCursor: null,
+        claimedAt: "2026-08-09T20:00:00.000Z",
+      },
+      idempotencyKey: `settle-${code.toLowerCase()}`,
+      outcome: "completed",
+      result: "The first result needs correction.",
+    }), (error: unknown) => error instanceof RetryableSettlementError && error.code === code);
+  }
 });
