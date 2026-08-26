@@ -10,7 +10,7 @@
 The board can already drive two vendor CLIs (codex, claude), but vendor knowledge is smeared across four leak sites and a closed `AgentProvider` union threaded through ~10 files, the only mid-run signal is a vendor-parsed activity string, capability differences are hard-coded per role, prompts are TypeScript literals, and the end-to-end proof only ever runs codex-shaped lanes. Campaign 8 makes multi-runtime real:
 
 1. **Internal event schema + runtime adapters** — one adapter module per vendor turns its stream into `RuntimeEvent`s (`stage_started | message_delta | tool_call | tool_result | stage_finished | error`); everything downstream is vendor-neutral.
-2. **Capability profiles** — `config/runtimes.json` declares, per runtime: binary, supported roles, per-role sandbox level, and the §11 documentation axes (permission model, MCP, tool-call granularity, context notes). Lanes fail closed at construction when their role isn't supported.
+2. **Capability profiles** — `config/runtimes.json` declares, per runtime: binary, supported roles, per-role sandbox level, and the §11 documentation axes (permission model, MCP, tool-call granularity, context notes). Every claim fails closed at the pre-launch guard when its role is unsupported; an optional fleet-config `role` also enables construction-time rejection.
 3. **Prompts as files** — the prose blocks of `agentPrompt()` move to `prompts/*.md`, loaded and sha256-pinned like skills; this finally wires the `promptsSha` claim pin that has existed unset since campaign 1.
 4. **Onboarding task type** — a per-project, run-once work item flowing the normal v2 pipeline whose implementation stage produces the §6 deliverables in the target repo (doc slots, verify-contract tiers, agent Dockerfile target) plus a gap report persisted as a board artifact; settle-time validation machine-checks the deliverables.
 
@@ -104,7 +104,7 @@ JSON, not YAML: the repo has no YAML dependency and every existing config (fleet
 ```
 
 - Loader `src/server/agents/runtime/profiles.ts`: `loadRuntimeProfiles(path)` / `parseRuntimeProfiles(value)`, same discipline as `parseTaskFleetConfig`. Fleet config gains `runtimesConfigPath` (default `<repo>/config/runtimes.json`).
-- **What the profile drives today:** `binary` (spawn command), `roles` (which roles a lane may serve + the per-role sandbox level the adapter turns into flags/modes). **Routing is enforced at lane construction**: `createTaskFleetWorker` fails closed if the lane identity's role has no entry in its runtime's profile. Roles are statically bound to lanes in fleet config, so construction is where "the scheduler routes stages to runtimes that can perform them" lives in the as-built scheduling model (activation picks agents by role; lanes serve fixed identities). A claim-gate check would livelock — activation binds a task to an identity before any claim, so rejecting at claim leaves the task stuck on a lane that keeps retrying.
+- **What the profile drives today:** `binary` (spawn command), `roles` (which roles a lane may serve + the per-role sandbox level the adapter turns into flags/modes). **Enforcement is at launch:** immediately before any model-process side effect, the worker checks the claimed role, quarantines a mismatch, rethrows `RuntimeCapabilityError`, and the fleet closes the `POISONED` lane. An optional per-lane `role` in fleet config adds construction-time fail-closed validation; omission does not weaken the launch guard.
 - **Documentation axes** (`permissionModel`, `mcp`, `toolCallGranularity`, `contextNotes`) are §11's remaining profile fields: schema-validated, logged at lane startup, consumed by nothing else yet. MCP is disabled in both vendors' argv by construction (as-built posture), so `mcp` is honest metadata, not a switch.
 
 ### Prompts as files
@@ -156,7 +156,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS onboarding_once_per_project
 ## Testing
 
 - **Adapter units**: codex/claude adapters pinned on argv, env allowlist, event mapping (vendor fixture lines → expected `RuntimeEvent`s), terminal parse — the existing `contained-cli-launcher.test.ts` / `agent-envelope-pipeline.test.ts` assertions relocated, not weakened. Worker doubles emit events instead of strings.
-- **Profile units**: parse/validate/reject (unknown role, missing binary, bad version), lane-construction fail-closed on unsupported role.
+- **Profile units**: parse/validate/reject (unknown role, missing binary, bad version), pre-launch quarantine and permanent lane close, plus construction-time fail-closed when a lane declares `role`.
 - **Prompt units**: registry load/digest, `renderPrompt` fail-closed, promptsSha claim pin present on production claims, divergence diagnostic.
 - **Onboarding units**: intake uniqueness 409, settle validation failures (missing slot, unparseable contract, empty gap report) → fix loop.
 - **E2E arc 1 (both exit criteria)**: fixture *external* repo (synthetic git repo, not the board's own) → project registered → onboarding work item → plan gate → implementation writes real doc slots + contract + Dockerfile target via fake CLI → settle validation passes → machine verify green using the new contract → final approval → merged; **lanes are claude-provider** with claude-shaped fake CLI output (`fakeCli(root, "claude", …)` emitting stream-json), proving the second runtime end to end through the adapter/event path.
@@ -170,10 +170,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS onboarding_once_per_project
 - **Branch protection** requires GitHub — permanently listed in gap reports until the deferred GitHub slice lands (campaign 4 precedent).
 - **Live Cicada onboarding is operational, not in-repo**: the campaign ships machinery + fixture proof; onboarding `DotBackendLuo`/the active pair for real spends live agent runs against another working tree and waits for explicit go-ahead.
 - **MCP profile field is metadata**: both vendors run MCP-disabled by construction; the field records capability, it does not enable anything.
+- **Container runtime registration has three touch points**: add the adapter, add the profile, and ensure the agent image both installs the CLI and carries the `steward.cli.<id>` version label used for immutable runtime identity.
 
 ## Alternatives considered
 
-- **Claim-gate capability enforcement (board-side)** — rejected: activation binds tasks to identities before claims, so rejection livelocks; reassignment machinery is not worth buying for a misconfiguration that lane-construction fail-closed catches earlier and cheaper.
+- **Board-side capability rejection at claim** — rejected: activation binds tasks to identities before claims, so withholding a claim would livelock. The worker instead claims durably, applies a side-effect-free pre-launch guard, quarantines the mismatch, and lets the fleet close the `POISONED` lane. Optional fleet-config `role` validation catches known static mismatches even earlier at construction.
 - **`AsyncIterable<string>` retained, events internal to launchers** — rejected: leaves the §11 schema decorative; the launcher↔worker handle is the real seam, and moving derivation worker-side deletes the vendor-branching in `provider-activity.ts` outright.
 - **Durable `run_events` table now** — rejected (YAGNI): no consumer; §11 requires the schema, not a transcript store; the widest edit stays bounded.
 - **New `onboarding` stage / template shape** — rejected: new `WORKFLOW_STAGES` values ripple through `pipelineTemplateShape`, its SQL mirror in `wall-clock.ts`, the work_nodes CHECK, and the automation stage executors; the v2 template plus prompts/validation delivers §6 without touching any of it.
@@ -181,3 +182,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS onboarding_once_per_project
 - **YAML config** — rejected: no YAML dependency exists; JSON keeps the loader discipline uniform. Name deviation from §2 recorded here.
 - **`config/projects.json` registry** — rejected: the board DB *is* the project registry as-built (`projects.description` = repo path); duplicating it into a file adds a second source of truth with no consumer.
 - **Real-CLI onboarding of a Cicada repo as the e2e** — rejected for tests (nondeterministic, paid, network); retained as the operational follow-up.
+
+## Amendments (post final review)
+
+These amendments describe the implemented behavior where final review found the original design incomplete or inaccurate.
+
+### Capability enforcement
+
+Capability enforcement is a launch-time safety boundary. After a durable claim and before any model-process side effect, the worker validates the claim role against the runtime profile. A mismatch is quarantined, rethrown as `RuntimeCapabilityError`, classified `POISONED`, and closes that lane permanently. A fleet agent may also declare an optional `role`; `createTaskFleetWorker` then rejects an unsupported role or sandbox at construction. The earlier lane-construction-only claim and the corresponding Alternatives reasoning are superseded by this two-layer behavior.
+
+### Correctable settlement rejection
+
+`WORKFLOW_PLAN_REQUIRED` and `ONBOARDING_DELIVERABLES_MISSING` remain correctable 400s, but relaunch is bounded per durable claim:
+
+- Each rejection writes a `settlement_rejected` task event with its code and redacted detail, outside the rolled-back settlement transaction.
+- Rejected terminal-output batches are retracted before the corrected turn so the task exposes one accepted result narrative.
+- The worker journals the rejection count. The first two rejections reset the same claim for correction; the third rewrites the journaled outcome to failed and settles through the existing attempt/park path. No fourth model turn launches.
+- Replaying the persisted claim while the board is paused returns the same hold response as a new claim, so pause remains a kill switch for correction loops.
+
+Feeding rejection detail into the immutable claim prompt is deferred to campaign 9.
+
+### Container runtime limit
+
+The one-adapter-plus-one-profile abstraction proof covers local-process runtimes. A container runtime also requires the CLI to be installed in the agent image and the image to expose its version as `steward.cli.<id>`; container image inspection fails closed without that third touch point.
+
+### Gap-report persistence
+
+Gap-report Markdown uses a newline-preserving persistence redactor only at the artifact ingress. It retains `\n` formatting while applying the same secret patterns and removing every other control character; the existing single-line redactor remains unchanged elsewhere.
