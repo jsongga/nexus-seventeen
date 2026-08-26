@@ -51,6 +51,8 @@ export interface CreateTaskFleetWorkerOptions {
   readonly loadProfiles?: (path: string) => Promise<RuntimeProfiles>;
   /** Test seam for observing the once-per-lane prompt load. */
   readonly loadPrompts?: (root: string) => PromptRegistry;
+  /** Test seam for the one-line, non-secret runtime capability startup record. */
+  readonly logRuntimeProfile?: (line: string) => void;
 }
 
 const profileLoads = new Map<string, Promise<RuntimeProfiles>>();
@@ -248,6 +250,13 @@ export async function createTaskFleetWorker(
   const profile = (await runtimeProfiles(options)).runtimes.get(config.provider);
   if (profile === undefined) throw new Error(`Unknown runtime profile: ${config.provider}`);
   if (config.role !== undefined) adapter.assertRole(profile, config.role);
+  (options.logRuntimeProfile ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+    `[task-fleet] runtime_profile runtime=${JSON.stringify(config.provider)}` +
+    ` permissionModel=${JSON.stringify(profile.permissionModel)}` +
+    ` mcp=${String(profile.mcp)}` +
+    ` toolCallGranularity=${JSON.stringify(profile.toolCallGranularity)}` +
+    ` contextNotes=${JSON.stringify(profile.contextNotes)}`,
+  );
   const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsRoot ?? "prompts"));
   return config.runtime === "container"
     ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile, prompts)

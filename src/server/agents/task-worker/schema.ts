@@ -117,7 +117,12 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
   }
   let active: TaskWorkerJournal["active"] = null;
   if (item.active !== null) {
-    const entry = exact(item.active, ["claim", "phase", "contextDigest", "launchStartedAt", "interruptReason", "outcome", "nextOutputIndex"], "Active run");
+    const rawActive = record(item.active, "Active run");
+    const hasRejectionCounter = Object.hasOwn(rawActive, "correctableSettlementRejections");
+    const entry = exact(item.active, [
+      "claim", "phase", "contextDigest", "launchStartedAt", "interruptReason", "outcome", "nextOutputIndex",
+      ...(hasRejectionCounter ? ["correctableSettlementRejections"] : []),
+    ], "Active run");
     if (entry.phase !== "claimed" && entry.phase !== "launch_started" && entry.phase !== "running" && entry.phase !== "outputs_pending") {
       throw new Error("Active run phase is invalid");
     }
@@ -128,6 +133,9 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
     const interruptReason = nullableProse(entry.interruptReason, "interruptReason", 1_000);
     const outcome = entry.outcome === null ? null : parseAgentRunOutcome(entry.outcome);
     const nextOutputIndex = nonNegativeInteger(entry.nextOutputIndex, "nextOutputIndex");
+    const correctableSettlementRejections = hasRejectionCounter
+      ? nonNegativeInteger(entry.correctableSettlementRejections, "correctableSettlementRejections")
+      : 0;
     if (
       (entry.phase === "claimed" && (contextDigest !== null || launchStartedAt !== null || outcome !== null)) ||
       ((entry.phase === "launch_started" || entry.phase === "running") && (contextDigest === null || launchStartedAt === null || outcome !== null)) ||
@@ -135,7 +143,17 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
       (entry.phase === "outputs_pending") !== (outcome !== null) || (outcome === null && nextOutputIndex !== 0) ||
       (outcome !== null && nextOutputIndex > outcome.outputs.length)
     ) throw new Error("Active run phase fields are inconsistent");
-    active = Object.freeze({ claim, phase: entry.phase, contextDigest, launchStartedAt, interruptReason, outcome, nextOutputIndex });
+    if (correctableSettlementRejections > 3) throw new Error("correctableSettlementRejections is invalid");
+    active = Object.freeze({
+      claim,
+      phase: entry.phase,
+      contextDigest,
+      launchStartedAt,
+      interruptReason,
+      outcome,
+      nextOutputIndex,
+      correctableSettlementRejections,
+    });
     if (legacy && claim.taskId !== null && legacyCursor !== null) messageCursors = Object.freeze({ [claim.taskId]: legacyCursor });
   }
   if (!Array.isArray(item.completed) || item.completed.length > 256) throw new Error("Completed run journal is invalid");

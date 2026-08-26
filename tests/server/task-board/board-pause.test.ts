@@ -284,6 +284,7 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
       interruptReason: null,
       outcome,
       nextOutputIndex: outcome.outputs.length,
+      correctableSettlementRejections: 0,
     },
   });
   await journal.close();
@@ -662,6 +663,43 @@ test("resume emits for pending live wakeups and releases a claim parked behind t
     });
     fixture.board.resumePausedWork();
     assert.ok(await within(heldClaim, 2_000));
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a persisted claim replay is held while paused and resumes without creating another run", async () => {
+  const fixture = await boardFixture();
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest());
+    const request = {
+      claimId: "claim-paused-persisted-replay-direct",
+      messageCursor: null,
+    };
+    const initial = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(initial);
+    const paused = fixture.board.setBoardPause({
+      paused: true,
+      reason: "Hold a persisted replay.",
+      version: 1,
+      actor: "human:alice",
+    });
+
+    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, request), null);
+
+    fixture.board.setBoardPause({
+      paused: false,
+      reason: null,
+      version: paused.version,
+      actor: "human:alice",
+    });
+    const replay = fixture.board.claimRun(fixture.engineer.agentId, request);
+    assert.ok(replay);
+    assert.equal(replay.run.runId, initial.run.runId);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.filter((run) => run.claimId === request.claimId).length,
+      1,
+    );
   } finally {
     fixture.board.close();
   }

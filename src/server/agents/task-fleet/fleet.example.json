@@ -11,6 +11,7 @@
       "agentId": "platform-engineer",
       "token": "replace-with-the-one-time-agent-token-0000000001",
       "provider": "codex",
+      "role": "engineer",
       "model": "replace-with-a-codex-model-id",
       "workingDirectory": "/absolute/path/to/repository",
       "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer.json"
@@ -20,6 +21,7 @@
       "agentId": "platform-engineer-2",
       "token": "replace-with-the-one-time-agent-token-0000000002",
       "provider": "codex",
+      "role": "engineer",
       "model": "replace-with-a-codex-model-id",
       "workingDirectory": "/absolute/path/to/repository",
       "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer-2.json"

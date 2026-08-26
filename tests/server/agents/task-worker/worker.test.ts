@@ -52,13 +52,14 @@ async function worker(
   launcher: FakeLauncher,
   logger?: (event: WorkerDiagnostic) => void,
   pinned?: ClaimRunPinning,
+  longPollMs = 30_000,
 ): Promise<TaskWorker> {
   return TaskWorker.create({
     identity: { workerId: "worker-one", agentId: AGENT },
     statePath: join(root, "state", "journal.json"),
     board,
     launcher,
-    longPollMs: 30_000,
+    longPollMs,
     now: () => new Date(NOW),
     ...(logger === undefined ? {} : { logger }),
     ...(pinned === undefined ? {} : { pinned }),
@@ -337,6 +338,41 @@ test("a non-active pending-claim replay is discarded without launch and the next
     assert.equal(launcher.requests.length, 1);
     assert.equal(launcher.requests[0]?.runId, "run-after-inactive-replay");
     assert.equal(board.settlements[0]?.claim.runId, "run-after-inactive-replay");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
+test("a paused pending-claim replay preserves its claim id and completes after resume", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  board.claimFailures = 1;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const taskWorker = await worker(root, board, launcher, undefined, undefined, 1);
+  try {
+    await assert.rejects(taskWorker.dispatchOnce(), /lost claim response/u);
+    const durableClaimId = board.claimRequests[0]?.claimId;
+    assert.ok(durableClaimId);
+
+    board.pauseClaimReplays = true;
+    assert.equal(await taskWorker.dispatchOnce(), false);
+    assert.equal(taskWorker.hasActiveClaim(), false);
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(board.settlementAttempts.length, 0);
+    assert.deepEqual(board.claimRequests.map((request) => request.claimId), [durableClaimId, durableClaimId]);
+
+    board.pauseClaimReplays = false;
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.deepEqual(board.claimRequests.map((request) => request.claimId), [
+      durableClaimId,
+      durableClaimId,
+      durableClaimId,
+    ]);
+    assert.equal(launcher.requests.length, 1);
+    assert.equal(board.settlements[0]?.claim.claimId, durableClaimId);
+    assert.equal(board.settlements[0]?.outcome, "completed");
   } finally {
     await taskWorker.close();
   }
@@ -1028,6 +1064,45 @@ test("forwards an optional gap report with the run settlement", async () => {
   }
 });
 
+test("three correctable settlement rejections durably take the failed path without a fourth relaunch", async () => {
+  const root = await tempRoot();
+  const journalPath = join(root, "state", "journal.json");
+  const board = new FakeBoard();
+  board.correctableSettleFailures = 3;
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(
+    completedOutcome("First rejected onboarding result."),
+    completedOutcome("Second rejected onboarding result."),
+    completedOutcome("Third rejected onboarding result."),
+  );
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(JSON.parse(await readFile(journalPath, "utf8")).active.correctableSettlementRejections, 1);
+    assert.equal(await taskWorker.dispatchOnce(), true);
+    assert.equal(JSON.parse(await readFile(journalPath, "utf8")).active.correctableSettlementRejections, 2);
+    assert.equal(await taskWorker.dispatchOnce(), true);
+
+    assert.equal(launcher.requests.length, 3);
+    assert.deepEqual(board.settlementAttempts.map((attempt) => attempt.outcome), [
+      "completed", "completed", "completed", "failed",
+    ]);
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "failed");
+    assert.equal(
+      board.settlements[0]?.result,
+      "Onboarding deliverables are missing: gap report is missing or empty",
+    );
+    assert.equal(taskWorker.hasActiveClaim(), false);
+
+    assert.equal(await taskWorker.dispatchOnce(), false);
+    assert.equal(launcher.requests.length, 3, "a fourth model turn must not launch");
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("forwards a provider-authored failed review handoff and findings with the run settlement", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
@@ -1523,6 +1598,7 @@ test("recovery clears last_error only after the durable claim replay validates",
       interruptReason: null,
       outcome: null,
       nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
     },
   });
   await store.close();
@@ -1541,6 +1617,102 @@ test("recovery clears last_error only after the durable claim replay validates",
     assert.equal(await restarted.dispatchOnce(), true);
     assert.deepEqual(board.laneErrors.map((entry) => entry.detail), [null]);
     assert.equal(launcher.requests.length, 1);
+  } finally {
+    await restarted.close();
+  }
+});
+
+test("a paused active durable claim holds without failure and relaunches after resume", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = {
+    agentId: AGENT,
+    claimId: "claim-recovery-paused-hold",
+    messageCursors: { [TASK]: 2 },
+    longPollMs: 0,
+  };
+  const serverClaim = claimed(request);
+  const board = new FakeBoard();
+  board.queued.push(() => serverClaim);
+  assert.deepEqual(await board.claimNextWake(request), serverClaim);
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    messageCursors: { [TASK]: 2 },
+    active: {
+      claim: serverClaim.claim,
+      phase: "claimed",
+      contextDigest: null,
+      launchStartedAt: null,
+      interruptReason: null,
+      outcome: null,
+      nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
+    },
+  });
+  await store.close();
+
+  board.pauseClaimReplays = true;
+  const launcher = new FakeLauncher();
+  launcher.outcomes.push(completedOutcome());
+  const restarted = await worker(root, board, launcher, undefined, undefined, 1);
+  try {
+    assert.equal(await restarted.dispatchOnce(), false);
+    assert.equal(restarted.hasActiveClaim(), true);
+    assert.equal(launcher.requests.length, 0);
+    assert.equal(board.outputs.length, 0);
+    assert.equal(board.settlementAttempts.length, 0, "a paused hold must not be quarantined or settled");
+
+    board.pauseClaimReplays = false;
+    assert.equal(await restarted.dispatchOnce(), true);
+    assert.equal(restarted.hasActiveClaim(), false);
+    assert.equal(launcher.requests.length, 1);
+    assert.equal(board.settlements.length, 1);
+    assert.equal(board.settlements[0]?.outcome, "completed");
+    assert.ok(board.claimRequests.every((claimRequest) => claimRequest.claimId === request.claimId));
+  } finally {
+    await restarted.close();
+  }
+});
+
+test("a genuinely missing active durable claim still fails loudly", async () => {
+  const root = await tempRoot();
+  const statePath = join(root, "state", "journal.json");
+  const identity = { workerId: "worker-one", agentId: AGENT };
+  const request = {
+    agentId: AGENT,
+    claimId: "claim-recovery-genuinely-missing",
+    messageCursors: { [TASK]: 2 },
+    longPollMs: 0,
+  };
+  const missingClaim = claimed(request).claim;
+  const store = await TaskWorkerJournalStore.open(statePath, identity);
+  await store.save({
+    ...emptyTaskWorkerJournal(identity),
+    messageCursors: { [TASK]: 2 },
+    active: {
+      claim: missingClaim,
+      phase: "claimed",
+      contextDigest: null,
+      launchStartedAt: null,
+      interruptReason: null,
+      outcome: null,
+      nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
+    },
+  });
+  await store.close();
+
+  const board = new FakeBoard();
+  const restarted = await worker(root, board, new FakeLauncher(), undefined, undefined, 1);
+  try {
+    await assert.rejects(
+      restarted.dispatchOnce(),
+      (error: unknown) => error instanceof Error && error.message === "Task board did not replay the active durable claim",
+    );
+    assert.equal(restarted.hasActiveClaim(), true);
+    assert.equal(board.settlementAttempts.length, 0);
   } finally {
     await restarted.close();
   }
@@ -1572,6 +1744,7 @@ test("recovery discards a claimed-phase replay settled during restart without po
       interruptReason: null,
       outcome: null,
       nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
     },
   });
   await store.close();
@@ -1633,6 +1806,7 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
       interruptReason: null,
       outcome: null,
       nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
     },
   });
   await store.close();
@@ -1730,6 +1904,7 @@ test("replays a CR-bearing journal with its pre-normalization identity without d
       interruptReason: null,
       outcome,
       nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
     },
   });
   await store.close();
@@ -1774,6 +1949,7 @@ test("does not duplicate a model process after restart beyond the durable launch
       interruptReason: null,
       outcome: null,
       nextOutputIndex: 0,
+      correctableSettlementRejections: 0,
     },
   };
   await store.save(seeded);

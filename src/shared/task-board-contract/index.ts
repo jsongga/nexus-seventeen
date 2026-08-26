@@ -1279,6 +1279,13 @@ export interface CreateTaskMessageRequest {
   readonly runId: string;
 }
 
+/** A persisted claim exists but may not be replayed until the board resumes. */
+export interface ClaimRunPausedResult {
+  readonly paused: true;
+}
+
+export type ClaimRunResponse = ClaimRunResult | ClaimRunPausedResult;
+
 export interface CreateHumanTaskMessageRequest {
   readonly clientEventId: string;
   readonly kind: "note";

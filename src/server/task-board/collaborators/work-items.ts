@@ -40,7 +40,7 @@ export type WorkItemDetail = WorkItem & Readonly<{
 export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
-const ONBOARDING_ACCEPTANCE_CRITERIA = "Return a single-node v2 workflowPlan with stageTemplate [\"implementation\",\"testing\",\"verification\"], declaredScope covering README.md, docs/**, and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.";
+const ONBOARDING_ACCEPTANCE_CRITERIA = "Return a single-node v2 workflowPlan with stageTemplate [\"implementation\",\"testing\",\"verification\"], declaredScope covering README.md, the prefix \"docs\" (covering everything under docs/), and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.";
 const WORK_ITEM_TERMINAL_RANK_SQL = "(work_item.ended_at IS NOT NULL)";
 const WORK_ITEM_PRIORITY_RANK_SQL = `CASE work_item.priority
   ${workItemPriorityCases("  ")}

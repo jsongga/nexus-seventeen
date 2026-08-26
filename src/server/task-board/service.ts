@@ -766,9 +766,9 @@ export class TaskBoardService {
       const onClose = (): void => abort.abort();
       if (request.socket.destroyed) abort.abort();
       else request.socket.once("close", onClose);
-      let result: Awaited<ReturnType<TaskBoard["waitToClaimRun"]>>;
+      let result: Awaited<ReturnType<TaskBoard["waitToClaimRunWithHold"]>>;
       try {
-        result = await this.#board.waitToClaimRun(
+        result = await this.#board.waitToClaimRunWithHold(
           agentId,
           claim,
           waitMs,
@@ -779,7 +779,7 @@ export class TaskBoardService {
         request.socket.off("close", onClose);
       }
       if (result === null) sendEmpty(response, 204);
-      else sendJson(response, 201, result);
+      else sendJson(response, "paused" in result ? 200 : 201, result);
       return;
     }
     const settleMatch = /^\/v1\/runs\/([^/]+)\/settle$/u.exec(url.pathname);

@@ -14,6 +14,7 @@ import {
   type BoardSnapshot,
   type BoardTask,
   type ClaimRunRequest,
+  type ClaimRunResponse,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CreateAgentRequest,
@@ -513,7 +514,8 @@ export class TaskBoard {
   }
 
   claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResult | null {
-    return this.#runs.claimRun(agentId, request, credentialVersion);
+    const result = this.#runs.claimRun(agentId, request, credentialVersion);
+    return result !== null && "paused" in result ? null : result;
   }
 
   async waitToClaimRun(
@@ -523,6 +525,17 @@ export class TaskBoard {
     signal: AbortSignal,
     credentialVersion?: number,
   ): Promise<ClaimRunResult | null> {
+    const result = await this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
+    return result !== null && "paused" in result ? null : result;
+  }
+
+  waitToClaimRunWithHold(
+    agentId: string,
+    request: ClaimRunRequest,
+    waitMs: number,
+    signal: AbortSignal,
+    credentialVersion?: number,
+  ): Promise<ClaimRunResponse | null> {
     return this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
   }
 

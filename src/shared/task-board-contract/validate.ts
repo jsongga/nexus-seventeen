@@ -67,6 +67,7 @@ import {
   type BoardTask,
   type BacklogTaskRequest,
   type ClaimRunResult,
+  type ClaimRunPausedResult,
   type ClaimRunRequest,
   type ConfirmPlanRevisionRequest,
   type CriterionResult,
@@ -2237,6 +2238,12 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   }
   booleanValue(context.design, "context.design");
   return value as ClaimRunResult;
+}
+
+export function parseClaimRunPausedResult(value: unknown): ClaimRunPausedResult {
+  const envelope = exact(value, ["paused"], "Paused claim result");
+  if (envelope.paused !== true) throw new ContractValidationError("Paused claim result is invalid");
+  return Object.freeze({ paused: true });
 }
 
 export type { StageHandoffDraft, WorkflowPlanDraft };

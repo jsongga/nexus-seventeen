@@ -52,6 +52,7 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
   }).agents[0]!;
   let environmentCalls = 0;
   let promptLoads = 0;
+  const runtimeProfileLogs: string[] = [];
   const promptsRoot = resolve("prompts");
   const selected = Object.freeze({
     ...codexAdapter,
@@ -69,10 +70,14 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
       assert.equal(root, promptsRoot);
       return PromptRegistry.loadSync(root);
     },
+    logRuntimeProfile: (line) => runtimeProfileLogs.push(line),
   });
   try {
     assert.equal(environmentCalls, 1);
     assert.equal(promptLoads, 1);
+    assert.deepEqual(runtimeProfileLogs, [
+      '[task-fleet] runtime_profile runtime="codex" permissionModel="cli-sandbox-flags" mcp=false toolCallGranularity="command" contextNotes="JSONL item stream; schema via --output-schema file"',
+    ]);
   } finally {
     await worker.close();
   }

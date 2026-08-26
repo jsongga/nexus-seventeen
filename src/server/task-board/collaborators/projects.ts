@@ -153,13 +153,15 @@ export class ProjectsCollaborator {
     caption: string;
     actorId: string;
   }>): ProjectArtifact {
-    return this.#artifacts.create(input.projectId, {
+    const artifact = this.#artifacts.create(input.projectId, {
       nodeId: input.nodeId,
       taskId: input.taskId,
       mediaType: "text/markdown",
       caption: input.caption,
       contentBase64: Buffer.from(input.content, "utf8").toString("base64"),
     }, input.actorId);
+    this.#workflow.event(input.projectId, input.nodeId, input.taskId, "artifact_created", artifact.caption);
+    return artifact;
   }
 
   listArtifacts(projectId: string): readonly ProjectArtifact[] {

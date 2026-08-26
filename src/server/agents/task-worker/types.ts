@@ -241,6 +241,18 @@ export interface ClaimedAgentRun {
   readonly pinned: ClaimedRunPinning;
 }
 
+/** Internal worker value for the additive HTTP `{ paused: true }` claim response. */
+export interface TaskBoardPausedClaim {
+  readonly paused: true;
+}
+
+export const TASK_BOARD_PAUSED_CLAIM: TaskBoardPausedClaim = Object.freeze({ paused: true });
+export type TaskBoardClaimResult = ClaimedAgentRun | TaskBoardPausedClaim | null;
+
+export function isTaskBoardPausedClaim(value: TaskBoardClaimResult): value is TaskBoardPausedClaim {
+  return value !== null && "paused" in value && value.paused === true;
+}
+
 /** A successful board claim whose full response could not be accepted safely. */
 export class TaskBoardClaimResponseError extends Error {
   constructor(message: string, readonly claim: TaskWakeClaim | null, cause?: unknown) {
@@ -309,6 +321,7 @@ export interface AgentRunInterrupt {
 /** Board credentials and transport details remain entirely outside the launcher. */
 export interface TaskBoardClient {
   claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<ClaimedAgentRun | null>;
+  claimNextWakeWithHold?(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<TaskBoardClaimResult>;
   heartbeatRun(claim: TaskWakeClaim, signal?: AbortSignal): Promise<void>;
   waitForRunInterrupt(claim: TaskWakeClaim, signal?: AbortSignal): Promise<AgentRunInterrupt | null>;
   updateTaskEstimate(request: UpdateTaskEstimateRequest, signal?: AbortSignal): Promise<number>;
@@ -380,6 +393,7 @@ export interface ActiveRunJournalEntry {
   readonly interruptReason: string | null;
   readonly outcome: AgentRunOutcome | null;
   readonly nextOutputIndex: number;
+  readonly correctableSettlementRejections: number;
 }
 
 export interface TaskWorkerJournal {

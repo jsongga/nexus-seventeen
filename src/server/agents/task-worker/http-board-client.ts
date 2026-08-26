@@ -11,6 +11,7 @@ import {
   identifier,
   integer as contractInteger,
   parseAgentTaskPhaseResponse,
+  parseClaimRunPausedResult,
   parseClaimRunResult,
   parseRunEntity,
   record,
@@ -18,7 +19,11 @@ import {
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
 import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
-import { POISONED_CLAIM_REASON, TaskBoardClaimResponseError } from "./types.js";
+import {
+  POISONED_CLAIM_REASON,
+  TASK_BOARD_PAUSED_CLAIM,
+  TaskBoardClaimResponseError,
+} from "./types.js";
 import type {
   AgentTaskPhase,
   AgentRunInterrupt,
@@ -30,13 +35,19 @@ import type {
   ReportAgentLaneErrorRequest,
   SettleAgentRunRequest,
   TaskBoardClient,
+  TaskBoardClaimResult,
   TaskWakeClaim,
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,
 } from "./types.js";
 
 export class TaskBoardHttpError extends Error {
-  constructor(message: string, readonly status: number | null, readonly code: string | null) {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly code: string | null,
+    readonly detail: string = message,
+  ) {
     super(message);
     this.name = "TaskBoardHttpError";
   }
@@ -53,7 +64,11 @@ const RETRYABLE_SETTLEMENT_ERROR_CODES = new Set<string>([
 
 /** A board validation rejection that requires a fresh model result for the same active run. */
 export class RetryableSettlementError extends Error {
-  constructor(readonly code: RetryableSettlementErrorCode, cause: TaskBoardHttpError) {
+  constructor(
+    readonly code: RetryableSettlementErrorCode,
+    readonly detail: string,
+    cause: TaskBoardHttpError,
+  ) {
     super(`Task-board settlement requires correction: ${code}`, { cause });
     this.name = "RetryableSettlementError";
   }
@@ -170,6 +185,17 @@ function errorCode(value: unknown): string | null {
   }
 }
 
+function errorDetail(value: unknown, fallback: string): string {
+  try {
+    const message = record(record(value, "response").error, "error").message;
+    if (typeof message !== "string") return fallback;
+    const detail = redactForPersistence(message, 2_000).trim();
+    return detail.length === 0 ? fallback : detail;
+  } catch {
+    return fallback;
+  }
+}
+
 async function boundedJson(response: Response, maximum: number): Promise<unknown> {
   const declared = response.headers.get("content-length");
   if (declared !== null && !/^(?:0|[1-9]\d*)$/u.test(declared)) {
@@ -251,7 +277,8 @@ class JsonClient {
       }
       const parsed = await boundedJson(response, this.#maximum);
       if (!response.ok) {
-        throw new TaskBoardHttpError(`Task-board request failed with HTTP ${response.status}`, response.status, errorCode(parsed));
+        const fallback = `Task-board request failed with HTTP ${response.status}`;
+        throw new TaskBoardHttpError(fallback, response.status, errorCode(parsed), errorDetail(parsed, fallback));
       }
       return { status: response.status, body: parsed };
     } catch (error) {
@@ -472,6 +499,19 @@ export class HttpTaskBoardClient implements TaskBoardClient {
   constructor(options: HttpTaskBoardClientOptions) { this.#http = new JsonClient(options); }
 
   async claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<ClaimedAgentRun | null> {
+    const result = await this.#claimNextWake(request, signal, false);
+    return result !== null && "paused" in result ? null : result;
+  }
+
+  claimNextWakeWithHold(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<TaskBoardClaimResult> {
+    return this.#claimNextWake(request, signal, true);
+  }
+
+  async #claimNextWake(
+    request: ClaimNextWakeRequest,
+    signal: AbortSignal | undefined,
+    distinguishPausedHold: boolean,
+  ): Promise<TaskBoardClaimResult> {
     const result = await this.#http.request(
       "POST",
       `/v1/agents/${encodeURIComponent(request.agentId)}/runs/claim?waitMs=${request.longPollMs}`,
@@ -487,6 +527,10 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const claimHandle = claimHandleFromResponse(result.body, request);
     try {
       const replayEnvelope = record(result.body, "Claim result");
+      if ("paused" in replayEnvelope) {
+        parseClaimRunPausedResult(result.body);
+        return distinguishPausedHold ? TASK_BOARD_PAUSED_CLAIM : null;
+      }
       const replayRun = parseRunEntity(replayEnvelope.run, "Claim run");
       if (replayRun.status !== "active") {
         if (claimHandle === null || replayRun.endedAt === null) {
@@ -725,7 +769,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         error instanceof TaskBoardHttpError && error.status === 400 && error.code !== null &&
         RETRYABLE_SETTLEMENT_ERROR_CODES.has(error.code)
       ) {
-        throw new RetryableSettlementError(error.code as RetryableSettlementErrorCode, error);
+        throw new RetryableSettlementError(error.code as RetryableSettlementErrorCode, error.detail, error);
       }
       throw error;
     }

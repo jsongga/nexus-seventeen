@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AgentRole } from "#shared/task-board-contract";
 import { safeErrorDetail } from "../../shared/safe-error-detail.js";
 import { RuntimeCapabilityError } from "../runtime/profiles.js";
@@ -24,16 +25,19 @@ import {
   POISONED_CLAIM_REASON,
   TASK_WAKE_REASONS,
   TaskBoardClaimResponseError,
+  isTaskBoardPausedClaim,
   type AgentRunHandle,
   type AgentRunOutcome,
   type AgentTaskPhase,
   type AgentTaskPhaseUpdate,
   type BoundedAgentContext,
   type ClaimedAgentRun,
+  type ClaimNextWakeRequest,
   type ClaimedRunPinning,
   type TaskWakeClaim,
   type TaskWakeReason,
   type TaskBoardClient,
+  type TaskBoardClaimResult,
   type TaskWorkerJournal,
   type TaskWorkerLogger,
   type TaskWorkerOptions,
@@ -62,6 +66,7 @@ const ALLOWED_WAKE_REASONS = new Set<string>(TASK_WAKE_REASONS);
 const MAX_HISTORY = 256;
 const MAX_MESSAGE_CURSORS = 256;
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const MAX_CORRECTABLE_SETTLEMENT_REJECTIONS = 3;
 
 function exactNow(now: () => Date): string {
   const value = now();
@@ -98,6 +103,10 @@ function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
   // requests cross this seam, so normalization cannot change replay identity.
   const normalized: TaskBoardClient = {
     claimNextWake: (request, signal) => board.claimNextWake(request, signal),
+    ...(board.claimNextWakeWithHold === undefined
+      ? {}
+      : { claimNextWakeWithHold: (request: ClaimNextWakeRequest, signal?: AbortSignal) =>
+          board.claimNextWakeWithHold!(request, signal) }),
     heartbeatRun: (claim, signal) => board.heartbeatRun(claim, signal),
     waitForRunInterrupt: (claim, signal) => board.waitForRunInterrupt(claim, signal),
     updateTaskEstimate: (request, signal) => board.updateTaskEstimate(normalizeCarriageReturns(request), signal),
@@ -367,6 +376,12 @@ export class TaskWorker {
     this.#state = next;
   }
 
+  #claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<TaskBoardClaimResult> {
+    return this.#options.board.claimNextWakeWithHold === undefined
+      ? this.#options.board.claimNextWake(request, signal)
+      : this.#options.board.claimNextWakeWithHold(request, signal);
+  }
+
   get snapshot(): TaskWorkerSnapshot {
     return {
       started: this.#started,
@@ -461,9 +476,9 @@ export class TaskWorker {
       if (this.#state.active !== null) return await this.#recoverOrContinueActive(signal);
       const replayingPendingClaim = this.#state.pendingClaim !== null;
       const pending = await this.#ensurePendingClaim();
-      let claimed: ClaimedAgentRun | null;
+      let claimed: TaskBoardClaimResult;
       try {
-        claimed = await this.#options.board.claimNextWake({
+        claimed = await this.#claimNextWake({
           agentId: this.#options.identity.agentId,
           claimId: pending.claimId,
           messageCursors: pending.messageCursors,
@@ -479,6 +494,10 @@ export class TaskWorker {
           await this.#recordPoisonedClaim(error.claim, pending);
         }
         throw error;
+      }
+      if (isTaskBoardPausedClaim(claimed)) {
+        await this.#waitAfterPausedClaim(signal);
+        return false;
       }
       if (claimed === null) {
         await this.#serial.run(async () => {
@@ -536,6 +555,16 @@ export class TaskWorker {
     });
   }
 
+  async #waitAfterPausedClaim(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
+    try {
+      await delay(this.#options.longPollMs, undefined, signal === undefined ? undefined : { signal });
+    } catch (error) {
+      if (signal?.aborted) return;
+      throw error;
+    }
+  }
+
   async #recordClaim(claimed: ClaimedAgentRun): Promise<void> {
     await this.#serial.run(async () => {
       if (this.#state.active !== null) throw new Error("Task worker already owns an active run");
@@ -548,6 +577,7 @@ export class TaskWorker {
         interruptReason: null,
         outcome: null,
         nextOutputIndex: 0,
+        correctableSettlementRejections: 0,
       });
       const next: TaskWorkerJournal = {
         ...this.#state,
@@ -611,9 +641,9 @@ export class TaskWorker {
       return true;
     }
     if (active.phase === "claimed") {
-      let replay: ClaimedAgentRun | null;
+      let replay: TaskBoardClaimResult;
       try {
-        replay = await this.#options.board.claimNextWake({
+        replay = await this.#claimNextWake({
           agentId: this.#options.identity.agentId,
           claimId: active.claim.claimId,
           messageCursors: active.claim.taskId === null || active.claim.requestedMessageCursor === null
@@ -628,6 +658,10 @@ export class TaskWorker {
           return false;
         }
         throw error;
+      }
+      if (isTaskBoardPausedClaim(replay)) {
+        await this.#waitAfterPausedClaim(signal);
+        return false;
       }
       if (replay === null) throw new Error("Task board did not replay the active durable claim");
       const parsed = assertClaimBinding(
@@ -665,14 +699,14 @@ export class TaskWorker {
       ? Object.freeze({})
       : Object.freeze({ [claim.taskId]: claim.requestedMessageCursor });
     try {
-      const replay = await this.#options.board.claimNextWake({
+      const replay = await this.#claimNextWake({
         agentId: this.#options.identity.agentId,
         claimId: claim.claimId,
         messageCursors: cursors,
         longPollMs: 0,
         ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
       }, signal);
-      if (replay === null) return;
+      if (replay === null || isTaskBoardPausedClaim(replay)) return;
       const parsed = assertClaimBinding(replay, this.#options.identity.agentId, claim.claimId, cursors);
       if (parsed.claim.runId !== claim.runId || parsed.claim.wakeupId !== claim.wakeupId) return;
       this.#logReplayPinningDivergence(parsed);
@@ -1263,7 +1297,7 @@ export class TaskWorker {
         });
       } catch (error) {
         if (!(error instanceof RetryableSettlementError)) throw error;
-        await this.#resetRejectedSettlement(active.claim);
+        await this.#handleRejectedSettlement(active.claim, error);
         return;
       }
     }
@@ -1284,7 +1318,11 @@ export class TaskWorker {
     });
   }
 
-  async #resetRejectedSettlement(claim: TaskWakeClaim): Promise<void> {
+  async #handleRejectedSettlement(
+    claim: TaskWakeClaim,
+    rejection: RetryableSettlementError,
+  ): Promise<void> {
+    let capReached = false;
     await this.#serial.run(async () => {
       const current = this.#state.active;
       if (
@@ -1293,19 +1331,30 @@ export class TaskWorker {
       ) {
         throw new Error("Active run changed while a correctable settlement was rejected");
       }
+      const correctableSettlementRejections = current.correctableSettlementRejections + 1;
+      capReached = correctableSettlementRejections >= MAX_CORRECTABLE_SETTLEMENT_REJECTIONS;
       const next: TaskWorkerJournal = {
         ...this.#state,
-        active: {
-          ...current,
-          phase: "claimed",
-          contextDigest: null,
-          launchStartedAt: null,
-          outcome: null,
-          nextOutputIndex: 0,
-        },
+        active: capReached
+          ? {
+              ...current,
+              outcome: failedOutcome(rejection.detail, "Task-board settlement correction limit was reached."),
+              nextOutputIndex: 0,
+              correctableSettlementRejections,
+            }
+          : {
+              ...current,
+              phase: "claimed",
+              contextDigest: null,
+              launchStartedAt: null,
+              outcome: null,
+              nextOutputIndex: 0,
+              correctableSettlementRejections,
+            },
       };
       await this.#saveState(next);
     });
+    if (capReached) await this.#flushAndFinish();
   }
 
   /** Directly reaches the launcher handle; no heartbeat or model turn mediates interruption. */

@@ -17,13 +17,21 @@ import type {
   SettleAgentRunRequest,
   ReportAgentLaneErrorRequest,
   TaskBoardClient,
+  TaskBoardClaimResult,
   TaskWakeClaim,
   UpdateAgentTaskPhaseRequest,
   UpdateTaskEstimateRequest,
 } from "#server/agents/task-worker/types";
 import type { AgentRole } from "#shared/task-board-contract";
-import { TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
-import { InactiveClaimReplayError } from "#server/agents/task-worker/http-board-client";
+import {
+  TASK_BOARD_PAUSED_CLAIM,
+  TaskBoardClaimResponseError,
+} from "#server/agents/task-worker/types";
+import {
+  InactiveClaimReplayError,
+  RetryableSettlementError,
+  TaskBoardHttpError,
+} from "#server/agents/task-worker/http-board-client";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
@@ -210,9 +218,11 @@ export class FakeBoard implements TaskBoardClient {
   poisonedClaimReason: string | null = null;
   appendFailures = 0;
   settleFailures = 0;
+  correctableSettleFailures = 0;
   heartbeatFailures = 0;
   heartbeatFailure: Error = new Error("Simulated heartbeat rejection");
   inactiveReplayStatus: "completed" | "failed" | "interrupted" | "waiting_for_human" | null = null;
+  pauseClaimReplays = false;
   estimateFailures = 0;
   laneErrorFailures = 0;
   laneErrorFailure: Error = new Error("Simulated lane-error endpoint rejection");
@@ -221,6 +231,14 @@ export class FakeBoard implements TaskBoardClient {
   #phaseSequence = 0;
 
   claimNextWake(request: ClaimNextWakeRequest): Promise<ClaimedAgentRun | null> {
+    return this.#claimNextWake(request, false) as Promise<ClaimedAgentRun | null>;
+  }
+
+  claimNextWakeWithHold(request: ClaimNextWakeRequest): Promise<TaskBoardClaimResult> {
+    return this.#claimNextWake(request, true);
+  }
+
+  #claimNextWake(request: ClaimNextWakeRequest, distinguishPausedHold: boolean): Promise<TaskBoardClaimResult> {
     this.onClaim?.(structuredClone(request));
     this.claimRequests.push(structuredClone(request));
     let result = this.#claimed.get(request.claimId);
@@ -234,6 +252,9 @@ export class FakeBoard implements TaskBoardClient {
     if (this.claimFailures > 0) {
       this.claimFailures -= 1;
       return Promise.reject(new Error("Simulated lost claim response"));
+    }
+    if (replayed && this.pauseClaimReplays) {
+      return Promise.resolve(distinguishPausedHold ? TASK_BOARD_PAUSED_CLAIM : null);
     }
     if (replayed && this.inactiveReplayStatus !== null) {
       const status = this.inactiveReplayStatus;
@@ -339,6 +360,20 @@ export class FakeBoard implements TaskBoardClient {
 
   settleAgentRun(request: SettleAgentRunRequest): Promise<void> {
     this.settlementAttempts.push(structuredClone(request));
+    if (this.correctableSettleFailures > 0 && request.outcome === "completed") {
+      this.correctableSettleFailures -= 1;
+      const detail = "Onboarding deliverables are missing: gap report is missing or empty";
+      return Promise.reject(new RetryableSettlementError(
+        "ONBOARDING_DELIVERABLES_MISSING",
+        detail,
+        new TaskBoardHttpError(
+          "Task-board request failed with HTTP 400",
+          400,
+          "ONBOARDING_DELIVERABLES_MISSING",
+          detail,
+        ),
+      ));
+    }
     if (this.settleFailures > 0) {
       this.settleFailures -= 1;
       return Promise.reject(new Error("Simulated settlement rejection"));

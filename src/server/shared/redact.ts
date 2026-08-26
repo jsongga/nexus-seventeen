@@ -4,6 +4,7 @@ const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
 const PREFIXED_TOKEN_PATTERN = /\b(?:(?:sk|xox)_|sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[a-z]-)[A-Za-z0-9._~+/-]+/gu;
 const AWS_ACCESS_KEY_PATTERN = /\bAKIA[0-9A-Z]{16}\b/gu;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/gu;
+const CONTROL_CHARACTER_EXCEPT_NEWLINE_PATTERN = /[\u0000-\u0009\u000b-\u001f\u007f]/gu;
 const REDACTION_MARKER_PATTERN = /^\[redacted:(?:token|bearer|pem|url-credential)\]/u;
 
 function truncatePreservingRedactionMarkers(value: string, maxLength: number): string {
@@ -17,14 +18,27 @@ function truncatePreservingRedactionMarkers(value: string, maxLength: number): s
   return `${value.slice(0, limit - marker.length)}${marker}`;
 }
 
-/** Pattern-based only — a secret in an unrecognized format persists. Entropy scanning is out of scope (spec §Redact). */
-export function redactForPersistence(value: string, maxLength?: number): string {
+function redact(
+  value: string,
+  controlCharacters: RegExp,
+  maxLength: number | undefined,
+): string {
   const redacted = value
-    .replace(CONTROL_CHARACTER_PATTERN, "")
+    .replace(controlCharacters, "")
     .replace(PRIVATE_KEY_PATTERN, "[redacted:pem]")
     .replace(URL_CREDENTIAL_PATTERN, "[redacted:url-credential]")
     .replace(BEARER_PATTERN, "[redacted:bearer]")
     .replace(PREFIXED_TOKEN_PATTERN, "[redacted:token]")
     .replace(AWS_ACCESS_KEY_PATTERN, "[redacted:token]");
   return maxLength === undefined ? redacted : truncatePreservingRedactionMarkers(redacted, maxLength);
+}
+
+/** Pattern-based only — a secret in an unrecognized format persists. Entropy scanning is out of scope (spec §Redact). */
+export function redactForPersistence(value: string, maxLength?: number): string {
+  return redact(value, CONTROL_CHARACTER_PATTERN, maxLength);
+}
+
+/** Gap-report ingress only: applies the standard persistence scrub while retaining Markdown line breaks. */
+export function redactMultilineForPersistence(value: string, maxLength?: number): string {
+  return redact(value, CONTROL_CHARACTER_EXCEPT_NEWLINE_PATTERN, maxLength);
 }

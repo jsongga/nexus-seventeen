@@ -10,6 +10,7 @@ import {
   type AgentRun,
   type BoardTask,
   type ClaimRunRequest,
+  type ClaimRunResponse,
   type ClaimRunResult,
   type CreatePlanRevisionRequest,
   type DesignRecordDraft,
@@ -24,7 +25,7 @@ import {
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-board-contract/validate";
-import { redactForPersistence } from "../../shared/redact.js";
+import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
@@ -90,6 +91,11 @@ type OnboardingSettlementContext = Readonly<{
 }>;
 
 const ONBOARDING_GAP_REPORT_CAPTION = "Onboarding gap report";
+const PAUSED_CLAIM_RESULT = Object.freeze({ paused: true as const });
+const CORRECTABLE_SETTLEMENT_ERROR_CODES = new Set<string>([
+  "WORKFLOW_PLAN_REQUIRED",
+  TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
+]);
 
 function onboardingMissingDetail(missing: readonly string[]): string {
   const boundedItems = missing.map((item) => redactForPersistence(item, 220));
@@ -418,10 +424,11 @@ export class RunsCollaborator {
     return batch.items.length > 0 ? batch : null;
   }
 
-  claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResult | null {
+  claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResponse | null {
     this.requireCredentialVersion(agentId, credentialVersion);
     const prior = this.runtime.store.db.prepare("SELECT * FROM runs WHERE agent_id = ? AND claim_id = ?").get(agentId, request.claimId);
     if (prior) {
+      if (this.boardPause.isBoardPaused()) return PAUSED_CLAIM_RESULT;
       const priorRun = runFromRow(prior);
       const requestHash = claimRequestHash(agentId, request, priorRun.taskId);
       const storedHash = stringValue(prior, "claim_request_hash");
@@ -619,7 +626,7 @@ export class RunsCollaborator {
     waitMs: number,
     signal: AbortSignal,
     credentialVersion?: number,
-  ): Promise<ClaimRunResult | null> {
+  ): Promise<ClaimRunResponse | null> {
     if (signal.aborted) {
       this.runtime.requireAgent(agentId);
       return null;
@@ -851,27 +858,94 @@ export class RunsCollaborator {
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
     const scopeCheck = current.taskId === null ? null : this.scopeCheckForSettlement(current.taskId, request.outcome);
-    const onboarding = current.taskId === null
-      ? null
-      : this.onboardingCheckForSettlement(current.taskId, request.outcome, request.gapReport);
+    let onboarding: OnboardingSettlementContext | null;
+    try {
+      onboarding = current.taskId === null
+        ? null
+        : this.onboardingCheckForSettlement(current.taskId, request.outcome, request.gapReport);
+    } catch (error) {
+      this.recordCorrectableSettlementRejectionBestEffort(current, agentId, error);
+      throw error;
+    }
     const attemptPrecheck = Object.freeze({
       scopeCheck,
       result: attemptSettlementResult(request, scopeCheck),
       onboarding,
     });
     const now = exactNow(this.runtime.config.now);
-    const effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
-      current,
-      agentId,
-      request,
-      now,
-      { type: "agent", id: agentId },
-      attemptPrecheck,
-    ));
+    let effects: SettlementEffects;
+    try {
+      effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
+        current,
+        agentId,
+        request,
+        now,
+        { type: "agent", id: agentId },
+        attemptPrecheck,
+      ));
+    } catch (error) {
+      this.recordCorrectableSettlementRejectionBestEffort(current, agentId, error);
+      throw error;
+    }
     if (effects.workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(effects.workflowWakeAgentId);
     this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
     this.projects.reconcileWorkflowsBestEffort(current.projectId);
     return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
+  }
+
+  private recordCorrectableSettlementRejection(
+    current: AgentRun,
+    agentId: string,
+    error: unknown,
+  ): void {
+    if (
+      current.status !== "active" || !(error instanceof TaskBoardError) || error.status !== 400 ||
+      !CORRECTABLE_SETTLEMENT_ERROR_CODES.has(error.code)
+    ) return;
+    const detail = redactForPersistence(error.message, 2_000);
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.transaction(() => {
+      const terminalMessages = this.runtime.store.db.prepare(`
+        SELECT message_id
+        FROM task_messages
+        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
+      `).all(current.runId, agentId) as ReadonlyArray<Record<string, unknown>>;
+      for (const row of terminalMessages) {
+        const messageId = String(row.message_id);
+        this.runtime.store.db.prepare(`
+          DELETE FROM task_events
+          WHERE event_type='task_message_appended' AND json_extract(data_json,'$.messageId')=?
+        `).run(messageId);
+      }
+      this.runtime.store.db.prepare(`
+        DELETE FROM task_messages
+        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
+      `).run(current.runId, agentId);
+      this.runtime.insertEvent(
+        current.projectId,
+        current.taskId,
+        { type: "agent", id: agentId },
+        "settlement_rejected",
+        { runId: current.runId, code: error.code, detail, retractedOutputCount: terminalMessages.length },
+        now,
+      );
+    });
+  }
+
+  private recordCorrectableSettlementRejectionBestEffort(
+    current: AgentRun,
+    agentId: string,
+    error: unknown,
+  ): void {
+    try {
+      this.recordCorrectableSettlementRejection(current, agentId, error);
+    } catch (recordingError) {
+      try {
+        console.error(`[task-board] settlement rejection recording failed for run ${current.runId}`, recordingError);
+      } catch {
+        // The original typed settlement error remains authoritative even if logging also fails.
+      }
+    }
   }
 
   private settleActiveRunInTransaction(
@@ -1089,25 +1163,26 @@ export class RunsCollaborator {
     agentId: string,
   ): void {
     const link = this.runtime.store.db.prepare(`
-      SELECT gap_report_artifact_id
-      FROM work_item_onboarding_tasks
+      SELECT onboarding.gap_report_artifact_id, artifact.task_id AS gap_report_task_id
+      FROM work_item_onboarding_tasks onboarding
+      LEFT JOIN artifacts artifact ON artifact.artifact_id=onboarding.gap_report_artifact_id
       WHERE work_item_id=?
     `).get(onboarding.workItemId);
     if (link === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_link");
-    if (link.gap_report_artifact_id !== null) return;
+    if (link.gap_report_artifact_id !== null && link.gap_report_task_id === onboarding.taskId) return;
     const artifact = this.projects.recordOnboardingGapReportInTransaction({
       projectId: onboarding.projectId,
       nodeId: onboarding.nodeId,
       taskId: onboarding.taskId,
-      content: redactForPersistence(onboarding.gapReport),
+      content: redactMultilineForPersistence(onboarding.gapReport),
       caption: ONBOARDING_GAP_REPORT_CAPTION,
       actorId: agentId,
     });
     const update = this.runtime.store.db.prepare(`
       UPDATE work_item_onboarding_tasks
       SET gap_report_artifact_id=?
-      WHERE work_item_id=? AND gap_report_artifact_id IS NULL
-    `).run(artifact.artifactId, onboarding.workItemId);
+      WHERE work_item_id=? AND gap_report_artifact_id IS ?
+    `).run(artifact.artifactId, onboarding.workItemId, link.gap_report_artifact_id);
     if (Number(update.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_identity");
   }
 

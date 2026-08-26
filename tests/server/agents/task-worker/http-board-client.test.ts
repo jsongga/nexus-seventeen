@@ -6,7 +6,10 @@ import {
   InactiveClaimReplayError,
   RetryableSettlementError,
 } from "../../../../src/server/agents/task-worker/http-board-client.js";
-import { TaskBoardClaimResponseError } from "../../../../src/server/agents/task-worker/types.js";
+import {
+  TASK_BOARD_PAUSED_CLAIM,
+  TaskBoardClaimResponseError,
+} from "../../../../src/server/agents/task-worker/types.js";
 import { boardFixture, taskRequest } from "../../task-board/helpers.js";
 
 const TOKEN = "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz";
@@ -133,6 +136,24 @@ test("claim responses expose immutable run pinning and preserve the onboarding d
   } finally {
     fixture.board.close();
   }
+});
+
+test("a typed paused claim response maps to the worker hold value instead of idle null", async () => {
+  const client = new HttpTaskBoardClient({
+    baseUrl: "http://127.0.0.1:4318",
+    token: TOKEN,
+    fetchImplementation: (async () => new Response(JSON.stringify({ paused: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+
+  assert.equal(await client.claimNextWakeWithHold({
+    agentId: "engineer-one",
+    claimId: "claim-paused-hold",
+    messageCursors: {},
+    longPollMs: 0,
+  }), TASK_BOARD_PAUSED_CLAIM);
 });
 
 test("a settled claim replay is reported as inactive before worker launch", async () => {
@@ -300,7 +321,7 @@ test("typed correctable settle 400s are distinguished from poisoned HTTP failure
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,
       fetchImplementation: (async () => new Response(JSON.stringify({
-        error: { code, message: "The model result needs correction." },
+        error: { code, message: "The model result needs correction. Bearer correction-secret" },
       }), {
         status: 400,
         headers: { "content-type": "application/json" },
@@ -323,6 +344,8 @@ test("typed correctable settle 400s are distinguished from poisoned HTTP failure
       idempotencyKey: `settle-${code.toLowerCase()}`,
       outcome: "completed",
       result: "The first result needs correction.",
-    }), (error: unknown) => error instanceof RetryableSettlementError && error.code === code);
+    }), (error: unknown) => error instanceof RetryableSettlementError
+      && error.code === code
+      && error.detail === "The model result needs correction. [redacted:bearer]");
   }
 });

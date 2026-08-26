@@ -2273,6 +2273,18 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     }, "atomic-settlement-planning-pending-wakeup").wakeup;
     assert.equal(pendingWakeup.claimedAt, null);
     assert.equal(pendingWakeup.runId, null);
+    fixture.board.appendAgentMessage(planningTask.taskId, fixture.manager.agentId, {
+      clientEventId: `twa_${"c".repeat(64)}`,
+      runId: claim.run.runId,
+      kind: "progress",
+      body: "The planning turn is still evaluating the required workflow shape.",
+    });
+    fixture.board.appendAgentMessage(planningTask.taskId, fixture.manager.agentId, {
+      clientEventId: `twe_${"a".repeat(64)}`,
+      runId: claim.run.runId,
+      kind: "result",
+      body: "The rejected turn incorrectly claimed that planning was complete.",
+    });
 
     assert.throws(
       () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
@@ -2288,6 +2300,10 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status, "active");
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "in_progress");
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "planning");
+    assert.deepEqual(
+      fixture.board.listMessages(planningTask.taskId).map((message) => message.body),
+      ["The planning turn is still evaluating the required workflow shape."],
+    );
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -2297,10 +2313,29 @@ test("a completed planning run missing workflowPlan remains active and accepts a
       assert.ok(persistedWakeup);
       assert.equal(persistedWakeup.claimed_at, null);
       assert.equal(persistedWakeup.run_id, null);
+      const rejection = inspected.prepare(`
+        SELECT data_json
+        FROM task_events
+        WHERE task_id=? AND event_type='settlement_rejected'
+        ORDER BY sequence DESC
+        LIMIT 1
+      `).get(planningTask.taskId);
+      assert.deepEqual(JSON.parse(String(rejection?.data_json)), {
+        code: "WORKFLOW_PLAN_REQUIRED",
+        detail: "Planning tasks must return a workflow plan",
+        retractedOutputCount: 1,
+        runId: claim.run.runId,
+      });
     } finally {
       inspected.close();
     }
 
+    fixture.board.appendAgentMessage(planningTask.taskId, fixture.manager.agentId, {
+      clientEventId: `twe_${"b".repeat(64)}`,
+      runId: claim.run.runId,
+      kind: "result",
+      body: "The corrected request includes the completed plan.",
+    });
     const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The corrected request includes the completed plan.",
@@ -2323,6 +2358,13 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "completed");
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
+    assert.deepEqual(
+      fixture.board.listMessages(planningTask.taskId).map((message) => message.body),
+      [
+        "The planning turn is still evaluating the required workflow shape.",
+        "The corrected request includes the completed plan.",
+      ],
+    );
   } finally {
     fixture.board.close();
   }

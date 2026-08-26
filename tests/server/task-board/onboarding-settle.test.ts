@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { SettleRunRequest, StageHandoffDraft, WorkflowPlanDraft } from "#shared/task-board-contract";
-import { redactForPersistence } from "../../../src/server/shared/redact.js";
+import { redactMultilineForPersistence } from "../../../src/server/shared/redact.js";
 import { TaskBoardError } from "#server/task-board";
 import { onboardingDeliverablesCheck } from "../../../src/server/task-board/collaborators/onboarding-check.js";
 import {
@@ -215,6 +216,16 @@ function assertDeliverablesError(operation: () => unknown, pattern: RegExp): voi
     && pattern.test(error.message));
 }
 
+async function driveFailedMachineVerifyToImplementation(fixture: OnboardingFixture): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    await fixture.board.sweepVerifyAttempts();
+    if (fixture.board.requireWorkItem(fixture.workItemId).state === "implementing") return;
+    await delay(25);
+  }
+  assert.fail(`machine testing did not return to implementation; current=${fixture.board.requireWorkItem(fixture.workItemId).state}`);
+}
+
 test("onboarding implementation settlement rejects every missing deliverable without mutating the active attempt", async () => {
   const fixture = await onboardingFixture("missing-interface");
   try {
@@ -309,7 +320,55 @@ test("onboarding implementation settlement requires a non-empty gap report", asy
 
     assertDeliverablesError(() => settleImplementation(fixture), /gap report/u);
     assertDeliverablesError(() => settleImplementation(fixture, " \n\t"), /gap report/u);
+    const persisted = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const rejections = persisted.prepare(`
+        SELECT data_json
+        FROM task_events
+        WHERE task_id=? AND event_type='settlement_rejected'
+        ORDER BY sequence
+      `).all(fixture.implementationTaskId);
+      assert.equal(rejections.length, 2);
+      assert.deepEqual(JSON.parse(String(rejections[0]?.data_json)), {
+        code: "ONBOARDING_DELIVERABLES_MISSING",
+        detail: "Onboarding deliverables are missing: gap report is missing or empty",
+        retractedOutputCount: 0,
+        runId: fixture.implementationRunId,
+      });
+    } finally {
+      persisted.close();
+    }
   } finally {
+    fixture.board.close();
+  }
+});
+
+test("a rejection-trace write failure preserves the original typed settlement error", async () => {
+  const fixture = await onboardingFixture("rejection-trace-failure");
+  const originalConsoleError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    await commitDeliverables(fixture);
+    const writable = new DatabaseSync(fixture.path);
+    try {
+      writable.exec(`
+        CREATE TRIGGER reject_settlement_rejected_event
+        BEFORE INSERT ON task_events
+        WHEN NEW.event_type='settlement_rejected'
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated settlement rejection trace failure');
+        END
+      `);
+    } finally {
+      writable.close();
+    }
+    console.error = (...data: unknown[]): void => { logged.push(data); };
+
+    assertDeliverablesError(() => settleImplementation(fixture), /gap report/u);
+    assert.match(String(logged[0]?.[0]), /settlement rejection recording failed/u);
+    assert.match(String(logged[0]?.[0]), new RegExp(fixture.implementationRunId, "u"));
+  } finally {
+    console.error = originalConsoleError;
     fixture.board.close();
   }
 });
@@ -342,8 +401,14 @@ test("successful onboarding implementation stores and surfaces the durable redac
     assert.equal(stored.artifact.nodeId, nodeId);
     assert.equal(stored.artifact.taskId, fixture.implementationTaskId);
     assert.equal(stored.artifact.mediaType, "text/markdown");
-    assert.equal(stored.bytes.toString("utf8"), redactForPersistence(report));
+    assert.equal(stored.bytes.toString("utf8"), redactMultilineForPersistence(report));
+    assert.equal(stored.bytes.toString("utf8"), "# Gaps\n\n- Branch protection is deferred.\n- Credential sample: [redacted:bearer]\n");
     assert.doesNotMatch(stored.bytes.toString("utf8"), /abcdefghijklmnopqrstuvwxyz/u);
+    assert.ok(fixture.board.listProjectEvents(fixture.project.projectId).some((event) =>
+      event.eventType === "artifact_created" &&
+      event.nodeId === nodeId &&
+      event.taskId === fixture.implementationTaskId &&
+      event.summary === "Onboarding gap report"));
     const persisted = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(
@@ -356,6 +421,131 @@ test("successful onboarding implementation stores and surfaces the durable redac
       );
     } finally {
       persisted.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a later implementation attempt replaces the gap-report artifact while a duplicate settle stays idempotent", async () => {
+  const fixture = await onboardingFixture("fresh-gap-report");
+  try {
+    await commitDeliverables(fixture);
+    const firstReport = "# Gaps\n\n- First implementation report.\n";
+    const firstRequest: GapReportSettlement = {
+      outcome: "completed",
+      result: "First onboarding implementation is complete.",
+      handoff: handoff(),
+      gapReport: firstReport,
+    };
+    const firstSettle = fixture.board.settleRun(
+      fixture.implementationRunId,
+      fixture.engineer.agentId,
+      firstRequest,
+    );
+    assert.equal(firstSettle.duplicate, false);
+    const duplicate = fixture.board.settleRun(
+      fixture.implementationRunId,
+      fixture.engineer.agentId,
+      firstRequest,
+    );
+    assert.equal(duplicate.duplicate, true);
+    const firstDetail = fixture.board.requireWorkItem(fixture.workItemId) as ReturnType<Fixture["board"]["requireWorkItem"]> & {
+      readonly gapReportArtifactId: string | null;
+    };
+    const firstArtifactId = firstDetail.gapReportArtifactId;
+    assert.match(firstArtifactId ?? "", /^artifact_/u);
+
+    await driveFailedMachineVerifyToImplementation(fixture);
+    const secondImplementation = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-onboarding-second-implementation-fresh-gap-report",
+      messageCursor: null,
+    });
+    assert.ok(secondImplementation?.task);
+    assert.notEqual(secondImplementation.task.taskId, fixture.implementationTaskId);
+    const secondReport = "# Gaps\n\n- Corrected implementation report.\n";
+    fixture.board.settleRun(secondImplementation.run.runId, fixture.engineer.agentId, {
+      outcome: "completed",
+      result: "Corrected onboarding implementation is complete.",
+      handoff: handoff(),
+      gapReport: secondReport,
+    });
+
+    const secondDetail = fixture.board.requireWorkItem(fixture.workItemId) as typeof firstDetail;
+    assert.match(secondDetail.gapReportArtifactId ?? "", /^artifact_/u);
+    assert.notEqual(secondDetail.gapReportArtifactId, firstArtifactId);
+    const firstArtifact = await fixture.board.artifactContent(firstArtifactId!);
+    const secondArtifact = await fixture.board.artifactContent(secondDetail.gapReportArtifactId!);
+    assert.equal(firstArtifact.bytes.toString("utf8"), firstReport);
+    assert.equal(secondArtifact.bytes.toString("utf8"), secondReport);
+    assert.equal(secondArtifact.artifact.taskId, secondImplementation.task.taskId);
+    assert.equal(
+      fixture.board.listProjectEvents(fixture.project.projectId).filter((event) =>
+        event.eventType === "artifact_created" && event.summary === "Onboarding gap report").length,
+      2,
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a repair-time onboarding rejection leaves a completed run's outputs and event history intact", async () => {
+  const fixture = await onboardingFixture("settled-repair-rejection");
+  try {
+    await commitDeliverables(fixture);
+    const request: GapReportSettlement = {
+      outcome: "completed",
+      result: "Onboarding implementation is complete before repair replay.",
+      handoff: handoff(),
+      gapReport: "# Gaps\n\n- Branch protection is deferred.\n",
+    };
+    fixture.board.appendAgentMessage(fixture.implementationTaskId, fixture.engineer.agentId, {
+      clientEventId: `twe_${"d".repeat(64)}`,
+      runId: fixture.implementationRunId,
+      kind: "result",
+      body: request.result,
+    });
+    const initial = fixture.board.settleRun(
+      fixture.implementationRunId,
+      fixture.engineer.agentId,
+      request,
+    );
+    assert.equal(initial.run.status, "completed");
+
+    await git(fixture.repository, ["rm", "docs/interface.md"]);
+    await git(fixture.repository, [
+      "-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "remove onboarding interface doc",
+    ]);
+    const partial = new DatabaseSync(fixture.path);
+    try {
+      partial.exec("PRAGMA foreign_keys = ON");
+      partial.prepare("DELETE FROM stage_handoffs WHERE task_id=?").run(fixture.implementationTaskId);
+      partial.prepare(`
+        UPDATE work_nodes
+        SET state='active',current_stage='implementation'
+        WHERE node_id=(SELECT node_id FROM stage_attempts WHERE task_id=? AND stage='implementation')
+      `).run(fixture.implementationTaskId);
+    } finally {
+      partial.close();
+    }
+
+    assertDeliverablesError(
+      () => fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, request),
+      /docs\/interface\.md/u,
+    );
+    assert.deepEqual(
+      fixture.board.listMessages(fixture.implementationTaskId).map((message) => message.body),
+      [request.result],
+    );
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM task_events
+        WHERE event_type='settlement_rejected' AND json_extract(data_json,'$.runId')=?
+      `).get(fixture.implementationRunId)?.count, 0);
+    } finally {
+      inspected.close();
     }
   } finally {
     fixture.board.close();
