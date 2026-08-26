@@ -96,7 +96,7 @@ webhook withdrawing a pending final approval. Concurrency >1 turns on here.
 Exit: overlapping tasks serialize, a runaway stage is caught by its cap, the
 kill switch drains cleanly.
 
-**8. Second runtime + onboarding task type** *(§11, §6; item 7)* — internal
+**8. Second runtime + onboarding task type** *(shipped 2026-08-25; §11, §6; item 7)* — internal
 event schema, capability profiles, second adapter; onboarding as a pipeline
 task producing the doc slots, tiers, `agent` image, and gap report for the
 first product repos (start with the Cicada estate's most active pair). Exit:
