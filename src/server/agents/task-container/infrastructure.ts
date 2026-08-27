@@ -111,7 +111,7 @@ export async function assertDockerAvailable(dockerBinary = "docker"): Promise<vo
   }
 }
 
-async function ensureNetwork(
+export async function ensureNetwork(
   dockerBinary: string,
   networkName: string,
   internal: boolean,

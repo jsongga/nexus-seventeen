@@ -40,6 +40,13 @@ function text(value: unknown, label: string, maximum: number): string {
   return value;
 }
 
+function repoName(value: unknown, label: string): string {
+  if (typeof value === "string" && /[`\r\n\u2028\u2029]/u.test(value)) {
+    throw new Error(`${label} must not contain backticks or newlines`);
+  }
+  return text(value, label, 128);
+}
+
 function excludes(value: unknown, label: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 128) {
     throw new Error(`${label} must be an array of at most 128 glob-lite <prefix>/** patterns`);
@@ -78,7 +85,7 @@ function repoConfig(value: unknown, index: number): DocsPublishRepo {
   const label = `config.repos[${index}]`;
   const item = exact(value, ["name", "path", "ref"], ["exclude"], label);
   return Object.freeze({
-    name: text(item.name, `${label}.name`, 128),
+    name: repoName(item.name, `${label}.name`),
     path: text(item.path, `${label}.path`, 4_096),
     ref: text(item.ref, `${label}.ref`, 512),
     ...(item.exclude === undefined ? {} : { exclude: excludes(item.exclude, `${label}.exclude`) }),

@@ -9,6 +9,8 @@ import {
 
 export interface PublishReport { readonly repo: string; readonly created: number; readonly updated: number; readonly archived: number; readonly unchanged: number; readonly failures: readonly string[] }
 
+const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ ([0-9a-f]{12})\./su;
+
 function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
   return runner([
     "-c", "core.fsmonitor=",
@@ -48,6 +50,10 @@ async function collectionState(
   return Object.freeze({ collection, documents: await sink.listDocuments(collection) });
 }
 
+function sourceBlobPrefix(text: string): string | undefined {
+  return SOURCE_BANNER_PATTERN.exec(text)?.[1];
+}
+
 export async function publishRepo(
   entry: DocsPublishRepo,
   sink: DocsSink,
@@ -58,7 +64,6 @@ export async function publishRepo(
     throw new Error(`git returned an invalid full SHA for ${entry.ref}`);
   }
   const sources = enumerateDocs(entry.path, resolvedSha, { exclude: entry.exclude }, runner);
-  const shortSha = resolvedSha.slice(0, 7);
 
   let state: Awaited<ReturnType<typeof collectionState>>;
   try {
@@ -67,10 +72,10 @@ export async function publishRepo(
     return report(entry.name, 0, 0, 0, 0, [`prepare collection: ${errorDetail(error)}`]);
   }
 
-  const desired = new Map(sources.map((source) => [
-    source.title,
-    withSourceBanner(source, entry.name, shortSha),
-  ]));
+  const desired = new Map(sources.map((source) => [source.title, Object.freeze({
+    blobPrefix: source.blobSha.slice(0, 12),
+    text: withSourceBanner(source, entry.name),
+  })]));
   const existing = new Map(state.documents.map((document) => [document.title, document]));
   const failures: string[] = [];
   let created = 0;
@@ -78,23 +83,23 @@ export async function publishRepo(
   let archived = 0;
   let unchanged = 0;
 
-  for (const [title, text] of desired) {
+  for (const [title, desiredDocument] of desired) {
     const document = existing.get(title);
     if (document === undefined) {
       try {
-        await sink.createDocument(state.collection, title, text);
+        await sink.createDocument(state.collection, title, desiredDocument.text);
         created += 1;
       } catch (error) {
         failures.push(`create ${title}: ${errorDetail(error)}`);
       }
       continue;
     }
-    if (document.text === text) {
+    if (sourceBlobPrefix(document.text) === desiredDocument.blobPrefix) {
       unchanged += 1;
       continue;
     }
     try {
-      await sink.updateDocument(document.id, title, text);
+      await sink.updateDocument(document.id, title, desiredDocument.text);
       updated += 1;
     } catch (error) {
       failures.push(`update ${title}: ${errorDetail(error)}`);

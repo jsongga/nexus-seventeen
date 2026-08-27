@@ -7,6 +7,7 @@ export {
   assertDockerAvailable,
   ContainerInfrastructureError,
   DEFAULT_ALLOWED_HOSTS,
+  ensureNetwork,
   prepareContainerInfrastructure,
 } from "./infrastructure.js";
 export type {

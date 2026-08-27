@@ -60,6 +60,16 @@ test("rejects unknown fields, bad versions, insecure URLs, and unsupported exclu
   assert.equal(parseDocsPublishConfig(allowed).outline.baseUrl, "http://127.0.0.1:3000");
 });
 
+test("rejects repository names that would corrupt source-banner markup", () => {
+  const backticked = validConfig();
+  ((backticked.repos as Array<Record<string, unknown>>)[0]!).name = "bad`name";
+  assert.throws(() => parseDocsPublishConfig(backticked), /repos\[0\]\.name.*backtick/u);
+
+  const multiline = validConfig();
+  ((multiline.repos as Array<Record<string, unknown>>)[0]!).name = "bad\nname";
+  assert.throws(() => parseDocsPublishConfig(multiline), /repos\[0\]\.name/u);
+});
+
 test("loads only bounded regular JSON files without following symlinks", async () => {
   const root = await mkdtemp(join(tmpdir(), "steward-docs-config-"));
   const validPath = join(root, "docs-publish.json");

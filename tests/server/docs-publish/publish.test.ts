@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { withSourceBanner } from "../../../src/server/docs-publish/banner.js";
 import type { DocsPublishRepo } from "../../../src/server/docs-publish/config.js";
@@ -14,11 +15,19 @@ const ENTRY: DocsPublishRepo = Object.freeze({ name: "sample", path: "/repo", re
 const COLLECTION: SinkCollection = Object.freeze({ id: "collection-1", name: "sample docs" });
 const RESOLVED_SHA = "abc1234567890abcdef1234567890abcdef12345";
 
+function gitBlobSha(markdown: string): string {
+  return createHash("sha1")
+    .update(`blob ${Buffer.byteLength(markdown)}\0${markdown}`)
+    .digest("hex");
+}
+
 function gitWithDocs(files: Readonly<Record<string, string>>, resolvedSha = RESOLVED_SHA): GitRunner {
   return (arguments_) => {
     if (arguments_.includes("ls-tree")) {
       const separator = arguments_.includes("-z") ? "\0" : "\n";
-      return `${Object.keys(files).join(separator)}${separator}`;
+      const entries = Object.entries(files).map(([path, markdown]) =>
+        `100644 blob ${gitBlobSha(markdown)}\t${path}`);
+      return `${entries.join(separator)}${separator}`;
     }
     const showIndex = arguments_.indexOf("show");
     if (showIndex >= 0) {
@@ -34,13 +43,15 @@ function gitWithDocs(files: Readonly<Record<string, string>>, resolvedSha = RESO
   };
 }
 
-test("resolves a moving ref once and uses that SHA for every content read and the banner", async () => {
+test("resolves a moving ref once and uses that SHA for every content read", async () => {
   const calls: Array<readonly string[]> = [];
+  const markdown = "# Readme\n";
+  const blobSha = gitBlobSha(markdown);
   const runner: GitRunner = (arguments_) => {
     calls.push([...arguments_]);
     if (arguments_.includes("rev-parse")) return `${RESOLVED_SHA}\n`;
-    if (arguments_.includes("ls-tree")) return "README.md\0";
-    if (arguments_.includes("show")) return "# Readme\n";
+    if (arguments_.includes("ls-tree")) return `100644 blob ${blobSha}\tREADME.md\0`;
+    if (arguments_.includes("show")) return markdown;
     throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
   };
   const sink = new MemorySink();
@@ -60,9 +71,8 @@ test("resolves a moving ref once and uses that SHA for every content read and th
     id: "created-1",
     title: "README.md",
     text: withSourceBanner(
-      { path: "README.md", title: "README.md", markdown: "# Readme\n" },
+      { path: "README.md", title: "README.md", markdown, blobSha },
       ENTRY.name,
-      RESOLVED_SHA.slice(0, 7),
     ),
   }]);
 });
@@ -103,27 +113,47 @@ class MemorySink implements DocsSink {
   }
 }
 
-test("creates, updates, preserves, and archives documents idempotently across two runs", async () => {
+test("diffs by banner blob SHA, updates unparseable banners, and stays idempotent", async () => {
   const files = {
-    "README.md": "# Readme\n",
+    "README.md": "# Readme\n\n- item1\n",
     "docs/guide.md": "# Guide\n",
+    "docs/malformed.md": "# Malformed\n",
     "docs/new.md": "# New\n",
   };
   const git = gitWithDocs(files);
+  const readmeSource = {
+    path: "README.md",
+    title: "README.md",
+    markdown: files["README.md"],
+    blobSha: gitBlobSha(files["README.md"]),
+  };
+  const outlineSerializedReadme = withSourceBanner(readmeSource, "sample")
+    .replace("- item1", "* item1")
+    .trimEnd();
   const sink = new MemorySink([
     {
       id: "readme",
       title: "README.md",
-      text: withSourceBanner({ path: "README.md", title: "README.md", markdown: files["README.md"] }, "sample", "abc1234"),
+      text: outlineSerializedReadme,
     },
-    { id: "guide", title: "docs/guide.md", text: "stale text" },
+    {
+      id: "guide",
+      title: "docs/guide.md",
+      text: withSourceBanner({
+        path: "docs/guide.md",
+        title: "docs/guide.md",
+        markdown: files["docs/guide.md"],
+        blobSha: "0000000000000000000000000000000000000000",
+      }, "sample"),
+    },
+    { id: "malformed", title: "docs/malformed.md", text: "not a publisher banner\n\n# Malformed" },
     { id: "old", title: "docs/old.md", text: "old text" },
   ]);
 
   assert.deepEqual(await publishRepo(ENTRY, sink, git), {
     repo: "sample",
     created: 1,
-    updated: 1,
+    updated: 2,
     archived: 1,
     unchanged: 1,
     failures: [],
@@ -133,9 +163,48 @@ test("creates, updates, preserves, and archives documents idempotently across tw
     created: 0,
     updated: 0,
     archived: 0,
-    unchanged: 3,
+    unchanged: 4,
     failures: [],
   });
+
+  const documents = await sink.listDocuments(COLLECTION);
+  assert.equal(documents.find((document) => document.title === "README.md")?.text, outlineSerializedReadme);
+  assert.equal(
+    documents.find((document) => document.title === "docs/guide.md")?.text,
+    withSourceBanner({
+      path: "docs/guide.md",
+      title: "docs/guide.md",
+      markdown: files["docs/guide.md"],
+      blobSha: gitBlobSha(files["docs/guide.md"]),
+    }, "sample"),
+  );
+  assert.equal(
+    documents.find((document) => document.title === "docs/malformed.md")?.text,
+    withSourceBanner({
+      path: "docs/malformed.md",
+      title: "docs/malformed.md",
+      markdown: files["docs/malformed.md"],
+      blobSha: gitBlobSha(files["docs/malformed.md"]),
+    }, "sample"),
+  );
+});
+
+test("treats a matching blob banner with a backtick-bearing source path as unchanged", async () => {
+  const path = "docs/with`backtick.md";
+  const markdown = "# Backtick path\n";
+  const blobSha = gitBlobSha(markdown);
+  const banner = withSourceBanner({ path, title: path, markdown, blobSha }, ENTRY.name);
+  const sink = new MemorySink([{ id: "backtick", title: path, text: banner }]);
+
+  assert.deepEqual(await publishRepo(ENTRY, sink, gitWithDocs({ [path]: markdown })), {
+    repo: "sample",
+    created: 0,
+    updated: 0,
+    archived: 0,
+    unchanged: 1,
+    failures: [],
+  });
+  assert.equal((await sink.listDocuments(COLLECTION))[0]?.text, banner);
 });
 
 test("records a per-document sink failure and continues publishing later documents", async () => {
