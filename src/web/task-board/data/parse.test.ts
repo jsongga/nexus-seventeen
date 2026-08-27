@@ -3,8 +3,6 @@ import { DESIGN_FAILURE_POINTS, TASK_BOARD_API_VERSION } from '@shared/task-boar
 
 const entityParserSpies = vi.hoisted(() => ({
   agent: vi.fn(),
-  documentPenHolder: vi.fn(),
-  documentSummary: vi.fn(),
   event: vi.fn(),
   interrupt: vi.fn(),
   project: vi.fn(),
@@ -35,19 +33,7 @@ vi.mock('@shared/task-board-contract/validate', async (importOriginal) => {
       parsed.recentRuns.forEach(() => entityParserSpies.run());
       parsed.recentInterrupts.forEach(() => entityParserSpies.interrupt());
       parsed.recentEvents.forEach(() => entityParserSpies.event());
-      parsed.documents.forEach((document) => {
-        entityParserSpies.documentSummary();
-        if (document.penHolder !== null) entityParserSpies.documentPenHolder();
-      });
       return parsed;
-    },
-    parseDocumentPenHolderEntity: (...args: Parameters<typeof actual.parseDocumentPenHolderEntity>) => {
-      entityParserSpies.documentPenHolder();
-      return actual.parseDocumentPenHolderEntity(...args);
-    },
-    parseDocumentSummaryEntity: (...args: Parameters<typeof actual.parseDocumentSummaryEntity>) => {
-      entityParserSpies.documentSummary();
-      return actual.parseDocumentSummaryEntity(...args);
     },
     parseEventEntity: (...args: Parameters<typeof actual.parseEventEntity>) => {
       entityParserSpies.event();
@@ -87,7 +73,6 @@ import {
   parseBoardNotification,
   parseBoardPause,
   parseDesignRecord,
-  parseDocument,
   parseFindingsLedger,
   parseGateAction,
   parseParkRecord,
@@ -211,20 +196,6 @@ const question = {
   version: 1,
 };
 
-const document = {
-  apiVersion: TASK_BOARD_API_VERSION,
-  documentId: 'document-one',
-  projectId: 'project-one',
-  title: 'Document one',
-  contentType: 'text/markdown',
-  contentVersion: 1,
-  penEpoch: 1,
-  penHolder: { actorType: 'agent', actorId: 'agent-one', clientId: 'client-one', acquiredAt: NOW },
-  sequence: 1,
-  createdAt: NOW,
-  updatedAt: NOW,
-};
-
 describe('browser task-board validator adapter', () => {
   it('loosely projects board pause state with its parsed update instant', () => {
     expect(parseBoardPause({
@@ -263,20 +234,6 @@ describe('browser task-board validator adapter', () => {
       updatedAtMs: Date.parse(NOW),
     });
     expect(parsed).not.toHaveProperty('apiVersion');
-  });
-
-  it('keeps document and pen-holder response identifiers opaque', () => {
-    expect(parseDocument({
-      ...document,
-      documentId: '',
-      projectId: 'opaque project id',
-      penHolder: { actorType: 'agent', actorId: '', clientId: 'opaque client id', acquiredAt: NOW },
-      content: '# Document',
-    }, 'document')).toMatchObject({
-      documentId: '',
-      projectId: 'opaque project id',
-      penHolder: { actorId: '', clientId: 'opaque client id' },
-    });
   });
 
   it('validates a terminal task completion timestamp before projecting it to null', () => {
@@ -661,7 +618,6 @@ describe('browser task-board validator adapter', () => {
         data: {},
         createdAt: NOW,
       }],
-      documents: [document],
     });
 
     expect(entityParserSpies.project).toHaveBeenCalledTimes(1);
@@ -672,8 +628,6 @@ describe('browser task-board validator adapter', () => {
     expect(entityParserSpies.run).toHaveBeenCalledTimes(1);
     expect(entityParserSpies.interrupt).toHaveBeenCalledTimes(1);
     expect(entityParserSpies.event).toHaveBeenCalledTimes(1);
-    expect(entityParserSpies.documentSummary).toHaveBeenCalledTimes(1);
-    expect(entityParserSpies.documentPenHolder).toHaveBeenCalledTimes(1);
   });
 
   it('preserves rolling compatibility for response fields omitted by the raw projection', () => {

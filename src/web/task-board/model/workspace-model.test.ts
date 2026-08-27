@@ -339,7 +339,6 @@ describe('workspace view model', () => {
       ],
       questions: [],
       runs: [],
-      documents: [],
     }, project.id);
     expect(orderedUpdates.map((update) => update.id)).toEqual(['later-message', 'earlier-message']);
   });
@@ -362,7 +361,6 @@ describe('workspace view model', () => {
       messages: input,
       questions: [],
       runs: [],
-      documents: [],
     }, project.id).map((update) => update.id);
 
     expect(orderedIds(messages)).toEqual(['update-alpha', 'update-omega']);
@@ -375,7 +373,7 @@ describe('workspace view model', () => {
     expect(taskNeedsHumanAction(task({ kind: 'work', assignedAgentId: null, assignedRole: null, status: 'backlog', endedAt: null }))).toBe(false);
   });
 
-  it('derives honest project documents, links, setup references, and outcomes', () => {
+  it('derives honest project links, setup references, and outcomes', () => {
     const resources = resourcesForProject(project, [task()]);
     expect(resources.map((resource) => resource.kind)).toEqual(expect.arrayContaining(['brief', 'link', 'setup', 'outcome']));
     expect(resources.find((resource) => resource.kind === 'link')?.href).toBe('https://example.com/runbook');
@@ -404,7 +402,6 @@ describe('workspace view model', () => {
       }],
       questions: [],
       runs: [],
-      documents: [],
     };
     expect(recentUpdatesForProject(snapshot, project.id)).toEqual([
       expect.objectContaining({ id: 'message-one', author: 'Engineer', body: 'Setup is now shorter for customers.' }),

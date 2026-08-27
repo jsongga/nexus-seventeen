@@ -59,12 +59,26 @@ function normalizeRuns(events: RawEvent[], runs: RawRun[] = [tasklessRun]) {
     runs,
     interrupts: [],
     events,
-    documents: [],
   };
   return normalize([board], [project], [], []).runs;
 }
 
 describe('run/event projection', () => {
+  it('pins the snapshot revision to projected entity versions', () => {
+    const versionedProject = { ...project, version: 7 };
+    const board: RawBoard = {
+      project: versionedProject,
+      agents: [],
+      tasks: [],
+      questions: [],
+      runs: [],
+      interrupts: [],
+      events: [],
+    };
+
+    expect(normalize([board], [versionedProject], [], []).revision).toBe(7);
+  });
+
   it('retains a run whose task id is null when no event supplies one', () => {
     expect(normalizeRuns([])).toEqual([
       expect.objectContaining({ id: tasklessRun.runId, taskId: null, wakeReason: null, heartbeatAt: null, heartbeatAtMs: null }),

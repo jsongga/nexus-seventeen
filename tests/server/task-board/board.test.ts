@@ -7351,7 +7351,7 @@ test("a project without a manager leaves review work in the backlog without a wo
   }
 });
 
-test("v24 document rows are retired while board snapshots keep the required empty documents key", async () => {
+test("v24 document rows are retired and board snapshots omit the retired key", async () => {
   const path = await databasePath();
   await installV24Schema(path);
   const { DatabaseSync } = await import("node:sqlite");
@@ -7376,7 +7376,7 @@ test("v24 document rows are retired while board snapshots keep the required empt
 
   const board = await TaskBoard.open(config(path));
   try {
-    assert.deepEqual(board.snapshot("snapshot-project").documents, []);
+    assert.equal(Object.hasOwn(board.snapshot("snapshot-project"), "documents"), false);
   } finally {
     board.close();
   }
@@ -7808,7 +7808,7 @@ test("schema version 3 upgrades through v25, preserves existing board data, and 
       upgraded.listProjects().find((project) => project.projectId === "v3-project")?.name,
       "Version three project",
     );
-    assert.deepEqual(upgraded.snapshot("v3-project").documents, []);
+    assert.equal(Object.hasOwn(upgraded.snapshot("v3-project"), "documents"), false);
   } finally {
     upgraded.close();
   }

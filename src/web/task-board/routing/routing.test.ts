@@ -8,8 +8,6 @@ const pages: BoardPage[] = [
   { kind: 'intake', workItemId: 'work-item-1' },
   { kind: 'automation' },
   { kind: 'ledgers' },
-  { kind: 'documents' },
-  { kind: 'documents', documentId: 'doc-1' },
   { kind: 'project', projectId: 'project-1' },
   { kind: 'agent', agentId: 'agent-1' },
 ];
@@ -21,8 +19,6 @@ describe('pageToHash', () => {
     expect(pageToHash({ kind: 'intake', workItemId: 'work-item-1' })).toBe('#/intake/work-item-1');
     expect(pageToHash({ kind: 'automation' })).toBe('#/automation');
     expect(pageToHash({ kind: 'ledgers' })).toBe('#/ledgers');
-    expect(pageToHash({ kind: 'documents' })).toBe('#/documents');
-    expect(pageToHash({ kind: 'documents', documentId: 'doc-1' })).toBe('#/documents/doc-1');
     expect(pageToHash({ kind: 'project', projectId: 'project-1' })).toBe('#/project/project-1');
     expect(pageToHash({ kind: 'agent', agentId: 'agent-1' })).toBe('#/agent/agent-1');
   });
@@ -47,6 +43,11 @@ describe('pageToHash', () => {
 });
 
 describe('hashToPage', () => {
+  it('falls back to tasks for retired document hashes', () => {
+    expect(hashToPage('#/documents')).toEqual({ kind: 'tasks' });
+    expect(hashToPage('#/documents/doc-1')).toEqual({ kind: 'tasks' });
+  });
+
   it('round-trips every page kind', () => {
     for (const page of pages) {
       expect(hashToPage(pageToHash(page))).toEqual(page);
@@ -112,7 +113,6 @@ describe('missingRouteFallback', () => {
     workItems: [],
     projects: [],
     agents: [],
-    documents: [],
   };
 
   it('canonicalizes a task id that has never appeared in an authoritative snapshot', () => {

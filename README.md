@@ -102,4 +102,3 @@ Generated output is written to `build/`, `dist/`, `.test-dist/`, and `test-resul
 - [Agent system](docs/AGENT_SYSTEM.md)
 - [Transparent workflow architecture](docs/WORKFLOW_ARCHITECTURE.md)
 - [Task fleet](docs/TASK_FLEET.md)
-- [Document broadcast](docs/DOCUMENT_BROADCAST.md)

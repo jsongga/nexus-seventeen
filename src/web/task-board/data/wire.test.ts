@@ -3,7 +3,6 @@ import {
   ACTOR_TYPES,
   AGENT_ROLES,
   AGENT_STATUSES,
-  DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
   IDENTIFIER_PATTERN,
   PLAN_REVISION_STATES,
@@ -29,7 +28,6 @@ import {
 import {
   actorTypes,
   apiVersion,
-  documentActorTypes,
   evaluatorProfiles,
   identifierPattern,
   maximumAutomationConfigurationBytes,
@@ -101,7 +99,6 @@ describe('wire validators', () => {
     ['work-item states', workItemStates, WORK_ITEM_STATES],
     ['work-item stages', workItemStages, WORK_ITEM_STAGES],
     ['evaluator profiles', evaluatorProfiles, EVALUATOR_PROFILES],
-    ['document actor types', documentActorTypes, DOCUMENT_ACTOR_TYPES],
     ['workflow stages', workflowStages, WORKFLOW_STAGES],
     ['plan revision states', planRevisionStates, PLAN_REVISION_STATES],
     ['work-node states', workNodeStates, WORK_NODE_STATES],

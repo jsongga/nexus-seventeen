@@ -529,7 +529,6 @@ export class TaskBoard {
       recentRuns: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 100").all(projectId).map(runFromRow)),
       recentInterrupts: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM interrupts WHERE project_id = ? ORDER BY sequence DESC LIMIT 100").all(projectId).map(interruptFromRow)),
       recentEvents: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM task_events WHERE project_id = ? ORDER BY sequence DESC LIMIT 200").all(projectId).map(eventFromRow)),
-      documents: [],
     });
   }
 

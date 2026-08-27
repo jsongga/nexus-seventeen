@@ -114,7 +114,6 @@ describe('observability HTTP client', () => {
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
       fetch: request as unknown as typeof fetch,
-      documentClientId: 'document-ui-test',
     });
 
     await expect(client.getFindingsLedger('project/one')).resolves.toMatchObject({
@@ -157,7 +156,6 @@ describe('observability HTTP client', () => {
     const client = createTaskBoardClient({
       baseUrl: 'https://board.example.test',
       fetch: request as unknown as typeof fetch,
-      documentClientId: 'document-ui-test',
     });
 
     await client.getFindingsLedger();

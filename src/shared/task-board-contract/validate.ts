@@ -12,8 +12,6 @@ import {
   DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
   DESIGN_RECORD_MAX_STATES,
   DESIGN_RECORD_MAX_TRANSITIONS,
-  DOCUMENT_CONTENT_MAX_BYTES,
-  DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
   GATE_KINDS,
   GIT_OBJECT_ID_PATTERN,
@@ -37,6 +35,7 @@ import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
   TASK_KINDS,
+  TASK_MESSAGE_ACTOR_TYPES,
   TASK_MESSAGE_KINDS,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
@@ -72,7 +71,6 @@ import {
   type ConfirmPlanRevisionRequest,
   type CriterionResult,
   type CreateAgentRequest,
-  type CreateDocumentRequest,
   type CreateHumanQuestionRequest,
   type CreateHumanTaskMessageRequest,
   type CreateProjectRequest,
@@ -80,9 +78,6 @@ import {
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
   type CreateWorkItemRequest,
-  type DocumentPenHolder,
-  type DocumentSnapshot,
-  type DocumentSummary,
   type DesignFailurePoint,
   type DesignFailurePointKind,
   type DesignRecord,
@@ -121,8 +116,6 @@ import {
   type TaskPhaseStatus,
   type TaskStatus,
   type UpdateAutomationConfigurationRequest,
-  type UpdateDocumentPenRequest,
-  type UpdateDocumentRequest,
   type UpdateTaskPhaseRequest,
   type UpdateTaskRequest,
   type UpdateWorkItemRequest,
@@ -952,7 +945,7 @@ export function parseMessageEntity(value: unknown, label: string, options: Shape
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     taskId: shapeIdentifier(item.taskId, `${label}.taskId`, options),
     runId: browserProjection ? null : nullableIdentifier(item.runId, `${label}.runId`, options),
-    actorType: entityMember(item.actorType, DOCUMENT_ACTOR_TYPES, `${label}.actorType`, options),
+    actorType: entityMember(item.actorType, TASK_MESSAGE_ACTOR_TYPES, `${label}.actorType`, options),
     actorId: shapeIdentifier(item.actorId, `${label}.actorId`, options),
     kind: entityMember(item.kind, TASK_MESSAGE_KINDS, `${label}.kind`, options),
     body: stringValue(item.body, `${label}.body`),
@@ -1915,56 +1908,6 @@ export function parseProjectArtifactEntity(value: unknown, label: string, option
   });
 }
 
-export function parseDocumentPenHolderEntity(value: unknown, label: string, options: ShapeParserOptions = {}): DocumentPenHolder {
-  const item = shape(value, label, ["actorType", "actorId", "clientId", "acquiredAt"],
-    ["actorType", "actorId", "clientId", "acquiredAt"], options);
-  return Object.freeze({
-    actorType: entityMember(item.actorType, DOCUMENT_ACTOR_TYPES, `${label}.actorType`, options),
-    actorId: shapeIdentifier(item.actorId, `${label}.actorId`, options),
-    clientId: shapeIdentifier(item.clientId, `${label}.clientId`, options),
-    acquiredAt: entityTimestamp(item.acquiredAt, `${label}.acquiredAt`, options),
-  });
-}
-
-export function parseDocumentSummaryEntity(value: unknown, label: string, options: ShapeParserOptions = {}): DocumentSummary {
-  const fields = [
-    "apiVersion", "documentId", "projectId", "title", "contentType", "contentVersion", "penEpoch", "penHolder",
-    "sequence", "createdAt", "updatedAt",
-  ];
-  const item = entity(value, label, fields, fields, options);
-  if (item.contentType !== "text/markdown") throw new ContractValidationError(`${label}.contentType has an unsupported value`);
-  const penEpoch = integer(item.penEpoch, `${label}.penEpoch`);
-  const penHolder = item.penHolder === null ? null : parseDocumentPenHolderEntity(item.penHolder, `${label}.penHolder`, options);
-  if (penHolder !== null && penEpoch < 1) throw new ContractValidationError(`${label}.penEpoch must advance before granting the pen`);
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    documentId: shapeIdentifier(item.documentId, `${label}.documentId`, options),
-    projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
-    title: stringValue(item.title, `${label}.title`),
-    contentType: "text/markdown",
-    contentVersion: integer(item.contentVersion, `${label}.contentVersion`, 1),
-    penEpoch,
-    penHolder,
-    sequence: integer(item.sequence, `${label}.sequence`),
-    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
-    updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
-  });
-}
-
-export function parseDocumentEntity(value: unknown, label: string, options: ShapeParserOptions = {}): DocumentSnapshot {
-  const item = entity(value, label, [
-    "apiVersion", "documentId", "projectId", "title", "contentType", "contentVersion", "penEpoch", "penHolder",
-    "sequence", "createdAt", "updatedAt", "content",
-  ], [
-    "apiVersion", "documentId", "projectId", "title", "contentType", "contentVersion", "penEpoch", "penHolder",
-    "sequence", "createdAt", "updatedAt", "content",
-  ], options);
-  return Object.freeze({
-    ...parseDocumentSummaryEntity(item, label, { ...options, exact: false }),
-    content: stringValue(item.content, `${label}.content`),
-  });
-}
-
 const AUTOMATION_STAGE_ROLES = Object.freeze({
   refinement: Object.freeze(["manager"] as const),
   project_resolution: Object.freeze(["manager"] as const),
@@ -2142,7 +2085,7 @@ export function parseBoardSnapshotEntity(
 ): BoardSnapshot {
   const fields = [
     "apiVersion", "project", "agents", "tasks", "openQuestions", "recentQuestions", "recentRuns", "recentInterrupts",
-    "recentEvents", "documents",
+    "recentEvents",
   ];
   const required = fields.filter((field) => field !== "recentQuestions");
   const item = entity(value, "board", fields, required, options);
@@ -2158,7 +2101,6 @@ export function parseBoardSnapshotEntity(
     recentInterrupts: Object.freeze(arrayOf(item.recentInterrupts, "board.recentInterrupts",
       (entry, label) => parseInterruptEntity(entry, label, options))),
     recentEvents: Object.freeze(arrayOf(item.recentEvents, "board.recentEvents", (entry, label) => parseEventEntity(entry, label, options))),
-    documents: Object.freeze(arrayOf(item.documents, "board.documents", (entry, label) => parseDocumentSummaryEntity(entry, label, options))),
   });
 }
 
@@ -3444,35 +3386,6 @@ export function parseBoardUpdateTaskPhase(value: unknown): UpdateTaskPhaseReques
   if ("parallelGroup" in item) result.parallelGroup = boardNullableIdentifier(item.parallelGroup, "parallelGroup");
   if ("orderKey" in item) result.orderKey = boardNonNegative(item.orderKey, "orderKey");
   return Object.freeze(result);
-}
-
-function boardDocumentContent(value: unknown): string {
-  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > DOCUMENT_CONTENT_MAX_BYTES ||
-    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
-    boardFailure("content must be valid text no larger than 48 KiB", "INVALID_DOCUMENT_CONTENT");
-  }
-  return value;
-}
-
-export function parseBoardCreateDocument(value: unknown): CreateDocumentRequest {
-  const item = boardExact(value, ["title", "contentType", "content", "clientId"], "Document");
-  if (item.contentType !== "text/markdown") boardFailure("contentType must be text/markdown", "INVALID_DOCUMENT_CONTENT_TYPE");
-  return Object.freeze({ title: boardText(item.title, "title", 240), contentType: "text/markdown", content: boardDocumentContent(item.content),
-    clientId: parseBoardIdentifier(item.clientId, "clientId") });
-}
-
-export function parseBoardDocumentPenUpdate(value: unknown): UpdateDocumentPenRequest {
-  const item = boardExact(value, ["action", "clientId", "expectedPenEpoch", "force"], "Document pen update");
-  if (item.action !== "acquire" && item.action !== "release") boardFailure("Document pen action is invalid");
-  if (typeof item.force !== "boolean" || item.action === "release" && item.force) boardFailure("force is only valid when acquiring the pen");
-  return Object.freeze({ action: item.action, clientId: parseBoardIdentifier(item.clientId, "clientId"),
-    expectedPenEpoch: boardNonNegative(item.expectedPenEpoch, "expectedPenEpoch"), force: item.force }) as UpdateDocumentPenRequest;
-}
-
-export function parseBoardDocumentUpdate(value: unknown): UpdateDocumentRequest {
-  const item = boardExact(value, ["clientId", "penEpoch", "contentVersion", "content"], "Document update");
-  return Object.freeze({ clientId: parseBoardIdentifier(item.clientId, "clientId"), penEpoch: boardPositiveVersion(item.penEpoch),
-    contentVersion: boardPositiveVersion(item.contentVersion), content: boardDocumentContent(item.content) });
 }
 
 export function parseBoardUpdateTask(value: unknown): UpdateTaskRequest {

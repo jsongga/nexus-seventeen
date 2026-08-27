@@ -3,11 +3,9 @@ import type {
   AgentQueryConversationTurn,
   AgentRole,
   AutomationConfiguration,
-  BoardDocument,
   BoardProject,
   BoardSnapshot,
   BoardWorkItemDetail,
-  CreateDocumentInput,
   CreateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
@@ -39,7 +37,6 @@ import {
   parseAgent,
   parseBoardNotification,
   parseBoardPause,
-  parseDocument,
   parseFindingsLedger,
   parseInterrupt,
   parseMessage,
@@ -68,15 +65,13 @@ import {
   type RawWorkItem,
 } from './parse';
 import {
-  documentProjection,
   normalize,
   projectProjection,
   workItemDetailProjection,
 } from '../model/project';
 import { taskMessagePageSize, workItemPageSize } from './wire';
-import { SseFrameParser, type SseEvent } from './sse';
+import { SseFrameParser } from './sse';
 import { mapWithConcurrency } from './concurrency';
-import { stableDocumentClientId } from './storage-lease';
 import { randomUuid } from './uuid';
 
 const maximumAgentQueryObjectiveCharacters = 8_000;
@@ -97,11 +92,6 @@ export const agentQueryRoutingContextMarker = '\n\nCompany routing map (use this
 export function parseBoardSnapshot(value: unknown): BoardSnapshot {
   const board = parseRawBoard(value);
   return normalize([board], [board.project], [], []);
-}
-
-/** Parses one authoritative document snapshot returned by the task board. */
-export function parseBoardDocument(value: unknown): BoardDocument {
-  return documentProjection(parseDocument(value, 'document'));
 }
 
 export function agentQueryPromptFromObjective(objective: string): string {
@@ -173,11 +163,6 @@ function automationConfigurationUpdateBody(input: SaveAutomationConfigurationInp
   validateAutomationParts(agentTypes, stages, 'automation configuration update');
   validateAutomationPayloadSize(agentTypes, stages, 'automation configuration update');
   return { version, agentTypes: rawAgentTypes, stages: rawStages };
-}
-
-function documentFromEnvelope(value: unknown, path: string): BoardDocument {
-  const envelope = record(value, path);
-  return documentProjection(parseDocument(envelope.document, `${path}.document`));
 }
 
 function projectFromEnvelope(value: unknown, path: string): BoardProject {
@@ -281,13 +266,6 @@ export class BoardApiError extends Error {
   }
 }
 
-export class DocumentStreamError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DocumentStreamError';
-  }
-}
-
 export interface InterruptRunResult {
   readonly runId: string | null;
 }
@@ -298,7 +276,6 @@ export interface BoardNotifications {
 }
 
 export interface TaskBoardClient {
-  readonly documentClientId: string;
   getSnapshot(signal?: AbortSignal, requestMarker?: 'foreground' | 'poll' | 'mutation'): Promise<BoardSnapshot>;
   getBoardPause(signal?: AbortSignal): Promise<RawBoardPause>;
   setBoardPause(input: { reason: string | null; version: number }): Promise<RawBoardPause>;
@@ -311,24 +288,6 @@ export interface TaskBoardClient {
   getWorkItem(workItemId: string, signal?: AbortSignal): Promise<BoardWorkItemDetail>;
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
-  getDocument(documentId: string, signal?: AbortSignal): Promise<BoardDocument>;
-  createDocument(input: CreateDocumentInput): Promise<BoardDocument>;
-  changeDocumentPen(documentId: string, input: {
-    action: 'acquire' | 'release';
-    expectedPenEpoch: number;
-    force: boolean;
-  }): Promise<BoardDocument>;
-  saveDocumentSnapshot(documentId: string, input: {
-    penEpoch: number;
-    contentVersion: number;
-    content: string;
-  }): Promise<BoardDocument>;
-  subscribeDocument(input: {
-    documentId: string;
-    after: number;
-    signal: AbortSignal;
-    onDocument: (document: BoardDocument) => void;
-  }): Promise<void>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
   getHostProjectRoots(signal?: AbortSignal): Promise<HostProjectRoot[]>;
   getHostDirectories(path?: string, signal?: AbortSignal): Promise<HostDirectoryListing>;
@@ -407,68 +366,12 @@ function safeBaseUrl(value: string): string {
   return trimmed;
 }
 
-const maximumDocumentEventBytes = 2 * 1024 * 1024;
-
-function dispatchDocumentEvent(
-  event: SseEvent,
-  onDocument: (document: BoardDocument) => void,
-): void {
-  if (event.event !== 'document') return;
-  if (event.id === null || !/^(?:0|[1-9]\d*)$/u.test(event.id)) {
-    throw new DocumentStreamError('The document stream returned an invalid event cursor.');
-  }
-  const sequence = Number(event.id);
-  if (!Number.isSafeInteger(sequence)) throw new DocumentStreamError('The document stream cursor is too large.');
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(event.data) as unknown;
-  } catch {
-    throw new DocumentStreamError('The document stream returned invalid JSON.');
-  }
-  const envelope = record(decoded, 'document event');
-  const document = documentProjection(parseDocument(envelope.document, 'document event.document'));
-  if (document.sequence !== sequence) {
-    throw new DocumentStreamError('The document stream cursor does not match its document snapshot.');
-  }
-  onDocument(document);
-}
-
-async function consumeDocumentStream(
-  response: Response,
-  onDocument: (document: BoardDocument) => void,
-): Promise<void> {
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!/^text\/event-stream(?:\s*;|$)/iu.test(contentType)) {
-    throw new DocumentStreamError('The document stream did not return server-sent events.');
-  }
-  if (!response.body) throw new DocumentStreamError('The document stream returned no body.');
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const parser = new SseFrameParser({
-    maximumFrameLength: maximumDocumentEventBytes,
-    onEvent: (event) => dispatchDocumentEvent(event, onDocument),
-    sizeLimitError: () => new DocumentStreamError('A document stream event exceeded the size limit.'),
-  });
-  try {
-    while (true) {
-      const next = await reader.read();
-      parser.push(decoder.decode(next.value, { stream: !next.done }));
-      if (next.done) break;
-    }
-    parser.finish();
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 export function createTaskBoardClient(options: {
   baseUrl?: string;
   fetch?: typeof fetch;
-  documentClientId?: string;
 } = {}): TaskBoardClient {
   const baseUrl = safeBaseUrl(options.baseUrl ?? '');
   const requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const documentClientId = stableDocumentClientId(options.documentClientId);
   const agentRoles = new Map<string, AgentRole>();
   const questionVersions = new Map<string, number>();
   const taskAgents = new Map<string, string>();
@@ -579,7 +482,6 @@ export function createTaskBoardClient(options: {
   }
 
   return {
-    documentClientId,
     async getBoardPause(signal) {
       return parseBoardPause(
         await json('/v1/board/pause', { signal }),
@@ -790,66 +692,6 @@ export function createTaskBoardClient(options: {
         }),
         'save automation configuration response',
       );
-    },
-    async getDocument(documentId, signal) {
-      return documentFromEnvelope(
-        await json(`/v1/documents/${encodeURIComponent(documentId)}`, { signal }),
-        'document response',
-      );
-    },
-    async createDocument(input) {
-      const title = input.title.trim();
-      if (title.length === 0) throw new Error('Enter a document title');
-      return documentFromEnvelope(
-        await json(`/v1/projects/${encodeURIComponent(input.projectId)}/documents`, {
-          method: 'POST',
-          body: JSON.stringify({
-            title,
-            contentType: 'text/markdown',
-            content: input.content,
-            clientId: documentClientId,
-          }),
-        }),
-        'create document response',
-      );
-    },
-    async changeDocumentPen(documentId, input) {
-      return documentFromEnvelope(
-        await json(`/v1/documents/${encodeURIComponent(documentId)}/pen`, {
-          method: 'POST',
-          body: JSON.stringify({
-            action: input.action,
-            clientId: documentClientId,
-            expectedPenEpoch: input.expectedPenEpoch,
-            force: input.force,
-          }),
-        }),
-        'document pen response',
-      );
-    },
-    async saveDocumentSnapshot(documentId, input) {
-      return documentFromEnvelope(
-        await json(`/v1/documents/${encodeURIComponent(documentId)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            clientId: documentClientId,
-            penEpoch: input.penEpoch,
-            contentVersion: input.contentVersion,
-            content: input.content,
-          }),
-        }),
-        'save document response',
-      );
-    },
-    async subscribeDocument(input) {
-      if (!Number.isSafeInteger(input.after) || input.after < 0) {
-        throw new Error('Document event cursor must be a non-negative safe integer');
-      }
-      const response = await request(
-        `/v1/documents/${encodeURIComponent(input.documentId)}/events?after=${input.after}`,
-        { signal: input.signal, headers: { accept: 'text/event-stream' } },
-      );
-      await consumeDocumentStream(response, input.onDocument);
     },
     async createProject(input) {
       return projectFromEnvelope(

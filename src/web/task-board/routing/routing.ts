@@ -5,7 +5,6 @@ interface RouteSnapshotIds {
   workItems: readonly { id: string }[];
   projects: readonly { id: string }[];
   agents: readonly { id: string }[];
-  documents: readonly { id: string }[];
 }
 
 /**
@@ -35,8 +34,6 @@ function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
     case 'automation':
     case 'ledgers':
       return segmentCount === 1;
-    case 'documents':
-      return segmentCount === 1 || segmentCount === 2;
     case 'project':
     case 'agent':
     case 'intake':
@@ -58,7 +55,7 @@ function decodeId(value: string | undefined): string | null | undefined {
   }
 }
 
-function pageHashWithId(kind: 'tasks' | 'documents' | 'project' | 'agent' | 'intake', id: string): string {
+function pageHashWithId(kind: 'tasks' | 'project' | 'agent' | 'intake', id: string): string {
   try {
     return `#/${kind}/${encodeURIComponent(id)}`;
   } catch {
@@ -78,8 +75,6 @@ export function pageToHash(page: BoardPage): string {
       return '#/automation';
     case 'ledgers':
       return '#/ledgers';
-    case 'documents':
-      return page.documentId ? pageHashWithId('documents', page.documentId) : '#/documents';
     case 'project':
       return pageHashWithId('project', page.projectId);
     case 'agent':
@@ -101,9 +96,6 @@ export function hashToPage(hash: string): BoardPage {
       return { kind: 'automation' };
     case 'ledgers':
       return { kind: 'ledgers' };
-    case 'documents':
-      if (id === null) return tasksPage;
-      return id === undefined ? { kind: 'documents' } : { kind: 'documents', documentId: id };
     case 'project':
       // A project or agent page without an id cannot render, so fall back
       // rather than producing a page that would immediately blank out.
@@ -132,6 +124,5 @@ export function missingRouteFallback(
   if (page.kind === 'intake' && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId)) return { kind: 'tasks' };
   if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
   if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
-  if (page.kind === 'documents' && page.documentId && !snapshot.documents.some((document) => document.id === page.documentId)) return { kind: 'documents' };
   return null;
 }

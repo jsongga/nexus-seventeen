@@ -28,7 +28,6 @@ describe('work-item create dialog task type', () => {
       questions: [],
       runs: [],
       workItems: [],
-      documents: [],
     };
     const markup = renderToStaticMarkup(createElement(CreateDialogs, {
       client: {} as TaskBoardClient,

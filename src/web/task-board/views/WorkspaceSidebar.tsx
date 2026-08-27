@@ -19,7 +19,6 @@ export type BoardPage =
   | { kind: 'intake'; workItemId: string }
   | { kind: 'automation' }
   | { kind: 'ledgers' }
-  | { kind: 'documents'; documentId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'agent'; agentId: string };
 
@@ -161,14 +160,6 @@ function RailContent({
             onClick={() => onNavigate({ kind: 'ledgers' })}
           >
             <span>Ledgers</span>
-          </button>
-          <button
-            type="button"
-            aria-current={pageIs(page, 'documents') ? 'page' : undefined}
-            className={cn(navRow, pageIs(page, 'documents') ? activeRow : inactiveRow)}
-            onClick={() => onNavigate({ kind: 'documents' })}
-          >
-            <span>Documents</span>
           </button>
           {pointOfContact ? (
             <button

@@ -5,7 +5,6 @@ import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from './data/client';
 import type { RawBoardNotification, RawBoardPause } from './data/parse';
-import { DocumentsPage } from './views/DocumentsPage';
 import { missingRouteFallback } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
@@ -591,14 +590,12 @@ export function BoardApp() {
         : 'The task board service could not be reached. No local demo data is shown.'}
       action={signInExpired ? <Button variant="primary" onClick={() => globalThis.location.reload()}>Sign in again</Button> : undefined}
     /></Card></main>;
-  } else if (page.kind === 'documents') {
-    content = <DocumentsPage snapshot={snapshot} selectedDocumentId={page.documentId} client={client} connected={connected} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} onRefreshBoard={() => refresh('mutation')} />;
   } else if (page.kind === 'automation') {
     content = <AutomationPage client={client} connected={connected} editorState={automationEditorState} onEditorStateChange={setAutomationEditorState} />;
   } else if (page.kind === 'ledgers') {
     content = <LedgersPage client={client} connected={connected} snapshotRevision={snapshot.revision} />;
   } else if (page.kind === 'project' && pageProject) {
-    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} onSelectDocument={(documentId) => navigate({ kind: 'documents', documentId })} />;
+    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={() => openDialog('task', pageProject.id)} />;
   } else if (page.kind === 'agent' && pageAgent) {
     content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} rotationErrors={tokenRotationErrors} onDismissActionError={dismissActionError} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(actionErrorContexts.agentSend(pageAgent.id), () => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(actionErrorContexts.questionAnswer(questionId), () => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
       let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
@@ -737,9 +734,7 @@ export function BoardApp() {
       ? `agent-${page.agentId}`
       : page.kind === 'intake'
         ? 'tasks'
-        : page.kind === 'documents'
-          ? 'documents'
-          : page.kind === 'automation'
+        : page.kind === 'automation'
             ? 'automation'
             : page.kind === 'ledgers'
               ? 'ledgers'

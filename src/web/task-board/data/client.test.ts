@@ -5,64 +5,11 @@ import {
   agentQueryRoutingContextMarker,
   createTaskBoardClient,
   BoardApiError,
-  DocumentStreamError,
-  parseBoardDocument,
   parseBoardSnapshot,
 } from './client';
 import { randomUuid } from './uuid';
 import type { AutomationAgentType, AutomationStageConfiguration } from '../types';
 import { newest } from '../model/project';
-
-class MemoryStorage implements Storage {
-  private readonly values: Map<string, string>;
-
-  constructor(values: Iterable<readonly [string, string]> = []) {
-    this.values = new Map(values);
-  }
-
-  get length(): number {
-    return this.values.size;
-  }
-
-  clear(): void {
-    this.values.clear();
-  }
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  key(index: number): string | null {
-    return [...this.values.keys()][index] ?? null;
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  copy(): MemoryStorage {
-    return new MemoryStorage(this.values.entries());
-  }
-}
-
-class PageLifecycle {
-  private readonly pagehideListeners: Array<(event: Event & { persisted: boolean }) => void> = [];
-
-  readonly addEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-    if (type !== 'pagehide') return;
-    const callback = typeof listener === 'function' ? listener : listener.handleEvent.bind(listener);
-    this.pagehideListeners.push(callback as (event: Event & { persisted: boolean }) => void);
-  });
-
-  pagehide(persisted: boolean): void {
-    const event = Object.assign(new Event('pagehide'), { persisted });
-    for (const listener of this.pagehideListeners) listener(event);
-  }
-}
 
 describe('randomUuid', () => {
   afterEach(() => {
@@ -299,23 +246,6 @@ const event = {
   data: { runId: 'run-one', wakeReason: 'human_assignment' },
   createdAt: '2026-07-19T10:15:00.000Z',
 };
-const documentSummary = {
-  apiVersion,
-  documentId: 'document-release-notes',
-  projectId: project.projectId,
-  title: 'Release notes',
-  contentType: 'text/markdown',
-  contentVersion: 2,
-  penEpoch: 1,
-  penHolder: null,
-  sequence: 4,
-  createdAt: '2026-07-19T10:05:00.000Z',
-  updatedAt: '2026-07-19T10:14:00.000Z',
-};
-const documentSnapshot = {
-  ...documentSummary,
-  content: '# Release notes\n\nInvoice recovery is clearer.',
-};
 const workflowPlan = {
   apiVersion,
   planRevisionId: 'plan-one',
@@ -408,7 +338,6 @@ function boardSnapshot() {
     recentRuns: [run],
     recentInterrupts: [],
     recentEvents: [event],
-    documents: [documentSummary],
   };
 }
 
@@ -441,8 +370,7 @@ describe('task-board protocol projection', () => {
       heartbeatAt: '2026-07-19T10:24:00.000Z',
       heartbeatAtMs: Date.parse('2026-07-19T10:24:00.000Z'),
     });
-    expect(snapshot.documents[0]).toMatchObject({ id: 'document-release-notes', contentVersion: 2, penEpoch: 1, sequence: 4 });
-    expect(snapshot.revision).toBe(7);
+    expect(snapshot.revision).toBe(3);
   });
 
   it('keeps an unknown task status visible and inert despite an open question', () => {
@@ -547,26 +475,6 @@ describe('task-board protocol projection', () => {
     expect(snapshot.questions.filter((item) => item.id === question.questionId)).toHaveLength(1);
     expect(snapshot.questions.find((item) => item.id === olderOpenQuestion.questionId)).toMatchObject({ status: 'open' });
     expect(snapshot.tasks[0]?.status).toBe('waiting_for_human');
-  });
-
-  it('parses full document snapshots and rejects malformed fencing state', () => {
-    expect(parseBoardDocument(documentSnapshot)).toMatchObject({
-      id: documentSummary.documentId,
-      content: documentSnapshot.content,
-      contentType: 'text/markdown',
-    });
-    expect(() => parseBoardDocument({ ...documentSnapshot, contentType: 'text/html' })).toThrow(/contentType/u);
-    expect(() => parseBoardDocument({ ...documentSnapshot, contentVersion: 0 })).toThrow(/contentVersion/u);
-    expect(() => parseBoardDocument({
-      ...documentSnapshot,
-      penEpoch: 0,
-      penHolder: {
-        actorType: 'agent',
-        actorId: agent.agentId,
-        clientId: 'agent-client-one',
-        acquiredAt: '2026-07-19T10:15:00.000Z',
-      },
-    })).toThrow(/penEpoch/u);
   });
 
   it('rejects invalid versions, model status values, and non-15-minute estimates', () => {
@@ -1561,102 +1469,6 @@ describe('task-board HTTP client', () => {
     }
   });
 
-  it('uses a stable tab identity for snapshot creation, pen fencing, saves, and release without waking an agent', async () => {
-    const calls: Array<[string, RequestInit | undefined]> = [];
-    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push([String(url), init]);
-      return new Response(JSON.stringify({ document: documentSnapshot }));
-    });
-    const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
-      documentClientId: 'document-tab-one',
-      fetch: request as unknown as typeof fetch,
-    });
-
-    await expect(client.getDocument(documentSummary.documentId)).resolves.toMatchObject({ id: documentSummary.documentId });
-    await client.createDocument({ projectId: project.projectId, title: '  Release notes  ', content: '# Draft' });
-    await client.changeDocumentPen(documentSummary.documentId, { action: 'acquire', expectedPenEpoch: 1, force: true });
-    await client.saveDocumentSnapshot(documentSummary.documentId, { penEpoch: 2, contentVersion: 2, content: '# Saved' });
-    await client.changeDocumentPen(documentSummary.documentId, { action: 'release', expectedPenEpoch: 2, force: false });
-
-    expect(client.documentClientId).toBe('document-tab-one');
-    expect(calls.map(([url, init]) => [url, init?.method ?? 'GET', init?.body ? JSON.parse(String(init.body)) : null])).toEqual([
-      ['https://board.example.test/v1/documents/document-release-notes', 'GET', null],
-      ['https://board.example.test/v1/projects/project-one/documents', 'POST', {
-        title: 'Release notes',
-        contentType: 'text/markdown',
-        content: '# Draft',
-        clientId: 'document-tab-one',
-      }],
-      ['https://board.example.test/v1/documents/document-release-notes/pen', 'POST', {
-        action: 'acquire',
-        clientId: 'document-tab-one',
-        expectedPenEpoch: 1,
-        force: true,
-      }],
-      ['https://board.example.test/v1/documents/document-release-notes', 'PATCH', {
-        clientId: 'document-tab-one',
-        penEpoch: 2,
-        contentVersion: 2,
-        content: '# Saved',
-      }],
-      ['https://board.example.test/v1/documents/document-release-notes/pen', 'POST', {
-        action: 'release',
-        clientId: 'document-tab-one',
-        expectedPenEpoch: 2,
-        force: false,
-      }],
-    ]);
-    expect(calls.some(([url]) => /\/tasks|\/resume|\/interrupt/u.test(url))).toBe(false);
-    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)).toBe(true);
-  });
-
-  it('validates resumable document snapshot events without adding browser authorization', async () => {
-    const streamed = { ...documentSnapshot, contentVersion: 3, sequence: 5, content: '# Streamed' };
-    const request = vi.fn(async () => new Response(
-      `: keepalive\n\nid: 5\nevent: document\ndata: ${JSON.stringify({ document: streamed })}\n\n`,
-      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
-    ));
-    const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
-      documentClientId: 'document-tab-one',
-      fetch: request as unknown as typeof fetch,
-    });
-    const received: string[] = [];
-
-    await client.subscribeDocument({
-      documentId: documentSummary.documentId,
-      after: 4,
-      signal: new AbortController().signal,
-      onDocument: (document) => received.push(`${document.sequence}:${document.content}`),
-    });
-
-    expect(received).toEqual(['5:# Streamed']);
-    expect(request).toHaveBeenCalledWith(
-      'https://board.example.test/v1/documents/document-release-notes/events?after=4',
-      expect.objectContaining({
-        cache: 'no-store',
-        credentials: 'omit',
-        headers: { accept: 'text/event-stream' },
-        signal: expect.any(AbortSignal),
-      }),
-    );
-
-    const invalid = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
-      fetch: vi.fn(async () => new Response(
-        `id: 6\nevent: document\ndata: ${JSON.stringify({ document: streamed })}\n\n`,
-        { headers: { 'content-type': 'text/event-stream' } },
-      )) as unknown as typeof fetch,
-    });
-    await expect(invalid.subscribeDocument({
-      documentId: documentSummary.documentId,
-      after: 4,
-      signal: new AbortController().signal,
-      onDocument: () => undefined,
-    })).rejects.toBeInstanceOf(DocumentStreamError);
-  });
-
   it('creates an assigned agent query and wake with one atomic task request', async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -2132,100 +1944,5 @@ describe('task-board HTTP client', () => {
       }],
     ]);
     expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
-  });
-});
-
-describe('document client tab identity', () => {
-  const unusedFetch = vi.fn() as unknown as typeof fetch;
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
-  });
-
-  it('rotates the copied session identity when an opener page still owns it', async () => {
-    const local = new MemoryStorage();
-    const originalSession = new MemoryStorage();
-    vi.stubGlobal('localStorage', local);
-    vi.stubGlobal('sessionStorage', originalSession);
-    vi.stubGlobal('addEventListener', new PageLifecycle().addEventListener);
-    vi.resetModules();
-    const originalModule = await import('./client');
-    const originalId = originalModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    const copiedSession = originalSession.copy();
-    vi.stubGlobal('sessionStorage', copiedSession);
-    vi.stubGlobal('addEventListener', new PageLifecycle().addEventListener);
-    vi.resetModules();
-    const copiedModule = await import('./client');
-    const copiedId = copiedModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    expect(copiedId).not.toBe(originalId);
-    expect(copiedModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId).toBe(copiedId);
-    expect(originalSession.getItem('cicada.documentClientId')).toBe(originalId);
-    expect(copiedSession.getItem('cicada.documentClientId')).toBe(copiedId);
-  });
-
-  it('reuses the identity after a normal pagehide releases the ownership claim', async () => {
-    const local = new MemoryStorage();
-    const session = new MemoryStorage();
-    const firstLifecycle = new PageLifecycle();
-    vi.stubGlobal('localStorage', local);
-    vi.stubGlobal('sessionStorage', session);
-    vi.stubGlobal('addEventListener', firstLifecycle.addEventListener);
-    vi.resetModules();
-    const firstModule = await import('./client');
-    const firstId = firstModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    firstLifecycle.pagehide(false);
-
-    vi.stubGlobal('addEventListener', new PageLifecycle().addEventListener);
-    vi.resetModules();
-    const reloadedModule = await import('./client');
-    const reloadedId = reloadedModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    expect(reloadedId).toBe(firstId);
-  });
-
-  it('retains a BFCache page claim so a concurrently active page gets a new identity', async () => {
-    const local = new MemoryStorage();
-    const session = new MemoryStorage();
-    const cachedLifecycle = new PageLifecycle();
-    vi.stubGlobal('localStorage', local);
-    vi.stubGlobal('sessionStorage', session);
-    vi.stubGlobal('addEventListener', cachedLifecycle.addEventListener);
-    vi.resetModules();
-    const cachedModule = await import('./client');
-    const cachedId = cachedModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    cachedLifecycle.pagehide(true);
-
-    vi.stubGlobal('addEventListener', new PageLifecycle().addEventListener);
-    vi.resetModules();
-    const activeModule = await import('./client');
-    const activeId = activeModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    expect(activeId).not.toBe(cachedId);
-  });
-
-  it('keeps one runtime identity but does not trust copied session state when local storage is unavailable', async () => {
-    const session = new MemoryStorage();
-    const unavailableLocal = {
-      getItem: () => { throw new Error('local storage denied'); },
-    } as unknown as Storage;
-    vi.stubGlobal('localStorage', unavailableLocal);
-    vi.stubGlobal('sessionStorage', session);
-    vi.resetModules();
-    const firstModule = await import('./client');
-    const firstId = firstModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    expect(firstModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId).toBe(firstId);
-
-    vi.resetModules();
-    const nextRuntimeModule = await import('./client');
-    const nextRuntimeId = nextRuntimeModule.createTaskBoardClient({ fetch: unusedFetch }).documentClientId;
-
-    expect(nextRuntimeId).not.toBe(firstId);
-    expect(session.getItem('cicada.documentClientId')).toBe(nextRuntimeId);
   });
 });

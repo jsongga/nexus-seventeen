@@ -42,7 +42,6 @@ function board() {
     recentRuns: [],
     recentInterrupts: [],
     recentEvents: [],
-    documents: [],
   };
 }
 

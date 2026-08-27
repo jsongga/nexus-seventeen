@@ -11,8 +11,6 @@
 import type {
   AgentStatus,
   BoardAgent,
-  BoardDocument,
-  BoardDocumentSummary,
   BoardMessage,
   BoardProject,
   BoardQuestion,
@@ -27,8 +25,6 @@ import type {
 } from '../types';
 import type {
   RawBoard,
-  RawDocument,
-  RawDocumentSummary,
   RawEvent,
   RawMessage,
   RawProject,
@@ -104,27 +100,6 @@ export function newest(values: Array<TimestampValue | null | undefined>, fallbac
     )) latest = value;
   }
   return latest ?? fallback;
-}
-
-export function documentSummary(raw: RawDocumentSummary): BoardDocumentSummary {
-  return {
-    id: raw.documentId,
-    projectId: raw.projectId,
-    title: raw.title,
-    contentType: raw.contentType,
-    contentVersion: raw.contentVersion,
-    penEpoch: raw.penEpoch,
-    penHolder: raw.penHolder === null ? null : { ...raw.penHolder },
-    sequence: raw.sequence,
-    createdAt: raw.createdAt,
-    createdAtMs: raw.createdAtMs,
-    updatedAt: raw.updatedAt,
-    updatedAtMs: raw.updatedAtMs,
-  };
-}
-
-export function documentProjection(raw: RawDocument): BoardDocument {
-  return { ...documentSummary(raw), content: raw.content };
 }
 
 export function projectProjection(raw: RawProject): BoardProject {
@@ -342,20 +317,17 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     createdAt: message.createdAt,
     createdAtMs: message.createdAtMs,
   }));
-  const documents = boards.flatMap((board) => board.documents.map(documentSummary));
   const generatedAt = newest([
     ...workItems.map((workItem) => ({ iso: workItem.updatedAt, ms: workItem.updatedAtMs })),
     ...projects.map((project) => ({ iso: project.updatedAt, ms: project.updatedAtMs })),
     ...boards.flatMap((board) => board.events.map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }))),
     ...messages.map((message) => ({ iso: message.createdAt, ms: message.createdAtMs })),
-    ...documents.map((document) => ({ iso: document.updatedAt, ms: document.updatedAtMs })),
   ], { iso: new Date(0).toISOString(), ms: 0 });
   return {
     revision: workItems.reduce((sum, workItem) => sum + workItem.version, 0)
       + projects.reduce((sum, project) => sum + (listedProjects.find((raw) => raw.projectId === project.id)?.version ?? 0), 0)
       + tasks.reduce((sum, task) => sum + task.version, 0)
-      + tasks.reduce((sum, task) => sum + task.phases.reduce((phaseSum, phase) => phaseSum + phase.version, 0), 0)
-      + documents.reduce((sum, document) => sum + document.sequence, 0),
+      + tasks.reduce((sum, task) => sum + task.phases.reduce((phaseSum, phase) => phaseSum + phase.version, 0), 0),
     generatedAt: generatedAt.iso,
     generatedAtMs: generatedAt.ms,
     workItems,
@@ -365,6 +337,5 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     messages,
     questions,
     runs,
-    documents,
   };
 }

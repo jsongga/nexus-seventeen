@@ -295,33 +295,6 @@ export interface BoardRun {
   createdAtMs: number;
 }
 
-export interface DocumentPenHolder {
-  actorType: 'human' | 'agent';
-  actorId: string;
-  clientId: string;
-  acquiredAt: string;
-  acquiredAtMs: number;
-}
-
-export interface BoardDocumentSummary {
-  id: string;
-  projectId: string;
-  title: string;
-  contentType: 'text/markdown';
-  contentVersion: number;
-  penEpoch: number;
-  penHolder: DocumentPenHolder | null;
-  sequence: number;
-  createdAt: string;
-  createdAtMs: number;
-  updatedAt: string;
-  updatedAtMs: number;
-}
-
-export interface BoardDocument extends BoardDocumentSummary {
-  content: string;
-}
-
 export interface BoardSnapshot {
   revision: number;
   generatedAt: string;
@@ -333,7 +306,6 @@ export interface BoardSnapshot {
   messages: BoardMessage[];
   questions: BoardQuestion[];
   runs: BoardRun[];
-  documents: BoardDocumentSummary[];
 }
 
 export interface WorkflowPlan {
@@ -467,10 +439,4 @@ export interface CreateWorkItemInput {
 export interface AgentQueryConversationTurn {
   role: 'human' | 'agent';
   body: string;
-}
-
-export interface CreateDocumentInput {
-  projectId: string;
-  title: string;
-  content: string;
 }

@@ -16,8 +16,6 @@ import {
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
-  DOCUMENT_CONTENT_MAX_BYTES,
-  DOCUMENT_ACTOR_TYPES,
   EVALUATOR_PROFILES,
   IDENTIFIER_PATTERN,
   PLAN_REVISION_STATES,
@@ -66,7 +64,6 @@ export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 export const apiVersion = TASK_BOARD_API_VERSION;
 export const unrecognizedState = 'unrecognized' as const;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
-export const maximumDocumentContentBytes = DOCUMENT_CONTENT_MAX_BYTES;
 export const maximumWorkItemCursorBytes = WORK_ITEM_CURSOR_MAX_BYTES;
 export const taskMessagePageSize = TASK_MESSAGE_PAGE_SIZE;
 export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
@@ -106,7 +103,6 @@ export const workItemPriorities = new Set(workItemPriorityValues);
 export const workItemStates = new Set(workItemStateValues);
 export const workItemStages = new Set(workItemStageValues);
 export const evaluatorProfiles = new Set(evaluatorProfileValues);
-export const documentActorTypes = new Set(DOCUMENT_ACTOR_TYPES);
 export const workflowStages = new Set(WORKFLOW_STAGES);
 export const planRevisionStates = new Set(planRevisionStateValues);
 export const workNodeStates = new Set(workNodeStateValues);

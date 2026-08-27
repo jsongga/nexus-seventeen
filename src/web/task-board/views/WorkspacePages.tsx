@@ -12,7 +12,7 @@ import type { InterruptRunResult, TaskBoardClient } from '../data/client';
 import { ContextSidebar, type ContextDocument } from '../project/ContextSidebar';
 import { parseProjectMetadata, type ProjectMetadataEntry } from '../model/project-metadata';
 import { ThreadPipelineTable } from '../project/ThreadPipelineTable';
-import type { AgentQueryConversationTurn, BoardAgent, BoardDocumentSummary, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, RotateAgentTokenResult } from '../types';
+import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, RotateAgentTokenResult } from '../types';
 import { WorkspaceHeader } from '../project/WorkspaceHeader';
 import {
   agentPipelineFocus,
@@ -47,28 +47,6 @@ function contextDocuments(entries: ProjectMetadataEntry[]): ContextDocument[] {
     id: resourceId(entry, index),
     meta: entry.href ? projectLinkLabel(entry.href) : entry.value,
   }));
-}
-
-function boardDocumentMeta(document: BoardDocumentSummary): string {
-  return `Updated ${formatTime(document.updatedAt)} · Version ${document.contentVersion}`;
-}
-
-export function projectDocuments(projectId: string, documents: BoardDocumentSummary[]): ContextDocument[] {
-  return documents
-    .filter((document) => document.projectId === projectId)
-    .sort((left, right) => (
-      right.updatedAtMs - left.updatedAtMs
-        || left.title.localeCompare(right.title)
-        || left.id.localeCompare(right.id)
-    ))
-    .map((document) => ({
-      id: `document:${document.id}`,
-      label: document.title,
-      value: document.title,
-      href: null,
-      meta: boardDocumentMeta(document),
-      documentId: document.id,
-    }));
 }
 
 /** Adds every artifact to the feed without duplicating it across task messages. */
@@ -141,7 +119,6 @@ export function ProjectPage({
   snapshot,
   onTask,
   onAddTask,
-  onSelectDocument,
   client,
   connected,
 }: {
@@ -149,7 +126,6 @@ export function ProjectPage({
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
   onAddTask: () => void;
-  onSelectDocument: (documentId: string) => void;
   client: TaskBoardClient;
   connected: boolean;
 }) {
@@ -191,10 +167,7 @@ export function ProjectPage({
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const documents = [
-    ...projectDocuments(project.id, snapshot.documents),
-    ...contextDocuments(metadata.entries),
-  ];
+  const documents = contextDocuments(metadata.entries);
   const feedUpdates = activityUpdates(updates, artifacts);
   const activeRuns = snapshot.runs.filter((run) => (
     run.projectId === project.id
@@ -262,7 +235,6 @@ export function ProjectPage({
         <ContextSidebar
           intro={metadata.summaries.join('\n\n') || `Project context and reference materials for ${project.name}.`}
           documents={documents}
-          onSelectDocument={onSelectDocument}
           orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
         />
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">

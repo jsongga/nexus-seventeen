@@ -82,226 +82,6 @@ const completedReferenceTask = {
   updatedAt: '2026-07-19T18:28:00.000Z',
 };
 
-interface DocumentFixture {
-  apiVersion: typeof apiVersion;
-  documentId: string;
-  projectId: string;
-  title: string;
-  contentType: 'text/markdown';
-  content: string;
-  contentVersion: number;
-  penEpoch: number;
-  penHolder: null | {
-    actorType: 'human' | 'agent';
-    actorId: string;
-    clientId: string;
-    acquiredAt: string;
-  };
-  sequence: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-const editableDocument: DocumentFixture = {
-  apiVersion,
-  documentId: 'document-invoice-playbook',
-  projectId: project.projectId,
-  title: 'Invoice recovery playbook',
-  contentType: 'text/markdown',
-  content: '# Invoice recovery\n\nCustomers can retry safely.',
-  contentVersion: 3,
-  penEpoch: 4,
-  penHolder: null,
-  sequence: 8,
-  createdAt: '2026-07-19T18:02:00.000Z',
-  updatedAt: '2026-07-19T18:20:00.000Z',
-};
-const documentAgentToken = 'e2e-agent-document-token-1234567890';
-
-function cloneDocument(document: DocumentFixture): DocumentFixture {
-  return {
-    ...document,
-    penHolder: document.penHolder === null ? null : { ...document.penHolder },
-  };
-}
-
-function documentSummary(document: DocumentFixture) {
-  const { content: _content, ...summary } = cloneDocument(document);
-  return summary;
-}
-
-function documentSseFrame(document: DocumentFixture): string {
-  return `id: ${document.sequence}\nevent: document\ndata: ${JSON.stringify({ document })}\n\n`;
-}
-
-async function installDocumentBoard(
-  page: Page,
-  initialDocument: DocumentFixture,
-  broadcastContent: string,
-) {
-  let current = cloneDocument(initialDocument);
-  const history = [cloneDocument(initialDocument)];
-  const documentRequests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
-  const wakeRequests: string[] = [];
-  const sseFrames: string[] = [];
-  const documentAuthorizations: Array<string | undefined> = [];
-  let initialBroadcastSent = false;
-
-  const advance = (patch: Partial<DocumentFixture>): DocumentFixture => {
-    current = {
-      ...current,
-      ...patch,
-      penHolder: patch.penHolder === undefined
-        ? current.penHolder === null ? null : { ...current.penHolder }
-        : patch.penHolder === null ? null : { ...patch.penHolder },
-      updatedAt: '2026-07-19T18:30:00.000Z',
-    };
-    history.push(cloneDocument(current));
-    return cloneDocument(current);
-  };
-
-  await page.route('**/board-api/v1/**', async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const method = request.method();
-    const body = method === 'GET' ? null : request.postDataJSON() as Record<string, unknown> | null;
-    if (url.pathname.includes('/documents')) {
-      documentAuthorizations.push(request.headers().authorization);
-    }
-
-    if (url.pathname === '/board-api/v1/work-items') {
-      await route.fulfill({ json: { workItems: [] } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/projects') {
-      await route.fulfill({ json: { projects: [project] } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({
-        json: {
-          ...board(),
-          tasks: [completedReferenceTask],
-          documents: [documentSummary(current)],
-        },
-      });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/tasks/${completedReferenceTask.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${current.documentId}/events` && method === 'GET') {
-      const after = Number(url.searchParams.get('after') ?? '0');
-      if (!initialBroadcastSent && after === current.sequence) {
-        initialBroadcastSent = true;
-        advance({
-          content: broadcastContent,
-          contentVersion: current.contentVersion + 1,
-          sequence: current.sequence + 1,
-        });
-      }
-      const frames = history
-        .filter((document) => document.sequence > after)
-        .map(documentSseFrame);
-      const responseBody = frames.length > 0 ? frames.join('') : ': keepalive\n\n';
-      if (frames.length > 0) sseFrames.push(...frames);
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream; charset=utf-8',
-        headers: { 'cache-control': 'no-cache' },
-        body: responseBody,
-      });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${current.documentId}` && method === 'GET') {
-      await route.fulfill({ json: { document: cloneDocument(current) } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${current.documentId}/pen` && method === 'POST') {
-      documentRequests.push({ method, path: url.pathname, body });
-      const action = body?.action;
-      const clientId = String(body?.clientId ?? '');
-      const expectedPenEpoch = Number(body?.expectedPenEpoch);
-      if (expectedPenEpoch !== current.penEpoch) {
-        await route.fulfill({ status: 409, json: { error: { code: 'DOCUMENT_PEN_EPOCH_CONFLICT', message: 'Document pen epoch changed' } } });
-        return;
-      }
-      if (action === 'acquire') {
-        if (current.penHolder !== null && body?.force !== true) {
-          await route.fulfill({ status: 409, json: { error: { code: 'DOCUMENT_PEN_HELD', message: 'Document pen is held by another client' } } });
-          return;
-        }
-        const next = advance({
-          penEpoch: current.penEpoch + 1,
-          penHolder: {
-            actorType: 'human',
-            actorId: 'human:operator',
-            clientId,
-            acquiredAt: '2026-07-19T18:30:00.000Z',
-          },
-          sequence: current.sequence + 1,
-        });
-        await route.fulfill({ json: { document: next } });
-        return;
-      }
-      if (action === 'release' && current.penHolder?.clientId === clientId) {
-        const next = advance({ penHolder: null, sequence: current.sequence + 1 });
-        await route.fulfill({ json: { document: next } });
-        return;
-      }
-      await route.fulfill({ status: 403, json: { error: { code: 'DOCUMENT_PEN_NOT_HELD', message: 'Only the pen holder can release it' } } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${current.documentId}` && method === 'PATCH') {
-      documentRequests.push({ method, path: url.pathname, body });
-      const clientId = String(body?.clientId ?? '');
-      if (
-        Number(body?.penEpoch) !== current.penEpoch
-        || Number(body?.contentVersion) !== current.contentVersion
-        || current.penHolder?.clientId !== clientId
-      ) {
-        await route.fulfill({ status: 409, json: { error: { code: 'DOCUMENT_VERSION_CONFLICT', message: 'Document changed or the writer was fenced' } } });
-        return;
-      }
-      const next = advance({
-        content: String(body?.content ?? ''),
-        contentVersion: current.contentVersion + 1,
-        sequence: current.sequence + 1,
-      });
-      await route.fulfill({ json: { document: next } });
-      return;
-    }
-    if (
-      method !== 'GET'
-      && (url.pathname.includes('/tasks') || url.pathname.includes('/resume') || url.pathname.includes('/interrupt'))
-    ) {
-      wakeRequests.push(`${method} ${url.pathname}`);
-    }
-    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
-  });
-
-  return {
-    current: () => cloneDocument(current),
-    documentRequests,
-    documentAuthorizations,
-    remoteUpdate: (input: { content: string; holderId: string }) => advance({
-      content: input.content,
-      contentVersion: current.contentVersion + 1,
-      penEpoch: current.penEpoch + 1,
-      penHolder: {
-        actorType: 'human',
-        actorId: input.holderId,
-        clientId: 'document-ui-remote-tab',
-        acquiredAt: '2026-07-19T18:31:00.000Z',
-      },
-      sequence: current.sequence + 2,
-    }),
-    sseFrames,
-    wakeRequests,
-  };
-}
-
 function board() {
   return {
     apiVersion,
@@ -313,7 +93,6 @@ function board() {
     recentRuns: [],
     recentInterrupts: [],
     recentEvents: [],
-    documents: [],
   };
 }
 
@@ -919,12 +698,11 @@ test('the default app reads real board state and assignment is an explicit human
   let companyRail = await openCompanyRail(page);
   await expect(companyRail.getByText('Cicada Tech Systems LLC.', { exact: true })).toBeVisible();
   await expect(companyRail.getByRole('button', { name: 'Task List' })).toBeVisible();
-  await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
+  await expect(companyRail.getByRole('button', { name: 'Automation' })).toBeVisible();
+  await expect(companyRail.getByRole('button', { name: 'Ledgers' })).toBeVisible();
+  await expect(companyRail.getByRole('button', { name: 'Documents' })).toHaveCount(0);
   await expect(companyRail.getByRole('button', { name: /billing-engineer/u })).toBeVisible();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /billing-engineer/u })).toHaveCount(0);
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-  await expect(page.getByText('No documents yet', { exact: true })).toBeVisible();
-  companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: 'Task List' }).click();
   await page.getByRole('button', { name: /Improve invoice recovery/u }).click();
   await page.getByRole('button', { name: 'Assign and wake agent' }).click();
@@ -1931,7 +1709,6 @@ test('project intake lazily creates a manager whose lane token can be rotated an
             data: { agentId: lazyManager.agentId, role: 'manager' },
             createdAt: lazyManager.createdAt,
           }] : [],
-          documents: [],
         },
       });
       return;
@@ -2728,19 +2505,11 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [explicitPointOfContactAgent, manager], tasks: projectTasks, documents: [documentSummary(editableDocument)] } });
+      await route.fulfill({ json: { ...board(), projects: [projectWithResources], agents: [explicitPointOfContactAgent, manager], tasks: projectTasks } });
       return;
     }
     if (url.pathname.startsWith('/board-api/v1/tasks/') && url.pathname.endsWith('/messages')) {
       await route.fulfill({ json: { messages: [], cursor: 0 } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${editableDocument.documentId}/events`) {
-      await route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: ': keepalive\n\n' });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/documents/${editableDocument.documentId}` && request.method() === 'GET') {
-      await route.fulfill({ json: { document: cloneDocument(editableDocument) } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/tasks` && request.method() === 'POST') {
@@ -2776,16 +2545,10 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await companyRail.getByRole('button', { name: 'Expand Cicada platform agents' }).click();
   await expect(companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: /release-manager/u })).toBeVisible();
 
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-  await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Documents' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Invoice recovery playbook.*Available to edit/u })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Recorded references' })).toHaveCount(0);
-
-  companyRail = await openCompanyRail(page);
   await companyRail.getByRole('navigation', { name: 'Projects and agents' }).getByRole('button', { name: 'Cicada platform', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cicada platform' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Context & Materials' })).toBeVisible();
+  const contextSidebar = page.getByRole('heading', { name: 'Context & Materials' }).locator('..');
+  await expect(contextSidebar).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Active Thread Pipeline' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent Activity & Visuals' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Team' })).toHaveCount(0);
@@ -2796,11 +2559,11 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole('heading', { name: 'Project setup' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Docs & links' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Important Documents' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open Invoice recovery playbook' })).toBeVisible();
-  await expect(page.getByText(/Updated .* · Version 3/u)).toBeVisible();
-  await expect(page.getByRole('link', { name: /GitHub: https:\/\/github.com\/acme\/cicada/u })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Documentation: https:\/\/docs.example.com\/cicada/u })).toBeVisible();
-  await expect(page.getByText('/workspace/billing', { exact: true })).toBeVisible();
+  await expect(contextSidebar.getByRole('link')).toHaveCount(2);
+  await expect(contextSidebar.getByRole('link', { name: /GitHub: https:\/\/github.com\/acme\/cicada/u })).toBeVisible();
+  await expect(contextSidebar.getByRole('link', { name: /Documentation: https:\/\/docs.example.com\/cicada/u })).toBeVisible();
+  await expect(contextSidebar.getByText('/workspace/billing', { exact: true })).toBeVisible();
+  await expect(contextSidebar.getByRole('button', { name: /^Open /u })).toHaveCount(0);
   const moveGitHubLater = page.getByRole('button', { name: 'Move GitHub later' });
   await moveGitHubLater.focus();
   await moveGitHubLater.press('Enter');
@@ -2819,10 +2582,6 @@ test('the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath('project-dashboard.png'), fullPage: true });
   }
-
-  await page.getByRole('button', { name: 'Open Invoice recovery playbook' }).click();
-  await expect(page).toHaveURL(new RegExp(`#\\/documents\\/${editableDocument.documentId}$`, 'u'));
-  await expect(page.getByRole('heading', { name: editableDocument.title, exact: true })).toBeVisible();
 
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole('button', { name: /billing-engineer/u }).click();
@@ -3000,322 +2759,6 @@ test('the POC chat answers its current task question before starting another que
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect.poll(() => mutations).toHaveLength(2);
   expect(mutations[1]?.path).toBe(`/board-api/v1/projects/${project.projectId}/tasks`);
-});
-
-test('durable documents broadcast, acquire, save, and release without waking an agent', async ({ page }) => {
-  const broadcastContent = '# Invoice recovery\n\nCustomers can retry safely.\n\nA watcher recorded the latest support guidance.';
-  const mock = await installDocumentBoard(page, editableDocument, broadcastContent);
-
-  await page.goto('/');
-  let companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-
-  await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Documents' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Invoice recovery playbook/u })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Recorded references' })).toHaveCount(0);
-
-  await page.getByRole('button', { name: /Invoice recovery playbook/u }).click();
-  await expect(page.getByRole('button', { name: 'Back to document list' })).toBeVisible();
-  const savedSnapshot = page.getByLabel('Invoice recovery playbook saved snapshot');
-  await expect(savedSnapshot).toContainText('A watcher recorded the latest support guidance.');
-  await expect(page.getByText(/Version 4$/u)).toBeVisible();
-  await expect(page.getByText('Project links', { exact: true })).toHaveCount(0);
-  await expect.poll(() => mock.sseFrames.some((frame) => frame.includes('id: 9\n'))).toBe(true);
-
-  const initialFrame = mock.sseFrames.find((frame) => frame.includes('id: 9\n'))!;
-  expect(initialFrame).toContain('event: document\n');
-  const frameId = Number(/^id: (\d+)$/mu.exec(initialFrame)?.[1]);
-  const frameData = JSON.parse(/^data: (.+)$/mu.exec(initialFrame)?.[1] ?? '{}') as { document?: { sequence?: number } };
-  expect(frameData.document?.sequence).toBe(frameId);
-
-  await page.getByRole('button', { name: 'Take the pen' }).click();
-  await expect(page.getByText('You hold the pen', { exact: true })).toBeVisible();
-
-  const editor = page.getByLabel('Edit Invoice recovery playbook');
-  const savedContent = `${broadcastContent}\n\nHumans retain release control.`;
-  await editor.fill(savedContent);
-  await expect(page.getByText('Unsaved in this tab', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Save snapshot' }).click();
-  await expect(page.getByText(/Version 5$/u)).toBeVisible();
-  await expect(editor).toHaveValue(savedContent);
-
-  await page.getByRole('button', { name: 'Release pen' }).click();
-  await expect(page.getByText('The pen is available', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Invoice recovery playbook saved snapshot')).toContainText('Humans retain release control.');
-
-  expect(mock.documentRequests).toHaveLength(3);
-  const clientId = String(mock.documentRequests[0]?.body?.clientId);
-  expect(clientId).toMatch(/^document-ui-/u);
-  expect(mock.documentRequests).toEqual([
-    {
-      method: 'POST',
-      path: `/board-api/v1/documents/${editableDocument.documentId}/pen`,
-      body: { action: 'acquire', clientId, expectedPenEpoch: 4, force: false },
-    },
-    {
-      method: 'PATCH',
-      path: `/board-api/v1/documents/${editableDocument.documentId}`,
-      body: { clientId, penEpoch: 5, contentVersion: 4, content: savedContent },
-    },
-    {
-      method: 'POST',
-      path: `/board-api/v1/documents/${editableDocument.documentId}/pen`,
-      body: { action: 'release', clientId, expectedPenEpoch: 5, force: false },
-    },
-  ]);
-  expect(mock.current()).toMatchObject({
-    content: savedContent,
-    contentVersion: 5,
-    penEpoch: 5,
-    penHolder: null,
-  });
-  expect(new Set(mock.documentAuthorizations)).toEqual(new Set([undefined]));
-  expect(mock.wakeRequests).toEqual([]);
-
-  if ((page.viewportSize()?.width ?? 1_000) < 1_024) {
-    await page.getByRole('button', { name: 'Back to document list' }).click();
-    const documentButton = page.getByRole('button', { name: /Invoice recovery playbook.*Available to edit/u });
-    await expect(documentButton).toBeVisible();
-    await expect(documentButton).toBeFocused();
-  } else {
-    companyRail = await openCompanyRail(page);
-    await expect(companyRail.getByRole('button', { name: 'Documents' })).toBeVisible();
-  }
-});
-
-test('document creation waits for its snapshot commit while a poll tick is skipped', async ({ page }) => {
-  let createdDocument: DocumentFixture | null = null;
-  let holdMutationRefresh = false;
-  let heldMutationRefresh = false;
-  let releaseMutationRefresh!: () => void;
-  const mutationRefreshGate = new Promise<void>((resolve) => { releaseMutationRefresh = resolve; });
-  let projectReads = 0;
-
-  await page.route('**/board-api/v1/**', async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (url.pathname === '/board-api/v1/work-items') {
-      await route.fulfill({ json: { workItems: [] } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/projects') {
-      projectReads += 1;
-      if (holdMutationRefresh && request.headers()['x-nexus-refresh-kind'] === 'mutation') {
-        holdMutationRefresh = false;
-        heldMutationRefresh = true;
-        await mutationRefreshGate;
-      }
-      await route.fulfill({ json: { projects: [project] } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({
-        json: {
-          ...board(),
-          documents: createdDocument === null ? [] : [documentSummary(createdDocument)],
-        },
-      });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${project.projectId}/documents` && request.method() === 'POST') {
-      const body = request.postDataJSON() as Record<string, unknown>;
-      createdDocument = {
-        ...editableDocument,
-        documentId: 'document-created-during-poll',
-        title: String(body.title),
-        content: String(body.content),
-        contentVersion: 1,
-        penEpoch: 1,
-        penHolder: {
-          actorType: 'human',
-          actorId: 'human:operator',
-          clientId: String(body.clientId),
-          acquiredAt: '2026-07-19T18:30:00.000Z',
-        },
-        sequence: 1,
-        createdAt: '2026-07-19T18:30:00.000Z',
-        updatedAt: '2026-07-19T18:30:00.000Z',
-      };
-      holdMutationRefresh = true;
-      await route.fulfill({ status: 201, json: { document: createdDocument } });
-      return;
-    }
-    if (createdDocument !== null && url.pathname === `/board-api/v1/documents/${createdDocument.documentId}` && request.method() === 'GET') {
-      await route.fulfill({ json: { document: createdDocument } });
-      return;
-    }
-    if (createdDocument !== null && url.pathname === `/board-api/v1/documents/${createdDocument.documentId}/events`) {
-      await route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: ': keepalive\n\n' });
-      return;
-    }
-    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
-  });
-
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Task List', exact: true })).toBeVisible();
-  const companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Documents', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
-
-  await page.getByRole('button', { name: 'New document', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Create a document', exact: true });
-  await dialog.getByLabel('Title', { exact: true }).fill('Polling-safe release notes');
-  await dialog.getByLabel('Starting text', { exact: true }).fill('# Release notes\n\nCreated while refresh work overlaps.');
-  await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
-  await expect.poll(() => heldMutationRefresh).toBe(true);
-
-  const readsWhileMutationRefreshIsHeld = projectReads;
-  await triggerVisiblePoll(page);
-  expect(projectReads).toBe(readsWhileMutationRefreshIsHeld);
-
-  releaseMutationRefresh();
-  await expect(page.getByRole('heading', { name: 'Polling-safe release notes', exact: true })).toBeVisible();
-  await expect(page.getByText('The document was saved, but the project document list could not be refreshed.', { exact: false })).toHaveCount(0);
-});
-
-test('a human force takeover fences an agent-held document epoch without touching wake routes', async ({ page }) => {
-  const agentDocument: DocumentFixture = {
-    ...editableDocument,
-    documentId: 'document-agent-held',
-    title: 'Agent research notes',
-    content: '# Research notes\n\nThe agent is still writing.',
-    contentVersion: 7,
-    penEpoch: 11,
-    penHolder: {
-      actorType: 'agent',
-      actorId: agent.agentId,
-      clientId: 'agent-worker-old',
-      acquiredAt: '2026-07-19T18:21:00.000Z',
-    },
-    sequence: 21,
-  };
-  const broadcastContent = '# Research notes\n\nThe agent saved its latest findings.';
-  const mock = await installDocumentBoard(page, agentDocument, broadcastContent);
-
-  await page.goto('/');
-  const companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-  await page.getByRole('button', { name: /Agent research notes/u }).click();
-
-  await expect(page.getByText('billing-engineer holds the pen', { exact: true })).toBeVisible();
-  await expect(page.getByText(/Version 8$/u)).toBeVisible();
-  await expect(page.getByLabel('Agent research notes saved snapshot')).toContainText('The agent saved its latest findings.');
-
-  let confirmation = '';
-  page.once('dialog', async (dialog) => {
-    confirmation = dialog.message();
-    await dialog.accept();
-  });
-  await page.getByRole('button', { name: 'Take over pen' }).click();
-  expect(confirmation).toContain('Take the pen from billing-engineer?');
-  expect(confirmation).toContain('Their future saves will be blocked');
-  await expect(page.getByText('You hold the pen', { exact: true })).toBeVisible();
-
-  const takeover = mock.documentRequests[0];
-  expect(takeover).toEqual({
-    method: 'POST',
-    path: `/board-api/v1/documents/${agentDocument.documentId}/pen`,
-    body: {
-      action: 'acquire',
-      clientId: takeover?.body?.clientId,
-      expectedPenEpoch: 11,
-      force: true,
-    },
-  });
-
-  const staleStatus = await page.evaluate(async ({ documentId, contentVersion, agentToken }) => {
-    const response = await fetch(`/board-api/v1/documents/${documentId}`, {
-      method: 'PATCH',
-      headers: {
-        authorization: `Bearer ${agentToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        clientId: 'agent-worker-old',
-        penEpoch: 11,
-        contentVersion,
-        content: '# Stale overwrite',
-      }),
-    });
-    return response.status;
-  }, { documentId: agentDocument.documentId, contentVersion: 8, agentToken: documentAgentToken });
-
-  expect(staleStatus).toBe(409);
-  expect(mock.current()).toMatchObject({
-    content: broadcastContent,
-    contentVersion: 8,
-    penEpoch: 12,
-    penHolder: { actorType: 'human' },
-  });
-  await expect(page.getByLabel('Edit Agent research notes')).toHaveValue(broadcastContent);
-  expect(new Set(mock.documentAuthorizations)).toEqual(new Set([
-    undefined,
-    `Bearer ${documentAgentToken}`,
-  ]));
-  expect(mock.wakeRequests).toEqual([]);
-});
-
-test('an unsaved document draft survives navigation and cannot overwrite a newer saved version', async ({ page }) => {
-  const broadcastContent = '# Invoice recovery\n\nCustomers can retry safely.\n\nThe shared snapshot is current.';
-  const mock = await installDocumentBoard(page, editableDocument, broadcastContent);
-
-  await page.goto('/');
-  let companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-  await page.getByRole('button', { name: /Invoice recovery playbook/u }).click();
-  await expect(page.getByText(/Version 4$/u)).toBeVisible();
-  await page.getByRole('button', { name: 'Take the pen' }).click();
-
-  const unsavedDraft = `${broadcastContent}\n\nUnsaved operator note.`;
-  const editor = page.getByLabel('Edit Invoice recovery playbook');
-  await editor.fill(unsavedDraft);
-  await expect(page.getByText('Unsaved in this tab', { exact: true })).toBeVisible();
-  expect(mock.documentRequests.filter((request) => request.method === 'PATCH')).toEqual([]);
-
-  companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Task List' }).click();
-  await expect(page.getByRole('heading', { name: 'Task List', exact: true })).toBeVisible();
-
-  const newerSavedContent = `${broadcastContent}\n\nAnother human saved a newer decision.`;
-  mock.remoteUpdate({ content: newerSavedContent, holderId: 'human:release-owner' });
-
-  companyRail = await openCompanyRail(page);
-  await companyRail.getByRole('button', { name: 'Documents' }).click();
-  await page.getByRole('button', { name: /Invoice recovery playbook/u }).click();
-
-  const restoredDraft = page.getByLabel('Edit Invoice recovery playbook');
-  await expect(restoredDraft).toHaveValue(unsavedDraft);
-  await expect(page.getByText(/Version 5$/u)).toBeVisible();
-  await expect(page.getByText('A newer saved version arrived. Your draft is preserved and cannot overwrite it.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Draft preserved — read-only', { exact: true })).toBeVisible();
-  const discardDraft = page.getByRole('button', { name: 'Discard draft and load saved' });
-  await expect(discardDraft).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save snapshot' })).toBeDisabled();
-
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toContain('Discard this unsaved draft');
-    await dialog.dismiss();
-  });
-  await discardDraft.click();
-  await expect(restoredDraft).toHaveValue(unsavedDraft);
-
-  page.once('dialog', async (dialog) => dialog.accept());
-  await discardDraft.click();
-  await expect(page.getByLabel('Invoice recovery playbook saved snapshot')).toContainText('Another human saved a newer decision.');
-
-  expect(mock.current()).toMatchObject({
-    content: newerSavedContent,
-    contentVersion: 5,
-    penEpoch: 6,
-    penHolder: { actorId: 'human:release-owner' },
-  });
-  expect(mock.documentRequests.filter((request) => request.method === 'PATCH')).toEqual([]);
-  expect(mock.wakeRequests).toEqual([]);
 });
 
 test('a failed authoritative read never falls back to demo agents', async ({ page }) => {

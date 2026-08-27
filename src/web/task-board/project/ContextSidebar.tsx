@@ -8,7 +8,6 @@ export interface ContextDocument {
   value: string;
   href: string | null;
   meta: string;
-  documentId?: string;
 }
 
 function orderedDocuments(documents: ContextDocument[], order: string[]): ContextDocument[] {
@@ -23,12 +22,10 @@ function orderedDocuments(documents: ContextDocument[], order: string[]): Contex
 export function ContextSidebar({
   intro,
   documents,
-  onSelectDocument,
   orderStorageKey,
 }: {
   intro: string;
   documents: ContextDocument[];
-  onSelectDocument: (documentId: string) => void;
   orderStorageKey?: string;
 }) {
   const [order, setOrder] = useState<string[]>([]);
@@ -102,18 +99,7 @@ export function ContextSidebar({
                 onDragEnd={() => setDraggedId(null)}
                 aria-hidden="true"
               />
-              {document.documentId ? (
-                <button
-                  type="button"
-                  aria-label={`Open ${document.label}`}
-                  title={document.label}
-                  className="min-w-0 flex-1 rounded-[4px] text-left text-current focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
-                  onClick={() => onSelectDocument(document.documentId!)}
-                >
-                  <span className="block break-words">{document.label}</span>
-                  <span className="mt-0.5 block break-words text-[11px] text-muted">{document.meta}</span>
-                </button>
-              ) : document.href ? (
+              {document.href ? (
                 <a
                   href={document.href}
                   target="_blank"

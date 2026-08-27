@@ -6,7 +6,6 @@ import {
   latestByAskedAt,
   latestByUpdatedAt,
   orderAgentChatEntries,
-  projectDocuments,
 } from './WorkspacePages';
 
 describe('agentPageUsesPointOfContactMode', () => {
@@ -37,17 +36,9 @@ describe('deriveInterruptAllOutcome', () => {
 });
 
 describe('workspace timestamp ordering', () => {
-  it('orders documents, activity, and chat by absolute instants', () => {
+  it('orders activity and chat by absolute instants', () => {
     const earlierOffset = '2026-07-19T12:00:00+02:00';
     const laterFraction = '2026-07-19T10:00:00.500Z';
-    const documents = [
-      { id: 'earlier', projectId: 'project-one', title: 'Earlier', contentType: 'text/markdown' as const, contentVersion: 1, penEpoch: 0, penHolder: null, sequence: 1, createdAt: earlierOffset, createdAtMs: Date.parse(earlierOffset), updatedAt: earlierOffset, updatedAtMs: Date.parse(earlierOffset) },
-      { id: 'later', projectId: 'project-one', title: 'Later', contentType: 'text/markdown' as const, contentVersion: 1, penEpoch: 0, penHolder: null, sequence: 2, createdAt: laterFraction, createdAtMs: Date.parse(laterFraction), updatedAt: laterFraction, updatedAtMs: Date.parse(laterFraction) },
-    ];
-    expect(projectDocuments('project-one', documents).map((document) => document.id)).toEqual([
-      'document:later',
-      'document:earlier',
-    ]);
 
     expect(activityUpdates([
       { id: 'earlier', projectId: 'project-one', taskId: 'task-one', taskTitle: 'Task', author: 'Agent', body: 'Earlier', kind: 'progress', createdAt: earlierOffset, createdAtMs: Date.parse(earlierOffset) },

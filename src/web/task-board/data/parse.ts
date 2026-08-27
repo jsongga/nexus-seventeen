@@ -5,9 +5,6 @@ import type {
   AgentRun,
   BoardPause,
   BoardSnapshot,
-  DocumentPenHolder,
-  DocumentSnapshot,
-  DocumentSummary,
   HumanQuestion,
   PipelineSummary,
   PlanRecordFields,
@@ -35,9 +32,6 @@ import {
   parseBoardNotification as parseBoardNotificationContract,
   parseBoardPause as parseBoardPauseContract,
   parseBoardSnapshotEntity,
-  parseDocumentEntity,
-  parseDocumentPenHolderEntity,
-  parseDocumentSummaryEntity,
   parseDesignRecordEntity,
   parseEventEntity,
   parseFindingsLedger as parseFindingsLedgerContract,
@@ -130,9 +124,6 @@ export interface RawParksLedger extends Omit<TolerantParksLedger, 'open' | 'reso
 export type RawBoardNotification = WithNullableMs<WithMs<TolerantBoardNotification, 'createdAt'>, 'readAt'>;
 export type RawBoardPause = WithMs<BoardPause, 'updatedAt'>;
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
-export type RawDocumentPenHolder = WithMs<DocumentPenHolder, 'acquiredAt'>;
-export type RawDocumentSummary = WithMs<WithMs<Omit<WithoutApi<DocumentSummary>, 'penHolder'> & { penHolder: RawDocumentPenHolder | null }, 'createdAt'>, 'updatedAt'>;
-export type RawDocument = RawDocumentSummary & Pick<DocumentSnapshot, 'content'>;
 export type RawTaskPhase = WithMs<WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, 'startedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
 export type RawTask = WithMs<WithMs<WithNullableMs<WithNullableMs<WithNullableMs<WithNullableMs<
   Omit<WithoutApi<TolerantTaskEntity>, 'phases' | 'workspaceRefs'> & { phases: RawTaskPhase[]; workspaceRefs: string[] }, 'estimateRecordedAt'>, 'startedAt'>,
@@ -142,7 +133,7 @@ export type RawRun = WithNullableMs<WithMs<WithNullableMs<Omit<WithoutApi<AgentR
 export type RawInterrupt = WithMs<Pick<AgentInterrupt, 'sequence' | 'agentId' | 'runId' | 'requestedAt'>, 'requestedAt'>;
 export type RawEvent = WithMs<WithoutApi<TaskEvent>, 'createdAt'>;
 export type RawMessage = WithMs<Omit<WithoutApi<TaskMessage>, 'runId'>, 'createdAt'>;
-export interface RawBoard { project: RawProject; agents: RawAgent[]; tasks: RawTask[]; questions: RawQuestion[]; runs: RawRun[]; interrupts: RawInterrupt[]; events: RawEvent[]; documents: RawDocumentSummary[] }
+export interface RawBoard { project: RawProject; agents: RawAgent[]; tasks: RawTask[]; questions: RawQuestion[]; runs: RawRun[]; interrupts: RawInterrupt[]; events: RawEvent[] }
 
 const loose = {
   exact: false,
@@ -236,29 +227,6 @@ function projectAgent(item: AgentProfile): RawAgent {
 }
 export function parseAgent(value: unknown, path: string): RawAgent {
   return projectAgent(parseAgentEntity(value, path, loose));
-}
-function projectDocumentPenHolder(item: DocumentPenHolder): RawDocumentPenHolder {
-  return { ...item, acquiredAtMs: ms(item.acquiredAt) };
-}
-export function parseDocumentPenHolder(value: unknown, path: string): RawDocumentPenHolder {
-  return projectDocumentPenHolder(parseDocumentPenHolderEntity(value, path, loose));
-}
-function projectDocumentSummary(item: DocumentSummary): RawDocumentSummary {
-  return {
-    ...withoutApiVersion(item),
-    penHolder: item.penHolder === null ? null : projectDocumentPenHolder(item.penHolder),
-    createdAtMs: ms(item.createdAt),
-    updatedAtMs: ms(item.updatedAt),
-  };
-}
-export function parseDocumentSummary(value: unknown, path: string): RawDocumentSummary {
-  return projectDocumentSummary(parseDocumentSummaryEntity(value, path, loose));
-}
-function projectDocument(item: DocumentSnapshot): RawDocument {
-  return { ...projectDocumentSummary(item), content: item.content };
-}
-export function parseDocument(value: unknown, path: string): RawDocument {
-  return projectDocument(parseDocumentEntity(value, path, loose));
 }
 function projectTaskPhase(item: TaskPhase): RawTaskPhase {
   return { ...withoutApiVersion(item), startedAtMs: nullableMs(item.startedAt), endedAtMs: nullableMs(item.endedAt), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt) };
@@ -484,6 +452,5 @@ export function parseRawBoard(value: unknown): RawBoard {
     runs: item.recentRuns.map(projectRun),
     interrupts: item.recentInterrupts.map(projectInterrupt),
     events: item.recentEvents.map(projectEvent),
-    documents: item.documents.map(projectDocumentSummary),
   };
 }

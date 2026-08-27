@@ -39,7 +39,6 @@ describe('board pause refresh coordination', () => {
       questions: [],
       runs: [],
       workItems: [],
-      documents: [],
     };
     const client = {
       getSnapshot: vi.fn().mockResolvedValue(snapshot),
