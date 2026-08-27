@@ -21,10 +21,11 @@ retired pen-documents editor.
    (realm name visible in the admin console's realm selector).
 2. **Dokploy project** — create a project (e.g. `cicada-docs`) with a **Compose** service;
    paste `deploy/outline/docker-compose.yml` as raw compose (no git source needed).
-3. **Environment** — in the service's Environment tab set:
+3. **Environment** — in the service's Environment tab, set the compose inputs exactly:
    `OUTLINE_SECRET_KEY` and `OUTLINE_UTILS_SECRET` (32-byte hex each — `openssl rand -hex 32`),
    `OUTLINE_PG_PASSWORD` (any strong value), `OUTLINE_OIDC_CLIENT_ID=outline`,
-   `OUTLINE_OIDC_CLIENT_SECRET`, and the three `OUTLINE_OIDC_*_URI` endpoints from step 1.
+   `OUTLINE_OIDC_CLIENT_SECRET`, `OUTLINE_OIDC_AUTH_URI`, `OUTLINE_OIDC_TOKEN_URI`, and
+   `OUTLINE_OIDC_USERINFO_URI`. Set the three URI values to the endpoints from step 1.
 4. **Domain** — on the `outline` service add domain `docs.cicadasystem.com` → port `3000`,
    HTTPS on (Traefik/letsencrypt). Deploy. First boot runs DB migrations (up to ~2 min).
 5. **First login** — sign in via Cicada SSO; the first user becomes admin.
@@ -32,17 +33,38 @@ retired pen-documents editor.
    Settings → API → new token. That token becomes `STEWARD_OUTLINE_API_TOKEN` for
    `npm run docs:publish` (and later the CI publish job). Never commit it.
 
-## Before deploying board schema v25 to production
+## Production document export
 
-**Export the pen-documents first — the v25 migration drops their tables on first boot.**
-On the host, against the volume `cicada-steward-3cmfas_steward-data`:
+**Before deploying board schema v25: export production pen-documents.** The v25 migration drops
+their tables on first boot. From this repository's checkout on the host, run this exact command
+against the `cicada-steward-3cmfas_steward-data` volume:
 
 ```bash
-node scripts/export-documents.mjs <path-to>/steward.sqlite <backup-dir>
+sudo node scripts/export-documents.mjs \
+  /var/lib/docker/volumes/cicada-steward-3cmfas_steward-data/_data/private/board.sqlite \
+  /root/nexus-pen-documents-v24-export
 ```
 
-The export writes every document as markdown plus its full event history as JSONL. Keep the
-backup somewhere durable before rolling the new board image.
+The destination must be absent or empty. The export writes every document as markdown plus its
+full event history as JSONL. Move that directory to durable backup storage and inspect it before
+rolling the new board image.
+
+## Publish by hand
+
+From a clean checkout with Node 24 and the default `config/docs-publish.json`:
+
+```bash
+npm ci
+STEWARD_OUTLINE_API_TOKEN='<Outline API token>' npm run docs:publish
+```
+
+The command prints one JSON report per configured repo and exits nonzero if any file fails.
+
+## Activate CI publishing
+
+In the GitHub repository's Actions settings, create the secret `STEWARD_OUTLINE_API_TOKEN`, then
+set the repository variable `DOCS_PUBLISH_ENABLED` to `true`. The publish workflow is inert until
+that variable has exactly that value; once enabled, it runs after pushes to `main`.
 
 ## Known limits
 

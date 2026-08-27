@@ -1,0 +1,24 @@
+# Inert until the repository variable DOCS_PUBLISH_ENABLED is set to true.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: docs-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    if: ${{ vars.DOCS_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run docs:publish
+        env:
+          STEWARD_OUTLINE_API_TOKEN: ${{ secrets.STEWARD_OUTLINE_API_TOKEN }}
