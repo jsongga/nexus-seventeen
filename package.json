@@ -28,6 +28,7 @@
     "dev:task-board": "npm run build:runtime && node build/server/task-board/main.js",
     "dev:task-worker": "npm run build:runtime && node build/server/agents/task-worker/main.js",
     "dev:task-fleet": "npm run build:runtime && node build/server/agents/task-fleet/main.js",
+    "docs:publish": "npm run build:runtime && node build/server/docs-publish/main.js",
     "clean:runtime": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true })\"",
     "clean:tests": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('.test-dist', { recursive: true, force: true })\"",
     "build": "npm run build:runtime && npm run build:web",

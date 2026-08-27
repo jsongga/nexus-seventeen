@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "outline": {
+    "baseUrl": "https://docs.cicadasystem.com"
+  },
+  "repos": [
+    {
+      "name": "nexus-seventeen",
+      "path": ".",
+      "ref": "HEAD",
+      "exclude": ["docs/superpowers/**"]
+    }
+  ]
+}
