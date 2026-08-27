@@ -1,0 +1,53 @@
+# Outline wiki for docs.cicadasystem.com — Dokploy compose project.
+# Runbook: docs/OUTLINE.md. TLS terminates at Dokploy's Traefik front door:
+# attach the domain docs.cicadasystem.com -> service `outline`, port 3000, in
+# the Dokploy panel. No ports are published here on purpose.
+# Image pinned 2026-08-26; the docker-tier e2e pins the same tag.
+services:
+  outline:
+    image: outlinewiki/outline:1.9.2
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      NODE_ENV: production
+      URL: https://docs.cicadasystem.com
+      PORT: "3000"
+      FORCE_HTTPS: "false" # TLS is Traefik's job; Outline sees plain HTTP
+      SECRET_KEY: ${OUTLINE_SECRET_KEY:?set in Dokploy environment}
+      UTILS_SECRET: ${OUTLINE_UTILS_SECRET:?set in Dokploy environment}
+      DATABASE_URL: postgres://outline:${OUTLINE_PG_PASSWORD:?set in Dokploy environment}@postgres:5432/outline
+      PGSSLMODE: disable
+      REDIS_URL: redis://redis:6379
+      FILE_STORAGE: local
+      FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data
+      FILE_STORAGE_UPLOAD_MAX_SIZE: "26214400"
+      # Keycloak OIDC (staff SSO). Create the client per docs/OUTLINE.md.
+      OIDC_CLIENT_ID: ${OUTLINE_OIDC_CLIENT_ID:?set in Dokploy environment}
+      OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?set in Dokploy environment}
+      OIDC_AUTH_URI: ${OUTLINE_OIDC_AUTH_URI:?e.g. https://sso.cicadasystem.com/realms/<realm>/protocol/openid-connect/auth}
+      OIDC_TOKEN_URI: ${OUTLINE_OIDC_TOKEN_URI:?token endpoint}
+      OIDC_USERINFO_URI: ${OUTLINE_OIDC_USERINFO_URI:?userinfo endpoint}
+      OIDC_DISPLAY_NAME: Cicada SSO
+      OIDC_SCOPES: openid profile email
+    volumes:
+      - outline-data:/var/lib/outline/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: outline
+      POSTGRES_PASSWORD: ${OUTLINE_PG_PASSWORD:?set in Dokploy environment}
+      POSTGRES_DB: outline
+    volumes:
+      - outline-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  outline-data:
+  outline-postgres:
