@@ -136,6 +136,16 @@ against the pre-v25 production DB), this roadmap file, all schema fixtures,
 files ≲72, `src`+`tests` ≲260, zero single-file directories outside
 mandated conventions, gates + goldens green.
 
+**9.6. Board UX polish** *(requested 2026-08-26)* — no browser-native
+dialogs anywhere: replace the pause-reason `globalThis.prompt` at
+`BoardApp.tsx:566` with a custom anchored popover (reason field + confirm,
+matching the design system) — this is the only native dialog in the app;
+rework the "Add a task" full-screen modal (`CreateDialogs.tsx`) into an
+anchored/inline surface (popover or side panel) so creating a task never
+feels like leaving the task-board page; audit the other create/confirm
+modals for the same takeover feel. Exit: zero `globalThis.prompt/confirm/
+alert` calls; task creation keeps the board visibly present behind it.
+
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase
 sequencing with the human gate on contract. Exit: one blast-radius change

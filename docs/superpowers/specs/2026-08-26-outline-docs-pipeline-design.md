@@ -57,7 +57,7 @@ A plain Node CLI, **outside the agent sandbox** (§2: "mechanical CI job, no LLM
 ```json
 {
   "version": 1,
-  "outline": { "baseUrl": "https://outline.cicadasystem.com" },
+  "outline": { "baseUrl": "https://docs.cicadasystem.com" },
   "repos": [
     { "name": "nexus-seventeen", "path": ".", "ref": "HEAD",
       "exclude": ["docs/superpowers/**"] }
@@ -87,7 +87,7 @@ Ordering per roadmap: **export first, then remove.** Zero cross-references point
 ## Part C — Deferred activation (authored now, executed by the user)
 
 - **CI publish job** — `.github/workflows/publish-docs.yml`: `on: push: branches: [main]`, single job gated `if: vars.DOCS_PUBLISH_ENABLED == 'true'`, runs `npm ci && npm run docs:publish` with `STEWARD_OUTLINE_API_TOKEN: ${{ secrets.STEWARD_OUTLINE_API_TOKEN }}`. Inert until the user sets the variable + secret; costs nothing when pushed; nothing pushes from this campaign.
-- **Dokploy Outline deployment** — `deploy/outline/docker-compose.yml` (outline + postgres + redis, named volumes, `${OUTLINE_SECRET_KEY:?...}`-style env requirements) and `docs/OUTLINE.md`, the runbook: create the Dokploy project, set env (secrets, `URL=https://outline.cicadasystem.com` — wildcard DNS already resolves), OIDC against the existing Keycloak (sso.cicadasystem.com), create the service account + API token, then run the publisher once by hand.
+- **Dokploy Outline deployment** — `deploy/outline/docker-compose.yml` (outline + postgres + redis, named volumes, `${OUTLINE_SECRET_KEY:?...}`-style env requirements) and `docs/OUTLINE.md`, the runbook: create the Dokploy project, set env (secrets, `URL=https://docs.cicadasystem.com` — wildcard DNS already resolves), OIDC against the existing Keycloak (sso.cicadasystem.com), create the service account + API token, then run the publisher once by hand.
 - **Retirement precondition, stated in bold in the runbook and the migration commit message**: before deploying a board version containing schema v25, run `scripts/export-documents.mjs` against the production volume (`cicada-steward-3cmfas_steward-data`) — the migration drops the tables on first boot.
 
 ## Testing summary
