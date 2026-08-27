@@ -109,6 +109,33 @@ read-only CI publish of repo docs on merge; board pen-documents retired
 listed here because retirement waits for the replacement. Exit: repo docs
 readable in Outline with source banners; Documents page gone.
 
+**9.5. File diet + consolidation** *(approved 2026-08-26, runs after 9
+closes; from the five-agent layout/dead-code analysis)* — Tier A:
+`.gitignore` the `.superpowers/` scratch; `catalog/company-bootstrap.json`
+→ `config/`; mirror-rule fix (move the 10 collaborator-named tests into
+`tests/server/task-board/collaborators/`, relocate the stray persistence
+test); delete the completed `docs/superpowers/{plans,specs}` (keep the
+active campaign's pair until it ships) + `scripts/agent-container-smoke.mjs`;
+dead code (`proposals.ts`+test, `parseWakeupEntity`, `apiEntity`,
+`parseTaskPhase`, dead barrel line, `public/cicada-mark.svg`, npm scripts
+`dev:task-worker`/`preview`/`test:watch`, `TASK_RETRY_REQUIRED` error code);
+`scripts/bootstrap-lib.test.mjs` → `tests/tooling/` (drop `test:bootstrap` +
+`build:bootstrap-contract` + `tsconfig.bootstrap.json`). Tier B: flatten
+`skills/<id>/SKILL.md` → `skills/<id>.md` (digest-safe, one-line registry
+change); micro-module merges (`runtime/{events,errors}`→`adapter`, the three
+SQL-constant files into their hosts, `data/{uuid,concurrency}`→`client`,
+`dialog-discard`→`dialog-stack`, `safe-error-detail`→`redact`); remove the
+25 barrel-only export lines + strip the 103 redundant `export` keywords;
+fold `docs/TASK_FLEET.md` into README; prune the stale 105-line plan section
+in `WORKFLOW_ARCHITECTURE.md`; document the 16 undocumented `STEWARD_*` env
+vars and `bootstrap:apply`. Tier C: merge the 7 micro prompt-partials via a
+`renderSection` registry extension (promptsSha churns once; regenerate
+affected goldens). Explicitly kept: `scripts/export-documents.mjs` (needed
+against the pre-v25 production DB), this roadmap file, all schema fixtures,
+`prompts/`/`deploy/`/`public/`/tsconfig placement. Exit: non-code tracked
+files ≲72, `src`+`tests` ≲260, zero single-file directories outside
+mandated conventions, gates + goldens green.
+
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase
 sequencing with the human gate on contract. Exit: one blast-radius change
