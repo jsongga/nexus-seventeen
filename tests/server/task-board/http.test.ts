@@ -14,18 +14,6 @@ import {
   workItemRequest,
 } from "./helpers.js";
 
-async function readSseFrame(reader: ReadableStreamDefaultReader<Uint8Array>, prior = ""): Promise<{ frame: string; rest: string }> {
-  const decoder = new TextDecoder();
-  let text = prior;
-  while (!text.includes("\n\n")) {
-    const chunk = await reader.read();
-    assert.equal(chunk.done, false);
-    text += decoder.decode(chunk.value, { stream: true });
-  }
-  const boundary = text.indexOf("\n\n");
-  return { frame: text.slice(0, boundary), rest: text.slice(boundary + 2) };
-}
-
 async function request(
   origin: string,
   path: string,
@@ -1478,104 +1466,21 @@ test("held HTTP worker requests expose transient connections and service close r
   }
 });
 
-test("document HTTP auth and full-snapshot SSE replay remain ordered across restart", async () => {
-  const path = await databasePath();
-  const options = {
-    dbPath: path,
+test("document routes are retired", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
     port: 0,
     now: () => new Date("2026-07-19T20:00:00.000Z"),
-  };
-  let service = await createTaskBoardService(options);
-  let address = await service.start();
-  let documentId = "";
-  const nearLimit = "x".repeat(48 * 1_024);
+  });
+  const address = await service.start();
   try {
-    const projectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
-      name: "Document broadcasts",
-      description: "Share development notes without frontend ownership.",
+    const response = await request(address.url, "/v1/documents/x", "GET", HUMAN_TOKEN);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), {
+      error: { code: "NOT_FOUND", message: "Endpoint was not found" },
     });
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
-      agentId: "engineer-one",
-      role: "engineer",
-      area: "documents",
-      mission: "Maintain project notes.",
-      model: "codex-mini",
-      token: AGENT_ONE_TOKEN,
-    })).status, 201);
-    const otherProjectResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
-      name: "Other project",
-      description: "Must not read the first project's documents.",
-    });
-    const otherProjectId = (await otherProjectResponse.json() as { project: { projectId: string } }).project.projectId;
-    assert.equal((await request(address.url, `/v1/projects/${otherProjectId}/agents`, "POST", HUMAN_TOKEN, {
-      agentId: "engineer-two",
-      role: "engineer",
-      area: "other",
-      mission: "Stay within the other project.",
-      model: "codex-mini",
-      token: AGENT_TWO_TOKEN,
-    })).status, 201);
-
-    const createdResponse = await request(address.url, `/v1/projects/${projectId}/documents`, "POST", HUMAN_TOKEN, {
-      title: "Large recovery note",
-      contentType: "text/markdown",
-      content: nearLimit,
-      clientId: "browser-owner",
-    });
-    assert.equal(createdResponse.status, 201);
-    const created = (await createdResponse.json() as { document: { documentId: string } }).document;
-    documentId = created.documentId;
-    assert.equal((await request(address.url, `/v1/documents/${documentId}`, "GET", AGENT_ONE_TOKEN)).status, 200);
-    assert.equal((await request(address.url, `/v1/documents/${documentId}`, "GET", AGENT_TWO_TOKEN)).status, 403);
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/documents`, "POST", AGENT_ONE_TOKEN, {
-      title: "Unauthorized create",
-      contentType: "text/markdown",
-      content: "no",
-      clientId: "agent-client",
-    })).status, 401);
-    const updated = await request(address.url, `/v1/documents/${documentId}`, "PATCH", HUMAN_TOKEN, {
-      clientId: "browser-owner",
-      penEpoch: 1,
-      contentVersion: 1,
-      content: nearLimit.replaceAll("x", "y"),
-    });
-    assert.equal(updated.status, 200);
-
-    await service.close();
-    service = await createTaskBoardService(options);
-    address = await service.start();
-
-    const controller = new AbortController();
-    const stream = await fetch(`${address.url}/v1/documents/${documentId}/events?after=1`, {
-      headers: { Authorization: `Bearer ${HUMAN_TOKEN}`, Accept: "text/event-stream" },
-      signal: controller.signal,
-    });
-    assert.equal(stream.status, 200);
-    assert.match(stream.headers.get("content-type") ?? "", /^text\/event-stream/u);
-    const reader = stream.body?.getReader();
-    assert.ok(reader);
-    let parsed = await readSseFrame(reader);
-    assert.match(parsed.frame, /^id: 2\nevent: document\ndata: /u);
-    const replay = JSON.parse(parsed.frame.split("\ndata: ")[1]!) as { document: { sequence: number; content: string } };
-    assert.equal(replay.document.sequence, 2);
-    assert.equal(replay.document.content.length, nearLimit.length);
-
-    const liveUpdate = await request(address.url, `/v1/documents/${documentId}`, "PATCH", HUMAN_TOKEN, {
-      clientId: "browser-owner",
-      penEpoch: 1,
-      contentVersion: 2,
-      content: "# Human-reviewed recovery",
-    });
-    assert.equal(liveUpdate.status, 200);
-    parsed = await readSseFrame(reader, parsed.rest);
-    assert.match(parsed.frame, /^id: 3\nevent: document\ndata: /u);
-    const live = JSON.parse(parsed.frame.split("\ndata: ")[1]!) as { document: { sequence: number; contentVersion: number } };
-    assert.equal(live.document.sequence, 3);
-    assert.equal(live.document.contentVersion, 3);
-    controller.abort();
   } finally {
     await service.close();
   }

@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   ACTOR_TYPES,
   AGENT_ROLES,
   DESIGN_FAILURE_POINTS,
-  DOCUMENT_ACTOR_TYPES,
   GATE_KINDS,
   NOTIFICATION_KINDS,
   PARK_CATEGORIES,
@@ -82,7 +81,7 @@ const V22_PARK_CATEGORIES = [
 ] as const;
 const V22_NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned"] as const;
 
-function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23 | 24): string {
+function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23 | 24 | 25): string {
   const rows = store.db.prepare(`
     SELECT type, name, sql
     FROM sqlite_master
@@ -118,19 +117,45 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
     .join("\n\n")}\n`;
 }
 
-test("fresh v24 DDL preserves the byte-identical frozen v19 through v23 schemas", async () => {
+function withoutRetiredDocumentSchema(schema: string): string {
+  return schema
+    .split(/(?=^-- (?:index|table|trigger): )/mu)
+    .filter((section) => !/^-- (?:index|table): (?:document_events|document_events_project|documents|documents_project)$/mu.test(
+      section.split("\n", 1)[0] ?? "",
+    ))
+    .join("");
+}
+
+async function installFrozenSchema(path: string, version: 23 | 24): Promise<void> {
+  const { DatabaseSync } = await import("node:sqlite");
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const legacy = new DatabaseSync(path);
+  try {
+    const frozen = await readFile(join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`), "utf8");
+    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
+    const executable = frozen
+      .split(/(?=^-- (?:index|table|trigger): )/m)
+      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
+        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .join("");
+    legacy.exec(executable);
+    legacy.exec(`PRAGMA user_version = ${version};`);
+  } finally {
+    legacy.close();
+  }
+  await chmod(path, 0o600);
+}
+
+test("fresh v25 DDL preserves the byte-identical non-document v19 through v24 schemas", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 24);
-    for (const version of [19, 20, 21, 22, 23] as const) {
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 25);
+    for (const version of [19, 20, 21, 22, 23, 24] as const) {
       const fixturePath = join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`);
-      // Regenerate a new pre-migration fixture with the same projection the assertion consumes:
+      // v24-schema.sql was generated before the version bump with the same mechanism as v23:
       // UPDATE_TASK_BOARD_SCHEMA_FIXTURES=1 node --test <compiled contract-drift suite>.
-      if (version === 23 && process.env.UPDATE_TASK_BOARD_SCHEMA_FIXTURES === "1") {
-        await writeFile(fixturePath, frozenProjection(store, version), "utf8");
-      }
       const golden = await readFile(fixturePath, "utf8");
-      assert.equal(frozenProjection(store, version), golden);
+      assert.equal(frozenProjection(store, version), withoutRetiredDocumentSchema(golden));
     }
     assert.deepEqual({ ...store.db.prepare(`
       SELECT pause_id, paused, reason, version, updated_at, updated_by FROM board_pause
@@ -147,30 +172,14 @@ test("fresh v24 DDL preserves the byte-identical frozen v19 through v23 schemas"
   }
 });
 
-test("v23 fixture migrates to the same v24 schema as a fresh database", async () => {
-  const { DatabaseSync } = await import("node:sqlite");
+test("v23 fixture migrates through v25 to the same schema as a fresh database", async () => {
   const path = await databasePath();
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const legacy = new DatabaseSync(path);
-  try {
-    const frozenV23 = await readFile(join(process.cwd(), "tests/server/task-board/fixtures/v23-schema.sql"), "utf8");
-    const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
-    const executableV23 = frozenV23
-      .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
-      .join("");
-    legacy.exec(executableV23);
-    legacy.exec("PRAGMA user_version = 23;");
-  } finally {
-    legacy.close();
-  }
-  await chmod(path, 0o600);
+  await installFrozenSchema(path, 23);
 
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     const onboardingColumns = upgraded.db.prepare("PRAGMA table_info(work_item_onboarding_tasks)").all();
     assert.deepEqual(
       onboardingColumns.map((row) => String(row.name)),
@@ -202,7 +211,7 @@ test("v23 fixture migrates to the same v24 schema as a fresh database", async ()
         sql,
       );
     }
-    assert.equal(frozenProjection(upgraded, 24), frozenProjection(fresh, 24));
+    assert.equal(frozenProjection(upgraded, 25), frozenProjection(fresh, 25));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     fresh.close();
@@ -210,7 +219,62 @@ test("v23 fixture migrates to the same v24 schema as a fresh database", async ()
   }
 });
 
-test("v24 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
+test("v24 fixture migrates to the same v25 schema as a fresh database and retires document tables", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await installFrozenSchema(path, 24);
+  const legacy = new DatabaseSync(path);
+  try {
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
+      VALUES ('migration-project', 'Migration project', 'Preserve this project.', 1,
+        '2026-08-26T12:00:00.000Z', '2026-08-26T12:00:00.000Z');
+      INSERT INTO documents(
+        document_id, project_id, title, content_type, content, content_version, pen_epoch,
+        pen_holder_actor_type, pen_holder_actor_id, pen_holder_client_id, pen_acquired_at,
+        sequence, created_at, updated_at
+      ) VALUES (
+        'retired-document', 'migration-project', 'Retired document', 'text/markdown', '# Exported', 1, 1,
+        NULL, NULL, NULL, NULL, 1, '2026-08-26T12:01:00.000Z', '2026-08-26T12:01:00.000Z'
+      );
+      INSERT INTO document_events(
+        document_id, sequence, event_id, project_id, event_type, actor_type,
+        actor_id, client_id, document_json, created_at
+      ) VALUES (
+        'retired-document', 1, 'retired-document-event', 'migration-project', 'document_created',
+        'human', 'human:alice', 'migration-test', '{}', '2026-08-26T12:01:00.000Z'
+      );
+    `);
+  } finally {
+    legacy.close();
+  }
+
+  const upgraded = await TaskBoardStore.open(path);
+  const fresh = await TaskBoardStore.open(await databasePath());
+  try {
+    for (const store of [upgraded, fresh]) {
+      assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 25);
+      for (const table of ["document_events", "documents"]) {
+        assert.equal(
+          store.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
+          undefined,
+        );
+      }
+    }
+    assert.equal(
+      upgraded.db.prepare("SELECT name FROM projects WHERE project_id = 'migration-project'").get()?.name,
+      "Migration project",
+    );
+    assert.equal(frozenProjection(upgraded, 25), frozenProjection(fresh, 25));
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    fresh.close();
+    upgraded.close();
+  }
+});
+
+test("v25 table CHECK clauses contain byte-identical contract-derived enum lists", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
     const tableSql = (name: string): string => {
@@ -236,8 +300,6 @@ test("v24 table CHECK clauses contain byte-identical contract-derived enum lists
       ["work_item_transitions", `from_state IN (${sqlList(WORK_ITEM_STATES)})`],
       ["work_item_transitions", `CHECK (to_state IN (${sqlList(WORK_ITEM_STATES)}))`],
       ["wakeups", `CHECK (reason IN (${sqlList(WAKEUP_REASONS)}))`],
-      ["documents", `pen_holder_actor_type IN (${sqlList(DOCUMENT_ACTOR_TYPES)})`],
-      ["document_events", `CHECK (actor_type IN (${sqlList(DOCUMENT_ACTOR_TYPES)}))`],
       ["task_messages", `CHECK (actor_type IN (${sqlList(TASK_MESSAGE_ACTOR_TYPES)}))`],
       ["task_messages", `CHECK (kind IN (${sqlList(TASK_MESSAGE_KINDS)}))`],
       ["task_events", `CHECK (actor_type IN (${sqlList(ACTOR_TYPES)}))`],
@@ -320,7 +382,7 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     for (const column of ["pipeline_branch", "base_sha"]) {
@@ -458,7 +520,7 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     assert.deepEqual(columns("review_findings"), [
@@ -565,7 +627,7 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
       .map((row) => String(row.name));
     assert.deepEqual(columns("park_records"), [
@@ -709,7 +771,7 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     assert.deepEqual(
       upgraded.db.prepare("SELECT rowid, * FROM park_records ORDER BY rowid").all().map((row) => ({ ...row })),
       parkRowsBefore,
@@ -862,7 +924,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     assert.deepEqual(
       upgraded.db.prepare(`
         SELECT work_item_id, state, project_target_mode, target_project_id, resolved_project_id, archived_at
@@ -974,7 +1036,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
 
   const reopened = await TaskBoardStore.open(path);
   try {
-    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     assert.deepEqual(
       reopened.db.prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id").all()
         .map((row) => ({ work_item_id: row.work_item_id, state: row.state })),
@@ -1054,7 +1116,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 24);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 25);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
       "CREATE INDEX project_events_node ON project_events(node_id, sequence)",

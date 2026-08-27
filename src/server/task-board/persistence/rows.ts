@@ -6,9 +6,6 @@ import {
   type AgentRole,
   type AgentRun,
   type BoardTask,
-  type DocumentEvent,
-  type DocumentSnapshot,
-  type DocumentSummary,
   type HumanQuestion,
   type Project,
   type ReviewFinding,
@@ -164,66 +161,6 @@ export function automationConfigurationFromRow(row: Row): AutomationConfiguratio
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
     updatedBy: stringValue(row, "updated_by"),
-  });
-}
-
-function documentPenFromRow(row: Row): DocumentSnapshot["penHolder"] {
-  const actorType = nullableString(row, "pen_holder_actor_type");
-  if (actorType === null) return null;
-  return Object.freeze({
-    actorType: actorType as "human" | "agent",
-    actorId: stringValue(row, "pen_holder_actor_id"),
-    clientId: stringValue(row, "pen_holder_client_id"),
-    acquiredAt: stringValue(row, "pen_acquired_at"),
-  });
-}
-
-export function documentSummaryFromRow(row: Row): DocumentSummary {
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    documentId: stringValue(row, "document_id"),
-    projectId: stringValue(row, "project_id"),
-    title: stringValue(row, "title"),
-    contentType: "text/markdown",
-    contentVersion: numberValue(row, "content_version"),
-    penEpoch: numberValue(row, "pen_epoch"),
-    penHolder: documentPenFromRow(row),
-    sequence: numberValue(row, "sequence"),
-    createdAt: stringValue(row, "created_at"),
-    updatedAt: stringValue(row, "updated_at"),
-  });
-}
-
-export function documentFromRow(row: Row): DocumentSnapshot {
-  return Object.freeze({
-    ...documentSummaryFromRow(row),
-    content: stringValue(row, "content"),
-  });
-}
-
-export function documentEventFromRow(row: Row): DocumentEvent {
-  const document = parseJson<DocumentSnapshot>(stringValue(row, "document_json"), "document_json");
-  if (
-    document.apiVersion !== TASK_BOARD_API_VERSION ||
-    typeof document.documentId !== "string" ||
-    typeof document.content !== "string" ||
-    !Number.isSafeInteger(document.sequence)
-  ) {
-    throw new Error("TASK_BOARD_DATABASE_CORRUPT:document_json");
-  }
-  const penHolder = document.penHolder === null ? null : Object.freeze({ ...document.penHolder });
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    eventId: stringValue(row, "event_id"),
-    documentId: stringValue(row, "document_id"),
-    projectId: stringValue(row, "project_id"),
-    sequence: numberValue(row, "sequence"),
-    eventType: stringValue(row, "event_type") as DocumentEvent["eventType"],
-    actorType: stringValue(row, "actor_type") as "human" | "agent",
-    actorId: stringValue(row, "actor_id"),
-    clientId: stringValue(row, "client_id"),
-    document: Object.freeze({ ...document, penHolder }),
-    createdAt: stringValue(row, "created_at"),
   });
 }
 

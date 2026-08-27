@@ -32,7 +32,7 @@ import {
 import { TaskBoardError } from "../errors.js";
 import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
@@ -553,8 +553,6 @@ ${REVIEW_DESIGN_SCHEMA}
 ${LEDGER_OBSERVABILITY_SCHEMA}
 
 ${TASK_PHASE_SCHEMA}
-
-${DOCUMENT_SCHEMA}
 
 CREATE TABLE task_messages (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1196,6 +1194,28 @@ function migrateVersion23To24(db: DatabaseSync): void {
   }
 }
 
+function migrateVersion24To25(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS document_events;
+      DROP TABLE IF EXISTS documents;
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    db.exec("PRAGMA user_version = 25; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1500,6 +1520,8 @@ export class TaskBoardStore {
         // Scheduling caps, board pause, and widened ledger enums are added below.
       } else if (version === 23) {
         // Onboarding work-item links are added below.
+      } else if (version === 24) {
+        // Pen-document storage is retired below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1525,6 +1547,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 21) migrateVersion21To22(db);
       if (version >= 1 && version <= 22) migrateVersion22To23(db);
       if (version >= 1 && version <= 23) migrateVersion23To24(db);
+      if (version >= 1 && version <= 24) migrateVersion24To25(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

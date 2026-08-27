@@ -32,13 +32,10 @@ import {
   parseClaim,
   parseConfirmPlanRevisionRequest,
   parseCreateAgent,
-  parseCreateDocument,
   parseCreateProject,
   parseCreateTask,
   parseCreateTaskPhase,
   parseCreateWorkItem,
-  parseDocumentPenUpdate,
-  parseDocumentUpdate,
   parseFindingsLedger,
   parseHumanMessage,
   parseIdentifier,
@@ -67,7 +64,7 @@ export interface TaskBoardAddress {
   readonly url: string;
 }
 
-interface DocumentStream {
+interface SseStream {
   readonly response: ServerResponse;
   readonly unsubscribe: () => void;
 }
@@ -163,8 +160,7 @@ export class TaskBoardService {
   readonly config: TaskBoardConfig;
   readonly #board: TaskBoard;
   readonly #server: Server;
-  readonly #documentStreams = new Set<DocumentStream>();
-  readonly #projectStreams = new Set<DocumentStream>();
+  readonly #projectStreams = new Set<SseStream>();
   readonly #closingAbort = new AbortController();
   #reconcileTimer: NodeJS.Timeout | undefined;
   #verifyTimer: NodeJS.Timeout | undefined;
@@ -518,67 +514,6 @@ export class TaskBoardService {
       response.end(bytes);
       return;
     }
-    const documentCreateMatch = /^\/v1\/projects\/([^/]+)\/documents$/u.exec(url.pathname);
-    if (documentCreateMatch && request.method === "POST") {
-      noQuery(url);
-      requireHuman(request, this.config);
-      const projectId = parseRouteIdentifier(documentCreateMatch[1], "projectId");
-      const document = this.#board.createDocument(
-        projectId,
-        parseCreateDocument(await readJsonBody(request, this.config.maxBodyBytes)),
-      );
-      sendJson(response, 201, { document });
-      return;
-    }
-    const documentMatch = /^\/v1\/documents\/([^/]+)$/u.exec(url.pathname);
-    if (documentMatch && request.method === "GET") {
-      noQuery(url);
-      const documentId = parseRouteIdentifier(documentMatch[1], "documentId");
-      const document = this.#board.getDocument(documentId);
-      this.#documentActor(request, document.projectId);
-      sendJson(response, 200, { document });
-      return;
-    }
-    const documentPenMatch = /^\/v1\/documents\/([^/]+)\/pen$/u.exec(url.pathname);
-    if (documentPenMatch && request.method === "POST") {
-      noQuery(url);
-      const documentId = parseRouteIdentifier(documentPenMatch[1], "documentId");
-      const current = this.#board.getDocument(documentId);
-      const actor = this.#documentActor(request, current.projectId);
-      const update = parseDocumentPenUpdate(await readJsonBody(request, this.config.maxBodyBytes));
-      if (actor.type === "agent") this.#board.assertAgentCredentialVersion(actor.id, actor.credentialVersion);
-      const document = this.#board.updateDocumentPen(
-        documentId,
-        update,
-        actor,
-      );
-      sendJson(response, 200, { document });
-      return;
-    }
-    if (documentMatch && request.method === "PATCH") {
-      noQuery(url);
-      const documentId = parseRouteIdentifier(documentMatch[1], "documentId");
-      const current = this.#board.getDocument(documentId);
-      const actor = this.#documentActor(request, current.projectId);
-      const update = parseDocumentUpdate(await readJsonBody(request, this.config.maxBodyBytes));
-      if (actor.type === "agent") this.#board.assertAgentCredentialVersion(actor.id, actor.credentialVersion);
-      const document = this.#board.updateDocument(
-        documentId,
-        update,
-        actor,
-      );
-      sendJson(response, 200, { document });
-      return;
-    }
-    const documentEventsMatch = /^\/v1\/documents\/([^/]+)\/events$/u.exec(url.pathname);
-    if (documentEventsMatch && request.method === "GET") {
-      const documentId = parseRouteIdentifier(documentEventsMatch[1], "documentId");
-      const document = this.#board.getDocument(documentId);
-      this.#documentActor(request, document.projectId);
-      const after = exactIntegerQuery(url, ["after"], "after", 0, Number.MAX_SAFE_INTEGER);
-      this.#openDocumentStream(request, response, documentId, document.sequence, after);
-      return;
-    }
     const agentCreateMatch = /^\/v1\/projects\/([^/]+)\/agents$/u.exec(url.pathname);
     if (agentCreateMatch && request.method === "POST") {
       noQuery(url);
@@ -833,88 +768,13 @@ export class TaskBoardService {
     throw new TaskBoardError(404, "NOT_FOUND", "Endpoint was not found");
   }
 
-  #documentActor(request: IncomingMessage, projectId: string): Readonly<
-    { type: "human"; id: string }
-    | { type: "agent"; id: string; credentialVersion: number }
-  > {
-    if (isHuman(request, this.config)) {
-      return Object.freeze({ type: "human", id: this.config.humanPrincipal });
-    }
-    const agent = this.#board.authenticateAgent(bearerToken(request));
-    if (agent.projectId !== projectId) {
-      throw new TaskBoardError(403, "DOCUMENT_PROJECT_FORBIDDEN", "Agent belongs to another project");
-    }
-    return Object.freeze({ type: "agent", id: agent.agentId, credentialVersion: agent.version });
-  }
-
-  #openDocumentStream(
-    request: IncomingMessage,
-    response: ServerResponse,
-    documentId: string,
-    currentSequence: number,
-    after: number,
-  ): void {
-    if (after > currentSequence) {
-      throw new TaskBoardError(409, "DOCUMENT_CURSOR_AHEAD", "Document cursor is ahead of durable state");
-    }
-
-    let stream: DocumentStream | undefined;
-    const remove = (): void => {
-      if (stream === undefined) return;
-      stream.unsubscribe();
-      this.#documentStreams.delete(stream);
-      stream = undefined;
-    };
-    const write = (document: import("#shared/task-board-contract").DocumentSnapshot): boolean => {
-      if (response.writableEnded || response.destroyed) return false;
-      // A false return is backpressure, not a failed delivery. The durable cursor
-      // lets a disconnected client replay; do not truncate a valid large frame.
-      response.write(
-        `id: ${document.sequence}\nevent: document\ndata: ${JSON.stringify({ document })}\n\n`,
-      );
-      return true;
-    };
-    const unsubscribe = this.#board.subscribeDocumentEvents(documentId, (event) => {
-      if (!write(event.document)) {
-        remove();
-        response.end();
-      }
-    });
-    stream = { response, unsubscribe };
-    this.#documentStreams.add(stream);
-    request.once("close", remove);
-    response.once("close", remove);
-
-    response.statusCode = 200;
-    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    response.setHeader("Cache-Control", "no-cache, no-transform");
-    response.setHeader("Connection", "keep-alive");
-    response.setHeader("X-Accel-Buffering", "no");
-    response.setHeader("X-Content-Type-Options", "nosniff");
-    response.flushHeaders();
-
-    let cursor = after;
-    while (!response.writableEnded) {
-      const events = this.#board.listDocumentEvents(documentId, cursor);
-      for (const event of events) {
-        if (!write(event.document)) {
-          remove();
-          response.end();
-          return;
-        }
-        cursor = event.sequence;
-      }
-      if (events.length < 200) break;
-    }
-  }
-
   #openProjectStream(request: IncomingMessage, response: ServerResponse, projectId: string, after: number): void {
     const write = (event: import("#shared/task-board-contract").ProjectEvent): boolean => {
       if (response.writableEnded || response.destroyed) return false;
       response.write(`id: ${event.sequence}\nevent: workflow\ndata: ${JSON.stringify({ event })}\n\n`);
       return true;
     };
-    let stream: DocumentStream | undefined;
+    let stream: SseStream | undefined;
     const remove = (): void => {
       if (!stream) return;
       stream.unsubscribe();
@@ -980,11 +840,6 @@ export class TaskBoardService {
       this.#baseBranchTimer = undefined;
     }
     this.#closingAbort.abort();
-    for (const stream of [...this.#documentStreams]) {
-      stream.unsubscribe();
-      stream.response.end();
-      this.#documentStreams.delete(stream);
-    }
     for (const stream of [...this.#projectStreams]) {
       stream.unsubscribe();
       stream.response.end();

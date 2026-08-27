@@ -18,7 +18,6 @@ import {
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
   type CreateAgentRequest,
-  type CreateDocumentRequest,
   type CreateHumanQuestionRequest,
   type CreateHumanTaskMessageRequest,
   type CreatePlanRevisionRequest,
@@ -28,9 +27,6 @@ import {
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
   type CreateWorkItemRequest,
-  type DocumentEvent,
-  type DocumentSnapshot,
-  type DocumentSummary,
   type FindingsLedger,
   type HumanQuestion,
   type InterruptAgentRequest,
@@ -51,8 +47,6 @@ import {
   type TaskMessage,
   type TaskPhase,
   type UpdateAutomationConfigurationRequest,
-  type UpdateDocumentPenRequest,
-  type UpdateDocumentRequest,
   type UpdateTaskPhaseRequest,
   type UpdateTaskRequest,
   type UpdateWorkItemRequest,
@@ -71,7 +65,6 @@ import {
   BaseBranchPollCollaborator,
   type BaseBranchSweepResult,
 } from "./collaborators/base-branch-poll.js";
-import { DocumentsCollaborator } from "./collaborators/documents.js";
 import { LedgersCollaborator } from "./collaborators/ledgers.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
 import {
@@ -130,7 +123,6 @@ export class TaskBoard {
   readonly #automation: AutomationCollaborator;
   readonly #baseBranchPoll: BaseBranchPollCollaborator;
   readonly #boardPause: BoardPauseCollaborator;
-  readonly #documents: DocumentsCollaborator;
   readonly #ledgers: LedgersCollaborator;
   readonly #messages: MessagesCollaborator;
   readonly #notifications: NotificationsCollaborator;
@@ -187,7 +179,6 @@ export class TaskBoard {
     );
     this.#wallClock = new WallClockCollaborator(this.#runtime, this.#runs, this.#notifications);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
-    this.#documents = new DocumentsCollaborator(this.#runtime);
     this.#messages = new MessagesCollaborator(this.#runtime);
   }
 
@@ -410,34 +401,6 @@ export class TaskBoard {
     return this.#projects.createProject(request);
   }
 
-  createDocument(projectId: string, request: CreateDocumentRequest): DocumentSnapshot {
-    return this.#documents.createDocument(projectId, request);
-  }
-
-  listDocuments(projectId: string): readonly DocumentSummary[] {
-    return this.#documents.listDocuments(projectId);
-  }
-
-  getDocument(documentId: string): DocumentSnapshot {
-    return this.#documents.getDocument(documentId);
-  }
-
-  updateDocumentPen(documentId: string, request: UpdateDocumentPenRequest, actor: Actor): DocumentSnapshot {
-    return this.#documents.updateDocumentPen(documentId, request, actor);
-  }
-
-  updateDocument(documentId: string, request: UpdateDocumentRequest, actor: Actor): DocumentSnapshot {
-    return this.#documents.updateDocument(documentId, request, actor);
-  }
-
-  listDocumentEvents(documentId: string, after = 0): readonly DocumentEvent[] {
-    return this.#documents.listDocumentEvents(documentId, after);
-  }
-
-  subscribeDocumentEvents(documentId: string, listener: (event: DocumentEvent) => void): () => void {
-    return this.#documents.subscribeDocumentEvents(documentId, listener);
-  }
-
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {
     return this.#agents.createAgent(projectId, request);
   }
@@ -566,7 +529,7 @@ export class TaskBoard {
       recentRuns: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 100").all(projectId).map(runFromRow)),
       recentInterrupts: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM interrupts WHERE project_id = ? ORDER BY sequence DESC LIMIT 100").all(projectId).map(interruptFromRow)),
       recentEvents: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM task_events WHERE project_id = ? ORDER BY sequence DESC LIMIT 200").all(projectId).map(eventFromRow)),
-      documents: this.#documents.listDocuments(projectId),
+      documents: [],
     });
   }
 

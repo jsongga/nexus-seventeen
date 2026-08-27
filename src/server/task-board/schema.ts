@@ -9,13 +9,10 @@ import {
   parseBoardClaim,
   parseBoardConfirmPlan,
   parseBoardCreateAgent,
-  parseBoardCreateDocument,
   parseBoardCreateProject,
   parseBoardCreateTask,
   parseBoardCreateTaskPhase,
   parseBoardCreateWorkItem,
-  parseBoardDocumentPenUpdate,
-  parseBoardDocumentUpdate,
   parseBoardHumanMessage,
   parseBoardIdempotencyKey,
   parseBoardIdentifier,
@@ -42,7 +39,6 @@ import type {
   ClaimRunRequest,
   ConfirmPlanRevisionRequest,
   CreateAgentRequest,
-  CreateDocumentRequest,
   CreateHumanQuestionRequest,
   CreateHumanTaskMessageRequest,
   CreateProjectRequest,
@@ -60,8 +56,6 @@ import type {
   RotateAgentTokenRequest,
   SettleRunRequest,
   UpdateAutomationConfigurationRequest,
-  UpdateDocumentPenRequest,
-  UpdateDocumentRequest,
   UpdateTaskPhaseRequest,
   UpdateTaskRequest,
   UpdateWorkItemRequest,
@@ -98,9 +92,6 @@ export function parseRotateAgentToken(value: unknown): RotateAgentTokenRequest {
 export function parseCreateTask(value: unknown): CreateTaskRequest { return adapt(() => parseBoardCreateTask(value)); }
 export function parseCreateTaskPhase(value: unknown): CreateTaskPhaseRequest { return adapt(() => parseBoardCreateTaskPhase(value)); }
 export function parseUpdateTaskPhase(value: unknown): UpdateTaskPhaseRequest { return adapt(() => parseBoardUpdateTaskPhase(value)); }
-export function parseCreateDocument(value: unknown): CreateDocumentRequest { return adapt(() => parseBoardCreateDocument(value)); }
-export function parseDocumentPenUpdate(value: unknown): UpdateDocumentPenRequest { return adapt(() => parseBoardDocumentPenUpdate(value)); }
-export function parseDocumentUpdate(value: unknown): UpdateDocumentRequest { return adapt(() => parseBoardDocumentUpdate(value)); }
 export function parseUpdateTask(value: unknown): UpdateTaskRequest { return adapt(() => parseBoardUpdateTask(value)); }
 export function parseRetryTask(value: unknown): RetryTaskRequest { return adapt(() => parseBoardRetryTask(value)); }
 export function parseBacklogTask(value: unknown): BacklogTaskRequest { return adapt(() => parseBoardBacklogTask(value)); }

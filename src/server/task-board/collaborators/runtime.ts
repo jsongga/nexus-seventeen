@@ -58,7 +58,6 @@ const REVIEW_WORKFLOW_ACTOR = "system:steward-review-workflow";
 export class TaskBoardRuntime {
   readonly interruptEvents = new EventEmitter();
   readonly wakeupEvents = new EventEmitter();
-  readonly documentEvents = new EventEmitter();
   readonly projectEvents = new EventEmitter();
   readonly #gateActionWriter: GateActionWriter;
   readonly #workerConnections = new Map<string, WorkerConnectionCounts>();
@@ -71,7 +70,6 @@ export class TaskBoardRuntime {
     this.#gateActionWriter = new GateActionWriter(store, config.now);
     this.interruptEvents.setMaxListeners(512);
     this.wakeupEvents.setMaxListeners(512);
-    this.documentEvents.setMaxListeners(512);
     this.projectEvents.setMaxListeners(512);
   }
 
@@ -728,9 +726,6 @@ export class TaskBoardRuntime {
   close(): void {
     this.interruptEvents.removeAllListeners();
     this.wakeupEvents.removeAllListeners();
-    this.documentEvents.removeAllListeners();
-    // projectEvents was omitted here before, so subscribeProjectEvents
-    // listeners outlived close(). All four emitters are released together.
     this.projectEvents.removeAllListeners();
     this.#workerConnections.clear();
   }
