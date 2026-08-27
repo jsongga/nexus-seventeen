@@ -21,7 +21,7 @@ function excludePrefixes(patterns: readonly string[]): readonly string[] {
     validateExcludePattern(pattern, `exclude[${index}]`).slice(0, -3));
 }
 
-function isDocument(path: string): boolean {
+export function isDocSourcePath(path: string): boolean {
   return path === "README.md" || (path.startsWith("docs/") && path.endsWith(".md"));
 }
 
@@ -35,7 +35,7 @@ export function enumerateDocs(
   const output = git(runner, repoPath, ["ls-tree", "-r", "--name-only", "-z", ref, "--"]);
   const paths = (output.includes("\0") ? output.split("\0") : output.split(/\r?\n/u))
     .filter((path) => path.length > 0)
-    .filter(isDocument)
+    .filter(isDocSourcePath)
     .filter((path) => !prefixes.some((prefix) => path.startsWith(`${prefix}/`)));
 
   return Object.freeze(paths.map((path) => Object.freeze({

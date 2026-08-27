@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { DocsPublishConfig, DocsPublishRepo } from "./config.js";
 import { loadDocsPublishConfig } from "./config.js";
+import { OutlineSink } from "./outline-sink.js";
 import { publishRepo, type PublishReport } from "./publish.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
 
@@ -79,30 +80,12 @@ class DryRunSink implements DocsSink {
   }
 }
 
-class UnconfiguredSink implements DocsSink {
-  #error(): Error {
-    return new Error("Outline sink is not configured; install the docs publisher HTTP sink");
-  }
-
-  ensureCollection(_repoName: string): Promise<SinkCollection> {
-    return Promise.reject(this.#error());
-  }
-
-  listDocuments(_collection: SinkCollection): Promise<readonly SinkDocument[]> {
-    return Promise.reject(this.#error());
-  }
-
-  createDocument(_collection: SinkCollection, _title: string, _text: string): Promise<void> {
-    return Promise.reject(this.#error());
-  }
-
-  updateDocument(_documentId: string, _title: string, _text: string): Promise<void> {
-    return Promise.reject(this.#error());
-  }
-
-  archiveDocument(_documentId: string): Promise<void> {
-    return Promise.reject(this.#error());
-  }
+function outlineSinkFactory(outline: DocsPublishConfig["outline"], token: string): DocsSink {
+  return new OutlineSink({
+    baseUrl: outline.baseUrl,
+    allowInsecureBaseUrl: outline.allowInsecureBaseUrl,
+    token,
+  });
 }
 
 function selectedRepos(config: DocsPublishConfig, repoName: string | undefined): readonly DocsPublishRepo[] {
@@ -128,7 +111,7 @@ export async function runDocsPublishCli(
     sink = new DryRunSink();
   } else {
     const token = required("STEWARD_OUTLINE_API_TOKEN");
-    sink = sinkFactory?.(config.outline, token) ?? new UnconfiguredSink();
+    sink = (sinkFactory ?? outlineSinkFactory)(config.outline, token);
   }
   const reports: PublishReport[] = [];
   for (const entry of repos) {
