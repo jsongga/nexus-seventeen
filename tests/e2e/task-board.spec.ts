@@ -663,6 +663,20 @@ test('task routes preserve operator context across polling, removal, and dirty-d
   await expect(taskDialog).toHaveCount(0);
 });
 
+test('desktop outside-click on a dirty add-task draft asks for confirmation', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored add-task is desktop-only');
+  await installDefaultBoard(page);
+  await page.goto('/');
+
+  const taskListActions = page.getByRole('group', { name: 'Task list actions' });
+  await taskListActions.getByRole('button', { name: 'Add task' }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  await taskDialog.getByLabel('Task', { exact: true }).fill('Protect this outside-click draft.');
+
+  await page.getByRole('heading', { name: 'Task List', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toBeVisible();
+});
+
 test('mobile Back from a task opened on a project focuses the project heading', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 1_280) >= 1_280, 'below-xl focus behavior');
   await installDefaultBoard(page);
@@ -927,7 +941,11 @@ test('creating a task requires and records one explicit project with priority', 
   await page.goto('/');
   const taskListActions = page.getByRole('group', { name: 'Task list actions' });
   await taskListActions.getByRole('button', { name: 'Add task' }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('dialog', { name: 'Add a task' });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await expect(taskListActions).toBeVisible();
+    await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  }
   const taskPrompt = dialog.getByRole('textbox', { name: 'Task', exact: true });
   const taskType = dialog.getByLabel('Task type', { exact: true });
   await expect(taskPrompt).toHaveCount(1);
@@ -1839,7 +1857,7 @@ test('project intake lazily creates a manager whose lane token can be rotated an
   expect(agentCreateRequests).toBe(0);
 
   await page.getByRole('button', { name: 'Add task' }).click();
-  const taskDialog = page.getByRole('dialog');
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task' });
   await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(createdWorkItem.originalRequest);
   await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
   await taskDialog.getByRole('button', { name: 'Submit task' }).click();

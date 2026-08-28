@@ -1,4 +1,14 @@
-import { useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from 'react';
 import { X } from 'lucide-react';
 import { useConfirmBeforeDiscard, useDialogLayer } from './dialog-stack';
 
@@ -12,6 +22,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: 'sm' | 'md' | 'lg';
   icon?: ReactNode;
+  ref?: Ref<HTMLButtonElement>;
 }
 
 const buttonVariants: Record<ButtonVariant, string> = {
@@ -37,10 +48,12 @@ export function Button({
   icon,
   children,
   type = 'button',
+  ref,
   ...props
 }: ButtonProps) {
   return (
     <button
+      ref={ref}
       type={type}
       className={cn(
         'inline-flex items-center justify-center border font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-safe:active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed disabled:opacity-45',
@@ -119,6 +132,8 @@ export function Modal({
   children,
   className,
   isDirty,
+  variant = 'takeover',
+  anchorRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -127,8 +142,20 @@ export function Modal({
   children: ReactNode | ((requestClose: () => void) => ReactNode);
   className?: string;
   isDirty?: () => boolean;
+  variant?: 'takeover' | 'anchored';
+  anchorRef?: RefObject<HTMLElement | null>;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
+  const [desktopBreakpointMatches, setDesktopBreakpointMatches] = useState(() => (
+    typeof window === 'undefined' || window.matchMedia('(min-width: 640px)').matches
+  ));
+  const [anchorPosition, setAnchorPosition] = useState({
+    top: 16,
+    right: 16,
+    maxHeight: 0,
+  });
+  const anchoredOnDesktop = variant === 'anchored' && desktopBreakpointMatches;
+  const takeoverLayout = !anchoredOnDesktop;
   const { confirmationOpen, requestClose, keepEditing, discard } = useConfirmBeforeDiscard({
     open,
     isDirty,
@@ -138,52 +165,132 @@ export function Modal({
     open,
     onClose: requestClose,
     containerRef: dialogRef,
+    lockScroll: !anchoredOnDesktop,
   });
 
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 640px)');
+    const updateBreakpoint = () => setDesktopBreakpointMatches(desktop.matches);
+    updateBreakpoint();
+    desktop.addEventListener('change', updateBreakpoint);
+    return () => desktop.removeEventListener('change', updateBreakpoint);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open || !anchoredOnDesktop || !anchorRef?.current || !dialogRef.current) return;
+    const anchor = anchorRef.current;
+    const dialog = dialogRef.current;
+    const updatePosition = () => {
+      const anchorBounds = anchor.getBoundingClientRect();
+      const dialogBounds = dialog.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportInset = 16;
+      const anchorGap = 8;
+      const desiredRight = viewportWidth - anchorBounds.right;
+      const maxRight = Math.max(viewportInset, viewportWidth - dialogBounds.width - viewportInset);
+      const right = Math.min(maxRight, Math.max(viewportInset, desiredRight));
+      const top = anchorBounds.bottom + window.scrollY + anchorGap;
+      const maxHeight = Math.max(0, Math.min(
+        window.innerHeight * 0.8,
+        window.innerHeight - anchorBounds.bottom - anchorGap - viewportInset,
+      ));
+      const next = {
+        top: Math.round(top),
+        right: Math.round(right),
+        maxHeight: Math.floor(maxHeight),
+      };
+      setAnchorPosition((current) => (
+        current.top === next.top
+          && current.right === next.right
+          && current.maxHeight === next.maxHeight
+          ? current
+          : next
+      ));
+    };
+    const resizeObserver = new ResizeObserver(updatePosition);
+
+    updatePosition();
+    resizeObserver.observe(anchor);
+    resizeObserver.observe(dialog);
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [anchorRef, anchoredOnDesktop, open]);
+
+  useEffect(() => {
+    if (!open || !anchoredOnDesktop || !isTopmost) return;
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (dialogRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
+      requestClose();
+    };
+
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [anchorRef, anchoredOnDesktop, isTopmost, open, requestClose]);
+
   if (!open) return null;
+
+  const anchorStyle = anchoredOnDesktop
+    ? {
+        '--modal-anchor-top': `${anchorPosition.top}px`,
+        '--modal-anchor-right': `${anchorPosition.right}px`,
+        '--modal-anchor-max-height': `${anchorPosition.maxHeight}px`,
+      } as CSSProperties
+    : undefined;
 
   return (
     <>
       <div
-      className={cn(
-        'cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
-        !isTopmost && 'pointer-events-none',
-      )}
-      role="presentation"
-      aria-hidden={isTopmost ? undefined : true}
-      onMouseDown={(event) => {
-        if (isTopmost && event.target === event.currentTarget) requestClose();
-      }}
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal={isTopmost ? 'true' : undefined}
-        aria-labelledby={`${layerId}-title`}
-        tabIndex={-1}
         className={cn(
-          'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md',
-          className,
+          takeoverLayout && 'cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
+          !isTopmost && 'pointer-events-none',
         )}
+        data-testid={takeoverLayout ? 'modal-scrim' : undefined}
+        role={takeoverLayout ? 'presentation' : undefined}
+        aria-hidden={isTopmost ? undefined : true}
+        onMouseDown={(event) => {
+          if (isTopmost && event.target === event.currentTarget) requestClose();
+        }}
       >
-        <header className="sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6">
-          <div>
-            <h2 id={`${layerId}-title`} className="font-display text-xl font-light tracking-[0.01em]">
-              {title}
-            </h2>
-            {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
-          </div>
-          <button
-            type="button"
-            onClick={requestClose}
-            className="flex size-10 shrink-0 items-center justify-center rounded-[99px] text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95"
-            aria-label="Close dialog"
-          >
-            <X size={19} />
-          </button>
-        </header>
-        {typeof children === 'function' ? children(requestClose) : children}
-      </section>
+        <section
+          ref={dialogRef}
+          role="dialog"
+          aria-modal={isTopmost && takeoverLayout ? 'true' : undefined}
+          aria-labelledby={`${layerId}-title`}
+          tabIndex={-1}
+          style={anchorStyle}
+          className={cn(
+            'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)]',
+            anchoredOnDesktop
+              ? 'sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[min(80dvh,var(--modal-anchor-max-height))] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
+              : 'sm:max-w-lg sm:rounded-md',
+            className,
+          )}
+        >
+          <header className="sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6">
+            <div>
+              <h2 id={`${layerId}-title`} className="font-display text-xl font-light tracking-[0.01em]">
+                {title}
+              </h2>
+              {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
+            </div>
+            <button
+              type="button"
+              onClick={requestClose}
+              className="flex size-10 shrink-0 items-center justify-center rounded-[99px] text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface hover:text-ink motion-safe:hover:scale-105 motion-safe:active:scale-95"
+              aria-label="Close dialog"
+            >
+              <X size={19} />
+            </button>
+          </header>
+          {typeof children === 'function' ? children(requestClose) : children}
+        </section>
       </div>
       <Modal
         open={confirmationOpen}

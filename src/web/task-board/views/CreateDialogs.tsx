@@ -589,6 +589,7 @@ export function CreateDialogs({
   closeDialog,
   projectFormDirty,
   workItemFormDirty,
+  taskAnchorRef,
   dialogProject,
   snapshot,
   busy,
@@ -604,6 +605,7 @@ export function CreateDialogs({
   closeDialog: () => void;
   projectFormDirty: RefObject<boolean>;
   workItemFormDirty: RefObject<boolean>;
+  taskAnchorRef: RefObject<HTMLElement | null>;
   dialogProject: BoardSnapshot['projects'][number] | undefined;
   snapshot: BoardSnapshot | null;
   busy: boolean;
@@ -638,6 +640,8 @@ export function CreateDialogs({
         open={dialog === 'task'}
         onClose={closeDialog}
         isDirty={() => workItemFormDirty.current}
+        variant="anchored"
+        anchorRef={taskAnchorRef}
         title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'}
         description="Records a durable intake request. This step does not wake an agent yet."
       >

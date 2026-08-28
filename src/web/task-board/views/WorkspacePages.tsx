@@ -4,7 +4,7 @@ import {
   Plus,
   Send,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Button, InlineActionErrors, Modal, Pill, cn } from '../../components/ui';
 import { ActivityFeed, type ActivityFeedUpdate } from '../project/ActivityFeed';
 import { agentQueryPromptFromObjective } from '../data/client';
@@ -125,7 +125,7 @@ export function ProjectPage({
   project: BoardProject;
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
-  onAddTask: () => void;
+  onAddTask: (anchorRef: RefObject<HTMLElement | null>) => void;
   client: TaskBoardClient;
   connected: boolean;
 }) {
@@ -136,6 +136,7 @@ export function ProjectPage({
   const [handledRunIds, setHandledRunIds] = useState<Set<string>>(() => new Set());
   const [interruptOutcome, setInterruptOutcome] = useState<Pick<InterruptAllOutcome, 'interruptedCount' | 'alreadyFinishedCount'> | null>(null);
   const [interruptError, setInterruptError] = useState<string | null>(null);
+  const addTaskAnchorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -220,12 +221,13 @@ export function ProjectPage({
         title={project.name}
         actions={(
           <button
+            ref={addTaskAnchorRef}
             type="button"
             className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
             aria-label="Add task"
             title="Add task"
             disabled={!connected}
-            onClick={onAddTask}
+            onClick={() => onAddTask(addTaskAnchorRef)}
           >
             <Plus size={14} strokeWidth={2} aria-hidden="true" />
           </button>

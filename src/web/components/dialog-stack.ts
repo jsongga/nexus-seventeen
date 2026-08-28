@@ -28,7 +28,12 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
-let layers: string[] = [];
+interface DialogLayerRecord {
+  id: string;
+  lockScroll: boolean;
+}
+
+let layers: DialogLayerRecord[] = [];
 let priorBodyOverflow: string | undefined;
 let deferredRestoreTarget: HTMLElement | null = null;
 const listeners = new Set<() => void>();
@@ -43,26 +48,46 @@ function subscribe(listener: () => void) {
 }
 
 function topLayer() {
-  return layers.at(-1) ?? null;
+  return layers.at(-1)?.id ?? null;
 }
 
-function addLayer(id: string) {
-  if (layers.includes(id)) return;
-  if (layers.length === 0) {
+export function dialogLayersLockScroll(lockScrollByLayer: readonly boolean[]): boolean {
+  return lockScrollByLayer.some(Boolean);
+}
+
+function syncBodyScrollLock() {
+  const shouldLock = dialogLayersLockScroll(layers.map((layer) => layer.lockScroll));
+  if (shouldLock && priorBodyOverflow === undefined) {
     priorBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    return;
   }
-  layers = [...layers, id];
+  if (!shouldLock && priorBodyOverflow !== undefined) {
+    document.body.style.overflow = priorBodyOverflow;
+    priorBodyOverflow = undefined;
+  }
+}
+
+function addLayer(id: string, lockScroll: boolean) {
+  if (layers.some((layer) => layer.id === id)) return;
+  layers = [...layers, { id, lockScroll }];
+  syncBodyScrollLock();
   emitLayerChange();
 }
 
+function updateLayerScrollLock(id: string, lockScroll: boolean) {
+  const layer = layers.find((candidate) => candidate.id === id);
+  if (!layer || layer.lockScroll === lockScroll) return;
+  layers = layers.map((candidate) => candidate.id === id
+    ? { ...candidate, lockScroll }
+    : candidate);
+  syncBodyScrollLock();
+}
+
 function removeLayer(id: string) {
-  if (!layers.includes(id)) return;
-  layers = layers.filter((layer) => layer !== id);
-  if (layers.length === 0) {
-    document.body.style.overflow = priorBodyOverflow ?? '';
-    priorBodyOverflow = undefined;
-  }
+  if (!layers.some((layer) => layer.id === id)) return;
+  layers = layers.filter((layer) => layer.id !== id);
+  syncBodyScrollLock();
   emitLayerChange();
 }
 
@@ -79,6 +104,7 @@ interface DialogLayerOptions {
   open: boolean;
   onClose: () => void;
   containerRef: RefObject<HTMLElement | null>;
+  lockScroll?: boolean;
 }
 
 interface ConfirmBeforeDiscardOptions {
@@ -121,14 +147,21 @@ export function useConfirmBeforeDiscard({
 }
 
 /** Shared keyboard, focus, and stacking behavior for sibling/stacked dialogs. */
-export function useDialogLayer({ open, onClose, containerRef }: DialogLayerOptions) {
+export function useDialogLayer({
+  open,
+  onClose,
+  containerRef,
+  lockScroll = true,
+}: DialogLayerOptions) {
   const reactId = useId().replace(/:/g, '');
   const layerId = `dialog-${reactId}`;
   const onCloseRef = useRef(onClose);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const receivedInitialFocusRef = useRef(false);
   const wasOpenRef = useRef(false);
+  const lockScrollRef = useRef(lockScroll);
   onCloseRef.current = onClose;
+  lockScrollRef.current = lockScroll;
 
   // Capture during render, before React commits a descendant's `autoFocus`.
   // A passive effect is too late and would remember the dialog input itself.
@@ -147,7 +180,7 @@ export function useDialogLayer({ open, onClose, containerRef }: DialogLayerOptio
       return;
     }
 
-    addLayer(layerId);
+    addLayer(layerId, lockScrollRef.current);
 
     return () => {
       const wasTopmost = topLayer() === layerId;
@@ -173,6 +206,10 @@ export function useDialogLayer({ open, onClose, containerRef }: DialogLayerOptio
       }
     };
   }, [layerId, open]);
+
+  useEffect(() => {
+    if (open) updateLayerScrollLock(layerId, lockScroll);
+  }, [layerId, lockScroll, open]);
 
   useEffect(() => {
     if (!isTopmost || receivedInitialFocusRef.current || !containerRef.current) return;
