@@ -32,9 +32,14 @@ function renderDialog(dialog: 'project' | 'task') {
     client: {} as TaskBoardClient,
     dialog,
     closeDialog: vi.fn(),
+    keepEditingDialog: vi.fn(),
+    projectRequestCloseRef: { current: null },
+    taskRequestCloseRef: { current: null },
     projectFormDirty: { current: false },
     workItemFormDirty: { current: false },
-    taskAnchorRef: createRef<HTMLButtonElement>(),
+    taskAnchorRef: dialog === 'task'
+      ? { current: { isConnected: true } as HTMLElement }
+      : createRef<HTMLButtonElement>(),
     dialogProject: dialog === 'task' ? snapshot.projects[0] : undefined,
     snapshot,
     busy: false,

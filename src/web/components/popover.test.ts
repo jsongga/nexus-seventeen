@@ -17,5 +17,6 @@ describe('Popover', () => {
     expect(markup).toContain('aria-label="Pause board"');
     expect(markup).not.toContain('aria-modal');
     expect(markup).toContain('data-popover-initial-focus="true"');
+    expect(markup).toContain('min-h-0 overflow-y-auto p-3');
   });
 });

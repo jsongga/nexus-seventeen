@@ -1,7 +1,16 @@
 import { createElement, createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { Modal, resolveModalAnchorPlacement } from './ui';
+import { Modal, resolveModalAnchorPlacement, resolveModalTakeover } from './ui';
+
+describe('resolveModalTakeover', () => {
+  it('enters below twelve rem and leaves only at sixteen rem', () => {
+    expect(resolveModalTakeover(191, false)).toBe(true);
+    expect(resolveModalTakeover(192, false)).toBe(false);
+    expect(resolveModalTakeover(255, true)).toBe(true);
+    expect(resolveModalTakeover(256, true)).toBe(false);
+  });
+});
 
 describe('resolveModalAnchorPlacement', () => {
   it('chooses the roomier side when both sides are large', () => {
@@ -43,16 +52,32 @@ describe('resolveModalAnchorPlacement', () => {
       takeover: true,
     });
   });
+
+  it('stays in takeover until the roomier side reaches sixteen rem', () => {
+    expect(resolveModalAnchorPlacement(200, 240, true)).toEqual({
+      placement: 'below',
+      maxHeight: 240,
+      takeover: true,
+    });
+    expect(resolveModalAnchorPlacement(200, 256, true)).toEqual({
+      placement: 'below',
+      maxHeight: 256,
+      takeover: false,
+    });
+  });
 });
 
 describe('Modal', () => {
   it('keeps the same body wrapper element in takeover and anchored layouts', () => {
+    const connectedAnchorRef = {
+      current: { isConnected: true } as HTMLElement,
+    };
     const renderModal = (variant: 'takeover' | 'anchored') => renderToStaticMarkup(createElement(Modal, {
       open: true,
       onClose: vi.fn(),
       title: 'Stable dialog',
       variant,
-      anchorRef: createRef<HTMLButtonElement>(),
+      anchorRef: variant === 'anchored' ? connectedAnchorRef : createRef<HTMLButtonElement>(),
       children: createElement('span', { 'data-modal-body-content': true }, 'Body'),
     }));
 
@@ -71,5 +96,20 @@ describe('Modal', () => {
     expect(anchored).toContain(
       '</header><div class="min-h-0 flex-1 overflow-y-auto"><span data-modal-body-content="true">Body</span></div></section>',
     );
+  });
+
+  it('uses takeover when an anchored dialog has no connected anchor', () => {
+    const markup = renderToStaticMarkup(createElement(Modal, {
+      open: true,
+      onClose: vi.fn(),
+      title: 'Detached anchor dialog',
+      variant: 'anchored',
+      anchorRef: createRef<HTMLButtonElement>(),
+      children: 'Body',
+    }));
+
+    expect(markup).toContain('data-testid="modal-scrim"');
+    expect(markup).toContain('cicada-scrim-enter fixed inset-0');
+    expect(markup).not.toContain('sm:absolute');
   });
 });

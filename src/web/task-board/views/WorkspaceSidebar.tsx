@@ -422,6 +422,15 @@ export function WorkspaceFrame({
   onCancelPauseRef.current = onCancelPause;
 
   useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const onBreakpointChange = () => {
+      if (pausePopoverOpenRef.current) onCancelPauseRef.current();
+    };
+    desktop.addEventListener('change', onBreakpointChange);
+    return () => desktop.removeEventListener('change', onBreakpointChange);
+  }, []);
+
+  useEffect(() => {
     if (!drawerOpen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -429,7 +438,6 @@ export function WorkspaceFrame({
     const desktop = window.matchMedia('(min-width: 1024px)');
     const onBreakpointChange = (event: MediaQueryListEvent) => {
       if (event.matches) {
-        if (pausePopoverOpenRef.current) onCancelPauseRef.current();
         onDrawerChange(false);
       }
     };

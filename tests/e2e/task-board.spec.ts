@@ -234,6 +234,57 @@ test('a pause version conflict keeps the reason and error in the popover', async
   await expect(reason).toHaveValue('Database maintenance window.');
 });
 
+test('a pause conflict keeps its recovery controls reachable in a short desktop viewport', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop rail popover only');
+  await page.setViewportSize({ width: 1_440, height: 420 });
+  await installDefaultBoard(page, { pauseConflictOnce: true });
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('button', { name: 'Pause board', exact: true }).click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await pausePopover.getByRole('textbox', { name: 'Reason', exact: true }).fill('Short viewport maintenance.');
+  const confirmPause = pausePopover.getByRole('button', { name: 'Confirm pause', exact: true });
+  await confirmPause.click();
+
+  await expect(pausePopover.getByRole('alert')).toBeInViewport();
+  await expect(confirmPause).toBeInViewport();
+});
+
+test('outside-click closing the pause popover does not restore focus to the rail', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop rail outside-click behavior');
+  await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+  await pause.click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover).toBeVisible();
+
+  await page.getByRole('heading', { name: 'Task List', exact: true }).click();
+  await expect(pausePopover).toHaveCount(0);
+  await expect(pause).not.toBeFocused();
+});
+
+test('crossing the desktop rail breakpoint closes the pause popover in both directions', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'starts from the desktop rail');
+  await installDefaultBoard(page);
+  await page.goto('/');
+  let companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('button', { name: 'Pause board', exact: true }).click();
+  let pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover).toBeVisible();
+
+  await page.setViewportSize({ width: 900, height: 844 });
+  await expect(pausePopover).toHaveCount(0);
+
+  companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('button', { name: 'Pause board', exact: true }).click();
+  pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover).toBeVisible();
+  await page.setViewportSize({ width: 1_440, height: 844 });
+  await expect(pausePopover).toHaveCount(0);
+});
+
 test('a remote pause closes the open pause popover without reopening it after resume', async ({ page }) => {
   const boardStub = await installDefaultBoard(page);
   await page.goto('/');
@@ -443,6 +494,7 @@ test('interrupting every active project agent confirms the count and preserves r
   await expect(interruptAll).toBeEnabled();
   await interruptAll.click();
   let confirmation = page.getByRole('dialog', { name: 'Interrupt 2 agents?', exact: true });
+  await expect(confirmation).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) >= 640) {
     await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
     const cancelIntersectsHeader = await page.evaluate(() => {
@@ -695,6 +747,163 @@ test('desktop outside-click on a dirty add-task draft asks for confirmation', as
   await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toBeVisible();
 });
 
+test('an anchored add-task trigger preserves a dirty draft and does not trap Tab focus', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored add-task is desktop-only');
+  await installDefaultBoard(page);
+  await page.goto('/');
+
+  const addTask = page.getByRole('group', { name: 'Task list actions' })
+    .getByRole('button', { name: 'Add task', exact: true });
+  await addTask.click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  const prompt = taskDialog.getByLabel('Task', { exact: true });
+  const backgroundPrompt = page.locator('#task-prompt');
+  await prompt.fill('Keep this draft when its trigger is clicked again.');
+
+  await addTask.click();
+  const discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  await expect(backgroundPrompt).toHaveValue('Keep this draft when its trigger is clicked again.');
+  await discardConfirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+
+  const cancel = taskDialog.getByRole('button', { name: 'Cancel', exact: true });
+  await cancel.focus();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => taskDialog.evaluate((element) => !element.contains(document.activeElement))).toBe(true);
+  await expect(taskDialog).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(discardConfirmation).toBeVisible();
+  await expect(backgroundPrompt).toHaveValue('Keep this draft when its trigger is clicked again.');
+});
+
+test('switching dialogs and navigating wait for a dirty add-task decision', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop rail and anchored add-task only');
+  await installDefaultBoard(page);
+  await page.goto('/');
+
+  const taskActions = page.getByRole('group', { name: 'Task list actions' });
+  const addTask = taskActions.getByRole('button', { name: 'Add task', exact: true });
+  const addProject = taskActions.getByRole('button', { name: 'Add project', exact: true });
+  await addTask.click();
+  let taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  let prompt = taskDialog.getByLabel('Task', { exact: true });
+  const backgroundPrompt = page.locator('#task-prompt');
+  await prompt.fill('Choose whether this dialog may be replaced.');
+
+  await addProject.click();
+  let discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  await expect(backgroundPrompt).toHaveValue('Choose whether this dialog may be replaced.');
+  await discardConfirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(taskDialog).toBeVisible();
+  await expect(prompt).toHaveValue('Choose whether this dialog may be replaced.');
+  await expect(page.getByRole('dialog', { name: 'Add project from disk', exact: true })).toHaveCount(0);
+
+  await addProject.click();
+  await expect(discardConfirmation).toBeVisible();
+  await discardConfirmation.getByRole('button', { name: 'Discard', exact: true }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'Add project from disk', exact: true });
+  await expect(projectDialog).toBeVisible();
+  await projectDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+
+  await addTask.click();
+  taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  prompt = taskDialog.getByLabel('Task', { exact: true });
+  await prompt.fill('Choose whether navigation may continue.');
+  const companyRail = await openCompanyRail(page);
+  const automation = companyRail.getByRole('button', { name: 'Automation', exact: true });
+  await automation.click();
+  discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  await expect(page).toHaveURL(/#\/tasks$/u);
+  await discardConfirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(prompt).toHaveValue('Choose whether navigation may continue.');
+
+  await automation.click();
+  await expect(discardConfirmation).toBeVisible();
+  await discardConfirmation.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(page).toHaveURL(/#\/automation$/u);
+  await expect(taskDialog).toHaveCount(0);
+});
+
+test('a successful task creation drops a pending dialog switch', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored add-task is desktop-only');
+  await installDefaultBoard(page);
+  let finishCreate = () => {};
+  const createMayFinish = new Promise<void>((resolve) => { finishCreate = resolve; });
+  let markCreateStarted = () => {};
+  const createStarted = new Promise<void>((resolve) => { markCreateStarted = resolve; });
+  await page.route('**/board-api/v1/work-items', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    markCreateStarted();
+    await createMayFinish;
+    await route.fulfill({
+      status: 201,
+      json: {
+        workItem: {
+          apiVersion,
+          workItemId: 'work-item-created-during-confirmation',
+          originalRequest: 'Create this task while the confirmation is open.',
+          refinedObjective: null,
+          priority: 'normal',
+          taskType: 'standard',
+          projectTarget: { mode: 'explicit', projectId: project.projectId },
+          resolvedProjectId: project.projectId,
+          planningTaskId: task.taskId,
+          state: 'planning',
+          currentStage: 'planning',
+          createdBy: 'human:operator',
+          version: 2,
+          createdAt: '2026-08-28T12:00:00.000Z',
+          updatedAt: '2026-08-28T12:00:00.000Z',
+          endedAt: null,
+          cancelledReason: null,
+          archivedAt: null,
+          transitions: [{
+            fromState: null,
+            toState: 'planning',
+            actorType: 'human',
+            actorId: 'human:operator',
+            createdAt: '2026-08-28T12:00:00.000Z',
+          }],
+        },
+      },
+    });
+  });
+  await page.goto('/');
+
+  const taskActions = page.getByRole('group', { name: 'Task list actions' });
+  const addTask = taskActions.getByRole('button', { name: 'Add task', exact: true });
+  const addProject = taskActions.getByRole('button', { name: 'Add project', exact: true });
+  await addTask.click();
+  let taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  await taskDialog.getByLabel('Task', { exact: true })
+    .fill('Create this task while the confirmation is open.');
+  await taskDialog.getByLabel('Project', { exact: true }).selectOption(project.projectId);
+  await taskDialog.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await createStarted;
+
+  await addProject.click();
+  const discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  finishCreate();
+
+  await expect(discardConfirmation).toHaveCount(0);
+  await expect(taskDialog).toHaveCount(0);
+  const projectDialog = page.getByRole('dialog', { name: 'Add project from disk', exact: true });
+  await expect(projectDialog).toHaveCount(0);
+
+  await addTask.click();
+  taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  await taskDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(taskDialog).toHaveCount(0);
+  await expect(projectDialog).toHaveCount(0);
+});
+
 test('an add-task draft survives desktop and mobile layout transitions', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 640, 'responsive transition starts on desktop');
   const initialViewport = page.viewportSize();
@@ -717,8 +926,7 @@ test('an add-task draft survives desktop and mobile layout transitions', async (
   await expect(prompt).toHaveValue('Keep this prompt while the dialog changes layouts.');
 });
 
-test('a token-rotation dialog stays inside a short desktop viewport', async ({ page }) => {
-  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored token rotation is desktop-only');
+async function installTokenRotationBoard(page: Page) {
   const importedProject = {
     ...project,
     projectId: 'project-payment-tools',
@@ -903,6 +1111,22 @@ test('a token-rotation dialog stays inside a short desktop viewport', async ({ p
     await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
   });
 
+  return {
+    importedProject,
+    lazyManager,
+    createdWorkItem,
+    rotatedToken,
+    createdProject: () => createdProject,
+    agentCreateRequests: () => agentCreateRequests,
+    createdWorkItemRequest: () => createdWorkItemRequest,
+  };
+}
+
+async function openTokenRotationDialog(
+  page: Page,
+  fixture: Awaited<ReturnType<typeof installTokenRotationBoard>>,
+  viewport?: Readonly<{ width: number; height: number }>,
+) {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add project' }).click();
   const dialog = page.getByRole('dialog');
@@ -922,22 +1146,22 @@ test('a token-rotation dialog stays inside a short desktop viewport', async ({ p
   await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
   await dialog.getByRole('button', { name: 'Add project' }).click();
   await dialog.getByRole('button', { name: 'Add anyway' }).click();
-  await expect.poll(() => createdProject).not.toBeNull();
+  await expect.poll(fixture.createdProject).not.toBeNull();
 
-  expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
-  expect(agentCreateRequests).toBe(0);
+  expect(fixture.createdProject()).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
+  expect(fixture.agentCreateRequests()).toBe(0);
 
   await page.getByRole('button', { name: 'Add task' }).click();
   const taskDialog = page.getByRole('dialog', { name: 'Add a task' });
-  await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(createdWorkItem.originalRequest);
-  await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
+  await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(fixture.createdWorkItem.originalRequest);
+  await taskDialog.getByLabel('Project').selectOption(fixture.importedProject.projectId);
   await taskDialog.getByRole('button', { name: 'Submit task' }).click();
-  await expect.poll(() => createdWorkItemRequest).not.toBeNull();
-  expect(createdWorkItemRequest).toEqual({
-    originalRequest: createdWorkItem.originalRequest,
+  await expect.poll(fixture.createdWorkItemRequest).not.toBeNull();
+  expect(fixture.createdWorkItemRequest()).toEqual({
+    originalRequest: fixture.createdWorkItem.originalRequest,
     priority: 'normal',
     taskType: 'standard',
-    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
+    projectTarget: { mode: 'explicit', projectId: fixture.importedProject.projectId },
   });
 
   const companyRail = await openCompanyRail(page);
@@ -947,7 +1171,7 @@ test('a token-rotation dialog stays inside a short desktop viewport', async ({ p
   await expect(lazyManagerButton).toBeVisible();
   await lazyManagerButton.click();
   await expect(page.getByRole('heading', { name: 'Lane configuration' })).toBeVisible();
-  const laneConfig = page.getByLabel(`Fleet lane configuration for ${lazyManager.agentId}`);
+  const laneConfig = page.getByLabel(`Fleet lane configuration for ${fixture.lazyManager.agentId}`);
   await expect(laneConfig).toContainText('"agentId": "payment-tools-manager"');
   await expect(laneConfig).toContainText('"workingDirectory": "/absolute/path/to/repository"');
   await expect(laneConfig).toContainText('"provider": "<codex or claude>"');
@@ -956,14 +1180,26 @@ test('a token-rotation dialog stays inside a short desktop viewport', async ({ p
 
   const rotateToken = page.getByRole('button', { name: 'Rotate token', exact: true });
   await expect(rotateToken).toBeVisible();
-  await page.setViewportSize({ width: 1_440, height: 420 });
+  if (viewport) await page.setViewportSize(viewport);
   await rotateToken.scrollIntoViewIfNeeded();
+  const anchorMaxHeight = await rotateToken.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const anchorGapAndViewportInset = 8 + 16;
+    return Math.max(
+      0,
+      bounds.top - anchorGapAndViewportInset,
+      window.innerHeight - bounds.bottom - anchorGapAndViewportInset,
+    );
+  });
   await rotateToken.click();
 
   const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?', exact: true });
-  const closeDialog = rotationDialog.getByRole('button', { name: 'Close dialog', exact: true });
-  await expect(closeDialog).toBeVisible();
-  const bounds = await rotationDialog.evaluate((element) => {
+  await expect(rotationDialog.getByRole('button', { name: 'Close dialog', exact: true })).toBeVisible();
+  return { anchorMaxHeight, laneConfig, rotateToken, rotationDialog };
+}
+
+async function expectDialogInsideViewport(dialog: Locator): Promise<void> {
+  const bounds = await dialog.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return {
       top: rect.top,
@@ -978,6 +1214,39 @@ test('a token-rotation dialog stays inside a short desktop viewport', async ({ p
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(bounds.viewportWidth);
   expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
+}
+
+test('a token-rotation dialog uses takeover inside a short desktop viewport', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored token rotation is desktop-only');
+  const fixture = await installTokenRotationBoard(page);
+  const { anchorMaxHeight, rotateToken, rotationDialog } = await openTokenRotationDialog(
+    page,
+    fixture,
+    { width: 1_440, height: 240 },
+  );
+
+  expect(anchorMaxHeight).toBeLessThan(12 * 16);
+  await expect(page.getByTestId('modal-scrim')).toHaveCount(1);
+  await expect(rotationDialog.getByRole('button', { name: 'Close dialog', exact: true })).toBeVisible();
+  await expectDialogInsideViewport(rotationDialog);
+
+  await page.keyboard.press('Escape');
+  await expect(rotationDialog).toHaveCount(0);
+  await expect(rotateToken).toBeFocused();
+});
+
+test('a token-rotation dialog stays anchored inside a taller desktop viewport', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored token rotation is desktop-only');
+  const fixture = await installTokenRotationBoard(page);
+  const { anchorMaxHeight, rotateToken, rotationDialog } = await openTokenRotationDialog(
+    page,
+    fixture,
+    { width: 1_440, height: 700 },
+  );
+
+  expect(anchorMaxHeight).toBeGreaterThanOrEqual(12 * 16);
+  await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  await expectDialogInsideViewport(rotationDialog);
 
   await page.keyboard.press('Escape');
   await expect(rotationDialog).toHaveCount(0);
@@ -1958,243 +2227,9 @@ test('task details stay concise while showing a long description, agent estimate
 });
 
 test('project intake lazily creates a manager whose lane token can be rotated and shown once', async ({ page }) => {
-  const importedProject = {
-    ...project,
-    projectId: 'project-payment-tools',
-    name: 'payment-tools',
-    description: '/workspace/payment-tools',
-  };
-  let createdProject: Record<string, unknown> | null = null;
-  let projectCreated = false;
-  let projectCreateAttempts = 0;
-  let taskSubmitted = false;
-  let agentCreateRequests = 0;
-  let managerVersion = 1;
-  let rotationAttempts = 0;
-  let createdWorkItemRequest: Record<string, unknown> | null = null;
-  const rotatedToken = 'rotated-payment-tools-manager-token-012345678901';
-  const lazyManager = {
-    ...agent,
-    agentId: 'payment-tools-manager',
-    projectId: importedProject.projectId,
-    role: 'manager',
-    area: importedProject.name,
-    mission: 'Refine incoming payment-tools work and plan durable workflows.',
-    model: 'auto',
-    status: 'ready',
-    workerConnection: null,
-    lastError: null,
-    version: managerVersion,
-    createdAt: '2026-08-09T20:01:00.000Z',
-  };
-  const planningTask = {
-    ...task,
-    taskId: 'task-plan-payment-tools',
-    projectId: importedProject.projectId,
-    title: 'Plan workflow: Add a health check to payment tools',
-    objective: 'Add a health check to payment tools',
-    acceptanceCriteria: 'Return a concise workflow plan.',
-    workspaceRefs: [],
-    status: 'queued',
-    assignedAgentId: lazyManager.agentId,
-    assignedRole: 'manager',
-    requiresReview: false,
-    version: 1,
-    createdAt: '2026-08-09T20:01:00.000Z',
-    updatedAt: '2026-08-09T20:01:00.000Z',
-  };
-  const createdWorkItem = {
-    apiVersion,
-    workItemId: 'work-item-payment-tools-first',
-    originalRequest: 'Add a health check to payment tools',
-    refinedObjective: null,
-    priority: 'normal',
-    taskType: 'standard',
-    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
-    resolvedProjectId: importedProject.projectId,
-    planningTaskId: planningTask.taskId,
-    state: 'planning',
-    currentStage: 'planning',
-    createdBy: 'human:operator',
-    version: 2,
-    createdAt: '2026-08-09T20:01:00.000Z',
-    updatedAt: '2026-08-09T20:01:00.000Z',
-    endedAt: null,
-    cancelledReason: null,
-    archivedAt: null,
-    transitions: [{
-      fromState: null,
-      toState: 'queued',
-      actorType: 'human',
-      actorId: 'human:operator',
-      createdAt: '2026-08-09T20:01:00.000Z',
-    }, {
-      fromState: 'queued',
-      toState: 'planning',
-      actorType: 'system',
-      actorId: 'system:planning',
-      createdAt: '2026-08-09T20:01:00.000Z',
-    }],
-  };
-  await page.route('**/board-api/v1/**', async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (url.pathname === '/board-api/v1/host/project-roots' && request.method() === 'GET') {
-      await route.fulfill({ json: { roots: [] } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && !url.searchParams.has('path')) {
-      await route.fulfill({
-        json: { listing: { path: '/workspace', parent: null, entries: [], truncated: false } },
-      });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && url.searchParams.get('path') === '/workspace/payment-tools') {
-      await route.fulfill({
-        status: 403,
-        json: { error: { code: 'HOST_PATH_OUTSIDE_ROOTS', message: 'The folder is outside the browsable area' } },
-      });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'GET') {
-      await route.fulfill({ json: { workItems: taskSubmitted ? [createdWorkItem] : [] } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'POST') {
-      createdWorkItemRequest = request.postDataJSON() as Record<string, unknown>;
-      taskSubmitted = true;
-      await route.fulfill({ status: 201, json: { workItem: createdWorkItem } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/projects' && request.method() === 'POST') {
-      projectCreateAttempts += 1;
-      if (projectCreateAttempts === 1) {
-        await route.fulfill({
-          status: 409,
-          json: { error: { code: 'PROJECT_PATH_CONFLICT', message: 'Project path changed' } },
-        });
-        return;
-      }
-      createdProject = request.postDataJSON() as Record<string, unknown>;
-      projectCreated = true;
-      await route.fulfill({ status: 201, json: { project: importedProject } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/agents` && request.method() === 'POST') {
-      agentCreateRequests += 1;
-      await route.fulfill({ status: 500, json: { error: { code: 'UNEXPECTED_AGENT_CREATE', message: 'Identity must be lazy' } } });
-      return;
-    }
-    if (url.pathname === '/board-api/v1/projects') {
-      await route.fulfill({ json: { projects: projectCreated ? [project, importedProject] : [project] } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: board() });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/board`) {
-      await route.fulfill({
-        json: {
-          ...board(),
-          project: importedProject,
-          agents: taskSubmitted ? [{ ...lazyManager, version: managerVersion }] : [],
-          tasks: taskSubmitted ? [planningTask] : [],
-          recentEvents: taskSubmitted ? [{
-            apiVersion,
-            eventId: 'event-payment-tools-manager-created',
-            projectId: importedProject.projectId,
-            taskId: null,
-            actorType: 'system',
-            actorId: 'system:lazy-agent-identity',
-            eventType: 'agent_profile_created',
-            data: { agentId: lazyManager.agentId, role: 'manager' },
-            createdAt: lazyManager.createdAt,
-          }] : [],
-        },
-      });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/tasks/${planningTask.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/agents/${lazyManager.agentId}/rotate-token` && request.method() === 'POST') {
-      expect(request.postDataJSON()).toEqual({ version: managerVersion });
-      rotationAttempts += 1;
-      if (rotationAttempts === 1) {
-        await route.fulfill({
-          status: 409,
-          json: { error: { code: 'AGENT_VERSION_CONFLICT', message: 'Agent version changed' } },
-        });
-        return;
-      }
-      managerVersion += 1;
-      await route.fulfill({
-        json: { agent: { ...lazyManager, version: managerVersion }, token: rotatedToken },
-      });
-      return;
-    }
-    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
-      await route.fulfill({ json: { messages: [], cursor: 0 } });
-      return;
-    }
-    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
-  });
-
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Add project' }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
-  await dialog.getByRole('button', { name: 'Add project' }).click();
-  await dialog.getByRole('button', { name: 'Add anyway' }).click();
-  await expect(dialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');
-  await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Close dialog' }).click();
-  await discardDirtyDialog(page);
-  await expect(page.getByRole('alert').filter({ hasText: 'The board changed in another session. Refresh before trying again.' })).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'Add project' }).click();
-  await expect(dialog.getByRole('alert')).toHaveCount(0);
-  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
-  await dialog.getByRole('button', { name: 'Add project' }).click();
-  await dialog.getByRole('button', { name: 'Add anyway' }).click();
-  await expect.poll(() => createdProject).not.toBeNull();
-
-  expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
-  expect(agentCreateRequests).toBe(0);
-
-  await page.getByRole('button', { name: 'Add task' }).click();
-  const taskDialog = page.getByRole('dialog', { name: 'Add a task' });
-  await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(createdWorkItem.originalRequest);
-  await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
-  await taskDialog.getByRole('button', { name: 'Submit task' }).click();
-  await expect.poll(() => createdWorkItemRequest).not.toBeNull();
-  expect(createdWorkItemRequest).toEqual({
-    originalRequest: createdWorkItem.originalRequest,
-    priority: 'normal',
-    taskType: 'standard',
-    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
-  });
-
-  const companyRail = await openCompanyRail(page);
-  const lazyManagerButton = companyRail
-    .getByRole('navigation', { name: 'Projects and agents' })
-    .getByRole('button', { name: /^payment-tools-manager\b/u });
-  await expect(lazyManagerButton).toBeVisible();
-  await lazyManagerButton.click();
-  await expect(page.getByRole('heading', { name: 'Lane configuration' })).toBeVisible();
-  const laneConfig = page.getByLabel(`Fleet lane configuration for ${lazyManager.agentId}`);
-  await expect(laneConfig).toContainText('"agentId": "payment-tools-manager"');
-  await expect(laneConfig).toContainText('"workingDirectory": "/absolute/path/to/repository"');
-  await expect(laneConfig).toContainText('"provider": "<codex or claude>"');
-  await expect(laneConfig).toContainText('<rotate token to reveal>');
-  await expect(page.getByText(/replace the working-directory and provider placeholders/u)).toBeVisible();
-
-  await page.getByRole('button', { name: 'Rotate token', exact: true }).click();
-  const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?' });
+  const fixture = await installTokenRotationBoard(page);
+  const { lazyManager, rotatedToken } = fixture;
+  const { laneConfig, rotationDialog } = await openTokenRotationDialog(page, fixture);
   if ((page.viewportSize()?.width ?? 0) >= 640) {
     await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
   }

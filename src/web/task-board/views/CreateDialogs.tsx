@@ -587,6 +587,9 @@ export function CreateDialogs({
   client,
   dialog,
   closeDialog,
+  keepEditingDialog,
+  projectRequestCloseRef,
+  taskRequestCloseRef,
   projectFormDirty,
   workItemFormDirty,
   taskAnchorRef,
@@ -603,6 +606,9 @@ export function CreateDialogs({
   client: TaskBoardClient;
   dialog: DialogName;
   closeDialog: () => void;
+  keepEditingDialog: () => void;
+  projectRequestCloseRef: RefObject<(() => void) | null>;
+  taskRequestCloseRef: RefObject<(() => void) | null>;
   projectFormDirty: RefObject<boolean>;
   workItemFormDirty: RefObject<boolean>;
   taskAnchorRef: RefObject<HTMLElement | null>;
@@ -621,6 +627,8 @@ export function CreateDialogs({
       <Modal
         open={dialog === 'project'}
         onClose={closeDialog}
+        onKeepEditing={keepEditingDialog}
+        requestCloseRef={projectRequestCloseRef}
         isDirty={() => projectFormDirty.current}
         title="Add project from disk"
         description="Pick a project folder, browse for one, or paste a path."
@@ -639,6 +647,8 @@ export function CreateDialogs({
       <Modal
         open={dialog === 'task'}
         onClose={closeDialog}
+        onKeepEditing={keepEditingDialog}
+        requestCloseRef={taskRequestCloseRef}
         isDirty={() => workItemFormDirty.current}
         variant="anchored"
         anchorRef={taskAnchorRef}

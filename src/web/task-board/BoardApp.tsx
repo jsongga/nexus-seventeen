@@ -8,7 +8,7 @@ import type { RawBoardNotification, RawBoardPause } from './data/parse';
 import { missingRouteFallback } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
-import { WorkspaceFrame } from './views/WorkspaceSidebar';
+import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
 import { WorkItemDetail } from './views/WorkItemDetail';
 import { LedgersPage } from './views/LedgersPage';
 import { CreateDialogs, type DialogName } from './views/CreateDialogs';
@@ -29,6 +29,15 @@ const notificationDateTime = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 });
+
+type DialogOpenOptions = Readonly<{
+  anchor?: RefObject<HTMLElement | null>;
+  projectId?: string;
+}>;
+
+type PendingDialogAction =
+  | Readonly<{ kind: 'open'; name: Exclude<DialogName, null>; options: DialogOpenOptions }>
+  | Readonly<{ kind: 'navigate'; page: BoardPage; mode: 'push' | 'replace' }>;
 
 export function NotificationsBlock({
   notifications,
@@ -208,7 +217,7 @@ export async function refreshBoardSnapshot(
 export function BoardApp() {
   const client = useMemo<TaskBoardClient>(() => createTaskBoardClient({ baseUrl: '/board-api' }), []);
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null);
-  const [page, navigate] = useHashRoute();
+  const [page, navigateRoute] = useHashRoute();
   const routedTaskId = page.kind === 'tasks' ? page.taskId : undefined;
   const [taskDetailDrafts, dispatchTaskDetailDraft] = useReducer(
     taskDetailDraftReducer,
@@ -245,6 +254,9 @@ export function BoardApp() {
   const taskDetailWasOpen = useRef(false);
   const projectFormDirty = useRef(false);
   const workItemFormDirty = useRef(false);
+  const pendingDialogActionRef = useRef<PendingDialogAction | null>(null);
+  const projectDialogRequestCloseRef = useRef<(() => void) | null>(null);
+  const taskDialogRequestCloseRef = useRef<(() => void) | null>(null);
   const headerAddTaskRef = useRef<HTMLButtonElement>(null);
   const emptyStateAddTaskRef = useRef<HTMLButtonElement>(null);
   const fallbackTaskDialogAnchorRef = useRef<HTMLElement>(null);
@@ -536,10 +548,7 @@ export function BoardApp() {
     navigate({ kind: 'tasks' }, 'replace');
   }
 
-  function openDialog(
-    name: Exclude<DialogName, null>,
-    options: { anchor?: RefObject<HTMLElement | null>; projectId?: string } = {},
-  ) {
+  function showDialog(name: Exclude<DialogName, null>, options: DialogOpenOptions = {}) {
     dismissActionError(name === 'project'
       ? actionErrorContexts.projectCreate
       : actionErrorContexts.workItemCreate);
@@ -552,19 +561,83 @@ export function BoardApp() {
     setDialog(name);
   }
 
-  function closeDialog() {
+  function requestCurrentDialogClose() {
+    const requestClose = dialog === 'project'
+      ? projectDialogRequestCloseRef.current
+      : dialog === 'task'
+        ? taskDialogRequestCloseRef.current
+        : null;
+    requestClose?.();
+  }
+
+  function openDialog(
+    name: Exclude<DialogName, null>,
+    options: DialogOpenOptions = {},
+  ) {
+    if (dialog === name) {
+      const requestedAnchor = options.anchor?.current ?? null;
+      if (
+        name === 'task'
+        && requestedAnchor !== null
+        && taskDialogAnchorRef.current === requestedAnchor
+      ) requestCurrentDialogClose();
+      return;
+    }
+    if (dialog !== null) {
+      pendingDialogActionRef.current = { kind: 'open', name, options };
+      requestCurrentDialogClose();
+      return;
+    }
+    showDialog(name, options);
+  }
+
+  function activateTaskDialog(options: DialogOpenOptions) {
+    const requestedAnchor = options.anchor ?? fallbackTaskDialogAnchorRef;
+    if (dialog === 'task' && taskDialogAnchorRef === requestedAnchor) {
+      requestCurrentDialogClose();
+      return;
+    }
+    openDialog('task', options);
+  }
+
+  function navigate(next: BoardPage, mode: 'push' | 'replace' = 'push') {
+    if (dialog === null) {
+      navigateRoute(next, mode);
+      return;
+    }
+    pendingDialogActionRef.current = { kind: 'navigate', page: next, mode };
+    requestCurrentDialogClose();
+  }
+
+  function closeDialog({ continuePendingAction = true }: { continuePendingAction?: boolean } = {}) {
     if (dialog === 'project') dismissActionError(actionErrorContexts.projectCreate);
     if (dialog === 'task') dismissActionError(actionErrorContexts.workItemCreate);
     projectFormDirty.current = false;
     workItemFormDirty.current = false;
+    const pendingAction = pendingDialogActionRef.current;
+    pendingDialogActionRef.current = null;
+    if (!continuePendingAction) {
+      setDialog(null);
+      return;
+    }
+    if (pendingAction?.kind === 'open') {
+      showDialog(pendingAction.name, pendingAction.options);
+      return;
+    }
     setDialog(null);
+    if (pendingAction?.kind === 'navigate') {
+      navigateRoute(pendingAction.page, pendingAction.mode);
+    }
+  }
+
+  function keepEditingDialog() {
+    pendingDialogActionRef.current = null;
   }
 
   async function createProject(input: CreateProjectInput): Promise<ActionResult> {
     const result = await mutate(actionErrorContexts.projectCreate, () => client.createProject(input));
     if (result.ok) {
-      projectFormDirty.current = false;
-      setDialog(null);
+      closeDialog({ continuePendingAction: false });
     }
     return result;
   }
@@ -572,8 +645,7 @@ export function BoardApp() {
   async function createWorkItem(input: CreateWorkItemInput): Promise<ActionResult> {
     const result = await mutate(actionErrorContexts.workItemCreate, () => client.createWorkItem(input));
     if (result.ok) {
-      workItemFormDirty.current = false;
-      setDialog(null);
+      closeDialog({ continuePendingAction: false });
     }
     return result;
   }
@@ -642,7 +714,7 @@ export function BoardApp() {
   } else if (page.kind === 'ledgers') {
     content = <LedgersPage client={client} connected={connected} snapshotRevision={snapshot.revision} />;
   } else if (page.kind === 'project' && pageProject) {
-    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={(anchor) => openDialog('task', { anchor, projectId: pageProject.id })} />;
+    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={(anchor) => activateTaskDialog({ anchor, projectId: pageProject.id })} />;
   } else if (page.kind === 'agent' && pageAgent) {
     content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} rotationErrors={tokenRotationErrors} onDismissActionError={dismissActionError} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(actionErrorContexts.agentSend(pageAgent.id), () => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(actionErrorContexts.questionAnswer(questionId), () => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
       let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
@@ -657,7 +729,7 @@ export function BoardApp() {
         <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', anyDetailOpen ? 'hidden xl:grid' : 'grid')}>
           <div><h1 data-page-heading tabIndex={-1} className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
           <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
-            <Button ref={headerAddTaskRef} className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => openDialog('task', { anchor: headerAddTaskRef })} />
+            <Button ref={headerAddTaskRef} className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => activateTaskDialog({ anchor: headerAddTaskRef })} />
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
             {anyDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
           </div>
@@ -740,7 +812,7 @@ export function BoardApp() {
                 ) : null}
                 {allWorkItems.length === 0 && allTasks.length === 0 ? snapshot.projects.length === 0
                   ? <EmptyState icon={<FolderKanban size={19} />} title="Start with a project" body="Add a project folder first. Agents arrive on demand for that project; then submit work." action={<Button size="sm" variant="primary" disabled={!connected} onClick={() => openDialog('project')}>Add project</Button>} />
-                  : <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button ref={emptyStateAddTaskRef} size="sm" variant="primary" disabled={!connected} onClick={() => openDialog('task', { anchor: emptyStateAddTaskRef })}>Add task</Button>} />
+                  : <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button ref={emptyStateAddTaskRef} size="sm" variant="primary" disabled={!connected} onClick={() => activateTaskDialog({ anchor: emptyStateAddTaskRef })}>Add task</Button>} />
                 : null}
               </div>
             </div>
@@ -798,6 +870,9 @@ export function BoardApp() {
         client={client}
         dialog={dialog}
         closeDialog={closeDialog}
+        keepEditingDialog={keepEditingDialog}
+        projectRequestCloseRef={projectDialogRequestCloseRef}
+        taskRequestCloseRef={taskDialogRequestCloseRef}
         projectFormDirty={projectFormDirty}
         workItemFormDirty={workItemFormDirty}
         taskAnchorRef={taskDialogAnchorRef}

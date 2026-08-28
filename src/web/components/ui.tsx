@@ -16,15 +16,26 @@ const modalViewportInset = 16;
 const modalAnchorGap = 8;
 const modalAnchoredMinMaxHeight = 16 * 16;
 const modalAnchoredTakeoverThreshold = 12 * 16;
+const modalAnchoredTakeoverExitThreshold = 16 * 16;
 
-export function resolveModalAnchorPlacement(spaceAbove: number, spaceBelow: number) {
+export function resolveModalTakeover(maxHeight: number, currentlyTakeover: boolean): boolean {
+  return currentlyTakeover
+    ? maxHeight < modalAnchoredTakeoverExitThreshold
+    : maxHeight < modalAnchoredTakeoverThreshold;
+}
+
+export function resolveModalAnchorPlacement(
+  spaceAbove: number,
+  spaceBelow: number,
+  currentlyTakeover = false,
+) {
   const placement: 'above' | 'below' = spaceAbove > spaceBelow ? 'above' : 'below';
   const maxHeight = Math.max(0, placement === 'above' ? spaceAbove : spaceBelow);
 
   return {
     placement,
     maxHeight,
-    takeover: maxHeight < modalAnchoredTakeoverThreshold,
+    takeover: resolveModalTakeover(maxHeight, currentlyTakeover),
   };
 }
 
@@ -150,6 +161,8 @@ export function Modal({
   isDirty,
   variant = 'takeover',
   anchorRef,
+  requestCloseRef,
+  onKeepEditing,
 }: {
   open: boolean;
   onClose: () => void;
@@ -160,6 +173,8 @@ export function Modal({
   isDirty?: () => boolean;
   variant?: 'takeover' | 'anchored';
   anchorRef?: RefObject<HTMLElement | null>;
+  requestCloseRef?: RefObject<(() => void) | null>;
+  onKeepEditing?: () => void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const [desktopBreakpointMatches, setDesktopBreakpointMatches] = useState(() => (
@@ -172,20 +187,43 @@ export function Modal({
     placement: 'below' as 'above' | 'below',
     takeover: false,
   });
+  const updateAnchorPositionRef = useRef<(() => void) | null>(null);
+  const ignoreAnchorMeasurementRef = useRef(false);
   const anchoredOnDesktop = variant === 'anchored' && desktopBreakpointMatches;
-  const anchoredLayout = anchoredOnDesktop && !anchorPosition.takeover;
+  const anchoredLayout = anchoredOnDesktop
+    && anchorRef?.current?.isConnected === true
+    && !anchorPosition.takeover;
   const takeoverLayout = !anchoredLayout;
-  const { confirmationOpen, requestClose, keepEditing, discard } = useConfirmBeforeDiscard({
+  const previousScrollLockRef = useRef(takeoverLayout);
+  const {
+    confirmationOpen,
+    requestClose,
+    keepEditing: keepEditingWithoutCallback,
+    discard,
+  } = useConfirmBeforeDiscard({
     open,
     isDirty,
     onDiscard: onClose,
   });
+  const keepEditing = () => {
+    keepEditingWithoutCallback();
+    onKeepEditing?.();
+  };
   const { isTopmost, layerId } = useDialogLayer({
     open,
     onClose: requestClose,
     containerRef: dialogRef,
     lockScroll: takeoverLayout,
+    trapFocus: takeoverLayout,
   });
+
+  useLayoutEffect(() => {
+    if (!requestCloseRef) return;
+    requestCloseRef.current = open ? requestClose : null;
+    return () => {
+      if (requestCloseRef.current === requestClose) requestCloseRef.current = null;
+    };
+  }, [open, requestClose, requestCloseRef]);
 
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 640px)');
@@ -196,10 +234,30 @@ export function Modal({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open || !anchoredOnDesktop || !anchorRef?.current || !dialogRef.current) return;
+    if (previousScrollLockRef.current === takeoverLayout) return;
+    previousScrollLockRef.current = takeoverLayout;
+    ignoreAnchorMeasurementRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      ignoreAnchorMeasurementRef.current = false;
+      updateAnchorPositionRef.current?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [takeoverLayout]);
+
+  useLayoutEffect(() => {
+    if (!open || !anchoredOnDesktop) return;
+    if (!anchorRef?.current?.isConnected || !dialogRef.current) {
+      setAnchorPosition((current) => current.takeover ? current : { ...current, takeover: true });
+      return;
+    }
     const anchor = anchorRef.current;
     const dialog = dialogRef.current;
     const updatePosition = () => {
+      if (ignoreAnchorMeasurementRef.current) return;
+      if (!anchor.isConnected || !dialog.isConnected) {
+        setAnchorPosition((current) => current.takeover ? current : { ...current, takeover: true });
+        return;
+      }
       const anchorBounds = anchor.getBoundingClientRect();
       const dialogBounds = dialog.getBoundingClientRect();
       const viewportWidth = document.documentElement.clientWidth;
@@ -214,36 +272,42 @@ export function Modal({
         - modalAnchorGap
         - modalViewportInset;
       const spaceAbove = anchorBounds.top - modalAnchorGap - modalViewportInset;
-      const placement = resolveModalAnchorPlacement(spaceAbove, spaceBelow);
-      const anchorEdge = placement.placement === 'above' ? anchorBounds.top : anchorBounds.bottom;
-      const top = anchorEdge
-        + window.scrollY
-        + (placement.placement === 'above' ? -modalAnchorGap : modalAnchorGap);
-      const next = {
-        top: Math.round(top),
-        right: Math.round(right),
-        maxHeight: Math.floor(placement.maxHeight),
-        placement: placement.placement,
-        takeover: placement.takeover,
-      };
-      setAnchorPosition((current) => (
-        current.top === next.top
+      setAnchorPosition((current) => {
+        const placement = resolveModalAnchorPlacement(
+          spaceAbove,
+          spaceBelow,
+          current.takeover,
+        );
+        const anchorEdge = placement.placement === 'above' ? anchorBounds.top : anchorBounds.bottom;
+        const top = anchorEdge
+          + window.scrollY
+          + (placement.placement === 'above' ? -modalAnchorGap : modalAnchorGap);
+        const next = {
+          top: Math.round(top),
+          right: Math.round(right),
+          maxHeight: Math.floor(placement.maxHeight),
+          placement: placement.placement,
+          takeover: placement.takeover,
+        };
+        return current.top === next.top
           && current.right === next.right
           && current.maxHeight === next.maxHeight
           && current.placement === next.placement
           && current.takeover === next.takeover
           ? current
-          : next
-      ));
+          : next;
+      });
     };
     const resizeObserver = new ResizeObserver(updatePosition);
 
+    updateAnchorPositionRef.current = updatePosition;
     updatePosition();
     resizeObserver.observe(anchor);
     resizeObserver.observe(dialog);
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
+      if (updateAnchorPositionRef.current === updatePosition) updateAnchorPositionRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
@@ -251,16 +315,25 @@ export function Modal({
   }, [anchorRef, anchoredOnDesktop, open]);
 
   useEffect(() => {
+    if (!open && anchorPosition.takeover) {
+      setAnchorPosition((current) => ({ ...current, takeover: false }));
+    }
+  }, [anchorPosition.takeover, open]);
+
+  useEffect(() => {
     if (!open || !anchoredLayout || !isTopmost) return;
-    const handleMouseDown = (event: MouseEvent) => {
+    const handleClick = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (dialogRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[role="dialog"], [data-dialog-layer]')) return;
       requestClose();
     };
 
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
+    // Let an outside control's click handler record a pending dialog or navigation
+    // before the dirty dialog asks whether that action may continue.
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
   }, [anchorRef, anchoredLayout, isTopmost, open, requestClose]);
 
   if (!open) return null;
@@ -276,6 +349,7 @@ export function Modal({
   return (
     <>
       <div
+        data-dialog-layer={layerId}
         className={cn(
           takeoverLayout && 'cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
           !isTopmost && 'pointer-events-none',

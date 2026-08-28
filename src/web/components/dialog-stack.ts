@@ -105,6 +105,7 @@ interface DialogLayerOptions {
   onClose: () => void;
   containerRef: RefObject<HTMLElement | null>;
   lockScroll?: boolean;
+  trapFocus?: boolean;
 }
 
 interface ConfirmBeforeDiscardOptions {
@@ -152,6 +153,7 @@ export function useDialogLayer({
   onClose,
   containerRef,
   lockScroll = true,
+  trapFocus = true,
 }: DialogLayerOptions) {
   const reactId = useId().replace(/:/g, '');
   const layerId = `dialog-${reactId}`;
@@ -240,7 +242,7 @@ export function useDialogLayer({
         onCloseRef.current();
         return;
       }
-      if (event.key !== 'Tab' || !containerRef.current) return;
+      if (!trapFocus || event.key !== 'Tab' || !containerRef.current) return;
 
       const focusable = focusableElements(containerRef.current);
       if (focusable.length === 0) {
@@ -262,7 +264,7 @@ export function useDialogLayer({
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [containerRef, isTopmost]);
+  }, [containerRef, isTopmost, trapFocus]);
 
   return { layerId, isTopmost };
 }

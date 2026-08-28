@@ -3,14 +3,16 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from 'react';
-import { cn } from './ui';
+import { cn, resolveModalAnchorPlacement } from './ui';
 
 type PopoverPlacement = Readonly<{
   horizontal: 'left' | 'right';
   vertical: 'above' | 'below';
+  maxHeight: number;
 }>;
 
 export function Popover({
@@ -30,9 +32,11 @@ export function Popover({
 }) {
   const popoverRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
+  const restoreFocusOnCloseRef = useRef(false);
   const [placement, setPlacement] = useState<PopoverPlacement>({
     horizontal: 'left',
     vertical: 'below',
+    maxHeight: 256,
   });
   onCloseRef.current = onClose;
 
@@ -49,28 +53,36 @@ export function Popover({
         && anchorBounds.right - popoverBounds.width >= viewportInset
         ? 'right'
         : 'left';
-      const vertical = anchorBounds.bottom + anchorGap + popoverBounds.height > window.innerHeight - viewportInset
-        && anchorBounds.top - anchorGap - popoverBounds.height >= viewportInset
-        ? 'above'
-        : 'below';
-      setPlacement((current) => current.horizontal === horizontal && current.vertical === vertical
+      const anchorPlacement = resolveModalAnchorPlacement(
+        anchorBounds.top - anchorGap - viewportInset,
+        window.innerHeight - anchorBounds.bottom - anchorGap - viewportInset,
+      );
+      const vertical = anchorPlacement.placement;
+      const maxHeight = Math.max(0, Math.floor(anchorPlacement.maxHeight));
+      setPlacement((current) => current.horizontal === horizontal
+        && current.vertical === vertical
+        && current.maxHeight === maxHeight
         ? current
-        : { horizontal, vertical });
+        : { horizontal, vertical, maxHeight });
     };
     const resizeObserver = new ResizeObserver(updatePlacement);
 
     updatePlacement();
+    resizeObserver.observe(anchor);
     resizeObserver.observe(popover);
     window.addEventListener('resize', updatePlacement);
+    window.addEventListener('scroll', updatePlacement, true);
     return () => {
       resizeObserver.disconnect();
       window.removeEventListener('resize', updatePlacement);
+      window.removeEventListener('scroll', updatePlacement, true);
     };
   }, [anchorRef, open]);
 
   useEffect(() => {
     if (!open || !popoverRef.current) return;
     const popover = popoverRef.current;
+    restoreFocusOnCloseRef.current = false;
     const focusInitialTarget = () => {
       popover.querySelector<HTMLElement>('[data-popover-initial-focus]')?.focus({ preventScroll: true });
     };
@@ -84,15 +96,22 @@ export function Popover({
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popover.contains(target) || anchorRef.current?.contains(target)) return;
+      restoreFocusOnCloseRef.current = false;
       onCloseRef.current();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      restoreFocusOnCloseRef.current = event.target instanceof Node && popover.contains(event.target);
     };
 
     queueMicrotask(focusInitialTarget);
     popover.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('focusin', handleFocusIn);
     return () => {
       popover.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('focusin', handleFocusIn);
+      if (!restoreFocusOnCloseRef.current) return;
       const anchor = anchorRef.current;
       if (!anchor?.isConnected) return;
       anchor.focus({ preventScroll: true });
@@ -101,6 +120,7 @@ export function Popover({
           anchor.focus({ preventScroll: true });
         }
       });
+      restoreFocusOnCloseRef.current = false;
     };
   }, [anchorRef, open]);
 
@@ -111,14 +131,15 @@ export function Popover({
       ref={popoverRef}
       role="dialog"
       aria-label={label}
+      style={{ maxHeight: `${placement.maxHeight}px` } as CSSProperties}
       className={cn(
-        'absolute z-40 w-[min(22rem,calc(100vw-2rem))] max-lg:max-w-full rounded-md border border-line bg-surface p-3 shadow-[0_24px_64px_var(--elevation-shadow-color)]',
+        'absolute z-40 flex w-[min(22rem,calc(100vw-2rem))] max-lg:max-w-full flex-col overflow-hidden rounded-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)]',
         placement.horizontal === 'right' ? 'right-0' : 'left-0',
         placement.vertical === 'above' ? 'bottom-full mb-2' : 'top-full mt-2',
         className,
       )}
     >
-      {children}
+      <div className="min-h-0 overflow-y-auto p-3">{children}</div>
     </section>
   );
 }
