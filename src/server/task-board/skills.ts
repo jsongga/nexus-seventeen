@@ -7,7 +7,9 @@ import { TaskBoardError } from "./errors.js";
 
 const SKILL_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 const MAX_SKILL_BYTES = 64 * 1024;
+const MAX_SKILL_REGISTRY_BYTES = 1024 * 1024;
 const MAX_SKILLS = 32;
+const REGISTRY_UNAVAILABLE = "Skill registry file is unavailable";
 
 function frontmatter(source: string, expectedId: string): { name: string; description: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/u.exec(source);
@@ -35,10 +37,12 @@ export class SkillRegistry {
 
   #loadSections(): ReadonlyMap<string, string> {
     let stat;
-    try { stat = lstatSync(this.#file); } catch { throw new TaskBoardError(500, "SKILL_NOT_AVAILABLE", `Skill registry file is unavailable: ${this.#file}`); }
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new TaskBoardError(500, "SKILL_NOT_AVAILABLE", `Skill registry file is unavailable: ${this.#file}`);
+    try { stat = lstatSync(this.#file); } catch { throw new TaskBoardError(500, "SKILL_NOT_AVAILABLE", REGISTRY_UNAVAILABLE); }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_REGISTRY_BYTES) {
+      throw new TaskBoardError(500, "SKILL_NOT_AVAILABLE", REGISTRY_UNAVAILABLE);
+    }
     const source = readFileSync(this.#file, "utf8");
-    if (Buffer.byteLength(source) !== stat.size) throw new TaskBoardError(500, "SKILL_INVALID", `Skill registry file changed while loading: ${this.#file}`);
+    if (Buffer.byteLength(source) !== stat.size) throw new TaskBoardError(500, "SKILL_INVALID", "Skill registry file changed while loading");
     if (source === this.#cachedSource && this.#cachedSections !== null) return this.#cachedSections;
     try {
       const sections = parseSections(source, { nameRule: SKILL_ID });

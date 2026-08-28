@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseSections } from "../../shared/sections.js";
 
 const MAX_PROMPT_BYTES = 1024 * 1024;
+const MAX_PROMPT_SECTION_BYTES = 64 * 1024;
 const PROMPT_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 const PLACEHOLDER = /\{\{(?<name>[a-z][a-zA-Z0-9]*)\}\}/gu;
 const KNOWN_TEMPLATES: ReadonlySet<string> = new Set([
@@ -59,7 +60,10 @@ export class PromptRegistry {
     if (Buffer.byteLength(source) !== stat.size) throw new Error(`Prompt file changed while loading: ${resolvedFile}`);
 
     const sections = parseSections(source, { nameRule: PROMPT_NAME });
-    for (const name of sections.keys()) {
+    for (const [name, content] of sections) {
+      if (Buffer.byteLength(content) > MAX_PROMPT_SECTION_BYTES) {
+        throw new Error(`Prompt template section ## ${name} exceeds the 64 KiB prompt limit`);
+      }
       if (!KNOWN_TEMPLATES.has(name)) throw new Error(`Prompt file contains unknown template section: ## ${name}`);
     }
     for (const name of KNOWN_TEMPLATES) {

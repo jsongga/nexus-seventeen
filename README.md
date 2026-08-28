@@ -125,7 +125,7 @@ Claude lanes use bare mode when `ANTHROPIC_API_KEY` is present. Without an expli
 
 The fleet retries transport failures, throttling, server errors, and journal I/O with capped exponential backoff. Authentication errors close the affected lane. Invalid-state and unexpected local errors quarantine a held claim as failed. A `RuntimeCapabilityError` is `POISONED`: it quarantines a held claim and closes the lane permanently. `SIGINT` and `SIGTERM` abort held claims, interrupt active model processes through the worker, and close every journal.
 
-Edit prompt templates in `config/prompts.md`: each `## <name>` section contains one template, names use lowercase letters, digits, and hyphens, and any content change updates the `promptsSha` pinned to agent runs. Template and skill bodies must not contain column-0 `## ` lines.
+Edit prompt templates in `config/prompts.md`: each `## <name>` section contains one template, names use lowercase letters, digits, and hyphens, and any content change updates the `promptsSha` pinned to agent runs. Blank lines between sections are fine; column-0 `## ` lines are reserved for section headers and cannot appear inside template or skill bodies.
 
 ### Less common environment settings
 

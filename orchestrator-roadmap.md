@@ -109,7 +109,7 @@ read-only CI publish of repo docs on merge; board pen-documents retired
 listed here because retirement waits for the replacement. Exit: repo docs
 readable in Outline with source banners; Documents page gone.
 
-**9.5. File diet + consolidation** *(approved 2026-08-26; from the five-agent
+**9.5. File diet + consolidation** *(shipped 2026-08-27; approved 2026-08-26; from the five-agent
 layout/dead-code analysis)* — Tier A: `.gitignore` the `.superpowers/`
 scratch; move the company bootstrap into `config/`; mirror-rule fix (move
 the 10 collaborator-named tests into

@@ -18,6 +18,14 @@ test("parses the real repo contract from docs/workflow.md", async () => {
     contract.rules.find((rule) => rule.match === "docs/workflow.md")?.action,
     { kind: "fixed", nodeTestDirs: ["tests/server/agents/verify"], vitest: undefined },
   );
+  assert.deepEqual(
+    contract.rules.find((rule) => rule.match === "config/skills.md")?.action,
+    { kind: "fixed", nodeTestDirs: ["tests/server/task-board"], vitest: undefined },
+  );
+  assert.deepEqual(
+    contract.rules.find((rule) => rule.match === "src/server/task-board/persistence/**")?.action,
+    { kind: "fixed", nodeTestDirs: ["tests/server/task-board"], vitest: undefined },
+  );
   assert.ok(contract.rules.length >= 10);
 });
 
@@ -43,6 +51,27 @@ test("prompt-only diffs select the registry and golden envelope suites", async (
       unmatched: [],
     });
     assert.ok(promptTestFiles.every((file) => file.startsWith(`${selection.nodeTestDirs[0]}/`)));
+  }
+});
+
+test("skill-registry and persistence diffs select the task-board suite", async () => {
+  const contract = await loadVerifyContract(process.cwd());
+  const testDirectory = "tests/server/task-board";
+  const host = {
+    fileExists: () => false,
+    directoryExists: (path: string) => path === testDirectory,
+  };
+
+  for (const changedFile of ["config/skills.md", "src/server/task-board/persistence/store.ts"]) {
+    for (const tier of ["fast", "area"] as const) {
+      assert.deepEqual(mapChangedFiles([changedFile], contract.rules, tier, host), {
+        nodeTestFiles: [],
+        nodeTestDirs: [testDirectory],
+        vitestTargets: [],
+        escalations: [],
+        unmatched: [],
+      });
+    }
   }
 });
 
