@@ -1,6 +1,7 @@
 import { ArrowLeft, Bell, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Button, Card, cn } from '../components/ui';
+import { markDialogSwitchEvent } from '../components/dialog-stack';
 import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from './data/client';
@@ -11,7 +12,7 @@ import { AgentPage, ProjectPage } from './views/WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
 import { WorkItemDetail } from './views/WorkItemDetail';
 import { LedgersPage } from './views/LedgersPage';
-import { CreateDialogs, type DialogName } from './views/CreateDialogs';
+import { CREATE_DIALOG_SWITCH_TARGET, CreateDialogs, type DialogName } from './views/CreateDialogs';
 import { ActionErrorToasts, EmptyState, FormError, RemovedTaskDetail, TaskRow, WorkItemRow } from './views/TaskList';
 import { TaskDetail, taskRunsByCreatedAt } from './views/TaskDetail';
 import { actionErrorContexts, actionErrorMessage, errorPipelineReducer, initialErrorPipelineState, isDialogAnchoredActionContext, mutationNetworkError, newestActionErrors, type ActionResult } from './model/action-errors';
@@ -34,6 +35,33 @@ type DialogOpenOptions = Readonly<{
   anchor?: RefObject<HTMLElement | null>;
   projectId?: string;
 }>;
+
+type DialogTriggerState = Readonly<{
+  name: Exclude<DialogName, null>;
+  anchor: RefObject<HTMLElement | null> | null;
+  dirty: boolean;
+}>;
+
+type DialogTriggerRequest = Readonly<{
+  name: Exclude<DialogName, null>;
+  anchor: RefObject<HTMLElement | null> | null;
+}>;
+
+export type DialogTriggerAction =
+  | 'toggle-close'
+  | 're-anchor'
+  | 'switch-clean'
+  | 'switch-dirty';
+
+export function resolveDialogTriggerAction(
+  current: DialogTriggerState,
+  requested: DialogTriggerRequest,
+): DialogTriggerAction {
+  if (current.name !== requested.name) {
+    return current.dirty ? 'switch-dirty' : 'switch-clean';
+  }
+  return current.anchor === requested.anchor ? 'toggle-close' : 're-anchor';
+}
 
 type PendingDialogAction =
   | Readonly<{ kind: 'open'; name: Exclude<DialogName, null>; options: DialogOpenOptions }>
@@ -573,34 +601,49 @@ export function BoardApp() {
   function openDialog(
     name: Exclude<DialogName, null>,
     options: DialogOpenOptions = {},
+    event?: Event,
   ) {
-    if (dialog === name) {
-      const requestedAnchor = options.anchor?.current ?? null;
-      if (
-        name === 'task'
-        && requestedAnchor !== null
-        && taskDialogAnchorRef.current === requestedAnchor
-      ) requestCurrentDialogClose();
+    markDialogSwitchEvent(event, CREATE_DIALOG_SWITCH_TARGET);
+    if (dialog === null) {
+      showDialog(name, options);
       return;
     }
-    if (dialog !== null) {
-      pendingDialogActionRef.current = { kind: 'open', name, options };
-      requestCurrentDialogClose();
-      return;
+
+    const requestedAnchor = name === 'task'
+      ? options.anchor ?? fallbackTaskDialogAnchorRef
+      : null;
+    const action = resolveDialogTriggerAction({
+      name: dialog,
+      anchor: dialog === 'task' ? taskDialogAnchorRef : null,
+      dirty: dialog === 'project' ? projectFormDirty.current : workItemFormDirty.current,
+    }, { name, anchor: requestedAnchor });
+
+    /*
+     * Trigger decision table while a dialog is open:
+     *
+     * | Request                              | Clean                                 | Dirty                                      |
+     * | ------------------------------------ | ------------------------------------- | ------------------------------------------ |
+     * | Same dialog, same anchor             | toggle-close through guard            | toggle-close; guard asks before discard    |
+     * | Same dialog, different anchor        | re-anchor; keep mounted                | re-anchor; preserve draft and dirty state  |
+     * | Different dialog                     | switch once via pending open           | guard; Keep cancels, Discard opens pending |
+     * | Navigation (handled by `navigate`)   | close, then navigate                   | guard; Keep cancels, Discard navigates     |
+     */
+    switch (action) {
+      case 'toggle-close':
+        requestCurrentDialogClose();
+        return;
+      case 're-anchor':
+        if (name === 'task') setTaskDialogAnchorRef(requestedAnchor ?? fallbackTaskDialogAnchorRef);
+        return;
+      case 'switch-clean':
+      case 'switch-dirty':
+        pendingDialogActionRef.current = { kind: 'open', name, options };
+        requestCurrentDialogClose();
     }
-    showDialog(name, options);
   }
 
-  function activateTaskDialog(options: DialogOpenOptions) {
-    const requestedAnchor = options.anchor ?? fallbackTaskDialogAnchorRef;
-    if (dialog === 'task' && taskDialogAnchorRef === requestedAnchor) {
-      requestCurrentDialogClose();
-      return;
-    }
-    openDialog('task', options);
-  }
-
-  function navigate(next: BoardPage, mode: 'push' | 'replace' = 'push') {
+  function navigate(next: BoardPage, mode: 'push' | 'replace' = 'push', event?: Event) {
+    markDialogSwitchEvent(event, CREATE_DIALOG_SWITCH_TARGET);
     if (dialog === null) {
       navigateRoute(next, mode);
       return;
@@ -714,7 +757,7 @@ export function BoardApp() {
   } else if (page.kind === 'ledgers') {
     content = <LedgersPage client={client} connected={connected} snapshotRevision={snapshot.revision} />;
   } else if (page.kind === 'project' && pageProject) {
-    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={(anchor) => activateTaskDialog({ anchor, projectId: pageProject.id })} />;
+    content = <ProjectPage key={pageProject.id} project={pageProject} snapshot={snapshot} client={client} connected={connected} onTask={openTask} onAddTask={(anchor, event) => openDialog('task', { anchor, projectId: pageProject.id }, event)} />;
   } else if (page.kind === 'agent' && pageAgent) {
     content = <AgentPage key={pageAgent.id} agent={pageAgent} snapshot={snapshot} isPointOfContact={pageAgent.id === pointOfContact?.id} explicitPointOfContact={pageAgent.id === pointOfContact?.id && isExplicitPointOfContact(pageAgent)} busy={busy || !connected} rotationErrors={tokenRotationErrors} onDismissActionError={dismissActionError} onTask={openTask} onSend={(prompt, workspaceRefs, routingContext, recentConversation) => mutate(actionErrorContexts.agentSend(pageAgent.id), () => client.createAgentQuery({ projectId: pageAgent.projectId, agentId: pageAgent.id, assignedRole: pageAgent.role, prompt, workspaceRefs, routingContext, recentConversation }))} onAnswer={(questionId, answer) => mutate(actionErrorContexts.questionAnswer(questionId), () => client.answerQuestion(questionId, { answer }))} onRotateToken={async () => {
       let rotated: Awaited<ReturnType<TaskBoardClient['rotateAgentToken']>> | null = null;
@@ -729,8 +772,8 @@ export function BoardApp() {
         <header className={cn('grid-cols-[minmax(0,1fr)_auto] items-start gap-4 border-b border-line bg-canvas px-4 py-5 sm:px-8 lg:items-center lg:px-12 lg:py-8', anyDetailOpen ? 'hidden xl:grid' : 'grid')}>
           <div><h1 data-page-heading tabIndex={-1} className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Task List</h1><p className="mt-1.5 text-sm font-light text-muted">New requests enter durable intake for refinement and planning.</p></div>
           <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
-            <Button ref={headerAddTaskRef} className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={() => activateTaskDialog({ anchor: headerAddTaskRef })} />
-            <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={() => openDialog('project')} />
+            <Button ref={headerAddTaskRef} data-dialog-trigger="task" className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={(event) => openDialog('task', { anchor: headerAddTaskRef }, event.nativeEvent)} />
+            <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={(event) => openDialog('project', {}, event.nativeEvent)} />
             {anyDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
           </div>
         </header>
@@ -811,8 +854,8 @@ export function BoardApp() {
                   </>
                 ) : null}
                 {allWorkItems.length === 0 && allTasks.length === 0 ? snapshot.projects.length === 0
-                  ? <EmptyState icon={<FolderKanban size={19} />} title="Start with a project" body="Add a project folder first. Agents arrive on demand for that project; then submit work." action={<Button size="sm" variant="primary" disabled={!connected} onClick={() => openDialog('project')}>Add project</Button>} />
-                  : <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button ref={emptyStateAddTaskRef} size="sm" variant="primary" disabled={!connected} onClick={() => activateTaskDialog({ anchor: emptyStateAddTaskRef })}>Add task</Button>} />
+                  ? <EmptyState icon={<FolderKanban size={19} />} title="Start with a project" body="Add a project folder first. Agents arrive on demand for that project; then submit work." action={<Button size="sm" variant="primary" disabled={!connected} onClick={(event) => openDialog('project', {}, event.nativeEvent)}>Add project</Button>} />
+                  : <EmptyState icon={<ListTodo size={19} />} title="Task list is empty" body="Submit an outcome to record it in durable intake." action={<Button ref={emptyStateAddTaskRef} data-dialog-trigger="task" size="sm" variant="primary" disabled={!connected} onClick={(event) => openDialog('task', { anchor: emptyStateAddTaskRef }, event.nativeEvent)}>Add task</Button>} />
                 : null}
               </div>
             </div>
@@ -860,7 +903,7 @@ export function BoardApp() {
               : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseBusy={pauseBusy} pauseControlDisabled={!connected} pauseControlError={pauseControlError} onPauseBoard={openPausePopover} onConfirmPause={(reason) => { void confirmPause(reason); }} onCancelPause={closePausePopover} onResumeBoard={() => { void resumeBoard(); }}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={(next, event) => navigate(next, 'push', event)} onAddProject={(event) => openDialog('project', {}, event)} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseBusy={pauseBusy} pauseControlDisabled={!connected} pauseControlError={pauseControlError} onPauseBoard={openPausePopover} onConfirmPause={(reason) => { void confirmPause(reason); }} onCancelPause={closePausePopover} onResumeBoard={() => { void resumeBoard(); }}>
       <BoardPauseBanner boardPause={boardPause} />
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       {errorPipeline.actionStatus ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><div role="status" aria-live="polite" className="rounded-md border border-success-fill/50 bg-success-soft px-4 py-3 text-sm text-success">{errorPipeline.actionStatus}</div></div> : null}

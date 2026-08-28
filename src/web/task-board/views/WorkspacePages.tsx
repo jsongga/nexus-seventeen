@@ -125,7 +125,7 @@ export function ProjectPage({
   project: BoardProject;
   snapshot: BoardSnapshot;
   onTask: (taskId: string) => void;
-  onAddTask: (anchorRef: RefObject<HTMLElement | null>) => void;
+  onAddTask: (anchorRef: RefObject<HTMLElement | null>, event: Event) => void;
   client: TaskBoardClient;
   connected: boolean;
 }) {
@@ -227,8 +227,9 @@ export function ProjectPage({
             className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
             aria-label="Add task"
             title="Add task"
+            data-dialog-trigger="task"
             disabled={!connected}
-            onClick={() => onAddTask(addTaskAnchorRef)}
+            onClick={(event) => onAddTask(addTaskAnchorRef, event.nativeEvent)}
           >
             <Plus size={14} strokeWidth={2} aria-hidden="true" />
           </button>

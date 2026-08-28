@@ -54,32 +54,36 @@ function AgentStatusMark({ agent }: { agent: BoardAgent }) {
 export function PauseReasonPopover({
   open,
   anchorRef,
+  reason,
   busy,
   disabled,
   error,
+  onReasonChange,
   onConfirm,
   onClose,
 }: {
   open: boolean;
   anchorRef: RefObject<HTMLButtonElement | null>;
+  reason: string;
   busy: boolean;
   disabled: boolean;
   error: string | null;
+  onReasonChange: (reason: string) => void;
   onConfirm: (reason: string) => void;
   onClose: () => void;
 }) {
   const reasonId = useId();
   const errorId = useId();
-  const [reason, setReason] = useState('');
   const close = () => {
-    setReason('');
+    onReasonChange('');
     onClose();
   };
+  const preserveRecovery = busy || error !== null;
 
   return (
     <Popover
       open={open}
-      onClose={busy ? () => undefined : close}
+      onClose={preserveRecovery ? () => undefined : close}
       anchorRef={anchorRef}
       label="Pause board"
     >
@@ -104,7 +108,7 @@ export function PauseReasonPopover({
           aria-invalid={error === null ? undefined : true}
           aria-describedby={error === null ? undefined : errorId}
           data-popover-initial-focus
-          onChange={(event) => setReason(event.currentTarget.value.slice(0, 500))}
+          onChange={(event) => onReasonChange(event.currentTarget.value.slice(0, 500))}
           className="mt-1.5 w-full resize-y rounded-sm border border-line bg-canvas px-3 py-2 text-sm leading-5 text-ink outline-none transition-colors placeholder:text-muted focus:border-taupe-hover disabled:cursor-not-allowed disabled:opacity-55"
         />
         {error === null ? null : (
@@ -131,10 +135,12 @@ function RailContent({
   unreadNotifications,
   boardPause,
   pausePopoverOpen,
+  pauseReason,
   pauseBusy,
   pauseControlDisabled,
   pauseControlError,
   onPauseBoard,
+  onPauseReasonChange,
   onConfirmPause,
   onCancelPause,
   onResumeBoard,
@@ -142,16 +148,18 @@ function RailContent({
   snapshot: BoardSnapshot | null;
   page: BoardPage;
   pointOfContact: BoardAgent | null;
-  onNavigate: (page: BoardPage) => void;
-  onAddProject: () => void;
+  onNavigate: (page: BoardPage, event: Event) => void;
+  onAddProject: (event: Event) => void;
   canAddProject: boolean;
   unreadNotifications: number;
   boardPause: RawBoardPause | null;
   pausePopoverOpen: boolean;
+  pauseReason: string;
   pauseBusy: boolean;
   pauseControlDisabled: boolean;
   pauseControlError: string | null;
   onPauseBoard: () => void;
+  onPauseReasonChange: (reason: string) => void;
   onConfirmPause: (reason: string) => void;
   onCancelPause: () => void;
   onResumeBoard: () => void;
@@ -186,7 +194,7 @@ function RailContent({
             type="button"
             aria-current={pageIs(page, 'tasks') ? 'page' : undefined}
             className={cn(navRow, pageIs(page, 'tasks') ? activeRow : inactiveRow)}
-            onClick={() => onNavigate({ kind: 'tasks' })}
+            onClick={(event) => onNavigate({ kind: 'tasks' }, event.nativeEvent)}
           >
             <span className="min-w-0 flex-1">Task List</span>
             <span className="ml-2 flex shrink-0 flex-wrap justify-end gap-1">
@@ -229,7 +237,7 @@ function RailContent({
             type="button"
             aria-current={pageIs(page, 'automation') ? 'page' : undefined}
             className={cn(navRow, pageIs(page, 'automation') ? activeRow : inactiveRow)}
-            onClick={() => onNavigate({ kind: 'automation' })}
+            onClick={(event) => onNavigate({ kind: 'automation' }, event.nativeEvent)}
           >
             <span>Automation</span>
           </button>
@@ -237,7 +245,7 @@ function RailContent({
             type="button"
             aria-current={pageIs(page, 'ledgers') ? 'page' : undefined}
             className={cn(navRow, pageIs(page, 'ledgers') ? activeRow : inactiveRow)}
-            onClick={() => onNavigate({ kind: 'ledgers' })}
+            onClick={(event) => onNavigate({ kind: 'ledgers' }, event.nativeEvent)}
           >
             <span>Ledgers</span>
           </button>
@@ -246,7 +254,7 @@ function RailContent({
               type="button"
               aria-current={pageIs(page, 'agent', pointOfContact.id) ? 'page' : undefined}
               className={cn(navRow, pageIs(page, 'agent', pointOfContact.id) ? activeRow : inactiveRow)}
-              onClick={() => onNavigate({ kind: 'agent', agentId: pointOfContact.id })}
+              onClick={(event) => onNavigate({ kind: 'agent', agentId: pointOfContact.id }, event.nativeEvent)}
             >
               <span className="min-w-0 flex-1 truncate">{pointOfContact.name}</span>
               <span className={cn(
@@ -276,7 +284,7 @@ function RailContent({
                       type="button"
                       aria-current={pageIs(page, 'project', project.id) ? 'page' : undefined}
                       className="min-h-11 min-w-0 flex-1 truncate py-2 pl-3 pr-2 text-left text-[12px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9"
-                      onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
+                      onClick={(event) => onNavigate({ kind: 'project', projectId: project.id }, event.nativeEvent)}
                     >
                       {project.name}
                     </button>
@@ -306,7 +314,7 @@ function RailContent({
                             'flex min-h-9 w-full items-center gap-2 border-l-2 border-transparent py-1 pl-6 pr-3 text-left text-[11px] leading-4 transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-7',
                             pageIs(page, 'agent', agent.id) ? activeRow : 'text-muted hover:bg-surface hover:text-ink',
                           )}
-                          onClick={() => onNavigate({ kind: 'agent', agentId: agent.id })}
+                          onClick={(event) => onNavigate({ kind: 'agent', agentId: agent.id }, event.nativeEvent)}
                         >
                           <span className="min-w-0 flex-1 truncate">{agent.name}</span>
                           <AgentStatusMark agent={agent} />
@@ -324,7 +332,7 @@ function RailContent({
                   type="button"
                   className="mt-2 flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45"
                   disabled={!canAddProject}
-                  onClick={onAddProject}
+                  onClick={(event) => onAddProject(event.nativeEvent)}
                 >
                   <Plus size={14} aria-hidden="true" />
                   Add project
@@ -359,9 +367,11 @@ function RailContent({
             <PauseReasonPopover
               open={pausePopoverOpen}
               anchorRef={pauseAnchorRef}
+              reason={pauseReason}
               busy={pauseBusy}
               disabled={pauseControlDisabled}
               error={pauseControlError}
+              onReasonChange={onPauseReasonChange}
               onConfirm={onConfirmPause}
               onClose={onCancelPause}
             />
@@ -399,8 +409,8 @@ export function WorkspaceFrame({
   pointOfContact: BoardAgent | null;
   drawerOpen: boolean;
   onDrawerChange: (open: boolean) => void;
-  onNavigate: (page: BoardPage) => void;
-  onAddProject: () => void;
+  onNavigate: (page: BoardPage, event: Event) => void;
+  onAddProject: (event: Event) => void;
   canAddProject: boolean;
   unreadNotifications?: number;
   boardPause?: RawBoardPause | null;
@@ -416,15 +426,22 @@ export function WorkspaceFrame({
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
+  const [pauseReason, setPauseReason] = useState('');
   const pausePopoverOpenRef = useRef(pausePopoverOpen);
+  const pauseBusyRef = useRef(pauseBusy);
   const onCancelPauseRef = useRef(onCancelPause);
   pausePopoverOpenRef.current = pausePopoverOpen;
+  pauseBusyRef.current = pauseBusy;
   onCancelPauseRef.current = onCancelPause;
+
+  useEffect(() => {
+    if (!pausePopoverOpen) setPauseReason('');
+  }, [pausePopoverOpen]);
 
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 1024px)');
     const onBreakpointChange = () => {
-      if (pausePopoverOpenRef.current) onCancelPauseRef.current();
+      if (pausePopoverOpenRef.current && !pauseBusyRef.current) onCancelPauseRef.current();
     };
     desktop.addEventListener('change', onBreakpointChange);
     return () => desktop.removeEventListener('change', onBreakpointChange);
@@ -477,14 +494,14 @@ export function WorkspaceFrame({
     if (restoreFocus) window.setTimeout(() => openerRef.current?.focus(), 0);
   };
 
-  const navigate = (next: BoardPage) => {
-    onNavigate(next);
+  const navigate = (next: BoardPage, event: Event) => {
+    onNavigate(next, event);
     closeDrawer();
   };
 
-  const addProjectFromDrawer = () => {
+  const addProjectFromDrawer = (event: Event) => {
     closeDrawer(false);
-    onAddProject();
+    onAddProject(event);
   };
 
   return (
@@ -495,7 +512,7 @@ export function WorkspaceFrame({
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen && !drawerOpen} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen && !drawerOpen} pauseReason={pauseReason} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onPauseReasonChange={setPauseReason} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
       </aside>
 
       {drawerOpen ? (
@@ -503,7 +520,7 @@ export function WorkspaceFrame({
           <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
             <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseReason={pauseReason} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onPauseReasonChange={setPauseReason} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
           </aside>
         </div>
       ) : null}

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   dialogDismissalDecision,
   dialogLayersLockScroll,
+  dialogSwitchWasHandledForLayer,
+  deferDialogOutsideDismissal,
   fieldsAreDirty,
+  markDialogSwitchEvent,
 } from './dialog-stack';
 
 describe('dialog discard guard', () => {
@@ -26,5 +29,30 @@ describe('dialog discard guard', () => {
     expect(dialogLayersLockScroll([])).toBe(false);
     expect(dialogLayersLockScroll([false])).toBe(false);
     expect(dialogLayersLockScroll([false, true])).toBe(true);
+  });
+
+  it('marks only the click event whose trigger already routed a dialog action', () => {
+    const handled = new Event('click');
+    const unrelated = new Event('click');
+
+    expect(dialogSwitchWasHandledForLayer(handled, 'create-dialog')).toBe(false);
+    markDialogSwitchEvent(handled, 'create-dialog');
+    expect(dialogSwitchWasHandledForLayer(handled, 'create-dialog')).toBe(true);
+    expect(dialogSwitchWasHandledForLayer(handled, 'dialog-merge')).toBe(false);
+    expect(dialogSwitchWasHandledForLayer(unrelated, 'create-dialog')).toBe(false);
+  });
+
+  it('defers outside dismissal until a trigger handler can mark its owning layer', async () => {
+    const createDialogClick = new Event('click');
+    const unrelatedDialogClick = new Event('click');
+    const dismiss = vi.fn();
+
+    deferDialogOutsideDismissal(createDialogClick, 'create-dialog', dismiss);
+    markDialogSwitchEvent(createDialogClick, 'create-dialog');
+    deferDialogOutsideDismissal(unrelatedDialogClick, 'dialog-merge', dismiss);
+    markDialogSwitchEvent(unrelatedDialogClick, 'create-dialog');
+    await Promise.resolve();
+
+    expect(dismiss).toHaveBeenCalledTimes(1);
   });
 });

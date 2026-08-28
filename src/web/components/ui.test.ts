@@ -96,6 +96,8 @@ describe('Modal', () => {
     expect(anchored).toContain(
       '</header><div class="min-h-0 flex-1 overflow-y-auto"><span data-modal-body-content="true">Body</span></div></section>',
     );
+    expect(anchored).toContain('ring-1 ring-line-strong/60');
+    expect(takeover).not.toContain('ring-line-strong/60');
   });
 
   it('uses takeover when an anchored dialog has no connected anchor', () => {

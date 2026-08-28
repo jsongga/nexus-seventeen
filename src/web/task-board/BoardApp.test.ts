@@ -4,6 +4,7 @@ import {
   changeBoardPause,
   pausePopoverShouldClose,
   refreshBoardSnapshot,
+  resolveDialogTriggerAction,
 } from './BoardApp';
 import type { TaskBoardClient } from './data/client';
 import type { RawBoardPause } from './data/parse';
@@ -29,6 +30,22 @@ function pauseState(version: number, paused: boolean): RawBoardPause {
     updatedBy: 'human:operator',
   };
 }
+
+describe('dialog trigger action', () => {
+  const firstAnchor = { current: null };
+  const secondAnchor = { current: null };
+
+  it.each([
+    ['same task anchor, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'task', anchor: firstAnchor }, 'toggle-close'],
+    ['same task anchor, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'task', anchor: firstAnchor }, 'toggle-close'],
+    ['different task anchor, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'task', anchor: secondAnchor }, 're-anchor'],
+    ['different task anchor, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'task', anchor: secondAnchor }, 're-anchor'],
+    ['different dialog, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'project', anchor: null }, 'switch-clean'],
+    ['different dialog, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'project', anchor: null }, 'switch-dirty'],
+  ] as const)('%s resolves correctly', (_label, current, requested, expected) => {
+    expect(resolveDialogTriggerAction(current, requested)).toBe(expected);
+  });
+});
 
 describe('board pause refresh coordination', () => {
   it('closes the pause popover when pause state is unavailable or already paused', () => {

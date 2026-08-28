@@ -7,6 +7,7 @@ import { addedWorkspacePaths, breadcrumbSegments, filterPickerEntries, pickerEnt
 import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput, HostDirectoryListing, HostProjectRoot } from '../types';
 
 export type DialogName = 'project' | 'task' | null;
+export const CREATE_DIALOG_SWITCH_TARGET = 'create-dialog';
 
 function normalizedWorkspacePath(value: string): string {
   const trimmed = value.trim();
@@ -628,6 +629,7 @@ export function CreateDialogs({
         open={dialog === 'project'}
         onClose={closeDialog}
         onKeepEditing={keepEditingDialog}
+        dialogSwitchTarget={CREATE_DIALOG_SWITCH_TARGET}
         requestCloseRef={projectRequestCloseRef}
         isDirty={() => projectFormDirty.current}
         title="Add project from disk"
@@ -648,10 +650,12 @@ export function CreateDialogs({
         open={dialog === 'task'}
         onClose={closeDialog}
         onKeepEditing={keepEditingDialog}
+        dialogSwitchTarget={CREATE_DIALOG_SWITCH_TARGET}
         requestCloseRef={taskRequestCloseRef}
         isDirty={() => workItemFormDirty.current}
         variant="anchored"
         anchorRef={taskAnchorRef}
+        dialogTrigger="task"
         title={dialogProject ? `Add a task to ${dialogProject.name}` : 'Add a task'}
         description="Records a durable intake request. This step does not wake an agent yet."
       >

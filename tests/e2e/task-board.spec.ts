@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type {
   HumanQuestion,
+  PipelineSummary,
   UpdateAutomationConfigurationRequest,
 } from '@shared/task-board-contract';
 
@@ -98,10 +99,24 @@ function board() {
 
 async function installDefaultBoard(
   page: Page,
-  options: { pauseConflictOnce?: boolean } = {},
-): Promise<{ pauseOnNextRead: () => void }> {
+  options: {
+    emptyProjectList?: boolean;
+    emptyTaskList?: boolean;
+    holdPausePostResponse?: boolean;
+    pauseConflictOnce?: boolean;
+    workItems?: ReadonlyArray<Record<string, unknown>>;
+  } = {},
+): Promise<{
+  pauseOnNextRead: () => void;
+  pausePostRequestStarted: Promise<void>;
+  releasePausePostResponse: () => void;
+}> {
   let pauseConflictOnce = options.pauseConflictOnce ?? false;
   let pauseOnNextRead = false;
+  let markPausePostRequestStarted: () => void = () => undefined;
+  const pausePostRequestStarted = new Promise<void>((resolve) => { markPausePostRequestStarted = resolve; });
+  let releasePausePostResponse: () => void = () => undefined;
+  const pausePostResponseRelease = new Promise<void>((resolve) => { releasePausePostResponse = resolve; });
   let boardPause = {
     paused: false,
     reason: null as string | null,
@@ -127,6 +142,8 @@ async function installDefaultBoard(
       return;
     }
     if (url.pathname === '/board-api/v1/board/pause' && request.method() === 'POST') {
+      markPausePostRequestStarted();
+      if (options.holdPausePostResponse) await pausePostResponseRelease;
       const body = request.postDataJSON() as { reason: string | null; version: number };
       if (pauseConflictOnce || body.version !== boardPause.version) {
         pauseConflictOnce = false;
@@ -160,15 +177,15 @@ async function installDefaultBoard(
       return;
     }
     if (url.pathname === '/board-api/v1/work-items') {
-      await route.fulfill({ json: { workItems: [] } });
+      await route.fulfill({ json: { workItems: options.workItems ?? [] } });
       return;
     }
     if (url.pathname === '/board-api/v1/projects') {
-      await route.fulfill({ json: { projects: [project] } });
+      await route.fulfill({ json: { projects: options.emptyProjectList ? [] : [project] } });
       return;
     }
     if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
-      await route.fulfill({ json: board() });
+      await route.fulfill({ json: options.emptyTaskList ? { ...board(), tasks: [] } : board() });
       return;
     }
     if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
@@ -180,7 +197,65 @@ async function installDefaultBoard(
 
   return {
     pauseOnNextRead: () => { pauseOnNextRead = true; },
+    pausePostRequestStarted,
+    releasePausePostResponse,
   };
+}
+
+async function installFinalApprovalBoard(page: Page) {
+  const workItem = {
+    apiVersion,
+    workItemId: 'work-item-final-approval',
+    originalRequest: 'Prepare the release-ready approval surface.',
+    refinedObjective: 'Prepare the release-ready approval surface.',
+    priority: 'normal',
+    taskType: 'standard',
+    projectTarget: { mode: 'explicit', projectId: project.projectId },
+    resolvedProjectId: project.projectId,
+    planningTaskId: null,
+    state: 'final_approval',
+    currentStage: null,
+    createdBy: 'human:operator',
+    version: 7,
+    createdAt: '2026-08-28T12:00:00.000Z',
+    updatedAt: '2026-08-28T12:30:00.000Z',
+    endedAt: null,
+    cancelledReason: null,
+    archivedAt: null,
+  };
+  const pipelineSummary: PipelineSummary = {
+    commits: [{
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      subject: 'Prepare final approval',
+    }],
+    diffstat: ' src/web/task-board/views/WorkItemDetail.tsx | 4 ++++',
+    filesTouched: ['src/web/task-board/views/WorkItemDetail.tsx'],
+    declaredScope: ['src/web/task-board'],
+    scopeOk: true,
+    assumptions: [],
+    midRunAssumptions: [],
+    verify: [],
+    criteria: ['The operator can review and dismiss the merge confirmation.'],
+    criterionChecks: [],
+    findings: [],
+    designRecord: null,
+  };
+
+  await installDefaultBoard(page, { workItems: [workItem] });
+  await page.route('**/board-api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `/board-api/v1/work-items/${workItem.workItemId}/pipeline-summary`) {
+      await route.fulfill({ json: pipelineSummary });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${workItem.workItemId}/audit`) {
+      await route.fulfill({ json: { gateActions: [], transitions: [] } });
+      return;
+    }
+    await route.fallback();
+  });
+
+  return workItem;
 }
 
 test('the board control pauses with a reason and resumes orchestration', async ({ page }) => {
@@ -248,6 +323,37 @@ test('a pause conflict keeps its recovery controls reachable in a short desktop 
 
   await expect(pausePopover.getByRole('alert')).toBeInViewport();
   await expect(confirmPause).toBeInViewport();
+});
+
+test('a pending pause keeps its reason and error when the rail breakpoint changes', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'starts from the desktop rail');
+  const boardStub = await installDefaultBoard(page, {
+    holdPausePostResponse: true,
+    pauseConflictOnce: true,
+  });
+  await page.goto('/');
+  let companyRail = await openCompanyRail(page);
+  const pauseBoard = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+  await expect(pauseBoard).toBeEnabled();
+  await pauseBoard.click();
+  let pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  const reasonText = 'Keep this reason through the responsive handoff.';
+  await pausePopover.getByRole('textbox', { name: 'Reason', exact: true }).fill(reasonText);
+  const pauseResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/board-api/v1/board/pause')
+    && response.request().method() === 'POST'
+  ));
+  await pausePopover.getByRole('button', { name: 'Confirm pause', exact: true }).click();
+  await boardStub.pausePostRequestStarted;
+
+  await page.setViewportSize({ width: 900, height: 844 });
+  boardStub.releasePausePostResponse();
+  await pauseResponse;
+
+  companyRail = await openCompanyRail(page);
+  pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover.getByRole('alert')).toContainText('Pause state changed');
+  await expect(pausePopover.getByRole('textbox', { name: 'Reason', exact: true })).toHaveValue(reasonText);
 });
 
 test('outside-click closing the pause popover does not restore focus to the rail', async ({ page }) => {
@@ -777,6 +883,91 @@ test('an anchored add-task trigger preserves a dirty draft and does not trap Tab
   await expect(backgroundPrompt).toHaveValue('Keep this draft when its trigger is clicked again.');
 });
 
+test('a clean add-task switches to add-project exactly once', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop rail and anchored add-task only');
+  await installDefaultBoard(page, { emptyProjectList: true });
+  await page.goto('/');
+
+  const taskActions = page.getByRole('group', { name: 'Task list actions' });
+  const addTask = taskActions.getByRole('button', { name: 'Add task', exact: true });
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  const projectDialog = page.getByRole('dialog', { name: 'Add project from disk', exact: true });
+
+  await addTask.click();
+  await expect(taskDialog).toBeVisible();
+  await taskActions.getByRole('button', { name: 'Add project', exact: true }).click();
+  await expect(projectDialog).toHaveCount(1);
+  await expect(taskDialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toHaveCount(0);
+  await projectDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+
+  await addTask.click();
+  await expect(taskDialog).toBeVisible();
+  await page.getByRole('main').getByRole('button', { name: 'Add project', exact: true }).click();
+  await expect(projectDialog).toHaveCount(1);
+  await expect(taskDialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toHaveCount(0);
+  await projectDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+
+  await addTask.click();
+  await expect(taskDialog).toBeVisible();
+  const companyRail = await openCompanyRail(page);
+  await companyRail.getByRole('navigation', { name: 'Projects and agents', exact: true })
+    .getByRole('button', { name: 'Add project', exact: true }).click();
+  await expect(projectDialog).toHaveCount(1);
+  await expect(taskDialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toHaveCount(0);
+});
+
+test('the other add-task trigger re-anchors the open form without losing its draft', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored add-task is desktop-only');
+  await installDefaultBoard(page, { emptyTaskList: true });
+  await page.goto('/');
+
+  const headerAddTask = page.getByRole('group', { name: 'Task list actions' })
+    .getByRole('button', { name: 'Add task', exact: true });
+  const emptyStateAddTask = page.getByRole('main')
+    .getByRole('button', { name: 'Add task', exact: true });
+  await expect(headerAddTask).toBeVisible();
+  await expect(emptyStateAddTask).toBeVisible();
+  await headerAddTask.click();
+
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  const prompt = taskDialog.getByLabel('Task', { exact: true });
+  await prompt.fill('Preserve this draft while moving the panel.');
+  const initialPromptElement = await prompt.elementHandle();
+  if (initialPromptElement === null) throw new Error('The task prompt did not mount.');
+  const initialBounds = await taskDialog.boundingBox();
+  expect(initialBounds).not.toBeNull();
+
+  await emptyStateAddTask.click();
+  await expect(taskDialog).toBeVisible();
+  await expect(prompt).toHaveValue('Preserve this draft while moving the panel.');
+  expect(await prompt.evaluate(
+    (currentPrompt, originalPrompt) => currentPrompt === originalPrompt,
+    initialPromptElement,
+  )).toBe(true);
+  await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toHaveCount(0);
+  await expect.poll(async () => {
+    const nextBounds = await taskDialog.boundingBox();
+    if (nextBounds === null || initialBounds === null) return 0;
+    return Math.abs(nextBounds.x - initialBounds.x) + Math.abs(nextBounds.y - initialBounds.y);
+  }).toBeGreaterThan(24);
+
+  await emptyStateAddTask.click();
+  const discardConfirmation = page.getByRole('dialog', { name: 'Discard draft?', exact: true });
+  await expect(discardConfirmation).toBeVisible();
+  expect(await initialPromptElement.evaluate((element) => ({
+    connected: element.isConnected,
+    value: element instanceof HTMLTextAreaElement ? element.value : null,
+  }))).toEqual({
+    connected: true,
+    value: 'Preserve this draft while moving the panel.',
+  });
+  await discardConfirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(taskDialog).toBeVisible();
+});
+
 test('switching dialogs and navigating wait for a dirty add-task decision', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop rail and anchored add-task only');
   await installDefaultBoard(page);
@@ -1248,7 +1439,7 @@ test('a token-rotation dialog stays anchored inside a taller desktop viewport', 
   await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
   await expectDialogInsideViewport(rotationDialog);
 
-  await page.keyboard.press('Escape');
+  await rotationDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(rotationDialog).toHaveCount(0);
   await expect(rotateToken).toBeFocused();
 });
@@ -1561,6 +1752,48 @@ test('creating a task requires and records one explicit project with priority', 
   const intakeRow = page.getByRole('button', { name: /Make invoice recovery clear/u });
   await expect(intakeRow.getByText('Queued', { exact: true })).toBeVisible();
   await expect(intakeRow.getByText(project.name, { exact: true })).toBeVisible();
+});
+
+test('desktop final approval opens an anchored in-viewport merge confirmation that can close', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1_024, 'desktop final-approval confirmation only');
+  const workItem = await installFinalApprovalBoard(page);
+  await page.goto('/');
+
+  const row = page.getByRole('article', { name: `Work item: ${workItem.refinedObjective}` });
+  await row.getByRole('button').click();
+  const finalActions = page.getByRole('group', { name: 'Final approval actions', exact: true });
+  const approve = finalActions.getByRole('button', { name: 'Approve & merge', exact: true });
+  await expect(approve).toBeVisible();
+  await approve.click();
+
+  const confirmation = page.getByRole('dialog', { name: 'Approve and merge pipeline', exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  const bounds = await confirmation.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
+
+  await confirmation.getByRole('button', { name: 'Keep in final review', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  await approve.click();
+  await confirmation.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+
+  await approve.click();
+  await expect(confirmation).toBeVisible();
+  await page.getByRole('group', { name: 'Task list actions', exact: true })
+    .getByRole('button', { name: 'Add task', exact: true }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  await expect(taskDialog).toBeVisible();
+  await expect(confirmation).toHaveCount(0);
+  await taskDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(taskDialog).toHaveCount(0);
+  await expect(confirmation).toHaveCount(0);
 });
 
 test('work-item detail resolves planning input, confirms a workflow, archives completion, and cancels another intake', async ({ page }) => {
@@ -2028,7 +2261,8 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   }
   await dialog.getByRole('button', { name: 'Archive work item' }).click();
   await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
-  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await dialog.getByRole('button', { name: 'Keep visible' }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('alert').filter({ hasText: 'This work item or plan changed in another session. Refresh before trying again.' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Archive', exact: true }).click();
   await expect(dialog.getByRole('alert')).toHaveCount(0);

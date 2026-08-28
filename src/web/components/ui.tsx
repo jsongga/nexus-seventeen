@@ -10,7 +10,12 @@ import {
   type RefObject,
 } from 'react';
 import { X } from 'lucide-react';
-import { useConfirmBeforeDiscard, useDialogLayer } from './dialog-stack';
+import {
+  deferDialogOutsideDismissal,
+  useConfirmBeforeDiscard,
+  useDialogLayer,
+  type DialogSwitchTarget,
+} from './dialog-stack';
 
 const modalViewportInset = 16;
 const modalAnchorGap = 8;
@@ -161,6 +166,8 @@ export function Modal({
   isDirty,
   variant = 'takeover',
   anchorRef,
+  dialogTrigger,
+  dialogSwitchTarget,
   requestCloseRef,
   onKeepEditing,
 }: {
@@ -173,6 +180,8 @@ export function Modal({
   isDirty?: () => boolean;
   variant?: 'takeover' | 'anchored';
   anchorRef?: RefObject<HTMLElement | null>;
+  dialogTrigger?: string;
+  dialogSwitchTarget?: DialogSwitchTarget;
   requestCloseRef?: RefObject<(() => void) | null>;
   onKeepEditing?: () => void;
 }) {
@@ -326,15 +335,19 @@ export function Modal({
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (dialogRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
-      if (target instanceof Element && target.closest('[role="dialog"], [data-dialog-layer]')) return;
-      requestClose();
+      const targetElement = target instanceof Element ? target : target.parentElement;
+      const registeredTrigger = targetElement?.closest('[data-dialog-trigger]');
+      if (registeredTrigger?.getAttribute('data-dialog-trigger') === dialogTrigger) return;
+      if (targetElement?.closest('[role="dialog"], [data-dialog-layer]')) return;
+      deferDialogOutsideDismissal(event, dialogSwitchTarget ?? layerId, requestClose);
     };
 
-    // Let an outside control's click handler record a pending dialog or navigation
-    // before the dirty dialog asks whether that action may continue.
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, [anchorRef, anchoredLayout, isTopmost, open, requestClose]);
+    // Capture the originating layer before a trigger can mount another dialog and
+    // remove this listener. The queued dismissal still runs after React marks the
+    // click for any same-owner dialog switch.
+    document.addEventListener('click', handleClick, true);
+    return () => document.removeEventListener('click', handleClick, true);
+  }, [anchorRef, anchoredLayout, dialogSwitchTarget, dialogTrigger, isTopmost, layerId, open, requestClose]);
 
   if (!open) return null;
 
@@ -370,7 +383,7 @@ export function Modal({
           style={anchorStyle}
           className={cn(
             anchoredLayout
-              ? 'cicada-modal-enter flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[var(--modal-anchor-max-height)] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
+              ? 'cicada-modal-enter flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] ring-1 ring-line-strong/60 sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[var(--modal-anchor-max-height)] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
               : 'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md',
             anchoredLayout && anchorPosition.placement === 'above' && 'sm:-translate-y-full',
             className,

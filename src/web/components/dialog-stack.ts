@@ -10,6 +10,36 @@ import {
 
 type DialogDismissalDecision = 'close' | 'confirm';
 
+export type DialogSwitchTarget = string;
+
+const dialogSwitchEvents = new WeakMap<Event, DialogSwitchTarget>();
+
+/** Records which dialog owner already routed a trigger click in its React handler. */
+export function markDialogSwitchEvent(
+  event: Event | undefined,
+  target: DialogSwitchTarget,
+): void {
+  if (event) dialogSwitchEvents.set(event, target);
+}
+
+export function dialogSwitchWasHandledForLayer(
+  event: Event,
+  layer: DialogSwitchTarget,
+): boolean {
+  return dialogSwitchEvents.get(event) === layer;
+}
+
+/** Lets React route a trigger click before the originating dialog acts on it. */
+export function deferDialogOutsideDismissal(
+  event: Event,
+  layer: DialogSwitchTarget,
+  onDismiss: () => void,
+): void {
+  queueMicrotask(() => {
+    if (!dialogSwitchWasHandledForLayer(event, layer)) onDismiss();
+  });
+}
+
 export function fieldsAreDirty(values: readonly string[]): boolean {
   return values.some((value) => value.length > 0);
 }

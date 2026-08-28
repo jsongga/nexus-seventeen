@@ -150,13 +150,22 @@ alert` calls; task creation keeps the board visibly present behind it.
 Shipped 2026-08-28; deliberate audit residue left as takeovers: `Cancel work item`,
 `Reject proposed plan`, `Request implementation changes`, the agent-type editor, and the project picker.
 
-**9.6.1. Anchored-dialog follow-ups** *(parked at the 9.6 fix-wave cap, 2026-08-28)* —
+**9.6.1. Anchored-dialog follow-ups** *(shipped 2026-08-28; parked at the 9.6 fix-wave cap)* —
 clean (non-dirty) cross-dialog switches request close twice before React commits
 (pending open can be clobbered); clicking the *other* Add-task trigger while the
 form is open drops the re-anchor; a `lg` breakpoint crossing during an in-flight
 pause hides a later 409/network error and the typed reason; no Playwright flow
 opens `Approve and merge pipeline`; the scrimless anchored panel's edge relies on
 the elevation shadow alone. None destroys data; a second click or retry recovers.
+
+**9.7. Naming audit** *(queued 2026-08-28; analysis first, renames as reviewed
+mechanical tasks)* — sweep code, config, docs, and UI copy for inconsistent
+vocabulary (`steward` vs `nexus-seventeen`, `provider` vs `runtime`, `intake` /
+`onboarding` / `work item` / `task`, `lane` vs `worker`), file names vs their
+primary export, folder names vs the seam they hold, abbreviations and
+misleading names; produce a renaming plan with ripple costs and the
+migration-sensitive exceptions (Dokploy volume names, pinned identifiers,
+external env vars) called out.
 
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase
