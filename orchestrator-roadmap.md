@@ -109,31 +109,32 @@ read-only CI publish of repo docs on merge; board pen-documents retired
 listed here because retirement waits for the replacement. Exit: repo docs
 readable in Outline with source banners; Documents page gone.
 
-**9.5. File diet + consolidation** *(approved 2026-08-26, runs after 9
-closes; from the five-agent layout/dead-code analysis)* — Tier A:
-`.gitignore` the `.superpowers/` scratch; `catalog/company-bootstrap.json`
-→ `config/`; mirror-rule fix (move the 10 collaborator-named tests into
+**9.5. File diet + consolidation** *(approved 2026-08-26; from the five-agent
+layout/dead-code analysis)* — Tier A: `.gitignore` the `.superpowers/`
+scratch; move the company bootstrap into `config/`; mirror-rule fix (move
+the 10 collaborator-named tests into
 `tests/server/task-board/collaborators/`, relocate the stray persistence
 test); delete the completed `docs/superpowers/{plans,specs}` (keep the
 active campaign's pair until it ships) + `scripts/agent-container-smoke.mjs`;
 dead code (`proposals.ts`+test, `parseWakeupEntity`, `apiEntity`,
 `parseTaskPhase`, dead barrel line, `public/cicada-mark.svg`, npm scripts
 `dev:task-worker`/`preview`/`test:watch`, `TASK_RETRY_REQUIRED` error code);
-`scripts/bootstrap-lib.test.mjs` → `tests/tooling/` (drop `test:bootstrap` +
-`build:bootstrap-contract` + `tsconfig.bootstrap.json`). Tier B: **collapse `skills/` (11 dirs) into one sectioned `config/skills.md`**
-(`## <skill-id>` sections; digests are content-only so plan pins survive); micro-module merges (`runtime/{events,errors}`→`adapter`, the three
+move the bootstrap tooling test under `tests/tooling/` and retire its
+redundant dedicated build and test entries. Tier B: **consolidate 11 skill
+directories into one sectioned `config/skills.md`** (`## <skill-id>`
+sections; digests are content-only so plan pins survive); micro-module merges (`runtime/{events,errors}`→`adapter`, the three
 SQL-constant files into their hosts, `data/{uuid,concurrency}`→`client`,
 `dialog-discard`→`dialog-stack`, `safe-error-detail`→`redact`); remove the
 25 barrel-only export lines + strip the 103 redundant `export` keywords;
 fold `docs/TASK_FLEET.md` into README; prune the stale 105-line plan section
 in `WORKFLOW_ARCHITECTURE.md`; document the 16 undocumented `STEWARD_*` env
-vars and `bootstrap:apply`. Tier C (approved 2026-08-27): **collapse `prompts/` (23 files) into one
+vars and `bootstrap:apply`. Tier C: **consolidate 23 prompt files into one
 sectioned `config/prompts.md`** (`## <template>` sections, bodies verbatim →
-promptsSha and the 10 goldens stay byte-identical); `promptsRoot`/
-`STEWARD_TASK_WORKER_PROMPTS_ROOT` become `promptsFile`/`…_PROMPTS_FILE` and
-get documented. Explicitly kept: `scripts/export-documents.mjs` (needed
+promptsSha and the 10 goldens stay byte-identical); prompt configuration now
+uses `promptsFile` and `STEWARD_TASK_WORKER_PROMPTS_FILE`. Explicitly kept:
+`scripts/export-documents.mjs` (needed
 against the pre-v25 production DB), this roadmap file, all schema fixtures,
-`prompts/`/`docker_image/`/`public/`/tsconfig placement. Exit: non-code tracked
+`config/`/`docker_image/`/`public/`/tsconfig placement. Exit: non-code tracked
 files ≲72, `src`+`tests` ≲260, zero single-file directories outside
 mandated conventions, gates + goldens green.
 
@@ -176,7 +177,7 @@ lands as phased children across two repos.
 
 First runtime for pipeline v1 (Codex vs Claude CLI); container base for
 non-Node product repos; Outline hosting shape on Dokploy (Postgres/Redis);
-whether `AGENTS.md`/`prompts/`/`config/` land in this repo or a sibling
+whether `AGENTS.md` and `config/` land in this repo or a sibling
 orchestrator repo (§2 layout — this repo currently plays both roles);
 webhook exposure.
 

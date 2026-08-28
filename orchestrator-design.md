@@ -44,16 +44,11 @@ feedback channel.
 
 ```
 AGENTS.md                 # router; always loaded; <80 lines
-prompts/
-  intake.md
-  designer.md
-  engineer.md
-  reviewer.md
-  integrator.md
 findings/                 # append-only ledger
 config/
-  runtimes.yaml           # capability profiles per runtime
-  projects.yaml           # project -> repo, type, image, tier defaults
+  prompts.md              # sectioned prompt templates
+  runtimes.json           # capability profiles per runtime
+  company-bootstrap.json  # projects, agents, skills, and stage defaults
 ```
 
 `AGENTS.md` contains: global invariants, precedence rule (project docs override global), the
