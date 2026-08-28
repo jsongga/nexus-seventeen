@@ -23,7 +23,7 @@ retired pen-documents editor.
    paste `docker-compose.outline.yml` as raw compose (no git source needed).
 3. **Environment** — in the service's Environment tab, set the compose inputs exactly:
    `OUTLINE_SECRET_KEY` and `OUTLINE_UTILS_SECRET` (32-byte hex each — `openssl rand -hex 32`),
-   `OUTLINE_PG_PASSWORD` (any strong value), `OUTLINE_OIDC_CLIENT_ID=outline`,
+   `OUTLINE_PG_PASSWORD` (hex only — `openssl rand -hex 24`), `OUTLINE_OIDC_CLIENT_ID=outline`,
    `OUTLINE_OIDC_CLIENT_SECRET`, `OUTLINE_OIDC_AUTH_URI`, `OUTLINE_OIDC_TOKEN_URI`, and
    `OUTLINE_OIDC_USERINFO_URI`. Set the three URI values to the endpoints from step 1.
 4. **Domain** — on the `outline` service add domain `docs.cicadasystem.com` → port `3000`,
@@ -71,5 +71,9 @@ that variable has exactly that value; once enabled, it runs after pushes to `mai
 - The publisher covers markdown only; relative image links inside docs will 404 in Outline
   until attachment sync exists.
 - Source-absent pages are archived, never deleted — comment history survives.
+- With `--dry-run`, every source is reported as a create because the publisher does not read the
+  live mirror; it cannot preview updates, archives, or unchanged pages.
+- When pages created outside the publisher duplicate a source title, only the last listed page is
+  considered; the other duplicates are neither updated nor archived (the title map is last-wins).
 - The docker-tier e2e provisions its API token by seeding Outline's database directly and is
   pinned to the image tag above; bumping the image means revisiting that seed.

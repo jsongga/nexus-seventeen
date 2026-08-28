@@ -1,4 +1,5 @@
 import { withSourceBanner } from "./banner.js";
+import { OutlineHttpError } from "./client.js";
 import type { DocsPublishRepo } from "./config.js";
 import { enumerateDocs } from "./enumerate.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
@@ -9,7 +10,7 @@ import {
 
 export interface PublishReport { readonly repo: string; readonly created: number; readonly updated: number; readonly archived: number; readonly unchanged: number; readonly failures: readonly string[] }
 
-const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ ([0-9a-f]{12})\./su;
+const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ blob ([0-9a-f]{12})\./su;
 
 function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
   return runner([
@@ -21,6 +22,9 @@ function git(runner: GitRunner, repoPath: string, arguments_: readonly string[])
 }
 
 function errorDetail(error: unknown): string {
+  if (error instanceof OutlineHttpError && error.code !== undefined) {
+    return `HTTP ${error.status} ${error.code}: ${error.message}`;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -59,11 +63,16 @@ export async function publishRepo(
   sink: DocsSink,
   runner: GitRunner = runDeclaredScopeGit,
 ): Promise<PublishReport> {
-  const resolvedSha = git(runner, entry.path, ["rev-parse", entry.ref]).trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(resolvedSha)) {
-    throw new Error(`git returned an invalid full SHA for ${entry.ref}`);
+  let sources: ReturnType<typeof enumerateDocs>;
+  try {
+    const resolvedSha = git(runner, entry.path, ["rev-parse", entry.ref]).trim();
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(resolvedSha)) {
+      throw new Error(`git returned an invalid full SHA for ${entry.ref}`);
+    }
+    sources = enumerateDocs(entry.path, resolvedSha, { exclude: entry.exclude }, runner);
+  } catch (error) {
+    return report(entry.name, 0, 0, 0, 0, [`enumerate: ${errorDetail(error)}`]);
   }
-  const sources = enumerateDocs(entry.path, resolvedSha, { exclude: entry.exclude }, runner);
 
   let state: Awaited<ReturnType<typeof collectionState>>;
   try {

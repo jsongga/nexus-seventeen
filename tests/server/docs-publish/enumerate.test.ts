@@ -84,6 +84,26 @@ test("reports the offending raw tree entry when git output is malformed", () => 
   );
 });
 
+test("limits recursive tree enumeration to the README and docs pathspecs", () => {
+  const calls: Array<readonly string[]> = [];
+
+  assert.deepEqual(enumerateDocs("/repo", "HEAD", {}, (arguments_) => {
+    calls.push([...arguments_]);
+    return "";
+  }), []);
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.slice(-7), [
+    "ls-tree",
+    "-r",
+    "-z",
+    "HEAD",
+    "--",
+    "README.md",
+    "docs",
+  ]);
+});
+
 test("rejects the same unsafe exclude patterns as config parsing before invoking git", () => {
   const patterns = [
     "/docs/private/**",

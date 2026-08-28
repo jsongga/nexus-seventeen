@@ -1,7 +1,12 @@
+name: publish-docs
+
 # Inert until the repository variable DOCS_PUBLISH_ENABLED is set to true.
 on:
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: docs-publish
@@ -11,6 +16,7 @@ jobs:
   publish:
     if: ${{ vars.DOCS_PUBLISH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -18,6 +24,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
       - run: npm ci
       - run: npm run docs:publish
         env:

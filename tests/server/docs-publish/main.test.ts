@@ -116,3 +116,47 @@ test("non-dry publishing constructs the real Outline sink from config and token"
     failures: [],
   });
 });
+
+test("prints an enumeration failure, continues with later repos, and exits nonzero", async () => {
+  const root = await mkdtemp(join(tmpdir(), "steward-docs-cli-enumerate-failure-"));
+  const repo = join(root, "repo");
+  const configPath = join(root, "docs-publish.json");
+  await mkdir(repo);
+  await writeFile(join(repo, "README.md"), "# Fixture\n");
+  git(repo, "init", "-b", "main");
+  git(repo, "add", ".");
+  git(repo, "-c", "user.name=Docs Test", "-c", "user.email=docs@example.test", "commit", "-m", "fixture");
+  await writeFile(configPath, JSON.stringify({
+    version: 1,
+    outline: { baseUrl: "https://outline.example.test" },
+    repos: [
+      { name: "missing", path: join(root, "missing-repo"), ref: "HEAD" },
+      { name: "fixture", path: repo, ref: "HEAD" },
+    ],
+  }));
+
+  const previousLog = console.log;
+  const lines: string[] = [];
+  console.log = (...values: unknown[]) => { lines.push(values.join(" ")); };
+  let exitCode = -1;
+  try {
+    exitCode = await runDocsPublishCli(["--config", configPath, "--dry-run"]);
+  } finally {
+    console.log = previousLog;
+  }
+
+  assert.equal(exitCode, 1);
+  assert.equal(lines.length, 2);
+  const failed = JSON.parse(lines[0] ?? "") as { readonly repo: string; readonly failures: readonly string[] };
+  assert.equal(failed.repo, "missing");
+  assert.equal(failed.failures.length, 1);
+  assert.match(failed.failures[0] ?? "", /^enumerate: /u);
+  assert.deepEqual(JSON.parse(lines[1] ?? "") as unknown, {
+    repo: "fixture",
+    created: 1,
+    updated: 0,
+    archived: 0,
+    unchanged: 0,
+    failures: [],
+  });
+});

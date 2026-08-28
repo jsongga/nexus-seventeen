@@ -17,6 +17,7 @@ services:
       FORCE_HTTPS: "false" # TLS is Traefik's job; Outline sees plain HTTP
       SECRET_KEY: ${OUTLINE_SECRET_KEY:?set in Dokploy environment}
       UTILS_SECRET: ${OUTLINE_UTILS_SECRET:?set in Dokploy environment}
+      # OUTLINE_PG_PASSWORD must be hex-only because it is interpolated into this URL.
       DATABASE_URL: postgres://outline:${OUTLINE_PG_PASSWORD:?set in Dokploy environment}@postgres:5432/outline
       PGSSLMODE: disable
       REDIS_URL: redis://redis:6379

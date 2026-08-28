@@ -125,7 +125,7 @@ test("real Outline publishes this repo idempotently and archives excluded docs",
     const text = document.text;
     assert.ok(typeof text === "string", "documents.info.data.text must be a string");
     const blobSha = (await runGit(repoPath, ["rev-parse", `HEAD:${WORKFLOW_TITLE}`])).trim();
-    const expectedBanner = `> **Read-only mirror.** Source: \`${REPO_NAME}/${WORKFLOW_TITLE}\` @ ${blobSha.slice(0, 12)}. Edit in the repository — this page is republished on merge. Comments are welcome here.`;
+    const expectedBanner = `> **Read-only mirror.** Source: \`${REPO_NAME}/${WORKFLOW_TITLE}\` @ blob ${blobSha.slice(0, 12)}. Edit in the repository — this page is republished on merge. Comments are welcome here.`;
     assert.equal(text.split("\n", 1)[0], expectedBanner);
     return Object.freeze({ id: workflow.id, title: workflow.title });
   });

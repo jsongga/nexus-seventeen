@@ -12,8 +12,10 @@ test('docs publishing stays guarded and receives its token from GitHub secrets',
   const workflow = await readFile(workflowPath, 'utf8');
 
   assert.ok(workflow.includes("if: ${{ vars.DOCS_PUBLISH_ENABLED == 'true' }}"));
+  assert.ok(workflow.includes('permissions:\n  contents: read'));
   assert.ok(workflow.includes('  group: docs-publish'));
   assert.ok(workflow.includes('  cancel-in-progress: true'));
+  assert.ok(workflow.includes('    timeout-minutes: 20'));
   assert.ok(
     workflow.includes(
       'STEWARD_OUTLINE_API_TOKEN: ${{ secrets.STEWARD_OUTLINE_API_TOKEN }}',

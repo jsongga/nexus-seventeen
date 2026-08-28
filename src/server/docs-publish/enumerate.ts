@@ -67,7 +67,7 @@ export function enumerateDocs(
   runner: GitRunner = runDeclaredScopeGit,
 ): readonly DocSource[] {
   const prefixes = excludePrefixes(options.exclude ?? []);
-  const output = git(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--"]);
+  const output = git(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--", "README.md", "docs"]);
   const entries = output
     .split("\0")
     .filter((entry) => entry.length > 0)

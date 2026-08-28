@@ -24,6 +24,8 @@ function checkedOptions(options: RetryOptions): void {
 
 function retryable(error: unknown): boolean {
   return error instanceof TypeError || (
+    error instanceof Error && error.name === "AbortError"
+  ) || (
     error instanceof OutlineHttpError &&
     (error.status === 429 || (error.status >= 500 && error.status <= 599))
   );
@@ -49,4 +51,3 @@ export async function withRetry<T>(
   }
   throw new Error("Retry attempts were exhausted");
 }
-

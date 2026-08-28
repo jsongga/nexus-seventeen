@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { withSourceBanner } from "../../../src/server/docs-publish/banner.js";
+import { OutlineHttpError } from "../../../src/server/docs-publish/client.js";
 import type { DocsPublishRepo } from "../../../src/server/docs-publish/config.js";
 import { publishRepo } from "../../../src/server/docs-publish/publish.js";
 import type {
@@ -80,13 +81,16 @@ test("resolves a moving ref once and uses that SHA for every content read", asyn
 class MemorySink implements DocsSink {
   readonly #documents = new Map<string, SinkDocument>();
   #nextId = 1;
+  ensureCollectionCalls = 0;
   failCreateTitle: string | undefined;
+  failCreateError: Error = new Error("injected create failure");
 
   constructor(documents: readonly SinkDocument[] = []) {
     for (const document of documents) this.#documents.set(document.id, document);
   }
 
   async ensureCollection(repoName: string): Promise<SinkCollection> {
+    this.ensureCollectionCalls += 1;
     assert.equal(repoName, ENTRY.name);
     return COLLECTION;
   }
@@ -98,7 +102,7 @@ class MemorySink implements DocsSink {
 
   async createDocument(collection: SinkCollection, title: string, text: string): Promise<void> {
     assert.equal(collection, COLLECTION);
-    if (title === this.failCreateTitle) throw new Error("injected create failure");
+    if (title === this.failCreateTitle) throw this.failCreateError;
     const id = `created-${this.#nextId++}`;
     this.#documents.set(id, Object.freeze({ id, title, text }));
   }
@@ -224,4 +228,42 @@ test("records a per-document sink failure and continues publishing later documen
     (await sink.listDocuments(COLLECTION)).map((document) => document.title),
     ["docs/a.md", "docs/c.md"],
   );
+});
+
+test("reports enumeration failures without preparing the collection", async () => {
+  const sink = new MemorySink();
+  const runner: GitRunner = (arguments_) => {
+    if (arguments_.includes("rev-parse")) return `${RESOLVED_SHA}\n`;
+    if (arguments_.includes("ls-tree")) throw new Error("stdout maxBuffer length exceeded");
+    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+  };
+
+  assert.deepEqual(await publishRepo(ENTRY, sink, runner), {
+    repo: "sample",
+    created: 0,
+    updated: 0,
+    archived: 0,
+    unchanged: 0,
+    failures: ["enumerate: stdout maxBuffer length exceeded"],
+  });
+  assert.equal(sink.ensureCollectionCalls, 0);
+  assert.deepEqual(await sink.listDocuments(COLLECTION), []);
+});
+
+test("includes Outline's HTTP status and error code in sink failure details", async () => {
+  const sink = new MemorySink();
+  sink.failCreateTitle = "README.md";
+  sink.failCreateError = new OutlineHttpError(
+    "Outline request failed with HTTP 400",
+    400,
+    "validation_error",
+  );
+
+  const report = await publishRepo(ENTRY, sink, gitWithDocs({
+    "README.md": "# Readme\n",
+  }));
+
+  assert.deepEqual(report.failures, [
+    "create README.md: HTTP 400 validation_error: Outline request failed with HTTP 400",
+  ]);
 });

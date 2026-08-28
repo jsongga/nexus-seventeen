@@ -15,6 +15,6 @@ test("prepends the source banner byte-exactly and leaves markdown unchanged", ()
 
   assert.equal(
     result,
-    "> **Read-only mirror.** Source: `nexus-seventeen/docs/workflow.md` @ 0123456789ab. Edit in the repository — this page is republished on merge. Comments are welcome here.\n\n# Workflow\n\nBody.\n",
+    "> **Read-only mirror.** Source: `nexus-seventeen/docs/workflow.md` @ blob 0123456789ab. Edit in the repository — this page is republished on merge. Comments are welcome here.\n\n# Workflow\n\nBody.\n",
   );
 });
