@@ -138,7 +138,7 @@ against the pre-v25 production DB), this roadmap file, all schema fixtures,
 files ≲72, `src`+`tests` ≲260, zero single-file directories outside
 mandated conventions, gates + goldens green.
 
-**9.6. Board UX polish** *(requested 2026-08-26)* — no browser-native
+**9.6. Board UX polish** *(requested 2026-08-26; spec 2026-08-27)* — no browser-native
 dialogs anywhere: replace the pause-reason `globalThis.prompt` at
 `BoardApp.tsx:566` with a custom anchored popover (reason field + confirm,
 matching the design system) — this is the only native dialog in the app;
