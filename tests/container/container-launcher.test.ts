@@ -24,7 +24,7 @@ import {
 } from "./helpers.js";
 
 const DIRECT_EGRESS_PROBE = "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 const CONNECT_PROBE = [
   "const net=require('node:net');",
   "const proxy=new URL(process.env.STEWARD_PROXY_URL);",

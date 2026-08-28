@@ -34,7 +34,7 @@ test("prompt-only diffs select the registry and golden envelope suites", async (
   };
 
   for (const tier of ["fast", "area"] as const) {
-    const selection = mapChangedFiles(["prompts/engineer.md"], contract.rules, tier, host);
+    const selection = mapChangedFiles(["config/prompts.md"], contract.rules, tier, host);
     assert.deepEqual(selection, {
       nodeTestFiles: [],
       nodeTestDirs: [promptTestDirectory],

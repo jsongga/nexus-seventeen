@@ -10,7 +10,7 @@ import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "../task-worker/helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 async function fakeDocker(
   root: string,

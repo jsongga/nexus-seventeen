@@ -12,7 +12,7 @@ import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context } from "../task-worker/helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 const baseOptions = {
   adapter: codexAdapter,

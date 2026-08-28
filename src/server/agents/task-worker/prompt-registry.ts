@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { lstatSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { parseSections } from "../../shared/sections.js";
 
-const MAX_PROMPT_BYTES = 64 * 1024;
-const PROMPT_FILE = /^(?<name>[a-z0-9][a-z0-9-]*)\.md$/u;
+const MAX_PROMPT_BYTES = 1024 * 1024;
+const PROMPT_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 const PLACEHOLDER = /\{\{(?<name>[a-z][a-zA-Z0-9]*)\}\}/gu;
 
 interface LoadedPrompt {
@@ -24,26 +25,25 @@ export class PromptRegistry {
     this.#promptsSha = promptsSha;
   }
 
-  static loadSync(root: string): PromptRegistry {
-    const resolvedRoot = resolve(root);
+  static loadSync(file: string): PromptRegistry {
+    const resolvedFile = resolve(file);
+    const stat = lstatSync(resolvedFile);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Prompt file is unavailable: ${resolvedFile}`);
+    if (stat.size > MAX_PROMPT_BYTES) throw new Error(`${resolvedFile} exceeds the 1 MiB prompt limit`);
+    const source = readFileSync(resolvedFile, "utf8");
+    if (Buffer.byteLength(source) !== stat.size) throw new Error(`Prompt file changed while loading: ${resolvedFile}`);
+
     const templates = new Map<string, LoadedPrompt>();
-    const entries = readdirSync(resolvedRoot, { withFileTypes: true })
-      .filter((entry) => entry.name.endsWith(".md"))
-      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-    for (const entry of entries) {
-      const match = PROMPT_FILE.exec(entry.name);
-      if (match?.groups?.name === undefined) throw new Error(`Prompt file name is invalid: ${entry.name}`);
-      const path = join(resolvedRoot, entry.name);
-      const stat = lstatSync(path);
-      if (!entry.isFile() || entry.isSymbolicLink() || !stat.isFile() || stat.isSymbolicLink()) {
-        throw new Error(`Prompt file is unavailable: ${entry.name}`);
-      }
-      if (stat.size > MAX_PROMPT_BYTES) throw new Error(`${entry.name} exceeds the 64 KiB prompt limit`);
-      const content = readFileSync(path, "utf8");
-      if (Buffer.byteLength(content) !== stat.size) throw new Error(`Prompt file changed while loading: ${entry.name}`);
-      templates.set(match.groups.name, Object.freeze({ content, digest: digest(content) }));
+    for (const [name, content] of parseSections(source, { nameRule: PROMPT_NAME })) {
+      templates.set(name, Object.freeze({ content, digest: digest(content) }));
     }
-    const manifest = [...templates].map(([name, prompt]) => [name, prompt.digest] as const);
+    const manifest = [...templates]
+      .map(([name, prompt]) => [name, prompt.digest] as const)
+      .sort(([left], [right]) => {
+        const leftFileName = `${left}.md`;
+        const rightFileName = `${right}.md`;
+        return leftFileName < rightFileName ? -1 : leftFileName > rightFileName ? 1 : 0;
+      });
     const promptsSha = digest(JSON.stringify(manifest));
     return new PromptRegistry(templates, promptsSha);
   }

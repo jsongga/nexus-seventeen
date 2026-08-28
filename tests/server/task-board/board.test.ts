@@ -1544,7 +1544,7 @@ test("happy-path claim keeps the existing complete response shape", async () => 
 test("claim pinning round-trips verbatim and replay echoes the original pinned values", async () => {
   const fixture = await boardFixture();
   try {
-    const productionPromptsSha = PromptRegistry.loadSync(resolve("prompts")).promptsSha;
+    const productionPromptsSha = PromptRegistry.loadSync(resolve("config/prompts.md")).promptsSha;
     fixture.board.createTask(fixture.project.projectId, taskRequest({
       title: "Pin the claim execution identity",
     }));

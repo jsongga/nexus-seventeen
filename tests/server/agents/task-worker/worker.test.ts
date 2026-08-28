@@ -34,7 +34,7 @@ import {
 } from "./helpers.js";
 
 type WorkerDiagnostic = TaskWorkerDiagnosticEvent;
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 function phaseEvent(signal: Readonly<{
   key: string;

@@ -48,7 +48,7 @@ const HUMAN_TOKEN = "runtime-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "runtime-e2e-manager-token-0123456789abcdef";
 const ENGINEER_TOKEN = "runtime-e2e-engineer-token-0123456789abcdef";
 const VERIFIER_TOKEN = "runtime-e2e-verifier-token-0123456789abcdef";
-const PROMPTS_ROOT = resolve("prompts");
+const PROMPTS_FILE = resolve("config/prompts.md");
 const DECLARED_SCOPE = Object.freeze(["src/acme"]);
 const CHECKED_CRITERION = "The synthetic runtime fixture command passes.";
 
@@ -431,7 +431,7 @@ async function createFleetWorker(
     return await createTaskFleetWorker(config, origin, {
       registry: runtimeRegistry([codexAdapter, claudeAdapter, acmeAdapter]),
       profiles: ACME_PROFILES,
-      promptsRoot: PROMPTS_ROOT,
+      promptsFile: PROMPTS_FILE,
     });
   } finally {
     if (priorPath === undefined) delete process.env.PATH;

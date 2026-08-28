@@ -29,11 +29,11 @@ if (runtimesConfigSource !== undefined && runtimesConfigSource.length === 0) {
 const runtimesConfigPath = resolve(runtimesConfigSource ?? "config/runtimes.json");
 const profile = (await loadRuntimeProfiles(runtimesConfigPath)).runtimes.get(provider);
 if (profile === undefined) throw new Error(`Unknown runtime profile: ${provider}`);
-const promptsRootSource = process.env.STEWARD_TASK_WORKER_PROMPTS_ROOT;
-if (promptsRootSource !== undefined && promptsRootSource.length === 0) {
-  throw new Error("STEWARD_TASK_WORKER_PROMPTS_ROOT must not be empty");
+const promptsFileSource = process.env.STEWARD_TASK_WORKER_PROMPTS_FILE;
+if (promptsFileSource !== undefined && promptsFileSource.length === 0) {
+  throw new Error("STEWARD_TASK_WORKER_PROMPTS_FILE must not be empty");
 }
-const prompts = PromptRegistry.loadSync(resolve(promptsRootSource ?? "prompts"));
+const prompts = PromptRegistry.loadSync(resolve(promptsFileSource ?? "config/prompts.md"));
 const longPollMs = optionalInteger("STEWARD_TASK_WORKER_LONG_POLL_MS");
 const timeoutMs = optionalInteger("STEWARD_TASK_WORKER_AGENT_TIMEOUT_MS");
 const terminationGraceMs = optionalInteger("STEWARD_TASK_WORKER_TERMINATION_GRACE_MS");

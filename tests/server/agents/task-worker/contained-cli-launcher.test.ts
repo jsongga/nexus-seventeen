@@ -35,7 +35,7 @@ import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
   return agentPrompt(request, PROMPTS);

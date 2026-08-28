@@ -6,7 +6,7 @@ import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { context } from "./helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
   return agentPrompt(request, PROMPTS);

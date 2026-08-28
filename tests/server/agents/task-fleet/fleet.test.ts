@@ -28,7 +28,7 @@ import type {
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { FakeBoard, FakeLauncher, claimed, completedOutcome, tempRoot } from "../task-worker/helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 interface Deferred<T> {
   readonly promise: Promise<T>;

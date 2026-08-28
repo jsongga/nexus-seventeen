@@ -166,7 +166,9 @@ function unique(values: readonly TaskFleetAgentConfig[], field: "workerId" | "ag
 }
 
 export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
-  const item = exact(value, ["version", "boardUrl", "agents"], ["retry", "runtimesConfigPath", "promptsRoot"], "config");
+  const config = record(value, "config");
+  if ("promptsRoot" in config) throw new Error("config.promptsRoot is no longer supported; use config.promptsFile");
+  const item = exact(config, ["version", "boardUrl", "agents"], ["retry", "runtimesConfigPath", "promptsFile"], "config");
   if (item.version !== 1) throw new Error("config.version must be 1");
   if (!Array.isArray(item.agents) || item.agents.length < 1 || item.agents.length > 128) {
     throw new Error("config.agents must contain between 1 and 128 agents");
@@ -181,9 +183,9 @@ export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
     runtimesConfigPath: item.runtimesConfigPath === undefined
       ? undefined
       : text(item.runtimesConfigPath, "config.runtimesConfigPath", 4_096),
-    promptsRoot: item.promptsRoot === undefined
+    promptsFile: item.promptsFile === undefined
       ? undefined
-      : text(item.promptsRoot, "config.promptsRoot", 4_096),
+      : text(item.promptsFile, "config.promptsFile", 4_096),
     retry: retryConfig(item.retry),
     agents,
   });

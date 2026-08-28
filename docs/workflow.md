@@ -44,7 +44,7 @@ Full runs in the background: the command prints a run id; observe with
     { "match": "scripts/**", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-container"] } },
     { "match": "docs/workflow.md", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/verify"] } },
     { "match": "docs/**", "action": { "kind": "none" } },
-    { "match": "prompts/**", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-worker"] } },
+    { "match": "config/prompts.md", "action": { "kind": "fixed", "nodeTestDirs": ["tests/server/agents/task-worker"] } },
     { "match": "**/*.md", "action": { "kind": "none" } },
     { "match": "package.json", "action": { "kind": "escalate" } },
     { "match": "package-lock.json", "action": { "kind": "escalate" } },

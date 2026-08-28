@@ -15,10 +15,10 @@ function configPath(): string {
 
 const config = await loadTaskFleetConfig(configPath());
 const runtimesConfigPath = resolve(config.runtimesConfigPath ?? "config/runtimes.json");
-const promptsRoot = resolve(config.promptsRoot ?? "prompts");
+const promptsFile = resolve(config.promptsFile ?? "config/prompts.md");
 const fleet = new TaskFleet({
   config,
-  workerFactory: (agent, boardUrl) => createTaskFleetWorker(agent, boardUrl, { runtimesConfigPath, promptsRoot }),
+  workerFactory: (agent, boardUrl) => createTaskFleetWorker(agent, boardUrl, { runtimesConfigPath, promptsFile }),
   classifyError: classifyTaskFleetError,
 });
 const stop = new AbortController();

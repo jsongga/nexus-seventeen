@@ -49,7 +49,7 @@ const HUMAN_CRITERION = "The implementation uses two reviewable commits.";
 const MID_RUN_ASSUMPTION = "Implementation selected a plain-text fixture marker.";
 const ENGINEER_RUN_PIN = { runtime: "codex", model: "fake-engineer" } as const;
 const VERIFIER_RUN_PIN = { runtime: "codex", model: "fake-reviewer" } as const;
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 type EngineerMode = "scoped" | "outside_scope" | "merge_conflict" | "seeded_defect";
 type ReviewerMode = "passed" | "seeded_defect" | "always_blocking";

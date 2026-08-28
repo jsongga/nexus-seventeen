@@ -46,11 +46,11 @@ export interface CreateTaskFleetWorkerOptions {
   readonly registry?: RuntimeRegistry;
   readonly profiles?: RuntimeProfiles;
   readonly runtimesConfigPath?: string;
-  readonly promptsRoot?: string;
+  readonly promptsFile?: string;
   /** Test seam for observing cache behavior while still invoking the real disk loader. */
   readonly loadProfiles?: (path: string) => Promise<RuntimeProfiles>;
   /** Test seam for observing the once-per-lane prompt load. */
-  readonly loadPrompts?: (root: string) => PromptRegistry;
+  readonly loadPrompts?: (file: string) => PromptRegistry;
   /** Test seam for the one-line, non-secret runtime capability startup record. */
   readonly logRuntimeProfile?: (line: string) => void;
 }
@@ -257,7 +257,7 @@ export async function createTaskFleetWorker(
     ` toolCallGranularity=${JSON.stringify(profile.toolCallGranularity)}` +
     ` contextNotes=${JSON.stringify(profile.contextNotes)}`,
   );
-  const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsRoot ?? "prompts"));
+  const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsFile ?? "config/prompts.md"));
   return config.runtime === "container"
     ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile, prompts)
     : createLocalProcessTaskFleetWorker(config, boardUrl, adapter, profile, prompts);

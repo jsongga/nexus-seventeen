@@ -8,7 +8,7 @@ import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { CLAUDE_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot } from "./helpers.js";
 
-const PROMPTS = PromptRegistry.loadSync(resolve("prompts"));
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 test("a contained launch uses the per-run workspace for cwd and sandbox roots", async () => {
   const root = await tempRoot();

@@ -53,7 +53,7 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
   let environmentCalls = 0;
   let promptLoads = 0;
   const runtimeProfileLogs: string[] = [];
-  const promptsRoot = resolve("prompts");
+  const promptsFile = resolve("config/prompts.md");
   const selected = Object.freeze({
     ...codexAdapter,
     environment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -64,11 +64,11 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
   const worker = await createTaskFleetWorker(config, "http://127.0.0.1:4318", {
     registry: runtimeRegistry([selected]),
     profiles: SHIPPED_RUNTIME_PROFILES,
-    promptsRoot,
-    loadPrompts: (root) => {
+    promptsFile,
+    loadPrompts: (file) => {
       promptLoads += 1;
-      assert.equal(root, promptsRoot);
-      return PromptRegistry.loadSync(root);
+      assert.equal(file, promptsFile);
+      return PromptRegistry.loadSync(file);
     },
     logRuntimeProfile: (line) => runtimeProfileLogs.push(line),
   });

@@ -42,7 +42,7 @@ const HUMAN_TOKEN = "onboarding-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "onboarding-e2e-manager-token-0123456789abcdef";
 const ENGINEER_TOKEN = "onboarding-e2e-engineer-token-0123456789abcdef";
 const VERIFIER_TOKEN = "onboarding-e2e-verifier-token-0123456789abcdef";
-const PROMPTS_ROOT = resolve("prompts");
+const PROMPTS_FILE = resolve("config/prompts.md");
 const DECLARED_SCOPE = Object.freeze(["README.md", "docs", "Dockerfile"]);
 const GAP_REPORT = "# Onboarding gaps\n\n- Branch protection remains deferred for a repository administrator.";
 const WORKFLOW_MARKDOWN = `# Workflow
@@ -368,7 +368,7 @@ async function createFleetWorker(
     return await createTaskFleetWorker(config, origin, {
       registry: runtimeRegistry([codexAdapter, claudeAdapter]),
       profiles: SHIPPED_RUNTIME_PROFILES,
-      promptsRoot: PROMPTS_ROOT,
+      promptsFile: PROMPTS_FILE,
     });
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
