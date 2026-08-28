@@ -147,6 +147,8 @@ anchored/inline surface (popover or side panel) so creating a task never
 feels like leaving the task-board page; audit the other create/confirm
 modals for the same takeover feel. Exit: zero `globalThis.prompt/confirm/
 alert` calls; task creation keeps the board visibly present behind it.
+Shipped 2026-08-28; deliberate audit residue left as takeovers: `Cancel work item`,
+`Reject proposed plan`, `Request implementation changes`, the agent-type editor, and the project picker.
 
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase

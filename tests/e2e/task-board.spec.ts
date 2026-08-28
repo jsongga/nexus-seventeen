@@ -443,6 +443,24 @@ test('interrupting every active project agent confirms the count and preserves r
   await expect(interruptAll).toBeEnabled();
   await interruptAll.click();
   let confirmation = page.getByRole('dialog', { name: 'Interrupt 2 agents?', exact: true });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+    const cancelIntersectsHeader = await page.evaluate(() => {
+      const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
+        .find((candidate) => candidate.querySelector('h2')?.textContent === 'Interrupt 2 agents?');
+      const header = dialog?.querySelector<HTMLElement>(':scope > header');
+      const cancel = [...(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+        .find((button) => button.textContent?.trim() === 'Cancel');
+      if (!header || !cancel) throw new Error('Expected the interrupt dialog header and Cancel button');
+      const headerBounds = header.getBoundingClientRect();
+      const cancelBounds = cancel.getBoundingClientRect();
+      return cancelBounds.left < headerBounds.right
+        && cancelBounds.right > headerBounds.left
+        && cancelBounds.top < headerBounds.bottom
+        && cancelBounds.bottom > headerBounds.top;
+    });
+    expect(cancelIntersectsHeader).toBe(false);
+  }
   await expect(confirmation).toContainText('2 active agents');
   await expect(confirmation).toContainText('recoverable via Retry');
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -675,6 +693,295 @@ test('desktop outside-click on a dirty add-task draft asks for confirmation', as
 
   await page.getByRole('heading', { name: 'Task List', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Discard draft?', exact: true })).toBeVisible();
+});
+
+test('an add-task draft survives desktop and mobile layout transitions', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'responsive transition starts on desktop');
+  const initialViewport = page.viewportSize();
+  if (!initialViewport) throw new Error('Expected a configured desktop viewport');
+  await installDefaultBoard(page);
+  await page.goto('/');
+
+  await page.getByRole('group', { name: 'Task list actions' })
+    .getByRole('button', { name: 'Add task', exact: true }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task', exact: true });
+  const prompt = taskDialog.getByLabel('Task', { exact: true });
+  await prompt.fill('Keep this prompt while the dialog changes layouts.');
+
+  await page.setViewportSize({ width: 500, height: initialViewport.height });
+  await expect(page.getByTestId('modal-scrim')).toBeVisible();
+  await expect(prompt).toHaveValue('Keep this prompt while the dialog changes layouts.');
+
+  await page.setViewportSize({ width: 1_440, height: initialViewport.height });
+  await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  await expect(prompt).toHaveValue('Keep this prompt while the dialog changes layouts.');
+});
+
+test('a token-rotation dialog stays inside a short desktop viewport', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 640, 'anchored token rotation is desktop-only');
+  const importedProject = {
+    ...project,
+    projectId: 'project-payment-tools',
+    name: 'payment-tools',
+    description: '/workspace/payment-tools',
+  };
+  let createdProject: Record<string, unknown> | null = null;
+  let projectCreated = false;
+  let projectCreateAttempts = 0;
+  let taskSubmitted = false;
+  let agentCreateRequests = 0;
+  let managerVersion = 1;
+  let rotationAttempts = 0;
+  let createdWorkItemRequest: Record<string, unknown> | null = null;
+  const rotatedToken = 'rotated-payment-tools-manager-token-012345678901';
+  const lazyManager = {
+    ...agent,
+    agentId: 'payment-tools-manager',
+    projectId: importedProject.projectId,
+    role: 'manager',
+    area: importedProject.name,
+    mission: 'Refine incoming payment-tools work and plan durable workflows.',
+    model: 'auto',
+    status: 'ready',
+    workerConnection: null,
+    lastError: null,
+    version: managerVersion,
+    createdAt: '2026-08-09T20:01:00.000Z',
+  };
+  const planningTask = {
+    ...task,
+    taskId: 'task-plan-payment-tools',
+    projectId: importedProject.projectId,
+    title: 'Plan workflow: Add a health check to payment tools',
+    objective: 'Add a health check to payment tools',
+    acceptanceCriteria: 'Return a concise workflow plan.',
+    workspaceRefs: [],
+    status: 'queued',
+    assignedAgentId: lazyManager.agentId,
+    assignedRole: 'manager',
+    requiresReview: false,
+    version: 1,
+    createdAt: '2026-08-09T20:01:00.000Z',
+    updatedAt: '2026-08-09T20:01:00.000Z',
+  };
+  const createdWorkItem = {
+    apiVersion,
+    workItemId: 'work-item-payment-tools-first',
+    originalRequest: 'Add a health check to payment tools',
+    refinedObjective: null,
+    priority: 'normal',
+    taskType: 'standard',
+    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
+    resolvedProjectId: importedProject.projectId,
+    planningTaskId: planningTask.taskId,
+    state: 'planning',
+    currentStage: 'planning',
+    createdBy: 'human:operator',
+    version: 2,
+    createdAt: '2026-08-09T20:01:00.000Z',
+    updatedAt: '2026-08-09T20:01:00.000Z',
+    endedAt: null,
+    cancelledReason: null,
+    archivedAt: null,
+    transitions: [{
+      fromState: null,
+      toState: 'queued',
+      actorType: 'human',
+      actorId: 'human:operator',
+      createdAt: '2026-08-09T20:01:00.000Z',
+    }, {
+      fromState: 'queued',
+      toState: 'planning',
+      actorType: 'system',
+      actorId: 'system:planning',
+      createdAt: '2026-08-09T20:01:00.000Z',
+    }],
+  };
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/board-api/v1/host/project-roots' && request.method() === 'GET') {
+      await route.fulfill({ json: { roots: [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && !url.searchParams.has('path')) {
+      await route.fulfill({
+        json: { listing: { path: '/workspace', parent: null, entries: [], truncated: false } },
+      });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/host/directories' && request.method() === 'GET' && url.searchParams.get('path') === '/workspace/payment-tools') {
+      await route.fulfill({
+        status: 403,
+        json: { error: { code: 'HOST_PATH_OUTSIDE_ROOTS', message: 'The folder is outside the browsable area' } },
+      });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'GET') {
+      await route.fulfill({ json: { workItems: taskSubmitted ? [createdWorkItem] : [] } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/work-items' && request.method() === 'POST') {
+      createdWorkItemRequest = request.postDataJSON() as Record<string, unknown>;
+      taskSubmitted = true;
+      await route.fulfill({ status: 201, json: { workItem: createdWorkItem } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects' && request.method() === 'POST') {
+      projectCreateAttempts += 1;
+      if (projectCreateAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'PROJECT_PATH_CONFLICT', message: 'Project path changed' } },
+        });
+        return;
+      }
+      createdProject = request.postDataJSON() as Record<string, unknown>;
+      projectCreated = true;
+      await route.fulfill({ status: 201, json: { project: importedProject } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/agents` && request.method() === 'POST') {
+      agentCreateRequests += 1;
+      await route.fulfill({ status: 500, json: { error: { code: 'UNEXPECTED_AGENT_CREATE', message: 'Identity must be lazy' } } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects') {
+      await route.fulfill({ json: { projects: projectCreated ? [project, importedProject] : [project] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: board() });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${importedProject.projectId}/board`) {
+      await route.fulfill({
+        json: {
+          ...board(),
+          project: importedProject,
+          agents: taskSubmitted ? [{ ...lazyManager, version: managerVersion }] : [],
+          tasks: taskSubmitted ? [planningTask] : [],
+          recentEvents: taskSubmitted ? [{
+            apiVersion,
+            eventId: 'event-payment-tools-manager-created',
+            projectId: importedProject.projectId,
+            taskId: null,
+            actorType: 'system',
+            actorId: 'system:lazy-agent-identity',
+            eventType: 'agent_profile_created',
+            data: { agentId: lazyManager.agentId, role: 'manager' },
+            createdAt: lazyManager.createdAt,
+          }] : [],
+        },
+      });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${planningTask.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/agents/${lazyManager.agentId}/rotate-token` && request.method() === 'POST') {
+      expect(request.postDataJSON()).toEqual({ version: managerVersion });
+      rotationAttempts += 1;
+      if (rotationAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'AGENT_VERSION_CONFLICT', message: 'Agent version changed' } },
+        });
+        return;
+      }
+      managerVersion += 1;
+      await route.fulfill({
+        json: { agent: { ...lazyManager, version: managerVersion }, token: rotatedToken },
+      });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/tasks/${task.taskId}/messages`) {
+      await route.fulfill({ json: { messages: [], cursor: 0 } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add project' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
+  await dialog.getByRole('button', { name: 'Add project' }).click();
+  await dialog.getByRole('button', { name: 'Add anyway' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');
+  await expect(dialog.getByRole('button', { name: 'Dismiss error' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await discardDirtyDialog(page);
+  await expect(page.getByRole('alert').filter({ hasText: 'The board changed in another session. Refresh before trying again.' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Action errors' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add project' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await dialog.getByRole('textbox', { name: 'Project folder' }).fill('/workspace/payment-tools/');
+  await dialog.getByRole('button', { name: 'Add project' }).click();
+  await dialog.getByRole('button', { name: 'Add anyway' }).click();
+  await expect.poll(() => createdProject).not.toBeNull();
+
+  expect(createdProject).toEqual({ name: 'payment-tools', description: '/workspace/payment-tools' });
+  expect(agentCreateRequests).toBe(0);
+
+  await page.getByRole('button', { name: 'Add task' }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add a task' });
+  await taskDialog.getByRole('textbox', { name: 'Task', exact: true }).fill(createdWorkItem.originalRequest);
+  await taskDialog.getByLabel('Project').selectOption(importedProject.projectId);
+  await taskDialog.getByRole('button', { name: 'Submit task' }).click();
+  await expect.poll(() => createdWorkItemRequest).not.toBeNull();
+  expect(createdWorkItemRequest).toEqual({
+    originalRequest: createdWorkItem.originalRequest,
+    priority: 'normal',
+    taskType: 'standard',
+    projectTarget: { mode: 'explicit', projectId: importedProject.projectId },
+  });
+
+  const companyRail = await openCompanyRail(page);
+  const lazyManagerButton = companyRail
+    .getByRole('navigation', { name: 'Projects and agents' })
+    .getByRole('button', { name: /^payment-tools-manager\b/u });
+  await expect(lazyManagerButton).toBeVisible();
+  await lazyManagerButton.click();
+  await expect(page.getByRole('heading', { name: 'Lane configuration' })).toBeVisible();
+  const laneConfig = page.getByLabel(`Fleet lane configuration for ${lazyManager.agentId}`);
+  await expect(laneConfig).toContainText('"agentId": "payment-tools-manager"');
+  await expect(laneConfig).toContainText('"workingDirectory": "/absolute/path/to/repository"');
+  await expect(laneConfig).toContainText('"provider": "<codex or claude>"');
+  await expect(laneConfig).toContainText('<rotate token to reveal>');
+  await expect(page.getByText(/replace the working-directory and provider placeholders/u)).toBeVisible();
+
+  const rotateToken = page.getByRole('button', { name: 'Rotate token', exact: true });
+  await expect(rotateToken).toBeVisible();
+  await page.setViewportSize({ width: 1_440, height: 420 });
+  await rotateToken.scrollIntoViewIfNeeded();
+  await rotateToken.click();
+
+  const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?', exact: true });
+  const closeDialog = rotationDialog.getByRole('button', { name: 'Close dialog', exact: true });
+  await expect(closeDialog).toBeVisible();
+  const bounds = await rotationDialog.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      left: rect.left,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(bounds.top).toBeGreaterThanOrEqual(0);
+  expect(bounds.left).toBeGreaterThanOrEqual(0);
+  expect(bounds.right).toBeLessThanOrEqual(bounds.viewportWidth);
+  expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
+
+  await page.keyboard.press('Escape');
+  await expect(rotationDialog).toHaveCount(0);
+  await expect(rotateToken).toBeFocused();
 });
 
 test('mobile Back from a task opened on a project focuses the project heading', async ({ page }) => {
@@ -1447,6 +1754,9 @@ test('work-item detail resolves planning input, confirms a workflow, archives co
   await expect(pane.getByRole('group', { name: 'Current status' }).getByText('Done', { exact: true })).toBeVisible();
   await pane.getByRole('button', { name: 'Archive', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Archive work item' });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  }
   await dialog.getByRole('button', { name: 'Archive work item' }).click();
   await expect(dialog.getByRole('alert')).toContainText('This work item or plan changed in another session. Refresh before trying again.');
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
@@ -1885,6 +2195,9 @@ test('project intake lazily creates a manager whose lane token can be rotated an
 
   await page.getByRole('button', { name: 'Rotate token', exact: true }).click();
   const rotationDialog = page.getByRole('dialog', { name: 'Rotate agent token?' });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await expect(page.getByTestId('modal-scrim')).toHaveCount(0);
+  }
   await expect(rotationDialog).toContainText('disconnects any worker using the current token');
   await rotationDialog.getByRole('button', { name: 'Rotate token', exact: true }).click();
   await expect(rotationDialog.getByRole('alert')).toContainText('The board changed in another session. Refresh before trying again.');

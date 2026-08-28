@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { PipelineSummary } from '@shared/task-board-contract';
@@ -174,6 +174,7 @@ describe('final approval summary and controls', () => {
   it('presents merge as the primary confirmed action and changes as a separate path', () => {
     const markup = renderToStaticMarkup(createElement(FinalApprovalActions, {
       busy: false,
+      approveAnchorRef: createRef<HTMLButtonElement>(),
       onApprove: vi.fn(),
       onRequestChanges: vi.fn(),
     }));

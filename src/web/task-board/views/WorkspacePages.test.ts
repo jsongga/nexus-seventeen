@@ -1,5 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Modal } from '../../components/ui';
+import type { TaskBoardClient } from '../data/client';
+import type { BoardAgent, BoardProject, BoardSnapshot } from '../types';
+
+vi.mock('../../components/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../components/ui')>();
+  return { ...actual, Modal: vi.fn(() => null) };
+});
+
 import {
+  AgentPage,
+  ProjectPage,
   activityUpdates,
   agentPageUsesPointOfContactMode,
   deriveInterruptAllOutcome,
@@ -7,6 +20,89 @@ import {
   latestByUpdatedAt,
   orderAgentChatEntries,
 } from './WorkspacePages';
+
+const timestamp = '2026-08-28T12:00:00.000Z';
+const project: BoardProject = {
+  id: 'project-one',
+  name: 'Project one',
+  description: 'Project context.',
+  createdAt: timestamp,
+  createdAtMs: Date.parse(timestamp),
+  updatedAt: timestamp,
+  updatedAtMs: Date.parse(timestamp),
+};
+const agent: BoardAgent = {
+  id: 'agent-one',
+  projectId: project.id,
+  name: 'Agent one',
+  role: 'engineer',
+  area: 'Project one',
+  mission: 'Implement the project.',
+  model: 'auto',
+  status: 'sleeping',
+  workerConnection: null,
+  lastError: null,
+  currentTaskId: null,
+  lastEventAt: null,
+  lastEventAtMs: null,
+  version: 1,
+  createdAt: timestamp,
+  createdAtMs: Date.parse(timestamp),
+  updatedAt: timestamp,
+  updatedAtMs: Date.parse(timestamp),
+};
+const snapshot: BoardSnapshot = {
+  revision: 1,
+  generatedAt: timestamp,
+  generatedAtMs: Date.parse(timestamp),
+  workItems: [],
+  projects: [project],
+  agents: [agent],
+  tasks: [],
+  messages: [],
+  questions: [],
+  runs: [],
+};
+
+beforeEach(() => {
+  vi.mocked(Modal).mockClear();
+});
+
+describe('workspace confirmation surfaces', () => {
+  it('renders the interrupt and token-rotation confirms as anchored variants', () => {
+    renderToStaticMarkup(createElement(ProjectPage, {
+      project,
+      snapshot,
+      onTask: vi.fn(),
+      onAddTask: vi.fn(),
+      client: { getProjectArtifacts: vi.fn() } as unknown as TaskBoardClient,
+      connected: true,
+    }));
+    renderToStaticMarkup(createElement(AgentPage, {
+      agent,
+      snapshot,
+      isPointOfContact: false,
+      explicitPointOfContact: false,
+      busy: false,
+      rotationErrors: [],
+      onDismissActionError: vi.fn(),
+      onTask: vi.fn(),
+      onSend: vi.fn(),
+      onAnswer: vi.fn(),
+      onRotateToken: vi.fn(),
+    }));
+
+    const modalProps = vi.mocked(Modal).mock.calls.map(([props]) => props);
+    expect(modalProps.find(({ title }) => String(title).startsWith('Interrupt '))).toMatchObject({
+      variant: 'anchored',
+      anchorRef: { current: null },
+    });
+    expect(modalProps.find(({ title }) => title === 'Rotate agent token?')).toMatchObject({
+      variant: 'anchored',
+      anchorRef: { current: null },
+    });
+  });
+});
 
 describe('agentPageUsesPointOfContactMode', () => {
   it('enables POC chat framing only for the selected explicit POC', () => {

@@ -9,7 +9,7 @@ import {
   Send,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from '@shared/task-board-contract';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import { fieldsAreDirty } from '../../components/dialog-stack';
@@ -641,17 +641,19 @@ export function PipelineSummaryDetails({ summary }: { summary: PipelineSummary }
 
 export function FinalApprovalActions({
   busy,
+  approveAnchorRef,
   onApprove,
   onRequestChanges,
 }: {
   busy: boolean;
+  approveAnchorRef: RefObject<HTMLButtonElement | null>;
   onApprove: () => void;
   onRequestChanges: () => void;
 }) {
   return (
     <div className="mt-4">
       <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Final approval actions">
-        <Button variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
+        <Button ref={approveAnchorRef} variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
         <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>Request changes</Button>
       </div>
       <p className="mt-2 text-xs leading-5 text-muted">
@@ -746,6 +748,8 @@ export function WorkItemDetail({
   const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
   const auditWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const mergeConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
+  const archiveConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
   const actionContexts = {
     rejectPlan: actionErrorContexts.workItemRejectPlan(workItem.id),
@@ -1160,6 +1164,7 @@ export function WorkItemDetail({
                 {workItem.state === 'final_approval' && onApproveMerge !== undefined && onRejectFinal !== undefined ? (
                   <FinalApprovalActions
                     busy={busy || finalActionBusy}
+                    approveAnchorRef={mergeConfirmationAnchorRef}
                     onApprove={() => openConfirmation('merge')}
                     onRequestChanges={() => openConfirmation('requestChanges')}
                   />
@@ -1186,7 +1191,7 @@ export function WorkItemDetail({
         {affordances.cancel || affordances.archive ? (
           <footer className="flex flex-wrap justify-end gap-2 px-4 py-4 sm:px-5">
             {affordances.cancel ? <Button variant="danger" disabled={busy} onClick={() => openConfirmation('cancel')}>Cancel work item</Button> : null}
-            {affordances.archive ? <Button icon={<Archive size={15} />} disabled={busy} onClick={() => openConfirmation('archive')}>Archive</Button> : null}
+            {affordances.archive ? <Button ref={archiveConfirmationAnchorRef} icon={<Archive size={15} />} disabled={busy} onClick={() => openConfirmation('archive')}>Archive</Button> : null}
           </footer>
         ) : null}
         </Card>
@@ -1243,6 +1248,8 @@ export function WorkItemDetail({
       <Modal
         open={confirmation === 'merge'}
         onClose={closeConfirmation}
+        variant="anchored"
+        anchorRef={mergeConfirmationAnchorRef}
         title="Approve and merge pipeline"
         description="This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the work item to implementation with conflict details."
       >
@@ -1275,6 +1282,8 @@ export function WorkItemDetail({
       <Modal
         open={confirmation === 'archive'}
         onClose={closeConfirmation}
+        variant="anchored"
+        anchorRef={archiveConfirmationAnchorRef}
         title="Archive work item"
         description="Archived work items leave the default intake list but remain stored and retrievable."
       >

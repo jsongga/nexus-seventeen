@@ -137,6 +137,7 @@ export function ProjectPage({
   const [interruptOutcome, setInterruptOutcome] = useState<Pick<InterruptAllOutcome, 'interruptedCount' | 'alreadyFinishedCount'> | null>(null);
   const [interruptError, setInterruptError] = useState<string | null>(null);
   const addTaskAnchorRef = useRef<HTMLButtonElement>(null);
+  const interruptAllAnchorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -253,6 +254,7 @@ export function ProjectPage({
             {interruptError ? <p className="pt-2 text-right text-[11px] text-urgent" role="alert">{interruptError}</p> : null}
             <div className="mt-auto flex justify-end gap-2 pt-4">
               <Button
+                ref={interruptAllAnchorRef}
                 variant="danger"
                 size="sm"
                 className="!min-h-0 !px-4 !py-2"
@@ -280,6 +282,8 @@ export function ProjectPage({
       <Modal
         open={interruptConfirmationOpen}
         onClose={() => { if (!interruptingAll) setInterruptConfirmationOpen(false); }}
+        variant="anchored"
+        anchorRef={interruptAllAnchorRef}
         title={`Interrupt ${activeRuns.length} ${activeRuns.length === 1 ? 'agent' : 'agents'}?`}
         description={`This will interrupt ${activeRuns.length} active ${activeRuns.length === 1 ? 'agent' : 'agents'} in ${project.name}.`}
       >
@@ -475,6 +479,7 @@ function AgentChat({
   const [rotating, setRotating] = useState(false);
   const rotationContext = actionErrorContexts.agentRotateToken(agent.id);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const rotationAnchorRef = useRef<HTMLButtonElement>(null);
   const history = useMemo(() => agentChatHistory(agent, snapshot, isPointOfContact), [agent, isPointOfContact, snapshot]);
   const focus = useMemo(() => agentPipelineFocus(agent, snapshot.tasks), [agent, snapshot.tasks]);
   const recentConversation = useMemo(() => history.flatMap((entry): AgentQueryConversationTurn[] => (
@@ -588,6 +593,7 @@ function AgentChat({
               </p>
             </div>
             <Button
+              ref={rotationAnchorRef}
               className="shrink-0"
               size="sm"
               disabled={busy || rotating}
@@ -657,6 +663,8 @@ function AgentChat({
       <Modal
         open={confirmRotation}
         onClose={closeRotationDialog}
+        variant="anchored"
+        anchorRef={rotationAnchorRef}
         title="Rotate agent token?"
         description="Rotating immediately disconnects any worker using the current token."
       >

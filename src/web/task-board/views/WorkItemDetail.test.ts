@@ -1,9 +1,15 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { Modal } from '../../components/ui';
 import type { TaskBoardClient } from '../data/client';
 import type { BoardQuestion, BoardTask, BoardWorkItem } from '../types';
 import { GapReportSection, WorkItemDetail } from './WorkItemDetail';
+
+vi.mock('../../components/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../components/ui')>();
+  return { ...actual, Modal: vi.fn(() => null) };
+});
 
 const timestamp = '2026-08-16T00:00:00.000Z';
 
@@ -111,6 +117,33 @@ describe('parked work-item detail', () => {
     expect(markup).toContain('Planning needs your input');
     expect(markup).toContain('Which audience should this target?');
     expect(markup).not.toContain('Parked — no open question. Retry or reassign from the task view.');
+  });
+});
+
+describe('work-item confirmation surfaces', () => {
+  it('anchors only the dirty-free merge and archive confirms', () => {
+    vi.mocked(Modal).mockClear();
+    renderParkedDetail(null);
+
+    const modalProps = new Map(vi.mocked(Modal).mock.calls.map(([props]) => [props.title, props]));
+    expect(modalProps.get('Approve and merge pipeline')).toMatchObject({
+      variant: 'anchored',
+      anchorRef: { current: null },
+    });
+    expect(modalProps.get('Archive work item')).toMatchObject({
+      variant: 'anchored',
+      anchorRef: { current: null },
+    });
+    for (const takeoverTitle of [
+      'Cancel work item',
+      'Reject proposed plan',
+      'Request implementation changes',
+    ]) {
+      const takeoverProps = modalProps.get(takeoverTitle);
+      expect(takeoverProps).toBeDefined();
+      expect(takeoverProps).not.toHaveProperty('variant');
+      expect(takeoverProps).not.toHaveProperty('anchorRef');
+    }
   });
 });
 

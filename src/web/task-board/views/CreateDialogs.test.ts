@@ -62,6 +62,10 @@ describe('create dialogs', () => {
     expect(markup).toContain('<option value="onboarding">Onboarding</option>');
     expect(markup).not.toContain('data-testid="modal-scrim"');
     expect(markup).not.toContain('aria-modal');
+    expect(markup).toContain('flex-col overflow-hidden');
+    expect(markup).toContain('<header class="flex shrink-0');
+    expect(markup).not.toContain('<header class="sticky');
+    expect(markup).toContain('<div class="min-h-0 flex-1 overflow-y-auto">');
   });
 
   it('keeps the project picker as a takeover dialog', () => {

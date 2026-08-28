@@ -12,6 +12,22 @@ import {
 import { X } from 'lucide-react';
 import { useConfirmBeforeDiscard, useDialogLayer } from './dialog-stack';
 
+const modalViewportInset = 16;
+const modalAnchorGap = 8;
+const modalAnchoredMinMaxHeight = 16 * 16;
+const modalAnchoredTakeoverThreshold = 12 * 16;
+
+export function resolveModalAnchorPlacement(spaceAbove: number, spaceBelow: number) {
+  const placement: 'above' | 'below' = spaceAbove > spaceBelow ? 'above' : 'below';
+  const maxHeight = Math.max(0, placement === 'above' ? spaceAbove : spaceBelow);
+
+  return {
+    placement,
+    maxHeight,
+    takeover: maxHeight < modalAnchoredTakeoverThreshold,
+  };
+}
+
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
@@ -152,10 +168,13 @@ export function Modal({
   const [anchorPosition, setAnchorPosition] = useState({
     top: 16,
     right: 16,
-    maxHeight: 0,
+    maxHeight: modalAnchoredMinMaxHeight,
+    placement: 'below' as 'above' | 'below',
+    takeover: false,
   });
   const anchoredOnDesktop = variant === 'anchored' && desktopBreakpointMatches;
-  const takeoverLayout = !anchoredOnDesktop;
+  const anchoredLayout = anchoredOnDesktop && !anchorPosition.takeover;
+  const takeoverLayout = !anchoredLayout;
   const { confirmationOpen, requestClose, keepEditing, discard } = useConfirmBeforeDiscard({
     open,
     isDirty,
@@ -165,7 +184,7 @@ export function Modal({
     open,
     onClose: requestClose,
     containerRef: dialogRef,
-    lockScroll: !anchoredOnDesktop,
+    lockScroll: takeoverLayout,
   });
 
   useEffect(() => {
@@ -184,25 +203,35 @@ export function Modal({
       const anchorBounds = anchor.getBoundingClientRect();
       const dialogBounds = dialog.getBoundingClientRect();
       const viewportWidth = document.documentElement.clientWidth;
-      const viewportInset = 16;
-      const anchorGap = 8;
       const desiredRight = viewportWidth - anchorBounds.right;
-      const maxRight = Math.max(viewportInset, viewportWidth - dialogBounds.width - viewportInset);
-      const right = Math.min(maxRight, Math.max(viewportInset, desiredRight));
-      const top = anchorBounds.bottom + window.scrollY + anchorGap;
-      const maxHeight = Math.max(0, Math.min(
-        window.innerHeight * 0.8,
-        window.innerHeight - anchorBounds.bottom - anchorGap - viewportInset,
-      ));
+      const maxRight = Math.max(
+        modalViewportInset,
+        viewportWidth - dialogBounds.width - modalViewportInset,
+      );
+      const right = Math.min(maxRight, Math.max(modalViewportInset, desiredRight));
+      const spaceBelow = window.innerHeight
+        - anchorBounds.bottom
+        - modalAnchorGap
+        - modalViewportInset;
+      const spaceAbove = anchorBounds.top - modalAnchorGap - modalViewportInset;
+      const placement = resolveModalAnchorPlacement(spaceAbove, spaceBelow);
+      const anchorEdge = placement.placement === 'above' ? anchorBounds.top : anchorBounds.bottom;
+      const top = anchorEdge
+        + window.scrollY
+        + (placement.placement === 'above' ? -modalAnchorGap : modalAnchorGap);
       const next = {
         top: Math.round(top),
         right: Math.round(right),
-        maxHeight: Math.floor(maxHeight),
+        maxHeight: Math.floor(placement.maxHeight),
+        placement: placement.placement,
+        takeover: placement.takeover,
       };
       setAnchorPosition((current) => (
         current.top === next.top
           && current.right === next.right
           && current.maxHeight === next.maxHeight
+          && current.placement === next.placement
+          && current.takeover === next.takeover
           ? current
           : next
       ));
@@ -222,7 +251,7 @@ export function Modal({
   }, [anchorRef, anchoredOnDesktop, open]);
 
   useEffect(() => {
-    if (!open || !anchoredOnDesktop || !isTopmost) return;
+    if (!open || !anchoredLayout || !isTopmost) return;
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -232,11 +261,11 @@ export function Modal({
 
     document.addEventListener('mousedown', handleMouseDown);
     return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [anchorRef, anchoredOnDesktop, isTopmost, open, requestClose]);
+  }, [anchorRef, anchoredLayout, isTopmost, open, requestClose]);
 
   if (!open) return null;
 
-  const anchorStyle = anchoredOnDesktop
+  const anchorStyle = anchoredLayout
     ? {
         '--modal-anchor-top': `${anchorPosition.top}px`,
         '--modal-anchor-right': `${anchorPosition.right}px`,
@@ -266,14 +295,16 @@ export function Modal({
           tabIndex={-1}
           style={anchorStyle}
           className={cn(
-            'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)]',
-            anchoredOnDesktop
-              ? 'sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[min(80dvh,var(--modal-anchor-max-height))] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
-              : 'sm:max-w-lg sm:rounded-md',
+            anchoredLayout
+              ? 'cicada-modal-enter flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[var(--modal-anchor-max-height)] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
+              : 'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md',
+            anchoredLayout && anchorPosition.placement === 'above' && 'sm:-translate-y-full',
             className,
           )}
         >
-          <header className="sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6">
+          <header className={anchoredLayout
+            ? 'flex shrink-0 items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6'
+            : 'sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6'}>
             <div>
               <h2 id={`${layerId}-title`} className="font-display text-xl font-light tracking-[0.01em]">
                 {title}
@@ -289,7 +320,9 @@ export function Modal({
               <X size={19} />
             </button>
           </header>
-          {typeof children === 'function' ? children(requestClose) : children}
+          <div className={anchoredLayout ? 'min-h-0 flex-1 overflow-y-auto' : undefined}>
+            {typeof children === 'function' ? children(requestClose) : children}
+          </div>
         </section>
       </div>
       <Modal
