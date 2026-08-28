@@ -9,7 +9,7 @@ retired pen-documents editor.
 - **URL (once deployed):** https://docs.cicadasystem.com — the `*.cicadasystem.com` wildcard
   already resolves to the Hetzner Dokploy stack; no DNS change needed.
 - **Login:** staff SSO via Keycloak (`sso.cicadasystem.com`), native OIDC.
-- **Compose file:** `deploy/outline/docker-compose.yml` (image pinned `outlinewiki/outline:1.9.2`).
+- **Compose file:** `docker-compose.outline.yml` (image pinned `outlinewiki/outline:1.9.2`).
 
 ## Deploy runbook (Dokploy)
 
@@ -20,7 +20,7 @@ retired pen-documents editor.
    `https://sso.cicadasystem.com/realms/<realm>/protocol/openid-connect/{auth,token,userinfo}`
    (realm name visible in the admin console's realm selector).
 2. **Dokploy project** — create a project (e.g. `cicada-docs`) with a **Compose** service;
-   paste `deploy/outline/docker-compose.yml` as raw compose (no git source needed).
+   paste `docker-compose.outline.yml` as raw compose (no git source needed).
 3. **Environment** — in the service's Environment tab, set the compose inputs exactly:
    `OUTLINE_SECRET_KEY` and `OUTLINE_UTILS_SECRET` (32-byte hex each — `openssl rand -hex 32`),
    `OUTLINE_PG_PASSWORD` (any strong value), `OUTLINE_OIDC_CLIENT_ID=outline`,

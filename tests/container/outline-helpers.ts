@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ensureNetwork } from "#server/agents/task-container";
 import { docker, requireDocker } from "./helpers.js";
 
-// Pinned 2026-08-26. Keep equal to deploy/outline/docker-compose.yml; the
+// Pinned 2026-08-26. Keep equal to docker-compose.outline.yml; the
 // container test asserts this rather than letting the two deployment paths drift.
 export const OUTLINE_IMAGE = "outlinewiki/outline:1.9.2";
 export const POSTGRES_IMAGE = "postgres:16-alpine";

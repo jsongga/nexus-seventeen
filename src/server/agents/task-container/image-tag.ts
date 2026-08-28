@@ -16,7 +16,7 @@ async function listFiles(directory: string): Promise<string[]> {
 export async function computeAgentImageTag(rootDirectory: string): Promise<string> {
   const hash = createHash("sha256");
   const root = resolve(rootDirectory);
-  const agentDir = join(root, "deploy", "agent");
+  const agentDir = join(root, "docker_image", "agent");
   const files = [
     join(root, "package-lock.json"),
     join(root, "Dockerfile"),

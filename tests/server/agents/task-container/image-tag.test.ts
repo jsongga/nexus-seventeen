@@ -7,7 +7,7 @@ import { computeAgentImageTag } from "#server/agents/task-container";
 
 test("computes a stable content-addressed agent image tag", async () => {
   const root = await mkdtemp(join(tmpdir(), "steward-agent-image-tag-"));
-  const agentDir = join(root, "deploy", "agent");
+  const agentDir = join(root, "docker_image", "agent");
   const serverDir = join(root, "src", "server", "agents");
   const sharedDir = join(root, "src", "shared");
   await mkdir(agentDir, { recursive: true });

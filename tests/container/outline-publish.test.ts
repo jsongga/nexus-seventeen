@@ -58,7 +58,7 @@ async function outlineApi(
 }
 
 test("Outline container image stays equal to the deployment compose pin", async () => {
-  const compose = await readFile(resolve("deploy/outline/docker-compose.yml"), "utf8");
+  const compose = await readFile(resolve("docker-compose.outline.yml"), "utf8");
   const composeImage = /^ {4}image:\s*(outlinewiki\/outline:[^\s#]+)\s*$/mu.exec(compose)?.[1];
   assert.equal(composeImage, OUTLINE_IMAGE);
 });

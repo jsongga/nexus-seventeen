@@ -1,5 +1,6 @@
 # Outline wiki for docs.cicadasystem.com — Dokploy compose project.
-# Runbook: docs/OUTLINE.md. TLS terminates at Dokploy's Traefik front door:
+# Compose: docker-compose.outline.yml. Runbook: docs/OUTLINE.md.
+# TLS terminates at Dokploy's Traefik front door:
 # attach the domain docs.cicadasystem.com -> service `outline`, port 3000, in
 # the Dokploy panel. No ports are published here on purpose.
 # Image pinned 2026-08-26; the docker-tier e2e pins the same tag.

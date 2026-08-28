@@ -317,7 +317,7 @@ tasks:
   - id: T6
     capability: backend
     depends_on: [T3]
-    paths: [src/server/task-board/artifacts.ts, src/server/task-board/service.ts, deploy/Caddyfile, tests/server/task-board/http.test.ts]
+    paths: [src/server/task-board/artifacts.ts, src/server/task-board/service.ts, docker_image/Caddyfile, tests/server/task-board/http.test.ts]
     action: Add authenticated immutable artifact upload/download and project SSE endpoints with replay cursors and configured storage limits.
     validation: npm run test:runtime && docker build -t nexus-seventeen:workflow-check .
     done_when: Authorized clients can replay events and retrieve validated artifacts while traversal, spoofed media, and oversized uploads are rejected.

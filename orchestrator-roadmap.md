@@ -103,7 +103,7 @@ first product repos (start with the Cicada estate's most active pair). Exit:
 adding the second runtime touched one adapter + one profile; one external
 repo onboarded end to end.
 
-**9. Outline + docs pipeline** *(§2)* — self-hosted Outline (Dokploy);
+**9. Outline + docs pipeline** *(shipped 2026-08-27; §2)* — self-hosted Outline (Dokploy);
 read-only CI publish of repo docs on merge; board pen-documents retired
 (export, then remove editor and routes). Runs parallel to 7–8 once 4 exists;
 listed here because retirement waits for the replacement. Exit: repo docs
@@ -132,7 +132,7 @@ vars and `bootstrap:apply`. Tier C: merge the 7 micro prompt-partials via a
 `renderSection` registry extension (promptsSha churns once; regenerate
 affected goldens). Explicitly kept: `scripts/export-documents.mjs` (needed
 against the pre-v25 production DB), this roadmap file, all schema fixtures,
-`prompts/`/`deploy/`/`public/`/tsconfig placement. Exit: non-code tracked
+`prompts/`/`docker_image/`/`public/`/tsconfig placement. Exit: non-code tracked
 files ≲72, `src`+`tests` ≲260, zero single-file directories outside
 mandated conventions, gates + goldens green.
 
