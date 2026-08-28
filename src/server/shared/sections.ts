@@ -18,6 +18,7 @@ function matches(rule: RegExp, value: string): boolean {
 }
 
 export function parseSections(source: string, { nameRule }: ParseSectionsOptions): ReadonlyMap<string, string> {
+  const rule = nameRule ?? SECTION_NAME;
   const headers: SectionHeader[] = [];
   const names = new Set<string>();
   let offset = 0;
@@ -28,7 +29,7 @@ export function parseSections(source: string, { nameRule }: ParseSectionsOptions
     const line = source.slice(offset, lineEnd);
     if (line.startsWith("## ")) {
       const name = line.slice(3);
-      if (!SECTION_NAME.test(name) || (nameRule !== undefined && !matches(nameRule, name))) {
+      if (!matches(rule, name)) {
         throw new Error(`Section header is invalid: ${line}`);
       }
       if (names.has(name)) throw new Error(`Section name is duplicated: ${name}`);

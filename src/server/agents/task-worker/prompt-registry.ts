@@ -6,6 +6,31 @@ import { parseSections } from "../../shared/sections.js";
 const MAX_PROMPT_BYTES = 1024 * 1024;
 const PROMPT_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 const PLACEHOLDER = /\{\{(?<name>[a-z][a-zA-Z0-9]*)\}\}/gu;
+const KNOWN_TEMPLATES: ReadonlySet<string> = new Set([
+  "bright-line",
+  "designer",
+  "engineer-fix",
+  "engineer",
+  "hazardous-implementation",
+  "hazardous-review",
+  "header",
+  "intake-return",
+  "intake",
+  "onboarding-engineer",
+  "onboarding-intake",
+  "oversight",
+  "pipeline-implementation",
+  "reviewer-evidence",
+  "reviewer-legacy",
+  "reviewer-prior-findings-truncated",
+  "reviewer-prior-findings",
+  "reviewer-scope-legacy",
+  "reviewer-scope",
+  "reviewer",
+  "trailer",
+  "verifier",
+  "workflow-plan-return",
+]);
 
 interface LoadedPrompt {
   readonly content: string;
@@ -33,8 +58,16 @@ export class PromptRegistry {
     const source = readFileSync(resolvedFile, "utf8");
     if (Buffer.byteLength(source) !== stat.size) throw new Error(`Prompt file changed while loading: ${resolvedFile}`);
 
+    const sections = parseSections(source, { nameRule: PROMPT_NAME });
+    for (const name of sections.keys()) {
+      if (!KNOWN_TEMPLATES.has(name)) throw new Error(`Prompt file contains unknown template section: ## ${name}`);
+    }
+    for (const name of KNOWN_TEMPLATES) {
+      if (!sections.has(name)) throw new Error(`Prompt file is missing template section: ## ${name}`);
+    }
+
     const templates = new Map<string, LoadedPrompt>();
-    for (const [name, content] of parseSections(source, { nameRule: PROMPT_NAME })) {
+    for (const [name, content] of sections) {
       templates.set(name, Object.freeze({ content, digest: digest(content) }));
     }
     const manifest = [...templates]

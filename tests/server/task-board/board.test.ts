@@ -16,6 +16,7 @@ import {
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { parseClaimRunResult } from "#shared/task-board-contract/validate";
+import { parseSections } from "../../../src/server/shared/sections.js";
 import {
   AGENT_ONE_TOKEN,
   automationConfigurationRequest,
@@ -259,7 +260,7 @@ const CLAIM_CONTEXT_SKILL_ID = "cicada-evidence-research";
 
 async function claimContextWorkflow(suffix: string) {
   const fixture = await boardFixture();
-  const skillPath = join(process.cwd(), "skills", CLAIM_CONTEXT_SKILL_ID, "SKILL.md");
+  const skillPath = join(process.cwd(), "config", "skills.md");
   const skillContent = await readFile(skillPath, "utf8");
   const agentTypeId = `claim-context-${suffix}`;
   fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
@@ -308,7 +309,18 @@ async function claimContextWorkflow(suffix: string) {
 }
 
 async function changeClaimContextSkill(skillPath: string, skillContent: string, suffix: string): Promise<void> {
-  await writeFile(skillPath, `${skillContent}\nClaim-context digest mutation: ${suffix}.\n`, "utf8");
+  const body = parseSections(skillContent, {}).get(CLAIM_CONTEXT_SKILL_ID);
+  assert.ok(body);
+  const header = `## ${CLAIM_CONTEXT_SKILL_ID}\n`;
+  const bodyStart = skillContent.indexOf(header) + header.length;
+  assert.ok(bodyStart >= header.length);
+  assert.equal(skillContent.slice(bodyStart, bodyStart + body.length), body);
+  const changedBody = `${body}Claim-context digest mutation: ${suffix}.\n`;
+  await writeFile(
+    skillPath,
+    `${skillContent.slice(0, bodyStart)}${changedBody}${skillContent.slice(bodyStart + body.length)}`,
+    "utf8",
+  );
 }
 
 function assertSkillDigestChangedClaim(

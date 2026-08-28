@@ -241,7 +241,7 @@ async function attemptFixture(
   const workflow = settleWorkflow
     ? new TransparentWorkflow(
         store.db,
-        new SkillRegistry(resolve("skills")),
+        new SkillRegistry(resolve("config/skills.md")),
         boardConfig.now,
         (operation) => store.transaction(operation),
         undefined,

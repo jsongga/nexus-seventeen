@@ -104,7 +104,7 @@ export class ProjectsCollaborator {
   ) {
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
-      new SkillRegistry(resolve("skills")),
+      new SkillRegistry(resolve("config/skills.md")),
       runtime.config.now,
       (operation) => runtime.store.transaction(operation),
       (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),

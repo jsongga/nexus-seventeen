@@ -12,6 +12,10 @@ test("parses named sections in source order without changing body bytes", () => 
 });
 
 test("applies an optional section-name rule", () => {
+  assert.deepEqual(
+    [...parseSections("## alpha.beta_gamma:delta\nBody\n", { nameRule: /^[a-z][a-z._:]+$/u })],
+    [["alpha.beta_gamma:delta", "Body\n"]],
+  );
   assert.throws(
     () => parseSections("## alpha\nAlpha\n", { nameRule: /^beta$/u }),
     /Section header is invalid/u,

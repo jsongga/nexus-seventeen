@@ -464,7 +464,7 @@ async function settleMergeConflict(
   try {
     const workflow = new TransparentWorkflow(
       store.db,
-      new SkillRegistry("skills"),
+      new SkillRegistry("config/skills.md"),
       () => new Date("2026-08-19T17:00:00.000Z"),
       (operation) => store.transaction(operation),
       undefined,

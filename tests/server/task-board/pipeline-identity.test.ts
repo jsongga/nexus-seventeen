@@ -527,7 +527,7 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
   try {
     const workflow = new TransparentWorkflow(
       store.db,
-      new SkillRegistry(join(process.cwd(), "skills")),
+      new SkillRegistry(join(process.cwd(), "config", "skills.md")),
       () => new Date("2026-08-19T20:00:00.000Z"),
       (operation) => {
         transactions += 1;
@@ -576,7 +576,7 @@ test("a throwing injected git runner fails before opening the confirm transactio
   try {
     const workflow = new TransparentWorkflow(
       store.db,
-      new SkillRegistry(join(process.cwd(), "skills")),
+      new SkillRegistry(join(process.cwd(), "config", "skills.md")),
       () => new Date("2026-08-19T20:00:00.000Z"),
       (operation) => {
         transactions += 1;
@@ -612,7 +612,7 @@ test("a malformed pipeline HEAD is reported as an unavailable repository", async
   try {
     const workflow = new TransparentWorkflow(
       store.db,
-      new SkillRegistry(join(process.cwd(), "skills")),
+      new SkillRegistry(join(process.cwd(), "config", "skills.md")),
       () => new Date("2026-08-19T20:00:00.000Z"),
       (operation) => store.transaction(operation),
       undefined,

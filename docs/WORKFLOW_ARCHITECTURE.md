@@ -59,17 +59,15 @@ An agent may propose a plan change but cannot apply it. This keeps authority and
 
 ## Editable skills
 
-Skills become repository-owned files:
+Skills become repository-owned sections in one file:
 
 ```text
-skills/
-  cicada-software-implementation/
-    SKILL.md
-  cicada-web-interface-design/
-    SKILL.md
+config/skills.md
+  ## cicada-software-implementation
+  ## cicada-web-interface-design
 ```
 
-`SKILL.md` uses the existing frontmatter shape:
+Each section body uses the existing frontmatter shape:
 
 ```yaml
 ---
@@ -80,7 +78,7 @@ description: Execute a confirmed implementation stage.
 
 The remainder is Markdown instructions. The catalog and automation configuration continue to reference lowercase `skillIds`.
 
-**Load-time trust** — the board reads only `skills/<validated-id>/SKILL.md`, rejects symlinks and path traversal, enforces per-skill limits, and computes a SHA-256 digest. Confirmation pins selected digests. If a referenced file changes before an attempt launches, that attempt stops visibly instead of silently using different instructions.
+**Load-time trust** — the board reads only validated sections from the regular, non-symlinked `config/skills.md` file, enforces per-skill limits, and computes a SHA-256 digest. Confirmation pins selected digests. If a referenced section changes before an attempt launches, that attempt stops visibly instead of silently using different instructions.
 
 **Compact prompts** — a worker receives only the stage’s pinned skills, direct dependency handoffs, acceptance criteria, relevant project memory, and referenced artifacts. It does not receive the full project transcript or unrelated skills.
 
@@ -270,8 +268,8 @@ contracts:
     location: src/shared/task-board-contract/index.ts
     decision: Add PlanRevision, WorkNode, StageAttempt, StageHandoff, Artifact, ProjectEvent, and their request types before backend or frontend work.
   - name: Skill file
-    location: skills/<skill-id>/SKILL.md
-    decision: Validated lowercase directory ID, YAML frontmatter name matching the ID, bounded Markdown body, and SHA-256 digest pinned by confirmed plan revision.
+    location: config/skills.md
+    decision: Validated lowercase section ID, YAML frontmatter name matching the ID, bounded Markdown body, and SHA-256 digest pinned by confirmed plan revision.
   - name: Worker launch context
     location: src/server/agents/task-worker/types.ts
     decision: Add plan/node/stage identity, pinned skill snapshots, direct dependency handoffs, artifact references, and prompt-budget metadata; omit unrelated project history.
@@ -289,7 +287,7 @@ tasks:
   - id: T2
     capability: backend
     depends_on: [T1]
-    paths: [skills, src/server/task-board/skills.ts, config/company-bootstrap.json, scripts/bootstrap-lib.mjs]
+    paths: [config/skills.md, src/server/task-board/skills.ts, config/company-bootstrap.json, scripts/bootstrap-lib.mjs]
     action: Add repository skill loading, frontmatter validation, symlink/path protection, digest computation, catalog reference validation, and initial skill files.
     validation: npm run test:tooling && npm run test:runtime
     done_when: Every configured skill resolves to one bounded file and confirmed revisions can pin immutable digests.

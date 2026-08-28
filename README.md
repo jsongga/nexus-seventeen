@@ -85,7 +85,7 @@ npm run dev:task-fleet -- "$PWD/.steward-data/fleet.json"
 
 Each fleet entry binds an existing agent and its token to a provider, model, working directory, and private journal.
 
-Edit prompt templates in `config/prompts.md`: each `## <name>` section contains one template, names use lowercase letters, digits, and hyphens, and any content change updates the `promptsSha` pinned to agent runs.
+Edit prompt templates in `config/prompts.md`: each `## <name>` section contains one template, names use lowercase letters, digits, and hyphens, and any content change updates the `promptsSha` pinned to agent runs. Template and skill bodies must not contain column-0 `## ` lines.
 
 ## Commands
 

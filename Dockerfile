@@ -22,7 +22,7 @@ WORKDIR /app
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY --from=build /build/package.json ./package.json
 COPY --from=build /build/build ./build
-COPY --from=build /build/skills ./skills
+COPY --from=build /build/config/skills.md ./config/skills.md
 
 RUN mkdir -p /srv/steward /var/lib/steward/private \
   && chown -R node:node /var/lib/steward \
