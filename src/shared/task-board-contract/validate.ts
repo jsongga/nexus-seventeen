@@ -145,12 +145,12 @@ export class ContractValidationError extends Error {
   }
 }
 
-export interface ExactMessageMap {
+interface ExactMessageMap {
   readonly unexpected: (label: string, field: string) => string;
   readonly missing: (label: string, field: string) => string;
 }
 
-export const GENERIC_EXACT_MESSAGES: ExactMessageMap = Object.freeze({
+const GENERIC_EXACT_MESSAGES: ExactMessageMap = Object.freeze({
   unexpected: (label: string) => `${label} has unexpected or missing fields`,
   missing: (label: string) => `${label} has unexpected or missing fields`,
 });
@@ -165,7 +165,7 @@ export const PATH_EXACT_MESSAGES: ExactMessageMap = Object.freeze({
   missing: (label: string, field: string) => `${label}.${field} is required`,
 });
 
-export interface FieldSetOptions {
+interface FieldSetOptions {
   readonly messages?: ExactMessageMap;
   readonly required?: readonly string[];
 }
@@ -204,7 +204,7 @@ export function stringValue(value: unknown, label: string): string {
   return value;
 }
 
-export interface ScalarMessageProfile {
+interface ScalarMessageProfile {
   readonly stringType: (label: string) => string;
   readonly integerAtLeast: (label: string, minimum: number) => string;
 }
@@ -215,7 +215,7 @@ export const BROWSER_SCALAR_MESSAGES: ScalarMessageProfile = Object.freeze({
   integerAtLeast: (label: string, minimum: number) => `${label} must be a safe integer of at least ${minimum}`,
 });
 
-export interface TextOptions {
+interface TextOptions {
   readonly maximum?: number;
   readonly allowEmpty?: boolean;
   readonly trim?: boolean;
@@ -226,7 +226,7 @@ export interface TextOptions {
 }
 
 /** Human-entered board text: trim at the boundary and reject control characters. */
-export function text(value: unknown, label: string, options: TextOptions = {}): string {
+function text(value: unknown, label: string, options: TextOptions = {}): string {
   const maximum = options.maximum ?? 8_000;
   if (typeof value !== "string") {
     throw new ContractValidationError(options.scalarMessages?.stringType(label) ?? options.message ?? `${label} is invalid`);
@@ -247,7 +247,7 @@ export function text(value: unknown, label: string, options: TextOptions = {}): 
   return parsed;
 }
 
-export interface ProseOptions {
+interface ProseOptions {
   readonly maximum: number;
   readonly allowEmpty?: boolean;
   /** `preserve` is for worker-authored text normalized immediately before board writes. */
@@ -296,7 +296,7 @@ export function timestamp(
   return value;
 }
 
-export function contractMember<const Values extends readonly string[]>(
+function contractMember<const Values extends readonly string[]>(
   value: unknown,
   values: Values,
   label: string,
@@ -343,7 +343,7 @@ export function arrayOf<T>(
   return value.map((item, index) => parser(item, `${label}[${index}]`));
 }
 
-export interface ShapeParserOptions {
+interface ShapeParserOptions {
   /** False preserves the browser adapter's rolling compatibility with additive fields. */
   readonly exact?: false | ExactMessageMap;
   /** Browser response projections historically treated wire IDs as opaque strings. */
@@ -405,7 +405,7 @@ export interface TolerantParksLedger {
   readonly recordsSince: string;
 }
 
-export type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> & Readonly<{
+type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> & Readonly<{
   point: DesignFailurePointKind | "unrecognized";
 }>;
 
@@ -546,7 +546,7 @@ export function parseProjectEntity(value: unknown, label: string, options: Shape
   });
 }
 
-export function parseWorkItemProjectTargetEntity(
+function parseWorkItemProjectTargetEntity(
   value: unknown,
   label: string,
   options: ShapeParserOptions = {},
@@ -1679,7 +1679,7 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
 }
 
 const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start"] as const;
-export function parseVerifyAttemptEntity(
+function parseVerifyAttemptEntity(
   value: unknown,
   label: string,
   options: ShapeParserOptions = {},
@@ -2167,7 +2167,7 @@ export function parseClaimRunPausedResult(value: unknown): ClaimRunPausedResult 
 
 export type { StageHandoffDraft, WorkflowPlanDraft };
 
-export interface ValidatedTaskWakeClaim {
+interface ValidatedTaskWakeClaim {
   readonly apiVersion: 1;
   readonly claimId: string;
   readonly runId: string;
@@ -2180,7 +2180,7 @@ export interface ValidatedTaskWakeClaim {
   readonly claimedAt: string;
 }
 
-export interface ValidatedAgentTaskPhase {
+interface ValidatedAgentTaskPhase {
   readonly phaseId: string;
   readonly title: string;
   readonly stage: TaskPhaseStage;
@@ -2190,11 +2190,11 @@ export interface ValidatedAgentTaskPhase {
   readonly version: number;
 }
 
-export interface ValidatedAgentTaskPhaseUpdate extends Omit<ValidatedAgentTaskPhase, "phaseId" | "version"> {
+interface ValidatedAgentTaskPhaseUpdate extends Omit<ValidatedAgentTaskPhase, "phaseId" | "version"> {
   readonly phaseId: string | null;
 }
 
-export interface ValidatedAgentContext {
+interface ValidatedAgentContext {
   readonly apiVersion: 1;
   readonly projectId: string;
   readonly agentId: string;
@@ -2264,13 +2264,13 @@ export interface ValidatedAgentContext {
   }> | null;
 }
 
-export type ValidatedAgentRunOutput =
+type ValidatedAgentRunOutput =
   | Readonly<{ type: "progress"; body: string }>
   | Readonly<{ type: "proposed_child_task"; title: string; objective: string; acceptanceCriteria: readonly string[] }>
   | Readonly<{ type: "result"; body: string }>
   | Readonly<{ type: "human_question"; question: string }>;
 
-export interface ValidatedAgentRunOutcome {
+interface ValidatedAgentRunOutcome {
   readonly status: "completed" | "failed" | "interrupted" | "waiting_for_human";
   readonly outputs: readonly ValidatedAgentRunOutput[];
   readonly expectedAgentMinutes: number | null;

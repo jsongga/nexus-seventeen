@@ -15,7 +15,7 @@ import {
   boardFixture,
   taskRequest,
   workItemRequest,
-} from "../helpers.js";
+} from "./helpers.js";
 
 const IMPLEMENT_PIN = Object.freeze({
   runtime: "codex",

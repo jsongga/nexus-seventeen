@@ -29,7 +29,7 @@ function Timestamp({ value }: { value: string }) {
   return <time dateTime={value}>{Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed)}</time>;
 }
 
-export interface FindingCategoryCounts {
+interface FindingCategoryCounts {
   category: string;
   total: number;
   minor: number;

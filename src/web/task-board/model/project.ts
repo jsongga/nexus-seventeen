@@ -39,7 +39,7 @@ import {
   type WireTaskStatus,
 } from '../data/wire';
 
-export function taskStatus(status: WireTaskStatus | 'unrecognized', hasOpenQuestion: boolean): TaskStatus {
+function taskStatus(status: WireTaskStatus | 'unrecognized', hasOpenQuestion: boolean): TaskStatus {
   if (status === 'unrecognized') return status;
   if (hasOpenQuestion) return 'waiting_for_human';
   const statuses: Record<WireTaskStatus, TaskStatus> = {
@@ -55,7 +55,7 @@ export function taskStatus(status: WireTaskStatus | 'unrecognized', hasOpenQuest
   return statuses[status];
 }
 
-export function agentStatus(status: WireAgentStatus): AgentStatus {
+function agentStatus(status: WireAgentStatus): AgentStatus {
   const statuses: Record<WireAgentStatus, AgentStatus> = {
     idle: 'sleeping',
     ready: 'queued',
@@ -66,11 +66,11 @@ export function agentStatus(status: WireAgentStatus): AgentStatus {
   return statuses[status];
 }
 
-export function runStatus(status: WireRunStatus): RunStatus {
+function runStatus(status: WireRunStatus): RunStatus {
   return status === 'active' ? 'running' : status;
 }
 
-export function eventRunId(event: RawEvent): string | null {
+function eventRunId(event: RawEvent): string | null {
   return typeof event.data.runId === 'string' ? event.data.runId : null;
 }
 
@@ -80,7 +80,7 @@ export function eventRunId(event: RawEvent): string | null {
 // excludes it. Keeping the wire type means the assignment into
 // BoardRun.wakeReason is where a contract addition fails to compile — which is
 // exactly where someone should be forced to decide how the UI displays it.
-export function eventWakeReason(event: RawEvent): WireWakeReason | null {
+function eventWakeReason(event: RawEvent): WireWakeReason | null {
   const value = event.data.wakeReason;
   return typeof value === 'string' && wakeReasons.has(value as WireWakeReason) ? value as WireWakeReason : null;
 }
@@ -114,7 +114,7 @@ export function projectProjection(raw: RawProject): BoardProject {
   };
 }
 
-export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
+function workItemProjection(raw: RawWorkItem): BoardWorkItem {
   return {
     id: raw.workItemId,
     originalRequest: raw.originalRequest,

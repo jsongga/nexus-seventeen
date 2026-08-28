@@ -1,6 +1,6 @@
 import type { AutomationConfiguration } from '../types';
 
-export interface ClientOperationToken<T extends object> {
+interface ClientOperationToken<T extends object> {
   readonly client: T;
   readonly generation: number;
 }
@@ -57,7 +57,7 @@ export function emptyAutomationEditorState(): AutomationEditorState {
   return { saved: null, draft: null, remote: null };
 }
 
-export function cloneAutomationConfiguration(configuration: AutomationConfiguration): AutomationConfiguration {
+function cloneAutomationConfiguration(configuration: AutomationConfiguration): AutomationConfiguration {
   return {
     ...configuration,
     agentTypes: configuration.agentTypes.map((agentType) => ({
@@ -71,7 +71,7 @@ export function cloneAutomationConfiguration(configuration: AutomationConfigurat
   };
 }
 
-export function automationEditablePayload(configuration: AutomationConfiguration): string {
+function automationEditablePayload(configuration: AutomationConfiguration): string {
   return JSON.stringify({
     agentTypes: configuration.agentTypes,
     stages: configuration.stages,

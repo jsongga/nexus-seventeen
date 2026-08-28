@@ -53,7 +53,7 @@ export class TaskBoardHttpError extends Error {
   }
 }
 
-export type RetryableSettlementErrorCode =
+type RetryableSettlementErrorCode =
   | "WORKFLOW_PLAN_REQUIRED"
   | typeof TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING;
 

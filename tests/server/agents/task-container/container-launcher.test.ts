@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
-import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
 import { ContainerAgentLauncher } from "#server/agents/task-container";
 import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CODEX_PROFILE } from "../runtime/profile-fixtures.js";

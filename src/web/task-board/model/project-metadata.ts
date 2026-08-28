@@ -1,4 +1,4 @@
-export type ProjectMetadataKind = 'workspace' | 'github' | 'dokploy' | 'live' | 'docs' | 'other';
+type ProjectMetadataKind = 'workspace' | 'github' | 'dokploy' | 'live' | 'docs' | 'other';
 
 export interface ProjectMetadataEntry {
   key: string;
@@ -8,7 +8,7 @@ export interface ProjectMetadataEntry {
   href: string | null;
 }
 
-export interface ProjectMetadata {
+interface ProjectMetadata {
   summaries: string[];
   entries: ProjectMetadataEntry[];
 }

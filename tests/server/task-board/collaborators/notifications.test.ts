@@ -9,7 +9,7 @@ import {
 import { NotificationsCollaborator } from "#server/task-board/collaborators/notifications";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
-import { HUMAN_TOKEN, config, databasePath } from "./helpers.js";
+import { HUMAN_TOKEN, config, databasePath } from "../helpers.js";
 
 const NOW = "2026-08-21T16:00:00.000Z";
 

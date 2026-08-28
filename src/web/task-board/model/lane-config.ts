@@ -2,7 +2,7 @@ import type { BoardAgent } from '../types';
 
 export const MASKED_LANE_TOKEN = '<rotate token to reveal>';
 
-export interface LaneConfigurationState {
+interface LaneConfigurationState {
   tokenVisible: boolean;
   snippet: string;
 }

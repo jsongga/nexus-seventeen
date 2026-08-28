@@ -11,24 +11,24 @@ export interface HostContext {
   /** When non-null, replaces $HOME auto-detection entirely. */
   readonly rootsOverride: readonly string[] | null;
 }
-export interface HostProjectEntry {
+interface HostProjectEntry {
   readonly name: string;
   readonly path: string;
   readonly hasGit: boolean;
   readonly modifiedAtMs: number;
 }
-export interface HostProjectRoot {
+interface HostProjectRoot {
   readonly name: string;
   readonly path: string;
   readonly projects: readonly HostProjectEntry[];
   readonly truncated: boolean;
 }
-export interface HostDirectoryEntry {
+interface HostDirectoryEntry {
   readonly name: string;
   readonly path: string;
   readonly hasGit: boolean;
 }
-export interface HostDirectoryListing {
+interface HostDirectoryListing {
   readonly path: string;
   readonly parent: string | null;
   readonly entries: readonly HostDirectoryEntry[];

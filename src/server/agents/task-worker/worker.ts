@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AgentRole } from "#shared/task-board-contract";
-import { safeErrorDetail } from "../../shared/safe-error-detail.js";
+import { safeErrorDetail } from "../../shared/redact.js";
 import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import {
   ActivityBuffer,
@@ -13,7 +13,7 @@ import {
   sanitizeActivity,
   type LivePhaseSignal,
 } from "../runtime/derive.js";
-import type { RuntimeEvent } from "../runtime/events.js";
+import type { RuntimeEvent } from "../runtime/adapter.js";
 import { TaskWorkerJournalStore } from "./journal.js";
 import { InactiveClaimReplayError, RetryableSettlementError } from "./http-board-client.js";
 import {

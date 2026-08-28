@@ -84,7 +84,7 @@ export function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArti
   ].sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
 }
 
-export interface InterruptAllOutcome {
+interface InterruptAllOutcome {
   handledRunIds: string[];
   interruptedCount: number;
   alreadyFinishedCount: number;
@@ -311,7 +311,7 @@ interface AgentPageProps {
   onRotateToken: () => Promise<RotateAgentTokenResult | null>;
 }
 
-export interface AgentChatEntry {
+interface AgentChatEntry {
   id: string;
   author: string;
   body: string;

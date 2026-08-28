@@ -35,9 +35,9 @@ import {
   type WorkflowGitRunner,
 } from "../persistence/workflow.js";
 import { SkillRegistry } from "../skills.js";
-import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/workflow.js";
 import { exactNow } from "../persistence/timestamps.js";
-import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
+import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
@@ -81,7 +81,7 @@ export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
   outcome?: "parked_hazardous" | "designing";
 }>;
 
-export type ProjectsVerifyDependencies = Omit<
+type ProjectsVerifyDependencies = Omit<
   VerifyAttemptsDependencies,
   "git" | "settleInTransaction" | "activateNodes" | "reconcileProject"
 >;

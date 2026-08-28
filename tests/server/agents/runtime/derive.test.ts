@@ -6,7 +6,7 @@ import {
   estimateMinutesFromEvent,
   phaseSignalFromEvent,
 } from "../../../../src/server/agents/runtime/derive.js";
-import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
 
 const phase = {
   key: "api",

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { hashToPage, pageToHash } from './routing';
 import type { BoardPage } from '../views/WorkspaceSidebar';
 
-export type HashNavigationMode = 'push' | 'replace';
+type HashNavigationMode = 'push' | 'replace';
 
 /** Owns the raw URL state so the rendered page is always derived from the hash. */
 export function useHashRoute(): readonly [BoardPage, (next: BoardPage, mode?: HashNavigationMode) => void] {

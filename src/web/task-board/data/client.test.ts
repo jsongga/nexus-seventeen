@@ -6,8 +6,8 @@ import {
   createTaskBoardClient,
   BoardApiError,
   parseBoardSnapshot,
+  randomUuid,
 } from './client';
-import { randomUuid } from './uuid';
 import type { AutomationAgentType, AutomationStageConfiguration } from '../types';
 import { newest } from '../model/project';
 

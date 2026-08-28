@@ -6,7 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import type { AgentRole } from "#shared/task-board-contract";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
-import { AgentProcessError } from "../runtime/errors.js";
+import { AgentProcessError } from "../runtime/adapter.js";
 import { RuntimeCapabilityError, type RuntimeProfile } from "../runtime/profiles.js";
 import {
   ActivityChannel,

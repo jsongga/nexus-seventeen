@@ -8,7 +8,7 @@ import {
   type BoardNotification,
   type NotificationDeliveryAdapter,
 } from "#server/task-board";
-import { AGENT_TWO_TOKEN, HUMAN_TOKEN, databasePath, workItemRequest } from "./helpers.js";
+import { AGENT_TWO_TOKEN, HUMAN_TOKEN, databasePath, workItemRequest } from "../helpers.js";
 
 const PARKED_AT = "2026-08-01T12:00:00.000Z";
 const QUESTION = `Which rollback path should the implementation preserve? ${"x".repeat(240)}`;

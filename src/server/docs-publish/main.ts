@@ -12,7 +12,7 @@ interface CliOptions {
   readonly dryRun: boolean;
 }
 
-export type DocsSinkFactory = (
+type DocsSinkFactory = (
   outline: DocsPublishConfig["outline"],
   token: string,
 ) => DocsSink;

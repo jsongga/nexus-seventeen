@@ -1,4 +1,4 @@
-import { safeErrorDetail } from "../../shared/safe-error-detail.js";
+import { safeErrorDetail } from "../../shared/redact.js";
 import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import type {
   ManagedTaskWorker,

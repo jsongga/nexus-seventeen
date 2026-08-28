@@ -1,24 +1,12 @@
 export { TaskWorker } from "./worker.js";
-export type { TaskWorkerSnapshot } from "./worker.js";
-export { TaskWorkerJournalStore } from "./journal.js";
 export {
   HttpTaskBoardClient,
   RetryableSettlementError,
   TaskBoardHttpError,
 } from "./http-board-client.js";
-export type { HttpTaskBoardClientOptions } from "./http-board-client.js";
-export { AgentProcessError } from "../runtime/errors.js";
+export { AgentProcessError } from "../runtime/adapter.js";
 export { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
-export type { ContainedCliAgentLauncherOptions } from "./contained-cli-launcher.js";
 export { PromptRegistry } from "./prompt-registry.js";
-export {
-  parseAgentRunOutcome,
-  parseAgentRunOutput,
-  parseBoundedAgentContext,
-  parseTaskWakeClaim,
-  parseTaskWorkerJournal,
-} from "./schema.js";
-export { TASK_WAKE_REASONS, TaskBoardClaimResponseError } from "./types.js";
 export type {
   AgentLaunchRequest,
   AgentLauncher,

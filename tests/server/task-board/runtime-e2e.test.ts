@@ -9,7 +9,7 @@ import test from "node:test";
 import type { RuntimeAdapter } from "../../../src/server/agents/runtime/adapter.js";
 import { claudeAdapter } from "../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../src/server/agents/runtime/codex.js";
-import type { RuntimeEvent } from "../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../src/server/agents/runtime/adapter.js";
 import {
   RuntimeCapabilityError,
   type RuntimeProfile,

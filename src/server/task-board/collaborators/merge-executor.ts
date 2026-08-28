@@ -29,7 +29,7 @@ export type MergePipelineResult =
   | Readonly<{ kind: "empty" }>
   | Readonly<{ kind: "repo_busy" }>;
 
-export type PipelineMergeTarget =
+type PipelineMergeTarget =
   | Readonly<{ kind: "ready"; branch: string; head: string }>
   | Readonly<{ kind: "repo_busy" }>;
 

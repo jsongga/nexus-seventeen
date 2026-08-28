@@ -7,7 +7,17 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from 'react';
-import { dialogDismissalDecision } from './dialog-discard';
+
+type DialogDismissalDecision = 'close' | 'confirm';
+
+export function fieldsAreDirty(values: readonly string[]): boolean {
+  return values.some((value) => value.length > 0);
+}
+
+/** Evaluates lazily so a dialog always protects the text visible at dismissal time. */
+export function dialogDismissalDecision(isDirty?: () => boolean): DialogDismissalDecision {
+  return isDirty?.() ? 'confirm' : 'close';
+}
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -65,13 +75,13 @@ function focusableElements(container: HTMLElement) {
   );
 }
 
-export interface DialogLayerOptions {
+interface DialogLayerOptions {
   open: boolean;
   onClose: () => void;
   containerRef: RefObject<HTMLElement | null>;
 }
 
-export interface ConfirmBeforeDiscardOptions {
+interface ConfirmBeforeDiscardOptions {
   open: boolean;
   isDirty?: () => boolean;
   onDiscard: () => void;

@@ -20,8 +20,7 @@ import {
   WORKFLOW_STAGES,
   type AgentRole,
 } from "#shared/task-board-contract";
-import { AgentProcessError } from "../runtime/errors.js";
-import type { RuntimeEvent } from "../runtime/events.js";
+import { AgentProcessError, type RuntimeEvent } from "../runtime/adapter.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";

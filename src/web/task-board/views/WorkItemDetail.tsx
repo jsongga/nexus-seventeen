@@ -12,7 +12,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from '@shared/task-board-contract';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
-import { fieldsAreDirty } from '../../components/dialog-discard';
+import { fieldsAreDirty } from '../../components/dialog-stack';
 import type { TaskBoardClient } from '../data/client';
 import type { RawWorkItemAudit } from '../data/parse';
 import {

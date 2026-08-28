@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
-import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
 import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";

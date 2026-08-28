@@ -24,7 +24,7 @@ import {
   config,
   taskRequest,
   workItemRequest,
-} from "./helpers.js";
+} from "../helpers.js";
 
 async function within<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;

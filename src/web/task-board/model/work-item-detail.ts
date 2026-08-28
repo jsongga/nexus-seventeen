@@ -3,7 +3,7 @@ import type { ProjectWorkflow, TaskStatus, WorkflowNode, WorkflowPlan, WorkItemS
 
 export type DetailedWorkflowPlan = WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'>;
 
-export interface WorkItemDetailAffordances {
+interface WorkItemDetailAffordances {
   answerQuestion: boolean;
   confirmPlan: boolean;
   rejectPlan: boolean;

@@ -32,7 +32,7 @@ import {
   RetryableSettlementError,
   TaskBoardHttpError,
 } from "#server/agents/task-worker/http-board-client";
-import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
 
 export const NOW = "2026-07-19T20:00:00.000Z";
 export const PROJECT = "project-one";

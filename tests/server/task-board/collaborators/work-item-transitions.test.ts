@@ -12,7 +12,7 @@ import {
   workItemStateForNodeStage,
   workItemStateForStage,
 } from "#server/task-board/collaborators/work-item-transitions";
-import { databasePath } from "./helpers.js";
+import { databasePath } from "../helpers.js";
 
 const CREATED_AT = "2026-08-15T12:00:00.000Z";
 

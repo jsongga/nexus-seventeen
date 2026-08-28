@@ -1,14 +1,14 @@
 import { createServer } from "node:http";
 import { connect } from "node:net";
 
-export interface EgressProxyOptions {
+interface EgressProxyOptions {
   readonly host: string;
   readonly port: number;
   readonly allowedHosts: readonly string[];
   readonly allowedPorts?: readonly number[];
 }
 
-export interface EgressProxy {
+interface EgressProxy {
   readonly port: number;
   close(): Promise<void>;
 }

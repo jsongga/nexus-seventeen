@@ -35,7 +35,7 @@ export interface MachineVerifyWorkspaceManager {
   retain(key: string): Promise<void>;
 }
 
-export interface CriterionCheckExecution {
+interface CriterionCheckExecution {
   readonly passed: boolean;
   readonly detail: string;
 }
@@ -78,7 +78,7 @@ interface CheckOutcome {
   readonly failureDetailsByIndex: readonly (string | null)[];
 }
 
-export type StartingVerifyAttemptResult =
+type StartingVerifyAttemptResult =
   | Readonly<{ kind: "created"; verifyAttemptId: string }>
   | Readonly<{ kind: "ineligible" }>
   | Readonly<{ kind: "pipeline_required" }>;

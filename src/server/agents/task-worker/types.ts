@@ -16,7 +16,7 @@ import {
   type TaskPhaseStage,
   type TaskPhaseStatus,
 } from "#shared/task-board-contract";
-import type { RuntimeEvent } from "../runtime/events.js";
+import type { RuntimeEvent } from "../runtime/adapter.js";
 
 /**
  * Backward-compatible worker name. Per the WAKEUP_REASONS contract, additions
@@ -60,7 +60,7 @@ export interface AgentTaskContext {
 }
 
 /** Worker-side mirror kept explicit so additive review fields cannot disappear at the HTTP boundary. */
-export interface BoundedWorkflowReviewContext extends WorkflowReviewContext {
+interface BoundedWorkflowReviewContext extends WorkflowReviewContext {
   readonly mechanicalPortions: readonly string[];
 }
 
@@ -103,7 +103,7 @@ export interface AreaMemoryEntry {
   readonly endedAt: string;
 }
 
-export interface ParentTaskEvidence {
+interface ParentTaskEvidence {
   readonly taskId: string;
   readonly title: string;
   readonly objective: string;
@@ -190,7 +190,7 @@ export interface AgentRunOutcome {
   readonly designRecord?: DesignRecordDraft;
 }
 
-export interface AgentWorkspace { readonly path: string }
+interface AgentWorkspace { readonly path: string }
 
 export interface AgentLaunchRequest {
   readonly runId: string;
@@ -242,7 +242,7 @@ export interface ClaimedAgentRun {
 }
 
 /** Internal worker value for the additive HTTP `{ paused: true }` claim response. */
-export interface TaskBoardPausedClaim {
+interface TaskBoardPausedClaim {
   readonly paused: true;
 }
 
@@ -385,7 +385,7 @@ export interface CompletedRunJournalEntry {
 
 export type ActiveRunPhase = "claimed" | "launch_started" | "running" | "outputs_pending";
 
-export interface ActiveRunJournalEntry {
+interface ActiveRunJournalEntry {
   readonly claim: TaskWakeClaim;
   readonly phase: ActiveRunPhase;
   readonly contextDigest: string | null;

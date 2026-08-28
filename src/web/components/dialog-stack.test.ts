@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dialogDismissalDecision, fieldsAreDirty } from './dialog-discard';
+import { dialogDismissalDecision, fieldsAreDirty } from './dialog-stack';
 
 describe('dialog discard guard', () => {
   it('checks the current predicate value for every dismissal request', () => {

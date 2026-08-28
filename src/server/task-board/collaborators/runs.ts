@@ -28,8 +28,7 @@ import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-bo
 import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
-import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
-import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL, RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import {
   claimMessageCursor,
   claimRequestHash,
@@ -116,7 +115,7 @@ function attemptSettlementResult(
   return request.result;
 }
 
-export const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
+const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
 
 export class RunsCollaborator {
   constructor(

@@ -4,7 +4,7 @@ import {
   type TaskPhaseStage,
   type TaskPhaseStatus,
 } from "#shared/task-board-contract";
-import type { RuntimeEvent } from "./events.js";
+import type { RuntimeEvent } from "./adapter.js";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS = 160;
@@ -19,7 +19,7 @@ export interface LivePhaseSignal {
   readonly parallelGroup: string | null;
 }
 
-export interface ActivityBufferOptions {
+interface ActivityBufferOptions {
   readonly minimumIntervalMs?: number;
   readonly dedupeWindowMs?: number;
   readonly maximumCharacters?: number;

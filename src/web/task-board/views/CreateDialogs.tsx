@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Button, FieldLabel, InlineActionErrors, Modal, cn, inputClass } from '../../components/ui';
-import { fieldsAreDirty } from '../../components/dialog-discard';
-import { BoardApiError, type TaskBoardClient } from '../data/client';
-import { randomUuid } from '../data/uuid';
+import { fieldsAreDirty } from '../../components/dialog-stack';
+import { BoardApiError, randomUuid, type TaskBoardClient } from '../data/client';
 import type { ActionError, ActionResult } from '../model/action-errors';
 import { addedWorkspacePaths, breadcrumbSegments, filterPickerEntries, pickerEntries } from '../model/project-picker';
 import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput, HostDirectoryListing, HostProjectRoot } from '../types';

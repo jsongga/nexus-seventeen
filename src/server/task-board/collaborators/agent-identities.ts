@@ -8,7 +8,7 @@ const LAZY_IDENTITY_ACTOR = "system:lazy-agent-identity";
 
 type IdentityActor = Readonly<{ type: "human" | "agent" | "system"; id: string }>;
 
-export interface AgentIdentityInput {
+interface AgentIdentityInput {
   readonly agentId: string;
   readonly role: AgentRole;
   readonly area: string;

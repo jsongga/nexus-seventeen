@@ -1,9 +1,9 @@
-export interface ArtifactPreviewLoad {
+interface ArtifactPreviewLoad {
   readonly done: Promise<void>;
   dispose(): void;
 }
 
-export interface ArtifactPreviewLoadOptions {
+interface ArtifactPreviewLoadOptions {
   artifactIds: readonly string[];
   getBlob: (artifactId: string, signal: AbortSignal) => Promise<Blob>;
   onPreview: (artifactId: string, url: string | null) => void;

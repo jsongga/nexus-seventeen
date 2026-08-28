@@ -30,7 +30,7 @@ export interface WorkItemTransitionRequest {
   readonly touch?: boolean;
 }
 
-export interface InitialWorkItemTransitionRequest {
+interface InitialWorkItemTransitionRequest {
   readonly workItemId: string;
   readonly actorType: "human" | "agent" | "system";
   readonly actorId: string;

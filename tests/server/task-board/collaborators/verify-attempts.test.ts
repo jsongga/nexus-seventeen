@@ -30,7 +30,7 @@ import {
   boardFixture,
   config,
   workItemRequest,
-} from "./helpers.js";
+} from "../helpers.js";
 
 type AttemptState = "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
 

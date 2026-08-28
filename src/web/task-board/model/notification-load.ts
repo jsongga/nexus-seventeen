@@ -1,4 +1,4 @@
-export type NotificationLoad = (token: number) => Promise<void>;
+type NotificationLoad = (token: number) => Promise<void>;
 
 /** Coalesces snapshot-driven reads while rejecting completions from older requests. */
 export class NotificationLoadCoordinator {

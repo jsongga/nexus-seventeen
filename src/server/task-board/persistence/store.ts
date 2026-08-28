@@ -30,9 +30,14 @@ import {
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
-import { workItemPriorityCases } from "./work-item-priority-sql.js";
 
 const SCHEMA_VERSION = 25;
+
+export function workItemPriorityCases(indentation: string): string {
+  return WORK_ITEM_PRIORITIES
+    .map((priority, rank) => `WHEN '${priority}' THEN ${rank}`)
+    .join(`\n${indentation}`);
+}
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);

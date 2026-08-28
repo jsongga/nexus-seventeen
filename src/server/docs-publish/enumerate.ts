@@ -10,7 +10,7 @@ export interface DocSource {
   readonly markdown: string;
   readonly blobSha: string;
 }
-export interface EnumerateOptions { readonly exclude?: readonly string[] }
+interface EnumerateOptions { readonly exclude?: readonly string[] }
 
 interface TreeEntry { readonly path: string; readonly blobSha: string }
 

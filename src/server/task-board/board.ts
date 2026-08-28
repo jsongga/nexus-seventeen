@@ -106,8 +106,7 @@ import {
   taskFromRow,
 } from "./persistence/rows.js";
 import { TaskBoardStore } from "./persistence/store.js";
-import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "./persistence/pending-wakeups.js";
-import { RETIRED_WAKEUP_EVENT_PREFIX } from "./persistence/retired-wakeups.js";
+import { PENDING_LIVE_WAKEUP_PREDICATE_SQL, RETIRED_WAKEUP_EVENT_PREFIX } from "./persistence/workflow.js";
 import type { ProjectWorkflowSnapshot } from "./persistence/workflow.js";
 import type { ConfirmWorkflowResult } from "./collaborators/projects.js";
 

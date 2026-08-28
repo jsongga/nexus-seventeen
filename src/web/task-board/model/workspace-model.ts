@@ -40,7 +40,7 @@ const phaseStageOrder: Record<Exclude<BoardTaskPhase['stage'], 'done'>, number> 
   review: 4,
 };
 
-export interface AgentPipelineFocus {
+interface AgentPipelineFocus {
   task: BoardTask | null;
   phase: BoardTaskPhase | null;
   stage: 'Implementing' | 'Reviewing' | null;
@@ -103,7 +103,7 @@ export function agentPipelineFocus(agent: BoardAgent, tasks: BoardTask[]): Agent
   return { task, phase, stage, loop: loop > 1 ? loop : null };
 }
 
-export interface ProjectResource {
+interface ProjectResource {
   id: string;
   projectId: string;
   title: string;
@@ -145,7 +145,7 @@ export function taskNeedsHumanAction(task: BoardTask): boolean {
     || (task.kind === 'human_check' && task.endedAt === null);
 }
 
-export function isWebLink(value: string): boolean {
+function isWebLink(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === 'http:' || url.protocol === 'https:';

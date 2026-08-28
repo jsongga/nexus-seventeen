@@ -5,7 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
-import type { RuntimeEvent } from "../../../../src/server/agents/runtime/events.js";
+import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
 import { RuntimeCapabilityError } from "../../../../src/server/agents/runtime/profiles.js";
 import {
   AGENT_GAP_REPORT_MAX_CHARACTERS,

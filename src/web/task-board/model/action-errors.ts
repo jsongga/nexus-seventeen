@@ -48,7 +48,7 @@ export function newestActionErrors(state: ActionErrorState): ActionErrorState {
   return [...state].reverse();
 }
 
-export type ActionErrorEvent =
+type ActionErrorEvent =
   | { type: 'started'; context: string }
   | { type: 'failed'; context: string; error: string }
   | { type: 'dismissed'; context: string };
@@ -71,7 +71,7 @@ export function actionErrorReducer(
   ];
 }
 
-export interface ErrorPipelineState {
+interface ErrorPipelineState {
   connectivityDown: boolean;
   actionErrors: ActionErrorState;
   actionStatus: string | null;
@@ -83,13 +83,13 @@ export const initialErrorPipelineState: ErrorPipelineState = {
   actionStatus: null,
 };
 
-export const MUTATION_REFRESH_PENDING_NOTICE = 'Saved — the view is catching up';
+const MUTATION_REFRESH_PENDING_NOTICE = 'Saved — the view is catching up';
 
 export function mutationActionStatus(refreshCommitted: boolean): string | null {
   return refreshCommitted ? null : MUTATION_REFRESH_PENDING_NOTICE;
 }
 
-export type ErrorPipelineEvent =
+type ErrorPipelineEvent =
   | { type: 'snapshot-succeeded' }
   | { type: 'snapshot-failed' }
   | { type: 'action-started'; context: string }

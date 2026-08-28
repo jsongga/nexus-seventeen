@@ -17,7 +17,7 @@ import type {
 
 const PAGE_LIMIT = 100;
 
-export interface OutlineSinkOptions extends OutlineClientOptions {
+interface OutlineSinkOptions extends OutlineClientOptions {
   readonly sleeper?: RetrySleeper;
 }
 

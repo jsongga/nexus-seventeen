@@ -8,7 +8,7 @@ const REQUIRED_FILES = Object.freeze([
   "docs/workflow.md",
 ] as const);
 
-export interface OnboardingCheckResult {
+interface OnboardingCheckResult {
   readonly ok: boolean;
   readonly missing: readonly string[];
 }

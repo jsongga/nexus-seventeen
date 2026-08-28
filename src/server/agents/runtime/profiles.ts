@@ -9,7 +9,7 @@ import {
 const MAX_PROFILES_BYTES = 1024 * 1024;
 const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 
-export interface RuntimeRoleProfile {
+interface RuntimeRoleProfile {
   readonly sandbox: string;
 }
 

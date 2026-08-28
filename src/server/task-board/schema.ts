@@ -62,7 +62,7 @@ import type {
   WorkItemAudit,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "./errors.js";
-import { MAX_SAFE_ERROR_DETAIL_CHARACTERS, safeErrorDetail } from "../shared/safe-error-detail.js";
+import { MAX_SAFE_ERROR_DETAIL_CHARACTERS, safeErrorDetail } from "../shared/redact.js";
 
 function adapt<T>(parse: () => T): T {
   try {

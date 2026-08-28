@@ -14,7 +14,7 @@ import {
   boardFixture,
   latestParkRecord,
   workItemRequest,
-} from "./helpers.js";
+} from "../helpers.js";
 
 const BASE_SHA = "a".repeat(40);
 const ADVANCED_SHA = "b".repeat(40);

@@ -1,6 +1,4 @@
 export { loadTaskFleetConfig, parseTaskFleetConfig } from "./config.js";
-export { TaskFleet } from "./fleet.js";
-export type { TaskFleetOptions } from "./fleet.js";
 export {
   captureContainerRuntimeVersion,
   captureTaskFleetRuntimeVersion,
@@ -8,7 +6,6 @@ export {
   createTaskFleetWorker,
   isTransientTaskFleetError,
 } from "./runtime.js";
-export type { ContainerRuntimeIdentity, CreateTaskFleetWorkerOptions, TaskFleetVersionRunner } from "./runtime.js";
 export type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,

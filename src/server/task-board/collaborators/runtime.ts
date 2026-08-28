@@ -24,8 +24,11 @@ import {
 import { canonicalJson } from "../canonical.js";
 import type { TaskBoardConfig } from "../config.js";
 import { conflict, TaskBoardError } from "../errors.js";
-import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/pending-wakeups.js";
-import { RETIRED_WAKEUP_EVENT_PREFIX, retiredWakeupEventId } from "../persistence/retired-wakeups.js";
+import {
+  PENDING_LIVE_WAKEUP_PREDICATE_SQL,
+  RETIRED_WAKEUP_EVENT_PREFIX,
+  retiredWakeupEventId,
+} from "../persistence/workflow.js";
 import {
   nullableString,
   numberValue,
@@ -48,7 +51,7 @@ import {
 } from "./work-item-transitions.js";
 
 export type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
-export type ReviewFollowupResult = Readonly<{ taskId: string; wakeAgentId: string | null }>;
+type ReviewFollowupResult = Readonly<{ taskId: string; wakeAgentId: string | null }>;
 type WorkItemTransitionActor = Readonly<{ type: "human" | "agent" | "system"; id: string }>;
 
 type ActiveWorkerConnection = Exclude<WorkerConnection, null>;

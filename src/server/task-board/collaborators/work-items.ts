@@ -18,9 +18,9 @@ import { parseGateAction } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
-import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/retired-wakeups.js";
+import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import { decodeWorkItemCursor, encodeWorkItemCursor } from "../persistence/work-item-cursor.js";
-import { workItemPriorityCases } from "../persistence/work-item-priority-sql.js";
+import { workItemPriorityCases } from "../persistence/store.js";
 import { stringValue, workItemFromRow, type Row } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
@@ -37,7 +37,7 @@ export type WorkItemDetail = WorkItem & Readonly<{
   transitions: readonly WorkItemTransition[];
   gapReportArtifactId?: string | null;
 }>;
-export type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
+type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
 const ONBOARDING_ACCEPTANCE_CRITERIA = "Return a single-node v2 workflowPlan with stageTemplate [\"implementation\",\"testing\",\"verification\"], declaredScope covering README.md, the prefix \"docs\" (covering everything under docs/), and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.";

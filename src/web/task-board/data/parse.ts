@@ -99,36 +99,36 @@ type WithOptionalNullableMs<T, K extends string> = T & Partial<Record<`${K}Ms`, 
 type WithoutApi<T> = Omit<T, 'apiVersion'>;
 export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updatedAt'>;
 export type RawWorkItem = WithOptionalNullableMs<WithOptionalNullableMs<WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>, 'stateSince'>, 'heartbeatAt'>;
-export type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
+type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
 export type RawWorkItemDetail = RawWorkItem & Readonly<{
   transitions: RawWorkItemTransition[];
   gapReportArtifactId: string | null;
 }>;
-export type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
+type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
 export interface RawWorkItemAudit {
   gateActions: RawGateAction[];
   transitions: RawWorkItemTransition[];
 }
-export type RawReviewFinding = WithMs<TolerantReviewFindingEntity, 'createdAt'>;
+type RawReviewFinding = WithMs<TolerantReviewFindingEntity, 'createdAt'>;
 export interface RawFindingsLedger extends Omit<TolerantFindingsLedger, 'recent'> {
   recent: Array<RawReviewFinding & Readonly<{ workItemId: string }>>;
 }
-export type RawParkRecord = WithNullableMs<WithMs<TolerantParkRecord, 'parkedAt'>, 'resolvedAt'>;
-export type RawLedgerParkRecord = RawParkRecord & Readonly<{ workItemTitle: string }>;
+type RawParkRecord = WithNullableMs<WithMs<TolerantParkRecord, 'parkedAt'>, 'resolvedAt'>;
+type RawLedgerParkRecord = RawParkRecord & Readonly<{ workItemTitle: string }>;
 export interface RawParksLedger extends Omit<TolerantParksLedger, 'open' | 'resolved'> {
   open: RawLedgerParkRecord[];
   resolved: RawLedgerParkRecord[];
 }
 export type RawBoardNotification = WithNullableMs<WithMs<TolerantBoardNotification, 'createdAt'>, 'readAt'>;
 export type RawBoardPause = WithMs<BoardPause, 'updatedAt'>;
-export type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
-export type RawTaskPhase = WithMs<WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, 'startedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
+type RawAgent = WithMs<WithoutApi<AgentProfile>, 'createdAt'>;
+type RawTaskPhase = WithMs<WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, 'startedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
 export type RawTask = WithMs<WithMs<WithNullableMs<WithNullableMs<WithNullableMs<WithNullableMs<
   Omit<WithoutApi<TolerantTaskEntity>, 'phases' | 'workspaceRefs'> & { phases: RawTaskPhase[]; workspaceRefs: string[] }, 'estimateRecordedAt'>, 'startedAt'>,
   'expectedCompletedAt'>, 'endedAt'>, 'createdAt'>, 'updatedAt'>;
-export type RawQuestion = WithMs<WithNullableMs<Omit<WithoutApi<HumanQuestion>, 'runId' | 'answeredBy'>, 'answeredAt'>, 'askedAt'>;
+type RawQuestion = WithMs<WithNullableMs<Omit<WithoutApi<HumanQuestion>, 'runId' | 'answeredBy'>, 'answeredAt'>, 'askedAt'>;
 export type RawRun = WithNullableMs<WithMs<WithNullableMs<Omit<WithoutApi<AgentRun>, 'claimId' | 'wakeupId' | 'result'>, 'endedAt'>, 'startedAt'>, 'heartbeatAt'>;
-export type RawInterrupt = WithMs<Pick<AgentInterrupt, 'sequence' | 'agentId' | 'runId' | 'requestedAt'>, 'requestedAt'>;
+type RawInterrupt = WithMs<Pick<AgentInterrupt, 'sequence' | 'agentId' | 'runId' | 'requestedAt'>, 'requestedAt'>;
 export type RawEvent = WithMs<WithoutApi<TaskEvent>, 'createdAt'>;
 export type RawMessage = WithMs<Omit<WithoutApi<TaskMessage>, 'runId'>, 'createdAt'>;
 export interface RawBoard { project: RawProject; agents: RawAgent[]; tasks: RawTask[]; questions: RawQuestion[]; runs: RawRun[]; interrupts: RawInterrupt[]; events: RawEvent[] }
@@ -168,7 +168,7 @@ export function boundedText(value: unknown, path: string, maximum: number, allow
 }
 export function integer(value: unknown, path: string, minimum = 0): number { return contractInteger(value, path, minimum); }
 export function array<T>(value: unknown, path: string, parse: (item: unknown, path: string) => T): T[] { return arrayOf(value, path, parse); }
-export function identifier(value: unknown, path: string): string {
+function identifier(value: unknown, path: string): string {
   return contractIdentifier(value, path, `${path} must be a valid identifier`, BROWSER_SCALAR_MESSAGES);
 }
 export function skillIdentifier(value: unknown, path: string): string {
@@ -202,7 +202,7 @@ function projectWorkItem(item: TolerantWorkItemEntity): RawWorkItem {
 export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   return projectWorkItem(parseWorkItemEntity(value, path, loose));
 }
-export function parseWorkItemTransitions(value: unknown, path: string): RawWorkItemTransition[] {
+function parseWorkItemTransitions(value: unknown, path: string): RawWorkItemTransition[] {
   return arrayOf(value, path, (entry, entryPath) => {
     const transition = parseWorkItemTransitionEntity(entry, entryPath, loose);
     return { ...transition, createdAtMs: ms(transition.createdAt) };
@@ -387,7 +387,7 @@ export function parseAutomationConfiguration(value: unknown, path: string): Auto
   return { id: 'company-default', agentTypes, stages, version: item.version, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), updatedAt: item.updatedAt, updatedAtMs: ms(item.updatedAt), updatedBy: item.updatedBy };
 }
 
-export function parseWorkflowPlan(
+function parseWorkflowPlan(
   value: unknown,
   path: string,
 ): WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'> {
@@ -418,8 +418,8 @@ export function parseWorkflowPlan(
     ...(item.rejectedNote === undefined ? {} : { rejectedNote: item.rejectedNote }),
   };
 }
-export function parseWorkflowNode(value: unknown, path: string): WorkflowNode { const item = parseNodeEntity(value, path, loose); return { nodeId: item.nodeId, planRevisionId: item.planRevisionId, title: item.title, objective: item.objective, acceptanceCriteria: [...item.acceptanceCriteria], dependencyNodeIds: [...item.dependencyNodeIds], stageTemplate: [...item.stageTemplate], currentStage: item.currentStage, state: item.state, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), updatedAt: item.updatedAt, updatedAtMs: ms(item.updatedAt) }; }
-export function parseWorkflowHandoff(value: unknown, path: string): WorkflowHandoff { const item = parseHandoffEntity(value, path, loose); return { handoffId: item.handoffId, nodeId: item.nodeId, taskId: item.taskId, stage: item.stage, outcome: item.outcome, summary: item.summary, evidence: [...item.evidence], artifactIds: [...item.artifactIds], blockers: [...item.blockers], createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
+function parseWorkflowNode(value: unknown, path: string): WorkflowNode { const item = parseNodeEntity(value, path, loose); return { nodeId: item.nodeId, planRevisionId: item.planRevisionId, title: item.title, objective: item.objective, acceptanceCriteria: [...item.acceptanceCriteria], dependencyNodeIds: [...item.dependencyNodeIds], stageTemplate: [...item.stageTemplate], currentStage: item.currentStage, state: item.state, createdAt: item.createdAt, createdAtMs: ms(item.createdAt), updatedAt: item.updatedAt, updatedAtMs: ms(item.updatedAt) }; }
+function parseWorkflowHandoff(value: unknown, path: string): WorkflowHandoff { const item = parseHandoffEntity(value, path, loose); return { handoffId: item.handoffId, nodeId: item.nodeId, taskId: item.taskId, stage: item.stage, outcome: item.outcome, summary: item.summary, evidence: [...item.evidence], artifactIds: [...item.artifactIds], blockers: [...item.blockers], createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
 export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent { const item = parseProjectEventEntity(value, path, loose); return { sequence: item.sequence, eventId: item.eventId, nodeId: item.nodeId, taskId: item.taskId, eventType: item.eventType, summary: item.summary, createdAt: item.createdAt, createdAtMs: ms(item.createdAt) }; }
 export function parseProjectWorkflow(value: unknown, path: string): ProjectWorkflow { const item = record(value, path); return { plans: array(item.plans, `${path}.plans`, parseWorkflowPlan), nodes: array(item.nodes, `${path}.nodes`, parseWorkflowNode), handoffs: array(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff), events: array(item.events, `${path}.events`, parseWorkflowEvent) }; }
 export function parsePipelineSummary(value: unknown, path: string): PipelineSummary {

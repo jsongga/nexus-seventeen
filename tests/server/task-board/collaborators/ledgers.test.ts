@@ -9,7 +9,7 @@ import {
   databasePath,
   taskRequest,
   workItemRequest,
-} from "./helpers.js";
+} from "../helpers.js";
 
 const NOW = "2026-08-21T12:00:00.000Z";
 

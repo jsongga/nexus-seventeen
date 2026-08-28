@@ -1,6 +1,6 @@
 import { FileText } from 'lucide-react';
 
-export interface ActivityArtifact {
+interface ActivityArtifact {
   artifactId: string;
   caption: string;
   mediaType: string;

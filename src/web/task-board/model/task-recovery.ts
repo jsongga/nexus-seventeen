@@ -6,7 +6,7 @@ import {
 } from '../data/wire';
 import type { TaskKind, TaskStatus } from '../types';
 
-export interface TaskDetailMutationAffordances {
+interface TaskDetailMutationAffordances {
   answerQuestion: boolean;
   decideHumanCheck: boolean;
   recover: boolean;
@@ -45,7 +45,7 @@ export function deriveTaskDetailMutationAffordances(input: {
   };
 }
 
-export interface RecoveryAffordanceInput {
+interface RecoveryAffordanceInput {
   status: TaskStatus;
   assignedAgentId: string | null;
   /** Null means the board snapshot does not expose workflow linkage. */
@@ -53,7 +53,7 @@ export interface RecoveryAffordanceInput {
   eligibleAgentIds: readonly string[];
 }
 
-export interface RecoveryAffordances {
+interface RecoveryAffordances {
   retry: Readonly<{ primary: true }> | null;
   reassign: Readonly<{
     primary: boolean;
@@ -63,7 +63,7 @@ export interface RecoveryAffordances {
   backlog: Readonly<{ primary: false }> | null;
 }
 
-export interface AgentPickerSelection {
+interface AgentPickerSelection {
   readonly taskId: string;
   readonly agentId: string;
   readonly explicit: boolean;

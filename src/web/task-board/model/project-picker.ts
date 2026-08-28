@@ -1,7 +1,7 @@
 import { parseProjectMetadata } from './project-metadata';
 import type { BoardProject, HostProjectRoot } from '../types';
 
-export interface PickerEntry {
+interface PickerEntry {
   name: string;
   path: string;
   hasGit: boolean;

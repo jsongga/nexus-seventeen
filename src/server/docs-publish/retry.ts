@@ -1,6 +1,6 @@
 import { OutlineHttpError } from "./client.js";
 
-export interface RetryOptions {
+interface RetryOptions {
   readonly attempts: number;
   readonly delays: readonly number[];
 }
