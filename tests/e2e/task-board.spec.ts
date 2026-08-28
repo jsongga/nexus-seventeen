@@ -96,7 +96,12 @@ function board() {
   };
 }
 
-async function installDefaultBoard(page: Page): Promise<void> {
+async function installDefaultBoard(
+  page: Page,
+  options: { pauseConflictOnce?: boolean } = {},
+): Promise<{ pauseOnNextRead: () => void }> {
+  let pauseConflictOnce = options.pauseConflictOnce ?? false;
+  let pauseOnNextRead = false;
   let boardPause = {
     paused: false,
     reason: null as string | null,
@@ -108,12 +113,23 @@ async function installDefaultBoard(page: Page): Promise<void> {
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/board-api/v1/board/pause' && request.method() === 'GET') {
+      if (pauseOnNextRead) {
+        pauseOnNextRead = false;
+        boardPause = {
+          paused: true,
+          reason: 'Paused by another operator.',
+          version: boardPause.version + 1,
+          updatedAt: '2026-07-19T18:29:00.000Z',
+          updatedBy: 'human:another-operator',
+        };
+      }
       await route.fulfill({ json: boardPause });
       return;
     }
     if (url.pathname === '/board-api/v1/board/pause' && request.method() === 'POST') {
       const body = request.postDataJSON() as { reason: string | null; version: number };
-      if (body.version !== boardPause.version) {
+      if (pauseConflictOnce || body.version !== boardPause.version) {
+        pauseConflictOnce = false;
         await route.fulfill({ status: 409, json: { error: { code: 'BOARD_PAUSE_VERSION_CONFLICT', message: 'Pause state changed' } } });
         return;
       }
@@ -161,6 +177,10 @@ async function installDefaultBoard(page: Page): Promise<void> {
     }
     await route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } });
   });
+
+  return {
+    pauseOnNextRead: () => { pauseOnNextRead = true; },
+  };
 }
 
 test('the board control pauses with a reason and resumes orchestration', async ({ page }) => {
@@ -170,14 +190,68 @@ test('the board control pauses with a reason and resumes orchestration', async (
   const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
   await expect(pause).toBeVisible();
 
-  page.once('dialog', (dialog) => { void dialog.accept('Database maintenance window.'); });
   await pause.click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await pausePopover.getByRole('textbox', { name: 'Reason', exact: true }).fill('Database maintenance window.');
+  await pausePopover.getByRole('button', { name: 'Confirm pause', exact: true }).click();
   await expect(page.getByText('Board paused', { exact: true })).toBeVisible();
   await expect(page.getByText('Database maintenance window.', { exact: true })).toBeVisible();
 
   await companyRail.getByRole('button', { name: 'Resume board', exact: true }).click();
   await expect(companyRail.getByRole('button', { name: 'Pause board', exact: true })).toBeVisible();
   await expect(page.getByText('Board paused', { exact: true })).toHaveCount(0);
+});
+
+test('Escape closes the pause popover and returns focus to its trigger', async ({ page }) => {
+  await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+
+  await pause.click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover).toBeVisible();
+  await pausePopover.getByRole('textbox', { name: 'Reason', exact: true }).press('Escape');
+
+  await expect(pausePopover).toHaveCount(0);
+  await expect(pause).toBeFocused();
+});
+
+test('a pause version conflict keeps the reason and error in the popover', async ({ page }) => {
+  await installDefaultBoard(page, { pauseConflictOnce: true });
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+
+  await pause.click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  const reason = pausePopover.getByRole('textbox', { name: 'Reason', exact: true });
+  await reason.fill('Database maintenance window.');
+  await pausePopover.getByRole('button', { name: 'Confirm pause', exact: true }).click();
+
+  await expect(pausePopover).toBeVisible();
+  await expect(pausePopover.getByRole('alert')).toContainText('Pause state changed');
+  await expect(reason).toHaveValue('Database maintenance window.');
+});
+
+test('a remote pause closes the open pause popover without reopening it after resume', async ({ page }) => {
+  const boardStub = await installDefaultBoard(page);
+  await page.goto('/');
+  const companyRail = await openCompanyRail(page);
+  const pause = companyRail.getByRole('button', { name: 'Pause board', exact: true });
+
+  await pause.click();
+  const pausePopover = companyRail.getByRole('dialog', { name: 'Pause board', exact: true });
+  await expect(pausePopover).toBeVisible();
+
+  boardStub.pauseOnNextRead();
+  await triggerVisiblePoll(page);
+  await expect(companyRail.getByRole('button', { name: 'Resume board', exact: true })).toBeVisible();
+  await expect(pausePopover).toHaveCount(0);
+
+  await companyRail.getByRole('button', { name: 'Resume board', exact: true }).click();
+  await expect(pause).toBeVisible();
+  await expect(pausePopover).toHaveCount(0);
 });
 
 async function openCompanyRail(page: Page): Promise<Locator> {

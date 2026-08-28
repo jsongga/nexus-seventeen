@@ -8,8 +8,9 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { cn } from '../../components/ui';
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Popover } from '../../components/popover';
+import { Button, cn } from '../../components/ui';
 import type { BoardAgent, BoardSnapshot } from '../types';
 import type { RawBoardPause } from '../data/parse';
 import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
@@ -50,6 +51,76 @@ function AgentStatusMark({ agent }: { agent: BoardAgent }) {
   );
 }
 
+export function PauseReasonPopover({
+  open,
+  anchorRef,
+  busy,
+  disabled,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  busy: boolean;
+  disabled: boolean;
+  error: string | null;
+  onConfirm: (reason: string) => void;
+  onClose: () => void;
+}) {
+  const reasonId = useId();
+  const errorId = useId();
+  const [reason, setReason] = useState('');
+  const close = () => {
+    setReason('');
+    onClose();
+  };
+
+  return (
+    <Popover
+      open={open}
+      onClose={busy ? () => undefined : close}
+      anchorRef={anchorRef}
+      label="Pause board"
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (disabled) return;
+          onConfirm(reason.slice(0, 500));
+        }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <label htmlFor={reasonId} className="text-xs font-medium text-ink">Reason</label>
+          <span className="text-[10px] text-muted" aria-hidden="true">Optional</span>
+        </div>
+        <textarea
+          id={reasonId}
+          value={reason}
+          maxLength={500}
+          rows={4}
+          placeholder="Why are you pausing the board?"
+          disabled={busy || disabled}
+          aria-invalid={error === null ? undefined : true}
+          aria-describedby={error === null ? undefined : errorId}
+          data-popover-initial-focus
+          onChange={(event) => setReason(event.currentTarget.value.slice(0, 500))}
+          className="mt-1.5 w-full resize-y rounded-sm border border-line bg-canvas px-3 py-2 text-sm leading-5 text-ink outline-none transition-colors placeholder:text-muted focus:border-taupe-hover disabled:cursor-not-allowed disabled:opacity-55"
+        />
+        {error === null ? null : (
+          <p id={errorId} className="mt-2 text-[11px] leading-4 text-urgent" role="alert">{error}</p>
+        )}
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          <Button type="submit" variant="primary" size="sm" disabled={busy || disabled}>
+            {busy ? 'Pausing…' : 'Confirm pause'}
+          </Button>
+          <Button size="sm" disabled={busy} onClick={close}>Cancel</Button>
+        </div>
+      </form>
+    </Popover>
+  );
+}
+
 function RailContent({
   snapshot,
   page,
@@ -59,9 +130,13 @@ function RailContent({
   canAddProject,
   unreadNotifications,
   boardPause,
+  pausePopoverOpen,
   pauseBusy,
+  pauseControlDisabled,
   pauseControlError,
   onPauseBoard,
+  onConfirmPause,
+  onCancelPause,
   onResumeBoard,
 }: {
   snapshot: BoardSnapshot | null;
@@ -72,15 +147,20 @@ function RailContent({
   canAddProject: boolean;
   unreadNotifications: number;
   boardPause: RawBoardPause | null;
+  pausePopoverOpen: boolean;
   pauseBusy: boolean;
+  pauseControlDisabled: boolean;
   pauseControlError: string | null;
   onPauseBoard: () => void;
+  onConfirmPause: (reason: string) => void;
+  onCancelPause: () => void;
   onResumeBoard: () => void;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
   const parkedCount = snapshot?.workItems.filter((workItem) => workItem.state === 'parked').length ?? 0;
   const finalApprovalCount = snapshot?.workItems.filter((workItem) => workItem.state === 'final_approval').length ?? 0;
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const pauseAnchorRef = useRef<HTMLButtonElement>(null);
   const navRow = 'group flex min-h-11 w-full items-center border-l-2 border-transparent px-3 text-left text-[12px] font-medium transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9';
   const activeRow = 'border-l-taupe bg-surface text-ink';
   const inactiveRow = 'text-ink hover:bg-surface';
@@ -262,16 +342,32 @@ function RailContent({
             <span className="rounded-[99px] border border-caution/30 bg-caution-soft px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-caution">Paused</span>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45 lg:min-h-9"
-          disabled={pauseBusy}
-          onClick={boardPause?.paused ? onResumeBoard : onPauseBoard}
-        >
-          {boardPause?.paused ? <CirclePlay size={14} aria-hidden="true" /> : <CirclePause size={14} aria-hidden="true" />}
-          {pauseBusy ? (boardPause.paused ? 'Resuming…' : 'Pausing…') : boardPause.paused ? 'Resume board' : 'Pause board'}
-        </button>
-        {pauseControlError === null ? null : <p className="px-3 pt-2 text-[11px] leading-4 text-urgent" role="alert">{pauseControlError}</p>}
+        <div className="relative">
+          <button
+            ref={pauseAnchorRef}
+            type="button"
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45 lg:min-h-9"
+            disabled={pauseBusy || pauseControlDisabled}
+            aria-expanded={boardPause.paused ? undefined : pausePopoverOpen}
+            aria-haspopup={boardPause.paused ? undefined : 'dialog'}
+            onClick={boardPause.paused ? onResumeBoard : onPauseBoard}
+          >
+            {boardPause.paused ? <CirclePlay size={14} aria-hidden="true" /> : <CirclePause size={14} aria-hidden="true" />}
+            {pauseBusy ? (boardPause.paused ? 'Resuming…' : 'Pausing…') : boardPause.paused ? 'Resume board' : 'Pause board'}
+          </button>
+          {boardPause.paused ? null : (
+            <PauseReasonPopover
+              open={pausePopoverOpen}
+              anchorRef={pauseAnchorRef}
+              busy={pauseBusy}
+              disabled={pauseControlDisabled}
+              error={pauseControlError}
+              onConfirm={onConfirmPause}
+              onClose={onCancelPause}
+            />
+          )}
+        </div>
+        {!boardPause.paused || pauseControlError === null ? null : <p className="px-3 pt-2 text-[11px] leading-4 text-urgent" role="alert">{pauseControlError}</p>}
       </section>}
     </div>
   );
@@ -288,9 +384,13 @@ export function WorkspaceFrame({
   canAddProject,
   unreadNotifications = 0,
   boardPause = null,
+  pausePopoverOpen = false,
   pauseBusy = false,
+  pauseControlDisabled = false,
   pauseControlError = null,
   onPauseBoard = () => undefined,
+  onConfirmPause = () => undefined,
+  onCancelPause = () => undefined,
   onResumeBoard = () => undefined,
   children,
 }: {
@@ -304,14 +404,22 @@ export function WorkspaceFrame({
   canAddProject: boolean;
   unreadNotifications?: number;
   boardPause?: RawBoardPause | null;
+  pausePopoverOpen?: boolean;
   pauseBusy?: boolean;
+  pauseControlDisabled?: boolean;
   pauseControlError?: string | null;
   onPauseBoard?: () => void;
+  onConfirmPause?: (reason: string) => void;
+  onCancelPause?: () => void;
   onResumeBoard?: () => void;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
+  const pausePopoverOpenRef = useRef(pausePopoverOpen);
+  const onCancelPauseRef = useRef(onCancelPause);
+  pausePopoverOpenRef.current = pausePopoverOpen;
+  onCancelPauseRef.current = onCancelPause;
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -320,7 +428,10 @@ export function WorkspaceFrame({
     window.setTimeout(() => drawerRef.current?.focus(), 0);
     const desktop = window.matchMedia('(min-width: 1024px)');
     const onBreakpointChange = (event: MediaQueryListEvent) => {
-      if (event.matches) onDrawerChange(false);
+      if (event.matches) {
+        if (pausePopoverOpenRef.current) onCancelPauseRef.current();
+        onDrawerChange(false);
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -353,6 +464,7 @@ export function WorkspaceFrame({
   }, [drawerOpen, onDrawerChange]);
 
   const closeDrawer = (restoreFocus = true) => {
+    if (pausePopoverOpen) onCancelPause();
     onDrawerChange(false);
     if (restoreFocus) window.setTimeout(() => openerRef.current?.focus(), 0);
   };
@@ -375,7 +487,7 @@ export function WorkspaceFrame({
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pauseBusy={pauseBusy} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onResumeBoard={onResumeBoard} />
+        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen && !drawerOpen} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
       </aside>
 
       {drawerOpen ? (
@@ -383,7 +495,7 @@ export function WorkspaceFrame({
           <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
           <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
             <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pauseBusy={pauseBusy} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onResumeBoard={onResumeBoard} />
+            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
           </aside>
         </div>
       ) : null}

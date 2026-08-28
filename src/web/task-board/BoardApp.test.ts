@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BoardPauseVersionGuard, refreshBoardSnapshot } from './BoardApp';
+import {
+  BoardPauseVersionGuard,
+  changeBoardPause,
+  pausePopoverShouldClose,
+  refreshBoardSnapshot,
+} from './BoardApp';
 import type { TaskBoardClient } from './data/client';
 import type { RawBoardPause } from './data/parse';
 import { NotificationLoadCoordinator } from './model/notification-load';
@@ -26,6 +31,12 @@ function pauseState(version: number, paused: boolean): RawBoardPause {
 }
 
 describe('board pause refresh coordination', () => {
+  it('closes the pause popover when pause state is unavailable or already paused', () => {
+    expect(pausePopoverShouldClose(null)).toBe(true);
+    expect(pausePopoverShouldClose(pauseState(2, true))).toBe(true);
+    expect(pausePopoverShouldClose(pauseState(3, false))).toBe(false);
+  });
+
   it('commits and renders a valid snapshot when the independent pause GET fails', async () => {
     const generatedAt = '2026-08-21T12:00:00.000Z';
     const snapshot: BoardSnapshot = {
@@ -82,6 +93,49 @@ describe('board pause refresh coordination', () => {
     await pollAssignment;
 
     expect(stored).toEqual(pauseState(2, true));
+  });
+});
+
+describe('changeBoardPause', () => {
+  it('does not send a pause request when the reason flow is cancelled', async () => {
+    const setBoardPause = vi.fn();
+    const client = { setBoardPause } as unknown as TaskBoardClient;
+
+    await expect(changeBoardPause(client, pauseState(1, false), null)).resolves.toBeNull();
+    expect(setBoardPause).not.toHaveBeenCalled();
+  });
+
+  it('sends an empty reason as null', async () => {
+    const updated = pauseState(2, true);
+    const setBoardPause = vi.fn().mockResolvedValue(updated);
+    const client = { setBoardPause } as unknown as TaskBoardClient;
+
+    await expect(changeBoardPause(client, pauseState(1, false), '  ')).resolves.toEqual(updated);
+    expect(setBoardPause).toHaveBeenCalledWith({ reason: null, version: 1 });
+  });
+
+  it('trims a supplied reason and clamps its raw length to 500 characters', async () => {
+    const updated = pauseState(2, true);
+    const setBoardPause = vi.fn().mockResolvedValue(updated);
+    const client = { setBoardPause } as unknown as TaskBoardClient;
+
+    await changeBoardPause(client, pauseState(1, false), `  Maintenance  ${'x'.repeat(500)}`);
+
+    expect(setBoardPause).toHaveBeenCalledWith({
+      reason: `Maintenance  ${'x'.repeat(485)}`,
+      version: 1,
+    });
+  });
+
+  it('resumes directly and ignores the reason argument', async () => {
+    const resumed = pauseState(3, false);
+    const resumeBoard = vi.fn().mockResolvedValue(resumed);
+    const setBoardPause = vi.fn();
+    const client = { resumeBoard, setBoardPause } as unknown as TaskBoardClient;
+
+    await expect(changeBoardPause(client, pauseState(2, true), 'unused')).resolves.toEqual(resumed);
+    expect(resumeBoard).toHaveBeenCalledWith({ version: 2 });
+    expect(setBoardPause).not.toHaveBeenCalled();
   });
 });
 

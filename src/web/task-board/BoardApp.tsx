@@ -155,13 +155,19 @@ export function BoardPauseBanner({ boardPause }: { boardPause: RawBoardPause | n
 export async function changeBoardPause(
   client: TaskBoardClient,
   boardPause: RawBoardPause,
-  promptForReason: () => string | null,
+  reason: string | null,
 ): Promise<RawBoardPause | null> {
   if (boardPause.paused) return client.resumeBoard({ version: boardPause.version });
-  const response = promptForReason();
-  if (response === null) return null;
-  const reason = response.trim();
-  return client.setBoardPause({ reason: reason.length === 0 ? null : reason, version: boardPause.version });
+  if (reason === null) return null;
+  const trimmedReason = reason.slice(0, 500).trim();
+  return client.setBoardPause({
+    reason: trimmedReason.length === 0 ? null : trimmedReason,
+    version: boardPause.version,
+  });
+}
+
+export function pausePopoverShouldClose(boardPause: RawBoardPause | null): boolean {
+  return boardPause === null || boardPause.paused;
 }
 
 /** Keeps delayed reads from replacing a newer pause mutation response. */
@@ -224,6 +230,7 @@ export function BoardApp() {
   const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
   const [notificationsAttempt, setNotificationsAttempt] = useState(0);
   const [boardPause, setBoardPause] = useState<RawBoardPause | null>(null);
+  const [pausePopoverOpen, setPausePopoverOpen] = useState(false);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [pauseControlError, setPauseControlError] = useState<string | null>(null);
   const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
@@ -283,6 +290,10 @@ export function BoardApp() {
     notificationLoads.activate();
     return () => notificationLoads.deactivate();
   }, [notificationLoads]);
+
+  useEffect(() => {
+    if (pausePopoverShouldClose(boardPause)) setPausePopoverOpen(false);
+  }, [boardPause]);
 
   const performRefresh = useCallback(async (kind: BoardRefreshKind, signal: AbortSignal): Promise<boolean> => {
     try {
@@ -555,16 +566,40 @@ export function BoardApp() {
     return result;
   }
 
-  async function toggleBoardPause() {
-    if (boardPause === null || pauseBusy) return;
+  function openPausePopover() {
+    if (boardPause === null || boardPause.paused || pauseBusy) return;
+    setPauseControlError(null);
+    setPausePopoverOpen(true);
+  }
+
+  function closePausePopover() {
+    setPausePopoverOpen(false);
+    setPauseControlError(null);
+  }
+
+  async function confirmPause(reason: string | null) {
+    if (!connected || boardPause === null || boardPause.paused || pauseBusy) return;
     setPauseBusy(true);
     setPauseControlError(null);
     try {
-      const next = await changeBoardPause(
-        client,
-        boardPause,
-        () => globalThis.prompt('Why are you pausing the board?'),
-      );
+      const next = await changeBoardPause(client, boardPause, reason);
+      if (next !== null) {
+        updateBoardPause(next);
+        setPausePopoverOpen(false);
+      }
+    } catch (caught) {
+      setPauseControlError(caught instanceof Error ? caught.message : 'The board pause state could not be changed.');
+    } finally {
+      setPauseBusy(false);
+    }
+  }
+
+  async function resumeBoard() {
+    if (boardPause === null || !boardPause.paused || pauseBusy) return;
+    setPauseBusy(true);
+    setPauseControlError(null);
+    try {
+      const next = await changeBoardPause(client, boardPause, null);
       if (next !== null) updateBoardPause(next);
     } catch (caught) {
       setPauseControlError(caught instanceof Error ? caught.message : 'The board pause state could not be changed.');
@@ -741,7 +776,7 @@ export function BoardApp() {
               : 'tasks';
 
   return (
-    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0} boardPause={boardPause} pauseBusy={pauseBusy || !connected} pauseControlError={pauseControlError} onPauseBoard={() => { void toggleBoardPause(); }} onResumeBoard={() => { void toggleBoardPause(); }}>
+    <WorkspaceFrame snapshot={snapshot} page={page} pointOfContact={pointOfContact} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} onNavigate={navigate} onAddProject={() => openDialog('project')} canAddProject={connected} unreadNotifications={notifications?.unread.length ?? 0} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseBusy={pauseBusy} pauseControlDisabled={!connected} pauseControlError={pauseControlError} onPauseBoard={openPausePopover} onConfirmPause={(reason) => { void confirmPause(reason); }} onCancelPause={closePausePopover} onResumeBoard={() => { void resumeBoard(); }}>
       <BoardPauseBanner boardPause={boardPause} />
       {errorPipeline.connectivityDown ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><FormError><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{signInExpired ? 'Your sign-in has expired' : 'Task board unavailable'}</p><p className="mt-1 text-xs leading-5">{signInExpired ? 'Sign in again to continue. Existing durable state remains visible.' : `The board service is not reachable. ${connectivityError ?? 'Could not connect to the task board'}. Existing durable state remains visible. No demo data is being shown.`}</p></div>{signInExpired ? <button type="button" className="shrink-0 underline" onClick={() => globalThis.location.reload()}>Sign in again</button> : null}</div></FormError></div> : null}
       {errorPipeline.actionStatus ? <div className="px-4 pt-4 sm:px-8 lg:px-12"><div role="status" aria-live="polite" className="rounded-md border border-success-fill/50 bg-success-soft px-4 py-3 text-sm text-success">{errorPipeline.actionStatus}</div></div> : null}

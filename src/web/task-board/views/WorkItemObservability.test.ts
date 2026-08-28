@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BoardPauseBanner,
   NotificationsBlock,
-  changeBoardPause,
   markNotificationReadAndRefresh,
 } from '../BoardApp';
 import type { BoardNotifications, TaskBoardClient } from '../data/client';
@@ -153,6 +152,50 @@ describe('default observability view', () => {
     expect(markup).not.toContain('Documents');
     expect(markup).toContain('Resume board');
 
+    const pausePopoverMarkup = renderToStaticMarkup(createElement(WorkspaceFrame, {
+      snapshot,
+      page: { kind: 'tasks' },
+      pointOfContact: null,
+      drawerOpen: false,
+      onDrawerChange: vi.fn(),
+      onNavigate: vi.fn(),
+      onAddProject: vi.fn(),
+      canAddProject: true,
+      boardPause: { ...pausedBoard, paused: false, reason: null },
+      pausePopoverOpen: true,
+      pauseControlError: 'Pause state changed',
+      children: createElement('div', null, 'Content'),
+    }));
+    expect(pausePopoverMarkup).toContain('aria-label="Pause board"');
+    expect(pausePopoverMarkup).toContain('>Reason</label>');
+    expect(pausePopoverMarkup).toContain('maxLength="500"');
+    expect(pausePopoverMarkup).toContain('placeholder="Why are you pausing the board?"');
+    expect(pausePopoverMarkup).toContain('Confirm pause');
+    expect(pausePopoverMarkup).toContain('Cancel');
+    expect(pausePopoverMarkup).toContain('role="alert"');
+    expect(pausePopoverMarkup).toContain('Pause state changed');
+
+    const disconnectedPopoverMarkup = renderToStaticMarkup(createElement(WorkspaceFrame, {
+      snapshot,
+      page: { kind: 'tasks' },
+      pointOfContact: null,
+      drawerOpen: false,
+      onDrawerChange: vi.fn(),
+      onNavigate: vi.fn(),
+      onAddProject: vi.fn(),
+      canAddProject: false,
+      boardPause: { ...pausedBoard, paused: false, reason: null },
+      pausePopoverOpen: true,
+      pauseControlDisabled: true,
+      children: createElement('div', null, 'Content'),
+    }));
+    const disconnectedReason = /<textarea[^>]*>/u.exec(disconnectedPopoverMarkup)?.[0];
+    const disconnectedConfirm = /<button[^>]*>Confirm pause<\/button>/u.exec(disconnectedPopoverMarkup)?.[0];
+    const disconnectedCancel = /<button[^>]*>Cancel<\/button>/u.exec(disconnectedPopoverMarkup)?.[0];
+    expect(disconnectedReason).toContain('disabled=""');
+    expect(disconnectedConfirm).toContain('disabled=""');
+    expect(disconnectedCancel).not.toContain('disabled=""');
+
     const unavailableMarkup = renderToStaticMarkup(createElement(WorkspaceFrame, {
       snapshot,
       page: { kind: 'tasks' },
@@ -169,33 +212,13 @@ describe('default observability view', () => {
     expect(unavailableMarkup).not.toContain('Pause board');
   });
 
-  it('renders the paused banner with its reason and dispatches pause and resume controls', async () => {
+  it('renders the paused banner with its reason', () => {
     const markup = renderToStaticMarkup(createElement(BoardPauseBanner, { boardPause: pausedBoard }));
     expect(markup).toContain('Board paused');
     expect(markup).toContain('Database maintenance window.');
     expect(renderToStaticMarkup(createElement(BoardPauseBanner, {
       boardPause: { ...pausedBoard, paused: false, reason: null },
     }))).toBe('');
-
-    const setBoardPause = vi.fn().mockResolvedValue(pausedBoard);
-    const resumeBoard = vi.fn().mockResolvedValue({ ...pausedBoard, paused: false, reason: null, version: 3 });
-    const client = { setBoardPause, resumeBoard } as unknown as TaskBoardClient;
-    await expect(changeBoardPause(client, { ...pausedBoard, paused: false, reason: null, version: 1 }, () => '  Maintenance  ')).resolves.toEqual(pausedBoard);
-    expect(setBoardPause).toHaveBeenCalledWith({ reason: 'Maintenance', version: 1 });
-    await expect(changeBoardPause(client, pausedBoard, () => { throw new Error('resume must not prompt'); })).resolves.toMatchObject({ paused: false, version: 3 });
-    expect(resumeBoard).toHaveBeenCalledWith({ version: 2 });
-  });
-
-  it('does not mutate when the pause-reason prompt is cancelled', async () => {
-    const setBoardPause = vi.fn();
-    const client = { setBoardPause } as unknown as TaskBoardClient;
-
-    await expect(changeBoardPause(
-      client,
-      { ...pausedBoard, paused: false, reason: null },
-      () => null,
-    )).resolves.toBeNull();
-    expect(setBoardPause).not.toHaveBeenCalled();
   });
 
   it('renders work-item stage, state age, round, and heartbeat freshness', () => {
