@@ -6,7 +6,7 @@
 
 Cicada Steward gives a human one place to submit work, then uses short-lived agent runs to refine, research, plan, execute, and evaluate it. The **project** is the durable memory and authority boundary. An **agent type** defines a stage role. A **skill** adds reusable domain expertise. A **pipeline** decides which run may happen next. An **agent run** is disposable and is pinned to the versions of all three.
 
-The checked-in catalog at [`catalog/company-bootstrap.json`](../catalog/company-bootstrap.json) defines six product-level projects, 18 fixed authority profiles, 16 reusable agent types, and the safe linear portion of the pipeline. [`scripts/reconcile-bootstrap.mjs`](../scripts/reconcile-bootstrap.mjs) applies it without duplicating existing records and stores one-time agent credentials in macOS Keychain.
+The checked-in catalog at [`config/company-bootstrap.json`](../config/company-bootstrap.json) defines six product-level projects, 18 fixed authority profiles, 16 reusable agent types, and the safe linear portion of the pipeline. [`scripts/reconcile-bootstrap.mjs`](../scripts/reconcile-bootstrap.mjs) applies it without duplicating existing records and stores one-time agent credentials in macOS Keychain.
 
 Saving this catalog does **not** start automation. The current automation registry is deliberately dormant: it records ownership for the UI but does not bind an agent type to a fixed profile, launch a worker, or evaluate a transition. That boundary is verified in [`src/server/task-board/test/board.test.ts`](../src/server/task-board/test/board.test.ts).
 

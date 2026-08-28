@@ -120,7 +120,6 @@ import {
   type UpdateTaskRequest,
   type UpdateWorkItemRequest,
   type VerifyAttempt,
-  type Wakeup,
   type WorkItem,
   type WorkItemAudit,
   type WorkItemProjectTarget,
@@ -907,28 +906,6 @@ export function parseRunEntity(value: unknown, label: string, options: ShapePars
     runtimeVersion: nullableString(item.runtimeVersion, `${label}.runtimeVersion`),
     model: nullableString(item.model, `${label}.model`),
     promptsSha: nullableString(item.promptsSha, `${label}.promptsSha`),
-  });
-}
-
-export function parseWakeupEntity(value: unknown, label: string, options: ShapeParserOptions = {}): Wakeup {
-  const fields = [
-    "apiVersion", "wakeupId", "projectId", "agentId", "reason", "taskId", "questionId", "detail", "createdBy",
-    "createdAt", "claimedAt", "runId",
-  ];
-  const item = entity(value, label, fields, fields, options);
-  return Object.freeze({
-    apiVersion: TASK_BOARD_API_VERSION,
-    wakeupId: shapeIdentifier(item.wakeupId, `${label}.wakeupId`, options),
-    projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
-    agentId: shapeIdentifier(item.agentId, `${label}.agentId`, options),
-    reason: entityMember(item.reason, WAKEUP_REASONS, `${label}.reason`, options),
-    taskId: nullableIdentifier(item.taskId, `${label}.taskId`, options),
-    questionId: nullableIdentifier(item.questionId, `${label}.questionId`, options),
-    detail: stringValue(item.detail, `${label}.detail`),
-    createdBy: shapeIdentifier(item.createdBy, `${label}.createdBy`, options),
-    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
-    claimedAt: nullableTimestamp(item.claimedAt, `${label}.claimedAt`, options),
-    runId: nullableIdentifier(item.runId, `${label}.runId`, options),
   });
 }
 

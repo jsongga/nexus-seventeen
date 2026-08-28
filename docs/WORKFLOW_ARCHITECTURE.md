@@ -289,9 +289,9 @@ tasks:
   - id: T2
     capability: backend
     depends_on: [T1]
-    paths: [skills, src/server/task-board/skills.ts, catalog/company-bootstrap.json, scripts/bootstrap-lib.mjs]
+    paths: [skills, src/server/task-board/skills.ts, config/company-bootstrap.json, scripts/bootstrap-lib.mjs]
     action: Add repository skill loading, frontmatter validation, symlink/path protection, digest computation, catalog reference validation, and initial skill files.
-    validation: npm run test:bootstrap && npm run test:runtime
+    validation: npm run test:tooling && npm run test:runtime
     done_when: Every configured skill resolves to one bounded file and confirmed revisions can pin immutable digests.
   - id: T3
     capability: backend

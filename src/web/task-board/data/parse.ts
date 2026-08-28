@@ -51,7 +51,6 @@ import {
   parseReviewFindingEntity,
   parseRunEntity,
   parseTaskEntity,
-  parseTaskPhaseEntity,
   parseWorkItemAudit as parseWorkItemAuditContract,
   parseWorkItemEntity,
   parseWorkItemTransitionEntity,
@@ -61,7 +60,6 @@ import {
   stringValue,
   timestamp as contractTimestamp,
   validateAutomationConfigurationParts,
-  versionedRecord,
   type JsonRecord,
   type ParsedWorkItemTransition,
   type TolerantBoardNotification,
@@ -184,8 +182,6 @@ export function timestamp(value: unknown, path: string): string {
 export function member<T extends string>(value: unknown, values: ReadonlySet<T>, path: string): T {
   return contractSetMember(value, values, path);
 }
-export function apiEntity(value: unknown, path: string): JsonRecord { return versionedRecord(value, path); }
-
 function projectProject(item: Project): RawProject {
   return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt) };
 }
@@ -230,9 +226,6 @@ export function parseAgent(value: unknown, path: string): RawAgent {
 }
 function projectTaskPhase(item: TaskPhase): RawTaskPhase {
   return { ...withoutApiVersion(item), startedAtMs: nullableMs(item.startedAt), endedAtMs: nullableMs(item.endedAt), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt) };
-}
-export function parseTaskPhase(value: unknown, path: string): RawTaskPhase {
-  return projectTaskPhase(parseTaskPhaseEntity(value, path, loose));
 }
 function projectTask(item: TolerantTaskEntity): RawTask {
   return {

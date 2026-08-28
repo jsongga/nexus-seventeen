@@ -12,7 +12,7 @@ import {
 } from './bootstrap-lib.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const catalogPath = resolve(directory, '../catalog/company-bootstrap.json');
+const catalogPath = resolve(directory, '../config/company-bootstrap.json');
 const apply = process.argv.includes('--apply');
 const validateOnly = process.argv.includes('--validate') || !apply;
 const baseUrl = (process.env.STEWARD_BOARD_URL ?? 'https://steward.cicadasystem.com/board-api').replace(/\/$/u, '');
