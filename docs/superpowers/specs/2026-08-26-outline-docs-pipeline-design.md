@@ -1,6 +1,6 @@
 # Campaign 9: Outline + docs pipeline
 
-**Status:** Approved for implementation
+**Status:** Shipped 2026-08-27 (amended post final review: blob-sha banner/diff rule, seam method names, verified seed facts, folder rename)
 **Author:** Claude (brainstormed under standing drive-to-completion authorization)
 **Date:** 2026-08-26
 **Scope:** orchestrator-design.md §2 (documentation layout / Outline publishing), roadmap campaign 9. Local-first: no GitHub pushes, no live infra deployment — CI activation and the Dokploy Outline deployment ship as inert artifacts + a runbook the user executes.
@@ -27,26 +27,27 @@ Seam facts below are from `.superpowers/sdd/campaign9-exploration.md` (as-built 
 
 A plain Node CLI, **outside the agent sandbox** (§2: "mechanical CI job, no LLM in the path" — this also sidesteps the egress proxy's CONNECT-443-exact-host allowlist). New package `src/server/docs-publish/`:
 
-- `enumerate.ts` — `enumerateDocs(repoPath, ref, options): readonly DocSource[]` where `DocSource = { path, title, markdown }`. Reads via `git show <ref>:<path>` (branch-correct, the `onboarding-check.ts` precedent) using an injectable `GitRunner`; the file set is `README.md` + every `docs/**/*.md` reachable from `git ls-tree -r`, minus configured excludes (default `docs/superpowers/**`). Title = repo-relative path (stable identity).
-- `banner.ts` — `withSourceBanner(source: DocSource, repoName: string, shortSha: string): string`:
+- `enumerate.ts` — `enumerateDocs(repoPath, sha, options): readonly DocSource[]` where `DocSource = { path, title, markdown, blobSha }`. `publishRepo` resolves the configured ref to one full SHA (`git rev-parse`) **once** and every `ls-tree`/`show` call uses that SHA (no moving-ref skew); `ls-tree -r -z` is bounded to the pathspec `README.md docs`, and each entry's git *blob* sha is captured as `blobSha`. Reads via `git show <ref>:<path>` (branch-correct, the `onboarding-check.ts` precedent) using an injectable `GitRunner`; the file set is `README.md` + every `docs/**/*.md` reachable from `git ls-tree -r`, minus configured excludes (default `docs/superpowers/**`). Title = repo-relative path (stable identity).
+- `banner.ts` — `withSourceBanner(source: DocSource, repoName: string): string`:
 
   ```markdown
-  > **Read-only mirror.** Source: `<repoName>/<path>` @ <shortSha>. Edit in the repository — this page is republished on merge. Comments are welcome here.
+  > **Read-only mirror.** Source: `<repoName>/<path>` @ blob <blobSha first 12>. Edit in the repository — this page is republished on merge. Comments are welcome here.
   ```
 
-  prepended, followed by a blank line, then the original markdown untouched.
+  prepended, followed by a blank line, then the original markdown untouched. **Amended 2026-08-27 (ruled during Task 6):** the banner carries the file's git *blob* sha, not the commit sha — Outline re-serializes markdown on save (verified: `- ` list markers become `* `, trailing newline dropped), so byte comparison can never be idempotent; the blob sha in the surviving banner line is the change key. A commit sha would go stale under blob-keyed updates.
 - `sink.ts` — the seam:
 
   ```ts
   export interface DocsSink {
     ensureCollection(repoName: string): Promise<SinkCollection>;   // creates or finds; enforces read-only permission
-    listDocuments(collection: SinkCollection): Promise<readonly SinkDocument[]>;  // { id, title }
-    upsert(collection: SinkCollection, title: string, markdown: string): Promise<void>;
-    archive(collection: SinkCollection, documentId: string): Promise<void>;       // for titles no longer in the source set
+    listDocuments(collection: SinkCollection): Promise<readonly SinkDocument[]>;  // { id, title, text }
+    createDocument(collection: SinkCollection, title: string, text: string): Promise<void>;
+    updateDocument(documentId: string, title: string, text: string): Promise<void>;
+    archiveDocument(documentId: string): Promise<void>;            // for titles no longer in the source set
   }
   ```
-- `outline-sink.ts` — `OutlineSink implements DocsSink` over Outline's REST API (`/api/collections.list|create|update`, `/api/documents.list|create|update|archive`), auth `Bearer` token. One collection per repo named `<repoName> docs`, `permission: "read"` (team members read + comment; only the token's service account writes). Upsert = match by exact title within the collection, update when the (banner-included) text differs, create otherwise; source-absent titles are archived (not deleted) — the mirror never destroys history.
-- `client.ts` — a copy of the `JsonClient` shape (`http-board-client.ts:239-292`): injectable fetch, per-call `AbortController` + unref'd timeout, bounded response reader, `redirect:"error"` / `credentials:"omit"`, typed `OutlineHttpError(status, code)`. One retry layer above it: 3 attempts, 1s→8s backoff, on 429/5xx/network only. No retry inside the client.
+- `outline-sink.ts` — `OutlineSink implements DocsSink` over Outline's REST API (`/api/collections.list|create|update`, `/api/documents.list|create|update|archive`), auth `Bearer` token. One collection per repo named `<repoName> docs`, `permission: "read"` (team members read + comment; only the token's service account writes). Diff = match by exact title within the collection; **unchanged** when the stored page's first line parses to the desired blob sha, **update** otherwise (including a foreign/unparseable first line), **create** when absent; source-absent titles are archived (not deleted) — the mirror never destroys history. `documents.info` full-text hydration happens only for source-shaped titles; non-idempotent creates are retried **self-reconcilingly** (re-list by name/title before re-issuing) so a lost response cannot duplicate a page.
+- `client.ts` — a copy of the `JsonClient` shape (`http-board-client.ts:239-292`): injectable fetch, per-call `AbortController` + unref'd timeout, bounded response reader, `redirect:"error"` / `credentials:"omit"`, typed `OutlineHttpError(status, code)`. One retry layer above it: 3 attempts, 1s→8s backoff, on 429/5xx/network errors and client timeouts only. No retry inside the client.
 - `publish.ts` — `publishRepo(config-entry, sink, git): Promise<PublishReport>` orchestrating enumerate → banner → diff → upsert/archive; `PublishReport = { repo, created, updated, archived, unchanged, failures[] }`. Non-zero exit when any failure.
 - `main.ts` — CLI entry (`npm run docs:publish [-- --config <path>] [--repo <name>] [--dry-run]`). `--dry-run` prints the report without calling the sink.
 
@@ -70,7 +71,7 @@ The API token comes only from `STEWARD_OUTLINE_API_TOKEN` (the `required()` env 
 ### Testing
 
 - Unit: enumeration against fixture git repos (ref-correctness: worktree edits invisible), banner formatting, diff/idempotence logic against an in-memory `DocsSink` fake, config parsing (reject unknown keys, oversize, symlink), client retry/backoff with injected fetch, error surfaces.
-- **Docker-tier e2e** (`tests/container/outline-publish.test.ts`): boots a **pinned** `outline/outline` version + `postgres:16-alpine` + `redis:7-alpine` on a dedicated docker network using the tier's established primitives (`docker run -d` + readiness polling; `ensureNetwork` gets exported from `task-container/infrastructure.ts` or ~40 lines reimplemented in the test helper). API token provisioned by **direct postgres seeding** of team/user/apiKey rows — deliberately pinned to the image version so the seeding SQL stays stable; the pin and the fragility are documented in the test header. Readiness deadlines sized for Outline's first-boot migrations (up to 180 s, 500 ms poll). The arc: publish this repo's own docs twice → first run creates, second run reports all-unchanged (idempotence); assert via Outline's API that the collection is `permission:"read"`, each document's text starts with the source banner, and a doc removed from the source set gets archived on a third run.
+- **Docker-tier e2e** (`tests/container/outline-publish.test.ts`): boots a **pinned** `outlinewiki/outline` version (the old `outline/outline` Docker Hub name is dead) + `postgres:16-alpine` + `redis:7-alpine` on a dedicated docker network using the tier's established primitives (`docker run -d` + readiness polling; `ensureNetwork` gets exported from `task-container/infrastructure.ts` or ~40 lines reimplemented in the test helper). API token provisioned by **direct postgres seeding** (verified on `outlinewiki/outline:1.9.2`: camelCase `"apiKeys"`, token `ol_api_` + 38 word chars hashed sha256, `users.role` enum + `jwtSecret` bytea, `FORCE_HTTPS=false` or every non-GET is 405'd before the API mounts; the seed is verified with `collections.list`, not `auth.info`, which 500s on a minimal seed) — pinned to the image version; the pin and the fragility are documented in the test header and `.superpowers`-derived facts were folded into the helper comments. Readiness deadlines sized for Outline's first-boot migrations (up to 180 s, 500 ms poll). The arc: publish this repo's own docs twice → first run creates, second run reports all-unchanged (idempotence); assert via Outline's API that the collection is `permission:"read"`, each document's text starts with the source banner, and a doc removed from the source set gets archived on a third run.
 
 ## Part B — Pen-documents retirement
 
@@ -87,7 +88,7 @@ Ordering per roadmap: **export first, then remove.** Zero cross-references point
 ## Part C — Deferred activation (authored now, executed by the user)
 
 - **CI publish job** — `.github/workflows/publish-docs.yml`: `on: push: branches: [main]`, single job gated `if: vars.DOCS_PUBLISH_ENABLED == 'true'`, runs `npm ci && npm run docs:publish` with `STEWARD_OUTLINE_API_TOKEN: ${{ secrets.STEWARD_OUTLINE_API_TOKEN }}`. Inert until the user sets the variable + secret; costs nothing when pushed; nothing pushes from this campaign.
-- **Dokploy Outline deployment** — `deploy/outline/docker-compose.yml` (outline + postgres + redis, named volumes, `${OUTLINE_SECRET_KEY:?...}`-style env requirements) and `docs/OUTLINE.md`, the runbook: create the Dokploy project, set env (secrets, `URL=https://docs.cicadasystem.com` — wildcard DNS already resolves), OIDC against the existing Keycloak (sso.cicadasystem.com), create the service account + API token, then run the publisher once by hand.
+- **Dokploy Outline deployment** — `docker-compose.outline.yml` (root; the former `deploy/` image-input folder is now `docker_image/`) (outline + postgres + redis, named volumes, `${OUTLINE_SECRET_KEY:?...}`-style env requirements) and `docs/OUTLINE.md`, the runbook: create the Dokploy project, set env (secrets, `URL=https://docs.cicadasystem.com` — wildcard DNS already resolves), OIDC against the existing Keycloak (sso.cicadasystem.com), create the service account + API token, then run the publisher once by hand.
 - **Retirement precondition, stated in bold in the runbook and the migration commit message**: before deploying a board version containing schema v25, run `scripts/export-documents.mjs` against the production volume (`cicada-steward-3cmfas_steward-data`) — the migration drops the tables on first boot.
 
 ## Testing summary
