@@ -13,6 +13,14 @@ import { conflict, TaskBoardError } from "../errors.js";
 import type { TaskBoardStore } from "../persistence/store.js";
 
 const STORES_BY_DATABASE = new WeakMap<TaskBoardStore["db"], TaskBoardStore>();
+type ParentTerminationCascade = (input: Readonly<{
+  parentWorkItemId: string;
+  state: "abandoned" | "dead_letter";
+  actorType: "human" | "agent" | "system";
+  actorId: string;
+  now: string;
+}>) => void;
+const PARENT_TERMINATION_CASCADES_BY_DATABASE = new WeakMap<TaskBoardStore["db"], ParentTerminationCascade>();
 const PARK_REASON_MAX_LENGTH = 2_000;
 const PARK_REASON_TRUNCATION_MARKER = "…";
 
@@ -87,6 +95,19 @@ export function workItemStateForNodeStage(
 
 export function registerWorkItemTransitionStore(store: TaskBoardStore): void {
   STORES_BY_DATABASE.set(store.db, store);
+}
+
+export function registerParentTerminationCascade(
+  store: TaskBoardStore,
+  cascade: ParentTerminationCascade,
+): void {
+  PARENT_TERMINATION_CASCADES_BY_DATABASE.set(store.db, cascade);
+}
+
+export function assertParentTerminationCascadeRegistered(store: TaskBoardStore): void {
+  if (!PARENT_TERMINATION_CASCADES_BY_DATABASE.has(store.db)) {
+    throw new Error("TASK_BOARD_PARENT_TERMINATION_CASCADE_MISSING");
+  }
 }
 
 export function workItemTransitionStoreForDatabase(db: TaskBoardStore["db"]): TaskBoardStore {
@@ -181,7 +202,7 @@ export function transitionWorkItemInTransaction(
 ): { fromState: WorkItemState; version: number } {
   assertInStoreTransaction(store);
   const row = store.db.prepare(`
-    SELECT state, current_stage, cancelled_reason, version
+    SELECT state, current_stage, cancelled_reason, version, parent_work_item_id
     FROM work_items
     WHERE work_item_id = ?
   `).get(request.workItemId) as Readonly<{
@@ -189,6 +210,7 @@ export function transitionWorkItemInTransaction(
     current_stage: WorkItemStage | null;
     cancelled_reason: string | null;
     version: number;
+    parent_work_item_id: string | null;
   }> | undefined;
   if (row === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
   assertParkMetadata(request);
@@ -241,6 +263,38 @@ export function transitionWorkItemInTransaction(
       TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
       `work item cannot move ${fromState} -> ${request.to}`,
     );
+  }
+  const requiresChild = fromState === "queued"
+    && (request.to === "designing" || request.to === "implementing");
+  const requiresDecomposedParent = (
+    (fromState === "coordinating" && request.to === "merged")
+    || (fromState === "final_approval" && request.to === "coordinating")
+    || (fromState === "parked" && request.to === "coordinating")
+  );
+  const hasChildren = requiresDecomposedParent && store.db.prepare(
+    "SELECT 1 FROM work_items WHERE parent_work_item_id=? LIMIT 1",
+  ).get(request.workItemId) !== undefined;
+  if (
+    (requiresChild && row.parent_work_item_id === null)
+    || (requiresDecomposedParent && !hasChildren)
+  ) {
+    throw conflict(
+      TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+      `work item cannot move ${fromState} -> ${request.to}`,
+    );
+  }
+
+  let parentTerminationCascade: ParentTerminationCascade | null = null;
+  if (request.to === "abandoned" || request.to === "dead_letter") {
+    const hasChildren = store.db.prepare(
+      "SELECT 1 FROM work_items WHERE parent_work_item_id=? LIMIT 1",
+    ).get(request.workItemId) !== undefined;
+    if (hasChildren) {
+      parentTerminationCascade = PARENT_TERMINATION_CASCADES_BY_DATABASE.get(store.db) ?? null;
+      if (parentTerminationCascade === null) {
+        throw new Error("TASK_BOARD_PARENT_TERMINATION_CASCADE_MISSING");
+      }
+    }
   }
 
   const version = row.version + 1;
@@ -308,6 +362,45 @@ export function transitionWorkItemInTransaction(
         LIMIT 1
       )
     `).run(request.now, resolutionForParkExit(request), request.workItemId);
+  }
+  if (request.to === "abandoned" || request.to === "dead_letter") {
+    if (parentTerminationCascade !== null) {
+      parentTerminationCascade({
+        parentWorkItemId: request.workItemId,
+        state: request.to,
+        actorType: request.actorType,
+        actorId: request.actorId,
+        now: request.now,
+      });
+    }
+    const child = store.db.prepare(`
+      SELECT parent_work_item_id
+      FROM work_items
+      WHERE work_item_id=?
+    `).get(request.workItemId) as Readonly<{ parent_work_item_id: string | null }> | undefined;
+    if (child?.parent_work_item_id !== null && child?.parent_work_item_id !== undefined) {
+      const parent = store.db.prepare(`
+        SELECT state
+        FROM work_items
+        WHERE work_item_id=?
+      `).get(child.parent_work_item_id) as Readonly<{ state: WorkItemState }> | undefined;
+      if (parent?.state === "coordinating" || parent?.state === "final_approval") {
+        transitionWorkItemInTransaction(store, {
+          workItemId: child.parent_work_item_id,
+          to: "parked",
+          actorType: "system",
+          actorId: "system:child-state",
+          now: request.now,
+          currentStage: null,
+          park: {
+            category: "child_failed",
+            reason: request.to === "dead_letter"
+              ? `Child ${request.workItemId} was dead-lettered`
+              : `Child ${request.workItemId} was abandoned`,
+          },
+        });
+      }
+    }
   }
   return { fromState, version };
 }

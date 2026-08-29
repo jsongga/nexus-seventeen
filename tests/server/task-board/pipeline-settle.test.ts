@@ -11,6 +11,7 @@ import { ProjectsCollaborator } from "#server/task-board/collaborators/projects"
 import { RunsCollaborator } from "#server/task-board/collaborators/runs";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
+import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   automationConfigurationRequest,
@@ -209,6 +210,7 @@ test("throwing settlement Git runner fails closed and never advances", async () 
   const boardConfig = config(fixture.path);
   const store = await TaskBoardStore.open(boardConfig.dbPath);
   const runtime = new TaskBoardRuntime(boardConfig, store);
+  registerParentTerminationCascade(store, () => undefined);
   const automation = new AutomationCollaborator(runtime);
   const tasks = new TasksCollaborator(runtime);
   const projects = new ProjectsCollaborator(runtime, automation, tasks);

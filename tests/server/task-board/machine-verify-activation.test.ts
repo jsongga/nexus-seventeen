@@ -5,6 +5,7 @@ import { AutomationCollaborator } from "#server/task-board/collaborators/automat
 import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
+import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   automationConfigurationRequest,
@@ -53,6 +54,7 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
     const boardConfig = config(fixture.path);
     store = await TaskBoardStore.open(boardConfig.dbPath);
     runtime = new TaskBoardRuntime(boardConfig, store);
+    registerParentTerminationCascade(store, () => undefined);
     const automation = new AutomationCollaborator(runtime);
     const current = automation.getConfiguration();
     automation.updateConfiguration(automationConfigurationRequest({
@@ -92,6 +94,7 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
               startCalls += 1;
               throw new Error("machine verify subprocess must not run");
             },
+            async terminate() { throw new Error("terminate must not run"); },
             async status() { throw new Error("status must not run"); },
             async tail() { throw new Error("tail must not run"); },
           };

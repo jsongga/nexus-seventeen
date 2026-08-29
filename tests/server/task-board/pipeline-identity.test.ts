@@ -11,7 +11,10 @@ import { TaskBoardError } from "#server/task-board";
 import { SkillRegistry } from "#server/task-board/skills";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
-import { registerWorkItemTransitionStore } from "#server/task-board/collaborators/work-item-transitions";
+import {
+  registerParentTerminationCascade,
+  registerWorkItemTransitionStore,
+} from "#server/task-board/collaborators/work-item-transitions";
 import {
   AGENT_ONE_TOKEN,
   automationConfigurationRequest,
@@ -520,6 +523,7 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
   fixture.board.close();
   const store = await TaskBoardStore.open(fixture.path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   const calls: readonly string[][] = [];
   const mutableCalls = calls as string[][];
   const expectedSha = "a".repeat(40);
@@ -577,6 +581,7 @@ test("a throwing injected git runner fails before opening the confirm transactio
   fixture.board.close();
   const store = await TaskBoardStore.open(fixture.path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   let transactions = 0;
   const before = transactionSnapshot(fixture.path, workItem.workItemId, revision.planRevisionId);
   try {
@@ -615,6 +620,7 @@ test("a malformed pipeline HEAD is reported as an unavailable repository", async
   fixture.board.close();
   const store = await TaskBoardStore.open(fixture.path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   try {
     const workflow = new TransparentWorkflow(
       store.db,

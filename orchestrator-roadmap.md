@@ -167,6 +167,14 @@ misleading names; produce a renaming plan with ripple costs and the
 migration-sensitive exceptions (Dokploy volume names, pinned identifiers,
 external env vars) called out.
 
+**9.8. Load-tolerant pipeline e2e timing** *(queued 2026-08-29)* — the
+`machine-verify-integration` and `pipeline-e2e` arcs pin fixed windows
+("verify sweep did not reach reviewing"; a 122 s kill-switch run gets
+wall-clock-parked) and fail whenever a reviewer runs tests concurrently;
+campaign 10 needed three isolated/quiet reruns. Make the windows scale with
+observed sweep latency (or gate on state transitions instead of elapsed
+time) so a loaded machine cannot fake a regression.
+
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase
 sequencing with the human gate on contract. Exit: one blast-radius change

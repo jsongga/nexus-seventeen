@@ -292,6 +292,52 @@ test("stage cap suspends the run, blocks the node, parks exactly, and notifies o
   }
 });
 
+test("wall-clock caps ignore a coordinating parent's stray active planning run", async () => {
+  const fixture = await capFixture({ stageCapSeconds: 60, taskCapSeconds: 60 });
+  try {
+    const { planning, workItem } = await startPlanning(fixture, "coordinating-parent");
+    const workflow = fixture.board.proposeWorkflow({
+      workItemId: workItem.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Coordinate a branchless parent while a stale planning run remains active.",
+      assumptions: [],
+      acceptanceCriteria: ["The coordinating parent is excluded from cap enforcement."],
+      changeShape: "feature",
+      tier: "standard",
+      declaredScope: ["coordination"],
+      children: [{
+        key: "coordinating-child",
+        objective: "Execute the independently mergeable child.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/coordinating-child"],
+        acceptanceCriteria: ["The child owns execution."],
+      }],
+      skillIds: [],
+      nodes: [{
+        nodeId: "coordinating-parent-node",
+        title: "Coordinate the child",
+        objective: "Own no execution.",
+        acceptanceCriteria: ["The parent remains healthy without a run."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      }],
+    });
+    const plan = workflow.plans.find((candidate) => candidate.workItemId === workItem.workItemId);
+    assert.ok(plan);
+    fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "coordinating");
+
+    fixture.setNow(61);
+    assert.deepEqual(fixture.board.sweepWallClockCaps(at(61).toISOString()), { suspended: 0, parked: 0 });
+    assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "coordinating");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === planning.run.runId,
+    )?.status, "active");
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("a cap-parked stage stays blocked through reconciliation and human retry reactivates it", async () => {
   const fixture = await capFixture({ stageCapSeconds: 60, taskCapSeconds: 0 });
   try {

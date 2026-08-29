@@ -387,6 +387,19 @@ export class VerifyRunner {
     return publicStatus(parsed);
   }
 
+  public async terminate(id: string): Promise<void> {
+    this.#assertRunId(id);
+    const path = join(this.#runsRoot, id, "status.json");
+    const parsed = storedStatus(JSON.parse(await readFile(path, "utf8")) as unknown, path);
+    if (parsed.id !== id) throw new Error(`verify status id mismatch at ${path}`);
+    if (parsed.state !== "running" || parsed.pid === undefined) return;
+    try {
+      process.kill(process.platform === "win32" ? parsed.pid : -parsed.pid, "SIGTERM");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+
   public async tail(id: string, bytes = DEFAULT_TAIL_BYTES): Promise<string> {
     this.#assertRunId(id);
     if (!Number.isInteger(bytes) || bytes < 0) throw new RangeError("tail bytes must be a non-negative integer");

@@ -33,6 +33,12 @@ type PipelineMergeTarget =
   | Readonly<{ kind: "ready"; branch: string; head: string }>
   | Readonly<{ kind: "repo_busy" }>;
 
+export type PipelineBaseAdvanceInspection =
+  | Readonly<{ kind: "repo_busy" }>
+  | Readonly<{ kind: "unchanged"; head: string }>
+  | Readonly<{ kind: "advanced"; head: string }>
+  | Readonly<{ kind: "diverged"; head: string }>;
+
 export function inspectPipelineMergeTarget(request: Readonly<{
   repoPath: string;
   branch: string;
@@ -78,6 +84,28 @@ export function isPipelineBaseAncestor(request: Readonly<{
     ) return false;
     throw error;
   }
+}
+
+export function inspectPipelineBaseAdvance(request: Readonly<{
+  repoPath: string;
+  branch: string;
+  baseSha: string;
+  git: GitRunner;
+}>): PipelineBaseAdvanceInspection {
+  const target = inspectPipelineMergeTarget(request);
+  if (target.kind === "repo_busy") return target;
+  if (target.head === request.baseSha) {
+    return Object.freeze({ kind: "unchanged", head: target.head });
+  }
+  return Object.freeze({
+    kind: isPipelineBaseAncestor({
+      repoPath: request.repoPath,
+      baseSha: request.baseSha,
+      target: target.head,
+      git: request.git,
+    }) ? "advanced" : "diverged",
+    head: target.head,
+  });
 }
 
 export function resolvePipelineBranchTip(request: Readonly<{

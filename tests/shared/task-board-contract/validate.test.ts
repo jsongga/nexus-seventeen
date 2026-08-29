@@ -4,6 +4,7 @@ import {
   AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
   EVALUATOR_PROFILES,
+  GATE_KINDS,
   IDENTIFIER_PATTERN,
   PLAN_CHANGE_SHAPES,
   PLAN_TIERS,
@@ -39,6 +40,7 @@ import {
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseClaimRunResult,
+  parseGateAction,
   parsePlanEntity,
   parseTaskEntity,
   parseWorkItemEntity,
@@ -207,6 +209,23 @@ test("prose exposes board-strict and worker-preserved carriage-return policies",
   assert.throws(() => prose("\rline one", "body", { maximum: 100 }), /invalid/u);
   assert.equal(prose("line one\r\nline two", "body", { maximum: 100, carriageReturns: "preserve" }), "line one\r\nline two");
   assert.equal(prose("line one\r\nline two", "body", { maximum: 100, carriageReturns: "normalize" }), "line one\nline two");
+});
+
+test("every gate-action refId remains an identifier", () => {
+  for (const gate of GATE_KINDS) {
+    assert.throws(() => parseGateAction({
+      gateActionId: `gate-action-${gate}`,
+      workItemId: "work-item-one",
+      gate,
+      actorId: "human:operator",
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: "not an identifier",
+      note: null,
+      createdAt: NOW,
+    }, "gateAction"), ContractValidationError, gate);
+  }
 });
 
 test("claim pinning accepts an optional closed-world block of bounded single-line values", () => {

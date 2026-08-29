@@ -7,7 +7,10 @@ import {
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board/errors";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
+import { SkillRegistry } from "#server/task-board/skills";
 import {
+  registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
   workItemStateForStage,
@@ -110,6 +113,96 @@ function seedOpenParkRecord(store: TaskBoardStore, workItemId: string, suffix: s
     ) VALUES (?, ?, 'open_question', 'test park', ?, NULL, NULL)
   `).run(`park-record-${suffix}`, workItemId, CREATED_AT);
 }
+
+function seedRelatedWorkItem(
+  store: TaskBoardStore,
+  workItemId: string,
+  parentWorkItemId: string | null = null,
+): void {
+  store.db.prepare(`
+    INSERT INTO work_items(
+      work_item_id, original_request, refined_objective, priority,
+      project_target_mode, target_project_id, resolved_project_id, parent_work_item_id,
+      state, current_stage, created_by, idempotency_key, request_hash,
+      version, created_at, updated_at, ended_at, cancelled_reason, archived_at
+    ) VALUES (?, 'Contextual transition fixture.', NULL, 'normal', 'auto', NULL, NULL, ?,
+      'queued', 'refinement', 'human:test', ?, ?, 1, ?, ?, NULL, NULL, NULL)
+  `).run(
+    workItemId,
+    parentWorkItemId,
+    `related-${workItemId}`,
+    `related-hash-${workItemId}`,
+    CREATED_AT,
+    CREATED_AT,
+  );
+}
+
+test("decomposition-only edges allow their required context and reject ordinary items", async () => {
+  const cases = [{
+    from: "queued",
+    to: "designing",
+    relation: "child",
+  }, {
+    from: "queued",
+    to: "implementing",
+    relation: "child",
+  }, {
+    from: "coordinating",
+    to: "merged",
+    relation: "parent",
+  }, {
+    from: "final_approval",
+    to: "coordinating",
+    relation: "parent",
+  }, {
+    from: "parked",
+    to: "coordinating",
+    relation: "parent",
+  }] as const;
+
+  for (const [index, scenario] of cases.entries()) {
+    const allowed = await transitionFixture({ initialState: scenario.from, initialStage: null });
+    try {
+      if (scenario.relation === "child") {
+        seedRelatedWorkItem(allowed.store, `context-parent-${index}`);
+        allowed.store.db.prepare("UPDATE work_items SET parent_work_item_id=? WHERE work_item_id=?")
+          .run(`context-parent-${index}`, allowed.workItemId);
+      } else {
+        seedRelatedWorkItem(allowed.store, `context-child-${index}`, allowed.workItemId);
+      }
+      const now = `2026-08-15T12:1${index}:00.000Z`;
+      const result = allowed.store.transaction(() => transitionWorkItemInTransaction(allowed.store, {
+        workItemId: allowed.workItemId,
+        to: scenario.to,
+        actorType: "system",
+        actorId: "system:decomposition-test",
+        now,
+        ...(scenario.to === "merged" ? { endedAt: now } : { currentStage: null }),
+      }));
+      assert.deepEqual(result, { fromState: scenario.from, version: 2 });
+    } finally {
+      allowed.store.close();
+    }
+
+    const denied = await transitionFixture({ initialState: scenario.from, initialStage: null });
+    try {
+      assert.throws(() => denied.store.transaction(() => transitionWorkItemInTransaction(denied.store, {
+        workItemId: denied.workItemId,
+        to: scenario.to,
+        actorType: "system",
+        actorId: "system:decomposition-test",
+        now: `2026-08-15T12:2${index}:00.000Z`,
+        ...(scenario.to === "merged"
+          ? { endedAt: `2026-08-15T12:2${index}:00.000Z` }
+          : { currentStage: null }),
+      })), (error: unknown) => error instanceof TaskBoardError
+        && error.code === "WORK_ITEM_ILLEGAL_TRANSITION");
+      assert.equal(workItemRow(denied.store, denied.workItemId).state, scenario.from);
+    } finally {
+      denied.store.close();
+    }
+  }
+});
 
 test("an allowed work-item edge bumps the version and appends its actor-attributed transition", async () => {
   const { store, workItemId } = await transitionFixture();
@@ -534,6 +627,53 @@ test("the transition helper rejects calls outside a store transaction", async ()
     ));
     assert.equal(workItemRow(store, workItemId).version, 1);
     assert.equal(transitionRows(store, workItemId).length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("workflow construction rejects a bootstrap without a parent termination cascade", async () => {
+  const { store } = await transitionFixture();
+  try {
+    registerWorkItemTransitionStore(store);
+    assert.throws(
+      () => new TransparentWorkflow(
+        store.db,
+        new SkillRegistry("config/skills.md"),
+        () => new Date(CREATED_AT),
+        (operation) => store.transaction(operation),
+        undefined,
+        () => "",
+      ),
+      /TASK_BOARD_PARENT_TERMINATION_CASCADE_MISSING/u,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("a parent terminal transition rechecks cascade registration before writing", async () => {
+  const { store, workItemId } = await transitionFixture();
+  try {
+    const childWorkItemId = "transition-time-cascade-child";
+    seedRelatedWorkItem(store, childWorkItemId, workItemId);
+    const before = workItemRow(store, workItemId);
+
+    assert.throws(
+      () => store.transaction(() => transitionWorkItemInTransaction(store, {
+        workItemId,
+        to: "abandoned",
+        actorType: "human",
+        actorId: "human:test",
+        now: "2026-08-15T12:01:00.000Z",
+        endedAt: "2026-08-15T12:01:00.000Z",
+        cancelledReason: "Exercise the transition-time cascade guard.",
+      })),
+      /TASK_BOARD_PARENT_TERMINATION_CASCADE_MISSING/u,
+    );
+    assert.deepEqual(workItemRow(store, workItemId), before);
+    assert.equal(transitionRows(store, workItemId).length, 1);
+    assert.equal(workItemRow(store, childWorkItemId).state, "queued");
   } finally {
     store.close();
   }

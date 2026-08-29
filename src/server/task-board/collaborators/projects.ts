@@ -40,6 +40,8 @@ import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+import type { NotificationsCollaborator } from "./notifications.js";
+import { BoardPauseCollaborator } from "./board-pause.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
 import {
   VerifyAttemptsCollaborator,
@@ -51,12 +53,17 @@ import {
   type PipelineInspection,
 } from "./pipeline-inspection.js";
 import {
+  inspectPipelineBaseAdvance,
   mergePipelineBranch,
   resolvePipelineBranchTip,
   type MergePipelineResult,
 } from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
 import { declaredScopesOverlap } from "./scope-check.js";
+import {
+  decompositionFamilyTouchesProjectSql,
+  decompositionReadinessBlocker,
+} from "./decomposition-readiness.js";
 import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
@@ -87,12 +94,27 @@ type ProjectsVerifyDependencies = Omit<
 >;
 export type PipelineMergeExecutor = typeof mergePipelineBranch;
 
+type PipelineMergeAuthorization = Readonly<{
+  actorId: string;
+  actorType: "human" | "system";
+  refId: string | null;
+}>;
+
+type PhasedChildBaseRefresh = Readonly<{
+  workItemId: string;
+  projectId: string;
+  baseSha: string;
+}>;
+
 export class ProjectsCollaborator {
   readonly #workflow: TransparentWorkflow;
   readonly #artifacts: ArtifactStore;
   readonly #verifyAttempts: VerifyAttemptsCollaborator;
+  readonly #boardPause: BoardPauseCollaborator;
   // Process-local by ruling: one task-board process owns a repository/database pair.
   readonly #finalApprovalLocks = new Map<string, Promise<void>>();
+  #startDesignInTransaction: ((workItemId: string) => void) | undefined;
+  #decompositionReconciliationActive = false;
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -101,6 +123,8 @@ export class ProjectsCollaborator {
     private readonly git: WorkflowGitRunner = runWorkflowGit,
     verifyDependencies: ProjectsVerifyDependencies = {},
     private readonly mergePipeline: PipelineMergeExecutor = mergePipelineBranch,
+    private readonly notifications?: NotificationsCollaborator,
+    boardPause?: BoardPauseCollaborator,
   ) {
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
@@ -112,6 +136,7 @@ export class ProjectsCollaborator {
       (input) => runtime.insertGateActionInTransaction(input),
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
+    this.#boardPause = boardPause ?? new BoardPauseCollaborator(runtime);
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
       ...verifyDependencies,
       git,
@@ -120,6 +145,10 @@ export class ProjectsCollaborator {
       activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
       reconcileProject: (projectId) => this.reconcileWorkflowsBestEffort(projectId),
     });
+  }
+
+  setStartDesignInTransaction(startDesignInTransaction: (workItemId: string) => void): void {
+    this.#startDesignInTransaction = startDesignInTransaction;
   }
 
   listProjects(): readonly Project[] {
@@ -208,7 +237,7 @@ export class ProjectsCollaborator {
       this.runtime.config.humanPrincipal,
       baseShas.parentBaseSha,
       baseShas.childBaseShas,
-      startDesignInTransaction,
+      startDesignInTransaction ?? this.#startDesignInTransaction,
     );
     for (const node of confirmation.readyNodes) this.activateWorkflowNode(node);
     const projectId = confirmation.readyNodes[0]?.projectId
@@ -313,104 +342,351 @@ export class ProjectsCollaborator {
   }
 
   approvePipelineMerge(workItemId: string, request: ApprovePipelineMergeRequest): Promise<WorkItem> {
-    return this.withFinalApprovalLock(workItemId, () => {
-      // Git runs before the final settlement transaction and never while the store has an open transaction.
-      const context = this.pipelineMergeContext(workItemId, request.version);
-      let branchTip: string;
-      try {
-        branchTip = resolvePipelineBranchTip({
-          repoPath: context.repoPath,
-          branch: context.branch,
-          git: this.git,
-        });
-      } catch (error) {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-          "The pipeline repository is unavailable",
-          { cause: error },
-        );
-      }
-      const verifiedSha = context.verifiedSha;
-      if (verifiedSha === null || branchTip !== verifiedSha) {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_MOVED,
-          "branch advanced since verification — request changes to re-verify",
-        );
-      }
-      let merge: MergePipelineResult;
-      try {
-        merge = this.mergePipeline({
-          repoPath: context.repoPath,
-          branch: context.branch,
-          branchSha: branchTip,
-          baseSha: context.baseSha,
-          git: this.git,
-        });
-      } catch (error) {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-          "The pipeline repository is unavailable",
-          { cause: error },
-        );
-      }
-      if (merge.kind === "repo_busy") {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
-          "The pipeline repository is busy; check out a clean non-task merge target and retry",
-        );
-      }
-      if (merge.kind === "diverged") {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BASE_DIVERGED,
-          `The pipeline base diverged from the current merge target: ${merge.detail}`,
-        );
-      }
-      if (merge.kind === "empty") {
-        throw new TaskBoardError(
-          409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_EMPTY,
-          "nothing to merge",
-        );
-      }
-      let readyNodes: readonly WorkNode[];
-      try {
-        readyNodes = this.runtime.store.transaction(() => this.#workflow.settlePipelineMergeInTransaction(
+    const workItem = this.runtime.requireWorkItem(workItemId);
+    if (this.isDecomposedParent(workItem)) {
+      return this.approveUnphasedParent(workItemId, request);
+    }
+    return this.approvePipelineMergeAuthorized(workItemId, request, {
+      actorId: this.runtime.config.humanPrincipal,
+      actorType: "human",
+      refId: null,
+    });
+  }
+
+  private approvePipelineMergeAuthorized(
+    workItemId: string,
+    request: ApprovePipelineMergeRequest,
+    authorization: PipelineMergeAuthorization,
+    reconcileAfter = true,
+  ): Promise<WorkItem> {
+    return this.withFinalApprovalLock(workItemId, () =>
+      this.approveSinglePipelineMerge(workItemId, request, authorization, reconcileAfter));
+  }
+
+  private approveSinglePipelineMerge(
+    workItemId: string,
+    request: ApprovePipelineMergeRequest,
+    authorization: PipelineMergeAuthorization,
+    reconcileAfter: boolean,
+  ): WorkItem {
+    // Git runs before the final settlement transaction and never while the store has an open transaction.
+    const context = this.pipelineMergeContext(workItemId, request.version);
+    let branchTip: string;
+    try {
+      branchTip = resolvePipelineBranchTip({
+        repoPath: context.repoPath,
+        branch: context.branch,
+        git: this.git,
+      });
+    } catch (error) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+        { cause: error },
+      );
+    }
+    const verifiedSha = context.verifiedSha;
+    if (verifiedSha === null || branchTip !== verifiedSha) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_MOVED,
+        "branch advanced since verification — request changes to re-verify",
+      );
+    }
+    let merge: MergePipelineResult;
+    try {
+      merge = this.mergePipeline({
+        repoPath: context.repoPath,
+        branch: context.branch,
+        branchSha: branchTip,
+        baseSha: context.baseSha,
+        git: this.git,
+      });
+    } catch (error) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable",
+        { cause: error },
+      );
+    }
+    if (merge.kind === "repo_busy") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
+        "The pipeline repository is busy; check out a clean non-task merge target and retry",
+      );
+    }
+    if (merge.kind === "diverged") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BASE_DIVERGED,
+        `The pipeline base diverged from the current merge target: ${merge.detail}`,
+      );
+    }
+    if (merge.kind === "empty") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_BRANCH_EMPTY,
+        "nothing to merge",
+      );
+    }
+    let readyNodes: readonly WorkNode[];
+    try {
+      readyNodes = this.runtime.store.transaction(() => {
+        const nodes = this.#workflow.settlePipelineMergeInTransaction(
           workItemId,
           request.version,
           merge,
-          this.runtime.config.humanPrincipal,
+          authorization.actorId,
           verifiedSha,
-        ));
-      } catch (error) {
-        if (merge.kind !== "merged") throw error;
-        this.runtime.store.transaction(() => {
-          this.#workflow.recordOrphanedPipelineMergeInTransaction(workItemId, merge.mergeSha);
-        });
+          authorization.actorType,
+          authorization.refId,
+        );
+        const settled = this.runtime.requireWorkItem(workItemId);
+        if (settled.state !== "final_approval" && settled.state !== "merged") {
+          this.withdrawPromotedParentForChildInTransaction({
+            childWorkItemId: workItemId,
+            actorId: "system:parent-coordination",
+            now: exactNow(this.runtime.config.now),
+            dedupeToken: `reverify:${request.version}`,
+          });
+        }
+        return nodes;
+      });
+    } catch (error) {
+      if (merge.kind !== "merged") throw error;
+      this.runtime.store.transaction(() => {
+        this.#workflow.recordOrphanedPipelineMergeInTransaction(workItemId, merge.mergeSha);
+      });
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT,
+        `Merge ${merge.mergeSha} landed, but the work item could not be settled; operator recovery is required`,
+        { cause: error },
+      );
+    }
+    this.activateWorkflowNodes(readyNodes);
+    if (reconcileAfter) this.reconcileWorkflowsBestEffort(context.projectId);
+    return this.runtime.requireWorkItem(workItemId);
+  }
+
+  private approveUnphasedParent(
+    workItemId: string,
+    request: ApprovePipelineMergeRequest,
+  ): Promise<WorkItem> {
+    return this.withFinalApprovalLock(workItemId, async () => {
+      const parent = this.runtime.requireWorkItem(workItemId);
+      if (parent.version !== request.version) {
+        throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+      }
+      if (parent.state !== "final_approval") {
         throw new TaskBoardError(
           409,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT,
-          `Merge ${merge.mergeSha} landed, but the work item could not be settled; operator recovery is required`,
-          { cause: error },
+          TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+          "Parent work item is not awaiting final approval",
         );
       }
-      this.activateWorkflowNodes(readyNodes);
-      this.reconcileWorkflowsBestEffort(context.projectId);
+      const orderedChildren = this.childrenInDependencyOrder(workItemId);
+      if (orderedChildren.length === 0 || this.decompositionMergePolicy(orderedChildren) !== "parent_approval") {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+          "Only an unphased decomposed parent can fan out final approval",
+        );
+      }
+      const authorization: PipelineMergeAuthorization = Object.freeze({
+        actorId: this.runtime.config.humanPrincipal,
+        actorType: "human",
+        refId: null,
+      });
+      const familyProjectIds = new Set((this.runtime.store.db.prepare(`
+        SELECT project.project_id
+        FROM projects project
+        WHERE ${decompositionFamilyTouchesProjectSql("?", "project.project_id")}
+        ORDER BY project.project_id
+      `).all(workItemId, workItemId) as Row[]).map((row) => String(row.project_id)));
+      for (const child of orderedChildren) {
+        const current = this.runtime.requireWorkItem(child.workItemId);
+        if (current.state === "merged") continue;
+        if (current.state !== "final_approval") {
+          throw new TaskBoardError(
+            409,
+            "PARENT_CHILDREN_NOT_READY",
+            `Child ${current.workItemId} is not awaiting final approval`,
+          );
+        }
+        const merged = await this.approvePipelineMergeAuthorized(
+          current.workItemId,
+          { version: current.version },
+          authorization,
+          false,
+        );
+        if (merged.state !== "merged") {
+          throw new TaskBoardError(409, "PARENT_CHILD_MERGE_CONFLICT", `Child ${merged.workItemId} did not merge`);
+        }
+      }
+      this.runtime.store.transaction(() => {
+        this.#workflow.settleParentCompletionInTransaction(
+          workItemId,
+          request.version,
+          orderedChildren.map((child) => child.workItemId),
+          this.runtime.config.humanPrincipal,
+          "human",
+        );
+      });
+      for (const projectId of familyProjectIds) this.reconcileWorkflowsBestEffort(projectId);
       return this.runtime.requireWorkItem(workItemId);
     });
   }
 
+  /** Phases, not change shape, select the decomposition merge policy. */
+  private decompositionMergePolicy(
+    children: readonly Readonly<{ phase: string | null }>[],
+  ): "phased_auto_merge" | "parent_approval" {
+    const phased = children.filter((child) => child.phase !== null).length;
+    if (phased === 0) return "parent_approval";
+    if (phased === children.length) return "phased_auto_merge";
+    throw new Error("TASK_BOARD_DATABASE_CORRUPT:mixed_child_phases");
+  }
+
+  private isDecomposedParent(row: Pick<WorkItem, "workItemId" | "pipelineBranch">): boolean {
+    return row.pipelineBranch === null && this.runtime.store.db.prepare(
+      "SELECT 1 FROM work_items WHERE parent_work_item_id=? LIMIT 1",
+    ).get(row.workItemId) !== undefined;
+  }
+
+  private childrenInDependencyOrder(parentWorkItemId: string): readonly Readonly<{
+    workItemId: string;
+    phase: string | null;
+    ordinal: number;
+  }>[] {
+    const rows = this.runtime.store.db.prepare(`
+      SELECT work_item_id,phase,child_ordinal
+      FROM work_items
+      WHERE parent_work_item_id=?
+        AND state NOT IN ('abandoned','dead_letter')
+      ORDER BY child_ordinal,work_item_id
+    `).all(parentWorkItemId) as Row[];
+    const children = rows.map((row) => Object.freeze({
+      workItemId: String(row.work_item_id),
+      phase: row.phase === null ? null : String(row.phase),
+      ordinal: Number(row.child_ordinal),
+    }));
+    const byId = new Map(children.map((child) => [child.workItemId, child] as const));
+    const dependencyRows = this.runtime.store.db.prepare(`
+      SELECT dependency.work_item_id,dependency.depends_on_work_item_id
+      FROM work_item_dependencies dependency
+      JOIN work_items child ON child.work_item_id=dependency.work_item_id
+      JOIN work_items predecessor ON predecessor.work_item_id=dependency.depends_on_work_item_id
+      WHERE child.parent_work_item_id=?
+        AND child.state NOT IN ('abandoned','dead_letter')
+        AND predecessor.state NOT IN ('abandoned','dead_letter')
+      ORDER BY child.child_ordinal,dependency.depends_on_work_item_id
+    `).all(parentWorkItemId) as Row[];
+    const remaining = new Map<string, number>(children.map((child) => [child.workItemId, 0]));
+    const dependents = new Map<string, string[]>();
+    for (const dependency of dependencyRows) {
+      const childId = String(dependency.work_item_id);
+      const predecessorId = String(dependency.depends_on_work_item_id);
+      if (!byId.has(predecessorId)) throw new Error("TASK_BOARD_DATABASE_CORRUPT:cross_parent_dependency");
+      remaining.set(childId, (remaining.get(childId) ?? 0) + 1);
+      const list = dependents.get(predecessorId) ?? [];
+      list.push(childId);
+      dependents.set(predecessorId, list);
+    }
+    const ready = children.filter((child) => remaining.get(child.workItemId) === 0);
+    const ordered: typeof children = [];
+    while (ready.length > 0) {
+      ready.sort((left, right) => left.ordinal - right.ordinal || left.workItemId.localeCompare(right.workItemId));
+      const next = ready.shift()!;
+      ordered.push(next);
+      for (const dependentId of dependents.get(next.workItemId) ?? []) {
+        const count = (remaining.get(dependentId) ?? 0) - 1;
+        remaining.set(dependentId, count);
+        if (count === 0) ready.push(byId.get(dependentId)!);
+      }
+    }
+    if (ordered.length !== children.length) throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_dependency_cycle");
+    return Object.freeze(ordered);
+  }
+
   rejectFinalApproval(workItemId: string, request: RejectFinalApprovalRequest): Promise<WorkItem> {
     return this.withFinalApprovalLock(workItemId, () => {
-      const readyNodes = this.runtime.store.transaction(() => this.#workflow.rejectFinalApprovalInTransaction(
-        workItemId,
-        request,
-        this.runtime.config.humanPrincipal,
-      ));
+      if (this.isDecomposedParent(this.runtime.requireWorkItem(workItemId))) {
+        const readyNodes: WorkNode[] = [];
+        const rejected = this.runtime.store.transaction(() => {
+          const current = this.runtime.requireWorkItem(workItemId);
+          if (current.version !== request.version) {
+            throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+          }
+          if (current.state !== "final_approval") {
+            throw new TaskBoardError(
+              409,
+              TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+              "Parent work item is not awaiting final approval",
+            );
+          }
+          const plan = this.runtime.store.db.prepare(`
+            SELECT plan_revision_id
+            FROM plan_revisions
+            WHERE work_item_id=? AND state='confirmed'
+            ORDER BY revision DESC
+            LIMIT 1
+          `).get(workItemId) as Row | undefined;
+          if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_parent_plan_missing");
+          const children = this.runtime.store.db.prepare(`
+            SELECT work_item_id,state,version
+            FROM work_items
+            WHERE parent_work_item_id=?
+            ORDER BY child_ordinal,created_at,work_item_id
+          `).all(workItemId) as Row[];
+          for (const child of children) {
+            if (child.state !== "final_approval") continue;
+            readyNodes.push(...this.#workflow.rejectFinalApprovalInTransaction(
+              String(child.work_item_id),
+              { version: Number(child.version), note: request.note },
+              this.runtime.config.humanPrincipal,
+            ));
+          }
+          transitionWorkItemInTransaction(this.runtime.store, {
+            workItemId,
+            to: "coordinating",
+            actorType: "human",
+            actorId: this.runtime.config.humanPrincipal,
+            now: exactNow(this.runtime.config.now),
+            currentStage: null,
+          });
+          this.runtime.insertGateActionInTransaction({
+            workItemId,
+            gate: "final_reject",
+            actorId: this.runtime.config.humanPrincipal,
+            planRevisionId: String(plan.plan_revision_id),
+            verifiedSha: null,
+            mergeSha: null,
+            refId: null,
+            note: request.note,
+          });
+          return this.runtime.requireWorkItem(workItemId);
+        });
+        this.activateWorkflowNodes(readyNodes);
+        return rejected;
+      }
+      const readyNodes = this.runtime.store.transaction(() => {
+        const nodes = this.#workflow.rejectFinalApprovalInTransaction(
+          workItemId,
+          request,
+          this.runtime.config.humanPrincipal,
+        );
+        this.withdrawPromotedParentForChildInTransaction({
+          childWorkItemId: workItemId,
+          actorId: "system:parent-coordination",
+          now: exactNow(this.runtime.config.now),
+          dedupeToken: `reject:${request.version}`,
+        });
+        return nodes;
+      });
       this.activateWorkflowNodes(readyNodes);
       return this.runtime.requireWorkItem(workItemId);
     });
@@ -423,94 +699,173 @@ export class ProjectsCollaborator {
       expectedBaseSha: string;
       head: string;
       note: string;
+      now: string;
     }>,
-    afterWithdrawalInTransaction: () => void,
   ): boolean {
-    const locked = this.withFinalApprovalLockIfAvailable(input.workItemId, () => {
-      const readyNodes = this.runtime.store.transaction(() => {
-        const current = this.runtime.store.db.prepare(`
-          SELECT state,version,base_sha
-          FROM work_items
-          WHERE work_item_id=?
-        `).get(input.workItemId) as Row | undefined;
-        if (
-          current === undefined ||
-          current.state !== "final_approval" ||
-          Number(current.version) !== input.expectedVersion ||
-          current.base_sha !== input.expectedBaseSha
-        ) return null;
-        const nodes = this.#workflow.returnFinalApprovalToImplementationInTransaction(
-          input.workItemId,
-          { version: input.expectedVersion, note: input.note },
-          "system:base-branch-poll",
-          (nodeId, currentState) => workItemStateForNodeStage(
-            this.runtime.store.db,
-            input.workItemId,
-            nodeId,
-            "implementation",
-            currentState,
-          ),
-          null,
-          "system",
-          input.head,
-        );
-        afterWithdrawalInTransaction();
-        return nodes;
-      });
-      if (readyNodes === null) return false;
-      this.activateWorkflowNodes(readyNodes);
-      return true;
-    });
+    const locked = this.withFinalApprovalLockIfAvailable(input.workItemId, () =>
+      this.withdrawFinalApprovalForBaseAdvanceWithLockHeld(input));
     return locked.acquired && locked.value;
+  }
+
+  private withdrawFinalApprovalForBaseAdvanceWithLockHeld(input: Readonly<{
+    workItemId: string;
+    expectedVersion: number;
+    expectedBaseSha: string;
+    head: string;
+    note: string;
+    now: string;
+  }>): boolean {
+    const readyNodes = this.runtime.store.transaction(() => {
+      const current = this.runtime.store.db.prepare(`
+        SELECT state,version,base_sha,resolved_project_id
+        FROM work_items
+        WHERE work_item_id=?
+      `).get(input.workItemId) as Row | undefined;
+      if (
+        current === undefined ||
+        current.state !== "final_approval" ||
+        Number(current.version) !== input.expectedVersion ||
+        current.base_sha !== input.expectedBaseSha
+      ) return null;
+      const nodes = this.#workflow.returnFinalApprovalToImplementationInTransaction(
+        input.workItemId,
+        { version: input.expectedVersion, note: input.note },
+        "system:base-branch-poll",
+        (nodeId, currentState) => workItemStateForNodeStage(
+          this.runtime.store.db,
+          input.workItemId,
+          nodeId,
+          "implementation",
+          currentState,
+        ),
+        null,
+        "system",
+        input.head,
+      );
+      this.withdrawPromotedParentForChildInTransaction({
+        childWorkItemId: input.workItemId,
+        actorId: "system:base-branch-poll",
+        now: input.now,
+        dedupeToken: input.head,
+      });
+      this.notifications?.insertNotificationAtInTransaction({
+        kind: "final_approval_withdrawn",
+        dedupeKey: `final_approval_withdrawn:${input.workItemId}:${input.head}`,
+        projectId: current.resolved_project_id === null ? null : String(current.resolved_project_id),
+        workItemId: input.workItemId,
+        summary: `Final approval withdrawn: base branch advanced to ${input.head.slice(0, 10)}`,
+      }, input.now);
+      return nodes;
+    });
+    if (readyNodes === null) return false;
+    this.activateWorkflowNodes(readyNodes);
+    return true;
   }
 
   parkFinalApprovalForBaseDivergence(input: Readonly<{
     workItemId: string;
     expectedVersion: number;
     expectedBaseSha: string;
+    head: string;
     reason: string;
     now: string;
   }>): boolean {
     const locked = this.withFinalApprovalLockIfAvailable(input.workItemId, () =>
-      this.runtime.store.transaction(() => {
-        const current = this.runtime.store.db.prepare(`
-          SELECT state,version,base_sha,current_stage
-          FROM work_items
-          WHERE work_item_id=?
-        `).get(input.workItemId) as Row | undefined;
-        if (
-          current === undefined ||
-          current.state !== "final_approval" ||
-          Number(current.version) !== input.expectedVersion ||
-          current.base_sha !== input.expectedBaseSha
-        ) return false;
-        if (current.current_stage !== null) {
-          throw new Error("TASK_BOARD_DATABASE_CORRUPT:final_approval_current_stage");
-        }
-        const activeRun = this.runtime.store.db.prepare(`
-          SELECT run.run_id
-          FROM runs run
-          JOIN stage_attempts attempt ON attempt.task_id=run.task_id
-          JOIN work_nodes node ON node.node_id=attempt.node_id
-          JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-          WHERE plan.work_item_id=? AND plan.state='confirmed' AND run.status='active'
-          LIMIT 1
-        `).get(input.workItemId);
-        if (activeRun !== undefined) {
-          throw new Error("TASK_BOARD_DATABASE_CORRUPT:active_run_in_final_approval");
-        }
-        transitionWorkItemInTransaction(this.runtime.store, {
-          workItemId: input.workItemId,
-          to: "parked",
-          actorType: "system",
-          actorId: "system:base-branch-poll",
-          now: input.now,
-          currentStage: null,
-          park: { category: "base_diverged", reason: input.reason },
-        });
-        return true;
-      }));
+      this.parkFinalApprovalForBaseDivergenceWithLockHeld(input));
     return locked.acquired && locked.value;
+  }
+
+  private parkFinalApprovalForBaseDivergenceWithLockHeld(input: Readonly<{
+    workItemId: string;
+    expectedVersion: number;
+    expectedBaseSha: string;
+    head: string;
+    reason: string;
+    now: string;
+  }>): boolean {
+    return this.runtime.store.transaction(() => {
+      const current = this.runtime.store.db.prepare(`
+        SELECT state,version,base_sha,current_stage,resolved_project_id
+        FROM work_items
+        WHERE work_item_id=?
+      `).get(input.workItemId) as Row | undefined;
+      if (
+        current === undefined ||
+        current.state !== "final_approval" ||
+        Number(current.version) !== input.expectedVersion ||
+        current.base_sha !== input.expectedBaseSha
+      ) return false;
+      if (current.current_stage !== null) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:final_approval_current_stage");
+      }
+      const activeRun = this.runtime.store.db.prepare(`
+        SELECT run.run_id
+        FROM runs run
+        JOIN stage_attempts attempt ON attempt.task_id=run.task_id
+        JOIN work_nodes node ON node.node_id=attempt.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND plan.state='confirmed' AND run.status='active'
+        LIMIT 1
+      `).get(input.workItemId);
+      if (activeRun !== undefined) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:active_run_in_final_approval");
+      }
+      transitionWorkItemInTransaction(this.runtime.store, {
+        workItemId: input.workItemId,
+        to: "parked",
+        actorType: "system",
+        actorId: "system:base-branch-poll",
+        now: input.now,
+        currentStage: null,
+        park: { category: "base_diverged", reason: input.reason },
+      });
+      this.notifications?.insertNotificationAtInTransaction({
+        kind: "final_approval_withdrawn",
+        dedupeKey: `final_approval_withdrawn:${input.workItemId}:base-diverged:${input.head}`,
+        projectId: current.resolved_project_id === null ? null : String(current.resolved_project_id),
+        workItemId: input.workItemId,
+        summary: `Final approval parked: base branch diverged at ${input.head.slice(0, 10)}`,
+      }, input.now);
+      this.withdrawPromotedParentForChildInTransaction({
+        childWorkItemId: input.workItemId,
+        actorId: "system:base-branch-poll",
+        now: input.now,
+        dedupeToken: `base-diverged:${input.head}`,
+      });
+      return true;
+    });
+  }
+
+  private withdrawPromotedParentForChildInTransaction(input: Readonly<{
+    childWorkItemId: string;
+    actorId: string;
+    now: string;
+    dedupeToken: string;
+  }>): boolean {
+    const parent = this.runtime.store.db.prepare(`
+      SELECT parent.work_item_id,parent.resolved_project_id,parent.state
+      FROM work_items child
+      JOIN work_items parent ON parent.work_item_id=child.parent_work_item_id
+      WHERE child.work_item_id=?
+    `).get(input.childWorkItemId) as Row | undefined;
+    if (parent?.state !== "final_approval") return false;
+    const parentId = String(parent.work_item_id);
+    transitionWorkItemInTransaction(this.runtime.store, {
+      workItemId: parentId,
+      to: "coordinating",
+      actorType: "system",
+      actorId: input.actorId,
+      now: input.now,
+      currentStage: null,
+    });
+    this.notifications?.insertNotificationAtInTransaction({
+      kind: "final_approval_withdrawn",
+      dedupeKey: `final_approval_withdrawn:${parentId}:${input.childWorkItemId}:${input.dedupeToken}`,
+      projectId: parent.resolved_project_id === null ? null : String(parent.resolved_project_id),
+      workItemId: parentId,
+      summary: `Parent approval withdrawn: child ${input.childWorkItemId} needs re-verification`,
+    }, input.now);
+    return true;
   }
 
   private withFinalApprovalLockIfAvailable<T>(
@@ -675,14 +1030,289 @@ export class ProjectsCollaborator {
     for (const node of nodes) this.activateWorkflowNode(node);
   }
 
+  private reconcileDecompositionPolicies(projectId?: string): void {
+    if (this.#decompositionReconciliationActive) return;
+    if (this.#boardPause.isBoardPaused()) {
+      console.info("[task-board] decomposition policy reconciliation skipped", Object.freeze({
+        reason: "board_paused",
+        projectId: projectId ?? null,
+      }));
+      return;
+    }
+    this.#decompositionReconciliationActive = true;
+    try {
+      const projectFilter = projectId === undefined
+        ? ""
+        : `AND ${decompositionFamilyTouchesProjectSql("parent.work_item_id", "?")}`;
+      const parents = this.runtime.store.db.prepare(`
+        SELECT parent.work_item_id,
+          EXISTS(
+            SELECT 1
+            FROM work_items phased_child
+            WHERE phased_child.parent_work_item_id=parent.work_item_id
+              AND phased_child.phase IS NOT NULL
+          ) AS parent_is_phased
+        FROM work_items parent
+        WHERE parent.state IN ('coordinating','final_approval')
+          AND EXISTS(SELECT 1 FROM work_items child WHERE child.parent_work_item_id=parent.work_item_id)
+          ${projectFilter}
+        ORDER BY parent.created_at,parent.work_item_id
+      `).all(...(projectId === undefined ? [] : [projectId])) as Row[];
+      for (const parent of parents) {
+        const parentId = String(parent.work_item_id);
+        const parentIsPhased = Number(parent.parent_is_phased) === 1;
+        try {
+          this.reconcileDecompositionParent(parentId, parentIsPhased, parentIsPhased
+            ? {
+                actorId: "system:parent-plan-authorization",
+                actorType: "system",
+                refId: null,
+              }
+            : {
+                actorId: "system:parent-completion",
+                actorType: "system",
+                refId: null,
+              });
+        } catch (error) {
+          this.logDecompositionPolicyFailure(parentId, null, false, error);
+        }
+      }
+    } finally {
+      this.#decompositionReconciliationActive = false;
+    }
+  }
+
+  private reconcileDecompositionParent(
+    parentId: string,
+    parentIsPhased: boolean,
+    completionAuthorization: PipelineMergeAuthorization,
+  ): void {
+    const parent = this.runtime.requireWorkItem(parentId);
+    const children = this.childrenInDependencyOrder(parentId);
+    const states = new Map((this.runtime.store.db.prepare(`
+      SELECT work_item_id,state
+      FROM work_items
+      WHERE parent_work_item_id=?
+    `).all(parentId) as Row[]).map((row) => [String(row.work_item_id), String(row.state)] as const));
+    const hasFailedChild = [...states.values()].some((state) => (
+      state === "abandoned" || state === "dead_letter"
+    ));
+    if (
+      (!parentIsPhased || !hasFailedChild)
+      && children.every((child) => states.get(child.workItemId) === "merged")
+    ) {
+      this.runtime.store.transaction(() => {
+        const current = this.runtime.requireWorkItem(parentId);
+        if (current.state !== "coordinating" && current.state !== "final_approval") return;
+        this.#workflow.settleParentCompletionInTransaction(
+          parentId,
+          current.version,
+          children.map((child) => child.workItemId),
+          completionAuthorization.actorId,
+          completionAuthorization.actorType,
+        );
+      });
+      return;
+    }
+    if (children.length === 0) return;
+    if (parent.state !== "coordinating") return;
+    const mergePolicy = this.decompositionMergePolicy(children);
+
+    if (mergePolicy === "phased_auto_merge") {
+      const authorization = this.runtime.store.db.prepare(`
+        SELECT gate_action_id
+        FROM gate_actions
+        WHERE work_item_id=? AND gate='plan_confirm'
+        ORDER BY created_at DESC,rowid DESC
+        LIMIT 1
+      `).get(parentId) as Row | undefined;
+      if (authorization === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:parent_plan_authorization_missing");
+      for (const child of children) {
+        const current = this.runtime.requireWorkItem(child.workItemId);
+        if (current.state !== "final_approval" || !["expand", "migrate"].includes(child.phase ?? "")) continue;
+        const unmetDependency = this.runtime.store.db.prepare(`
+          SELECT 1
+          FROM work_item_dependencies dependency
+          JOIN work_items predecessor ON predecessor.work_item_id=dependency.depends_on_work_item_id
+          WHERE dependency.work_item_id=?
+            AND predecessor.state NOT IN ('merged','abandoned','dead_letter')
+          LIMIT 1
+        `).get(child.workItemId);
+        if (unmetDependency !== undefined) continue;
+        try {
+          const locked = this.withFinalApprovalLockIfAvailable(child.workItemId, () => {
+            const context = this.pipelineMergeContext(child.workItemId, current.version);
+            const baseAdvance = inspectPipelineBaseAdvance({
+              repoPath: context.repoPath,
+              branch: context.branch,
+              baseSha: context.baseSha,
+              git: this.git,
+            });
+            if (baseAdvance.kind === "advanced") {
+              const note = `base branch advanced to ${baseAdvance.head}; rebase onto it and re-verify`;
+              return Object.freeze({
+                kind: "withdrawn" as const,
+                applied: this.withdrawFinalApprovalForBaseAdvanceWithLockHeld({
+                  workItemId: child.workItemId,
+                  expectedVersion: current.version,
+                  expectedBaseSha: context.baseSha,
+                  head: baseAdvance.head,
+                  note,
+                  now: exactNow(this.runtime.config.now),
+                }),
+              });
+            }
+            if (baseAdvance.kind === "diverged") {
+              return Object.freeze({
+                kind: "parked" as const,
+                applied: this.parkFinalApprovalForBaseDivergenceWithLockHeld({
+                  workItemId: child.workItemId,
+                  expectedVersion: current.version,
+                  expectedBaseSha: context.baseSha,
+                  head: baseAdvance.head,
+                  reason: `base branch history rewritten (was ${context.baseSha}, now ${baseAdvance.head})`,
+                  now: exactNow(this.runtime.config.now),
+                }),
+              });
+            }
+            if (baseAdvance.kind === "repo_busy") {
+              return Object.freeze({ kind: "repo_busy" as const });
+            }
+            return Object.freeze({
+              kind: "merge" as const,
+              workItem: this.approveSinglePipelineMerge(
+                child.workItemId,
+                { version: current.version },
+                {
+                  actorId: "system:parent-plan-authorization",
+                  actorType: "system",
+                  refId: String(authorization.gate_action_id),
+                },
+                false,
+              ),
+            });
+          });
+          if (!locked.acquired) continue;
+          if (locked.value.kind === "repo_busy") {
+            console.info("[task-board] phased automatic merge skipped", Object.freeze({
+              parentWorkItemId: parentId,
+              childWorkItemId: child.workItemId,
+              reason: "repo_busy",
+            }));
+            continue;
+          }
+          if (locked.value.kind === "withdrawn" || locked.value.kind === "parked") {
+            if (!locked.value.applied) {
+              this.logDecompositionPolicyFailure(
+                parentId,
+                child.workItemId,
+                false,
+                locked.value.kind === "withdrawn"
+                  ? "base-advance withdrawal was not applied"
+                  : "base-divergence park was not applied",
+              );
+            }
+            continue;
+          }
+          if (locked.value.workItem.state !== "merged") {
+            this.notifyAutomaticMergeFailure(
+              parentId,
+              child.workItemId,
+              locked.value.workItem.resolvedProjectId,
+              locked.value.workItem.version,
+            );
+            this.logDecompositionPolicyFailure(parentId, child.workItemId, false, "automatic merge returned to implementation");
+            continue;
+          }
+        } catch (error) {
+          const transient = error instanceof TaskBoardError && (
+            error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY
+            || error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE
+          );
+          this.logDecompositionPolicyFailure(parentId, child.workItemId, transient, error);
+          if (!transient) {
+            const failed = this.runtime.requireWorkItem(child.workItemId);
+            this.notifyAutomaticMergeFailure(parentId, child.workItemId, failed.resolvedProjectId, failed.version);
+          }
+          continue;
+        }
+      }
+      return;
+    }
+
+    const unmerged = children.filter((child) => states.get(child.workItemId) !== "merged");
+    if (
+      unmerged.length === 0
+      || unmerged.some((child) => states.get(child.workItemId) !== "final_approval")
+    ) return;
+    this.runtime.store.transaction(() => {
+      const current = this.runtime.requireWorkItem(parentId);
+      if (current.state !== "coordinating") return;
+      const transition = transitionWorkItemInTransaction(this.runtime.store, {
+        workItemId: parentId,
+        to: "final_approval",
+        actorType: "system",
+        actorId: "system:parent-coordination",
+        now: exactNow(this.runtime.config.now),
+        currentStage: null,
+      });
+      this.notifications?.insertNotificationInTransaction({
+        kind: "parent_ready_for_approval",
+        dedupeKey: `parent_ready_for_approval:${parentId}:${transition.version}`,
+        projectId: current.resolvedProjectId,
+        workItemId: parentId,
+        summary: `Parent ready for approval: ${parentId}`,
+      });
+    });
+  }
+
+  private notifyAutomaticMergeFailure(
+    parentId: string,
+    childId: string,
+    projectId: string | null,
+    version: number,
+  ): void {
+    this.runtime.store.transaction(() => {
+      this.notifications?.insertNotificationInTransaction({
+        kind: "final_approval_withdrawn",
+        dedupeKey: `final_approval_withdrawn:${childId}:automatic-merge:${version}`,
+        projectId,
+        workItemId: childId,
+        summary: `Automatic merge failed for child ${childId} of parent ${parentId}`,
+      });
+    });
+  }
+
+  private logDecompositionPolicyFailure(
+    parentId: string,
+    childId: string | null,
+    transient: boolean,
+    error: unknown,
+  ): void {
+    console.error("[task-board] decomposition policy reconciliation failed", Object.freeze({
+      parentWorkItemId: parentId,
+      childWorkItemId: childId,
+      transient,
+      code: error instanceof TaskBoardError ? error.code : "UNEXPECTED_ERROR",
+      error,
+    }));
+  }
+
   reconcileWorkflows(projectId?: string): void {
     if (projectId !== undefined) this.runtime.requireProject(projectId);
+    this.reconcileDecompositionPolicies(projectId);
     if (this.runtime.store.db.prepare(
       projectId === undefined
         ? "SELECT 1 FROM work_nodes LIMIT 1"
         : "SELECT 1 FROM work_nodes WHERE project_id=? LIMIT 1",
     ).get(...(projectId === undefined ? [] : [projectId])) === undefined) return;
-    const projectFilter = projectId === undefined ? "" : "AND node.project_id=?";
+    const projectFilter = projectId === undefined ? "" : `AND (
+      node.project_id=?
+      OR (
+        item.parent_work_item_id IS NOT NULL
+        AND ${decompositionFamilyTouchesProjectSql("item.parent_work_item_id", "?")}
+      )
+    )`;
     const rows = this.runtime.store.db.prepare(`
       SELECT node.node_id
       FROM work_nodes node
@@ -691,10 +1321,16 @@ export class ProjectsCollaborator {
       WHERE plan.state='confirmed'
         ${projectFilter}
         AND item.state NOT IN ('coordinating','parked','merged','abandoned','dead_letter')
-        AND node.current_stage IS NOT NULL
         AND (
           (
+            item.parent_work_item_id IS NOT NULL
+            AND item.state='queued'
+            AND node.state IN ('pending','blocked')
+          )
+          OR
+          (
             node.state='ready'
+            AND node.current_stage IS NOT NULL
             AND NOT EXISTS(
               SELECT 1
               FROM stage_attempts attempt
@@ -707,6 +1343,7 @@ export class ProjectsCollaborator {
           )
           OR (
             node.state='blocked'
+            AND node.current_stage IS NOT NULL
             AND (
               SELECT event.event_type
               FROM project_events event
@@ -720,7 +1357,7 @@ export class ProjectsCollaborator {
           )
         )
       ORDER BY node.created_at,node.node_id
-    `).all(...(projectId === undefined ? [] : [projectId])) as Row[];
+    `).all(...(projectId === undefined ? [] : [projectId, projectId])) as Row[];
     const candidateIds = rows.map((row) => String(row.node_id));
     for (let offset = 0; offset < candidateIds.length; offset += WORKFLOW_RECONCILIATION_BATCH_SIZE) {
       const batch = candidateIds.slice(offset, offset + WORKFLOW_RECONCILIATION_BATCH_SIZE);
@@ -761,13 +1398,60 @@ export class ProjectsCollaborator {
     }
   }
 
+  private phasedChildBaseRefreshForActivation(nodeId: string): PhasedChildBaseRefresh | null {
+    const candidate = this.runtime.store.db.prepare(`
+      SELECT item.work_item_id,item.resolved_project_id
+      FROM work_nodes node
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE node.node_id=?
+        AND node.state IN ('pending','ready','blocked')
+        AND item.state='queued'
+        AND item.parent_work_item_id IS NOT NULL
+        AND EXISTS(
+          SELECT 1
+          FROM work_items phased_child
+          WHERE phased_child.parent_work_item_id=item.parent_work_item_id
+            AND phased_child.phase IS NOT NULL
+        )
+    `).get(nodeId) as Row | undefined;
+    if (candidate === undefined) return null;
+    const workItemId = String(candidate.work_item_id);
+    if (decompositionReadinessBlocker(this.runtime.store.db, workItemId) !== null) return null;
+    if (candidate.resolved_project_id === null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_project_missing");
+    }
+    const projectId = String(candidate.resolved_project_id);
+    return Object.freeze({
+      workItemId,
+      projectId,
+      baseSha: this.#workflow.pipelineBaseShaForProject(projectId),
+    });
+  }
+
   private activateWorkflowNode(node: WorkNode): void {
+    // A phased child's default-branch head is resolved before the activation
+    // transaction so no Git process runs while SQLite holds a transaction.
+    const phasedBaseRefresh = this.phasedChildBaseRefreshForActivation(node.nodeId);
+    let phasedBaseRefreshLog: Readonly<{
+      workItemId: string;
+      projectId: string;
+      previousBaseSha: string;
+      baseSha: string;
+    }> | null = null;
     let wakeAgentId: string | null = null;
     this.runtime.store.transaction(() => {
-      const current = this.#workflow.nodesForIds([node.nodeId])[0];
-      if (current === undefined || !["ready", "blocked"].includes(current.state)) return;
+      let current = this.#workflow.nodesForIds([node.nodeId])[0];
+      if (current === undefined || !["pending", "ready", "blocked"].includes(current.state)) return;
       const owner = this.runtime.store.db.prepare(`
-        SELECT item.state
+        SELECT item.work_item_id,item.state,item.parent_work_item_id,item.phase,
+          item.resolved_project_id,item.base_sha,plan.tier,
+          EXISTS(
+            SELECT 1
+            FROM work_items phased_child
+            WHERE phased_child.parent_work_item_id=item.parent_work_item_id
+              AND phased_child.phase IS NOT NULL
+          ) AS parent_is_phased
         FROM plan_revisions plan
         JOIN work_items item ON item.work_item_id=plan.work_item_id
         WHERE plan.plan_revision_id=?
@@ -777,6 +1461,85 @@ export class ProjectsCollaborator {
       }
       const ownerState = owner.state as WorkItemState;
       if (!workItemStateOwnsWorkflowExecution(ownerState)) return;
+      const childWorkItemId = owner.parent_work_item_id === null
+        ? null
+        : String(owner.work_item_id);
+      if (childWorkItemId !== null && ownerState === "queued") {
+        const unmet = decompositionReadinessBlocker(this.runtime.store.db, childWorkItemId);
+        if (unmet !== null) {
+          const dependencyId = unmet.workItemId;
+          const dependencyPhase = unmet.phase ?? "child";
+          this.#workflow.blockNodeInTransaction(
+            current.nodeId,
+            unmet.state === "abandoned" || unmet.state === "dead_letter"
+              ? `blocked: ${dependencyId} (${dependencyPhase}) ${unmet.state}`
+              : unmet.state !== "merged"
+              ? `waits for ${dependencyId} (${dependencyPhase}) to merge`
+              : `waits for ${dependencyId} (${dependencyPhase}) deploy attestation`,
+          );
+          return;
+        }
+        if (Number(owner.parent_is_phased) === 1) {
+          if (
+            phasedBaseRefresh === null
+            || phasedBaseRefresh.workItemId !== childWorkItemId
+            || phasedBaseRefresh.projectId !== owner.resolved_project_id
+            || owner.base_sha === null
+          ) {
+            throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_base_refresh_missing");
+          }
+          const refreshed = this.runtime.store.db.prepare(`
+            UPDATE work_items
+            SET base_sha=?
+            WHERE work_item_id=? AND state='queued'
+          `).run(phasedBaseRefresh.baseSha, childWorkItemId);
+          if (Number(refreshed.changes) !== 1) {
+            throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_base_refresh_conflict");
+          }
+          phasedBaseRefreshLog = Object.freeze({
+            workItemId: childWorkItemId,
+            projectId: phasedBaseRefresh.projectId,
+            previousBaseSha: String(owner.base_sha),
+            baseSha: phasedBaseRefresh.baseSha,
+          });
+        }
+        if (owner.tier === "hazardous") {
+          if (this.#startDesignInTransaction === undefined) {
+            throw new Error("TASK_BOARD_DATABASE_CORRUPT:design_task_creator_missing");
+          }
+          this.#workflow.deferNodeForDesignInTransaction(current.nodeId);
+          this.#startDesignInTransaction(childWorkItemId);
+          transitionWorkItemInTransaction(this.runtime.store, {
+            workItemId: childWorkItemId,
+            to: "designing",
+            actorType: "system",
+            actorId: "system:parent-coordination",
+            now: exactNow(this.runtime.config.now),
+            currentStage: "planning",
+          });
+          return;
+        }
+        current = this.#workflow.readyNodeAtTemplateStartInTransaction(current.nodeId);
+        const childStage = current.currentStage;
+        if (childStage === null) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_without_ready_stage");
+        }
+        transitionWorkItemInTransaction(this.runtime.store, {
+          workItemId: childWorkItemId,
+          to: workItemStateForNodeStage(
+            this.runtime.store.db,
+            childWorkItemId,
+            current.nodeId,
+            childStage,
+            ownerState,
+          ),
+          actorType: "system",
+          actorId: "system:parent-coordination",
+          now: exactNow(this.runtime.config.now),
+          currentStage: childStage,
+        });
+      }
+      if (!["ready", "blocked"].includes(current.state)) return;
       if (current.state === "blocked") {
         const latestLifecycleEvent = this.runtime.store.db.prepare(`
           SELECT event.event_type
@@ -993,6 +1756,9 @@ export class ProjectsCollaborator {
       );
       if (orphan === undefined) wakeAgentId = String(agent.agent_id);
     });
+    if (phasedBaseRefreshLog !== null) {
+      console.info("[task-board] phased child base refreshed", phasedBaseRefreshLog);
+    }
     if (wakeAgentId !== null) this.runtime.wakeupEvents.emit(wakeAgentId);
   }
 

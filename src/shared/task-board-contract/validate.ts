@@ -59,6 +59,7 @@ import {
   type AgentRun,
   type AnswerHumanQuestionRequest,
   type ApprovePipelineMergeRequest,
+  type AttestDeployRequest,
   type AutomationAgentType,
   type AutomationConfiguration,
   type AutomationPipelineStage,
@@ -1747,7 +1748,7 @@ export function parsePlanEntity(
   });
 }
 
-const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start"] as const;
+const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start", "retired"] as const;
 function parseVerifyAttemptEntity(
   value: unknown,
   label: string,
@@ -3061,9 +3062,13 @@ function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPo
 export function validateWorkflowPlanChildren(
   plan: Pick<WorkflowPlanDraft, "changeShape" | "children">,
   parentProjectId?: string,
+  parentWorkItemId?: string | null,
 ): void {
   const children = plan.children;
   const hasChildren = children !== undefined && children.length > 0;
+  if (parentWorkItemId !== undefined && parentWorkItemId !== null && hasChildren) {
+    throw new ContractValidationError("workflowPlan.children is invalid for a child work item");
+  }
   if (plan.changeShape === "mechanical_sweep" && hasChildren) {
     throw new ContractValidationError("workflowPlan.children is invalid for a mechanical_sweep");
   }
@@ -3398,6 +3403,13 @@ export function parseBoardRejectPlan(value: unknown): RejectPlanRevisionRequest 
 export function parseBoardApprovePipelineMerge(value: unknown): ApprovePipelineMergeRequest {
   const item = boardExact(value, ["version"], "Pipeline merge approval", true);
   return Object.freeze({ version: boardPositiveVersion(item.version) });
+}
+
+export function parseBoardAttestDeploy(value: unknown): AttestDeployRequest {
+  const item = boardAllowed(value, ["note"], [], "Deploy attestation");
+  return Object.freeze({
+    ...(item.note === undefined || item.note === "" ? {} : { note: boardText(item.note, "note", 2_000) }),
+  });
 }
 
 export function parseBoardRejectFinalApproval(value: unknown): RejectFinalApprovalRequest {

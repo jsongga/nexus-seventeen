@@ -80,17 +80,17 @@ test('work item states cover the durable lifecycle', () => {
 
 test('work item transition table is pinned edge for edge', () => {
   assert.deepEqual(WORK_ITEM_TRANSITIONS, {
-    queued: ['planning', 'parked', 'abandoned', 'dead_letter'],
+    queued: ['planning', 'designing', 'implementing', 'parked', 'abandoned', 'dead_letter'],
     planning: ['plan_approval', 'implementing', 'verifying', 'reviewing', 'parked', 'abandoned', 'dead_letter'],
     plan_approval: ['coordinating', 'designing', 'implementing', 'verifying', 'reviewing', 'planning', 'parked', 'abandoned', 'dead_letter'],
-    coordinating: ['final_approval', 'parked', 'abandoned', 'dead_letter'],
+    coordinating: ['final_approval', 'merged', 'parked', 'abandoned', 'dead_letter'],
     designing: ['implementing', 'parked', 'abandoned', 'dead_letter'],
     implementing: ['verifying', 'reviewing', 'planning', 'merged', 'parked', 'abandoned', 'dead_letter'],
     verifying: ['reviewing', 'fixing', 'final_approval', 'implementing', 'planning', 'parked', 'abandoned', 'dead_letter'],
     reviewing: ['fixing', 'planning', 'implementing', 'verifying', 'final_approval', 'merged', 'parked', 'abandoned', 'dead_letter'],
     fixing: ['verifying', 'parked', 'abandoned', 'dead_letter'],
-    final_approval: ['merged', 'fixing', 'implementing', 'parked', 'abandoned', 'dead_letter'],
-    parked: ['planning', 'implementing', 'verifying', 'reviewing', 'fixing', 'abandoned', 'dead_letter'],
+    final_approval: ['coordinating', 'merged', 'fixing', 'implementing', 'parked', 'abandoned', 'dead_letter'],
+    parked: ['coordinating', 'planning', 'implementing', 'verifying', 'reviewing', 'fixing', 'abandoned', 'dead_letter'],
     merged: [],
     abandoned: [],
     dead_letter: [],

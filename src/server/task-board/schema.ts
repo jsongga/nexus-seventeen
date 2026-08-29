@@ -4,6 +4,7 @@ import {
   parseBoardAgentMessage,
   parseBoardAnswer,
   parseBoardApprovePipelineMerge,
+  parseBoardAttestDeploy,
   parseBoardAutomationUpdate,
   parseBoardBacklogTask,
   parseBoardClaim,
@@ -35,6 +36,7 @@ import {
 import type {
   AnswerHumanQuestionRequest,
   ApprovePipelineMergeRequest,
+  AttestDeployRequest,
   BacklogTaskRequest,
   ClaimRunRequest,
   ConfirmPlanRevisionRequest,
@@ -83,6 +85,7 @@ export function parseCreateProject(value: unknown): CreateProjectRequest { retur
 export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest { return adapt(() => parseBoardConfirmPlan(value)); }
 export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest { return adapt(() => parseBoardRejectPlan(value)); }
 export function parseApprovePipelineMergeRequest(value: unknown): ApprovePipelineMergeRequest { return adapt(() => parseBoardApprovePipelineMerge(value)); }
+export function parseAttestDeployRequest(value: unknown): AttestDeployRequest { return adapt(() => parseBoardAttestDeploy(value)); }
 export function parseRejectFinalApprovalRequest(value: unknown): RejectFinalApprovalRequest { return adapt(() => parseBoardRejectFinalApproval(value)); }
 export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest { return adapt(() => parseBoardCreateWorkItem(value)); }
 export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest { return adapt(() => parseBoardUpdateWorkItem(value)); }

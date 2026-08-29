@@ -734,6 +734,7 @@ export class RunsCollaborator {
     runId: string,
     reason: string,
     actor: SettlementActor,
+    nowOverride?: string,
   ): { workItemId: string | null; projectId: string } | null {
     const row = this.runtime.store.db.prepare(
       "SELECT * FROM runs WHERE run_id=? AND status='active'",
@@ -741,7 +742,7 @@ export class RunsCollaborator {
     if (row === undefined) return null;
     const current = runFromRow(row);
     const persistedReason = redactForPersistence(reason);
-    const now = exactNow(this.runtime.config.now);
+    const now = nowOverride ?? exactNow(this.runtime.config.now);
     const workItem = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
       SELECT plan.work_item_id
       FROM stage_attempts attempt
@@ -978,10 +979,11 @@ export class RunsCollaborator {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
       }
       try {
-        validateWorkflowPlanChildren(request.workflowPlan);
-        if (planning.resolved_project_id !== null) {
-          validateWorkflowPlanChildren(request.workflowPlan, String(planning.resolved_project_id));
-        }
+        validateWorkflowPlanChildren(
+          request.workflowPlan,
+          planning.resolved_project_id === null ? undefined : String(planning.resolved_project_id),
+          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id),
+        );
       } catch (error) {
         if (error instanceof ContractValidationError) {
           throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });

@@ -91,7 +91,11 @@ export function gateActions(path: string, workItemId: string): readonly GateActi
   }
 }
 
-export function config(path: string, now: () => Date = () => new Date("2026-07-19T20:00:00.000Z")): TaskBoardConfig {
+export function config(
+  path: string,
+  now: () => Date = () => new Date("2026-07-19T20:00:00.000Z"),
+  overrides: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">> | undefined = undefined,
+): TaskBoardConfig {
   return normalizeTaskBoardConfig({
     dbPath: path,
     humanToken: HUMAN_TOKEN,
@@ -99,6 +103,7 @@ export function config(path: string, now: () => Date = () => new Date("2026-07-1
     port: 0,
     corsOrigins: ["https://app.cicada.build"],
     now,
+    ...overrides,
   });
 }
 
@@ -106,9 +111,10 @@ export async function boardFixture(
   path?: string,
   now?: () => Date,
   dependencies: TaskBoardDependencies = {},
+  configOverrides?: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">>,
 ) {
   const resolvedPath = path ?? await databasePath();
-  const board = await TaskBoard.open(config(resolvedPath, now), dependencies);
+  const board = await TaskBoard.open(config(resolvedPath, now, configOverrides), dependencies);
   const project = board.createProject({ name: "Checkout reliability", description: "Keep customer checkout dependable." });
   const engineer = board.createAgent(project.projectId, {
     agentId: "engineer-one",

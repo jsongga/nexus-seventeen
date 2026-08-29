@@ -4,9 +4,14 @@ import {
   TASK_BOARD_ERROR_CODES,
   WORK_ITEM_PAGE_SIZE,
   isHardTerminalTaskStatus,
+  isTerminalWorkItemState,
+  type AttestDeployRequest,
+  type AttestDeployResult,
   type BoardTask,
+  type ChildWorkItem,
   type CreateWorkItemRequest,
   type GateAction,
+  type ParentCompletion,
   type UpdateWorkItemRequest,
   type WorkItem,
   type WorkItemAudit,
@@ -23,14 +28,21 @@ import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import { decodeWorkItemCursor, encodeWorkItemCursor } from "../persistence/work-item-cursor.js";
 import { workItemPriorityCases } from "../persistence/store.js";
-import { stringValue, workItemFromRow, type Row } from "../persistence/rows.js";
+import { numberValue, stringValue, workItemFromRow, type Row } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
+import type { NotificationsCollaborator } from "./notifications.js";
 import { createLazyManagerInTransaction } from "./agent-identities.js";
 import {
+  decompositionFamilyTouchesProjectSql,
+  decompositionReadinessBlocker,
+} from "./decomposition-readiness.js";
+import { retireOpenVerifyAttemptsForWorkItemInTransaction } from "./verify-attempts.js";
+import {
   recordInitialWorkItemTransitionInTransaction,
+  registerParentTerminationCascade,
   transitionWorkItemInTransaction,
 } from "./work-item-transitions.js";
 
@@ -75,12 +87,33 @@ export function workItemTitleProjection(
 }
 
 export class WorkItemsCollaborator {
+  #suspendActiveRunInTransaction: ((
+    runId: string,
+    reason: string,
+    actor: { type: "human" | "agent" | "system"; id: string },
+    now: string,
+  ) => unknown) | undefined;
+
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
     private readonly reconcileWorkflowsBestEffort: (projectId: string) => void = () => undefined,
-  ) {}
+    private readonly notifications?: NotificationsCollaborator,
+  ) {
+    registerParentTerminationCascade(this.runtime.store, (input) => {
+      this.cancelChildrenForParentTerminationInTransaction(input);
+    });
+  }
+
+  setSuspendActiveRunInTransaction(suspend: (
+    runId: string,
+    reason: string,
+    actor: { type: "human" | "agent" | "system"; id: string },
+    now: string,
+  ) => unknown): void {
+    this.#suspendActiveRunInTransaction = suspend;
+  }
 
   listWorkItemsPage(cursor?: string, includeArchived = false): WorkItemPage {
     const tuple = cursor === undefined ? null : decodeWorkItemCursor(cursor);
@@ -158,20 +191,166 @@ export class WorkItemsCollaborator {
     return this.listWorkItemsPage(undefined, includeArchived).workItems;
   }
 
-  listChildren(parentWorkItemId: string): readonly WorkItem[] {
-    this.runtime.requireWorkItem(parentWorkItemId);
+  listChildren(parentWorkItemId: string): readonly ChildWorkItem[] {
+    const completionByChild = new Map(this.parentCompletion(parentWorkItemId).children.map(
+      (child) => [child.workItemId, child.mergeSha] as const,
+    ));
     const rows = this.runtime.store.db.prepare(`
       SELECT work_item.*,
         CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
         (SELECT task_id FROM work_item_planning_tasks planning
           WHERE planning.work_item_id=work_item.work_item_id
-        ) AS planning_task_id
+        ) AS planning_task_id,
+        EXISTS(
+          SELECT 1 FROM gate_actions action
+          WHERE action.work_item_id=work_item.work_item_id AND action.gate='deploy_attest'
+        ) AS deploy_attested
       FROM work_items work_item
       LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
       WHERE work_item.parent_work_item_id=?
       ORDER BY work_item.child_ordinal,work_item.created_at,work_item.work_item_id
     `).all(parentWorkItemId);
-    return Object.freeze(rows.map(workItemFromRow));
+    return Object.freeze(rows.map((row) => Object.freeze({
+      ...workItemFromRow(row),
+      deployAttested: numberValue(row, "deploy_attested") === 1,
+      mergeSha: completionByChild.get(stringValue(row, "work_item_id")) ?? null,
+    })));
+  }
+
+  parentCompletion(parentWorkItemId: string): ParentCompletion {
+    this.runtime.requireWorkItem(parentWorkItemId);
+    const children = (this.runtime.store.db.prepare(`
+      SELECT child.work_item_id,
+        (
+          SELECT action.merge_sha
+          FROM gate_actions action
+          WHERE action.work_item_id=child.work_item_id
+            AND action.gate='final_approve'
+            AND action.merge_sha IS NOT NULL
+          ORDER BY action.created_at DESC,action.rowid DESC
+          LIMIT 1
+        ) AS merge_sha
+      FROM work_items child
+      WHERE child.parent_work_item_id=?
+      ORDER BY child.child_ordinal,child.created_at,child.work_item_id
+    `).all(parentWorkItemId) as Row[]).map((row) => Object.freeze({
+      workItemId: stringValue(row, "work_item_id"),
+      mergeSha: row.merge_sha === null ? null : stringValue(row, "merge_sha"),
+    }));
+    return Object.freeze({
+      parentWorkItemId,
+      children: Object.freeze(children),
+    });
+  }
+
+  resumeDecomposedParent(workItemId: string): WorkItem {
+    const projectIds = this.decompositionFamilyProjectIds(workItemId);
+    this.runtime.store.transaction(() => {
+      const current = this.runtime.requireWorkItem(workItemId);
+      const hasChildren = this.runtime.store.db.prepare(
+        "SELECT 1 FROM work_items WHERE parent_work_item_id=? LIMIT 1",
+      ).get(workItemId) !== undefined;
+      if (current.state !== "parked" || !hasChildren) {
+        throw conflict(
+          TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+          "Only a parked decomposed parent can be resumed",
+        );
+      }
+      transitionWorkItemInTransaction(this.runtime.store, {
+        workItemId,
+        to: "coordinating",
+        actorType: "human",
+        actorId: this.runtime.config.humanPrincipal,
+        now: exactNow(this.runtime.config.now),
+        currentStage: null,
+      });
+    });
+    for (const projectId of projectIds) this.reconcileWorkflowsBestEffort(projectId);
+    return this.runtime.requireWorkItem(workItemId);
+  }
+
+  attestDeploy(workItemId: string, request: AttestDeployRequest): AttestDeployResult {
+    const projectIds = new Set<string>();
+    const result = this.runtime.store.transaction(() => {
+      const workItem = this.runtime.requireWorkItem(workItemId);
+      if (workItem.state !== "merged") {
+        throw conflict("WORK_ITEM_NOT_MERGED", "Only merged work items can be deploy-attested");
+      }
+      const existing = this.runtime.store.db.prepare(`
+        SELECT *
+        FROM gate_actions
+        WHERE work_item_id=? AND gate='deploy_attest'
+        ORDER BY created_at, rowid
+        LIMIT 1
+      `).get(workItemId);
+      let attestation: AttestDeployResult;
+      if (existing !== undefined) {
+        attestation = Object.freeze({
+          gateAction: parseGateAction({
+            gateActionId: existing.gate_action_id,
+            workItemId: existing.work_item_id,
+            gate: existing.gate,
+            actorId: existing.actor_id,
+            planRevisionId: existing.plan_revision_id,
+            verifiedSha: existing.verified_sha,
+            mergeSha: existing.merge_sha,
+            refId: existing.ref_id,
+            note: existing.note,
+            createdAt: existing.created_at,
+          }, "gateAction"),
+          duplicate: true,
+        });
+      } else {
+        const plan = this.runtime.store.db.prepare(`
+          SELECT plan_revision_id
+          FROM plan_revisions
+          WHERE work_item_id=? AND state='confirmed'
+          ORDER BY revision DESC
+          LIMIT 1
+        `).get(workItemId);
+        if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:confirmed_plan_missing");
+        const gateAction = this.runtime.insertGateActionInTransaction({
+          workItemId,
+          gate: "deploy_attest",
+          actorId: this.runtime.config.humanPrincipal,
+          planRevisionId: stringValue(plan, "plan_revision_id"),
+          verifiedSha: null,
+          mergeSha: null,
+          refId: null,
+          note: request.note ?? null,
+        });
+        attestation = Object.freeze({ gateAction, duplicate: false });
+      }
+      const contractCandidates = this.runtime.store.db.prepare(`
+        SELECT contract.work_item_id,contract.resolved_project_id,contract.parent_work_item_id
+        FROM work_items contract
+        WHERE contract.phase='contract'
+          AND contract.state='queued'
+          AND contract.parent_work_item_id=(
+            SELECT parent_work_item_id FROM work_items WHERE work_item_id=?
+          )
+        ORDER BY contract.child_ordinal,contract.work_item_id
+      `).all(workItemId) as Row[];
+      const readyContracts = contractCandidates.filter((contract) => (
+        decompositionReadinessBlocker(this.runtime.store.db, stringValue(contract, "work_item_id")) === null
+      ));
+      for (const contract of readyContracts) {
+        const contractId = stringValue(contract, "work_item_id");
+        const parentId = stringValue(contract, "parent_work_item_id");
+        const projectId = stringValue(contract, "resolved_project_id");
+        projectIds.add(projectId);
+        this.notifications?.insertNotificationInTransaction({
+          kind: "phase_ready",
+          dedupeKey: `phase_ready:${parentId}:${contractId}`,
+          projectId,
+          workItemId: contractId,
+          summary: `Contract phase ready: ${contractId}`,
+        });
+      }
+      return attestation;
+    });
+    for (const projectId of projectIds) this.reconcileWorkflowsBestEffort(projectId);
+    return result;
   }
 
   dependenciesFor(workItemId: string): readonly WorkItemDependency[] {
@@ -653,10 +832,12 @@ export class WorkItemsCollaborator {
   closeWorkItemWorkInTransaction(
     workItemId: string,
     reason: string,
-    actor: { type: "human" | "system"; id: string },
+    actor: { type: "human" | "agent" | "system"; id: string },
     now: string,
+    terminateActiveRuns = false,
   ): void {
     const persistedReason = redactForPersistence(reason);
+    retireOpenVerifyAttemptsForWorkItemInTransaction(this.runtime, workItemId, persistedReason, now);
     const linkedTasks = this.runtime.store.db.prepare(`
       SELECT task_id
       FROM (
@@ -677,7 +858,22 @@ export class WorkItemsCollaborator {
       ORDER BY task_id
     `).all(workItemId, workItemId, workItemId);
     for (const linked of linkedTasks) {
-      const task = this.runtime.requireTask(stringValue(linked, "task_id"));
+      const taskId = stringValue(linked, "task_id");
+      if (terminateActiveRuns) {
+        const runIds = this.runtime.store.db.prepare(`
+          SELECT run_id
+          FROM runs
+          WHERE task_id=? AND status='active'
+          ORDER BY started_at,run_id
+        `).all(taskId).map((row) => stringValue(row, "run_id"));
+        if (runIds.length > 0 && this.#suspendActiveRunInTransaction === undefined) {
+          throw new Error("TASK_BOARD_PARENT_TERMINATION_RUN_SUSPENDER_MISSING");
+        }
+        for (const runId of runIds) {
+          this.#suspendActiveRunInTransaction!(runId, persistedReason, actor, now);
+        }
+      }
+      const task = this.runtime.requireTask(taskId);
       if (!isHardTerminalTaskStatus(task.status)) {
         const taskUpdate = this.runtime.store.db.prepare(`
           UPDATE tasks
@@ -733,8 +929,104 @@ export class WorkItemsCollaborator {
     }
   }
 
+  private cancelChildrenForParentTerminationInTransaction(input: Readonly<{
+    parentWorkItemId: string;
+    state: "abandoned" | "dead_letter";
+    actorType: "human" | "agent" | "system";
+    actorId: string;
+    now: string;
+  }>): void {
+    const children = this.runtime.store.db.prepare(`
+      SELECT work_item_id,state
+      FROM work_items
+      WHERE parent_work_item_id=?
+      ORDER BY child_ordinal,created_at,work_item_id
+    `).all(input.parentWorkItemId) as Row[];
+    const note = `parent ${input.parentWorkItemId} ${input.state}`;
+    for (const child of children) {
+      if (isTerminalWorkItemState(String(child.state) as WorkItemState)) continue;
+      const abandoned = this.cancelWorkItemInTransaction({
+        workItemId: String(child.work_item_id),
+        reason: note,
+        actor: { type: input.actorType, id: input.actorId },
+        now: input.now,
+        refId: input.parentWorkItemId,
+        terminateActiveRuns: true,
+      });
+      this.notifications?.insertNotificationAtInTransaction({
+        kind: "park_auto_abandoned",
+        dedupeKey: `park_auto_abandoned:${abandoned.workItemId}:${input.parentWorkItemId}`,
+        projectId: abandoned.resolvedProjectId,
+        workItemId: abandoned.workItemId,
+        summary: `Child auto-abandoned after parent ${input.parentWorkItemId} ${input.state}: ${abandoned.workItemId}`,
+      }, input.now);
+    }
+  }
+
+  private cancelWorkItemInTransaction(input: Readonly<{
+    workItemId: string;
+    reason: string;
+    actor: { type: "human" | "agent" | "system"; id: string };
+    now: string;
+    refId: string | null;
+    terminateActiveRuns: boolean;
+  }>): WorkItem {
+    const current = this.runtime.requireWorkItem(input.workItemId);
+    if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
+    const persistedReason = redactForPersistence(input.reason);
+    let planningProjectId: string | null = current.resolvedProjectId;
+    if (current.planningTaskId !== null) {
+      const planningTask = this.runtime.requireTask(current.planningTaskId);
+      planningProjectId = planningTask.projectId;
+    }
+    this.closeWorkItemWorkInTransaction(
+      input.workItemId,
+      persistedReason,
+      input.actor,
+      input.now,
+      input.terminateActiveRuns,
+    );
+    if (planningProjectId !== null) {
+      this.runtime.insertEvent(
+        planningProjectId,
+        current.planningTaskId,
+        input.actor,
+        "work_item_cancelled",
+        {
+          workItemId: input.workItemId,
+          previousState: current.state,
+          previousVersion: current.version,
+          reason: persistedReason,
+        },
+        input.now,
+      );
+    }
+    transitionWorkItemInTransaction(this.runtime.store, {
+      workItemId: input.workItemId,
+      to: "abandoned",
+      actorType: input.actor.type,
+      actorId: input.actor.id,
+      now: input.now,
+      endedAt: input.now,
+      cancelledReason: persistedReason,
+      currentStage: null,
+    });
+    this.runtime.insertGateActionInTransaction({
+      workItemId: input.workItemId,
+      gate: "cancel",
+      actorId: input.actor.id,
+      planRevisionId: null,
+      verifiedSha: null,
+      mergeSha: null,
+      refId: input.refId,
+      note: persistedReason,
+    });
+    return this.runtime.requireWorkItem(input.workItemId);
+  }
+
   private cancelWorkItem(workItemId: string, version: number, reason: string): WorkItem {
     const persistedReason = redactForPersistence(reason);
+    const projectIds = this.decompositionFamilyProjectIds(workItemId);
     const cancelled = this.runtime.store.transaction(() => {
       const current = this.runtime.requireWorkItem(workItemId);
       if (current.state === "abandoned") {
@@ -745,53 +1037,26 @@ export class WorkItemsCollaborator {
       if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
       const now = exactNow(this.runtime.config.now);
       const actor = { type: "human" as const, id: this.runtime.config.humanPrincipal };
-      let planningProjectId: string | null = current.resolvedProjectId;
-      if (current.planningTaskId !== null) {
-        const planningTask = this.runtime.requireTask(current.planningTaskId);
-        planningProjectId = planningTask.projectId;
-      }
-      this.closeWorkItemWorkInTransaction(workItemId, reason, actor, now);
-      if (planningProjectId !== null) {
-        this.runtime.insertEvent(
-          planningProjectId,
-          current.planningTaskId,
-          actor,
-          "work_item_cancelled",
-          {
-            workItemId,
-            previousState: current.state,
-            previousVersion: current.version,
-            reason: persistedReason,
-          },
-          now,
-        );
-      }
-      transitionWorkItemInTransaction(this.runtime.store, {
+      return this.cancelWorkItemInTransaction({
         workItemId,
-        to: "abandoned",
-        actorType: "human",
-        actorId: this.runtime.config.humanPrincipal,
+        reason: persistedReason,
+        actor,
         now,
-        endedAt: now,
-        cancelledReason: persistedReason,
-        currentStage: null,
-      });
-      this.runtime.insertGateActionInTransaction({
-        workItemId,
-        gate: "cancel",
-        actorId: this.runtime.config.humanPrincipal,
-        planRevisionId: null,
-        verifiedSha: null,
-        mergeSha: null,
         refId: null,
-        note: persistedReason,
+        terminateActiveRuns: false,
       });
-      return this.runtime.requireWorkItem(workItemId);
     });
-    if (cancelled.resolvedProjectId !== null) {
-      this.reconcileWorkflowsBestEffort(cancelled.resolvedProjectId);
-    }
+    for (const projectId of projectIds) this.reconcileWorkflowsBestEffort(projectId);
     return cancelled;
+  }
+
+  private decompositionFamilyProjectIds(parentWorkItemId: string): ReadonlySet<string> {
+    return new Set((this.runtime.store.db.prepare(`
+      SELECT project.project_id
+      FROM projects project
+      WHERE ${decompositionFamilyTouchesProjectSql("?", "project.project_id")}
+      ORDER BY project.project_id
+    `).all(parentWorkItemId, parentWorkItemId) as Row[]).map((row) => stringValue(row, "project_id")));
   }
 
   private archiveWorkItem(workItemId: string, version: number): WorkItem {

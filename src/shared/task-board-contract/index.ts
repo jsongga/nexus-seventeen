@@ -192,7 +192,7 @@ export function isTerminalWorkItemState(state: WorkItemState): boolean {
 export const WORK_ITEM_TRANSITIONS: Readonly<
   Record<WorkItemState, readonly WorkItemState[]>
 > = {
-  queued: ["planning", "parked", "abandoned", "dead_letter"],
+  queued: ["planning", "designing", "implementing", "parked", "abandoned", "dead_letter"],
   planning: [
     "plan_approval",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
@@ -219,7 +219,7 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "abandoned",
     "dead_letter",
   ],
-  coordinating: ["final_approval", "parked", "abandoned", "dead_letter"],
+  coordinating: ["final_approval", "merged", "parked", "abandoned", "dead_letter"],
   designing: ["implementing", "parked", "abandoned", "dead_letter"],
   implementing: [
     "verifying",
@@ -260,9 +260,10 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "dead_letter",
   ],
   fixing: ["verifying", "parked", "abandoned", "dead_letter"],
-  final_approval: ["merged", "fixing", "implementing", "parked", "abandoned", "dead_letter"],
+  final_approval: ["coordinating", "merged", "fixing", "implementing", "parked", "abandoned", "dead_letter"],
   merged: [],
   parked: [
+    "coordinating",
     "planning",
     "implementing",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
@@ -550,6 +551,19 @@ export interface WorkItem {
   readonly archivedAt: string | null;
 }
 
+export interface ChildWorkItem extends WorkItem {
+  readonly deployAttested: boolean;
+  readonly mergeSha: string | null;
+}
+
+export interface ParentCompletion {
+  readonly parentWorkItemId: string;
+  readonly children: readonly Readonly<{
+    readonly workItemId: string;
+    readonly mergeSha: string | null;
+  }>[];
+}
+
 export interface WorkItemDependency {
   readonly workItemId: string;
   readonly dependsOnWorkItemId: string;
@@ -741,7 +755,7 @@ export interface VerifyAttempt {
   readonly attempt: number;
   readonly verifyRunId: string | null;
   readonly workspacePath: string | null;
-  readonly state: "starting" | "running" | "green" | "failed" | "died" | "failed_to_start";
+  readonly state: "starting" | "running" | "green" | "failed" | "died" | "failed_to_start" | "retired";
   readonly checkResults: readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[] | null;
   readonly detail: string | null;
   readonly createdAt: string;
@@ -873,6 +887,15 @@ export interface RejectPlanRevisionRequest {
 
 export interface ApprovePipelineMergeRequest {
   readonly version: number;
+}
+
+export interface AttestDeployRequest {
+  readonly note?: string;
+}
+
+export interface AttestDeployResult {
+  readonly gateAction: GateAction;
+  readonly duplicate: boolean;
 }
 
 export interface RejectFinalApprovalRequest {

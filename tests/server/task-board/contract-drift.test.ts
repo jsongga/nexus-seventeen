@@ -154,6 +154,12 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
           sqlList(version === 22 ? V22_PARK_CATEGORIES : V25_PARK_CATEGORIES),
         );
       }
+      if (version <= 25 && row.name === "verify_attempts") {
+        sql = sql.replace(
+          "state IN ('starting','running','green','failed','died','failed_to_start','retired')",
+          "state IN ('starting','running','green','failed','died','failed_to_start')",
+        );
+      }
       if (version === 19 && row.name === "work_items") {
         sql = sql.replace("  pipeline_branch TEXT NULL,\n  base_sha TEXT NULL,\n", "");
       } else if (version === 19 && row.name === "plan_revisions") {
@@ -748,6 +754,22 @@ test("populated v25 data upgrades through the v26 rebuild without weakening new 
         '[]', '[]', '[]', NULL, 'v26-project', '{}', 'proposed', 'agent:planner', NULL,
         '${createdAt}', NULL
       );
+      INSERT INTO work_nodes(
+        node_id, plan_revision_id, project_id, title, objective,
+        acceptance_criteria_json, stage_template_json, current_stage, state,
+        version, created_at, updated_at
+      ) VALUES (
+        'v26-node', 'v25-parent-plan', 'v26-project', 'Preserve verifier state',
+        'Keep the open attempt through both migrations.', '["The attempt survives."]',
+        '["verification"]', NULL, 'pending', 1, '${createdAt}', '${createdAt}'
+      );
+      INSERT INTO verify_attempts(
+        verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
+        state, check_results_json, detail, created_at, ended_at
+      ) VALUES (
+        'v26-verify-attempt', 'v26-node', 'verification', 1, 'run-v26', '/tmp/v26-verify',
+        'running', NULL, NULL, '${createdAt}', NULL
+      );
       INSERT INTO work_item_transitions(
         work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
       ) VALUES
@@ -807,6 +829,21 @@ test("populated v25 data upgrades through the v26 rebuild without weakening new 
       "final_approval_withdrawn");
     assert.equal(upgraded.db.prepare("SELECT gate FROM gate_actions WHERE gate_action_id='v25-gate'").get()?.gate,
       "cancel");
+    assert.deepEqual({ ...upgraded.db.prepare(`
+      SELECT verify_attempt_id, verify_run_id, workspace_path, state
+      FROM verify_attempts WHERE verify_attempt_id='v26-verify-attempt'
+    `).get() }, {
+      verify_attempt_id: "v26-verify-attempt",
+      verify_run_id: "run-v26",
+      workspace_path: "/tmp/v26-verify",
+      state: "running",
+    });
+    upgraded.db.prepare(`
+      UPDATE verify_attempts SET state='retired',ended_at=? WHERE verify_attempt_id='v26-verify-attempt'
+    `).run(createdAt);
+    assert.equal(upgraded.db.prepare(`
+      SELECT state FROM verify_attempts WHERE verify_attempt_id='v26-verify-attempt'
+    `).get()?.state, "retired");
     assert.deepEqual({ ...upgraded.db.prepare(`
       SELECT work_item_id, category, reason, parked_at, resolved_at, resolution
       FROM park_records WHERE park_record_id='v25-park'
@@ -1033,7 +1070,7 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
   attempt INTEGER NOT NULL,
   verify_run_id TEXT NULL,
   workspace_path TEXT NULL,
-  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start')),
+  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start','retired')),
   check_results_json TEXT NULL,
   detail TEXT NULL,
   created_at TEXT NOT NULL,

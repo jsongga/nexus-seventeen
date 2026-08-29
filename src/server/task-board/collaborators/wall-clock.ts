@@ -191,7 +191,7 @@ export class WallClockCollaborator {
         SELECT node.plan_revision_id FROM work_nodes AS node WHERE node.node_id=attempt.node_id
       )
       JOIN work_items AS item ON item.work_item_id=plan.work_item_id
-      WHERE run.status='active'
+      WHERE run.status='active' AND item.state<>'coordinating'
 
       UNION ALL
 
@@ -207,7 +207,7 @@ export class WallClockCollaborator {
       FROM runs AS run
       JOIN work_item_planning_tasks AS planning ON planning.task_id=run.task_id
       JOIN work_items AS item ON item.work_item_id=planning.work_item_id
-      WHERE run.status='active'
+      WHERE run.status='active' AND item.state<>'coordinating'
 
       UNION ALL
 
@@ -224,6 +224,7 @@ export class WallClockCollaborator {
       JOIN work_item_design_tasks AS design ON design.task_id=run.task_id
       JOIN work_items AS item ON item.work_item_id=design.work_item_id
       WHERE run.status='active'
+        AND item.state<>'coordinating'
         AND EXISTS (
           SELECT 1 FROM pipeline_plans AS plan WHERE plan.work_item_id=design.work_item_id
         )

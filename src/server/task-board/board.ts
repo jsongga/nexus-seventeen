@@ -6,6 +6,8 @@ import {
   type AgentProfile,
   type AgentRun,
   type ApprovePipelineMergeRequest,
+  type AttestDeployRequest,
+  type AttestDeployResult,
   type AnswerHumanQuestionRequest,
   type BacklogTaskRequest,
   type BacklogTaskResponse,
@@ -13,6 +15,7 @@ import {
   type BoardPause,
   type BoardSnapshot,
   type BoardTask,
+  type ChildWorkItem,
   type ClaimRunRequest,
   type ClaimRunResponse,
   type ClaimRunResult,
@@ -30,6 +33,7 @@ import {
   type FindingsLedger,
   type HumanQuestion,
   type InterruptAgentRequest,
+  type ParentCompletion,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
@@ -140,14 +144,6 @@ export class TaskBoard {
     this.#notifications = new NotificationsCollaborator(this.#runtime, dependencies.notificationDelivery);
     this.#automation = new AutomationCollaborator(this.#runtime);
     this.#tasks = new TasksCollaborator(this.#runtime);
-    this.#projects = new ProjectsCollaborator(
-      this.#runtime,
-      this.#automation,
-      this.#tasks,
-      dependencies.git,
-      {},
-      dependencies.mergePipeline,
-    );
     const reconcileProjectWorkflows = (projectId: string) => {
       this.#projects.reconcileWorkflowsBestEffort(projectId);
     };
@@ -156,7 +152,24 @@ export class TaskBoard {
       this.#automation,
       this.#tasks,
       reconcileProjectWorkflows,
+      this.#notifications,
     );
+    this.#projects = new ProjectsCollaborator(
+      this.#runtime,
+      this.#automation,
+      this.#tasks,
+      dependencies.git,
+      {},
+      dependencies.mergePipeline,
+      this.#notifications,
+      this.#boardPause,
+    );
+    this.#projects.setStartDesignInTransaction((workItemId) => {
+      const task = this.#workItems.startWorkItemDesignInTransaction(workItemId);
+      if (task === null) {
+        throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A design manager is unavailable");
+      }
+    });
     this.#parkLifecycle = new ParkLifecycleCollaborator(
       this.#runtime,
       this.#notifications,
@@ -166,7 +179,6 @@ export class TaskBoard {
     this.#baseBranchPoll = new BaseBranchPollCollaborator(
       this.#runtime,
       this.#projects,
-      this.#notifications,
       dependencies.git,
     );
     this.#runs = new RunsCollaborator(
@@ -177,6 +189,8 @@ export class TaskBoard {
       dependencies.git,
       this.#boardPause,
     );
+    this.#workItems.setSuspendActiveRunInTransaction((runId, reason, actor, now) =>
+      this.#runs.suspendActiveRunInTransaction(runId, reason, actor, now));
     this.#wallClock = new WallClockCollaborator(this.#runtime, this.#runs, this.#notifications);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#messages = new MessagesCollaborator(this.#runtime);
@@ -355,6 +369,11 @@ export class TaskBoard {
     return this.#workItems.requireWorkItem(workItemId);
   }
 
+  resumeWorkItem(workItemId: string): WorkItemDetail {
+    this.#workItems.resumeDecomposedParent(workItemId);
+    return this.#workItems.requireWorkItem(workItemId);
+  }
+
   getAutomationConfiguration(): AutomationConfiguration {
     return this.#automation.getConfiguration();
   }
@@ -373,8 +392,16 @@ export class TaskBoard {
     return this.#workItems.listWorkItems(includeArchived);
   }
 
-  listChildren(parentWorkItemId: string): readonly WorkItem[] {
+  listChildren(parentWorkItemId: string): readonly ChildWorkItem[] {
     return this.#workItems.listChildren(parentWorkItemId);
+  }
+
+  parentCompletion(parentWorkItemId: string): ParentCompletion {
+    return this.#workItems.parentCompletion(parentWorkItemId);
+  }
+
+  attestDeploy(workItemId: string, request: AttestDeployRequest): AttestDeployResult {
+    return this.#workItems.attestDeploy(workItemId, request);
   }
 
   dependenciesFor(workItemId: string): readonly WorkItemDependency[] {

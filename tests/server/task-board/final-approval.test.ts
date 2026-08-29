@@ -17,6 +17,7 @@ import {
 import { createTaskBoardService, SkillRegistry, TaskBoard } from "#server/task-board";
 import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
 import {
+  registerParentTerminationCascade,
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
 } from "#server/task-board/collaborators/work-item-transitions";
@@ -461,6 +462,7 @@ async function settleMergeConflict(
 ): Promise<string> {
   const store = await TaskBoardStore.open(path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   try {
     const workflow = new TransparentWorkflow(
       store.db,
@@ -1421,6 +1423,7 @@ test("confirming a second overlapping pipeline plan holds its node while the fir
   fixture.board.close();
   const store = await TaskBoardStore.open(fixture.path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   try {
     store.transaction(() => transitionWorkItemInTransaction(store, {
       workItemId: first.workItemId,
@@ -1851,6 +1854,7 @@ test("a parked pipeline item still holds an overlapping pipeline node", async ()
 
   const store = await TaskBoardStore.open(fixture.path);
   registerWorkItemTransitionStore(store);
+  registerParentTerminationCascade(store, () => undefined);
   try {
     store.transaction(() => transitionWorkItemInTransaction(store, {
       workItemId: first.workItemId,

@@ -25,6 +25,7 @@ import {
 import {
   parseAgentMessage,
   parseAnswer,
+  parseAttestDeployRequest,
   parseApprovePipelineMergeRequest,
   parseBacklogTask,
   parseBoardPauseRequest,
@@ -401,6 +402,16 @@ export class TaskBoardService {
       });
       return;
     }
+    const attestDeployMatch = /^\/v1\/work-items\/([^/]+)\/attest-deploy$/u.exec(url.pathname);
+    if (attestDeployMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, this.#board.attestDeploy(
+        parseRouteIdentifier(attestDeployMatch[1], "workItemId"),
+        parseAttestDeployRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+      ));
+      return;
+    }
     const pipelineSummaryMatch = /^\/v1\/work-items\/([^/]+)\/pipeline-summary$/u.exec(url.pathname);
     if (pipelineSummaryMatch && request.method === "GET") {
       noQuery(url);
@@ -430,6 +441,15 @@ export class TaskBoardService {
         parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes)),
       );
       sendJson(response, 200, { workItem });
+      return;
+    }
+    const resumeWorkItemMatch = /^\/v1\/work-items\/([^/]+)\/resume$/u.exec(url.pathname);
+    if (resumeWorkItemMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { workItem: this.#board.resumeWorkItem(
+        parseRouteIdentifier(resumeWorkItemMatch[1], "workItemId"),
+      ) });
       return;
     }
     const workItemAuditMatch = /^\/v1\/work-items\/([^/]+)\/audit$/u.exec(url.pathname);

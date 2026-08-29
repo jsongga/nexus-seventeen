@@ -57,7 +57,7 @@ CREATE TABLE verify_attempts (
   attempt INTEGER NOT NULL,
   verify_run_id TEXT NULL,
   workspace_path TEXT NULL,
-  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start')),
+  state TEXT NOT NULL CHECK (state IN ('starting','running','green','failed','died','failed_to_start','retired')),
   check_results_json TEXT NULL,
   detail TEXT NULL,
   created_at TEXT NOT NULL,
@@ -1297,6 +1297,30 @@ export function migrateVersion25To26(db: DatabaseSync): void {
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_dependencies'",
   ).get() !== undefined;
   const createWorkItemDependencies = hasWorkItemDependencies ? "" : WORK_ITEM_DEPENDENCIES_SCHEMA;
+  const hasVerifyAttempts = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='verify_attempts'",
+  ).get() !== undefined;
+  const verifyAttemptsAcceptRetired = hasVerifyAttempts && String(db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='verify_attempts'",
+  ).get()?.sql).includes("'retired'");
+  const migrateVerifyAttempts = !hasVerifyAttempts
+    ? VERIFY_ATTEMPTS_SCHEMA
+    : verifyAttemptsAcceptRetired
+      ? ""
+      : `
+        ALTER TABLE verify_attempts RENAME TO verify_attempts_v25;
+        ${VERIFY_ATTEMPTS_SCHEMA}
+        INSERT INTO verify_attempts(
+          verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
+          state, check_results_json, detail, created_at, ended_at
+        )
+        SELECT
+          verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
+          state, check_results_json, detail, created_at, ended_at
+        FROM verify_attempts_v25
+        ORDER BY rowid;
+        DROP TABLE verify_attempts_v25;
+      `;
   const hasLegacyQuotedTasks = String(db.prepare(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
   ).get()?.sql).startsWith('CREATE TABLE "tasks"');
@@ -1352,7 +1376,8 @@ export function migrateVersion25To26(db: DatabaseSync): void {
     && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gate_actions'").get()?.sql)
       .includes("'deploy_attest'")
     && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='park_records'").get()?.sql)
-      .includes("'child_failed'");
+      .includes("'child_failed'")
+    && verifyAttemptsAcceptRetired;
   if (alreadyVersion26) {
     db.exec("BEGIN IMMEDIATE;");
     try {
@@ -1381,6 +1406,7 @@ export function migrateVersion25To26(db: DatabaseSync): void {
       ${addPlanRevisionChildren}
       ${canonicalizeLegacyTasks}
       ${canonicalizeLegacyWakeups}
+      ${migrateVerifyAttempts}
       ALTER TABLE work_item_transitions RENAME TO work_item_transitions_v25;
       DROP INDEX work_items_updated;
       DROP INDEX work_items_display_order;

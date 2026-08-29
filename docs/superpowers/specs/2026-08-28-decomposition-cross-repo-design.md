@@ -61,6 +61,29 @@ Runtime units per task (contract, migration equivalence, split-rule matrix, read
 - **Child plans are leaves**: `changeShape = feature`, tier inherited from the parent (else `standard`), `criterionChecks = []` — a declaration carries acceptance-criteria text only. Follow-up candidate: `DeclaredChild.criterionChecks`.
 - **Children are target-locked from creation** and exempt from intake planning (`workItemAwaitsIntakePlanning`); the child's v2 template must pass the executor-drift check at confirm.
 
+### Rulings added during implementation (campaign 10 Task 3 review, 2026-08-29)
+
+- **Merge policy is keyed on phases, not change shape** — a phased declaration follows the auto-merge policy (Expand/Migrate under parent plan authorization, Contract human-gated); any unphased declaration (feature *or* blast-radius) follows the one-parent-approval policy.
+- **Individually merged children are tolerated** — the parent is promoted when every child is in `final_approval` or already `merged`; parent approval fans out over the unmerged children only; if the last child merges on its own, the parent settles directly.
+- **Contract readiness is transitive over the parent** — every Expand and Migrate sibling must be merged *and* deploy-attested, regardless of declared edges.
+- **Policy errors are isolated per parent** — a transient merge error (busy/unavailable repo) waits for the next reconcile pass; a non-transient one leaves the child where the human merge path would; neither can stop the pass for other items.
+- **`parked → coordinating`** exists for decomposed parents (after a `child_failed` park). New edges (`queued → designing|implementing`, `coordinating → merged`, `final_approval → coordinating`, `parked → coordinating`) live in the contract table but are contextually guarded: the first pair for children only, the rest for decomposed parents only.
+- Gate-action `refId` stays an identifier; the parent's completion action stores no child list (64 children would overflow any inline bound) — completion detail is derived from the children and their own `final_approve` actions.
+
+- **Unphased `dependsOn` is merge order only** — children of an unphased declaration start in parallel (the split rule already requires independent mergeability); the fan-out merges them in dependency order. Phased children keep merge-gated readiness.
+- **Delayed same-repo children re-base at first activation** — a phased child's `base_sha` is re-resolved from its project head when it first activates (Contract must see Expand's merge), never from the confirm-time snapshot.
+- Project-scoped reconciliation only visits decomposition families touching that project; a transient merge failure on one sibling does not stop independent siblings in the same pass.
+
+- **Automatic merges honour the base-advance guard** — before an Expand/Migrate auto-merge the reconciler runs the same base-advance predicate the base-branch poll uses; an advanced base withdraws the approval instead of merging.
+- **Rejecting a decomposed parent** in `final_approval` fans out like approval: every unmerged child in `final_approval` is rejected through its own path with the same note, and the parent returns to `coordinating` (otherwise the next reconcile pass would simply re-promote it). **Resuming a parked decomposed parent** is a work-item-level human action (`resume`) that returns it to `coordinating`.
+
+- **Board pause gates the decomposition policy pass** — no automatic merge, promotion, or settlement while paused.
+- **Parent termination cascades down** — abandoning or dead-lettering a decomposed parent cancels every non-terminal child (merged children untouched) in the same transaction.
+
+- **A family touches a project** if the parent's or any child's project matches — one helper for every project-scoped pass. **Any unmerged child leaving `final_approval`** (rejection, base withdrawal) demotes a promoted parent to `coordinating`. **Cancellation retires open machine-verification attempts**, cascaded or not.
+
+- **One level of decomposition** — a child's plan may not declare children. **Resuming a `child_failed` park means proceeding without the failed child — for unphased families only**: abandoned children are excluded from promotion and completion counts (the completion note records them). In a **phased** family an abandoned Expand or Migrate makes the Contract phase unsafe: Contract stays blocked (abandoned never counts as merged+attested), the parent can never complete, and cancelling the parent is the only exit. *(Re-ruled 2026-08-29 after the round-6 review showed a Contract could activate over an abandoned Migrate.)* **Retiring a verification attempt on cancellation stops the verifier and cleans its workspace** — retirement is a terminal outcome of the attempt state machine, not a bookkeeping flag.
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

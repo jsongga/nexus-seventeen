@@ -7,6 +7,7 @@ import type {
   WorkItemDependency,
 } from "#shared/task-board-contract";
 import {
+  ContractValidationError,
   parseWorkflowPlanDraft,
   validateWorkflowPlanChildren,
 } from "#shared/task-board-contract/validate";
@@ -133,7 +134,92 @@ function validateMaterializedChildPlan(board: TaskBoard, child: WorkItem): void 
   validateWorkflowPlanChildren(parsed, child.resolvedProjectId);
 }
 
-test("confirming a feature split creates queued children with confirmed plans, gates, dependencies, and projections", async () => {
+test("a materialized child cannot confirm a plan that declares another decomposition level", async () => {
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${PROVIDER_SHA}\n` });
+  const { revision, parent } = proposeDecomposedPlan(
+    fixture.board,
+    fixture.project.projectId,
+    [{
+      key: "child",
+      objective: "Materialize the only allowed decomposition level.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/child"],
+      acceptanceCriteria: ["The child owns a leaf plan."],
+    }],
+    "feature",
+    "nested-decomposition-rejected",
+  );
+  try {
+    fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+    const [child] = fixture.board.listChildren(parent.workItemId);
+    assert.ok(child);
+    const { plan } = childPlan(fixture.board, child);
+    const nestedChildren: readonly DeclaredChild[] = [{
+      key: "grandchild",
+      objective: "Attempt an unsupported nested split.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/grandchild"],
+      acceptanceCriteria: ["Nested decomposition is rejected."],
+    }];
+    const nestedPlan = parseWorkflowPlanDraft({
+      objective: plan.objective,
+      assumptions: plan.assumptions,
+      acceptanceCriteria: plan.acceptanceCriteria,
+      changeShape: "feature",
+      tier: "standard",
+      declaredScope: plan.declaredScope,
+      children: nestedChildren,
+      nodes: [{
+        nodeId: "nested-child-plan",
+        title: "Nested child plan",
+        objective: "Attempt the unsupported split.",
+        acceptanceCriteria: ["The plan remains unconfirmed."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      }],
+    });
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        UPDATE plan_revisions
+        SET state='proposed',confirmed_by=NULL,confirmed_at=NULL,children=?
+        WHERE plan_revision_id=?
+      `).run(JSON.stringify(nestedChildren), plan.planRevisionId);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () => fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 400
+        && error.code === "WORKFLOW_INVALID"
+        && error.message === "workflowPlan.children is invalid for a child work item",
+    );
+    assert.throws(
+      () => (validateWorkflowPlanChildren as (
+        candidate: typeof nestedPlan,
+        projectId: string,
+        parentWorkItemId: string,
+      ) => void)(nestedPlan, fixture.project.projectId, parent.workItemId),
+      (error: unknown) => error instanceof ContractValidationError
+        && error.message === "workflowPlan.children is invalid for a child work item",
+    );
+    const unchanged = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(unchanged.prepare("SELECT state FROM plan_revisions WHERE plan_revision_id=?")
+        .get(plan.planRevisionId)?.state, "proposed");
+      assert.equal(unchanged.prepare("SELECT COUNT(*) AS count FROM work_items WHERE parent_work_item_id=?")
+        .get(child.workItemId)?.count, 0);
+    } finally {
+      unchanged.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("confirming a feature split creates independently claimable children with merge-order dependencies", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${PROVIDER_SHA}\n` });
   const children: readonly DeclaredChild[] = [{
     key: "provider-contract",
@@ -213,8 +299,8 @@ test("confirming a feature split creates queued children with confirmed plans, g
       childOrdinal: ordinal,
       pipelineBranch: `task/${materialized[ordinal]!.workItemId}`,
       baseSha: PROVIDER_SHA,
-      state: "queued",
-      currentStage: null,
+      state: "implementing",
+      currentStage: "implementation",
     })));
 
     for (const [ordinal, child] of materialized.entries()) {
@@ -255,8 +341,8 @@ test("confirming a feature split creates queued children with confirmed plans, g
         acceptanceCriteria: declaration.acceptanceCriteria,
         dependencyNodeIds: [],
         stageTemplate: ["implementation", "testing", "verification"],
-        state: "pending",
-        currentStage: null,
+        state: "active",
+        currentStage: "implementation",
       });
       assert.deepEqual(
         fixture.board.workItemAudit(child.workItemId).gateActions.map((action) => ({
@@ -329,10 +415,10 @@ test("pre-confirmed children stay out of intake planning after updates and manag
       token: "post-decomposition-manager-token-0123456789",
     });
 
-    const stillQueued = fixture.board.requireWorkItem(child.workItemId);
-    assert.equal(stillQueued.state, "queued");
-    assert.equal(stillQueued.currentStage, null);
-    assert.equal(stillQueued.planningTaskId, null);
+    const stillPreconfirmed = fixture.board.requireWorkItem(child.workItemId);
+    assert.equal(stillPreconfirmed.state, "implementing");
+    assert.equal(stillPreconfirmed.currentStage, "implementation");
+    assert.equal(stillPreconfirmed.planningTaskId, null);
   } finally {
     fixture.board.close();
   }
@@ -462,7 +548,7 @@ test("confirming a phased blast-radius plan preserves project, phase, ordinal, d
     assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "coordinating");
     assert.deepEqual(
       gitCalls.map((arguments_) => arguments_[arguments_.indexOf("-C") + 1]).sort(),
-      ["/repos/consumer", "/repos/provider"],
+      ["/repos/consumer", "/repos/provider", "/repos/provider"],
     );
 
     const expand = materialized[0]!;
@@ -848,7 +934,7 @@ test("workflow reconciliation ignores a coordinating parent's ready node", async
   }
 });
 
-test("hazardous decomposition coordinates a branchless parent without a parent Design task", async () => {
+test("hazardous decomposition coordinates a branchless parent and starts Design on its ready child", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${PROVIDER_SHA}\n` });
   configureChildPipeline(fixture.board);
   const parent = fixture.board.createWorkItem(workItemRequest({
@@ -891,15 +977,17 @@ test("hazardous decomposition coordinates a branchless parent without a parent D
     assert.equal(coordinating.state, "coordinating");
     assert.equal(coordinating.pipelineBranch, null);
     assert.equal(coordinating.baseSha, null);
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.some(
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.filter(
       (task) => task.title.startsWith("Design workflow:"),
-    ), false);
+    ).length, 1);
     const [child] = fixture.board.listChildren(parent.workItemId);
     assert.ok(child);
-    assert.equal(child.state, "queued");
-    const plan = childPlan(fixture.board, child).plan;
+    assert.equal(child.state, "designing");
+    const { plan, node } = childPlan(fixture.board, child);
     assert.equal(plan.changeShape, "feature");
     assert.equal(plan.tier, "hazardous");
+    assert.equal(node.state, "pending");
+    assert.equal(node.currentStage, null);
     assert.doesNotThrow(() => validateMaterializedChildPlan(fixture.board, child));
   } finally {
     fixture.board.close();
@@ -948,6 +1036,7 @@ test("hazardous decomposition with a non-pipeline parent node materializes child
     assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "coordinating");
     const [child] = fixture.board.listChildren(parent.workItemId);
     assert.ok(child);
+    assert.equal(child.state, "designing");
     assert.equal(childPlan(fixture.board, child).plan.tier, "hazardous");
   } finally {
     fixture.board.close();

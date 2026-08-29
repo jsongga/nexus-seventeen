@@ -12,11 +12,13 @@ import { ProjectsCollaborator } from "#server/task-board/collaborators/projects"
 import {
   DEFAULT_SUPERVISOR_PATH,
   VerifyAttemptsCollaborator,
+  retireOpenVerifyAttemptsForWorkItemInTransaction,
   type MachineVerifyRunner,
   type MachineVerifyWorkspaceManager,
 } from "#server/task-board/collaborators/verify-attempts";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
+import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   TransparentWorkflow,
@@ -116,6 +118,7 @@ class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
 
 class FakeRunner implements MachineVerifyRunner {
   readonly starts: string[] = [];
+  readonly terminateCalls: string[] = [];
   readonly statusCalls: string[] = [];
   readonly tailCalls: Array<{ id: string; bytes: number }> = [];
   startErrors: Error[] = [];
@@ -123,6 +126,8 @@ class FakeRunner implements MachineVerifyRunner {
   tailError: Error | null = null;
   statusState: VerifyRunStatus["state"] = "running";
   tailText = "verify log tail";
+  onStart: (() => void | Promise<void>) | null = null;
+  onStatus: (() => void | Promise<void>) | null = null;
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -134,12 +139,19 @@ class FakeRunner implements MachineVerifyRunner {
     this.starts.push(this.repoRoot);
     const error = this.startErrors.shift();
     if (error !== undefined) throw error;
+    await this.onStart?.();
     return `verify-run-${this.starts.length}`;
+  }
+
+  async terminate(id: string): Promise<void> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.terminateCalls.push(id);
   }
 
   async status(id: string): Promise<VerifyRunStatus> {
     assert.equal(this.runtime.store.hasOpenTransaction, false);
     this.statusCalls.push(id);
+    await this.onStatus?.();
     if (this.statusError !== null) throw this.statusError;
     return {
       id,
@@ -174,6 +186,7 @@ async function attemptFixture(
   const boardConfig = config(fixture.path);
   const store = await TaskBoardStore.open(boardConfig.dbPath);
   const runtime = new TaskBoardRuntime(boardConfig, store);
+  registerParentTerminationCascade(store, () => undefined);
   const planRevisionId = `plan-machine-verify-${suffix}`;
   const nodeId = `node-machine-verify-${suffix}`;
   const verifyAttemptId = `verify-attempt-${suffix}`;
@@ -340,6 +353,153 @@ test("a stored confirmed v1 pipeline reaches final approval after a green machin
       ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
         .get(fixture.nodeId),
     }, { state: "completed", current_stage: null });
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retiring a starting attempt after spawn terminates its process and removes its workspace", async () => {
+  const fixture = await attemptFixture("retired-while-starting", "starting", [], true);
+  try {
+    fixture.runner.onStart = () => {
+      fixture.store.transaction(() => {
+        assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z",
+        ), 1);
+      });
+    };
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.settlements, []);
+    assert.equal(Number(fixture.store.db.prepare(
+      "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
+    ).get(fixture.nodeId)?.count), 0);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retiring a running attempt terminates its process and removes its workspace", async () => {
+  const fixture = await attemptFixture("retired-while-running", "running", [], true);
+  try {
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.settlements, []);
+    assert.equal(Number(fixture.store.db.prepare(
+      "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
+    ).get(fixture.nodeId)?.count), 0);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retirement racing a running verify settlement cleans the workspace exactly once and rejects its late write", async () => {
+  const fixture = await attemptFixture("late-cancellation", "running", [], true);
+  let releaseStatus!: () => void;
+  let markStatusStarted!: () => void;
+  const statusHeld = new Promise<void>((resolveStatus) => { releaseStatus = resolveStatus; });
+  const statusStarted = new Promise<void>((resolveStarted) => { markStatusStarted = resolveStarted; });
+  try {
+    fixture.runner.statusState = "green";
+    fixture.runner.onStatus = () => {
+      markStatusStarted();
+      return statusHeld;
+    };
+    const lateSweep = fixture.collaborator.sweep();
+    await statusStarted;
+
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+    releaseStatus();
+    assert.equal(await lateSweep, 1);
+
+    assert.equal(fixture.row().state, "retired");
+    assert.equal(fixture.row().ended_at, "2026-08-19T12:00:30.000Z");
+    assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.settlements, []);
+    assert.equal(fixture.store.db.prepare("SELECT 1 FROM tasks WHERE task_id=?")
+      .get(`task_${fixture.verifyAttemptId}`), undefined);
+    assert.equal(fixture.store.db.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
+      .get(`handoff_${fixture.verifyAttemptId}`), undefined);
+  } finally {
+    releaseStatus();
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retiring a failed_to_start attempt only changes its terminal state", async () => {
+  const fixture = await attemptFixture("retired-after-start-failure", "failed_to_start", [], true);
+  try {
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.runner.terminateCalls, []);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.retained, []);
+    assert.deepEqual(fixture.settlements, []);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retiring a failed_to_start attempt removes its recorded workspace", async () => {
+  const fixture = await attemptFixture("retired-start-failure-workspace", "failed_to_start", [], true);
+  try {
+    fixture.store.db.prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
+      .run("/tmp/retired-start-failure-workspace", fixture.verifyAttemptId);
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.runner.terminateCalls, []);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.retained, []);
+    assert.deepEqual(fixture.settlements, []);
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -846,6 +1006,7 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
     const boardConfig = config(fixture.path, () => now);
     const store = await TaskBoardStore.open(boardConfig.dbPath);
     const runtime = new TaskBoardRuntime(boardConfig, store);
+    registerParentTerminationCascade(store, () => undefined);
     const automation = new AutomationCollaborator(runtime);
     const tasks = new TasksCollaborator(runtime);
     assert.ok(holderNode);
@@ -912,6 +1073,7 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
         }),
         runnerFactory: () => ({
           startFull: async () => "unused-verify-run",
+          terminate: async () => undefined,
           status: async () => ({
             id: "verify-scope-release-run",
             state: "failed",

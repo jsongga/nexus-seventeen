@@ -43,6 +43,7 @@ import { TaskBoardError } from "../errors.js";
 import { GateActionWriter, type GateActionInput } from "./gate-actions.js";
 import { SkillRegistry } from "../skills.js";
 import {
+  assertParentTerminationCascadeRegistered,
   recordInitialWorkItemTransitionInTransaction,
   transitionWorkItemInTransaction,
   workItemStateForStage,
@@ -419,8 +420,10 @@ export class TransparentWorkflow {
     readonly git: GitRunner,
     insertGateActionInTransaction?: (input: GateActionInput) => GateAction,
   ) {
+    const transitionStore = workItemTransitionStoreForDatabase(db);
+    assertParentTerminationCascadeRegistered(transitionStore);
     const writer = insertGateActionInTransaction === undefined
-      ? new GateActionWriter(workItemTransitionStoreForDatabase(db), now)
+      ? new GateActionWriter(transitionStore, now)
       : null;
     this.#insertGateActionInTransaction = insertGateActionInTransaction
       ?? ((input) => writer!.insertGateActionInTransaction(input));
@@ -473,7 +476,9 @@ export class TransparentWorkflow {
       throw new TaskBoardError(400, "WORKFLOW_INVALID", "A plan needs criteria and bounded nodes");
     }
     assertPipelinePlanRecordComplete(raw);
-    if (!this.db.prepare("SELECT 1 FROM work_items WHERE work_item_id = ?").get(workItemId)) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    if (!this.db.prepare("SELECT 1 FROM work_items WHERE work_item_id = ?").get(workItemId)) {
+      throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    }
     if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId)) throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     const snapshots = this.skills.loadSync(raw.skillIds);
     const skillDigests = Object.fromEntries(snapshots.map((skill) => [skill.skillId, skill.digest]));
@@ -756,6 +761,14 @@ export class TransparentWorkflow {
     return this.pipelineBaseShasForConfirm(planId, request).parentBaseSha;
   }
 
+  pipelineBaseShaForProject(projectId: string): string {
+    const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(projectId);
+    if (project === undefined) {
+      throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
+    }
+    return pipelineBaseSha(String(project.repo_path), this.git);
+  }
+
   pipelineBaseShasForConfirm(
     planId: string,
     request: ConfirmPlanRevisionRequest,
@@ -767,7 +780,11 @@ export class TransparentWorkflow {
     let parsedPlan: WorkflowPlanDraft;
     try {
       parsedPlan = storedWorkflowPlanDraft(this.db, row);
-      validateWorkflowPlanChildren(parsedPlan, String(row.project_id));
+      const owner = this.db.prepare(
+        "SELECT parent_work_item_id FROM work_items WHERE work_item_id=?",
+      ).get(String(row.work_item_id)) as Readonly<{ parent_work_item_id: string | null }> | undefined;
+      if (owner === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:plan_owner_missing");
+      validateWorkflowPlanChildren(parsedPlan, String(row.project_id), owner.parent_work_item_id);
     } catch (error) {
       if (error instanceof ContractValidationError) {
         throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
@@ -789,11 +806,7 @@ export class TransparentWorkflow {
     if (hasPipelineShape && !hasDeclaredChildren) projectIds.add(String(row.project_id));
     const baseShas = new Map<string, string>();
     for (const projectId of projectIds) {
-      const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(projectId);
-      if (project === undefined) {
-        throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
-      }
-      baseShas.set(projectId, pipelineBaseSha(String(project.repo_path), this.git));
+      baseShas.set(projectId, this.pipelineBaseShaForProject(projectId));
     }
     return Object.freeze({
       parentBaseSha: hasPipelineShape && !hasDeclaredChildren
@@ -978,7 +991,11 @@ export class TransparentWorkflow {
       let parsedPlan: WorkflowPlanDraft;
       try {
         parsedPlan = storedWorkflowPlanDraft(this.db, row);
-        validateWorkflowPlanChildren(parsedPlan, String(row.project_id));
+        const owner = this.db.prepare(
+          "SELECT parent_work_item_id FROM work_items WHERE work_item_id=?",
+        ).get(String(row.work_item_id)) as Readonly<{ parent_work_item_id: string | null }> | undefined;
+        if (owner === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:plan_owner_missing");
+        validateWorkflowPlanChildren(parsedPlan, String(row.project_id), owner.parent_work_item_id);
       } catch (error) {
         if (error instanceof ContractValidationError) {
           throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
@@ -1199,6 +1216,8 @@ export class TransparentWorkflow {
     settlement: PipelineMergeSettlement,
     actor: string,
     verifiedSha: string | null = null,
+    actorType: "human" | "system" = "human",
+    refId: string | null = null,
   ): readonly WorkNode[] {
     if (settlement.kind === "conflict") {
       return this.returnFinalApprovalToImplementationInTransaction(
@@ -1213,7 +1232,7 @@ export class TransparentWorkflow {
           currentState,
         ),
         null,
-        "human",
+        actorType,
       );
     }
     const row = this.db.prepare(`
@@ -1243,7 +1262,7 @@ export class TransparentWorkflow {
     transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
       workItemId,
       to: "merged",
-      actorType: "human",
+      actorType,
       actorId: actor,
       now,
       endedAt: now,
@@ -1256,7 +1275,7 @@ export class TransparentWorkflow {
       planRevisionId: String(row.plan_revision_id),
       verifiedSha,
       mergeSha: settlement.mergeSha,
-      refId: null,
+      refId,
       note: null,
     });
     this.event(
@@ -1268,6 +1287,101 @@ export class TransparentWorkflow {
       now,
     );
     return Object.freeze([]);
+  }
+
+  settleParentCompletionInTransaction(
+    workItemId: string,
+    version: number,
+    childWorkItemIds: readonly string[],
+    actor: string,
+    actorType: "human" | "system",
+  ): void {
+    const row = this.db.prepare(`
+      SELECT item.state,item.version,plan.plan_revision_id,plan.project_id
+      FROM work_items item
+      JOIN plan_revisions plan
+        ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      WHERE item.work_item_id=?
+      ORDER BY plan.revision DESC
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (row === undefined) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    if (Number(row.version) !== version) {
+      throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
+    }
+    if (row.state !== "coordinating" && row.state !== "final_approval") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+        "Parent work item is not ready for completion",
+      );
+    }
+    const storedChildren = (this.db.prepare(`
+      SELECT work_item_id,state
+      FROM work_items
+      WHERE parent_work_item_id=?
+      ORDER BY child_ordinal,work_item_id
+    `).all(workItemId) as Row[]);
+    const abandonedChildren = storedChildren.filter((child) => (
+      child.state === "abandoned" || child.state === "dead_letter"
+    ));
+    const storedChildIds = storedChildren
+      .filter((child) => child.state !== "abandoned" && child.state !== "dead_letter")
+      .map((child) => String(child.work_item_id));
+    if (
+      storedChildIds.length !== childWorkItemIds.length
+      || storedChildIds.some((childWorkItemId) => !childWorkItemIds.includes(childWorkItemId))
+    ) {
+      throw new TaskBoardError(409, "PARENT_CHILD_SET_MISMATCH", "Parent completion must list every child");
+    }
+    const childMerges = childWorkItemIds.map((childWorkItemId) => {
+      const child = this.db.prepare(`
+        SELECT item.state,action.merge_sha
+        FROM work_items item
+        LEFT JOIN gate_actions action ON action.gate_action_id=(
+          SELECT latest.gate_action_id
+          FROM gate_actions latest
+          WHERE latest.work_item_id=item.work_item_id
+            AND latest.gate='final_approve'
+            AND latest.merge_sha IS NOT NULL
+          ORDER BY latest.created_at DESC,latest.rowid DESC
+          LIMIT 1
+        )
+        WHERE item.work_item_id=? AND item.parent_work_item_id=?
+      `).get(childWorkItemId, workItemId) as Row | undefined;
+      if (child === undefined || child.state !== "merged" || child.merge_sha === null) {
+        throw new TaskBoardError(409, "PARENT_CHILDREN_NOT_MERGED", "Every child must be merged before parent completion");
+      }
+      return Object.freeze({ childWorkItemId, mergeSha: String(child.merge_sha) });
+    });
+    const now = this.now().toISOString();
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId,
+      to: "merged",
+      actorType,
+      actorId: actor,
+      now,
+      endedAt: now,
+      currentStage: null,
+    });
+    this.#insertGateActionInTransaction({
+      workItemId,
+      gate: "final_approve",
+      actorId: actor,
+      planRevisionId: String(row.plan_revision_id),
+      verifiedSha: null,
+      mergeSha: null,
+      refId: String(row.plan_revision_id),
+      note: `${childMerges.length} children merged, ${abandonedChildren.length} abandoned`,
+    });
+    this.event(
+      String(row.project_id),
+      null,
+      null,
+      "parent_completed",
+      `Completed parent from ${childMerges.length} merged children and ${abandonedChildren.length} abandoned children`,
+      now,
+    );
   }
 
   recordOrphanedPipelineMergeInTransaction(workItemId: string, mergeSha: string): void {
@@ -1538,7 +1652,7 @@ export class TransparentWorkflow {
 
   blockNodeInTransaction(nodeId: string, summary: string): boolean {
     const row = this.db.prepare(
-      "SELECT project_id,title,state FROM work_nodes WHERE node_id=? AND state IN ('ready','blocked')",
+      "SELECT project_id,title,state FROM work_nodes WHERE node_id=? AND state IN ('pending','ready','blocked')",
     ).get(nodeId) as Row | undefined;
     if (row === undefined) return false;
     const now = this.now().toISOString();
@@ -1555,11 +1669,44 @@ export class TransparentWorkflow {
       return true;
     }
     const update = this.db.prepare(
-      "UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=? AND state='ready'",
+      "UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=? AND state IN ('pending','ready')",
     ).run(now, nodeId);
     if (Number(update.changes) !== 1) return false;
     this.event(String(row.project_id), nodeId, null, "node_blocked", summary, now);
     return true;
+  }
+
+  readyNodeAtTemplateStartInTransaction(nodeId: string): WorkNode {
+    const row = this.db.prepare(
+      "SELECT project_id,state FROM work_nodes WHERE node_id=? AND state IN ('pending','blocked')",
+    ).get(nodeId) as Row | undefined;
+    if (row === undefined) {
+      const current = this.nodesForIds([nodeId])[0];
+      if (current === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_missing");
+      return current;
+    }
+    const now = this.now().toISOString();
+    const update = this.db.prepare(`
+      UPDATE work_nodes
+      SET state='ready',current_stage=json_extract(stage_template_json,'$[0]'),version=version+1,updated_at=?
+      WHERE node_id=? AND state IN ('pending','blocked')
+    `).run(now, nodeId);
+    if (Number(update.changes) !== 1) throw new Error("TASK_BOARD_WORKFLOW_NODE_ACTIVATION_CONFLICT");
+    if (row.state === "blocked") {
+      this.event(String(row.project_id), nodeId, null, "dependency_unblocked", "Work-item dependencies satisfied", now);
+    }
+    const current = this.nodesForIds([nodeId])[0];
+    if (current === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_missing");
+    return current;
+  }
+
+  deferNodeForDesignInTransaction(nodeId: string): void {
+    const update = this.db.prepare(`
+      UPDATE work_nodes
+      SET state='pending',current_stage=NULL,version=version+1,updated_at=?
+      WHERE node_id=? AND state='blocked'
+    `).run(this.now().toISOString(), nodeId);
+    if (Number(update.changes) > 1) throw new Error("TASK_BOARD_WORKFLOW_NODE_ACTIVATION_CONFLICT");
   }
 
   suspendAttemptNodeInTransaction(taskId: string, reason: string): void {

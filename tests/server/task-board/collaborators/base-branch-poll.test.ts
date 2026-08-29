@@ -268,6 +268,11 @@ test("rewritten base history parks the item as base_diverged", async () => {
       category: "base_diverged",
       reason: `base branch history rewritten (was ${BASE_SHA}, now ${ADVANCED_SHA})`,
     });
+    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
+      notification.kind === "final_approval_withdrawn"
+      && notification.workItemId === fixture.workItemId
+      && notification.dedupeKey === `final_approval_withdrawn:${fixture.workItemId}:base-diverged:${ADVANCED_SHA}`
+    )));
     const database = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       const transition = database.prepare(`

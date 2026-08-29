@@ -22,9 +22,75 @@ export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(
 );
 
 type Row = Record<string, unknown>;
+type OpenAttemptState = "starting" | "running" | "failed_to_start";
+type VerifyAttemptRetirement = Readonly<{
+  verifyAttemptId: string;
+  previousState: OpenAttemptState;
+}>;
+type VerifyAttemptRetirementListener = (retirement: VerifyAttemptRetirement) => void;
+
+const retirementListeners = new WeakMap<TaskBoardRuntime, Set<VerifyAttemptRetirementListener>>();
+
+function registerRetirementListener(
+  runtime: TaskBoardRuntime,
+  listener: VerifyAttemptRetirementListener,
+): () => void {
+  const listeners = retirementListeners.get(runtime) ?? new Set<VerifyAttemptRetirementListener>();
+  listeners.add(listener);
+  retirementListeners.set(runtime, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) retirementListeners.delete(runtime);
+  };
+}
+
+export function retireOpenVerifyAttemptsForWorkItemInTransaction(
+  runtime: TaskBoardRuntime,
+  workItemId: string,
+  reason: string,
+  now: string,
+): number {
+  if (!runtime.store.hasOpenTransaction) {
+    throw new Error("TASK_BOARD_VERIFY_ATTEMPT_RETIREMENT_TRANSACTION_REQUIRED");
+  }
+  const detail = redactForPersistence(`Retired after work item cancellation: ${reason}`, 4_000);
+  const attempts = runtime.store.db.prepare(`
+    SELECT verify.verify_attempt_id, verify.state
+    FROM verify_attempts verify
+    JOIN work_nodes node ON node.node_id=verify.node_id
+    JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+    WHERE verify.state IN ('starting','running','failed_to_start')
+      AND plan.work_item_id=?
+    ORDER BY verify.created_at, verify.verify_attempt_id
+  `).all(workItemId) as Array<{ verify_attempt_id: string; state: OpenAttemptState }>;
+  const retired = runtime.store.db.prepare(`
+    UPDATE verify_attempts
+    SET state='retired',detail=?,ended_at=?
+    WHERE state IN ('starting','running','failed_to_start')
+      AND node_id IN (
+        SELECT node.node_id
+        FROM work_nodes node
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=?
+      )
+  `).run(detail, now, workItemId);
+  if (Number(retired.changes) > 0 && attempts.length > 0) {
+    const retirements = attempts.map((attempt) => Object.freeze({
+      verifyAttemptId: String(attempt.verify_attempt_id),
+      previousState: String(attempt.state) as OpenAttemptState,
+    }));
+    runtime.store.afterCommit(() => {
+      for (const listener of retirementListeners.get(runtime) ?? []) {
+        for (const retirement of retirements) listener(retirement);
+      }
+    });
+  }
+  return Number(retired.changes);
+}
 
 export interface MachineVerifyRunner {
   startFull(): Promise<string>;
+  terminate(id: string): Promise<void>;
   status(id: string): Promise<VerifyRunStatus>;
   tail(id: string, bytes: number): Promise<string>;
 }
@@ -222,6 +288,11 @@ export class VerifyAttemptsCollaborator {
   readonly #git: GitRunner;
   readonly #boardPause: BoardPauseCollaborator;
   readonly #inFlightStarts = new Set<string>();
+  readonly #startAbortControllers = new Map<string, AbortController>();
+  readonly #retirementOperations = new Set<Promise<void>>();
+  readonly #terminationClaims = new Set<string>();
+  readonly #workspaceCleanupClaims = new Set<string>();
+  readonly #unregisterRetirementListener: () => void;
   #sweepInFlight: Promise<number> | null = null;
   #closed = false;
 
@@ -239,6 +310,13 @@ export class VerifyAttemptsCollaborator {
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
     this.#git = dependencies.git ?? runDeclaredScopeGit;
     this.#boardPause = new BoardPauseCollaborator(runtime);
+    this.#unregisterRetirementListener = registerRetirementListener(runtime, (retirement) => {
+      if (this.#closed) return;
+      const controller = this.#startAbortControllers.get(retirement.verifyAttemptId);
+      controller?.abort();
+      if (retirement.previousState === "starting") return;
+      this.#trackRetirement(this.#retireAttemptResources(retirement.verifyAttemptId));
+    });
   }
 
   listForWorkItem(workItemId: string): readonly VerifyAttempt[] {
@@ -302,7 +380,7 @@ export class VerifyAttemptsCollaborator {
   sweep(): Promise<number> {
     if (this.#closed) return Promise.resolve(0);
     if (this.#sweepInFlight !== null) return this.#sweepInFlight;
-    const sweep = this.#sweepOpenAttempts();
+    const sweep = this.#sweepAndDrainRetirements();
     this.#sweepInFlight = sweep;
     void sweep.finally(() => {
       if (this.#sweepInFlight === sweep) this.#sweepInFlight = null;
@@ -312,6 +390,52 @@ export class VerifyAttemptsCollaborator {
 
   close(): void {
     this.#closed = true;
+    this.#unregisterRetirementListener();
+  }
+
+  async #sweepAndDrainRetirements(): Promise<number> {
+    await this.#drainRetirements();
+    const processed = await this.#sweepOpenAttempts();
+    await this.#drainRetirements();
+    return processed;
+  }
+
+  #trackRetirement(operation: Promise<void>): void {
+    this.#retirementOperations.add(operation);
+    void operation.finally(() => this.#retirementOperations.delete(operation)).catch(() => undefined);
+  }
+
+  async #drainRetirements(): Promise<void> {
+    while (this.#retirementOperations.size > 0) {
+      await Promise.all([...this.#retirementOperations]);
+    }
+  }
+
+  async #retireAttemptResources(verifyAttemptId: string): Promise<void> {
+    const current = this.#context(verifyAttemptId);
+    if (current === undefined || current.state !== "retired") return;
+    if (current.verifyRunId !== null && current.workspacePath !== null) {
+      try {
+        const runner = this.#runnerFactory({
+          repoRoot: current.workspacePath,
+          supervisorPath: this.#supervisorPath,
+        });
+        await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
+      } catch (error) {
+        console.error(`[task-board] could not prepare termination for retired verify attempt ${verifyAttemptId}`, error);
+      }
+    }
+    if (current.workspacePath === null) return;
+    try {
+      const workspace = this.#workspaceManagerFactory(current.repositoryPath);
+      await this.#removeAttemptWorkspaceBestEffort(
+        current.verifyAttemptId,
+        workspace,
+        current.workItemId,
+      );
+    } catch (error) {
+      console.error(`[task-board] could not prepare retired verify workspace cleanup for ${verifyAttemptId}`, error);
+    }
   }
 
   async #sweepOpenAttempts(): Promise<number> {
@@ -359,7 +483,10 @@ export class VerifyAttemptsCollaborator {
     if (this.#boardPause.isBoardPaused()) return false;
     if (this.#inFlightStarts.has(verifyAttemptId)) return false;
     this.#inFlightStarts.add(verifyAttemptId);
+    const abortController = new AbortController();
+    this.#startAbortControllers.set(verifyAttemptId, abortController);
     let current: AttemptContext | undefined;
+    let initialState: "starting" | "failed_to_start" | undefined;
     let workspacePath: string | null = null;
     let workspace: MachineVerifyWorkspaceManager | null = null;
     try {
@@ -367,12 +494,26 @@ export class VerifyAttemptsCollaborator {
       if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) {
         return false;
       }
+      initialState = current.state;
       workspace = this.#workspaceManagerFactory(current.repositoryPath);
       workspacePath = await workspace.create(
         `${current.workItemId}${VERIFY_WORKSPACE_SUFFIX}`,
         current.baseSha ?? undefined,
         current.workItemId,
       );
+      const beforeSpawn = this.#context(verifyAttemptId);
+      if (
+        abortController.signal.aborted ||
+        beforeSpawn === undefined ||
+        (beforeSpawn.state !== "starting" && beforeSpawn.state !== "failed_to_start")
+      ) {
+        if (beforeSpawn?.state === "retired" && initialState === "starting") {
+          await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
+        } else {
+          await this.#removeBestEffort(workspace, current.workItemId);
+        }
+        return false;
+      }
       if (this.#closed) {
         await this.#removeBestEffort(workspace, current.workItemId);
         return false;
@@ -383,17 +524,40 @@ export class VerifyAttemptsCollaborator {
         return false;
       }
       const verifyRunId = await runner.startFull();
-      if (this.#closed) {
-        await this.#removeBestEffort(workspace, current.workItemId);
+      const afterSpawn = this.#context(verifyAttemptId);
+      if (
+        this.#closed ||
+        abortController.signal.aborted ||
+        afterSpawn === undefined ||
+        (afterSpawn.state !== "starting" && afterSpawn.state !== "failed_to_start")
+      ) {
+        await this.#terminateBestEffort(verifyAttemptId, runner, verifyRunId);
+        if (afterSpawn?.state === "retired") {
+          await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
+        } else {
+          await this.#removeBestEffort(workspace, current.workItemId);
+        }
         return false;
       }
+      let started = false;
       this.runtime.store.transaction(() => {
-        this.runtime.store.db.prepare(`
+        const update = this.runtime.store.db.prepare(`
           UPDATE verify_attempts
           SET state='running',verify_run_id=?,workspace_path=?,detail=NULL
           WHERE verify_attempt_id=? AND state IN ('starting','failed_to_start')
         `).run(verifyRunId, workspacePath, verifyAttemptId);
+        started = Number(update.changes) === 1;
       });
+      if (!started) {
+        const latest = this.#context(verifyAttemptId);
+        await this.#terminateBestEffort(verifyAttemptId, runner, verifyRunId);
+        if (latest?.state === "retired") {
+          await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
+        } else {
+          await this.#removeBestEffort(workspace, current.workItemId);
+        }
+        return false;
+      }
       return true;
     } catch (error) {
       if (this.#closed) {
@@ -403,7 +567,12 @@ export class VerifyAttemptsCollaborator {
         return false;
       }
       current = this.#context(verifyAttemptId);
-      if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) return false;
+      if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) {
+        if (current?.state === "retired" && workspace !== null && initialState === "starting") {
+          await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
+        }
+        return false;
+      }
       const failedAttempt = current;
       const failures = startFailureCount(current.detail) + 1;
       const safeError = errorDetail(error);
@@ -447,6 +616,9 @@ export class VerifyAttemptsCollaborator {
       return true;
     } finally {
       this.#inFlightStarts.delete(verifyAttemptId);
+      if (this.#startAbortControllers.get(verifyAttemptId) === abortController) {
+        this.#startAbortControllers.delete(verifyAttemptId);
+      }
     }
   }
 
@@ -632,12 +804,56 @@ export class VerifyAttemptsCollaborator {
       );
       settled = true;
     });
-    if (!settled) return;
+    if (!settled) {
+      const latest = this.#context(current.verifyAttemptId);
+      if (latest?.state === "retired") {
+        if (current.verifyRunId !== null && current.workspacePath !== null) {
+          const runner = this.#runnerFactory({
+            repoRoot: current.workspacePath,
+            supervisorPath: this.#supervisorPath,
+          });
+          await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
+        }
+        const workspace = this.#workspaceManagerFactory(current.repositoryPath);
+        await this.#removeAttemptWorkspaceBestEffort(
+          current.verifyAttemptId,
+          workspace,
+          current.workItemId,
+        );
+      }
+      return;
+    }
     this.dependencies.activateNodes(settledNodes);
     this.dependencies.reconcileProject(current.projectId);
     const workspace = this.#workspaceManagerFactory(current.repositoryPath);
-    if (passed) await this.#removeBestEffort(workspace, current.workItemId);
+    if (passed) {
+      await this.#removeAttemptWorkspaceBestEffort(current.verifyAttemptId, workspace, current.workItemId);
+    }
     else await this.#retainBestEffort(workspace, current.workItemId);
+  }
+
+  async #terminateBestEffort(
+    verifyAttemptId: string,
+    runner: MachineVerifyRunner,
+    verifyRunId: string,
+  ): Promise<void> {
+    if (this.#terminationClaims.has(verifyAttemptId)) return;
+    this.#terminationClaims.add(verifyAttemptId);
+    try {
+      await runner.terminate(verifyRunId);
+    } catch (error) {
+      console.error(`[task-board] could not terminate retired verify attempt ${verifyAttemptId}`, error);
+    }
+  }
+
+  async #removeAttemptWorkspaceBestEffort(
+    verifyAttemptId: string,
+    workspace: MachineVerifyWorkspaceManager,
+    workItemId: string,
+  ): Promise<void> {
+    if (this.#workspaceCleanupClaims.has(verifyAttemptId)) return;
+    this.#workspaceCleanupClaims.add(verifyAttemptId);
+    await this.#removeBestEffort(workspace, workItemId);
   }
 
   async #removeBestEffort(workspace: MachineVerifyWorkspaceManager, workItemId: string): Promise<void> {
