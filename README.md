@@ -24,6 +24,28 @@ There are three runtime pieces:
 
 The product deliberately has no deployment endpoint. Agents can implement and review work, but production approval and deployment remain human responsibilities.
 
+## Decomposition and cross-repo changes
+
+A request can stay as one executable work item or become a **coordination family**: a branchless parent plus independently mergeable child work items. Each child owns one project, repository, branch, and merge; the parent preserves the overall request, approved split, dependency order, and completion state.
+
+The proposed plan declares each child’s objective, project, scope, acceptance criteria, dependencies, and optional phase before the human confirms it.
+
+| Change shape | Allowed declaration |
+|---|---|
+| `mechanical_sweep` | No children. |
+| `feature` | Optional unphased children with non-overlapping same-project scopes. |
+| `blast_radius` | Children required; every child declares `splitBy: consumer` or `splitBy: phase`. Unphased same-project scopes must not overlap; only the sequenced Expand/Contract pair is exempt. |
+| Any phased declaration | Exactly one Expand, one or more Migrates, and one Contract. Every child has a phase; each Migrate depends on Expand, and Contract depends on every Migrate. |
+
+Expand and Contract stay in the provider project and both cover `docs/interface.md`; Migrate children target consumer projects. Expand publishes that interface, consumers read the published interface at the Expand merge SHA—never the provider’s source—and Contract removes the compatibility surface only after migration.
+
+Merge policy is keyed on phases, not change shape:
+
+- **Unphased family, including unphased `blast_radius`** — children run independently. **Approve & merge children** succeeds only when every remaining unmerged child is in `final_approval`; it then merges them in dependency order and skips children already merged.
+- **Phased family** — confirming the parent plan pre-authorizes Expand and Migrate to auto-merge after verification and review. Each merged Expand/Migrate child still needs a human **Attest deployed** action. Contract remains blocked until every such sibling is merged and attested, then requires its own human approval.
+
+The full coordination state, audit actions, recovery rules, operator UI, and rolling-upgrade order are in [Transparent workflow architecture](docs/WORKFLOW_ARCHITECTURE.md#decomposition-and-cross-repository-coordination).
+
 ## Source layout
 
 ```text

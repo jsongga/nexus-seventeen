@@ -177,6 +177,13 @@ arc is intermittent under load too (0/5 failures isolated, 1/3 loaded). Make the
 observed sweep latency (or gate on state transitions instead of elapsed
 time) so a loaded machine cannot fake a regression.
 
+**9.9. Repository identity separate from the product project** *(queued
+2026-08-29)* — a board Project has exactly one `repo_path`, and decomposition
+assigns one child per project, so a product that spans several repositories
+inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
+repositories as their own records (project → repositories), let a declared
+child target a repository, and migrate `repo_path` into it.
+
 **10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
 tasks, independently-mergeable split rule, expand/migrate/contract phase
 sequencing with the human gate on contract. Exit: one blast-radius change

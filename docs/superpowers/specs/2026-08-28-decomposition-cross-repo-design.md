@@ -7,7 +7,7 @@
 
 ## Summary
 
-Today a work item is one plan, one branch, one repo, one merge. §7 asks for parent/child work items whose
+Before this campaign, a work item was one plan, one branch, one repo, and one merge. §7 asks for parent/child work items whose
 children are each independently mergeable, with decomposition **declared in the plan** by change shape;
 §9 asks for cross-repo changes as three phased children — Expand → Migrate (one per consumer, parallel) →
 Contract (human-gated, after all migrates are merged *and deployed*). This campaign adds parent/child

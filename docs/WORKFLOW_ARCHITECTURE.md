@@ -1,10 +1,10 @@
 # Transparent Agent Workflow
 
-**Status** — implemented · **Author** — Cicada · **Date** — 2026-07-26 · **Scope** — editable skills, confirmed task graphs, deterministic stage orchestration, compact agent handoffs, live project progress, diagrams, and image artifacts; excludes deployment automation and arbitrary agent-to-agent activation.
+**Status** — implemented · **Author** — Cicada · **Date** — 2026-08-29 · **Scope** — editable skills, confirmed task graphs, deterministic stage orchestration, parent/child decomposition, cross-repository interface changes, compact agent handoffs, live project progress, diagrams, and image artifacts; excludes deployment automation and arbitrary agent-to-agent activation.
 
 ## Summary
 
-Nexus Seventeen will turn a human request into a visible, versioned plan and run each confirmed subtask through Research → Plan → Act → Test → Evaluate. A low-cost intake agent may interpret ambiguous language, but ordinary code owns dependencies, stage transitions, retries, and permissions.
+Nexus Seventeen turns a human request into a visible, versioned plan and runs each confirmed subtask through Research → Plan → Act → Test → Evaluate. A low-cost intake agent may interpret ambiguous language, but ordinary code owns dependencies, stage transitions, retries, and permissions.
 
 Four records define the workflow:
 
@@ -12,6 +12,8 @@ Four records define the workflow:
 - A **plan revision** proposes a set of subtasks and dependencies for human confirmation.
 - A **work node** is one confirmed subtask in that dependency graph.
 - A **stage attempt** is one existing board task assigned to a specialist for one stage.
+
+An ordinary work item owns one project, branch, and merge. A decomposed request instead has a branchless **parent** that coordinates independently mergeable **child work items**; each child still owns one project, branch, and merge, so one parent may span repositories without giving one agent cross-repository write authority.
 
 Agents never wake each other. They return structured handoffs; the task board validates each handoff and creates the next allowed attempt. The project dashboard shows the plan, dependencies, stage history, progress posts, decisions, diagrams, and images as durable board data.
 
@@ -56,6 +58,200 @@ The confirmation screen shows the rewritten objective, assumptions, acceptance c
 | Persist history, events, and artifacts | Task board |
 
 An agent may propose a plan change but cannot apply it. This keeps authority and failure recovery inspectable.
+
+## Decomposition and cross-repository coordination
+
+Decomposition turns one approved request into a durable family. The parent owns coordination and human gates; children own executable repository changes. Only one level is allowed: a materialized child cannot declare more children.
+
+### Phased family at a glance
+
+The coordinating parent spans the family without owning a branch. Expand and Contract use the provider repository; Migrate uses the consumer repository.
+
+```mermaid
+flowchart LR
+    P["Parent<br/>coordinating"]
+    subgraph PROVIDER[Provider repository]
+        E[Expand] --> EA[Auto-merge]
+        C[Contract] --> HA[Human approval<br/>and merge]
+    end
+    subgraph CONSUMER[Consumer app repository]
+        M[Migrate] --> MA[Auto-merge]
+    end
+    P -. coordinates .-> E
+    P -. coordinates .-> M
+    P -. coordinates .-> C
+    EA --> M
+    EA --> ED[Deploy attestation 1]
+    MA --> MD[Deploy attestation 2]
+    ED --> C
+    MD --> C
+```
+
+The dependency and gate order comes from phased-plan validation, sibling-wide Contract readiness, and phase-selected merge policy ([`validate.ts`](../src/shared/task-board-contract/validate.ts#L3241-L3272), [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts#L84-L163), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1180-L1342)).
+
+**Worked example — a provider API change used by one app.** Suppose a provider replaces a v1 endpoint with v2:
+
+1. Expand keeps v1 available, adds v2, and updates `docs/interface.md`; the publication check runs during verification before Expand auto-merges.
+2. Migrate receives that file at Expand’s recorded merge SHA, moves the app to v2, and auto-merges.
+3. A human attests the deployed Expand and Migrate merges. Only then can Contract start.
+4. Contract removes v1 from the provider, then waits for its own human approval and merge.
+
+This example follows the implemented publication check, merge-SHA interface lookup, deployment-attestation gate, and Contract approval path ([`runs.ts`](../src/server/task-board/collaborators/runs.ts#L274-L315), [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts#L165-L206), [`work-items.ts`](../src/server/task-board/collaborators/work-items.ts#L278-L355), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1216-L1335)).
+
+**Hard limits**
+
+- **One level** — validation rejects a child plan that declares children ([`validate.ts`](../src/shared/task-board-contract/validate.ts#L3166-L3175)).
+- **No re-merge** — unphased fan-out skips merged children, and phased auto-merge considers only children in `final_approval`. Expand publication is enforced during verification before merge; a merged Expand is not reopened for that check ([`projects.ts`](../src/server/task-board/collaborators/projects.ts#L515-L569), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1225-L1236), [`runs.ts`](../src/server/task-board/collaborators/runs.ts#L274-L315)).
+- **Phased failure has one exit** — an abandoned or dead-lettered Expand/Migrate keeps Contract blocked. Cancelling the parent is the only exit from that family ([`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts#L84-L163), [`work-item-detail.ts`](../src/web/task-board/model/work-item-detail.ts#L36-L59)).
+
+### Declaration and materialization
+
+The plan gate shows every declared child before confirmation, including its objective, project, declared scope, acceptance criteria, phase, and dependencies. `DeclaredChild` stores those fields plus `splitBy`; confirmation therefore approves the split and the children’s work, not just the parent objective.
+
+| Plan shape | Split rule |
+|---|---|
+| `mechanical_sweep` | Children are forbidden. |
+| `feature` | Children are optional and unphased. Same-project sibling scopes must not overlap. |
+| `blast_radius` | Children are required, and every child declares `splitBy: consumer` or `splitBy: phase`. An unphased split is allowed only when same-project scopes are disjoint; validation rejects every overlap. |
+| Phased declaration | If one child has a phase, all do. There is exactly one Expand, at least one Migrate, and exactly one Contract. Every Migrate depends on Expand; Contract depends on every Migrate. The sequenced Expand/Contract pair is the only same-project overlap exempted from the disjoint-scope check. |
+
+Keys are unique, dependencies remain inside the family, and cycles are rejected. Every unphased same-project overlap is rejected, as is an overlap between same-project Migrates. Expand and Contract are the ordered exception: both use the parent/provider project and both must cover `docs/interface.md`. Migrate children use other projects ([`validate.ts`](../src/shared/task-board-contract/validate.ts#L3194-L3272)).
+
+Confirming the parent performs one transaction:
+
+1. Revalidate the persisted declaration and resolve each child repository’s base SHA before writing.
+2. Confirm the parent plan and write its human `plan_confirm` gate action.
+3. Create target-locked children in `queued` state and declaration order, each with `parent_work_item_id`, optional `phase`, `child_ordinal`, its own `task/<child-id>` branch, and a repository-specific base SHA.
+4. Give each child a pre-confirmed single-node leaf plan (`changeShape: feature`, inherited tier, empty `criterionChecks`) and a human `plan_confirm` action whose `refId` is the parent.
+5. Insert `work_item_dependencies`, then move the branchless parent from `plan_approval` to `coordinating`.
+
+A `coordinating` parent has no branch, base SHA, run, or heartbeat and is excluded from execution and wall-clock sweeps. Its guarded lifecycle is `coordinating → final_approval | merged | parked | abandoned | dead_letter`; final rejection and a valid park recovery return it to `coordinating`.
+
+Hazardous tier is inherited by every child. Each hazardous child runs the ordinary single-item Design stage before implementation; the coordinating parent never runs a duplicate Design stage.
+
+### Version 26 storage
+
+Version 26 keeps coordination separate from the existing node graph.
+
+| Storage | Version 26 contract |
+|---|---|
+| `work_items` | Adds nullable `parent_work_item_id`, `phase` (`expand`, `migrate`, or `contract`), and `child_ordinal`; the state constraint includes `coordinating`. |
+| `plan_revisions` | Adds nullable JSON `children`, preserving the declaration reviewed at the parent gate. |
+| `work_item_dependencies` | Stores child-to-child edges as `(work_item_id, depends_on_work_item_id)` with self-dependencies rejected. |
+| `projects` | Adds `repo_path`. `repoPath` is optional at project creation; as a compatibility fallback, omission copies `description` into it ([`validate.ts`](../src/shared/task-board-contract/validate.ts#L3490-L3498), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L998-L1005)). |
+| `gate_actions` | Adds `deploy_attest`. |
+| `notifications` | Adds `parent_ready_for_approval` and `phase_ready`. |
+| `park_records` | Adds the `child_failed` category. |
+| `verify_attempts` | Adds terminal state `retired`, used when cancellation owns verifier shutdown and workspace cleanup. |
+
+Fresh databases and every supported migration path finish at schema version 26. The v25 schema golden remains frozen.
+
+### Readiness and published interfaces
+
+Readiness depends on whether the family is phased.
+
+| Family | Activation rule |
+|---|---|
+| Unphased | Children activate in parallel. `dependsOn` orders the later parent fan-out merge; it does not gate execution. |
+| Expand | Activates first. On first activation, every phased child runs `git rev-parse HEAD`, recording the repository’s current HEAD (its checked-out branch — the merge target). It does not resolve a default branch: the operator must check out the intended target, and the later merge requires that branch to be clean and non-task ([`workflow.ts`](../src/server/task-board/persistence/workflow.ts#L301-L319), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1539-L1546), [`merge-executor.ts`](../src/server/task-board/collaborators/merge-executor.ts#L42-L65)). |
+| Migrate | Waits for its declared predecessors to merge, then must be able to load the provider’s published interface within the worker-context budget. |
+| Contract | Checks every non-Contract sibling under the parent, not only direct dependency edges. Every Expand and Migrate sibling must be `merged` and have `deploy_attest`. |
+
+An abandoned or dead-lettered Expand/Migrate is never treated as ready. It keeps Contract blocked, and the block summary names the sibling’s actual terminal state (`abandoned` or `dead_letter`). When several blockers exist, a terminal sibling wins over an unmerged predecessor, which wins over a merged-but-unattested sibling.
+
+**Expand publishes the contract** — Expand verification reads `docs/interface.md` at the verified SHA. The reader requires a regular-file Git mode, no more than 64 KiB, valid UTF-8, non-empty content, and no prohibited control characters; it does not validate Markdown structure. A failure produces a board-authored verification finding and the normal fix round without rewriting the worker’s submitted settlement. If that failure occurs on the fourth pipeline-verification attempt, the verification stage-attempt cap dead-letters the child. Expand and Contract scopes must cover the file, and engineers on those phases are expressly authorized to edit it ([`interface-context.ts`](../src/server/task-board/collaborators/interface-context.ts#L46-L55), [`interface-context.ts`](../src/server/task-board/collaborators/interface-context.ts#L92-L133), [`workflow.ts`](../src/server/task-board/persistence/workflow.ts#L1840-L1967), [`validate.ts`](../src/shared/task-board-contract/validate.ts#L3250-L3257)).
+
+**Consumers use the published contract** — a Migrate implementation-engineer claim receives:
+
+```ts
+crossRepoContext = {
+  providerProjectId,
+  providerRepoName,
+  interfacePath: "docs/interface.md",
+  sha: expandMergeSha,
+  markdown
+}
+```
+
+The board reads the file from the provider repository at the Expand child’s recorded merge SHA, validates it, and includes it in the claim’s total context budget. Testing and verification tasks do not receive it. The interface-context rule is absolute: **consumers read the published interface, never the provider’s source**. A residual interface failure blocks Migrate; cancellation of the parent abandons the decomposition.
+
+### Merge policy and human gates
+
+Phases—not `changeShape`—select merge policy. A feature split is unphased, and an unphased `blast_radius` uses the same single-parent-approval policy.
+
+| Policy | Merge behavior | Human gate |
+|---|---|---|
+| Unphased | Children run independently. When every non-terminal, unmerged child is in `final_approval`, the parent enters `final_approval`; one fan-out merges unmerged children in dependency order. Already merged children are skipped. | One parent **Approve & merge children** action. |
+| Phased Expand/Migrate | Each child auto-merges on reaching `final_approval`, after the normal branch-tip and base-advance guards. Transient failures retry on a later reconciliation pass; one child’s failure does not stop another eligible child or family. | Parent plan confirmation is explicit pre-authorization. |
+| Phased Contract | Contract remains blocked until every Expand/Migrate sibling is merged and deploy-attested, then follows the ordinary merge path. | Contract always has its own human final approval. |
+
+Deployment status is a human assertion: observing a merge on the base branch is a prerequisite shown to the operator, never a substitute for `deploy_attest`.
+
+The board pause gates the entire decomposition policy pass: while paused there is no automatic merge, parent promotion, or parent settlement. A project-scoped pass includes a family when either its parent or any child belongs to that project.
+
+Every merge and human decision remains auditable:
+
+| Step | Durable action |
+|---|---|
+| Parent plan confirmed | Human `plan_confirm` on the parent; its gate-action ID authorizes phased auto-merges. |
+| Children materialized | Human `plan_confirm` on every child, attributed to the parent approver with `refId = parent work item`. |
+| Expand/Migrate auto-merged | System `final_approve` on the child with verified SHA, merge SHA, actor `system:parent-plan-authorization`, and `refId = parent plan_confirm gate action`. |
+| Unphased fan-out | Human `final_approve` on each child actually merged. |
+| Contract merged | Human `final_approve` on Contract with verified and merge SHAs. |
+| Phase deployed | Idempotent human `deploy_attest` on the merged child, with an optional note. |
+| Parent completed | Parent `final_approve` with no merge SHA, `refId = confirmed parent plan`, and a bounded note such as `3 children merged, 0 abandoned`. Child merge SHAs are derived from their own actions. |
+| Parent sent back | Human `final_reject` on the parent plus the same `final_reject` note on every unmerged child in `final_approval`; the parent returns to `coordinating`. |
+| Family cancelled | Human/system `cancel` on the parent and every non-terminal child; each child action references the parent. |
+
+An unphased parent tolerates children merged independently. If the last child merges outside fan-out, reconciliation settles the parent directly. If a promoted child leaves `final_approval` because of rejection, base movement, or merge conflict, the parent returns to `coordinating` until all remaining children are ready again.
+
+### Notifications, recovery, and operations
+
+| Signal | Meaning |
+|---|---|
+| `parent_ready_for_approval` | At least one unphased child awaits final approval and every other non-terminal child is merged or also awaiting approval; the parent human gate is ready. |
+| `phase_ready` | The final required deployment attestation made Contract ready. |
+| `final_approval_withdrawn` | Final approval became unusable after ordinary base movement or divergence, parent withdrawal for child re-verification, or an automatic-merge failure ([`projects.ts`](../src/server/task-board/collaborators/projects.ts#L735-L908), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1364-L1378)). |
+| `park_auto_abandoned` | A park deadline auto-abandoned an item, or an abandoned/dead-lettered parent automatically abandoned a non-terminal child ([`park-lifecycle.ts`](../src/server/task-board/collaborators/park-lifecycle.ts#L115-L169), [`work-items.ts`](../src/server/task-board/collaborators/work-items.ts#L968-L1059)). |
+
+An abandoned or dead-lettered child parks its parent as `child_failed`. **Resume coordination** is the recovery path for an unphased family: failed children are excluded from promotion and completion, and the parent completion note records the abandoned count. A phased family cannot safely omit a failed phase; an abandoned Expand/Migrate keeps Contract blocked, the web does not offer resume, and cancelling the parent is the exit.
+
+Rejecting the parent fans the note out to its ready children. Abandoning or dead-lettering the parent cascades to every non-terminal child while leaving merged children untouched.
+
+Cancellation cleanup is bounded per child:
+
+- Open machine-verification attempts become `retired`; their verifier processes are terminated and their verification workspaces are removed.
+- Active agent runs are interrupted, linked tasks are cancelled, and open questions are closed.
+- One child’s cleanup failure records a `work_item_cancellation_cleanup_failed` project event and a structured diagnostic; the remaining child cascade continues.
+
+These behaviors are implemented in the cancellation coordinator and verification-retirement listener ([`work-items.ts`](../src/server/task-board/collaborators/work-items.ts#L838-L1099), [`verify-attempts.ts`](../src/server/task-board/collaborators/verify-attempts.ts#L47-L89), [`verify-attempts.ts`](../src/server/task-board/collaborators/verify-attempts.ts#L300-L322)).
+
+Every unexpected HTTP 500 emits exactly one structured `[task-board] request failed` record containing bounded, redacted method, path, message, and stack fields before returning the generic response.
+
+### Operator interface
+
+The parent detail is the control surface for a coordination family:
+
+- The plan gate lists every declared child’s scope and acceptance criteria. A phased gate also states that Expand/Migrate will merge automatically and Contract remains human-gated.
+- The Children table is ordered by declaration and has Ordinal, Phase, Project, State, Attestation, and Actions columns. Merged unattested Expand/Migrate rows provide inline **Attest deployed**; each child’s Audit gate-action timeline shows its merge SHA.
+- An unphased parent exposes one **Approve & merge children** action and **Send back to coordination**. Contract detail shows all transitive sibling attestations and disables approval until they are ready.
+- A `child_failed` park exposes **Resume coordination** only for unphased families. Phased failure explains that cancellation is the exit.
+- Terminal parents retain the family table for audit. Child detail links back to the parent.
+
+### Rolling upgrade
+
+Claims now carry `phase` and, for Migrate implementation engineers, `crossRepoContext`. Older workers use a closed claim schema and reject those new fields. Upgrade every worker first, then deploy the board/web version that emits decomposition claims. Existing pre-decomposition claim replays remain readable because the new worker treats absent `phase` as `null` and omits absent interface context.
+
+### Implementation map
+
+| Concern | Source |
+|---|---|
+| Declaration and split validation | [`validate.ts`](../src/shared/task-board-contract/validate.ts) |
+| Version 26 schema and child materialization | [`store.ts`](../src/server/task-board/persistence/store.ts), [`workflow.ts`](../src/server/task-board/persistence/workflow.ts) |
+| Readiness, merge policy, and attestation | [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts), [`projects.ts`](../src/server/task-board/collaborators/projects.ts) |
+| Published-interface reads and claim context | [`interface-context.ts`](../src/server/task-board/collaborators/interface-context.ts), [`runs.ts`](../src/server/task-board/collaborators/runs.ts) |
+| Recovery, cancellation, and request diagnostics | [`work-items.ts`](../src/server/task-board/collaborators/work-items.ts), [`verify-attempts.ts`](../src/server/task-board/collaborators/verify-attempts.ts), [`http.ts`](../src/server/task-board/http.ts) |
+| Parent/child operator controls | [`WorkItemDetail.tsx`](../src/web/task-board/views/WorkItemDetail.tsx), [`work-item-detail.ts`](../src/web/task-board/model/work-item-detail.ts) |
 
 ## Editable skills
 
@@ -255,3 +451,9 @@ Existing tasks remain visible and manually operated. Rollback disables new coord
 **MCP as the internal workflow engine** — deferred. Internal typed APIs are simpler while contracts are evolving. A later MCP adapter can expose the same board operations to external agents without becoming the source of truth.
 
 **Store binary artifacts in SQLite** — rejected because large images would inflate transactional backups and snapshots. SQLite stores immutable metadata; a private artifact root stores content-addressed blobs.
+
+**One cross-repository child** — rejected because it would combine repository authority, branch identity, verification, and merge recovery in one execution unit. A branchless parent keeps coordination global while each child stays repository-scoped.
+
+**Auto-merge Contract** — rejected because removing compatibility is the irreversible phase. Parent plan confirmation may pre-authorize additive Expand/Migrate work, but Contract retains a separate human gate.
+
+**Infer deployment from Git** — rejected because a merge proves only that code reached the base branch. Human `deploy_attest` records the operational fact Contract readiness needs.
