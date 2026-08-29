@@ -184,10 +184,19 @@ inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
 repositories as their own records (project → repositories), let a declared
 child target a repository, and migrate `repo_path` into it.
 
-**10. Decomposition + cross-repo** *(§7, §9; items 8–9)* — parent/child
-tasks, independently-mergeable split rule, expand/migrate/contract phase
-sequencing with the human gate on contract. Exit: one blast-radius change
-lands as phased children across two repos.
+**10. Decomposition + cross-repo** *(shipped 2026-08-29)* — parent/child work
+items (`coordinating` parent, children created pre-confirmed at plan confirm),
+the independently-mergeable split rule by change shape, Expand → Migrate →
+Contract with auto-merge under the parent plan and a human gate on Contract
+after deployment attestation, the published-interface rule for consumers
+(`docs/interface.md` at the Expand merge sha), and the parent/child web surface.
+Exit met: `pipeline-e2e` lands a blast-radius change as phased children across
+two repositories with real git and fake CLIs. Rollout notes: v18 → v26 migration
+(legacy-quoted tables canonicalized; `projects.repo_path` must be set explicitly
+after upgrade — the description fallback is a shim); upgrade workers before the
+board (claims now carry `phase` + `crossRepoContext`). Limits: one level of
+decomposition; one repository per Project (→ 9.9); an abandoned Expand/Migrate
+leaves cancel as the only exit.
 
 ## Migration risks
 
