@@ -189,8 +189,8 @@ export class TaskBoard {
       dependencies.git,
       this.#boardPause,
     );
-    this.#workItems.setSuspendActiveRunInTransaction((runId, reason, actor, now) =>
-      this.#runs.suspendActiveRunInTransaction(runId, reason, actor, now));
+    this.#workItems.setSuspendActiveRunInTransaction((runId, reason, actor, now, options) =>
+      this.#runs.suspendActiveRunInTransaction(runId, reason, actor, now, options));
     this.#wallClock = new WallClockCollaborator(this.#runtime, this.#runs, this.#notifications);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#messages = new MessagesCollaborator(this.#runtime);

@@ -2790,6 +2790,63 @@ test("a duplicate settle repairs a terminal run whose workflow node is still act
   }
 });
 
+test("kill-switch suspension surfaces an active attempt linked to a non-active node", async () => {
+  const fixture = await activeSettlementWorkflow("non-active-suspension");
+  const { DatabaseSync } = await import("node:sqlite");
+  const originalError = console.error;
+  const logged: unknown[][] = [];
+  let attemptId = "";
+  try {
+    const db = new DatabaseSync(fixture.path);
+    try {
+      attemptId = String(db.prepare("SELECT attempt_id FROM stage_attempts WHERE task_id=?")
+        .get(fixture.claim.task!.taskId)?.attempt_id);
+      db.prepare("UPDATE work_nodes SET state='blocked' WHERE node_id=?")
+        .run(fixture.node.nodeId);
+      db.prepare("UPDATE work_items SET pipeline_branch=? WHERE work_item_id=?")
+        .run(`task/${fixture.workItem.workItemId}`, fixture.workItem.workItemId);
+    } finally {
+      db.close();
+    }
+    console.error = (...arguments_: unknown[]) => { logged.push(arguments_); };
+
+    assert.deepEqual(fixture.board.suspendAllActiveRuns(
+      "board paused: report the non-active workflow node",
+      { type: "system", id: "system:kill-switch" },
+    ), { suspended: 0, failed: 1 });
+
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT status FROM runs WHERE run_id=?")
+        .get(fixture.claim.run.runId)?.status, "interrupted");
+      assert.deepEqual({ ...inspected.prepare(`
+        SELECT task_id,event_type,summary
+        FROM project_events
+        WHERE node_id=? AND event_type='node_blocked'
+        ORDER BY sequence DESC LIMIT 1
+      `).get(fixture.node.nodeId) }, {
+        task_id: fixture.claim.task!.taskId,
+        event_type: "node_blocked",
+        summary: "board paused: report the non-active workflow node",
+      });
+    } finally {
+      inspected.close();
+    }
+    const diagnostics = logged.filter((record) =>
+      record[0] === "[task-board] active attempt linked to non-active workflow node");
+    assert.equal(diagnostics.length, 1);
+    assert.deepEqual(diagnostics[0]?.[1], {
+      attemptId,
+      taskId: fixture.claim.task!.taskId,
+      nodeId: fixture.node.nodeId,
+      nodeState: "blocked",
+    });
+  } finally {
+    console.error = originalError;
+    fixture.board.close();
+  }
+});
+
 test("a duplicate failed settle repairs the legacy blocked-task workflow shape", async () => {
   const fixture = await activeSettlementWorkflow("legacy-failed-repair");
   const result = "The pre-v14 worker failed after persisting only the legacy task shape.";

@@ -66,6 +66,62 @@ async function within<T>(promise: Promise<T>, milliseconds: number): Promise<T> 
   }
 }
 
+test("unexpected route failures are logged once with redacted structured context", async () => {
+  const path = await databasePath();
+  const service = await createTaskBoardService({
+    dbPath: path,
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    reconcileIntervalSeconds: 0,
+  });
+  const address = await service.start();
+  const { DatabaseSync } = await import("node:sqlite");
+  const injected = new DatabaseSync(path);
+  const originalError = console.error;
+  const records: unknown[][] = [];
+  const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+  try {
+    injected.exec(`
+      CREATE TRIGGER fail_project_insert
+      BEFORE INSERT ON projects
+      BEGIN
+        SELECT RAISE(ABORT, 'route exploded Bearer ${secret}');
+      END;
+    `);
+    console.error = (...arguments_: unknown[]) => { records.push(arguments_); };
+
+    const response = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "Injected failure",
+      description: "Exercise the unexpected route error boundary.",
+    });
+
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: { code: "INTERNAL_ERROR", message: "Task board could not complete the request" },
+    });
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.[0], "[task-board] request failed");
+    const record = records[0]?.[1] as Record<string, unknown> | undefined;
+    assert.deepEqual(record === undefined ? undefined : {
+      method: record.method,
+      path: record.path,
+      message: record.message,
+    }, {
+      method: "POST",
+      path: "/v1/projects",
+      message: "route exploded [redacted:bearer]",
+    });
+    assert.equal(typeof record?.stack, "string");
+    assert.match(String(record?.stack), /route exploded \[redacted:bearer\]/u);
+    assert.doesNotMatch(JSON.stringify(records), new RegExp(secret, "u"));
+  } finally {
+    console.error = originalError;
+    injected.close();
+    await service.close();
+  }
+});
+
 test("dormant automation configuration is human-only and CAS controlled", async () => {
   const service = await createTaskBoardService({
     dbPath: await databasePath(),

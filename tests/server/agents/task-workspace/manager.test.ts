@@ -71,6 +71,24 @@ test("create rejects unsafe keys before touching the filesystem", async () => {
   }
 });
 
+test("recorded workspace cleanup removes only descendants of the configured root", async () => {
+  const root = await tempRoot();
+  const repo = await fixtureRepo(root);
+  const workspaceRoot = join(root, "ws");
+  const manager = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+  const recorded = join(workspaceRoot, "persisted-attempt-workspace");
+  const outside = join(root, "outside-workspace");
+  await mkdir(recorded, { recursive: true });
+  await writeFile(join(recorded, "status.json"), "running\n");
+  await writeFile(outside, "preserve\n");
+
+  await manager.removeRecordedPath(recorded);
+
+  await assert.rejects(access(recorded), { code: "ENOENT" });
+  await assert.rejects(manager.removeRecordedPath(outside), TaskWorkspaceError);
+  assert.equal(await readFile(outside, "utf8"), "preserve\n");
+});
+
 test("create removes the cloned workspace when base ref selection fails", async () => {
   const root = await tempRoot();
   const repo = await fixtureRepo(root);

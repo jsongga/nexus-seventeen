@@ -1735,14 +1735,38 @@ export class TransparentWorkflow {
     if (Number(update.changes) > 1) throw new Error("TASK_BOARD_WORKFLOW_NODE_ACTIVATION_CONFLICT");
   }
 
-  suspendAttemptNodeInTransaction(taskId: string, reason: string): void {
+  suspendAttemptNodeInTransaction(taskId: string, reason: string): boolean {
     const attempt = this.db.prepare(`
-      SELECT attempt.node_id,node.project_id,node.state
+      SELECT attempt.attempt_id,attempt.node_id,node.project_id,node.state
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
       WHERE attempt.task_id=?
     `).get(taskId) as Row | undefined;
-    if (attempt === undefined) return;
+    if (attempt === undefined) return true;
+    // A durable task/run link can outlive or be attached outside this process's
+    // activation path. Cancellation still owns the run, but it must not force an
+    // already-blocked or otherwise non-active node through an active-only CAS.
+    if (attempt.state !== "active") {
+      try {
+        console.error("[task-board] active attempt linked to non-active workflow node", Object.freeze({
+          attemptId: String(attempt.attempt_id),
+          taskId,
+          nodeId: String(attempt.node_id),
+          nodeState: String(attempt.state),
+        }));
+      } catch {
+        // The durable suspension remains authoritative if diagnostic output fails.
+      }
+      this.event(
+        String(attempt.project_id),
+        String(attempt.node_id),
+        taskId,
+        "node_blocked",
+        reason,
+        this.now().toISOString(),
+      );
+      return false;
+    }
     const now = this.now().toISOString();
     const update = this.db.prepare(`
       UPDATE work_nodes
@@ -1760,6 +1784,7 @@ export class TransparentWorkflow {
       reason,
       now,
     );
+    return true;
   }
 
   settleAttemptInTransaction(

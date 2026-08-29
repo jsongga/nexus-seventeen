@@ -92,6 +92,8 @@ Runtime units per task (contract, migration equivalence, split-rule matrix, read
 
 - **UI rulings (Task 5 review)** — the plan gate shows every declared child's scope and acceptance criteria before confirm (confirmation pre-approves them); the web hides *Resume coordination* for a phased family parked `child_failed` (cancel is the only exit) and offers inline deployment attestation on the parent's children rows; a parent's Children section renders only once a non-empty children list arrives, including for terminal parents.
 
+- **Block-summary precedence** (Task 6 review): a terminal (abandoned/dead-lettered) sibling is reported first, then unmerged predecessors, then unattested ones — the permanent reason wins over the recoverable one; the summary names the sibling's actual terminal state (`abandoned` or `dead_letter`).
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

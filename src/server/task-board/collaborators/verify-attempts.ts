@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify";
 import { VerifyRunner } from "#server/agents/verify";
-import { TaskWorkspaceManager } from "#server/agents/task-workspace";
+import { TaskWorkspaceManager, removeRecordedTaskWorkspace } from "#server/agents/task-workspace";
 import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
 import { GIT_OBJECT_ID_PATTERN, VERIFY_WORKSPACE_SUFFIX } from "#shared/task-board-contract";
 import { redactForPersistence } from "../../shared/redact.js";
@@ -98,6 +98,7 @@ export interface MachineVerifyRunner {
 export interface MachineVerifyWorkspaceManager {
   create(key: string, baseRef?: string, branchKey?: string): Promise<string>;
   remove(key: string): Promise<void>;
+  removeRecordedPath?(path: string): Promise<void>;
   retain(key: string): Promise<void>;
 }
 
@@ -313,8 +314,10 @@ export class VerifyAttemptsCollaborator {
     this.#unregisterRetirementListener = registerRetirementListener(runtime, (retirement) => {
       if (this.#closed) return;
       const controller = this.#startAbortControllers.get(retirement.verifyAttemptId);
-      controller?.abort();
-      if (retirement.previousState === "starting") return;
+      if (controller !== undefined) {
+        controller.abort();
+        return;
+      }
       this.#trackRetirement(this.#retireAttemptResources(retirement.verifyAttemptId));
     });
   }
@@ -432,9 +435,15 @@ export class VerifyAttemptsCollaborator {
         current.verifyAttemptId,
         workspace,
         current.workItemId,
+        current.workspacePath,
       );
     } catch (error) {
       console.error(`[task-board] could not prepare retired verify workspace cleanup for ${verifyAttemptId}`, error);
+      try {
+        await removeRecordedTaskWorkspace(this.runtime.config.verifyWorkspaceRoot, current.workspacePath);
+      } catch (cleanupError) {
+        console.error(`[task-board] could not remove recorded verify workspace for ${current.workItemId}`, cleanupError);
+      }
     }
   }
 
@@ -850,9 +859,18 @@ export class VerifyAttemptsCollaborator {
     verifyAttemptId: string,
     workspace: MachineVerifyWorkspaceManager,
     workItemId: string,
+    recordedPath?: string,
   ): Promise<void> {
     if (this.#workspaceCleanupClaims.has(verifyAttemptId)) return;
     this.#workspaceCleanupClaims.add(verifyAttemptId);
+    if (recordedPath !== undefined && workspace.removeRecordedPath !== undefined) {
+      try {
+        await workspace.removeRecordedPath(recordedPath);
+        return;
+      } catch (error) {
+        console.error(`[task-board] could not remove recorded verify workspace for ${workItemId}`, error);
+      }
+    }
     await this.#removeBestEffort(workspace, workItemId);
   }
 

@@ -12,6 +12,7 @@ import {
   DESIGN_FAILURE_POINTS,
   SCOPE_HOLD_SUMMARY_PREFIX,
   type BoardSnapshot,
+  type ChildWorkItem,
   type ClaimRunResult,
   type ConfirmPlanRevisionResponse,
   type DesignRecordDraft,
@@ -29,13 +30,15 @@ import {
   TaskWorker,
 } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
+import { VerifyRunner } from "#server/agents/verify";
 import {
   createTaskBoardService,
   normalizeTaskBoardConfig,
   TaskBoard,
   type TaskBoardService,
 } from "#server/task-board";
-import { automationConfigurationRequest, automationStages } from "./helpers.js";
+import { DEFAULT_SUPERVISOR_PATH } from "#server/task-board/collaborators/verify-attempts";
+import { automationConfigurationRequest, automationStages, gateActions } from "./helpers.js";
 
 const HUMAN_TOKEN = "pipeline-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "pipeline-e2e-manager-token-0123456789abcdef";
@@ -47,11 +50,20 @@ const REJECTION_NOTE = "Make the second plan explicitly identify the two reviewa
 const CHECKED_CRITERION = "The fixture criterion command passes.";
 const HUMAN_CRITERION = "The implementation uses two reviewable commits.";
 const MID_RUN_ASSUMPTION = "Implementation selected a plain-text fixture marker.";
+const BLAST_RADIUS_MARKER = "BLAST_RADIUS_DECOMPOSITION";
+const FEATURE_SPLIT_MARKER = "FEATURE_SPLIT_DECOMPOSITION";
+const PUBLISHED_INTERFACE = "# Published provider interface\n\n- `GET /v1/pipeline-fixture`\n";
 const ENGINEER_RUN_PIN = { runtime: "codex", model: "fake-engineer" } as const;
 const VERIFIER_RUN_PIN = { runtime: "codex", model: "fake-reviewer" } as const;
 const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
-type EngineerMode = "scoped" | "outside_scope" | "merge_conflict" | "seeded_defect";
+type EngineerMode =
+  | "scoped"
+  | "outside_scope"
+  | "merge_conflict"
+  | "seeded_defect"
+  | "phased_provider"
+  | "phased_consumer";
 type ReviewerMode = "passed" | "seeded_defect" | "always_blocking";
 type PlanTier = "standard" | "hazardous";
 
@@ -105,7 +117,8 @@ interface PipelineFixture {
   readonly origin: string;
   readonly service: TaskBoardService;
   readonly sweepBoard: TaskBoard;
-  readonly project: Project;
+  readonly projects: readonly FixtureProject[];
+  readonly project: FixtureProject;
   readonly workItem: WorkItem;
   readonly managerId: string;
   readonly engineerId: string;
@@ -127,13 +140,40 @@ interface PipelineFixture {
   readonly tier: PlanTier;
 }
 
+interface FixtureRepositoryOptions {
+  readonly name: string;
+  readonly verifyPasses: boolean;
+  readonly declaredScope?: readonly string[];
+  readonly engineerMode?: EngineerMode;
+  readonly reviewerMode?: ReviewerMode;
+  readonly omitInterfaceOnFirstExpand?: boolean;
+}
+
+interface FixtureProject extends Project {
+  readonly repo: string;
+  readonly declaredScope: readonly string[];
+  readonly managerId: string;
+  readonly managerToken: string;
+  readonly managerWorker: TaskWorker;
+  readonly managerScratch: string;
+  readonly engineerId: string;
+  readonly engineerToken: string;
+  readonly engineerWorker: TaskWorker;
+  readonly engineerScratch: string;
+  readonly verifierId: string;
+  readonly verifierToken: string;
+  readonly verifierWorker: TaskWorker;
+}
+
 interface FixtureOptions {
   readonly suffix: string;
+  readonly originalRequest?: string;
   readonly engineerMode: EngineerMode;
   readonly reviewerMode?: ReviewerMode;
   readonly tier?: PlanTier;
   readonly verifyPasses: boolean;
   readonly declaredScope?: readonly string[];
+  readonly repos?: readonly FixtureRepositoryOptions[];
   readonly scopeRoutes?: ReadonlyArray<Readonly<{
     marker: string;
     declaredScope: readonly string[];
@@ -194,6 +234,11 @@ function managerCliSource(
   declaredScope: readonly string[],
   tier: PlanTier,
   scopeRoutes: FixtureOptions["scopeRoutes"] = [],
+  projectRoutes: Readonly<{
+    ownProjectId: string;
+    providerProjectId: string;
+    consumerProjectId: string | null;
+  }>,
 ): string {
   return `
 let input = "";
@@ -228,7 +273,7 @@ process.stdin.on("end", () => {
     process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
     return;
   }
-  const workflowPlan = {
+  let workflowPlan = {
     objective: "Deliver the scoped Pipeline v2 fixture plan v" + revision + ".",
     assumptions: ["The fixture repository stays available."],
     acceptanceCriteria: [${JSON.stringify(CHECKED_CRITERION)}, ${JSON.stringify(HUMAN_CRITERION)}],
@@ -251,6 +296,84 @@ process.stdin.on("end", () => {
       stageTemplate: ["implementation", "testing", "verification"]
     }]
   };
+  const projectRoutes = ${JSON.stringify(projectRoutes)};
+  if (input.includes(${JSON.stringify(BLAST_RADIUS_MARKER)})) {
+    if (projectRoutes.consumerProjectId === null) throw new Error("blast-radius fixture requires a consumer project");
+    workflowPlan = {
+      ...workflowPlan,
+      objective: "Coordinate a phased provider/consumer interface change.",
+      acceptanceCriteria: ["Every phased child reaches its governed merge outcome."],
+      changeShape: "blast_radius",
+      declaredScope: ["coordination"],
+      criterionChecks: [],
+      children: [{
+        key: "expand",
+        objective: "Publish the additive provider interface.",
+        projectId: projectRoutes.providerProjectId,
+        declaredScope: ["src/provider", "docs/interface.md"],
+        acceptanceCriteria: ["The additive interface is published in docs/interface.md."],
+        phase: "expand",
+        splitBy: "phase"
+      }, {
+        key: "migrate",
+        objective: "Migrate the consumer against the published provider interface.",
+        projectId: projectRoutes.consumerProjectId,
+        declaredScope: ["src/consumer"],
+        acceptanceCriteria: ["The consumer records and uses the exact published interface."],
+        phase: "migrate",
+        dependsOn: ["expand"],
+        splitBy: "consumer"
+      }, {
+        key: "contract",
+        objective: "Contract the provider after every consumer deploy is attested.",
+        projectId: projectRoutes.providerProjectId,
+        declaredScope: ["src/contract", "docs/interface.md"],
+        acceptanceCriteria: ["The provider contract is finalized after migration."],
+        phase: "contract",
+        dependsOn: ["migrate"],
+        splitBy: "phase"
+      }],
+      nodes: [{
+        nodeId: ${JSON.stringify(`pipeline-${suffix}-parent-v`)} + revision,
+        title: "Coordinate the phased interface change",
+        objective: "Coordinate Expand, Migrate, and Contract.",
+        acceptanceCriteria: ["The parent records all three governed child outcomes."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"]
+      }]
+    };
+  } else if (input.includes(${JSON.stringify(FEATURE_SPLIT_MARKER)})) {
+    workflowPlan = {
+      ...workflowPlan,
+      objective: "Coordinate two independently reviewable feature children.",
+      acceptanceCriteria: ["Both feature children merge under one parent approval."],
+      changeShape: "feature",
+      declaredScope: ["coordination"],
+      criterionChecks: [],
+      children: [{
+        key: "feature-one",
+        objective: "Implement the first independent feature slice.",
+        projectId: projectRoutes.ownProjectId,
+        declaredScope: ["src/feature/one"],
+        acceptanceCriteria: ["The first feature slice passes verification."]
+      }, {
+        key: "feature-two",
+        objective: "Implement the second independent feature slice.",
+        projectId: projectRoutes.ownProjectId,
+        declaredScope: ["src/feature/two"],
+        acceptanceCriteria: ["The second feature slice passes verification."],
+        dependsOn: ["feature-one"]
+      }],
+      nodes: [{
+        nodeId: ${JSON.stringify(`pipeline-${suffix}-parent-v`)} + revision,
+        title: "Coordinate the feature split",
+        objective: "Coordinate both independent feature slices.",
+        acceptanceCriteria: ["The parent records both child merges."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"]
+      }]
+    };
+  }
   const result = {
     status: "completed",
     progress: ["The complete pipeline plan is ready for human review."],
@@ -269,7 +392,21 @@ process.stdin.on("end", () => {
 `;
 }
 
-function engineerCliSource(mode: EngineerMode, delayMs = 0): string {
+function engineerCliSource(
+  mode: EngineerMode,
+  delayMs = 0,
+  phased: Readonly<{
+    providerRepoPath: string | null;
+    providerProjectId: string | null;
+    providerRepoName: string | null;
+    omitInterfaceOnFirstExpand: boolean;
+  }> = {
+    providerRepoPath: null,
+    providerProjectId: null,
+    providerRepoName: null,
+    omitInterfaceOnFirstExpand: false,
+  },
+): string {
   const secondPath = mode === "outside_scope"
     ? "docs/outside.md"
     : mode === "merge_conflict" ? "shared.txt" : "src/allowed/second.txt";
@@ -299,11 +436,58 @@ process.stdin.on("end", () => {
     runGit(["-c", "user.name=Pipeline Test", "-c", "user.email=pipeline@test.invalid", "commit", "-m", subject]);
   };
   const mode = ${JSON.stringify(mode)};
+  const phased = ${JSON.stringify(phased)};
   const scopeMatch = /Declared scope \\(only these path prefixes\\): ([^.]*)\\./u.exec(input);
   const scopedRoot = scopeMatch === null ? "src/allowed" : scopeMatch[1].split(",")[0].trim();
   const fixMatch = /Fix round (\\d+) on branch/u.exec(input);
   const fixRound = fixMatch === null ? null : Number(fixMatch[1]);
-  if (fixRound !== null) {
+  const isExpand = input.includes("This is the Expand phase of a planned interface change.");
+  const isContract = input.includes("This is the Contract phase of a planned interface change.");
+  if (mode === "phased_consumer") {
+    const contextMatch = /Bounded task context follows as JSON:\\n([^\\n]+)\\nReturn only/u.exec(input);
+    if (contextMatch === null) throw new Error("consumer prompt omitted bounded task context");
+    const context = JSON.parse(contextMatch[1]);
+    const crossRepo = context.crossRepoContext;
+    if (crossRepo === undefined) throw new Error("consumer claim omitted crossRepoContext");
+    if (crossRepo.providerProjectId !== phased.providerProjectId) throw new Error("consumer received the wrong provider project");
+    if (crossRepo.providerRepoName !== phased.providerRepoName) throw new Error("consumer received the wrong provider repository name");
+    if (crossRepo.interfacePath !== "docs/interface.md") throw new Error("consumer received the wrong interface path");
+    if (!/^[0-9a-f]{40,64}$/u.test(crossRepo.sha)) throw new Error("consumer received an invalid Expand merge sha");
+    if (crossRepo.markdown !== ${JSON.stringify(PUBLISHED_INTERFACE)}) throw new Error("consumer received different interface markdown");
+    if (phased.providerRepoPath !== null) {
+      if (process.argv.some((value) => value.includes(phased.providerRepoPath))) {
+        throw new Error("provider repository path leaked through consumer argv");
+      }
+      if (Object.values(process.env).some((value) => typeof value === "string" && value.includes(phased.providerRepoPath))) {
+        throw new Error("provider repository path leaked through consumer environment");
+      }
+      if (input.includes(phased.providerRepoPath)) throw new Error("provider repository path leaked through consumer prompt");
+    }
+    if (fixRound === null) {
+      commit("src/consumer/provider-interface.md", crossRepo.markdown, "record published provider interface");
+      commit("src/consumer/provider-context.json", JSON.stringify({
+        providerProjectId: crossRepo.providerProjectId,
+        sha: crossRepo.sha
+      }) + "\\n", "record provider interface identity");
+    } else {
+      commit(
+        "src/consumer/fix-round-" + fixRound + ".txt",
+        "consumer fix round " + fixRound + "\\n",
+        "fix consumer review round " + fixRound
+      );
+    }
+  } else if (mode === "phased_provider" && isExpand) {
+    if (fixRound === null) {
+      commit("src/provider/change.txt", "additive provider change\\n", "expand provider interface");
+      if (!phased.omitInterfaceOnFirstExpand) {
+        commit("docs/interface.md", ${JSON.stringify(PUBLISHED_INTERFACE)}, "publish provider interface");
+      }
+    } else {
+      commit("docs/interface.md", ${JSON.stringify(PUBLISHED_INTERFACE)}, "publish provider interface fix");
+    }
+  } else if (mode === "phased_provider" && isContract) {
+    commit("src/contract/change.txt", "contract provider change\\n", "contract provider interface");
+  } else if (fixRound !== null) {
     if (mode === "seeded_defect") {
       commit("src/feature.txt", "fixed scoped change\\n", "fix seeded defect");
     } else {
@@ -412,8 +596,8 @@ process.stdin.on("end", () => {
 `;
 }
 
-async function fixtureRepository(root: string, verifyPasses: boolean): Promise<string> {
-  const repo = join(root, "repo");
+async function fixtureRepository(root: string, name: string, verifyPasses: boolean): Promise<string> {
+  const repo = join(root, name);
   await git(root, ["init", "-b", "main", repo]);
   await git(repo, ["config", "user.name", "Pipeline Test"]);
   await git(repo, ["config", "user.email", "pipeline@test.invalid"]);
@@ -444,9 +628,20 @@ async function fixtureRepository(root: string, verifyPasses: boolean): Promise<s
 
 async function createFixture(options: FixtureOptions): Promise<PipelineFixture> {
   const root = await mkdtemp(join(tmpdir(), `steward-pipeline-e2e-${options.suffix}-`));
-  const repo = await fixtureRepository(root, options.verifyPasses);
   const tier = options.tier ?? "standard";
-  const reviewerMode = options.reviewerMode ?? "passed";
+  const repositoryOptions = options.repos ?? [{
+    name: "repo",
+    verifyPasses: options.verifyPasses,
+    declaredScope: options.declaredScope,
+    engineerMode: options.engineerMode,
+    reviewerMode: options.reviewerMode,
+  }];
+  assert.ok(repositoryOptions.length > 0, "a pipeline fixture needs at least one repository");
+  const repositories = await Promise.all(repositoryOptions.map(async (repository, index) => ({
+    index,
+    options: repository,
+    repo: await fixtureRepository(root, repository.name, repository.verifyPasses),
+  })));
   const dbPath = join(root, "board", "task-board.sqlite");
   const verifyWorkspaceRoot = join(root, "verify-workspaces");
   const boardOptions = {
@@ -463,56 +658,21 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const service = await createTaskBoardService(boardOptions);
   const address = await service.start();
   const sweepBoard = await TaskBoard.open(normalizeTaskBoardConfig(boardOptions));
-  const { project } = await jsonRequest<{ project: Project }>(address.url, "/v1/projects", "POST", 201, {
-    body: { name: `Pipeline fixture ${options.suffix}`, description: repo },
-  });
-  const managerId = `pipeline-${options.suffix}-manager`;
-  const engineerId = `pipeline-${options.suffix}-engineer`;
-  const verifierId = `pipeline-${options.suffix}-verifier`;
-  await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
-    body: {
-      agentId: managerId,
-      role: "manager",
-      area: "pipeline planning",
-      mission: "Return complete Pipeline v2 plans for human approval.",
-      model: "fake-codex",
-      token: MANAGER_TOKEN,
-    },
-  });
-  await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
-    body: {
-      agentId: verifierId,
-      role: "verifier",
-      area: "pipeline verification",
-      mission: "Independently review the machine-verified pipeline evidence.",
-      model: VERIFIER_RUN_PIN.model,
-      token: VERIFIER_TOKEN,
-    },
-  });
-  await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
-    body: {
-      agentId: engineerId,
-      role: "engineer",
-      area: "pipeline implementation",
-      mission: "Implement only the confirmed declared scope and commit each logical change.",
-      model: ENGINEER_RUN_PIN.model,
-      token: ENGINEER_TOKEN,
-    },
-  });
-  const secondEngineerId = options.twoEngineerLanes === true
-    ? `pipeline-${options.suffix}-engineer-two`
-    : null;
-  if (secondEngineerId !== null) {
-    await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
+  const projectRows: Array<Readonly<{
+    index: number;
+    options: FixtureRepositoryOptions;
+    repo: string;
+    project: Project;
+  }>> = [];
+  for (const repository of repositories) {
+    const { project } = await jsonRequest<{ project: Project }>(address.url, "/v1/projects", "POST", 201, {
       body: {
-        agentId: secondEngineerId,
-        role: "engineer",
-        area: "parallel pipeline implementation",
-        mission: "Provide a second bounded implementation lane for exit-criterion coverage.",
-        model: ENGINEER_RUN_PIN.model,
-        token: ENGINEER_TWO_TOKEN,
+        name: `Pipeline fixture ${options.suffix} ${repository.options.name}`,
+        description: `Real Git fixture for ${repository.options.name}.`,
+        repoPath: repository.repo,
       },
     });
+    projectRows.push({ ...repository, project });
   }
   const engineerType = {
     agentTypeId: `pipeline-${options.suffix}-engineer-type`,
@@ -541,123 +701,216 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
       }),
     }),
   });
-
-  const declaredScope = options.declaredScope ?? ["src/allowed"];
-  const managerCli = await fakeCodex(
-    root,
-    "manager-cli",
-    managerCliSource(options.suffix, declaredScope, tier, options.scopeRoutes),
-  );
-  const engineerCli = await fakeCodex(
-    root,
-    "engineer-cli",
-    engineerCliSource(options.engineerMode, options.engineerDelayMs),
-  );
-  const secondEngineerCli = secondEngineerId === null
-    ? null
-    : await fakeCodex(
-        root,
-        "engineer-two-cli",
-        engineerCliSource(options.engineerMode, options.engineerDelayMs),
-      );
-  const verifierCli = await fakeCodex(root, "verifier-cli", verifierCliSource(reviewerMode));
-  const managerWorker = await TaskWorker.create({
-    identity: { workerId: `pipeline-${options.suffix}-manager-worker`, agentId: managerId },
-    statePath: join(root, "manager-worker", "journal.json"),
-    board: new HttpTaskBoardClient({ baseUrl: address.url, token: MANAGER_TOKEN }),
-    launcher: new ContainedCliAgentLauncher({
-      adapter: codexAdapter,
-      profile: CODEX_PROFILE,
-      prompts: PROMPTS,
-      model: "fake-codex",
-      workingDirectory: managerCli.working,
-      environment: {
-        PATH: `${managerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
-        TMPDIR: managerCli.scratch,
-      },
-      timeoutMs: 5_000,
-      terminationGraceMs: 10,
-      groupAbsenceTimeoutMs: 2_000,
-    }),
-    longPollMs: 1,
-  });
   const workspaceRoot = join(root, "implementation-workspaces");
-  const engineerLauncher = new WorkspaceScopedLauncher(
-    new ContainedCliAgentLauncher({
-      adapter: codexAdapter,
-      profile: CODEX_PROFILE,
-      prompts: PROMPTS,
-      model: ENGINEER_RUN_PIN.model,
-      workingDirectory: engineerCli.working,
-      environment: {
-        PATH: `${engineerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
-        TMPDIR: engineerCli.scratch,
+  const provider = projectRows[0]!;
+  const consumer = projectRows[1] ?? null;
+  const fixtureProjects: FixtureProject[] = [];
+  for (const row of projectRows) {
+    const identitySuffix = row.index === 0 ? "" : `-${row.index + 1}`;
+    const managerId = `pipeline-${options.suffix}${identitySuffix}-manager`;
+    const engineerId = `pipeline-${options.suffix}${identitySuffix}-engineer`;
+    const verifierId = `pipeline-${options.suffix}${identitySuffix}-verifier`;
+    const managerToken = row.index === 0
+      ? MANAGER_TOKEN
+      : `pipeline-e2e-manager-${row.index + 1}-token-0123456789abcdef`;
+    const engineerToken = row.index === 0
+      ? ENGINEER_TOKEN
+      : `pipeline-e2e-engineer-${row.index + 1}-token-0123456789abcdef`;
+    const verifierToken = row.index === 0
+      ? VERIFIER_TOKEN
+      : `pipeline-e2e-verifier-${row.index + 1}-token-0123456789abcdef`;
+    await jsonRequest(address.url, `/v1/projects/${row.project.projectId}/agents`, "POST", 201, {
+      body: {
+        agentId: managerId,
+        role: "manager",
+        area: "pipeline planning",
+        mission: "Return complete Pipeline v2 plans for human approval.",
+        model: "fake-codex",
+        token: managerToken,
       },
-      timeoutMs: 5_000,
-      terminationGraceMs: 10,
-      groupAbsenceTimeoutMs: 2_000,
-    }),
-    new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo }),
-  );
-  const engineerWorker = await TaskWorker.create({
-    identity: { workerId: `pipeline-${options.suffix}-engineer-worker`, agentId: engineerId },
-    statePath: join(root, "engineer-worker", "journal.json"),
-    board: new HttpTaskBoardClient({ baseUrl: address.url, token: ENGINEER_TOKEN }),
-    launcher: engineerLauncher,
-    pinned: ENGINEER_RUN_PIN,
-    longPollMs: 1,
-  });
-  const secondEngineerWorker = secondEngineerId === null || secondEngineerCli === null
-    ? null
-    : await TaskWorker.create({
-        identity: { workerId: `pipeline-${options.suffix}-engineer-two-worker`, agentId: secondEngineerId },
-        statePath: join(root, "engineer-two-worker", "journal.json"),
-        board: new HttpTaskBoardClient({ baseUrl: address.url, token: ENGINEER_TWO_TOKEN }),
-        launcher: new WorkspaceScopedLauncher(
-          new ContainedCliAgentLauncher({
-            adapter: codexAdapter,
-            profile: CODEX_PROFILE,
-            prompts: PROMPTS,
-            model: ENGINEER_RUN_PIN.model,
-            workingDirectory: secondEngineerCli.working,
-            environment: {
-              PATH: `${secondEngineerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
-              TMPDIR: secondEngineerCli.scratch,
-            },
-            timeoutMs: 5_000,
-            terminationGraceMs: 10,
-            groupAbsenceTimeoutMs: 2_000,
-          }),
-          new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo }),
-        ),
-        pinned: ENGINEER_RUN_PIN,
-        longPollMs: 1,
-      });
-  const verifierWorker = await TaskWorker.create({
-    identity: { workerId: `pipeline-${options.suffix}-verifier-worker`, agentId: verifierId },
-    statePath: join(root, "verifier-worker", "journal.json"),
-    board: new HttpTaskBoardClient({ baseUrl: address.url, token: VERIFIER_TOKEN }),
-    launcher: new ContainedCliAgentLauncher({
-      adapter: codexAdapter,
-      profile: CODEX_PROFILE,
-      prompts: PROMPTS,
-      model: VERIFIER_RUN_PIN.model,
-      workingDirectory: verifierCli.working,
-      environment: {
-        PATH: `${verifierCli.bin}${delimiter}${process.env.PATH ?? ""}`,
-        TMPDIR: verifierCli.scratch,
+    });
+    await jsonRequest(address.url, `/v1/projects/${row.project.projectId}/agents`, "POST", 201, {
+      body: {
+        agentId: verifierId,
+        role: "verifier",
+        area: "pipeline verification",
+        mission: "Independently review the machine-verified pipeline evidence.",
+        model: VERIFIER_RUN_PIN.model,
+        token: verifierToken,
       },
-      timeoutMs: 5_000,
-      terminationGraceMs: 10,
-      groupAbsenceTimeoutMs: 2_000,
-    }),
-    pinned: VERIFIER_RUN_PIN,
-    longPollMs: 1,
-  });
+    });
+    await jsonRequest(address.url, `/v1/projects/${row.project.projectId}/agents`, "POST", 201, {
+      body: {
+        agentId: engineerId,
+        role: "engineer",
+        area: "pipeline implementation",
+        mission: "Implement only the confirmed declared scope and commit each logical change.",
+        model: ENGINEER_RUN_PIN.model,
+        token: engineerToken,
+      },
+    });
+    const declaredScope = row.options.declaredScope ?? options.declaredScope ?? ["src/allowed"];
+    const cliLabel = row.index === 0 ? "" : `-${row.index + 1}`;
+    const managerCli = await fakeCodex(
+      root,
+      `manager${cliLabel}-cli`,
+      managerCliSource(options.suffix, declaredScope, tier, options.scopeRoutes, {
+        ownProjectId: row.project.projectId,
+        providerProjectId: provider.project.projectId,
+        consumerProjectId: consumer?.project.projectId ?? null,
+      }),
+    );
+    const engineerCli = await fakeCodex(
+      root,
+      `engineer${cliLabel}-cli`,
+      engineerCliSource(row.options.engineerMode ?? options.engineerMode, options.engineerDelayMs, {
+        providerRepoPath: provider.repo,
+        providerProjectId: provider.project.projectId,
+        providerRepoName: provider.project.name,
+        omitInterfaceOnFirstExpand: row.options.omitInterfaceOnFirstExpand ?? false,
+      }),
+    );
+    const verifierCli = await fakeCodex(
+      root,
+      `verifier${cliLabel}-cli`,
+      verifierCliSource(row.options.reviewerMode ?? options.reviewerMode ?? "passed"),
+    );
+    const managerWorker = await TaskWorker.create({
+      identity: { workerId: `pipeline-${options.suffix}${identitySuffix}-manager-worker`, agentId: managerId },
+      statePath: join(root, `manager${cliLabel}-worker`, "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: address.url, token: managerToken }),
+      launcher: new ContainedCliAgentLauncher({
+        adapter: codexAdapter,
+        profile: CODEX_PROFILE,
+        prompts: PROMPTS,
+        model: "fake-codex",
+        workingDirectory: managerCli.working,
+        environment: {
+          PATH: `${managerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+          TMPDIR: managerCli.scratch,
+        },
+        timeoutMs: 5_000,
+        terminationGraceMs: 10,
+        groupAbsenceTimeoutMs: 2_000,
+      }),
+      longPollMs: 1,
+    });
+    const engineerWorker = await TaskWorker.create({
+      identity: { workerId: `pipeline-${options.suffix}${identitySuffix}-engineer-worker`, agentId: engineerId },
+      statePath: join(root, `engineer${cliLabel}-worker`, "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: address.url, token: engineerToken }),
+      launcher: new WorkspaceScopedLauncher(
+        new ContainedCliAgentLauncher({
+          adapter: codexAdapter,
+          profile: CODEX_PROFILE,
+          prompts: PROMPTS,
+          model: ENGINEER_RUN_PIN.model,
+          workingDirectory: engineerCli.working,
+          environment: {
+            PATH: `${engineerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+            TMPDIR: engineerCli.scratch,
+          },
+          timeoutMs: 5_000,
+          terminationGraceMs: 10,
+          groupAbsenceTimeoutMs: 2_000,
+        }),
+        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: row.repo }),
+      ),
+      pinned: ENGINEER_RUN_PIN,
+      longPollMs: 1,
+    });
+    const verifierWorker = await TaskWorker.create({
+      identity: { workerId: `pipeline-${options.suffix}${identitySuffix}-verifier-worker`, agentId: verifierId },
+      statePath: join(root, `verifier${cliLabel}-worker`, "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: address.url, token: verifierToken }),
+      launcher: new ContainedCliAgentLauncher({
+        adapter: codexAdapter,
+        profile: CODEX_PROFILE,
+        prompts: PROMPTS,
+        model: VERIFIER_RUN_PIN.model,
+        workingDirectory: verifierCli.working,
+        environment: {
+          PATH: `${verifierCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+          TMPDIR: verifierCli.scratch,
+        },
+        timeoutMs: 5_000,
+        terminationGraceMs: 10,
+        groupAbsenceTimeoutMs: 2_000,
+      }),
+      pinned: VERIFIER_RUN_PIN,
+      longPollMs: 1,
+    });
+    fixtureProjects.push({
+      ...row.project,
+      repo: row.repo,
+      declaredScope,
+      managerId,
+      managerToken,
+      managerWorker,
+      managerScratch: managerCli.scratch,
+      engineerId,
+      engineerToken,
+      engineerWorker,
+      engineerScratch: engineerCli.scratch,
+      verifierId,
+      verifierToken,
+      verifierWorker,
+    });
+  }
+  const project = fixtureProjects[0]!;
+  let secondEngineer: PipelineFixture["secondEngineer"] = null;
+  if (options.twoEngineerLanes === true) {
+    const secondEngineerId = `pipeline-${options.suffix}-engineer-two`;
+    await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, {
+      body: {
+        agentId: secondEngineerId,
+        role: "engineer",
+        area: "parallel pipeline implementation",
+        mission: "Provide a second bounded implementation lane for exit-criterion coverage.",
+        model: ENGINEER_RUN_PIN.model,
+        token: ENGINEER_TWO_TOKEN,
+      },
+    });
+    const secondEngineerCli = await fakeCodex(
+      root,
+      "engineer-two-cli",
+      engineerCliSource(options.engineerMode, options.engineerDelayMs),
+    );
+    const secondEngineerWorker = await TaskWorker.create({
+      identity: { workerId: `pipeline-${options.suffix}-engineer-two-worker`, agentId: secondEngineerId },
+      statePath: join(root, "engineer-two-worker", "journal.json"),
+      board: new HttpTaskBoardClient({ baseUrl: address.url, token: ENGINEER_TWO_TOKEN }),
+      launcher: new WorkspaceScopedLauncher(
+        new ContainedCliAgentLauncher({
+          adapter: codexAdapter,
+          profile: CODEX_PROFILE,
+          prompts: PROMPTS,
+          model: ENGINEER_RUN_PIN.model,
+          workingDirectory: secondEngineerCli.working,
+          environment: {
+            PATH: `${secondEngineerCli.bin}${delimiter}${process.env.PATH ?? ""}`,
+            TMPDIR: secondEngineerCli.scratch,
+          },
+          timeoutMs: 5_000,
+          terminationGraceMs: 10,
+          groupAbsenceTimeoutMs: 2_000,
+        }),
+        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: project.repo }),
+      ),
+      pinned: ENGINEER_RUN_PIN,
+      longPollMs: 1,
+    });
+    secondEngineer = {
+      id: secondEngineerId,
+      token: ENGINEER_TWO_TOKEN,
+      worker: secondEngineerWorker,
+      scratch: secondEngineerCli.scratch,
+    };
+  }
   const { workItem } = await jsonRequest<{ workItem: WorkItem }>(address.url, "/v1/work-items", "POST", 201, {
     idempotencyKey: `pipeline-e2e-${options.suffix}`,
     body: {
-      originalRequest: RAW_REQUEST,
+      originalRequest: options.originalRequest ?? RAW_REQUEST,
       priority: "normal",
       projectTarget: { mode: "explicit", projectId: project.projectId },
     },
@@ -665,52 +918,87 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   assert.equal(workItem.state, "planning");
   return {
     root,
-    repo,
+    repo: project.repo,
     dbPath,
     origin: address.url,
     service,
     sweepBoard,
+    projects: fixtureProjects,
     project,
     workItem,
-    managerId,
-    engineerId,
-    verifierId,
-    managerWorker,
-    engineerWorker,
-    secondEngineer: secondEngineerId === null || secondEngineerCli === null || secondEngineerWorker === null
-      ? null
-      : {
-          id: secondEngineerId,
-          token: ENGINEER_TWO_TOKEN,
-          worker: secondEngineerWorker,
-          scratch: secondEngineerCli.scratch,
-        },
-    verifierWorker,
-    managerScratch: managerCli.scratch,
-    engineerScratch: engineerCli.scratch,
+    managerId: project.managerId,
+    engineerId: project.engineerId,
+    verifierId: project.verifierId,
+    managerWorker: project.managerWorker,
+    engineerWorker: project.engineerWorker,
+    secondEngineer,
+    verifierWorker: project.verifierWorker,
+    managerScratch: project.managerScratch,
+    engineerScratch: project.engineerScratch,
     workspaceRoot,
     verifyWorkspaceRoot,
-    declaredScope,
+    declaredScope: project.declaredScope,
     tier,
   };
 }
 
 async function closeFixture(fixture: PipelineFixture): Promise<void> {
-  await fixture.managerWorker.close();
-  await fixture.engineerWorker.close();
+  for (const project of fixture.projects) {
+    await project.managerWorker.close();
+    await project.engineerWorker.close();
+    await project.verifierWorker.close();
+  }
   await fixture.secondEngineer?.worker.close();
-  await fixture.verifierWorker.close();
   fixture.sweepBoard.close();
   await fixture.service.close();
 }
 
-async function workflow(fixture: PipelineFixture): Promise<WorkflowSnapshot> {
+async function workflow(
+  fixture: PipelineFixture,
+  project: Project = fixture.project,
+): Promise<WorkflowSnapshot> {
   return (await jsonRequest<{ workflow: WorkflowSnapshot }>(
     fixture.origin,
-    `/v1/projects/${fixture.project.projectId}/workflow`,
+    `/v1/projects/${project.projectId}/workflow`,
     "GET",
     200,
   )).workflow;
+}
+
+async function childrenFor(fixture: PipelineFixture, parentWorkItemId: string): Promise<readonly ChildWorkItem[]> {
+  return (await jsonRequest<{ children: readonly ChildWorkItem[] }>(
+    fixture.origin,
+    `/v1/work-items/${parentWorkItemId}/children`,
+    "GET",
+    200,
+  )).children;
+}
+
+function latestNodeBlock(fixture: PipelineFixture, workItemId: string): string | null {
+  const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+  try {
+    const row = db.prepare(`
+      SELECT event.summary
+      FROM project_events event
+      JOIN work_nodes node ON node.node_id=event.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      WHERE plan.work_item_id=? AND event.event_type='node_blocked'
+      ORDER BY event.sequence DESC
+      LIMIT 1
+    `).get(workItemId) as { summary?: unknown } | undefined;
+    return row === undefined ? null : String(row.summary);
+  } finally {
+    db.close();
+  }
+}
+
+function singleFinalApproval(fixture: PipelineFixture, workItemId: string, expectMergeSha = true) {
+  const approvals = gateActions(fixture.dbPath, workItemId).filter((action) => action.gate === "final_approve");
+  assert.equal(approvals.length, 1, `${workItemId} must have exactly one final_approve action`);
+  const approval = approvals[0];
+  assert.ok(approval);
+  if (expectMergeSha) assert.match(approval.mergeSha ?? "", /^[0-9a-f]{40,64}$/u);
+  return approval;
 }
 
 async function currentWorkItem(fixture: PipelineFixture, workItemId = fixture.workItem.workItemId): Promise<WorkItem> {
@@ -763,6 +1051,57 @@ function assertCompletePlan(plan: PlanRevision, declaredScope: readonly string[]
     recommendedDefault: "No; keep the change local to fixture files.",
   }]);
   assert.deepEqual(plan.criterionChecks, [{ criterion: CHECKED_CRITERION, check: "node criterion-check.mjs" }]);
+}
+
+async function proposeAndConfirmDecomposition(
+  fixture: PipelineFixture,
+  expectedShape: "feature" | "blast_radius",
+  expectedPhases: readonly ("expand" | "migrate" | "contract" | null)[],
+): Promise<Readonly<{
+  plan: PlanRevision;
+  children: readonly ChildWorkItem[];
+}>> {
+  assert.equal(await fixture.project.managerWorker.dispatchOnce(), true);
+  assert.equal((await currentWorkItem(fixture)).state, "plan_approval");
+  const snapshot = await workflow(fixture);
+  const plan = proposedPlan(snapshot, fixture.workItem.workItemId);
+  assert.equal(plan.changeShape, expectedShape);
+  assert.equal(plan.tier, "standard");
+  assert.equal(plan.children?.length, expectedPhases.length);
+  assert.deepEqual(plan.children?.map((child) => child.phase ?? null), expectedPhases);
+  for (const child of plan.children ?? []) {
+    assert.ok(child.objective.length > 0);
+    assert.ok(child.declaredScope.length > 0);
+    assert.ok(child.acceptanceCriteria.length > 0);
+  }
+  await jsonRequest<ConfirmPlanRevisionResponse>(
+    fixture.origin,
+    `/v1/plans/${plan.planRevisionId}/confirm`,
+    "POST",
+    200,
+    { body: { expectedState: "proposed" } },
+  );
+  const parent = await currentWorkItem(fixture);
+  assert.equal(parent.state, "coordinating");
+  assert.equal(parent.pipelineBranch, null);
+  assert.equal(parent.baseSha, null);
+  const children = await childrenFor(fixture, parent.workItemId);
+  assert.equal(children.length, expectedPhases.length);
+  assert.deepEqual(children.map((child) => child.phase), expectedPhases);
+  assert.deepEqual(children.map((child) => child.childOrdinal), expectedPhases.map((_, index) => index));
+  const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+  try {
+    for (const child of children) {
+      assert.equal(db.prepare(`
+        SELECT to_state
+        FROM work_item_transitions
+        WHERE work_item_id=? AND sequence=1
+      `).get(child.workItemId)?.to_state, "queued");
+    }
+  } finally {
+    db.close();
+  }
+  return { plan, children };
 }
 
 async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean): Promise<PlanRevision> {
@@ -1713,5 +2052,496 @@ test("campaign 7 exit: the kill switch drains an active run, gates claims, resum
     assert.equal((await currentWorkItem(fixture)).state, "merged");
   } finally {
     await closeFixture(fixture);
+  }
+});
+
+test("campaign 10 exit: a blast-radius change lands as phased children across two repos", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-blast-radius",
+    originalRequest: `Deliver the ${BLAST_RADIUS_MARKER} across provider and consumer repositories.`,
+    engineerMode: "scoped",
+    verifyPasses: true,
+    repos: [{
+      name: "provider",
+      verifyPasses: true,
+      engineerMode: "phased_provider",
+      omitInterfaceOnFirstExpand: true,
+    }, {
+      name: "consumer",
+      verifyPasses: true,
+      engineerMode: "phased_consumer",
+    }],
+  });
+  try {
+    const [provider, consumer] = fixture.projects;
+    assert.ok(provider);
+    assert.ok(consumer);
+    assert.notEqual(provider.projectId, consumer.projectId);
+    assert.notEqual(provider.managerId, consumer.managerId);
+    assert.notEqual(provider.engineerId, consumer.engineerId);
+    assert.notEqual(provider.verifierId, consumer.verifierId);
+
+    const decomposition = await proposeAndConfirmDecomposition(
+      fixture,
+      "blast_radius",
+      ["expand", "migrate", "contract"],
+    );
+    const [expand, migrate, contract] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    assert.ok(contract);
+    assert.equal(expand.resolvedProjectId, provider.projectId);
+    assert.equal(migrate.resolvedProjectId, consumer.projectId);
+    assert.equal(contract.resolvedProjectId, provider.projectId);
+    assert.deepEqual(decomposition.plan.children?.map((child) => child.dependsOn ?? []), [[], ["expand"], ["migrate"]]);
+    assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "implementing");
+    assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "queued");
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+    assert.equal(await consumer.engineerWorker.dispatchOnce(), false);
+
+    assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "verifying");
+    await driveVerifyItem(fixture, expand.workItemId, "reviewing");
+    assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "fixing");
+    assert.equal(await consumer.engineerWorker.dispatchOnce(), false);
+    const publicationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      const verificationHandoffs = publicationDb.prepare(`
+        SELECT handoff.payload_json
+        FROM stage_handoffs handoff
+        JOIN work_nodes node ON node.node_id=handoff.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND handoff.stage='verification'
+        ORDER BY handoff.created_at,handoff.rowid
+      `).all(expand.workItemId).map((row) => JSON.parse(String(row.payload_json))) as Array<{
+        outcome: string;
+        summary: string;
+        blockers: string[];
+      }>;
+      assert.equal(verificationHandoffs[0]?.outcome, "passed");
+      assert.equal(verificationHandoffs[0]?.summary, "Independent verification passed.");
+      assert.equal(verificationHandoffs[1]?.outcome, "failed");
+      assert.equal(verificationHandoffs[1]?.blockers.at(-1), "publish docs/interface.md (absent)");
+      assert.equal(publicationDb.prepare(`
+        SELECT event.actor_id
+        FROM task_events event
+        JOIN stage_handoffs handoff ON handoff.task_id=event.task_id
+        JOIN work_nodes node ON node.node_id=handoff.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=?
+          AND event.actor_id='system:interface-publication'
+          AND event.event_type='task_created'
+        ORDER BY event.created_at DESC,event.rowid DESC
+        LIMIT 1
+      `).get(expand.workItemId)?.actor_id, "system:interface-publication");
+      assert.equal(publicationDb.prepare(`
+        SELECT expected
+        FROM review_findings finding
+        JOIN work_nodes node ON node.node_id=finding.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND finding.file='docs/interface.md'
+        ORDER BY finding.created_at DESC,finding.rowid DESC
+        LIMIT 1
+      `).get(expand.workItemId)?.expected, "publish docs/interface.md (absent)");
+    } finally {
+      publicationDb.close();
+    }
+
+    assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+    assert.equal(await readFile(join(provider.repo, "docs", "interface.md"), "utf8").catch(() => null), null);
+    await driveVerifyItem(fixture, expand.workItemId, "reviewing");
+    assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+    const mergedExpand = await currentWorkItem(fixture, expand.workItemId);
+    assert.equal(mergedExpand.state, "merged");
+    const parentPlanConfirm = gateActions(fixture.dbPath, fixture.workItem.workItemId).find(
+      (action) => action.gate === "plan_confirm",
+    );
+    assert.ok(parentPlanConfirm);
+    const expandApproval = singleFinalApproval(fixture, expand.workItemId);
+    const expandMainSha = (await git(provider.repo, ["rev-parse", "main"])).trim();
+    assert.equal(expandApproval.mergeSha, expandMainSha);
+    assert.equal(expandApproval.actorId, "system:parent-plan-authorization");
+    assert.equal(expandApproval.refId, parentPlanConfirm.gateActionId);
+    assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "implementing");
+
+    assert.equal(await consumer.engineerWorker.dispatchOnce(), true);
+    await driveVerifyItem(fixture, migrate.workItemId, "reviewing");
+    assert.equal(await consumer.verifierWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "merged");
+    const migrateApproval = singleFinalApproval(fixture, migrate.workItemId);
+    const migrateMainSha = (await git(consumer.repo, ["rev-parse", "main"])).trim();
+    assert.equal(migrateApproval.mergeSha, migrateMainSha);
+    assert.equal(migrateApproval.actorId, "system:parent-plan-authorization");
+    assert.equal(migrateApproval.refId, parentPlanConfirm.gateActionId);
+    assert.equal(await readFile(join(consumer.repo, "src", "consumer", "provider-interface.md"), "utf8"), PUBLISHED_INTERFACE);
+    assert.equal(
+      JSON.parse(await readFile(join(consumer.repo, "src", "consumer", "provider-context.json"), "utf8")).sha,
+      expandApproval.mergeSha,
+    );
+    assert.equal(
+      await git(provider.repo, ["show", `${expandApproval.mergeSha}:docs/interface.md`]),
+      PUBLISHED_INTERFACE,
+    );
+
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+    assert.equal(latestNodeBlock(fixture, contract.workItemId),
+      `waits for ${expand.workItemId} (expand) deploy attestation`);
+    await jsonRequest(fixture.origin, `/v1/work-items/${migrate.workItemId}/attest-deploy`, "POST", 200, {
+      body: { note: "The consumer migration is deployed." },
+    });
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+    assert.equal(latestNodeBlock(fixture, contract.workItemId),
+      `waits for ${expand.workItemId} (expand) deploy attestation`);
+    await jsonRequest(fixture.origin, `/v1/work-items/${expand.workItemId}/attest-deploy`, "POST", 200, {
+      body: { note: "The additive provider interface is deployed." },
+    });
+    const activeContract = await currentWorkItem(fixture, contract.workItemId);
+    assert.equal(activeContract.state, "implementing");
+    assert.equal(activeContract.baseSha, (await git(provider.repo, ["rev-parse", "HEAD"])).trim());
+
+    assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+    await driveVerifyItem(fixture, contract.workItemId, "reviewing");
+    assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+    const contractFinalApproval = await currentWorkItem(fixture, contract.workItemId);
+    assert.equal(contractFinalApproval.state, "final_approval");
+    const contractMerged = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${contract.workItemId}/approve-merge`,
+      "POST",
+      200,
+      { body: { version: contractFinalApproval.version } },
+    );
+    assert.equal(contractMerged.workItem.state, "merged");
+    assert.equal((await currentWorkItem(fixture)).state, "merged");
+    const contractApproval = singleFinalApproval(fixture, contract.workItemId);
+    const contractMainSha = (await git(provider.repo, ["rev-parse", "main"])).trim();
+    assert.equal(contractApproval.mergeSha, contractMainSha);
+    assert.equal(contractApproval.actorId, "human:pipeline-reviewer");
+    const parentApproval = singleFinalApproval(fixture, fixture.workItem.workItemId, false);
+    assert.equal(parentApproval.refId, decomposition.plan.planRevisionId);
+    assert.equal(parentApproval.mergeSha, null);
+    assert.equal(parentApproval.note, "3 children merged, 0 abandoned");
+    assert.deepEqual(
+      fixture.sweepBoard.parentCompletion(fixture.workItem.workItemId).children,
+      [{ workItemId: expand.workItemId, mergeSha: expandMainSha },
+        { workItemId: migrate.workItemId, mergeSha: migrateMainSha },
+        { workItemId: contract.workItemId, mergeSha: contractMainSha }],
+    );
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 10 exit: a feature split merges its children under one parent approval", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-feature-split",
+    originalRequest: `Deliver the ${FEATURE_SPLIT_MARKER} in one repository.`,
+    engineerMode: "scoped",
+    verifyPasses: true,
+  });
+  try {
+    const decomposition = await proposeAndConfirmDecomposition(fixture, "feature", [null, null]);
+    const [first, second] = decomposition.children;
+    assert.ok(first);
+    assert.ok(second);
+    assert.deepEqual(decomposition.plan.children?.map((child) => child.dependsOn ?? []), [[], ["feature-one"]]);
+    assert.equal((await currentWorkItem(fixture, first.workItemId)).state, "implementing");
+    assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "implementing");
+
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await waitForServiceVerifyLaunches(fixture, [first.workItemId, second.workItemId]);
+    await driveVerifyItem(fixture, first.workItemId, "reviewing");
+    await driveVerifyItem(fixture, second.workItemId, "reviewing");
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    assert.deepEqual(
+      await Promise.all([first, second].map(async (child) => (await currentWorkItem(fixture, child.workItemId)).state)),
+      ["final_approval", "final_approval"],
+    );
+    const parentApproval = await currentWorkItem(fixture);
+    assert.equal(parentApproval.state, "final_approval");
+    const notifications = await jsonRequest<{ unread: Array<{ kind: string; workItemId: string | null }> }>(
+      fixture.origin,
+      "/v1/notifications",
+      "GET",
+      200,
+    );
+    assert.equal(notifications.unread.filter((notification) =>
+      notification.kind === "parent_ready_for_approval" &&
+      notification.workItemId === fixture.workItem.workItemId).length, 1);
+
+    const merged = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
+      "POST",
+      200,
+      { body: { version: parentApproval.version } },
+    );
+    assert.equal(merged.workItem.state, "merged");
+    assert.deepEqual(
+      await Promise.all([first, second].map(async (child) => (await currentWorkItem(fixture, child.workItemId)).state)),
+      ["merged", "merged"],
+    );
+    const [firstApproval, secondApproval] = [first, second].map((child) =>
+      singleFinalApproval(fixture, child.workItemId));
+    assert.ok(firstApproval);
+    assert.ok(secondApproval);
+    assert.equal(firstApproval.actorId, "human:pipeline-reviewer");
+    assert.equal(secondApproval.actorId, "human:pipeline-reviewer");
+    assert.equal(await git(fixture.repo, [
+      "merge-base",
+      "--is-ancestor",
+      firstApproval.mergeSha!,
+      secondApproval.mergeSha!,
+    ]), "");
+    const parentGate = singleFinalApproval(fixture, fixture.workItem.workItemId, false);
+    assert.equal(parentGate.refId, decomposition.plan.planRevisionId);
+    assert.equal(parentGate.note, "2 children merged, 0 abandoned");
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)", async () => {
+  const fixture = await createFixture({
+    suffix: "exit-child-failed",
+    originalRequest: `Deliver the ${BLAST_RADIUS_MARKER} with a deliberately rejected migration.`,
+    engineerMode: "scoped",
+    verifyPasses: true,
+    repos: [{
+      name: "provider",
+      verifyPasses: true,
+      engineerMode: "phased_provider",
+    }, {
+      name: "consumer",
+      verifyPasses: true,
+      engineerMode: "phased_consumer",
+      reviewerMode: "always_blocking",
+    }],
+  });
+  let cancellationVerifyRunner: VerifyRunner | null = null;
+  let cancellationVerifyRunId: string | null = null;
+  let cancellationVerifyPid: number | null = null;
+  try {
+    const [provider, consumer] = fixture.projects;
+    assert.ok(provider);
+    assert.ok(consumer);
+    const decomposition = await proposeAndConfirmDecomposition(
+      fixture,
+      "blast_radius",
+      ["expand", "migrate", "contract"],
+    );
+    const [expand, migrate, contract] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    assert.ok(contract);
+
+    assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+    await driveVerifyItem(fixture, expand.workItemId, "reviewing");
+    assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "merged");
+    assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "implementing");
+
+    for (let round = 1; round <= 4; round += 1) {
+      assert.equal(await consumer.engineerWorker.dispatchOnce(), true);
+      await driveVerifyItem(fixture, migrate.workItemId, "reviewing");
+      assert.equal(await consumer.verifierWorker.dispatchOnce(), true);
+      assert.equal(
+        (await currentWorkItem(fixture, migrate.workItemId)).state,
+        round === 4 ? "dead_letter" : "fixing",
+      );
+    }
+    assert.equal((await currentWorkItem(fixture)).state, "parked");
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+    assert.equal(latestNodeBlock(fixture, contract.workItemId),
+      `blocked: ${migrate.workItemId} (migrate) dead_letter`);
+    const parks = await jsonRequest<{ open: Array<{ workItemId: string; category: string }> }>(
+      fixture.origin,
+      "/v1/ledgers/parks",
+      "GET",
+      200,
+    );
+    assert.ok(parks.open.some((park) =>
+      park.workItemId === fixture.workItem.workItemId && park.category === "child_failed"));
+
+    const resumed = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}/resume`,
+      "POST",
+      200,
+    );
+    assert.equal(resumed.workItem.state, "coordinating");
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+    assert.equal(latestNodeBlock(fixture, contract.workItemId),
+      `blocked: ${migrate.workItemId} (migrate) dead_letter`);
+
+    const activeContractTask = fixture.sweepBoard.createTask(provider.projectId, {
+      parentTaskId: null,
+      title: "Hold Contract work open until the family is cancelled",
+      objective: "Exercise cancellation of a run linked to the blocked Contract child.",
+      acceptanceCriteria: "The parent cancellation interrupts this run.",
+      workspaceRefs: [],
+      assignedAgentId: provider.engineerId,
+      assignedRole: "engineer",
+      requiresReview: false,
+    });
+    const activeContractRun = fixture.sweepBoard.claimRun(provider.engineerId, {
+      claimId: "exit-child-failed-contract-cancel-run",
+      messageCursor: null,
+    });
+    assert.ok(activeContractRun?.task);
+    assert.equal(activeContractRun.task.taskId, activeContractTask.taskId);
+    const verifyAttemptId = `verify-cancel-${contract.workItemId}`;
+    const verifyWorkspaceKey = `${contract.workItemId}-verify`;
+    const verifyWorkspaceManager = new TaskWorkspaceManager({
+      workspaceRoot: fixture.verifyWorkspaceRoot,
+      repositoryPath: provider.repo,
+    });
+    const verifyWorkspacePath = await verifyWorkspaceManager.create(
+      verifyWorkspaceKey,
+      contract.baseSha ?? undefined,
+      contract.workItemId,
+    );
+    await writeFile(
+      join(verifyWorkspacePath, "verify-full.mjs"),
+      "setTimeout(() => process.exit(0), 60_000);\n",
+    );
+    cancellationVerifyRunner = new VerifyRunner({
+      repoRoot: verifyWorkspacePath,
+      supervisorPath: DEFAULT_SUPERVISOR_PATH,
+    });
+    cancellationVerifyRunId = await cancellationVerifyRunner.startFull();
+    const verifyStatus = JSON.parse(await readFile(join(
+      verifyWorkspacePath,
+      ".verify-runs",
+      cancellationVerifyRunId,
+      "status.json",
+    ), "utf8")) as { pid?: unknown; state?: unknown };
+    assert.equal(verifyStatus.state, "running");
+    assert.equal(typeof verifyStatus.pid, "number");
+    const verifyPid = Number(verifyStatus.pid);
+    cancellationVerifyPid = verifyPid;
+    process.kill(verifyPid, 0);
+    let contractNodeId = "";
+    let completionEventsBeforeCancel = 0;
+    const cancellationSetupDb = new DatabaseSync(fixture.dbPath);
+    try {
+      const contractNode = cancellationSetupDb.prepare(`
+        SELECT node.node_id
+        FROM work_nodes node
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND plan.state='confirmed'
+        LIMIT 1
+      `).get(contract.workItemId);
+      assert.ok(contractNode);
+      contractNodeId = String(contractNode.node_id);
+      cancellationSetupDb.prepare(`
+        INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
+        VALUES(?,?,?,'implementation',99,'{}')
+      `).run(`attempt-cancel-${contract.workItemId}`, contractNodeId, activeContractTask.taskId);
+      cancellationSetupDb.prepare(`
+        INSERT INTO verify_attempts(
+          verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+          check_results_json,detail,created_at,ended_at
+        ) VALUES(?,?,'testing',99,?,?,'running',NULL,NULL,?,NULL)
+      `).run(
+        verifyAttemptId,
+        contractNodeId,
+        cancellationVerifyRunId,
+        verifyWorkspacePath,
+        new Date().toISOString(),
+      );
+      completionEventsBeforeCancel = Number(cancellationSetupDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='stage_completed'
+      `).get(contractNodeId)?.count);
+    } finally {
+      cancellationSetupDb.close();
+    }
+
+    const cancelled = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}`,
+      "PATCH",
+      200,
+      {
+        body: {
+          version: resumed.workItem.version,
+          action: "cancel",
+          reason: "Cancel the unsafe phased family after the migration dead-lettered.",
+        },
+      },
+    );
+    assert.equal(cancelled.workItem.state, "abandoned");
+    assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "merged");
+    assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "dead_letter");
+    assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "abandoned");
+    assert.equal(await fixture.sweepBoard.sweepVerifyAttempts(), 0);
+    const cleanupDeadline = Date.now() + 5_000;
+    while (Date.now() < cleanupDeadline) {
+      try {
+        await access(verifyWorkspacePath);
+      } catch {
+        break;
+      }
+      await delay(25);
+    }
+    await assert.rejects(access(verifyWorkspacePath));
+    const processDeadline = Date.now() + 5_000;
+    let verifyProcessRunning = true;
+    while (Date.now() < processDeadline && verifyProcessRunning) {
+      try {
+        process.kill(verifyPid, 0);
+        await delay(25);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        verifyProcessRunning = false;
+      }
+    }
+    assert.equal(verifyProcessRunning, false, "the retired Contract verifier process must terminate");
+    const cancellationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      const retiredAttempt = cancellationDb.prepare(`
+        SELECT state,ended_at
+        FROM verify_attempts
+        WHERE verify_attempt_id=?
+      `).get(verifyAttemptId);
+      assert.equal(retiredAttempt?.state, "retired");
+      assert.equal(retiredAttempt?.ended_at, (await currentWorkItem(fixture, contract.workItemId)).endedAt);
+      const interruptedRun = cancellationDb.prepare(`
+        SELECT status,ended_at
+        FROM runs
+        WHERE run_id=?
+      `).get(activeContractRun.run.runId);
+      assert.equal(interruptedRun?.status, "interrupted");
+      assert.equal(interruptedRun?.ended_at, cancelled.workItem.endedAt);
+      assert.equal(cancellationDb.prepare("SELECT status FROM tasks WHERE task_id=?")
+        .get(activeContractTask.taskId)?.status, "cancelled");
+      assert.equal(Number(cancellationDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='stage_completed'
+      `).get(contractNodeId)?.count), completionEventsBeforeCancel);
+      assert.equal(cancellationDb.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
+        .get(`handoff_${verifyAttemptId}`), undefined);
+    } finally {
+      cancellationDb.close();
+    }
+  } finally {
+    await closeFixture(fixture);
+    if (cancellationVerifyRunner !== null && cancellationVerifyRunId !== null) {
+      await cancellationVerifyRunner.terminate(cancellationVerifyRunId).catch(() => undefined);
+    }
+    if (cancellationVerifyPid !== null) {
+      try {
+        process.kill(cancellationVerifyPid, 0);
+        process.kill(process.platform === "win32" ? cancellationVerifyPid : -cancellationVerifyPid, "SIGTERM");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
   }
 });

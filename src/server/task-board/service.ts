@@ -175,7 +175,7 @@ export class TaskBoardService {
     this.config = config;
     this.#board = board;
     this.#server = createServer((request, response) => {
-      void this.#handle(request, response).catch((error: unknown) => sendError(response, error));
+      void this.#handle(request, response).catch((error: unknown) => sendError(request, response, error));
     });
     this.#server.requestTimeout = 45_000;
     this.#server.headersTimeout = 10_000;

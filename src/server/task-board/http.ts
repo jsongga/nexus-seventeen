@@ -1,4 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  redactForPersistence,
+  redactMultilineForPersistence,
+  safeErrorDetail,
+} from "../shared/redact.js";
 import { sha256, tokenMatches } from "./canonical.js";
 import type { TaskBoardConfig } from "./config.js";
 import { TaskBoardError } from "./errors.js";
@@ -74,7 +79,21 @@ export function sendEmpty(response: ServerResponse, status: number): void {
   response.end();
 }
 
-export function sendError(response: ServerResponse, error: unknown): void {
+export function sendError(request: IncomingMessage, response: ServerResponse, error: unknown): void {
+  if (!(error instanceof TaskBoardError)) {
+    const message = safeErrorDetail(error, "Unexpected request failure");
+    const sourceStack = error instanceof Error ? error.stack ?? message : message;
+    try {
+      console.error("[task-board] request failed", Object.freeze({
+        method: redactForPersistence(request.method ?? "UNKNOWN", 32),
+        path: redactForPersistence(request.url?.split("?", 1)[0] ?? "", 2_000),
+        message,
+        stack: redactMultilineForPersistence(sourceStack, 8_000),
+      }));
+    } catch {
+      // Logging must never prevent the generic failure response.
+    }
+  }
   if (response.headersSent) {
     response.end();
     return;

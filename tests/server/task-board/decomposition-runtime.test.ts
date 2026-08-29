@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -20,11 +20,14 @@ import {
   MAX_DESIGN_CONTEXT_BYTES,
 } from "#shared/task-board-contract";
 import { TaskBoard, TaskBoardError } from "#server/task-board";
+import { VerifyRunner } from "#server/agents/verify";
+import { TaskWorkspaceManager } from "#server/agents/task-workspace";
 import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
 import { HttpTaskBoardClient, mapClaimContext } from "#server/agents/task-worker/http-board-client";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { DEFAULT_SUPERVISOR_PATH } from "#server/task-board/collaborators/verify-attempts";
 import { transitionWorkItemInTransaction } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { parseClaimRunResult } from "#shared/task-board-contract/validate";
@@ -3787,7 +3790,72 @@ test("resuming a child-failure park abandons the dead-lettered child and complet
   }
 });
 
-test("a phased Contract stays blocked by an abandoned Migrate until the parent is cancelled", async () => {
+test("a phased Contract reports an abandoned Migrate after Expand deploy attestation", async () => {
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  try {
+    const consumer = fixture.board.createProject({
+      name: "Attested abandoned migration consumer",
+      description: "Owns the abandoned migration after the expansion is deployed.",
+      repoPath: "/repos/attested-abandoned-migration-consumer",
+    });
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      phasedChildren(fixture.project.projectId, consumer.projectId, "attested-abandoned-migrate"),
+      "phased-attested-abandoned-migrate",
+      "blast_radius",
+    );
+    const [expand, migrate, contract] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    assert.ok(contract);
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+    fixture.board.attestDeploy(expand.workItemId, { note: "The expansion is deployed." });
+    assert.equal(
+      (fixture.board.listChildren(decomposition.parent.workItemId) as readonly ChildWorkItem[])[0]?.deployAttested,
+      true,
+    );
+
+    fixture.board.updateWorkItem(migrate.workItemId, {
+      action: "cancel",
+      version: fixture.board.requireWorkItem(migrate.workItemId).version,
+      reason: "The migration is unsafe to continue.",
+    });
+
+    assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "parked");
+    assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
+    assert.equal(childNode(fixture.board, contract).node.state, "blocked");
+    assert.equal(
+      latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
+      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+    );
+
+    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
+
+    assert.equal(resumed.state, "coordinating");
+    assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
+    assert.equal(childNode(fixture.board, contract).node.state, "blocked");
+    assert.equal(
+      latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
+      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+    );
+
+    const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
+      action: "cancel",
+      version: resumed.version,
+      reason: "Cancel the unsafe phased family.",
+    });
+
+    assert.equal(cancelled.state, "abandoned");
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "merged");
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "abandoned");
+    assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "abandoned");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a phased Contract reports an abandoned Migrate before an unattested Expand", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
     const consumer = fixture.board.createProject({
@@ -3807,7 +3875,10 @@ test("a phased Contract stays blocked by an abandoned Migrate until the parent i
     assert.ok(migrate);
     assert.ok(contract);
     forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
-    fixture.board.attestDeploy(expand.workItemId, { note: "The expansion is deployed." });
+    assert.equal(
+      (fixture.board.listChildren(decomposition.parent.workItemId) as readonly ChildWorkItem[])[0]?.deployAttested,
+      false,
+    );
 
     fixture.board.updateWorkItem(migrate.workItemId, {
       action: "cancel",
@@ -4014,6 +4085,111 @@ test("cancelling a coordinating parent abandons active children and leaves merge
   }
 });
 
+test("a child cleanup failure is recorded without aborting parent termination", async () => {
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  const originalError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
+      key: "cleanup-failure",
+      objective: "Inject a run interruption failure during parent cancellation.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/cleanup-failure"],
+      acceptanceCriteria: ["The parent still reaches a terminal state."],
+    }, {
+      key: "unaffected-sibling",
+      objective: "Prove the cascade continues after a sibling cleanup failure.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/unaffected-sibling"],
+      acceptanceCriteria: ["This child is still abandoned."],
+    }], "cancel-parent-cleanup-failure");
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "cancel-parent-cleanup-failure-run",
+      messageCursor: null,
+    });
+    assert.ok(claim?.task);
+    const failingChildId = claim.context.workflow?.workspaceKey;
+    assert.ok(failingChildId);
+    const unaffected = decomposition.children.find((child) => child.workItemId !== failingChildId);
+    assert.ok(unaffected);
+    const interruptAbort = new AbortController();
+    const interruptWatch = fixture.board.waitForRunInterrupts(
+      claim.run.runId,
+      fixture.engineer.agentId,
+      0,
+      30_000,
+      interruptAbort.signal,
+    );
+    const injected = new DatabaseSync(fixture.path);
+    try {
+      injected.exec(`
+        CREATE TRIGGER fail_child_run_cleanup
+        BEFORE INSERT ON task_events
+        WHEN NEW.task_id='${claim.task.taskId}' AND NEW.event_type='task_run_settled'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced child cleanup failure');
+        END;
+      `);
+    } finally {
+      injected.close();
+    }
+    console.error = (...arguments_: unknown[]) => { logged.push(arguments_); };
+    const parent = fixture.board.requireWorkItem(decomposition.parent.workItemId);
+
+    const cancelled = fixture.board.updateWorkItem(parent.workItemId, {
+      action: "cancel",
+      version: parent.version,
+      reason: "Terminate the family despite one failed cleanup operation.",
+    });
+
+    assert.equal(cancelled.state, "abandoned");
+    assert.equal(fixture.board.requireWorkItem(failingChildId).state, "abandoned");
+    assert.equal(fixture.board.requireWorkItem(unaffected.workItemId).state, "abandoned");
+    assert.equal(fixture.board.requireTask(claim.task.taskId).status, "cancelled");
+    let interruptTimeout: NodeJS.Timeout | undefined;
+    const interruptBatch = await Promise.race([
+      interruptWatch,
+      new Promise<never>((_resolve, reject) => {
+        interruptTimeout = setTimeout(() => {
+          interruptAbort.abort();
+          reject(new Error("the child worker was not signalled after durable run termination"));
+        }, 2_000);
+      }),
+    ]).finally(() => {
+      if (interruptTimeout !== undefined) clearTimeout(interruptTimeout);
+    });
+    assert.equal(interruptBatch?.items.length, 1);
+    assert.equal(interruptBatch?.items[0]?.runId, claim.run.runId);
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const run = inspected.prepare("SELECT status,ended_at FROM runs WHERE run_id=?")
+        .get(claim.run.runId);
+      assert.equal(run?.status, "interrupted");
+      assert.ok(run?.ended_at);
+      assert.equal(Number(inspected.prepare(
+        "SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?",
+      ).get(claim.run.runId)?.count), 1);
+      const events = inspected.prepare(`
+        SELECT data_json
+        FROM task_events
+        WHERE event_type='work_item_cancellation_cleanup_failed'
+          AND json_extract(data_json,'$.childWorkItemId')=?
+      `).all(failingChildId);
+      assert.equal(events.length, 1);
+      assert.match(String(events[0]?.data_json), /forced child cleanup failure/u);
+    } finally {
+      inspected.close();
+    }
+    const cleanupLogs = logged.filter((record) =>
+      record[0] === "[task-board] child cancellation cleanup failed");
+    assert.equal(cleanupLogs.length, 1);
+    assert.equal((cleanupLogs[0]?.[1] as { phase?: unknown } | undefined)?.phase, "primary");
+  } finally {
+    console.error = originalError;
+    fixture.board.close();
+  }
+});
+
 test("a parent termination cascade reconciles overlapping pipelines in every child project", async () => {
   let now = new Date("2026-08-29T14:00:00.000Z");
   const fixture = await boardFixture(undefined, () => now, { git: () => `${BASE_SHA}\n` });
@@ -4121,6 +4297,197 @@ test("parent cancellation retires a child's running machine verification before 
       settled.close();
     }
   } finally {
+    fixture.board.close();
+  }
+});
+
+test("parent cancellation retires persisted Contract work even when the blocked node did not start it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "decomposition-cancel-persisted-contract-"));
+  const repo = join(root, "repo");
+  await execFileAsync("git", ["init", "-b", "main", repo]);
+  await execFileAsync("git", ["-C", repo, "config", "user.name", "Decomposition Test"]);
+  await execFileAsync("git", ["-C", repo, "config", "user.email", "decomposition@test.invalid"]);
+  await mkdir(join(repo, "docs"), { recursive: true });
+  await writeFile(join(repo, "docs", "workflow.md"), `# Verify workflow
+
+\`\`\`json
+${JSON.stringify({
+    version: 1,
+    compile: ["node verify-full.mjs"],
+    rules: [{ match: "**", action: { kind: "none" } }],
+    full: ["node verify-full.mjs"],
+  }, null, 2)}
+\`\`\`
+`);
+  await writeFile(join(repo, "verify-full.mjs"), "setTimeout(() => process.exit(0), 60_000);\n");
+  await execFileAsync("git", ["-C", repo, "add", "."]);
+  await execFileAsync("git", ["-C", repo, "commit", "-m", "fixture base"]);
+
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  let verifyRunner: VerifyRunner | null = null;
+  let verifyRunId: string | null = null;
+  let verifyPid: number | null = null;
+  try {
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
+        .run(repo, fixture.project.projectId);
+    } finally {
+      db.close();
+    }
+    const consumer = fixture.board.createProject({
+      name: "Persisted Contract cancellation consumer",
+      description: "Hosts the migration that dead-letters before Contract cancellation.",
+      repoPath: repo,
+    });
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      phasedChildren(fixture.project.projectId, consumer.projectId, "persisted-contract-cancel"),
+      "persisted-contract-cancel",
+      "blast_radius",
+    );
+    const [expand, migrate, contract] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    assert.ok(contract);
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+    const transitionStore = await TaskBoardStore.open(fixture.path);
+    new TaskBoardRuntime(config(fixture.path), transitionStore);
+    try {
+      transitionStore.transaction(() => {
+        transitionWorkItemInTransaction(transitionStore, {
+          workItemId: migrate.workItemId,
+          to: "dead_letter",
+          actorType: "system",
+          actorId: "system:test-dead-letter",
+          now: NOW,
+          endedAt: NOW,
+          currentStage: null,
+        });
+      });
+    } finally {
+      transitionStore.close();
+    }
+    assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "parked");
+    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
+    assert.equal(resumed.state, "coordinating");
+    const contractNode = childNode(fixture.board, contract).node;
+    assert.equal(contractNode.state, "blocked");
+
+    const contractRunner = fixture.board.createAgent(fixture.project.projectId, {
+      agentId: "persisted-contract-runner",
+      role: "engineer",
+      area: "contract-cancellation",
+      mission: "Hold a persisted Contract run until family cancellation.",
+      model: "codex-mini",
+      token: "persisted-contract-runner-token-0123456789",
+    });
+    const contractTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
+      title: "Hold blocked Contract work open",
+      objective: "Exercise cancellation of a run attached outside workflow activation.",
+      acceptanceCriteria: "Parent cancellation interrupts the persisted run.",
+      workspaceRefs: [],
+      assignedAgentId: contractRunner.agentId,
+    }));
+    const contractRun = fixture.board.claimRun(contractRunner.agentId, {
+      claimId: "persisted-contract-cancel-run",
+      messageCursor: null,
+    });
+    assert.equal(contractRun?.task?.taskId, contractTask.taskId);
+    assert.ok(contractRun);
+
+    const workspaceRoot = join(dirname(fixture.path), "verify-workspaces");
+    const workspace = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
+    const workspacePath = await workspace.create(
+      `${contract.workItemId}-verify`,
+      undefined,
+      contract.workItemId,
+    );
+    verifyRunner = new VerifyRunner({ repoRoot: workspacePath, supervisorPath: DEFAULT_SUPERVISOR_PATH });
+    verifyRunId = await verifyRunner.startFull();
+    const status = JSON.parse(await readFile(
+      join(workspacePath, ".verify-runs", verifyRunId, "status.json"),
+      "utf8",
+    )) as { pid?: unknown; state?: unknown };
+    assert.equal(status.state, "running");
+    assert.equal(typeof status.pid, "number");
+    verifyPid = Number(status.pid);
+    process.kill(verifyPid, 0);
+
+    const verifyAttemptId = `verify-cancel-${contract.workItemId}`;
+    const setup = new DatabaseSync(fixture.path);
+    let completionEventsBefore = 0;
+    try {
+      setup.prepare(`
+        INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
+        VALUES(?,?,?,'implementation',99,'{}')
+      `).run(`attempt-cancel-${contract.workItemId}`, contractNode.nodeId, contractTask.taskId);
+      setup.prepare(`
+        INSERT INTO verify_attempts(
+          verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+          check_results_json,detail,created_at,ended_at
+        ) VALUES(?,?,'testing',99,?,?,'running',NULL,NULL,?,NULL)
+      `).run(verifyAttemptId, contractNode.nodeId, verifyRunId, workspacePath, NOW);
+      completionEventsBefore = Number(setup.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='stage_completed'
+      `).get(contractNode.nodeId)?.count);
+    } finally {
+      setup.close();
+    }
+
+    const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
+      action: "cancel",
+      version: resumed.version,
+      reason: "Cancel the unsafe phased family after migration dead-letter.",
+    });
+    assert.equal(cancelled.state, "abandoned");
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "merged");
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "dead_letter");
+    assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "abandoned");
+    assert.equal(childNode(fixture.board, contract).node.state, "blocked");
+    assert.equal(fixture.board.requireTask(contractTask.taskId).status, "cancelled");
+    assert.equal(await fixture.board.sweepVerifyAttempts(), 0);
+
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(verifyPid, 0);
+        await delay(25);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        verifyPid = null;
+        break;
+      }
+    }
+    assert.equal(verifyPid, null, "the persisted verifier process must terminate");
+    await assert.rejects(access(workspacePath));
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(inspected.prepare("SELECT state FROM verify_attempts WHERE verify_attempt_id=?")
+        .get(verifyAttemptId)?.state, "retired");
+      assert.equal(inspected.prepare("SELECT status FROM runs WHERE run_id=?")
+        .get(contractRun.run.runId)?.status, "interrupted");
+      assert.equal(Number(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='stage_completed'
+      `).get(contractNode.nodeId)?.count), completionEventsBefore);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    if (verifyPid !== null) {
+      try {
+        process.kill(process.platform === "win32" ? verifyPid : -verifyPid, "SIGTERM");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    } else if (verifyRunner !== null && verifyRunId !== null) {
+      await verifyRunner.terminate(verifyRunId).catch(() => undefined);
+    }
     fixture.board.close();
   }
 });

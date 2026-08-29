@@ -75,6 +75,7 @@ import { declaredScopesOverlap } from "./scope-check.js";
 import {
   decompositionFamilyTouchesProjectSql,
   decompositionReadinessBlocker,
+  isFailedTerminalWorkItemState,
   migrateInterfaceReadiness,
   migrateTaskCarriesCrossRepoContext,
   publishedInterfaceReasonSummary,
@@ -1055,8 +1056,8 @@ export class ProjectsCollaborator {
     return this.#workflow.recordExpandInterfacePublicationFailureInTransaction(taskId, failure);
   }
 
-  suspendAttemptNodeInTransaction(taskId: string, reason: string): void {
-    this.#workflow.suspendAttemptNodeInTransaction(taskId, reason);
+  suspendAttemptNodeInTransaction(taskId: string, reason: string): boolean {
+    return this.#workflow.suspendAttemptNodeInTransaction(taskId, reason);
   }
 
   blockMigrateInterfaceClaim(
@@ -1771,7 +1772,7 @@ export class ProjectsCollaborator {
           const dependencyPhase = unmet.phase ?? "child";
           this.#workflow.blockNodeInTransaction(
             current.nodeId,
-            unmet.state === "abandoned" || unmet.state === "dead_letter"
+            isFailedTerminalWorkItemState(unmet.state)
               ? `blocked: ${dependencyId} (${dependencyPhase}) ${unmet.state}`
               : unmet.state !== "merged"
               ? `waits for ${dependencyId} (${dependencyPhase}) to merge`

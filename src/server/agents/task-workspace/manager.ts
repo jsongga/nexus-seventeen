@@ -55,6 +55,22 @@ function retainedTimestamp(name: string): number {
   return Number.isSafeInteger(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
+export async function removeRecordedTaskWorkspace(workspaceRoot: string, path: string): Promise<void> {
+  const relativePath = relative(workspaceRoot, path);
+  if (
+    !isAbsolute(workspaceRoot)
+    || !isAbsolute(path)
+    || relativePath === ""
+    || relativePath === ".."
+    || relativePath.startsWith(`..${sep}`)
+    || relativePath.includes(sep)
+    || isAbsolute(relativePath)
+  ) {
+    throw new TaskWorkspaceError(`Recorded task workspace path escapes workspaceRoot: ${path}`);
+  }
+  await rm(path, { recursive: true, force: true });
+}
+
 export class TaskWorkspaceManager {
   readonly #workspaceRoot: string;
   readonly #repositoryPath: string;
@@ -131,6 +147,10 @@ export class TaskWorkspaceManager {
 
   async remove(key: string): Promise<void> {
     await rm(this.workspacePath(key), { recursive: true, force: true });
+  }
+
+  async removeRecordedPath(path: string): Promise<void> {
+    await removeRecordedTaskWorkspace(this.#workspaceRoot, path);
   }
 
   async #pruneRetained(): Promise<void> {

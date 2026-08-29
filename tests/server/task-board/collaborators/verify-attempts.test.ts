@@ -90,8 +90,10 @@ test("verify workspace configuration defaults beside the database and rejects un
 class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
   readonly creates: Array<{ key: string; baseRef: string | undefined; branchKey: string | undefined }> = [];
   readonly removed: string[] = [];
+  readonly recordedRemovals: string[] = [];
   readonly retained: string[] = [];
   onCreate: (() => void | Promise<void>) | null = null;
+  recordedRemovalError: Error | null = null;
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
@@ -108,6 +110,12 @@ class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
   async remove(key: string): Promise<void> {
     assert.equal(this.runtime.store.hasOpenTransaction, false);
     this.removed.push(key);
+  }
+
+  async removeRecordedPath(path: string): Promise<void> {
+    assert.equal(this.runtime.store.hasOpenTransaction, false);
+    this.recordedRemovals.push(path);
+    if (this.recordedRemovalError !== null) throw this.recordedRemovalError;
   }
 
   async retain(key: string): Promise<void> {
@@ -294,7 +302,7 @@ async function attemptFixture(
     .get(verifyAttemptId) as Record<string, unknown>;
   return {
     runtime, store, collaborator, runner, workspace, settlements, checkCalls, gitCalls, row,
-    verifyAttemptId, workItem, nodeId,
+    verifyAttemptId, workItem, nodeId, workspacePath,
     setCheckPassed(value: boolean): void { checkPassed = value; },
     setCheckFailureDetail(value: string): void { checkDetails = [value]; },
     setCheckFailureDetails(values: readonly string[]): void { checkDetails = [...values]; },
@@ -359,10 +367,15 @@ test("a stored confirmed v1 pipeline reaches final approval after a green machin
   }
 });
 
-test("retiring a starting attempt after spawn terminates its process and removes its workspace", async () => {
+test("an in-process start exclusively cleans resources created after retirement aborts it", async () => {
   const fixture = await attemptFixture("retired-while-starting", "starting", [], true);
   try {
     fixture.runner.onStart = () => {
+      fixture.store.db.prepare(`
+        UPDATE verify_attempts
+        SET verify_run_id='verify-run-1',workspace_path=?
+        WHERE verify_attempt_id=?
+      `).run(fixture.workspacePath, fixture.verifyAttemptId);
       fixture.store.transaction(() => {
         assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
           fixture.runtime,
@@ -378,6 +391,7 @@ test("retiring a starting attempt after spawn terminates its process and removes
     assert.equal(fixture.row().state, "retired");
     assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
     assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.recordedRemovals, []);
     assert.deepEqual(fixture.settlements, []);
     assert.equal(Number(fixture.store.db.prepare(
       "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
@@ -403,11 +417,41 @@ test("retiring a running attempt terminates its process and removes its workspac
 
     assert.equal(fixture.row().state, "retired");
     assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
-    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.recordedRemovals, [fixture.workspacePath]);
     assert.deepEqual(fixture.settlements, []);
     assert.equal(Number(fixture.store.db.prepare(
       "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
     ).get(fixture.nodeId)?.count), 0);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("retiring a persisted starting attempt cleans resources not registered by this collaborator", async () => {
+  const fixture = await attemptFixture("retired-persisted-starting", "starting", [], true);
+  try {
+    fixture.store.db.prepare(`
+      UPDATE verify_attempts
+      SET verify_run_id='verify-run-1',workspace_path=?
+      WHERE verify_attempt_id=?
+    `).run(fixture.workspacePath, fixture.verifyAttemptId);
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.recordedRemovals, [fixture.workspacePath]);
+    assert.deepEqual(fixture.settlements, []);
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -443,7 +487,8 @@ test("retirement racing a running verify settlement cleans the workspace exactly
     assert.equal(fixture.row().state, "retired");
     assert.equal(fixture.row().ended_at, "2026-08-19T12:00:30.000Z");
     assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
-    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.recordedRemovals, [fixture.workspacePath]);
     assert.deepEqual(fixture.settlements, []);
     assert.equal(fixture.store.db.prepare("SELECT 1 FROM tasks WHERE task_id=?")
       .get(`task_${fixture.verifyAttemptId}`), undefined);
@@ -497,9 +542,37 @@ test("retiring a failed_to_start attempt removes its recorded workspace", async 
 
     assert.equal(fixture.row().state, "retired");
     assert.deepEqual(fixture.runner.terminateCalls, []);
-    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
+    assert.deepEqual(fixture.workspace.removed, []);
+    assert.deepEqual(fixture.workspace.recordedRemovals, ["/tmp/retired-start-failure-workspace"]);
     assert.deepEqual(fixture.workspace.retained, []);
     assert.deepEqual(fixture.settlements, []);
+  } finally {
+    fixture.runtime.close();
+    fixture.store.close();
+  }
+});
+
+test("recorded-path retirement falls back to the workspace key when direct removal fails", async () => {
+  const fixture = await attemptFixture("retired-recorded-path-fallback", "failed_to_start", [], true);
+  const recordedPath = "/tmp/retired-recorded-path-fallback";
+  try {
+    fixture.store.db.prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
+      .run(recordedPath, fixture.verifyAttemptId);
+    fixture.workspace.recordedRemovalError = new Error("synthetic recorded-path cleanup failure");
+    fixture.store.transaction(() => {
+      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
+        fixture.runtime,
+        fixture.workItem.workItemId,
+        "The work item was cancelled.",
+        "2026-08-19T12:00:30.000Z",
+      ), 1);
+    });
+
+    await fixture.collaborator.sweep();
+
+    assert.equal(fixture.row().state, "retired");
+    assert.deepEqual(fixture.workspace.recordedRemovals, [recordedPath]);
+    assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
   } finally {
     fixture.runtime.close();
     fixture.store.close();

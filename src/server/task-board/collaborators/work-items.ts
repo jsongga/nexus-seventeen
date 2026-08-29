@@ -22,7 +22,11 @@ import {
   type WorkItemTransition,
 } from "#shared/task-board-contract";
 import { parseGateAction } from "#shared/task-board-contract/validate";
-import { redactForPersistence } from "../../shared/redact.js";
+import {
+  redactForPersistence,
+  redactMultilineForPersistence,
+  safeErrorDetail,
+} from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
@@ -92,6 +96,7 @@ export class WorkItemsCollaborator {
     reason: string,
     actor: { type: "human" | "agent" | "system"; id: string },
     now: string,
+    options?: Readonly<{ skipAttemptNodeSuspension?: boolean }>,
   ) => unknown) | undefined;
 
   constructor(
@@ -111,6 +116,7 @@ export class WorkItemsCollaborator {
     reason: string,
     actor: { type: "human" | "agent" | "system"; id: string },
     now: string,
+    options?: Readonly<{ skipAttemptNodeSuspension?: boolean }>,
   ) => unknown): void {
     this.#suspendActiveRunInTransaction = suspend;
   }
@@ -837,6 +843,7 @@ export class WorkItemsCollaborator {
     terminateActiveRuns = false,
   ): void {
     const persistedReason = redactForPersistence(reason);
+    let cleanupFailure: unknown | null = null;
     retireOpenVerifyAttemptsForWorkItemInTransaction(this.runtime, workItemId, persistedReason, now);
     const linkedTasks = this.runtime.store.db.prepare(`
       SELECT task_id
@@ -870,7 +877,35 @@ export class WorkItemsCollaborator {
           throw new Error("TASK_BOARD_PARENT_TERMINATION_RUN_SUSPENDER_MISSING");
         }
         for (const runId of runIds) {
-          this.#suspendActiveRunInTransaction!(runId, persistedReason, actor, now);
+          try {
+            this.#suspendActiveRunInTransaction!(runId, persistedReason, actor, now);
+          } catch (error) {
+            this.#suspendActiveRunInTransaction!(
+              runId,
+              persistedReason,
+              actor,
+              now,
+              { skipAttemptNodeSuspension: true },
+            );
+            const durable = this.runtime.store.db.prepare(`
+              SELECT run.status,run.ended_at,
+                EXISTS(
+                  SELECT 1 FROM interrupts interrupt
+                  WHERE interrupt.run_id=run.run_id
+                    AND interrupt.idempotency_key='suspend:' || run.run_id
+                ) AS interrupted
+              FROM runs run
+              WHERE run.run_id=?
+            `).get(runId);
+            if (
+              durable?.status !== "interrupted" ||
+              durable.ended_at === null ||
+              Number(durable.interrupted) !== 1
+            ) {
+              throw new Error("TASK_BOARD_PARENT_TERMINATION_DURABLE_RUN_FALLBACK_FAILED", { cause: error });
+            }
+            cleanupFailure ??= error;
+          }
         }
       }
       const task = this.runtime.requireTask(taskId);
@@ -927,6 +962,7 @@ export class WorkItemsCollaborator {
         );
       }
     }
+    if (cleanupFailure !== null) throw cleanupFailure;
   }
 
   private cancelChildrenForParentTerminationInTransaction(input: Readonly<{
@@ -945,21 +981,141 @@ export class WorkItemsCollaborator {
     const note = `parent ${input.parentWorkItemId} ${input.state}`;
     for (const child of children) {
       if (isTerminalWorkItemState(String(child.state) as WorkItemState)) continue;
-      const abandoned = this.cancelWorkItemInTransaction({
-        workItemId: String(child.work_item_id),
-        reason: note,
-        actor: { type: input.actorType, id: input.actorId },
-        now: input.now,
-        refId: input.parentWorkItemId,
-        terminateActiveRuns: true,
-      });
-      this.notifications?.insertNotificationAtInTransaction({
-        kind: "park_auto_abandoned",
-        dedupeKey: `park_auto_abandoned:${abandoned.workItemId}:${input.parentWorkItemId}`,
-        projectId: abandoned.resolvedProjectId,
-        workItemId: abandoned.workItemId,
-        summary: `Child auto-abandoned after parent ${input.parentWorkItemId} ${input.state}: ${abandoned.workItemId}`,
-      }, input.now);
+      const childWorkItemId = String(child.work_item_id);
+      const actor = { type: input.actorType, id: input.actorId } as const;
+      let abandoned: WorkItem | null = null;
+      try {
+        abandoned = this.cancelWorkItemInTransaction({
+          workItemId: childWorkItemId,
+          reason: note,
+          actor,
+          now: input.now,
+          refId: input.parentWorkItemId,
+          terminateActiveRuns: true,
+        });
+      } catch (error) {
+        this.recordChildCancellationFailureInTransaction(input, childWorkItemId, error);
+        let current: WorkItem;
+        try {
+          current = this.runtime.requireWorkItem(childWorkItemId);
+        } catch (inspectionError) {
+          this.logChildCancellationFailure(
+            input.parentWorkItemId,
+            childWorkItemId,
+            inspectionError,
+            "fallback",
+          );
+          continue;
+        }
+        if (isTerminalWorkItemState(current.state)) {
+          abandoned = current;
+        } else {
+          try {
+            abandoned = this.cancelWorkItemInTransaction({
+              workItemId: childWorkItemId,
+              reason: note,
+              actor,
+              now: input.now,
+              refId: input.parentWorkItemId,
+              terminateActiveRuns: false,
+            });
+          } catch (fallbackError) {
+            this.logChildCancellationFailure(input.parentWorkItemId, childWorkItemId, fallbackError, "fallback");
+            try {
+              transitionWorkItemInTransaction(this.runtime.store, {
+                workItemId: childWorkItemId,
+                to: "abandoned",
+                actorType: actor.type,
+                actorId: actor.id,
+                now: input.now,
+                endedAt: input.now,
+                cancelledReason: note,
+                currentStage: null,
+              });
+              abandoned = this.runtime.requireWorkItem(childWorkItemId);
+            } catch (terminalError) {
+              this.logChildCancellationFailure(
+                input.parentWorkItemId,
+                childWorkItemId,
+                terminalError,
+                "terminal-fallback",
+              );
+            }
+          }
+        }
+      }
+      if (abandoned === null) continue;
+      try {
+        this.notifications?.insertNotificationAtInTransaction({
+          kind: "park_auto_abandoned",
+          dedupeKey: `park_auto_abandoned:${abandoned.workItemId}:${input.parentWorkItemId}`,
+          projectId: abandoned.resolvedProjectId,
+          workItemId: abandoned.workItemId,
+          summary: `Child auto-abandoned after parent ${input.parentWorkItemId} ${input.state}: ${abandoned.workItemId}`,
+        }, input.now);
+      } catch (error) {
+        this.recordChildCancellationFailureInTransaction(input, childWorkItemId, error);
+      }
+    }
+  }
+
+  private recordChildCancellationFailureInTransaction(
+    input: Readonly<{
+      parentWorkItemId: string;
+      state: "abandoned" | "dead_letter";
+      actorType: "human" | "agent" | "system";
+      actorId: string;
+      now: string;
+    }>,
+    childWorkItemId: string,
+    error: unknown,
+  ): void {
+    const message = safeErrorDetail(error, "Child cancellation cleanup failed");
+    this.logChildCancellationFailure(input.parentWorkItemId, childWorkItemId, error, "primary");
+    try {
+      const child = this.runtime.requireWorkItem(childWorkItemId);
+      if (child.resolvedProjectId === null) return;
+      this.runtime.insertEvent(
+        child.resolvedProjectId,
+        null,
+        { type: input.actorType, id: input.actorId },
+        "work_item_cancellation_cleanup_failed",
+        {
+          parentWorkItemId: input.parentWorkItemId,
+          childWorkItemId,
+          parentTerminalState: input.state,
+          message,
+        },
+        input.now,
+      );
+    } catch (recordingError) {
+      this.logChildCancellationFailure(
+        input.parentWorkItemId,
+        childWorkItemId,
+        recordingError,
+        "recording",
+      );
+    }
+  }
+
+  private logChildCancellationFailure(
+    parentWorkItemId: string,
+    childWorkItemId: string,
+    error: unknown,
+    phase: "primary" | "fallback" | "terminal-fallback" | "recording",
+  ): void {
+    const message = safeErrorDetail(error, "Child cancellation cleanup failed");
+    const sourceStack = error instanceof Error ? error.stack ?? message : message;
+    try {
+      console.error("[task-board] child cancellation cleanup failed", Object.freeze({
+        parentWorkItemId: redactForPersistence(parentWorkItemId, 200),
+        childWorkItemId: redactForPersistence(childWorkItemId, 200),
+        phase,
+        message,
+        stack: redactMultilineForPersistence(sourceStack, 8_000),
+      }));
+    } catch {
+      // Parent termination remains authoritative even if diagnostics fail.
     }
   }
 

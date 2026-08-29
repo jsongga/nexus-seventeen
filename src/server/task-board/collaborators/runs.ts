@@ -107,6 +107,7 @@ import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
 type SettlementEffects = Readonly<{
   workflowWakeAgentId: string | null;
   settledWorkflowNodes: readonly WorkNode[];
+  attemptNodeSuspensionFailed: boolean;
 }>;
 
 export type SettlementActor = Actor | Readonly<{ type: "system"; id: string }>;
@@ -118,6 +119,7 @@ export interface SuspendAllActiveRunsResult {
 
 type SettleActiveRunOptions = Readonly<{
   suspendAttempt?: boolean;
+  skipAttemptNodeSuspension?: boolean;
 }>;
 
 type AttemptSettlementPrecheck = Readonly<{
@@ -870,7 +872,12 @@ export class RunsCollaborator {
     reason: string,
     actor: SettlementActor,
     nowOverride?: string,
-  ): { workItemId: string | null; projectId: string } | null {
+    options: Readonly<{ skipAttemptNodeSuspension?: boolean }> = {},
+  ): {
+    workItemId: string | null;
+    projectId: string;
+    attemptNodeSuspensionFailed: boolean;
+  } | null {
     const row = this.runtime.store.db.prepare(
       "SELECT * FROM runs WHERE run_id=? AND status='active'",
     ).get(runId);
@@ -885,29 +892,42 @@ export class RunsCollaborator {
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       WHERE attempt.task_id=?
     `).get(current.taskId);
-    this.insertInterruptInTransaction(
-      current.projectId,
-      current.agentId,
-      current.runId,
-      `suspend:${current.runId}`,
-      sha256({ action: "suspend_run", runId: current.runId, reason: persistedReason, actor }),
-      persistedReason,
-      now,
-      actor,
-    );
-    this.settleActiveRunInTransaction(
+    const idempotencyKey = `suspend:${current.runId}`;
+    const requestHash = sha256({ action: "suspend_run", runId: current.runId, reason: persistedReason, actor });
+    const priorInterrupt = this.runtime.store.db.prepare(
+      "SELECT request_hash FROM interrupts WHERE agent_id=? AND idempotency_key=?",
+    ).get(current.agentId, idempotencyKey);
+    if (priorInterrupt === undefined) {
+      this.insertInterruptInTransaction(
+        current.projectId,
+        current.agentId,
+        current.runId,
+        idempotencyKey,
+        requestHash,
+        persistedReason,
+        now,
+        actor,
+      );
+    } else if (stringValue(priorInterrupt, "request_hash") !== requestHash) {
+      throw conflict("IDEMPOTENCY_CONFLICT", "Run suspension was retried with different input");
+    }
+    this.runtime.store.afterCommit(() => this.runtime.interruptEvents.emit(current.runId));
+    const effects = this.settleActiveRunInTransaction(
       current,
       current.agentId,
       { outcome: "interrupted", result: reason },
       now,
       actor,
       undefined,
-      { suspendAttempt: true },
+      {
+        suspendAttempt: true,
+        skipAttemptNodeSuspension: options.skipAttemptNodeSuspension,
+      },
     );
-    this.runtime.store.afterCommit(() => this.runtime.interruptEvents.emit(current.runId));
     return Object.freeze({
       workItemId: workItem === undefined ? null : stringValue(workItem, "work_item_id"),
       projectId: current.projectId,
+      attemptNodeSuspensionFailed: effects.attemptNodeSuspensionFailed,
     });
   }
 
@@ -931,7 +951,8 @@ export class RunsCollaborator {
       try {
         const result = this.runtime.store.transaction(() =>
           this.suspendActiveRunInTransaction(runId, reason, actor));
-        if (result !== null) suspended += 1;
+        if (result?.attemptNodeSuspensionFailed === true) failed += 1;
+        else if (result !== null) suspended += 1;
       } catch (error) {
         failed += 1;
         console.error(`[task-board] active-run suspension failed for run ${runId}`, error);
@@ -1101,6 +1122,7 @@ export class RunsCollaborator {
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
+    let attemptNodeSuspensionFailed = false;
     const persistedResult = redactForPersistence(request.result);
     const attemptResult = redactForPersistence(attemptPrecheck?.result ?? request.result);
     // Keep this planning snapshot: its work-item state is reused after task and workflow settlement below.
@@ -1200,7 +1222,12 @@ export class RunsCollaborator {
         );
       }
     } else if (current.taskId !== null && options.suspendAttempt === true) {
-      this.projects.suspendAttemptNodeInTransaction(current.taskId, attemptResult);
+      if (options.skipAttemptNodeSuspension !== true) {
+        attemptNodeSuspensionFailed = !this.projects.suspendAttemptNodeInTransaction(
+          current.taskId,
+          attemptResult,
+        );
+      }
     } else if (current.taskId !== null) {
       settledWorkflowNodes = this.projects.settleAttemptInTransaction(
         current.taskId,
@@ -1317,7 +1344,7 @@ export class RunsCollaborator {
     if (attemptPrecheck?.onboarding !== null && attemptPrecheck?.onboarding !== undefined && attemptPrecheck.scopeCheck?.ok === true) {
       this.recordOnboardingGapReportInTransaction(attemptPrecheck.onboarding, agentId);
     }
-    return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes });
+    return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes, attemptNodeSuspensionFailed });
   }
 
   private recordOnboardingGapReportInTransaction(

@@ -8,6 +8,10 @@ import type {
   WorkItemState,
 } from "#shared/task-board-contract";
 import {
+  WORK_ITEM_TERMINAL_STATES,
+  isTerminalWorkItemState,
+} from "#shared/task-board-contract";
+import {
   PUBLISHED_INTERFACE_PATH,
   type PublishedInterfaceReadResult,
 } from "./interface-context.js";
@@ -41,6 +45,17 @@ export type PublishedInterfaceReader = (
   sha: string,
   path: typeof PUBLISHED_INTERFACE_PATH,
 ) => PublishedInterfaceReadResult;
+
+const FAILED_TERMINAL_WORK_ITEM_STATES = WORK_ITEM_TERMINAL_STATES.filter(
+  (state) => state !== "merged",
+);
+const FAILED_TERMINAL_WORK_ITEM_STATES_SQL = FAILED_TERMINAL_WORK_ITEM_STATES
+  .map((state) => `'${state}'`)
+  .join(",");
+
+export function isFailedTerminalWorkItemState(state: WorkItemState): boolean {
+  return state !== "merged" && isTerminalWorkItemState(state);
+}
 
 /** Mirrors the claim-side role gate for published provider context. */
 export function migrateTaskCarriesCrossRepoContext(
@@ -113,7 +128,14 @@ export function decompositionReadinessBlocker(
                 AND attestation.gate='deploy_attest'
             )
           )
-        ORDER BY sibling.child_ordinal,sibling.work_item_id
+        ORDER BY
+          CASE
+            WHEN sibling.state IN (${FAILED_TERMINAL_WORK_ITEM_STATES_SQL}) THEN 0
+            WHEN sibling.state<>'merged' THEN 1
+            ELSE 2
+          END,
+          sibling.child_ordinal,
+          sibling.work_item_id
         LIMIT 1
       `).get(owner.parent_work_item_id)
     : db.prepare(`
