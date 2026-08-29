@@ -100,9 +100,16 @@ test("claim responses expose immutable run pinning and preserve the onboarding d
       },
     });
     assert.ok(replay);
+    const crossRepoContext = {
+      providerProjectId: "project-provider",
+      providerRepoName: "provider-api",
+      interfacePath: "docs/interface.md" as const,
+      sha: "a".repeat(40),
+      markdown: "# Published interface\n",
+    };
     const onboardingReplay = {
       ...replay,
-      context: { ...replay.context, onboarding: true as const },
+      context: { ...replay.context, onboarding: true as const, crossRepoContext },
     };
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
@@ -133,6 +140,7 @@ test("claim responses expose immutable run pinning and preserve the onboarding d
       promptsSha: "sha256:old-prompts",
     });
     assert.equal(claimed?.context?.onboarding, true);
+    assert.deepEqual(claimed?.context?.crossRepoContext, crossRepoContext);
   } finally {
     fixture.board.close();
   }

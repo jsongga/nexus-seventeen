@@ -71,6 +71,7 @@ function parseWithoutChangeShape(children: readonly unknown[]) {
 function phasedChildren(overrides: Partial<Record<"expand" | "migrateOne" | "migrateTwo" | "contract", Record<string, unknown>>> = {}) {
   return [
     child("expand", {
+      declaredScope: ["src/expand", "docs/interface.md"],
       phase: "expand",
       splitBy: "phase",
       ...overrides.expand,
@@ -92,6 +93,7 @@ function phasedChildren(overrides: Partial<Record<"expand" | "migrateOne" | "mig
       ...overrides.migrateTwo,
     }),
     child("contract", {
+      declaredScope: ["src/contract", "docs/interface.md"],
       phase: "contract",
       dependsOn: ["migrate-one", "migrate-two"],
       splitBy: "phase",
@@ -179,8 +181,8 @@ test("child scopes are pairwise disjoint within a project but may repeat across 
     child("two", { projectId: "consumer-project", declaredScope: ["src/app"] }),
   ]));
   assert.doesNotThrow(() => parse("blast_radius", phasedChildren({
-    expand: { declaredScope: ["src/provider/interface.ts"] },
-    contract: { declaredScope: ["src/provider/interface.ts"] },
+    expand: { declaredScope: ["src/provider/interface.ts", "docs/interface.md"] },
+    contract: { declaredScope: ["src/provider/interface.ts", "docs/interface.md"] },
   })));
   assert.throws(() => parse("blast_radius", phasedChildren({
     migrateTwo: {

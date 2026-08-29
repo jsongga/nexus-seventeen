@@ -84,6 +84,12 @@ Runtime units per task (contract, migration equivalence, split-rule matrix, read
 
 - **One level of decomposition** — a child's plan may not declare children. **Resuming a `child_failed` park means proceeding without the failed child — for unphased families only**: abandoned children are excluded from promotion and completion counts (the completion note records them). In a **phased** family an abandoned Expand or Migrate makes the Contract phase unsafe: Contract stays blocked (abandoned never counts as merged+attested), the parent can never complete, and cancelling the parent is the only exit. *(Re-ruled 2026-08-29 after the round-6 review showed a Contract could activate over an abandoned Migrate.)* **Retiring a verification attempt on cancellation stops the verifier and cleans its workspace** — retirement is a terminal outcome of the attempt state machine, not a bookkeeping flag.
 
+- **Publishing the interface is the Expand child's obligation**, enforced at its verification: an Expand whose verified sha lacks a valid `docs/interface.md` fails verification with a finding and goes through the normal fix round — there is no "re-merge" of a merged item. The Migrate readiness block remains only as a residual guard (repository outage, aggregate context budget), with cancellation of the parent as the exit. The interface bound counts toward the run's total context budget; the board validates the markdown (control characters only are rejected) before any run is persisted; only engineer tasks carry the context.
+
+- **The publication check never rewrites a worker's settlement** — the board accepts the verifier's result as submitted and, in the same transaction, records its own publication finding and routes the Expand back to implementation. **Expand and Contract scopes must cover `docs/interface.md`** (validated at settlement and confirm). A symlinked interface is `not_file`.
+
+- **Expand and Contract engineers are authorized to change `docs/interface.md`** — the engineer prompt renders a phase-authorization block for those claims (the published-interface bright line is suspended for that file only); Migrate and ordinary claims keep the bright line.
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

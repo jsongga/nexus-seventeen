@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
+  WORK_ITEM_PHASES,
   isHardTerminalTaskStatus,
   isRecoverableTaskStatus,
   isTerminalWorkItemState,
@@ -13,26 +14,40 @@ import {
   type ClaimRunResponse,
   type ClaimRunResult,
   type CreatePlanRevisionRequest,
+  type CrossRepoContext,
   type DesignRecordDraft,
   type InterruptAgentRequest,
+  type PublishedInterfaceFailureReason,
   type ResumeAgentRequest,
   type RunInterruptBatch,
   type SettleRunRequest,
   type TaskStatus,
   type Wakeup,
   type WorkNode,
+  type WorkItemPhase,
   type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
 import {
   ContractValidationError,
   parseDesignRecordDraft,
+  parseWorkerAgentContext,
+  publishedInterfaceValidationReason,
+  workerAgentContextUsage,
   validateWorkflowPlanChildren,
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
+import {
+  claimContextInputForDigest,
+  projectClaimContext,
+} from "../../shared/claim-context.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
-import { PENDING_LIVE_WAKEUP_PREDICATE_SQL, RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
+import {
+  PENDING_LIVE_WAKEUP_PREDICATE_SQL,
+  RETIRED_WAKEUP_EVENT_PREFIX,
+  type ExpandInterfacePublicationFailure,
+} from "../persistence/workflow.js";
 import {
   claimMessageCursor,
   claimRequestHash,
@@ -51,9 +66,35 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { AttemptScopeCheckResult } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
+import { claimTaskProjectionInputs } from "./claim-projection.js";
+import {
+  migrateInterfaceReadiness,
+  migrateInterfaceProvider,
+  migrateTaskCarriesCrossRepoContext,
+  publishedInterfaceFailureLabel,
+  publishedInterfaceReasonSummary,
+} from "./decomposition-readiness.js";
+import {
+  PUBLISHED_INTERFACE_PATH,
+  readPublishedInterface,
+} from "./interface-context.js";
 import { onboardingDeliverablesCheck } from "./onboarding-check.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
+
+class MigrateInterfaceClaimError extends Error {
+  constructor(
+    readonly summary: string,
+    readonly sha: string,
+    readonly contextDigest: string | null,
+    readonly reason: PublishedInterfaceFailureReason,
+    readonly repoPath: string | null = null,
+    options?: ErrorOptions,
+  ) {
+    super(summary, options);
+    this.name = "MigrateInterfaceClaimError";
+  }
+}
 import {
   checkDeclaredScope,
   runDeclaredScopeGit,
@@ -83,6 +124,7 @@ type AttemptSettlementPrecheck = Readonly<{
   scopeCheck: AttemptScopeCheckResult | null;
   result: string;
   onboarding: OnboardingSettlementContext | null;
+  publicationFailure: ExpandInterfacePublicationFailure | null;
 }>;
 
 type OnboardingSettlementContext = Readonly<{
@@ -224,6 +266,50 @@ export class RunsCollaborator {
       nodeId: row.node_id,
       taskId,
       gapReport,
+    });
+  }
+
+  private expandInterfacePublicationFailure(
+    current: AgentRun,
+    request: SettleRunRequest,
+  ): ExpandInterfacePublicationFailure | null {
+    if (current.status !== "active" || current.taskId === null || request.outcome !== "completed") return null;
+    const row = this.runtime.store.db.prepare(`
+      SELECT project.repo_path,
+        (
+          SELECT verify.detail
+          FROM verify_attempts verify
+          WHERE verify.node_id=node.node_id AND verify.state='green'
+          ORDER BY verify.attempt DESC,verify.created_at DESC,verify.verify_attempt_id DESC
+          LIMIT 1
+        ) AS verified_detail
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN projects project ON project.project_id=item.resolved_project_id
+      WHERE attempt.task_id=? AND attempt.stage='verification' AND item.phase='expand'
+    `).get(current.taskId) as Readonly<{
+      repo_path: string;
+      verified_detail: string | null;
+    }> | undefined;
+    if (row === undefined) return null;
+    const match = row.verified_detail === null ? null : /^verified-sha:([0-9a-f]{40})$/u.exec(row.verified_detail);
+    if (match?.[1] === undefined) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_verified_sha_missing");
+    }
+    const published = readPublishedInterface(row.repo_path, match[1], PUBLISHED_INTERFACE_PATH, this.git);
+    if (published.kind === "present") return null;
+    if (published.reason === "read_error") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        `Could not verify ${PUBLISHED_INTERFACE_PATH} at ${match[1]}`,
+      );
+    }
+    return Object.freeze({
+      finding: `publish ${PUBLISHED_INTERFACE_PATH} (${publishedInterfaceFailureLabel(published)})`,
+      actual: `${PUBLISHED_INTERFACE_PATH} at verified SHA ${match[1]} is ${publishedInterfaceFailureLabel(published)}`,
     });
   }
 
@@ -446,7 +532,17 @@ export class RunsCollaborator {
       const reviewInspection = priorRun.taskId === null
         ? null
         : this.projects.prepareClaimContext(priorRun.taskId);
-      return this.claimResult(priorRun, selectedCursor ?? 0, reviewInspection);
+      const crossRepoContext = priorRun.taskId === null
+        ? null
+        : (() => {
+            try {
+              return this.prepareCrossRepoContext(priorRun.taskId);
+            } catch (error) {
+              if (error instanceof MigrateInterfaceClaimError) this.throwTypedMigrateInterfaceError(error);
+              throw error;
+            }
+          })();
+      return this.claimResult(priorRun, selectedCursor ?? 0, reviewInspection, crossRepoContext);
     }
     const existing = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
@@ -479,9 +575,22 @@ export class RunsCollaborator {
     const reviewInspection = candidate.taskId === null
       ? null
       : this.projects.prepareClaimContext(candidate.taskId);
+    let crossRepoContext: CrossRepoContext | null;
+    try {
+      crossRepoContext = candidate.taskId === null
+        ? null
+        : this.prepareCrossRepoContext(candidate.taskId);
+    } catch (error) {
+      if (error instanceof MigrateInterfaceClaimError && candidate.taskId !== null) {
+        this.rejectMigrateInterfaceClaim(candidate.taskId, error);
+      }
+      throw error;
+    }
     const now = exactNow(this.runtime.config.now);
     let reviewRuntimeConflict: TaskBoardError | null = null;
-    const claimed = this.runtime.store.transaction(() => {
+    let claimed: ClaimRunResponse | null;
+    try {
+      claimed = this.runtime.store.transaction(() => {
       if (this.boardPause.isBoardPaused()) return null;
       const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
       const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
@@ -613,13 +722,39 @@ export class RunsCollaborator {
         runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
         claimMessageCursor(request, wakeup.taskId) ?? 0,
         reviewInspection,
+        crossRepoContext,
       );
+      if (crossRepoContext !== null) {
+        const projectedContext = projectClaimContext(result, claimMessageCursor(request, wakeup.taskId));
+        try {
+          if (projectedContext === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_taskless_claim");
+          parseWorkerAgentContext(projectedContext);
+        } catch (error) {
+          const reason = publishedInterfaceValidationReason(error);
+          if (reason === null || projectedContext === null) throw error;
+          const usage = workerAgentContextUsage(projectedContext);
+          throw new MigrateInterfaceClaimError(
+            publishedInterfaceReasonSummary(reason, crossRepoContext.sha, usage.bytes, usage.budget),
+            crossRepoContext.sha,
+            sha256(claimContextInputForDigest(projectedContext)),
+            reason,
+            null,
+            { cause: error },
+          );
+        }
+      }
       const persisted = this.runtime.store.db.prepare(
         "UPDATE runs SET claim_result_json = ? WHERE run_id = ? AND claim_result_json IS NULL",
       ).run(JSON.stringify(result), runId);
       if (Number(persisted.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
       return result;
-    });
+      });
+    } catch (error) {
+      if (error instanceof MigrateInterfaceClaimError && candidate.taskId !== null) {
+        this.rejectMigrateInterfaceClaim(candidate.taskId, error);
+      }
+      throw error;
+    }
     if (reviewRuntimeConflict !== null) throw reviewRuntimeConflict;
     return claimed;
   }
@@ -862,6 +997,7 @@ export class RunsCollaborator {
       }
       throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     }
+    const publicationFailure = this.expandInterfacePublicationFailure(current, request);
     const scopeCheck = current.taskId === null ? null : this.scopeCheckForSettlement(current.taskId, request.outcome);
     let onboarding: OnboardingSettlementContext | null;
     try {
@@ -876,6 +1012,7 @@ export class RunsCollaborator {
       scopeCheck,
       result: attemptSettlementResult(request, scopeCheck),
       onboarding,
+      publicationFailure,
     });
     const now = exactNow(this.runtime.config.now);
     let effects: SettlementEffects;
@@ -1073,6 +1210,12 @@ export class RunsCollaborator {
         request.reviewFindings,
         attemptPrecheck?.scopeCheck ?? null,
       );
+      if (attemptPrecheck?.publicationFailure !== null && attemptPrecheck?.publicationFailure !== undefined) {
+        settledWorkflowNodes = this.projects.recordExpandInterfacePublicationFailureInTransaction(
+          current.taskId,
+          attemptPrecheck.publicationFailure,
+        );
+      }
     }
     if (workflowProposal !== null) {
       this.projects.proposeWorkflowForAgentInTransaction(workflowProposal, agentId);
@@ -1261,13 +1404,15 @@ export class RunsCollaborator {
     run: AgentRun,
     cursor: number,
     reviewInspection: ReturnType<ProjectsCollaborator["prepareClaimContext"]>,
+    crossRepoContext: CrossRepoContext | null,
   ): ClaimRunResult {
     const wakeup = wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(run.wakeupId)!);
-    const task = wakeup.taskId === null ? null : this.runtime.requireTask(wakeup.taskId);
-    const messages = task === null ? [] : this.runtime.store.db.prepare(`
-      SELECT * FROM task_messages WHERE task_id = ? AND sequence > ? ORDER BY sequence LIMIT 100
-    `).all(task.taskId, cursor).map(messageFromRow);
-    const messageCursor = messages.at(-1)?.sequence ?? cursor;
+    const taskProjection = wakeup.taskId === null
+      ? null
+      : claimTaskProjectionInputs(this.runtime, wakeup.taskId, cursor);
+    const task = taskProjection?.task ?? null;
+    const messages = taskProjection?.messages ?? Object.freeze([]);
+    const messageCursor = taskProjection?.messageCursor ?? cursor;
     const triggerQuestion = wakeup.questionId === null
       ? null
       : questionFromRow(this.runtime.store.db.prepare("SELECT * FROM questions WHERE question_id = ?").get(wakeup.questionId)!);
@@ -1278,6 +1423,7 @@ export class RunsCollaborator {
       ) ORDER BY sequence
     `).all(parentTask.taskId).map(messageFromRow);
     const workflow = task === null ? null : this.projects.claimContext(task.taskId, reviewInspection);
+    const phase = task === null ? null : this.claimWorkItemPhase(task.taskId);
     const areaMemory = workflow?.pipeline !== null && workflow?.pipeline !== undefined
       ? []
       : this.runtime.store.db.prepare(`
@@ -1304,9 +1450,7 @@ export class RunsCollaborator {
       wakeup,
       task,
       context: Object.freeze({
-        intake: task !== null && this.runtime.store.db.prepare(
-          "SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?",
-        ).get(task.taskId) !== undefined,
+        intake: taskProjection?.intake ?? false,
         ...(task !== null && this.runtime.store.db.prepare(`
           SELECT 1
           FROM work_item_onboarding_tasks onboarding
@@ -1330,6 +1474,8 @@ export class RunsCollaborator {
         parentMessages: Object.freeze(parentMessages),
         acceptanceCriteria: task?.acceptanceCriteria ?? null,
         workspaceRefs: task?.workspaceRefs ?? Object.freeze([]),
+        phase,
+        ...(crossRepoContext === null ? {} : { crossRepoContext }),
         messageCursor,
         messages: Object.freeze(messages),
         triggerQuestion,
@@ -1339,6 +1485,86 @@ export class RunsCollaborator {
         workflow,
       }),
     });
+  }
+
+  private claimWorkItemPhase(taskId: string): WorkItemPhase | null {
+    const row = this.runtime.store.db.prepare(`
+      SELECT item.phase
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE attempt.task_id=?
+      ORDER BY attempt.attempt DESC
+      LIMIT 1
+    `).get(taskId) as Readonly<{ phase: string | null }> | undefined;
+    if (row === undefined || row.phase === null) return null;
+    if (!(WORK_ITEM_PHASES as readonly string[]).includes(row.phase)) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_phase");
+    }
+    return row.phase as WorkItemPhase;
+  }
+
+  private prepareCrossRepoContext(taskId: string): CrossRepoContext | null {
+    const owner = this.runtime.store.db.prepare(`
+      SELECT item.work_item_id,item.phase,attempt.stage,task.assigned_role
+      FROM stage_attempts attempt
+      JOIN tasks task ON task.task_id=attempt.task_id
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE attempt.task_id=?
+      ORDER BY attempt.attempt DESC
+      LIMIT 1
+    `).get(taskId) as Readonly<{
+      work_item_id: string;
+      phase: string | null;
+      stage: string;
+      assigned_role: string | null;
+    }> | undefined;
+    if (
+      owner === undefined
+      || owner.phase !== "migrate"
+      || !migrateTaskCarriesCrossRepoContext(owner.stage, owner.assigned_role)
+    ) return null;
+    const provider = migrateInterfaceProvider(this.runtime.store.db, owner.work_item_id);
+    if (provider === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_provider_merge_missing");
+    const readiness = migrateInterfaceReadiness(
+      this.runtime.store.db,
+      owner.work_item_id,
+      (repoPath, sha, path) => readPublishedInterface(repoPath, sha, path, this.git),
+    );
+    if (readiness === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_provider_merge_missing");
+    if (readiness.kind === "blocked") {
+      throw new MigrateInterfaceClaimError(
+        readiness.summary,
+        readiness.sha,
+        null,
+        readiness.reason,
+        provider.repoPath,
+      );
+    }
+    return readiness.context;
+  }
+
+  private rejectMigrateInterfaceClaim(taskId: string, error: MigrateInterfaceClaimError): never {
+    if (error.reason === "read_error" && error.repoPath !== null) {
+      this.projects.evictPublishedInterface(error.repoPath, error.sha);
+    }
+    this.projects.blockMigrateInterfaceClaim(taskId, error.summary, error.contextDigest === null ? null : {
+      expandSha: error.sha,
+      contextDigest: error.contextDigest,
+    });
+    this.throwTypedMigrateInterfaceError(error);
+  }
+
+  private throwTypedMigrateInterfaceError(error: MigrateInterfaceClaimError): never {
+    throw new TaskBoardError(
+      409,
+      TASK_BOARD_ERROR_CODES.TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE,
+      error.summary,
+      { cause: error },
+    );
   }
 
   private claimResultFromJson(value: string): ClaimRunResult {
@@ -1376,6 +1602,11 @@ export class RunsCollaborator {
             .get(currentRun.taskId) !== undefined;
       }
       if (!Object.hasOwn(context, "design")) context.design = false;
+      if (!Object.hasOwn(context, "phase")) {
+        context.phase = currentRun?.taskId === null || currentRun?.taskId === undefined
+          ? null
+          : this.claimWorkItemPhase(currentRun.taskId);
+      }
       if (context.workflow !== null && typeof context.workflow === "object" && !Array.isArray(context.workflow)) {
         const workflow = context.workflow as Record<string, unknown>;
         if (!Object.hasOwn(workflow, "workspaceKey")) workflow.workspaceKey = null;

@@ -1570,6 +1570,7 @@ test("happy-path claim keeps the existing complete response shape", async () => 
       "openQuestions",
       "parentMessages",
       "parentTask",
+      "phase",
       "projectMemory",
       "triggerQuestion",
       "workflow",
@@ -2458,7 +2459,7 @@ test("planning settlement defers auto-target project context, persists children,
       key: "expand-provider",
       objective: "Publish the expanded provider interface.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/provider/interface.ts"],
+      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
       acceptanceCriteria: ["The expanded interface is verified."],
       phase: "expand" as const,
       dependsOn: [],
@@ -2476,7 +2477,7 @@ test("planning settlement defers auto-target project context, persists children,
       key: "contract-provider",
       objective: "Remove the old provider interface.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/provider/interface.ts"],
+      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
       acceptanceCriteria: ["The old interface is removed."],
       phase: "contract" as const,
       dependsOn: ["migrate-consumer"],
@@ -2523,6 +2524,25 @@ test("planning settlement defers auto-target project context, persists children,
       messageCursor: null,
     });
     assert.ok(automaticClaim);
+    assert.throws(
+      () => board!.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The phased plan omits publication scope and must be corrected.",
+        workflowPlan: {
+          ...workflowPlan,
+          children: children.map((child) => child.phase === "expand"
+            ? { ...child, declaredScope: ["src/provider/interface.ts"] }
+            : child),
+        },
+      }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 400
+        && error.code === "WORKFLOW_INVALID"
+        && /expand.*docs\/interface\.md/u.test(error.message),
+    );
+    assert.equal(board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === automaticClaim.run.runId,
+    )?.status, "active");
     const settled = board.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The phased plan is ready for confirmation.",

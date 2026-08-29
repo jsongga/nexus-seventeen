@@ -17,6 +17,8 @@ import {
   GATE_KINDS,
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
+  MAX_AGENT_CONTEXT_BYTES,
+  MAX_DESIGN_CONTEXT_BYTES,
   MAX_AREA_MEMORY_RESULT_CHARACTERS,
   MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,
   NOTIFICATION_KINDS,
@@ -32,7 +34,9 @@ import {
   REVIEW_FINDING_SEVERITIES,
   REVIEW_WORKSPACE_SUFFIX,
   RUN_STATUSES,
+  STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
   STAGE_HANDOFF_OUTCOMES,
+  STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
   TASK_KINDS,
@@ -52,7 +56,9 @@ import {
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
+  isValidCrossRepoMarkdown,
   declaredScopesOverlap,
+  normalizeDeclaredScope,
   type AgentInterrupt,
   type AgentProfile,
   type AgentRole,
@@ -82,6 +88,7 @@ import {
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
   type CreateWorkItemRequest,
+  type CrossRepoContext,
   type DesignFailurePoint,
   type DesignFailurePointKind,
   type DesignRecord,
@@ -100,6 +107,7 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type PublishedInterfaceFailureReason,
   type ReviewFinding,
   type ReviewFindingCategory,
   type ReviewFindingDraft,
@@ -2164,7 +2172,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   ], "Claim wakeup");
   const context = exact(envelope.context, [
     "intake", "onboarding", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
-    "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
+    "phase", "crossRepoContext", "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
   ], "Claim context", {
     required: [
       "intake", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
@@ -2219,6 +2227,12 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     if (pipelineFields.fix !== null && workflow.stage !== "implementation") {
       throw new ContractValidationError("Workflow context.fix is only valid during implementation");
     }
+  }
+  if (context.crossRepoContext !== undefined) {
+    parseCrossRepoContext(context.crossRepoContext, "context.crossRepoContext");
+  }
+  if (context.phase !== undefined && context.phase !== null) {
+    contractMember(context.phase, WORK_ITEM_PHASES, "context.phase");
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   booleanValue(context.intake, "context.intake");
@@ -2321,6 +2335,8 @@ interface ValidatedAgentContext {
     status: "open" | "answered";
   }>[];
   readonly workspaceRefs: readonly string[];
+  readonly phase: WorkItemPhase | null;
+  readonly crossRepoContext?: CrossRepoContext;
   readonly workflow: Readonly<{
     planRevisionId: string;
     nodeId: string;
@@ -2353,10 +2369,9 @@ interface ValidatedAgentRunOutcome {
   readonly designRecord?: DesignRecordDraft;
 }
 
-const MAX_CONTEXT_BYTES = 256 * 1_024;
+const MAX_PUBLISHED_INTERFACE_BYTES = 64 * 1_024;
 // Design claims may carry their large approved-plan objective, while later
 // pipeline claims add the bounded record to an otherwise full context.
-const MAX_DESIGN_CONTEXT_BYTES = 4 * 1_024 * 1_024;
 const MAX_OUTCOME_BYTES = 64 * 1_024;
 const MAX_AREA_MEMORY_ITEMS = 8;
 
@@ -2364,8 +2379,81 @@ function byteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
+export interface WorkerAgentContextUsage {
+  readonly bytes: number;
+  readonly budget: number;
+}
+
+export class WorkerAgentContextBudgetError extends ContractValidationError {
+  constructor(readonly usage: WorkerAgentContextUsage, publishedInterface: boolean) {
+    super(
+      "Agent context exceeds its byte bound",
+      publishedInterface ? "PUBLISHED_INTERFACE_OVER_BUDGET" : "INVALID_REQUEST",
+    );
+    this.name = "WorkerAgentContextBudgetError";
+  }
+}
+
+export function workerAgentContextUsage(value: unknown): WorkerAgentContextUsage {
+  const rawContext = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : {};
+  const rawWorkflow = rawContext.workflow;
+  const rawPipeline = rawWorkflow !== null && typeof rawWorkflow === "object" && !Array.isArray(rawWorkflow)
+    ? (rawWorkflow as JsonRecord).pipeline
+    : null;
+  const carriesDesignRecord = rawPipeline !== null && typeof rawPipeline === "object" && !Array.isArray(rawPipeline) &&
+    (rawPipeline as JsonRecord).designRecord !== null && (rawPipeline as JsonRecord).designRecord !== undefined;
+  return Object.freeze({
+    bytes: byteLength(value),
+    budget: rawContext.design === true || carriesDesignRecord ? MAX_DESIGN_CONTEXT_BYTES : MAX_AGENT_CONTEXT_BYTES,
+  });
+}
+
+export function publishedInterfaceValidationReason(error: unknown): PublishedInterfaceFailureReason | null {
+  if (!(error instanceof ContractValidationError)) return null;
+  switch (error.code) {
+    case "PUBLISHED_INTERFACE_TOO_LARGE": return "too_large";
+    case "PUBLISHED_INTERFACE_INVALID_MARKDOWN": return "invalid_markdown";
+    case "PUBLISHED_INTERFACE_EMPTY": return "empty";
+    case "PUBLISHED_INTERFACE_OVER_BUDGET": return "over_budget";
+    default: return null;
+  }
+}
+
 function boundedJsonValue(value: unknown, maximum: number, label: string): void {
   if (byteLength(value) > maximum) throw new ContractValidationError(`${label} exceeds its byte bound`);
+}
+
+function parseCrossRepoContext(value: unknown, label: string): CrossRepoContext {
+  const item = exact(value, [
+    "providerProjectId", "providerRepoName", "interfacePath", "sha", "markdown",
+  ], label);
+  if (item.interfacePath !== "docs/interface.md") {
+    throw new ContractValidationError(`${label}.interfacePath is invalid`);
+  }
+  if (typeof item.sha !== "string" || !GIT_OBJECT_ID_PATTERN.test(item.sha)) {
+    throw new ContractValidationError(`${label}.sha is invalid`);
+  }
+  if (typeof item.markdown !== "string") {
+    throw new ContractValidationError(`${label}.markdown must be a string`);
+  }
+  if (new TextEncoder().encode(item.markdown).byteLength > MAX_PUBLISHED_INTERFACE_BYTES) {
+    throw new ContractValidationError(`${label}.markdown exceeds 64 KiB`, "PUBLISHED_INTERFACE_TOO_LARGE");
+  }
+  if (item.markdown.trim().length === 0) {
+    throw new ContractValidationError(`${label}.markdown is empty`, "PUBLISHED_INTERFACE_EMPTY");
+  }
+  if (!isValidCrossRepoMarkdown(item.markdown)) {
+    throw new ContractValidationError(`${label}.markdown is invalid`, "PUBLISHED_INTERFACE_INVALID_MARKDOWN");
+  }
+  return Object.freeze({
+    providerProjectId: identifier(item.providerProjectId, `${label}.providerProjectId`),
+    providerRepoName: prose(item.providerRepoName, `${label}.providerRepoName`, { maximum: 256 }),
+    interfacePath: "docs/interface.md",
+    sha: item.sha,
+    markdown: item.markdown,
+  });
 }
 
 function workerTimestamp(value: unknown, label: string): string {
@@ -2440,11 +2528,19 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
     taskId: identifier(handoff.taskId, `workflow.handoffs[${index}].taskId`),
     stage,
     outcome,
-    summary: workerProse(handoff.summary, `workflow.handoffs[${index}].summary`, 4_000),
+    summary: workerProse(
+      handoff.summary,
+      `workflow.handoffs[${index}].summary`,
+      STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS,
+    ),
     evidence: stringList(handoff.evidence, `workflow.handoffs[${index}].evidence`, 32),
     artifactIds: stringList(handoff.artifactIds, `workflow.handoffs[${index}].artifactIds`, 32),
     acceptanceCriteria: Object.freeze(acceptanceCriteria),
-    blockers: stringList(handoff.blockers, `workflow.handoffs[${index}].blockers`, 32),
+    blockers: stringList(
+      handoff.blockers,
+      `workflow.handoffs[${index}].blockers`,
+      STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
+    ),
     recommendedReturnStage,
     createdAt: workerTimestamp(handoff.createdAt, `workflow.handoffs[${index}].createdAt`),
   });
@@ -2657,20 +2753,13 @@ export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim
 
 export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   const rawContext = record(value, "Agent context");
-  const rawWorkflow = rawContext.workflow;
-  const rawPipeline = rawWorkflow !== null && typeof rawWorkflow === "object" && !Array.isArray(rawWorkflow)
-    ? (rawWorkflow as JsonRecord).pipeline
-    : null;
-  const carriesDesignRecord = rawPipeline !== null && typeof rawPipeline === "object" && !Array.isArray(rawPipeline) &&
-    (rawPipeline as JsonRecord).designRecord !== null && (rawPipeline as JsonRecord).designRecord !== undefined;
-  boundedJsonValue(
-    value,
-    rawContext.design === true || carriesDesignRecord ? MAX_DESIGN_CONTEXT_BYTES : MAX_CONTEXT_BYTES,
-    "Agent context",
-  );
+  const usage = workerAgentContextUsage(value);
+  if (usage.bytes > usage.budget) {
+    throw new WorkerAgentContextBudgetError(usage, rawContext.crossRepoContext !== undefined);
+  }
   const item = exact(value, [
     "apiVersion", "projectId", "agentId", "taskId", "intake", "onboarding", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
-    "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
+    "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "phase", "crossRepoContext", "workflow",
   ], "Agent context", {
     required: [
       "apiVersion", "projectId", "agentId", "taskId", "intake", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
@@ -2802,6 +2891,13 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     });
   }
 
+  const crossRepoContext = item.crossRepoContext === undefined
+    ? undefined
+    : parseCrossRepoContext(item.crossRepoContext, "crossRepoContext");
+  const phase = item.phase === undefined || item.phase === null
+    ? null
+    : contractMember(item.phase, WORK_ITEM_PHASES, "context.phase");
+
   if (!Array.isArray(task.phases) || task.phases.length > 64) throw new ContractValidationError("Agent task phases are invalid");
   const phases = task.phases.map(parseWorkerContextPhase);
   if (new Set(phases.map((phase) => phase.phaseId)).size !== phases.length) {
@@ -2870,7 +2966,10 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     }),
     areaMemory: Object.freeze(areaMemory), parentEvidence, messagesSinceCursor: since, nextMessageCursor: next,
     messages: Object.freeze(messages), triggerQuestion, openQuestions: Object.freeze(openQuestions),
-    workspaceRefs: Object.freeze(item.workspaceRefs.map((entry, index) => workerProse(entry, `workspaceRefs[${index}]`, 512))), workflow,
+    workspaceRefs: Object.freeze(item.workspaceRefs.map((entry, index) => workerProse(entry, `workspaceRefs[${index}]`, 512))),
+    phase,
+    ...(crossRepoContext === undefined ? {} : { crossRepoContext }),
+    workflow,
   });
 }
 
@@ -3012,11 +3111,16 @@ function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHand
   });
   return Object.freeze({
     outcome: contractMember(item.outcome, STAGE_HANDOFF_OUTCOMES, messages.handoffOutcomeLabel),
-    summary: draftText(item.summary, "handoff.summary", 4_000, policy),
+    summary: draftText(item.summary, "handoff.summary", STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS, policy),
     evidence: draftStringList(item.evidence, "handoff.evidence", policy),
     artifactIds: draftStringList(item.artifactIds, "handoff.artifactIds", policy),
     acceptanceCriteria: Object.freeze(criteria),
-    blockers: draftStringList(item.blockers, "handoff.blockers", policy),
+    blockers: draftStringList(
+      item.blockers,
+      "handoff.blockers",
+      policy,
+      STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
+    ),
     recommendedReturnStage: item.recommendedReturnStage === null
       ? null
       : contractMember(item.recommendedReturnStage, WORKFLOW_STAGES, messages.handoffReturnStageLabel),
@@ -3143,6 +3247,15 @@ export function validateWorkflowPlanChildren(
   }
   const expand = expands[0]!;
   const contract = contracts[0]!;
+  const publishedInterfacePath = "docs/interface.md";
+  const coversPublishedInterface = (child: DeclaredChild): boolean => normalizeDeclaredScope(child.declaredScope)
+    .some((prefix) => publishedInterfacePath === prefix || publishedInterfacePath.startsWith(`${prefix}/`));
+  if (!coversPublishedInterface(expand)) {
+    throw new ContractValidationError(`expand child declaredScope must cover ${publishedInterfacePath}`);
+  }
+  if (!coversPublishedInterface(contract)) {
+    throw new ContractValidationError(`contract child declaredScope must cover ${publishedInterfacePath}`);
+  }
   const providerProjectId = parentProjectId ?? expand.projectId;
   if (expand.projectId !== providerProjectId || contract.projectId !== providerProjectId) {
     throw new ContractValidationError("expand and contract children must use the parent project");

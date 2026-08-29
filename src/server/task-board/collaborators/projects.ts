@@ -22,13 +22,24 @@ import {
   type WorkItem,
   type WorkItemState,
   type WorkNode,
+  type WorkflowStage,
 } from "#shared/task-board-contract";
-import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
+import {
+  parseDesignRecordDraft,
+  parseWorkerAgentContext,
+  workerAgentContextUsage,
+} from "#shared/task-board-contract/validate";
+import { sha256 } from "../canonical.js";
+import {
+  claimContextInputForDigest,
+  projectClaimContext,
+} from "../../shared/claim-context.js";
 import { ArtifactStore } from "../persistence/artifacts.js";
-import { projectFromRow, reviewFindingFromRow, type Row } from "../persistence/rows.js";
+import { projectFromRow, questionFromRow, reviewFindingFromRow, type Row } from "../persistence/rows.js";
 import {
   TransparentWorkflow,
   type AttemptScopeCheckResult,
+  type ExpandInterfacePublicationFailure,
   type ProjectWorkflowSnapshot,
   type RejectWorkflowTransactionResult,
   type WorkflowGitRunner,
@@ -42,6 +53,7 @@ import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
 import type { NotificationsCollaborator } from "./notifications.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
+import { claimTaskProjectionInputs } from "./claim-projection.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
 import {
   VerifyAttemptsCollaborator,
@@ -63,7 +75,12 @@ import { declaredScopesOverlap } from "./scope-check.js";
 import {
   decompositionFamilyTouchesProjectSql,
   decompositionReadinessBlocker,
+  migrateInterfaceReadiness,
+  migrateTaskCarriesCrossRepoContext,
+  publishedInterfaceReasonSummary,
+  type MigrateInterfaceReadiness,
 } from "./decomposition-readiness.js";
+import { PublishedInterfaceCache } from "./interface-context.js";
 import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
@@ -75,14 +92,26 @@ const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
 
-export const runWorkflowGit: WorkflowGitRunner = (arguments_) => execFileSync("git", [...arguments_], {
-  encoding: "utf8",
-  timeout: GIT_TIMEOUT_MS,
-  maxBuffer: GIT_MAX_BYTES,
-  windowsHide: true,
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-});
+export const runWorkflowGit: WorkflowGitRunner = Object.assign(
+  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BYTES,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  }),
+  {
+    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+      encoding: "buffer",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BYTES,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    }),
+  },
+);
 
 export type ConfirmWorkflowResult = ProjectWorkflowSnapshot & Readonly<{
   outcome?: "parked_hazardous" | "designing";
@@ -100,10 +129,18 @@ type PipelineMergeAuthorization = Readonly<{
   refId: string | null;
 }>;
 
-type PhasedChildBaseRefresh = Readonly<{
+type PhasedChildActivationPreflight = Readonly<{
   workItemId: string;
   projectId: string;
-  baseSha: string;
+  baseSha: string | null;
+  interfaceRequired: boolean;
+  interfaceReadiness: MigrateInterfaceReadiness | null;
+}>;
+
+type MigrateContextEstimate = Readonly<{
+  bytes: number;
+  budget: number;
+  digest: string;
 }>;
 
 export class ProjectsCollaborator {
@@ -111,6 +148,7 @@ export class ProjectsCollaborator {
   readonly #artifacts: ArtifactStore;
   readonly #verifyAttempts: VerifyAttemptsCollaborator;
   readonly #boardPause: BoardPauseCollaborator;
+  readonly #publishedInterfaceCache: PublishedInterfaceCache;
   // Process-local by ruling: one task-board process owns a repository/database pair.
   readonly #finalApprovalLocks = new Map<string, Promise<void>>();
   #startDesignInTransaction: ((workItemId: string) => void) | undefined;
@@ -137,6 +175,7 @@ export class ProjectsCollaborator {
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
     this.#boardPause = boardPause ?? new BoardPauseCollaborator(runtime);
+    this.#publishedInterfaceCache = new PublishedInterfaceCache(git);
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
       ...verifyDependencies,
       git,
@@ -1009,8 +1048,63 @@ export class ProjectsCollaborator {
     return this.#workflow.settleAttemptInTransaction(taskId, outcome, result, handoff, reviewFindings, scopeCheck);
   }
 
+  recordExpandInterfacePublicationFailureInTransaction(
+    taskId: string,
+    failure: ExpandInterfacePublicationFailure,
+  ): readonly WorkNode[] {
+    return this.#workflow.recordExpandInterfacePublicationFailureInTransaction(taskId, failure);
+  }
+
   suspendAttemptNodeInTransaction(taskId: string, reason: string): void {
     this.#workflow.suspendAttemptNodeInTransaction(taskId, reason);
+  }
+
+  blockMigrateInterfaceClaim(
+    taskId: string,
+    summary: string,
+    key: Readonly<{ expandSha: string; contextDigest: string }> | null,
+  ): void {
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.transaction(() => {
+      const task = this.runtime.requireTask(taskId);
+      this.runtime.retirePendingWakeupsForTask(taskId, "interface_readiness_changed", now);
+      if (task.endedAt !== null) return;
+      const node = this.runtime.store.db.prepare(`
+        SELECT node.node_id,node.state
+        FROM stage_attempts attempt
+        JOIN work_nodes node ON node.node_id=attempt.node_id
+        WHERE attempt.task_id=?
+      `).get(taskId) as Row | undefined;
+      if (node?.state === "active") {
+        this.#workflow.suspendAttemptNodeInTransaction(taskId, summary);
+      } else if (node !== undefined) {
+        this.#workflow.blockNodeInTransaction(String(node.node_id), summary);
+      }
+      const update = this.runtime.store.db.prepare(`
+        UPDATE tasks
+        SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result=?,
+          version=version+1,updated_at=?
+        WHERE task_id=? AND ended_at IS NULL AND status IN ('queued','blocked')
+      `).run(now, now, summary, now, taskId);
+      if (Number(update.changes) !== 1) return;
+      this.runtime.insertEvent(task.projectId, task.taskId, {
+        type: "system",
+        id: "system:interface-readiness",
+      }, "task_cancelled", {
+        previousStatus: task.status,
+        status: "cancelled",
+        reason: summary,
+        ...(key === null ? {} : {
+          interfaceExpandSha: key.expandSha,
+          interfaceContextDigest: key.contextDigest,
+        }),
+        version: task.version + 1,
+      }, now);
+    });
+  }
+
+  evictPublishedInterface(repoPath: string, sha: string): void {
+    this.#publishedInterfaceCache.evict(repoPath, sha);
   }
 
   settleDesignInTransaction(
@@ -1398,15 +1492,15 @@ export class ProjectsCollaborator {
     }
   }
 
-  private phasedChildBaseRefreshForActivation(nodeId: string): PhasedChildBaseRefresh | null {
+  private phasedChildPreflightForActivation(nodeId: string): PhasedChildActivationPreflight | null {
     const candidate = this.runtime.store.db.prepare(`
-      SELECT item.work_item_id,item.resolved_project_id
+      SELECT item.work_item_id,item.resolved_project_id,item.phase,item.state,
+        node.current_stage,node.stage_template_json
       FROM work_nodes node
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE node.node_id=?
         AND node.state IN ('pending','ready','blocked')
-        AND item.state='queued'
         AND item.parent_work_item_id IS NOT NULL
         AND EXISTS(
           SELECT 1
@@ -1422,17 +1516,223 @@ export class ProjectsCollaborator {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_project_missing");
     }
     const projectId = String(candidate.resolved_project_id);
+    const prospectiveStage = candidate.current_stage === null
+      ? (JSON.parse(String(candidate.stage_template_json)) as WorkflowStage[])[0] ?? null
+      : String(candidate.current_stage) as WorkflowStage;
+    const configuration = this.automation.getConfiguration();
+    const executor = prospectiveStage === null
+      ? undefined
+      : configuration.stages.find((item) => item.stage === prospectiveStage)?.executor;
+    const agentType = executor?.kind === "agent_type"
+      ? configuration.agentTypes.find((item) => item.agentTypeId === executor.agentTypeId && item.enabled)
+      : undefined;
+    const interfaceRequired = candidate.phase === "migrate" && prospectiveStage !== null &&
+      migrateTaskCarriesCrossRepoContext(prospectiveStage, agentType?.role ?? null);
+    const interfaceReadiness = interfaceRequired
+      ? migrateInterfaceReadiness(
+          this.runtime.store.db,
+          workItemId,
+          (repoPath, sha, path) => this.#publishedInterfaceCache.read(repoPath, sha, path),
+        )
+      : null;
     return Object.freeze({
       workItemId,
       projectId,
-      baseSha: this.#workflow.pipelineBaseShaForProject(projectId),
+      interfaceRequired,
+      baseSha: candidate.state === "queued" && interfaceReadiness?.kind !== "blocked"
+        ? this.#workflow.pipelineBaseShaForProject(projectId)
+        : null,
+      interfaceReadiness,
     });
+  }
+
+  private migrateContextEstimate(
+    node: WorkNode,
+    agentId: string,
+    context: NonNullable<MigrateInterfaceReadiness & { kind: "ready" }>["context"],
+    stageDigests: Readonly<Record<string, string>>,
+    orphan: Row | undefined,
+  ): MigrateContextEstimate {
+    const projectedAgentId = orphan === undefined ? agentId : String(orphan.assigned_agent_id);
+    const agent = this.runtime.requireAgent(projectedAgentId);
+    const project = this.runtime.requireProject(node.projectId);
+    const now = agent.createdAt;
+    const workspaceRefs = Object.freeze([] as string[]);
+    const taskId = orphan === undefined ? "preview-migrate-task" : String(orphan.task_id);
+    const requestedCursor = orphan === undefined ? 0 : this.latestClaimMessageCursor(taskId);
+    const projectionInputs = orphan === undefined
+      ? null
+      : claimTaskProjectionInputs(this.runtime, taskId, requestedCursor);
+    const task = projectionInputs?.task ?? Object.freeze({
+      apiVersion: TASK_BOARD_API_VERSION,
+      taskId,
+      projectId: node.projectId,
+      parentTaskId: null,
+      kind: "work" as const,
+      requiredRole: null,
+      requiresReview: false,
+      title: `implementation: ${node.title}`,
+      objective: node.objective,
+      acceptanceCriteria: node.acceptanceCriteria.join("\n"),
+      workspaceRefs,
+      status: "queued" as const,
+      assignedAgentId: projectedAgentId,
+      assignedRole: agent.role,
+      expectedAgentMinutes: null,
+      estimateRecordedAt: null,
+      orderKey: 0,
+      phases: Object.freeze([]),
+      startedAt: null,
+      expectedCompletedAt: null,
+      endedAt: null,
+      result: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const projectedContext = projectClaimContext(Object.freeze({
+      apiVersion: TASK_BOARD_API_VERSION,
+      run: Object.freeze({
+        apiVersion: TASK_BOARD_API_VERSION,
+        runId: "preview-migrate-run",
+        claimId: "preview-migrate-claim",
+        projectId: node.projectId,
+        agentId: projectedAgentId,
+        wakeupId: "preview-migrate-wakeup",
+        taskId,
+        status: "active" as const,
+        startedAt: now,
+        heartbeatAt: null,
+        endedAt: null,
+        result: null,
+        runtime: null,
+        runtimeVersion: null,
+        model: null,
+        promptsSha: null,
+      }),
+      wakeup: Object.freeze({
+        apiVersion: TASK_BOARD_API_VERSION,
+        wakeupId: "preview-migrate-wakeup",
+        projectId: node.projectId,
+        agentId: projectedAgentId,
+        reason: "workflow_handoff" as const,
+        taskId,
+        questionId: null,
+        detail: "Migrate context readiness",
+        createdBy: "system:interface-readiness",
+        createdAt: now,
+        claimedAt: null,
+        runId: null,
+      }),
+      task,
+      context: Object.freeze({
+        intake: projectionInputs?.intake ?? false,
+        design: false,
+        agent,
+        projectMemory: Object.freeze({
+          projectId: project.projectId,
+          name: project.name,
+          description: project.description,
+        }),
+        areaMemory: Object.freeze([]),
+        parentTask: null,
+        parentMessages: Object.freeze([]),
+        acceptanceCriteria: task.acceptanceCriteria,
+        workspaceRefs,
+        phase: "migrate" as const,
+        crossRepoContext: context,
+        messageCursor: projectionInputs?.messageCursor ?? requestedCursor,
+        messages: projectionInputs?.messages ?? Object.freeze([]),
+        triggerQuestion: null,
+        openQuestions: Object.freeze((this.runtime.store.db.prepare(`
+          SELECT *
+          FROM questions
+          WHERE agent_id=? AND status='open'
+          ORDER BY asked_at,question_id
+          LIMIT 4
+        `).all(projectedAgentId) as Row[]).map(questionFromRow)),
+        workflow: this.#workflow.claimContextForStage(
+          node.nodeId,
+          "implementation",
+          stageDigests,
+        ),
+      }),
+    }), requestedCursor);
+    if (projectedContext === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_readiness_projection");
+    const usage = workerAgentContextUsage(projectedContext);
+    if (usage.bytes <= usage.budget) parseWorkerAgentContext(projectedContext);
+    return Object.freeze({
+      ...usage,
+      digest: sha256(claimContextInputForDigest(projectedContext)),
+    });
+  }
+
+  private latestClaimMessageCursor(taskId: string): number {
+    const row = this.runtime.store.db.prepare(`
+      SELECT json_extract(claim_result_json,'$.context.messageCursor') AS message_cursor
+      FROM runs
+      WHERE task_id=? AND claim_result_json IS NOT NULL
+      ORDER BY started_at DESC,rowid DESC
+      LIMIT 1
+    `).get(taskId) as Row | undefined;
+    const cursor = Number(row?.message_cursor ?? 0);
+    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+  }
+
+  private workflowActivationOrphan(
+    node: WorkNode,
+    stage: WorkflowStage,
+    assignedRole: string,
+  ): Row | undefined {
+    const title = `${stage}: ${node.title}`;
+    const acceptanceCriteria = node.acceptanceCriteria.join("\n");
+    return this.runtime.store.db.prepare(`
+      SELECT task.*
+      FROM tasks task
+      JOIN agents assigned
+        ON assigned.agent_id=task.assigned_agent_id
+        AND assigned.project_id=task.project_id
+        AND assigned.role=task.assigned_role
+      WHERE task.project_id=?
+        AND task.parent_task_id IS NULL
+        AND task.task_kind='work'
+        AND task.required_role IS NULL
+        AND task.requires_review=0
+        AND task.title=?
+        AND task.objective=?
+        AND task.acceptance_criteria=?
+        AND task.workspace_refs_json='[]'
+        AND task.assigned_role=?
+        AND task.ended_at IS NULL
+        AND task.status='queued'
+        AND NOT EXISTS(SELECT 1 FROM stage_attempts attempt WHERE attempt.task_id=task.task_id)
+        AND NOT EXISTS(SELECT 1 FROM work_item_planning_tasks planning WHERE planning.task_id=task.task_id)
+        AND EXISTS(
+          SELECT 1 FROM wakeups wakeup
+          WHERE wakeup.task_id=task.task_id
+            AND wakeup.project_id=task.project_id
+            AND wakeup.agent_id=task.assigned_agent_id
+            AND wakeup.claimed_at IS NULL
+            AND NOT EXISTS(
+              SELECT 1 FROM task_events event WHERE event.event_id=? || wakeup.wakeup_id
+            )
+        )
+      ORDER BY task.order_key,task.task_id
+      LIMIT 1
+    `).get(
+      node.projectId,
+      title,
+      node.objective,
+      acceptanceCriteria,
+      assignedRole,
+      RETIRED_WAKEUP_EVENT_PREFIX,
+    ) as Row | undefined;
   }
 
   private activateWorkflowNode(node: WorkNode): void {
     // A phased child's default-branch head is resolved before the activation
     // transaction so no Git process runs while SQLite holds a transaction.
-    const phasedBaseRefresh = this.phasedChildBaseRefreshForActivation(node.nodeId);
+    const phasedPreflight = this.phasedChildPreflightForActivation(node.nodeId);
     let phasedBaseRefreshLog: Readonly<{
       workItemId: string;
       projectId: string;
@@ -1479,11 +1779,28 @@ export class ProjectsCollaborator {
           );
           return;
         }
+      }
+      if (childWorkItemId !== null && owner.phase === "migrate" && phasedPreflight?.interfaceRequired === true) {
+        if (
+          phasedPreflight === null
+          || phasedPreflight.workItemId !== childWorkItemId
+          || phasedPreflight.projectId !== owner.resolved_project_id
+          || phasedPreflight.interfaceReadiness === null
+        ) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_interface_preflight_missing");
+        }
+        if (phasedPreflight.interfaceReadiness.kind === "blocked") {
+          this.#workflow.blockNodeInTransaction(current.nodeId, phasedPreflight.interfaceReadiness.summary);
+          return;
+        }
+      }
+      if (childWorkItemId !== null && ownerState === "queued") {
         if (Number(owner.parent_is_phased) === 1) {
           if (
-            phasedBaseRefresh === null
-            || phasedBaseRefresh.workItemId !== childWorkItemId
-            || phasedBaseRefresh.projectId !== owner.resolved_project_id
+            phasedPreflight === null
+            || phasedPreflight.workItemId !== childWorkItemId
+            || phasedPreflight.projectId !== owner.resolved_project_id
+            || phasedPreflight.baseSha === null
             || owner.base_sha === null
           ) {
             throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_base_refresh_missing");
@@ -1492,15 +1809,15 @@ export class ProjectsCollaborator {
             UPDATE work_items
             SET base_sha=?
             WHERE work_item_id=? AND state='queued'
-          `).run(phasedBaseRefresh.baseSha, childWorkItemId);
+          `).run(phasedPreflight.baseSha, childWorkItemId);
           if (Number(refreshed.changes) !== 1) {
             throw new Error("TASK_BOARD_DATABASE_CORRUPT:phased_child_base_refresh_conflict");
           }
           phasedBaseRefreshLog = Object.freeze({
             workItemId: childWorkItemId,
-            projectId: phasedBaseRefresh.projectId,
+            projectId: phasedPreflight.projectId,
             previousBaseSha: String(owner.base_sha),
-            baseSha: phasedBaseRefresh.baseSha,
+            baseSha: phasedPreflight.baseSha,
           });
         }
         if (owner.tier === "hazardous") {
@@ -1682,49 +1999,63 @@ export class ProjectsCollaborator {
           return;
         }
       }
+      const plan = this.runtime.store.db.prepare(`
+        SELECT plan.skill_digests_json
+        FROM plan_revisions plan
+        JOIN work_nodes planned_node ON planned_node.plan_revision_id=plan.plan_revision_id
+        WHERE planned_node.node_id=?
+      `).get(current.nodeId);
+      const planDigests = JSON.parse(String(plan?.skill_digests_json ?? "{}")) as Record<string, string>;
+      const stageDigests = Object.fromEntries(agentType.skillIds.flatMap((skillId) =>
+        planDigests[skillId] === undefined ? [] : [[skillId, planDigests[skillId]]]));
       const title = `${stage}: ${current.title}`;
       const acceptanceCriteria = current.acceptanceCriteria.join("\n");
-      const orphan = this.runtime.store.db.prepare(`
-        SELECT task.*
-        FROM tasks task
-        JOIN agents assigned
-          ON assigned.agent_id=task.assigned_agent_id
-          AND assigned.project_id=task.project_id
-          AND assigned.role=task.assigned_role
-        WHERE task.project_id=?
-          AND task.parent_task_id IS NULL
-          AND task.task_kind='work'
-          AND task.required_role IS NULL
-          AND task.requires_review=0
-          AND task.title=?
-          AND task.objective=?
-          AND task.acceptance_criteria=?
-          AND task.workspace_refs_json='[]'
-          AND task.assigned_role=?
-          AND task.ended_at IS NULL
-          AND task.status='queued'
-          AND NOT EXISTS(SELECT 1 FROM stage_attempts attempt WHERE attempt.task_id=task.task_id)
-          AND NOT EXISTS(SELECT 1 FROM work_item_planning_tasks planning WHERE planning.task_id=task.task_id)
-          AND EXISTS(
-            SELECT 1 FROM wakeups wakeup
-            WHERE wakeup.task_id=task.task_id
-              AND wakeup.project_id=task.project_id
-              AND wakeup.agent_id=task.assigned_agent_id
-              AND wakeup.claimed_at IS NULL
-              AND NOT EXISTS(
-                SELECT 1 FROM task_events event WHERE event.event_id=? || wakeup.wakeup_id
-              )
-          )
-        ORDER BY task.order_key,task.task_id
-        LIMIT 1
-      `).get(
-        current.projectId,
-        title,
-        current.objective,
-        acceptanceCriteria,
-        agentType.role,
-        RETIRED_WAKEUP_EVENT_PREFIX,
-      );
+      const orphan = this.workflowActivationOrphan(current, stage, agentType.role);
+      if (
+        owner.phase === "migrate" && migrateTaskCarriesCrossRepoContext(stage, agentType.role)
+      ) {
+        if (phasedPreflight?.interfaceReadiness?.kind !== "ready") {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_interface_preflight_missing");
+        }
+        const estimate = this.migrateContextEstimate(
+          current,
+          String(agent.agent_id),
+          phasedPreflight.interfaceReadiness.context,
+          stageDigests,
+          orphan,
+        );
+        const residual = this.runtime.store.db.prepare(`
+          SELECT json_extract(event.data_json,'$.reason') AS reason
+          FROM task_events event
+          JOIN stage_attempts attempt ON attempt.task_id=event.task_id
+          WHERE attempt.node_id=?
+            AND event.event_type='task_cancelled'
+            AND json_extract(event.data_json,'$.interfaceExpandSha')=?
+            AND json_extract(event.data_json,'$.interfaceContextDigest')=?
+          ORDER BY event.created_at DESC,event.rowid DESC
+          LIMIT 1
+        `).get(
+          current.nodeId,
+          phasedPreflight.interfaceReadiness.context.sha,
+          estimate.digest,
+        ) as Row | undefined;
+        if (typeof residual?.reason === "string") {
+          this.#workflow.blockNodeInTransaction(current.nodeId, residual.reason);
+          return;
+        }
+        if (estimate.bytes > estimate.budget) {
+          this.#workflow.blockNodeInTransaction(
+            current.nodeId,
+            publishedInterfaceReasonSummary(
+              "over_budget",
+              phasedPreflight.interfaceReadiness.context.sha,
+              estimate.bytes,
+              estimate.budget,
+            ),
+          );
+          return;
+        }
+      }
       const task = orphan === undefined
         ? this.tasks.createTaskInTransaction(current.projectId, {
             parentTaskId: null,
@@ -1737,15 +2068,6 @@ export class ProjectsCollaborator {
             requiresReview: false,
           })
         : this.runtime.requireTask(String(orphan.task_id));
-      const plan = this.runtime.store.db.prepare(`
-        SELECT plan.skill_digests_json
-        FROM plan_revisions plan
-        JOIN work_nodes planned_node ON planned_node.plan_revision_id=plan.plan_revision_id
-        WHERE planned_node.node_id=?
-      `).get(current.nodeId);
-      const planDigests = JSON.parse(String(plan?.skill_digests_json ?? "{}")) as Record<string, string>;
-      const stageDigests = Object.fromEntries(agentType.skillIds.flatMap((skillId) =>
-        planDigests[skillId] === undefined ? [] : [[skillId, planDigests[skillId]]]));
       this.#workflow.linkAttemptInTransaction(current.nodeId, task.taskId, stage, stageDigests);
       this.#workflow.event(
         current.projectId,

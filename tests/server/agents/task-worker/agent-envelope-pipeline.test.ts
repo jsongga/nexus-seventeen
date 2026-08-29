@@ -31,6 +31,17 @@ const DESIGN_RECORD = {
 
 const PIPELINE_BLOCK = "Pipeline task on branch task/work-item-one. Declared scope (only these path prefixes): src/server, tests/server. Non-goals: do not change the schema, do not add dependencies. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
 
+const INTERFACE_PHASE_AUTHORIZATION = (phase: "Expand" | "Contract") =>
+  `This is the ${phase} phase of a planned interface change. You are AUTHORIZED — and for Expand, REQUIRED — to change the published interface docs/interface.md within your declared scope; the bright-line rule about published interfaces does not apply to that file. Consumers will integrate against the version you publish.`;
+
+const CROSS_REPO_CONTEXT = {
+  providerProjectId: "project-provider",
+  providerRepoName: "provider-api",
+  interfacePath: "docs/interface.md",
+  sha: "c".repeat(40),
+  markdown: "# Published provider interface 😀 𠀀\n\n- `GET /v1/orders`\n",
+} as const;
+
 function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {
   return {
     planRevisionId: "plan-one",
@@ -108,6 +119,13 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
       priorFindingsTruncated: true,
     },
   } as const;
+  const expandWorkflow = {
+    ...pipelineWorkflow("implementation"),
+    pipeline: {
+      ...pipelineWorkflow("implementation").pipeline,
+      declaredScope: ["src/server", "docs/interface.md"],
+    },
+  } as const;
   return [
     {
       name: "manager-intake",
@@ -145,7 +163,22 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
       prompt: renderPrompt({
         runId: "run-golden-pipeline-implementation",
         wakeReason: "workflow_handoff",
-        context: context({ workflow: pipelineWorkflow("implementation") }),
+        context: context({
+          phase: "migrate",
+          crossRepoContext: CROSS_REPO_CONTEXT,
+          workflow: pipelineWorkflow("implementation"),
+        } as never),
+      }),
+    },
+    {
+      name: "engineer-expand-phase",
+      prompt: renderPrompt({
+        runId: "run-golden-expand-phase",
+        wakeReason: "workflow_handoff",
+        context: context({
+          phase: "expand",
+          workflow: expandWorkflow,
+        } as never),
       }),
     },
     {
@@ -254,6 +287,69 @@ test("pipeline implementation engineer prompt appends the declared-scope bright-
 
   assert.ok(prompt.includes(PIPELINE_BLOCK));
   assert.equal(prompt.split(PIPELINE_BLOCK).length, 2);
+});
+
+test("engineer prompt authorizes published-interface edits only for Expand and Contract claims", () => {
+  for (const phase of ["expand", "contract", "migrate", null] as const) {
+    const prompt = renderPrompt({
+      runId: `run-interface-phase-${phase ?? "ordinary"}`,
+      wakeReason: "workflow_handoff",
+      context: context({ phase, workflow: pipelineWorkflow("implementation") } as never),
+    });
+    if (phase === "expand" || phase === "contract") {
+      const label = phase === "expand" ? "Expand" : "Contract";
+      assert.ok(prompt.includes(INTERFACE_PHASE_AUTHORIZATION(label)));
+      assert.match(prompt, /change a published interface other than docs\/interface\.md/u);
+      assert.doesNotMatch(
+        prompt,
+        /BRIGHT_LINE:[^\n]*change a published interface,(?! other than docs\/interface\.md)/u,
+      );
+    } else {
+      assert.doesNotMatch(prompt, /phase of a planned interface change/u);
+      assert.match(prompt, /BRIGHT_LINE:[^\n]*change a published interface,/u);
+    }
+  }
+});
+
+test("Expand fix-round prompts retain the phase authorization and file-specific bright-line exception", () => {
+  const prompt = renderPrompt({
+    runId: "run-expand-interface-fix",
+    wakeReason: "workflow_handoff",
+    context: context({
+      phase: "expand",
+      workflow: {
+        ...pipelineWorkflow("implementation"),
+        fix: { round: 2, findings: [] },
+      },
+    } as never),
+  });
+
+  assert.match(prompt, /Fix round 2 on branch task\/work-item-one/u);
+  assert.ok(prompt.includes(INTERFACE_PHASE_AUTHORIZATION("Expand")));
+  assert.match(prompt, /change a published interface other than docs\/interface\.md/u);
+});
+
+test("engineer prompt renders published cross-repo context if and only if it is present", () => {
+  const withContext = renderPrompt({
+    runId: "run-cross-repo-context",
+    wakeReason: "workflow_handoff",
+    context: context({
+      crossRepoContext: CROSS_REPO_CONTEXT,
+      workflow: pipelineWorkflow("implementation"),
+    }),
+  });
+  const withoutContext = renderPrompt({
+    runId: "run-without-cross-repo-context",
+    wakeReason: "workflow_handoff",
+    context: context({ workflow: pipelineWorkflow("implementation") }),
+  });
+
+  assert.match(
+    withContext,
+    /Integrate against the provider's PUBLISHED interface below \(docs\/interface\.md @ c{40}\); never read or modify the provider's source\./u,
+  );
+  assert.ok(withContext.includes(CROSS_REPO_CONTEXT.markdown));
+  assert.doesNotMatch(withoutContext, /provider's PUBLISHED interface/u);
 });
 
 test("design-task manager prompt uses the hazardous designer instructions verbatim", () => {

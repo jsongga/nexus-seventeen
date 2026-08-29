@@ -1,17 +1,33 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import test from "node:test";
 import type {
   ChildWorkItem,
   DeclaredChild,
   DesignRecordDraft,
+  SettleRunRequest,
   WorkItem,
 } from "#shared/task-board-contract";
-import { DESIGN_FAILURE_POINTS } from "#shared/task-board-contract";
+import {
+  DESIGN_FAILURE_POINTS,
+  MAX_AGENT_CONTEXT_BYTES,
+  MAX_DESIGN_CONTEXT_BYTES,
+} from "#shared/task-board-contract";
 import { TaskBoard, TaskBoardError } from "#server/task-board";
+import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { HttpTaskBoardClient, mapClaimContext } from "#server/agents/task-worker/http-board-client";
+import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
+import { parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { transitionWorkItemInTransaction } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
+import { parseClaimRunResult } from "#shared/task-board-contract/validate";
 import {
   automationConfigurationRequest,
   automationStages,
@@ -19,6 +35,7 @@ import {
   config,
   gateActions,
   latestParkRecord,
+  taskRequest,
   workItemRequest,
 } from "./helpers.js";
 
@@ -28,6 +45,8 @@ const CONSUMER_BASE_SHA = "3".repeat(40);
 const VERIFIED_SHAS = ["a".repeat(40), "b".repeat(40), "c".repeat(40)] as const;
 const MERGE_SHAS = ["d".repeat(40), "e".repeat(40), "f".repeat(40)] as const;
 const NOW = "2026-08-29T14:00:00.000Z";
+const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
+const execFileAsync = promisify(execFile);
 
 const IMPLEMENTER = {
   agentTypeId: "decomposition-runtime-implementer",
@@ -67,6 +86,7 @@ function proposeParent(
   suffix: string,
   changeShape: "feature" | "blast_radius" = "feature",
   tier: "standard" | "hazardous" = "standard",
+  skillIds: readonly string[] = [],
 ) {
   configureChildPipeline(board);
   const parent = board.createWorkItem(workItemRequest({
@@ -83,7 +103,7 @@ function proposeParent(
     tier,
     declaredScope: ["coordination"],
     children,
-    skillIds: [],
+    skillIds,
     nodes: [{
       nodeId: `parent-${suffix}`,
       title: `Coordinate ${suffix}`,
@@ -144,7 +164,7 @@ function phasedChildren(
     key: "expand",
     objective: `Expand the provider interface for ${suffix}.`,
     projectId: providerProjectId,
-    declaredScope: [`src/${suffix}-expand`],
+    declaredScope: [`src/${suffix}-expand`, "docs/interface.md"],
     acceptanceCriteria: ["The expansion is independently mergeable."],
     phase: "expand",
     splitBy: "phase",
@@ -161,7 +181,7 @@ function phasedChildren(
     key: "contract",
     objective: `Contract the provider interface for ${suffix}.`,
     projectId: providerProjectId,
-    declaredScope: [`src/${suffix}-contract`],
+    declaredScope: [`src/${suffix}-contract`, "docs/interface.md"],
     acceptanceCriteria: ["The contraction waits for migration."],
     phase: "contract",
     splitBy: "phase",
@@ -310,6 +330,180 @@ function latestNodeBlock(path: string, nodeId: string): string | null {
   } finally {
     db.close();
   }
+}
+
+async function git(repoPath: string, arguments_: readonly string[]): Promise<string> {
+  const result = await execFileAsync("git", [...arguments_], { cwd: repoPath, encoding: "utf8" });
+  return result.stdout;
+}
+
+async function pipelineRepository(suffix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), `decomposition-interface-${suffix}-`));
+  const repoPath = join(root, "repo");
+  await mkdir(join(repoPath, "docs"), { recursive: true });
+  await git(root, ["init", "-b", "main", repoPath]);
+  await writeFile(join(repoPath, "seed.txt"), `${suffix} seed\n`, "utf8");
+  await writeFile(join(repoPath, "verify.mjs"), "process.exit(0);\n", "utf8");
+  await writeFile(join(repoPath, "docs/workflow.md"), `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
+    version: 1,
+    compile: ["node verify.mjs"],
+    rules: [{ match: "**", action: { kind: "none" } }],
+    full: ["node verify.mjs"],
+  }, null, 2)}\n\`\`\`\n`, "utf8");
+  await git(repoPath, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
+  await git(repoPath, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "seed"]);
+  return repoPath;
+}
+
+async function waitForQueuedRoleTask(
+  board: TaskBoard,
+  projectId: string,
+  role: "engineer" | "manager" | "verifier",
+): Promise<NonNullable<ReturnType<TaskBoard["snapshot"]>["tasks"][number]>> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    await board.sweepVerifyAttempts();
+    const task = board.snapshot(projectId).tasks.find((candidate) =>
+      candidate.status === "queued" && candidate.assignedRole === role);
+    if (task !== undefined) return task;
+    await delay(25);
+  }
+  assert.fail(`no queued ${role} task appeared for ${projectId}`);
+}
+
+type InterfaceGitOperation = "ls-tree" | "cat-file" | "show";
+
+function crossRepoGit(
+  readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer,
+) {
+  const run = (arguments_: readonly string[]): string | Buffer => {
+    const target = arguments_.at(-1) ?? "";
+    if (arguments_.includes("ls-tree") && target === "docs/interface.md") {
+      return readInterface("ls-tree", arguments_[arguments_.indexOf("-z") + 1] ?? "");
+    }
+    if (arguments_.includes("cat-file") && arguments_.includes("-s") && target.endsWith(":docs/interface.md")) {
+      return readInterface("cat-file", target.slice(0, -":docs/interface.md".length));
+    }
+    if (arguments_.includes("show") && target.endsWith(":docs/interface.md")) {
+      return readInterface("show", target.slice(0, -":docs/interface.md".length));
+    }
+    if (arguments_.includes("--abbrev-ref")) return "main\n";
+    if (arguments_.includes("--porcelain")) return "";
+    if (arguments_.includes("merge-base")) return "";
+    if (arguments_.includes("diff") || arguments_.includes("log")) return "";
+    if (arguments_.some((argument) => argument.endsWith("^{commit}"))) return `${VERIFIED_SHAS[0]}\n`;
+    const repositoryIndex = arguments_.indexOf("-C");
+    const repository = repositoryIndex < 0 ? null : arguments_[repositoryIndex + 1];
+    return `${repository === "/repos/claim-consumer" ? CONSUMER_BASE_SHA : BASE_SHA}\n`;
+  };
+  const text = (arguments_: readonly string[]): string => {
+    const result = run(arguments_);
+    return typeof result === "string" ? result : result.toString("utf8");
+  };
+  return Object.assign(text, {
+    bytes: (arguments_: readonly string[]): Buffer => {
+      const result = run(arguments_);
+      return typeof result === "string" ? Buffer.from(result, "utf8") : result;
+    },
+  });
+}
+
+async function migrateReadinessFixture(
+  suffix: string,
+  readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer,
+  skillIds: readonly string[] = [],
+) {
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit(readInterface),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: `Readiness provider ${suffix}`,
+    description: "Publishes the interface consumed by Migrate.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: `Readiness consumer ${suffix}`,
+    description: "Consumes the published provider interface.",
+    repoPath: "/repos/claim-consumer",
+  });
+  const decomposition = proposeParent(
+    fixture.board,
+    provider.projectId,
+    phasedChildren(provider.projectId, consumer.projectId, suffix),
+    suffix,
+    "blast_radius",
+    "standard",
+    skillIds,
+  );
+  const [expand, migrate] = decomposition.children;
+  assert.ok(expand);
+  assert.ok(migrate);
+  forceFinalApproval(fixture.path, expand.workItemId, VERIFIED_SHAS[0]);
+  fixture.board.reconcileWorkflows(provider.projectId);
+  return Object.freeze({ ...fixture, provider, consumer, expand, migrate });
+}
+
+function preparePhaseVerificationClaim(
+  fixture: Awaited<ReturnType<typeof boardFixture>>,
+  projectId: string,
+  workItem: WorkItem,
+  label: string,
+  attempt = 50,
+) {
+  const { node } = childNode(fixture.board, workItem);
+  const verifier = fixture.board.createAgent(projectId, {
+    agentId: `${label}-verifier`,
+    role: "verifier",
+    area: `${label} verification`,
+    mission: `Independently verify ${label}.`,
+    model: "test-model",
+    token: `${label}-verification-token-0123456789abcdef`,
+  });
+  const task = fixture.board.createTask(projectId, taskRequest({
+    title: `verification: ${label}`,
+    objective: `Verify ${label}.`,
+    acceptanceCriteria: `The ${label} result is independently verified.`,
+    workspaceRefs: [],
+    assignedAgentId: verifier.agentId,
+    assignedRole: "verifier",
+    requiresReview: false,
+  }));
+  const db = new DatabaseSync(fixture.path);
+  try {
+    db.prepare(`
+      UPDATE work_nodes SET state='active',current_stage='verification',updated_at=? WHERE node_id=?
+    `).run(NOW, node.nodeId);
+    db.prepare(`
+      UPDATE work_items SET state='reviewing',current_stage='verification',updated_at=? WHERE work_item_id=?
+    `).run(NOW, workItem.workItemId);
+    db.prepare(`
+      INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
+      VALUES(?,?,?,'verification',?,'{}')
+    `).run(`${label}-verification-attempt`, node.nodeId, task.taskId, attempt);
+    db.prepare(`
+      INSERT INTO verify_attempts(
+        verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
+        check_results_json,detail,created_at,ended_at
+      ) VALUES(?,?,'testing',?, ?,NULL,'green','[]',?,?,?)
+    `).run(
+      `${label}-green-verification`,
+      node.nodeId,
+      attempt,
+      `${label}-verify-run`,
+      `verified-sha:${VERIFIED_SHAS[0]}`,
+      NOW,
+      NOW,
+    );
+  } finally {
+    db.close();
+  }
+  const claim = fixture.board.claimRun(verifier.agentId, {
+    claimId: `claim-${label}-verification`,
+    messageCursor: null,
+  });
+  assert.ok(claim);
+  return Object.freeze({ claim, task, verifier });
 }
 
 function latestTransitionActor(path: string, workItemId: string): Readonly<{
@@ -825,6 +1019,14 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
   let busyBranch = "";
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      if (arguments_.includes("ls-tree") && arguments_.at(-1) === "docs/interface.md") {
+        return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file") && arguments_.includes("-s") &&
+        arguments_.at(-1)?.endsWith(":docs/interface.md")) return "22\n";
+      if (arguments_.includes("show") && arguments_.at(-1)?.endsWith(":docs/interface.md")) {
+        return "# Runtime interface\n";
+      }
       if (arguments_.includes("--abbrev-ref")) return "main\n";
       if (arguments_.includes("--porcelain")) return "";
       if (arguments_.includes("merge-base")) return "";
@@ -850,7 +1052,7 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
       key: "expand",
       objective: "Expand before the busy merge.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/busy-expand"],
+      declaredScope: ["src/busy-expand", "docs/interface.md"],
       acceptanceCriteria: ["The expand child remains retryable."],
       phase: "expand",
       splitBy: "phase",
@@ -867,7 +1069,7 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
       key: "contract",
       objective: "Contract after migrate.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/busy-contract"],
+      declaredScope: ["src/busy-contract", "docs/interface.md"],
       acceptanceCriteria: ["The contract follows deployment."],
       phase: "contract",
       splitBy: "phase",
@@ -995,7 +1197,7 @@ for (const failure of ["repo_busy", "conflict"] as const) {
         key: "expand",
         objective: "Expand before both migrations.",
         projectId: fixture.project.projectId,
-        declaredScope: ["src/expand"],
+        declaredScope: ["src/expand", "docs/interface.md"],
         acceptanceCriteria: ["The expansion merges."],
         phase: "expand",
         splitBy: "phase",
@@ -1021,7 +1223,7 @@ for (const failure of ["repo_busy", "conflict"] as const) {
         key: "contract",
         objective: "Contract after both migrations deploy.",
         projectId: fixture.project.projectId,
-        declaredScope: ["src/contract"],
+        declaredScope: ["src/contract", "docs/interface.md"],
         acceptanceCriteria: ["The contract remains downstream."],
         phase: "contract",
         splitBy: "phase",
@@ -1087,7 +1289,7 @@ test("a non-transient automatic merge failure reuses human conflict recovery and
       key: "expand",
       objective: "Exercise automatic merge conflict recovery.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/conflict-expand"],
+      declaredScope: ["src/conflict-expand", "docs/interface.md"],
       acceptanceCriteria: ["The child returns to implementation."],
       phase: "expand",
       splitBy: "phase",
@@ -1104,7 +1306,7 @@ test("a non-transient automatic merge failure reuses human conflict recovery and
       key: "contract",
       objective: "Wait for deployment after migration.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/conflict-contract"],
+      declaredScope: ["src/conflict-contract", "docs/interface.md"],
       acceptanceCriteria: ["The contract stays downstream."],
       phase: "contract",
       splitBy: "phase",
@@ -1433,6 +1635,14 @@ test("phased children auto-merge under parent authorization and Contract waits f
   let expandBranch = "";
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      if (arguments_.includes("ls-tree") && arguments_.at(-1) === "docs/interface.md") {
+        return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file") && arguments_.includes("-s") &&
+        arguments_.at(-1)?.endsWith(":docs/interface.md")) return "20\n";
+      if (arguments_.includes("show") && arguments_.at(-1)?.endsWith(":docs/interface.md")) {
+        return "# Runtime interface\n";
+      }
       if (arguments_.includes("--abbrev-ref")) return "main\n";
       if (arguments_.includes("--porcelain")) return "";
       if (arguments_.includes("merge-base")) return "";
@@ -1602,6 +1812,1498 @@ test("phased children auto-merge under parent authorization and Contract waits f
   }
 });
 
+test("a Migrate claim reads the provider interface at the Expand merge SHA only", async () => {
+  const interfaceMarkdown = "# Published provider interface 😀 𠀀\n\n- `GET /v1/orders`\n";
+  const showCalls: Array<readonly string[]> = [];
+  const fixture = await boardFixture(undefined, undefined, {
+    git(arguments_) {
+      if (arguments_.includes("show")) {
+        showCalls.push([...arguments_]);
+        return interfaceMarkdown;
+      }
+      if (arguments_.includes("ls-tree")) {
+        return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file") && arguments_.includes("-s")) {
+        return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      }
+      if (arguments_.includes("--abbrev-ref")) return "main\n";
+      if (arguments_.includes("--porcelain")) return "";
+      if (arguments_.includes("merge-base")) return "";
+      if (arguments_.some((argument) => argument.endsWith("^{commit}"))) return `${VERIFIED_SHAS[0]}\n`;
+      const repositoryIndex = arguments_.indexOf("-C");
+      const repository = repositoryIndex < 0 ? null : arguments_[repositoryIndex + 1];
+      return `${repository === "/repos/claim-consumer" ? CONSUMER_BASE_SHA : BASE_SHA}\n`;
+    },
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Claim provider",
+    description: "Publishes the interface consumed by Migrate.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Claim consumer",
+    description: "Consumes the published provider interface.",
+    repoPath: "/repos/claim-consumer",
+  });
+
+  try {
+    fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Ordinary non-migrate work" }));
+    const ordinaryClaim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-cross-repo-ordinary",
+      messageCursor: null,
+    });
+    assert.ok(ordinaryClaim);
+    assert.equal((ordinaryClaim.context as { phase?: string | null }).phase, null);
+    assert.equal(Object.hasOwn(ordinaryClaim.context, "crossRepoContext"), false);
+
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "claim-context"),
+      "claim-context",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    forceFinalApproval(fixture.path, expand.workItemId, VERIFIED_SHAS[0]);
+    fixture.board.reconcileWorkflows(provider.projectId);
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "merged");
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "implementing");
+
+    const implementationTask = fixture.board.snapshot(consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "engineer",
+    );
+    assert.ok(implementationTask?.assignedAgentId);
+    const migrateClaim = fixture.board.claimRun(implementationTask.assignedAgentId, {
+      claimId: "claim-cross-repo-migrate",
+      messageCursor: null,
+    });
+    assert.ok(migrateClaim);
+    assert.equal((migrateClaim.context as { phase?: string | null }).phase, "migrate");
+    assert.deepEqual(migrateClaim.context.crossRepoContext, {
+      providerProjectId: provider.projectId,
+      providerRepoName: provider.name,
+      interfacePath: "docs/interface.md",
+      sha: MERGE_SHAS[0],
+      markdown: interfaceMarkdown,
+    });
+    const parsedClaim = parseClaimRunResult(migrateClaim);
+    const mappedContext = mapClaimContext(parsedClaim, null);
+    assert.ok(mappedContext);
+    const workerContext = parseBoundedAgentContext(mappedContext);
+    const prompt = agentPrompt({
+      runId: migrateClaim.run.runId,
+      wakeReason: migrateClaim.wakeup.reason,
+      context: workerContext,
+    }, PROMPTS);
+    assert.ok(prompt.includes(interfaceMarkdown));
+    assert.ok(prompt.includes("😀"));
+    assert.ok(prompt.includes("𠀀"));
+
+    assert.equal(showCalls.length, 2);
+    for (const call of showCalls) {
+      assert.deepEqual(call.slice(-2), ["show", `${MERGE_SHAS[0]}:docs/interface.md`]);
+      assert.equal(call[call.indexOf("-C") + 1], provider.repoPath);
+    }
+    assert.deepEqual(fixture.board.claimRun(implementationTask.assignedAgentId, {
+      claimId: "claim-cross-repo-migrate",
+      messageCursor: null,
+    }), migrateClaim);
+    assert.equal(showCalls.length, 2);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("Expand verification requires the published interface before merge and Migrate activation", async () => {
+  const interfaceMarkdown = "# Published replacement interface\n";
+  const providerRepo = await pipelineRepository("provider");
+  const consumerRepo = await pipelineRepository("consumer");
+  const fixture = await boardFixture(undefined, undefined, {
+    mergePipeline: (request) => ({ kind: "merged", mergeSha: request.branchSha }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Verification provider",
+    description: "Publishes the verified interface.",
+    repoPath: providerRepo,
+  });
+  const consumer = fixture.board.createProject({
+    name: "Verification consumer",
+    description: "Consumes the verified interface.",
+    repoPath: consumerRepo,
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "verified-publication").map((child) =>
+        child.phase === "expand" ? { ...child, declaredScope: ["docs"] } : child),
+      "verified-publication",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand?.pipelineBranch);
+    assert.ok(migrate);
+
+    const implementationTask = await waitForQueuedRoleTask(fixture.board, provider.projectId, "engineer");
+    assert.ok(implementationTask.assignedAgentId);
+    const implementation = fixture.board.claimRun(implementationTask.assignedAgentId, {
+      claimId: "claim-expand-without-interface",
+      messageCursor: null,
+    });
+    assert.ok(implementation);
+    assert.equal((implementation.context as { phase?: string | null }).phase, "expand");
+    await git(providerRepo, ["checkout", "-b", expand.pipelineBranch]);
+    await writeFile(join(providerRepo, "docs", "interface.md"), Buffer.from([0x23, 0x20, 0xc3, 0x28, 0x0a]));
+    await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "docs/interface.md"]);
+    await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "expand with malformed interface"]);
+    fixture.board.settleRun(implementation.run.runId, implementationTask.assignedAgentId, {
+      outcome: "completed",
+      result: "Initial Expand implementation is ready.",
+      handoff: {
+        outcome: "passed",
+        summary: "Initial Expand implementation is ready.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
+      },
+    });
+
+    const firstReviewTask = await waitForQueuedRoleTask(fixture.board, provider.projectId, "verifier");
+    assert.ok(firstReviewTask.assignedAgentId);
+    const firstReview = fixture.board.claimRun(firstReviewTask.assignedAgentId, {
+      claimId: "claim-expand-review-without-interface",
+      messageCursor: null,
+    });
+    assert.ok(firstReview);
+    const publicationFinding = "publish docs/interface.md (invalid UTF-8)";
+    const originalSummary = "s".repeat(4_000);
+    const originalBlockers = Array.from({ length: 32 }, (_, index) => `original blocker ${index}`);
+    const settlementRequest: SettleRunRequest = {
+      outcome: "completed",
+      result: "Independent review passed.",
+      handoff: {
+        outcome: "passed",
+        summary: originalSummary,
+        evidence: ["The reviewer independently exercised the provider branch."],
+        artifactIds: [],
+        acceptanceCriteria: [{
+          criterion: "The provider change is independently verified.",
+          passed: true,
+          evidence: "The reviewer observed the expected provider behavior.",
+        }],
+        blockers: originalBlockers,
+        recommendedReturnStage: null,
+      },
+      reviewFindings: [],
+    };
+    const settlementDuplicates: boolean[] = [];
+    const client = new HttpTaskBoardClient({
+      baseUrl: "http://127.0.0.1:4318",
+      token: "expand-reviewer-token-0123456789abcdef",
+      fetchImplementation: (async (_input, init = {}) => {
+        const settled = fixture.board.settleRun(
+          firstReview.run.runId,
+          firstReviewTask.assignedAgentId!,
+          JSON.parse(String(init.body)) as SettleRunRequest,
+        );
+        settlementDuplicates.push(settled.duplicate);
+        return new Response(JSON.stringify(settled), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+    const workerSettlement = {
+      claim: {
+        apiVersion: 1 as const,
+        claimId: firstReview.run.claimId,
+        runId: firstReview.run.runId,
+        wakeupId: firstReview.run.wakeupId,
+        projectId: firstReview.run.projectId,
+        agentId: firstReview.run.agentId,
+        taskId: firstReview.run.taskId,
+        reason: firstReview.wakeup.reason,
+        requestedMessageCursor: null,
+        claimedAt: firstReview.run.startedAt,
+      },
+      idempotencyKey: "settle-expand-publication-review",
+      ...settlementRequest,
+    };
+    await client.settleAgentRun(workerSettlement);
+    await client.settleAgentRun(workerSettlement);
+    assert.deepEqual(settlementDuplicates, [false, true]);
+    const settledRun = fixture.board.snapshot(provider.projectId).recentRuns.find(
+      (run) => run.runId === firstReview.run.runId,
+    );
+    assert.equal(settledRun?.status, "completed");
+    assert.equal(settledRun.result, settlementRequest.result);
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "fixing");
+    const findingsAfterFailure = fixture.board.pipelineSummary(expand.workItemId).findings;
+    assert.ok(findingsAfterFailure.some((finding) =>
+      finding.expected === publicationFinding && finding.blocking));
+    const failedHandoffDb = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const handoffRows = failedHandoffDb.prepare(`
+        SELECT payload_json
+        FROM stage_handoffs
+        WHERE node_id=? AND stage='verification'
+        ORDER BY created_at,rowid
+      `).all(childNode(fixture.board, expand).node.nodeId);
+      assert.equal(handoffRows.length, 2);
+      const workerHandoff = JSON.parse(String(handoffRows[0]?.payload_json)) as {
+        outcome: string;
+        summary: string;
+        blockers: string[];
+      };
+      assert.equal(workerHandoff.outcome, "passed");
+      assert.equal(workerHandoff.summary, originalSummary);
+      assert.deepEqual(workerHandoff.blockers, originalBlockers);
+      const failedHandoff = JSON.parse(String(handoffRows[1]?.payload_json)) as {
+        taskId: string;
+        outcome: string;
+        summary: string;
+        evidence: string[];
+        acceptanceCriteria: Array<{ criterion: string; passed: boolean; evidence: string }>;
+        blockers: string[];
+      };
+      assert.equal(failedHandoff.outcome, "failed");
+      assert.equal(failedHandoff.summary.length, 4_000);
+      assert.ok(failedHandoff.summary.endsWith(` — ${publicationFinding}`));
+      assert.deepEqual(failedHandoff.evidence, ["The reviewer independently exercised the provider branch."]);
+      assert.deepEqual(failedHandoff.acceptanceCriteria, [{
+        criterion: "The provider change is independently verified.",
+        passed: true,
+        evidence: "The reviewer observed the expected provider behavior.",
+      }]);
+      assert.equal(failedHandoff.blockers.length, 32);
+      assert.equal(failedHandoff.blockers[0], "original blocker 1");
+      assert.equal(failedHandoff.blockers.at(-1), publicationFinding);
+      const publicationActor = failedHandoffDb.prepare(`
+        SELECT actor_type,actor_id
+        FROM task_events
+        WHERE task_id=? AND event_type='task_created'
+      `).get(failedHandoff.taskId);
+      assert.equal(publicationActor?.actor_type, "system");
+      assert.equal(publicationActor?.actor_id, "system:interface-publication");
+    } finally {
+      failedHandoffDb.close();
+    }
+
+    const fixTask = await waitForQueuedRoleTask(fixture.board, provider.projectId, "engineer");
+    assert.ok(fixTask.assignedAgentId);
+    const fix = fixture.board.claimRun(fixTask.assignedAgentId, {
+      claimId: "claim-expand-publish-interface-fix",
+      messageCursor: null,
+    });
+    assert.ok(fix);
+    assert.equal(fix.context.workflow?.fix?.round, 1);
+    const mappedFix = mapClaimContext(parseClaimRunResult(fix), null);
+    assert.ok(mappedFix);
+    const publicationHandoff = mappedFix.workflow?.dependencyHandoffs.at(-1);
+    assert.ok(publicationHandoff);
+    assert.ok(publicationHandoff.summary.endsWith(` — ${publicationFinding}`));
+    assert.equal(publicationHandoff.blockers.at(-1), publicationFinding);
+    await writeFile(join(providerRepo, "docs", "interface.md"), interfaceMarkdown, "utf8");
+    await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "docs/interface.md"]);
+    await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "publish interface"]);
+    const publishedSha = (await git(providerRepo, ["rev-parse", "HEAD"])).trim();
+    await git(providerRepo, ["checkout", "main"]);
+    fixture.board.settleRun(fix.run.runId, fixTask.assignedAgentId, {
+      outcome: "completed",
+      result: "The interface is now published.",
+      handoff: {
+        outcome: "passed",
+        summary: "The interface is now published.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
+      },
+    });
+
+    const secondReviewTask = await waitForQueuedRoleTask(fixture.board, provider.projectId, "verifier");
+    assert.ok(secondReviewTask.assignedAgentId);
+    const secondReview = fixture.board.claimRun(secondReviewTask.assignedAgentId, {
+      claimId: "claim-expand-review-with-interface",
+      messageCursor: null,
+    });
+    assert.ok(secondReview);
+    const passedReview = fixture.board.settleRun(secondReview.run.runId, secondReviewTask.assignedAgentId, {
+      outcome: "completed",
+      result: "Independent review passed with the published interface.",
+      handoff: {
+        outcome: "passed",
+        summary: "Independent review passed with the published interface.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
+      },
+      reviewFindings: [],
+    });
+    assert.equal(passedReview.run.status, "completed");
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "merged");
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "implementing");
+
+    const migrateTask = await waitForQueuedRoleTask(fixture.board, consumer.projectId, "engineer");
+    assert.ok(migrateTask.assignedAgentId);
+    const migrateClaim = fixture.board.claimRun(migrateTask.assignedAgentId, {
+      claimId: "claim-migrate-after-published-interface",
+      messageCursor: null,
+    });
+    assert.ok(migrateClaim);
+    assert.equal(migrateClaim.context.crossRepoContext?.markdown, interfaceMarkdown);
+    assert.equal(migrateClaim.context.crossRepoContext?.sha, publishedSha);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("an Expand that never publishes dead-letters at the review cap and parks its parent", async () => {
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => operation === "ls-tree" ? "" : "publication content must stay absent"),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Publication cap provider",
+    description: "Never publishes its required interface.",
+    repoPath: "/repos/publication-cap-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Publication cap consumer",
+    description: "Must remain parked when the provider exhausts review.",
+    repoPath: "/repos/publication-cap-consumer",
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "publication-cap"),
+      "publication-cap",
+      "blast_radius",
+    );
+    const expand = decomposition.children[0];
+    assert.ok(expand);
+    const verification = preparePhaseVerificationClaim(
+      fixture,
+      provider.projectId,
+      expand,
+      "expand-publication-cap",
+      4,
+    );
+
+    const settled = fixture.board.settleRun(
+      verification.claim.run.runId,
+      verification.verifier.agentId,
+      {
+        outcome: "completed",
+        result: "The fourth independent review passed.",
+        handoff: {
+          outcome: "passed",
+          summary: "The fourth independent review passed.",
+          evidence: [],
+          artifactIds: [],
+          acceptanceCriteria: [],
+          blockers: [],
+          recommendedReturnStage: null,
+        },
+        reviewFindings: [],
+      },
+    );
+
+    assert.equal(settled.run.status, "completed");
+    assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "dead_letter");
+    assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "parked");
+    assert.deepEqual(latestParkRecord(fixture.path, decomposition.parent.workItemId), {
+      category: "child_failed",
+      reason: `Child ${expand.workItemId} was dead-lettered`,
+    });
+    const publicationFinding = "publish docs/interface.md (absent)";
+    assert.ok(fixture.board.pipelineSummary(expand.workItemId).findings.some((finding) =>
+      finding.round === 4 && finding.expected === publicationFinding && finding.blocking));
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const publicationHandoff = db.prepare(`
+        SELECT payload_json
+        FROM stage_handoffs
+        WHERE node_id=? AND task_id LIKE 'task_interface_publication_%'
+        ORDER BY created_at DESC,rowid DESC
+        LIMIT 1
+      `).get(childNode(fixture.board, expand).node.nodeId);
+      assert.equal(
+        (JSON.parse(String(publicationHandoff?.payload_json)) as { blockers: string[] }).blockers.at(-1),
+        publicationFinding,
+      );
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a terminal Expand accepts a late publication-failing verification settlement", async () => {
+  for (const terminalState of ["abandoned", "merged"] as const) {
+    const fixture = await boardFixture(undefined, undefined, {
+      git: crossRepoGit((operation) => operation === "ls-tree" ? "" : "publication content must stay absent"),
+      mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+    });
+    const provider = fixture.board.createProject({
+      name: `Late ${terminalState} provider`,
+      description: "Settles after its work item is already terminal.",
+      repoPath: `/repos/late-${terminalState}-provider`,
+    });
+    const consumer = fixture.board.createProject({
+      name: `Late ${terminalState} consumer`,
+      description: "Is unaffected by the late provider settlement.",
+      repoPath: `/repos/late-${terminalState}-consumer`,
+    });
+
+    try {
+      const decomposition = proposeParent(
+        fixture.board,
+        provider.projectId,
+        phasedChildren(provider.projectId, consumer.projectId, `late-${terminalState}`),
+        `late-${terminalState}`,
+        "blast_radius",
+      );
+      const expand = decomposition.children[0];
+      assert.ok(expand);
+      const verification = preparePhaseVerificationClaim(
+        fixture,
+        provider.projectId,
+        expand,
+        `expand-late-${terminalState}`,
+        1,
+      );
+      const db = new DatabaseSync(fixture.path);
+      try {
+        assert.equal(Number(db.prepare(`
+          UPDATE work_items
+          SET state=?,current_stage=NULL,ended_at=?,version=version+1,updated_at=?
+          WHERE work_item_id=?
+        `).run(terminalState, NOW, NOW, expand.workItemId).changes), 1);
+      } finally {
+        db.close();
+      }
+
+      const settled = fixture.board.settleRun(
+        verification.claim.run.runId,
+        verification.verifier.agentId,
+        {
+          outcome: "completed",
+          result: `The ${terminalState} Expand review settled late.`,
+          handoff: {
+            outcome: "passed",
+            summary: `The ${terminalState} Expand review settled late.`,
+            evidence: [],
+            artifactIds: [],
+            acceptanceCriteria: [],
+            blockers: [],
+            recommendedReturnStage: null,
+          },
+          reviewFindings: [],
+        },
+      );
+
+      assert.equal(settled.run.status, "completed");
+      assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, terminalState);
+      assert.deepEqual(
+        {
+          state: childNode(fixture.board, expand).node.state,
+          currentStage: childNode(fixture.board, expand).node.currentStage,
+        },
+        { state: "completed", currentStage: null },
+      );
+      assert.ok(fixture.board.pipelineSummary(expand.workItemId).findings.some((finding) =>
+        finding.expected === "publish docs/interface.md (absent)" && finding.blocking));
+    } finally {
+      fixture.board.close();
+    }
+  }
+});
+
+test("Expand publication read errors leave the verification run active for retry", async () => {
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      throw new Error(`provider repository unavailable during ${operation}`);
+    }),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Publication read-error provider",
+    description: "Exercises retryable verification publication reads.",
+    repoPath: "/repos/publication-read-error-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Publication read-error consumer",
+    description: "Consumes the provider interface.",
+    repoPath: "/repos/publication-read-error-consumer",
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "publication-read-error"),
+      "publication-read-error",
+      "blast_radius",
+    );
+    const expand = decomposition.children[0];
+    assert.ok(expand);
+    const verification = preparePhaseVerificationClaim(
+      fixture,
+      provider.projectId,
+      expand,
+      "expand-publication-read-error",
+    );
+    assert.throws(
+      () => fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
+        outcome: "completed",
+        result: "The Expand review passed.",
+        handoff: {
+          outcome: "passed",
+          summary: "The Expand review passed.",
+          evidence: ["Reviewer evidence remains available for retry."],
+          artifactIds: [],
+          acceptanceCriteria: [],
+          blockers: [],
+          recommendedReturnStage: null,
+        },
+        reviewFindings: [],
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
+    );
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?")
+        .get(verification.claim.run.runId)?.status, "active");
+      assert.equal(db.prepare("SELECT status FROM tasks WHERE task_id=?")
+        .get(verification.task.taskId)?.status, "in_progress");
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("Expand publication enforcement is inert for Migrate, Contract, and ordinary verification settles", async () => {
+  for (const phase of ["migrate", "contract", "ordinary"] as const) {
+    let interfaceReads = 0;
+    const fixture = await boardFixture(undefined, undefined, {
+      git: crossRepoGit((operation) => {
+        interfaceReads += 1;
+        throw new Error(`publication guard must not read ${operation} for ${phase}`);
+      }),
+      mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+    });
+    const provider = fixture.board.createProject({
+      name: `${phase} inert provider`,
+      description: `Pins publication guard inertness for ${phase}.`,
+      repoPath: `/repos/${phase}-inert-provider`,
+    });
+    const consumer = fixture.board.createProject({
+      name: `${phase} inert consumer`,
+      description: `Runs ${phase} verification.`,
+      repoPath: `/repos/${phase}-inert-consumer`,
+    });
+    try {
+      let projectId: string;
+      let workItem: WorkItem;
+      if (phase === "ordinary") {
+        projectId = consumer.projectId;
+        workItem = proposeStandalonePipeline(
+          fixture.board,
+          projectId,
+          ["src/ordinary-inert"],
+          "ordinary-publication-inert",
+        );
+      } else {
+        const decomposition = proposeParent(
+          fixture.board,
+          provider.projectId,
+          phasedChildren(provider.projectId, consumer.projectId, `${phase}-publication-inert`),
+          `${phase}-publication-inert`,
+          "blast_radius",
+        );
+        workItem = decomposition.children.find((child) => child.phase === phase)!;
+        projectId = workItem.resolvedProjectId!;
+      }
+      const verification = preparePhaseVerificationClaim(
+        fixture,
+        projectId,
+        workItem,
+        `${phase}-publication-inert`,
+      );
+      const settled = fixture.board.settleRun(
+        verification.claim.run.runId,
+        verification.verifier.agentId,
+        {
+          outcome: "completed",
+          result: `${phase} verification passed.`,
+          handoff: {
+            outcome: "passed",
+            summary: `${phase} verification passed.`,
+            evidence: [],
+            artifactIds: [],
+            acceptanceCriteria: [],
+            blockers: [],
+            recommendedReturnStage: null,
+          },
+          reviewFindings: [],
+        },
+      );
+      assert.equal(settled.run.status, "completed", phase);
+      assert.equal(interfaceReads, 0, phase);
+    } finally {
+      fixture.board.close();
+    }
+  }
+});
+
+test("an oversized published interface blocks Migrate readiness before git show", async () => {
+  let showCalls = 0;
+  const fixture = await migrateReadinessFixture("oversized-interface", (operation) => {
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return `${64 * 1_024 + 1}\n`;
+    showCalls += 1;
+    throw new Error("oversized interface must not be shown");
+  });
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    assert.equal(
+      latestNodeBlock(fixture.path, node.nodeId),
+      `blocked: provider docs/interface.md exceeds 64 KiB at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+    );
+    assert.equal(showCalls, 0);
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
+      assert.equal(Number(db.prepare(
+        "SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?",
+      ).get(node.nodeId)?.count), 0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a non-file published interface blocks Migrate readiness", async () => {
+  const fixture = await migrateReadinessFixture("non-file-interface", (operation) => {
+    if (operation === "ls-tree") return `040000 tree ${"f".repeat(40)}\tdocs/interface.md\0`;
+    throw new Error(`${operation} must not run for a tree`);
+  });
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    assert.equal(
+      latestNodeBlock(fixture.path, node.nodeId),
+      `blocked: provider docs/interface.md is not a file at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+    );
+    assert.equal(fixture.board.requireWorkItem(fixture.migrate.workItemId).state, "queued");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("Migrate context attaches only to implementation and fix-round engineer claims", async () => {
+  const interfaceMarkdown = "# Role-scoped provider interface\n";
+  const fixture = await migrateReadinessFixture("role-scoped-context", (operation) => {
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+    return interfaceMarkdown;
+  });
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    const claims: Array<Readonly<{ label: string; agentId: string }>> = [];
+    const db = new DatabaseSync(fixture.path);
+    try {
+      for (const [label, role, stage, attempt] of [
+        ["verifier", "verifier", "testing", 20],
+        ["reviewer", "verifier", "verification", 20],
+        ["fix-round", "engineer", "implementation", 20],
+      ] as const) {
+        const agent = fixture.board.createAgent(fixture.consumer.projectId, {
+          agentId: `role-scoped-${label}`,
+          role,
+          area: `${label} lane`,
+          mission: `${label} must receive only role-relevant context.`,
+          model: "test-model",
+          token: `role-scoped-${label}-token-0123456789abcdef`,
+        });
+        const task = fixture.board.createTask(fixture.consumer.projectId, taskRequest({
+          title: `${label}: role-scoped Migrate task`,
+          assignedAgentId: agent.agentId,
+          assignedRole: role,
+        }));
+        db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
+          `role-scoped-${label}-attempt`,
+          node.nodeId,
+          task.taskId,
+          stage,
+          attempt,
+          "{}",
+        );
+        claims.push(Object.freeze({ label, agentId: agent.agentId }));
+      }
+
+      const designer = fixture.board.createAgent(fixture.consumer.projectId, {
+        agentId: "role-scoped-designer",
+        role: "manager",
+        area: "design lane",
+        mission: "Design without implementation-only context.",
+        model: "test-model",
+        token: "role-scoped-designer-token-0123456789abcdef",
+      });
+      const designTask = fixture.board.createTask(fixture.consumer.projectId, taskRequest({
+        title: "design: role-scoped Migrate task",
+        assignedAgentId: designer.agentId,
+        assignedRole: "manager",
+      }));
+      db.prepare("INSERT INTO work_item_design_tasks VALUES(?,?,?)").run(
+        fixture.migrate.workItemId,
+        designTask.taskId,
+        NOW,
+      );
+      claims.push(Object.freeze({ label: "design", agentId: designer.agentId }));
+    } finally {
+      db.close();
+    }
+
+    for (const { label, agentId } of claims) {
+      const claim = fixture.board.claimRun(agentId, {
+        claimId: `claim-role-scoped-${label}`,
+        messageCursor: null,
+      });
+      assert.ok(claim);
+      assert.equal(
+        Object.hasOwn(claim.context, "crossRepoContext"),
+        label === "fix-round",
+        label,
+      );
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a provider outage after Migrate implementation does not gate verification activation", async () => {
+  const interfaceMarkdown = "# Verification-independent provider interface\n";
+  let outage = false;
+  const fixture = await migrateReadinessFixture("verification-outage", (operation) => {
+    if (outage) throw new Error("provider repository unavailable during verification");
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+    return interfaceMarkdown;
+  });
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "engineer",
+    );
+    assert.ok(implementationTask);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      const expandPlan = db.prepare(`
+        SELECT plan.plan_revision_id
+        FROM plan_revisions plan
+        WHERE plan.work_item_id=? AND plan.state='confirmed'
+      `).get(fixture.expand.workItemId);
+      assert.ok(expandPlan);
+      db.prepare(`
+        INSERT INTO gate_actions(
+          gate_action_id,work_item_id,gate,actor_id,plan_revision_id,
+          verified_sha,merge_sha,ref_id,note,created_at
+        ) VALUES(?,?,'final_approve','human:alice',?,NULL,?,NULL,NULL,?)
+      `).run(
+        "verification-outage-new-provider-approval",
+        fixture.expand.workItemId,
+        String(expandPlan.plan_revision_id),
+        MERGE_SHAS[1],
+        NOW,
+      );
+      db.prepare(`
+        UPDATE tasks SET status='completed',started_at=?,ended_at=?,result='Implementation completed',updated_at=?
+        WHERE task_id=?
+      `).run(NOW, NOW, NOW, implementationTask.taskId);
+      db.prepare(`
+        UPDATE work_nodes SET state='ready',current_stage='verification',updated_at=? WHERE node_id=?
+      `).run(NOW, node.nodeId);
+      db.prepare(`
+        UPDATE work_items SET state='reviewing',current_stage='verification',updated_at=? WHERE work_item_id=?
+      `).run(NOW, fixture.migrate.workItemId);
+    } finally {
+      db.close();
+    }
+
+    outage = true;
+    fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    const verificationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "verifier",
+    );
+    assert.ok(verificationTask, latestNodeBlock(fixture.path, node.nodeId) ?? "verification task was not activated");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+for (const [name, invalidMarkdown] of [["NUL", "bad \0 interface"], ["ESC", "bad \u001b interface"]] as const) {
+  test(`${name} in a residual claim-side interface read blocks without persisting a poisoned run`, async () => {
+    const validMarkdown = "# Valid during readiness\n";
+    let showCalls = 0;
+    const fixture = await migrateReadinessFixture(`${name.toLowerCase()}-claim`, (operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(validMarkdown, "utf8")}\n`;
+      showCalls += 1;
+      return showCalls === 1 ? validMarkdown : invalidMarkdown;
+    });
+
+    try {
+      const { node } = childNode(fixture.board, fixture.migrate);
+      const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+        (task) => task.status === "queued" && task.assignedRole === "engineer",
+      );
+      assert.ok(implementationTask);
+      const assignedAgentId = implementationTask.assignedAgentId;
+      assert.ok(assignedAgentId);
+      assert.throws(
+        () => fixture.board.claimRun(assignedAgentId, {
+          claimId: `claim-cross-repo-${name.toLowerCase()}-control`,
+          messageCursor: null,
+        }),
+        (error: unknown) => error instanceof TaskBoardError &&
+          error.status === 409 &&
+          error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+      );
+      assert.equal(
+        latestNodeBlock(fixture.path, node.nodeId),
+        `blocked: provider docs/interface.md contains prohibited characters at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+      );
+      const db = new DatabaseSync(fixture.path, { readOnly: true });
+      try {
+        assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
+        assert.equal(Number(db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM wakeups wakeup
+          WHERE wakeup.task_id=? AND wakeup.claimed_at IS NOT NULL
+        `).get(implementationTask.taskId)?.count), 0);
+        assert.equal(Number(db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM task_events event
+          JOIN wakeups wakeup ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
+          WHERE wakeup.task_id=?
+        `).get(implementationTask.taskId)?.count), 1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      fixture.board.close();
+    }
+  });
+}
+
+test("a claim-side provider outage evicts readiness success and retries without replacement-task churn", async () => {
+  const interfaceMarkdown = "# Provider outage recovery interface\n";
+  let outage = false;
+  let treeReads = 0;
+  const fixture = await migrateReadinessFixture("claim-read-outage", (operation) => {
+    if (operation === "ls-tree") treeReads += 1;
+    if (outage) throw new Error("provider repository unavailable");
+    if (operation === "ls-tree") {
+      return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    }
+    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+    return interfaceMarkdown;
+  });
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    const firstTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "engineer",
+    );
+    assert.ok(firstTask?.assignedAgentId);
+    outage = true;
+    assert.throws(
+      () => fixture.board.claimRun(firstTask.assignedAgentId!, {
+        claimId: "claim-provider-read-outage",
+        messageCursor: null,
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE" &&
+        error.message === `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`,
+    );
+
+    for (let pass = 0; pass < 3; pass += 1) fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    const blocked = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(blocked.prepare(`
+        SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
+      `).get(node.nodeId)?.count), 1);
+      assert.equal(Number(blocked.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='node_blocked' AND summary=?
+      `).get(
+        node.nodeId,
+        `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`,
+      )?.count), 1);
+      assert.equal(fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
+        (task) => task.assignedRole === "engineer",
+      ).length, 1);
+    } finally {
+      blocked.close();
+    }
+    assert.ok(treeReads >= 4, `expected an uncached read on each outage pass, received ${treeReads}`);
+
+    outage = false;
+    fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    const replacement = fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
+      (task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId,
+    );
+    assert.equal(replacement.length, 1);
+    assert.equal(replacement[0]?.status, "queued");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("Migrate readiness and claim share the bounded worker projection", async () => {
+  const interfaceMarkdown = "# Bounded projection interface\n";
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    }),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Bounded projection provider",
+    description: "Publishes the bounded interface.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Bounded projection consumer",
+    description: "P".repeat(6_000),
+    repoPath: "/repos/claim-consumer",
+  });
+  const engineer = fixture.board.createAgent(consumer.projectId, {
+    agentId: "bounded-projection-engineer",
+    role: "engineer",
+    area: "bounded projection",
+    mission: "M".repeat(4_000),
+    model: "test-model",
+    token: "bounded-projection-token-0123456789abcdef",
+  });
+
+  try {
+    const children = phasedChildren(provider.projectId, consumer.projectId, "bounded-projection").map((child) =>
+      child.phase === "migrate"
+        ? { ...child, acceptanceCriteria: ["A".repeat(2_000), "B".repeat(2_000), "C".repeat(2_000)] }
+        : child);
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      children,
+      "bounded-projection",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+    fixture.board.reconcileWorkflows(consumer.projectId);
+
+    const task = await waitForQueuedRoleTask(fixture.board, consumer.projectId, "engineer");
+    assert.equal(task.assignedAgentId, engineer.agentId);
+    const claim = fixture.board.claimRun(engineer.agentId, {
+      claimId: "claim-bounded-migrate-projection",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const mapped = mapClaimContext(parseClaimRunResult(claim), null);
+    assert.ok(mapped);
+    assert.equal(mapped.mission.mission.length, 1_996);
+    assert.match(mapped.mission.mission, /\n\[truncated\]$/u);
+    assert.equal(mapped.projectMemory.length, 3_996);
+    assert.match(mapped.projectMemory, /\n\[truncated\]$/u);
+    assert.equal(mapped.task.acceptanceCriteria.length, 3_996);
+    assert.match(mapped.task.acceptanceCriteria, /\n\[truncated\]$/u);
+    assert.equal(mapped.crossRepoContext?.markdown, interfaceMarkdown);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a Migrate fix round previews its reusable orphan with the prior non-zero cursor", async () => {
+  const interfaceMarkdown = "I".repeat(60 * 1_024);
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    }),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Fix-round preview provider",
+    description: "Publishes the interface used by the migration fix.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Fix-round preview consumer",
+    description: "Claims a fresh migration fix task without prior-task history.",
+    repoPath: "/repos/claim-consumer",
+  });
+  const engineer = fixture.board.createAgent(consumer.projectId, {
+    agentId: "fix-round-preview-engineer",
+    role: "engineer",
+    area: "migration fixes",
+    mission: "Apply the bounded migration fix.",
+    model: "test-model",
+    token: "fix-round-preview-token-0123456789abcdef",
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "fix-round-preview"),
+      "fix-round-preview",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    const { node } = childNode(fixture.board, migrate);
+
+    const priorTask = fixture.board.createTask(consumer.projectId, taskRequest({
+      title: "Terminal prior Migrate implementation",
+      objective: "Carry enough terminal history to overflow the wrong readiness projection.",
+      acceptanceCriteria: "The next attempt must not inherit this task's history.",
+      assignedAgentId: engineer.agentId,
+      assignedRole: engineer.role,
+      requiresReview: false,
+    }));
+    for (let index = 0; index < 12; index += 1) {
+      fixture.board.appendHumanMessage(priorTask.taskId, {
+        clientEventId: `fix-round-prior-message-${index}`,
+        kind: "note",
+        body: `${index}:`.padEnd(2_000, "h"),
+      });
+    }
+    const priorClaim = fixture.board.claimRun(engineer.agentId, {
+      claimId: "claim-fix-round-heavy-prior",
+      messageCursor: 0,
+    });
+    assert.ok(priorClaim);
+    for (let index = 0; index < 64; index += 1) {
+      fixture.board.createTaskPhase(priorTask.taskId, {
+        title: `${index}:`.padEnd(240, "p"),
+        stage: "execution",
+        parallelGroup: `prior-${index}`,
+      }, engineer.agentId);
+    }
+    fixture.board.settleRun(priorClaim.run.runId, engineer.agentId, {
+      outcome: "completed",
+      result: "The heavy prior Migrate task is terminal.",
+    });
+
+    const title = `implementation: ${node.title}`;
+    const acceptanceCriteria = node.acceptanceCriteria.join("\n");
+    const orphan = fixture.board.createTask(consumer.projectId, taskRequest({
+      title,
+      objective: node.objective,
+      acceptanceCriteria,
+      workspaceRefs: [],
+      assignedAgentId: engineer.agentId,
+      assignedRole: engineer.role,
+      requiresReview: false,
+    }));
+    let orphanCursor = 0;
+    for (let index = 0; index < 12; index += 1) {
+      const message = fixture.board.appendHumanMessage(orphan.taskId, {
+        clientEventId: `fix-round-orphan-message-${index}`,
+        kind: "note",
+        body: `${index}:`.padEnd(2_000, "o"),
+      });
+      orphanCursor = message.sequence;
+    }
+    const orphanClaim = fixture.board.claimRun(engineer.agentId, {
+      claimId: "claim-fix-round-orphan-cursor",
+      messageCursor: orphanCursor,
+    });
+    assert.ok(orphanClaim);
+    assert.equal(orphanClaim.context.messageCursor, orphanCursor);
+    assert.deepEqual(orphanClaim.context.messages, []);
+    fixture.board.settleRun(orphanClaim.run.runId, engineer.agentId, {
+      outcome: "interrupted",
+      result: "Retry this unlinked activation task for the fix round.",
+    });
+    const interruptedOrphan = fixture.board.requireTask(orphan.taskId);
+    fixture.board.retryTask(orphan.taskId, { version: interruptedOrphan.version });
+
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
+        VALUES(?,?,?,'implementation',1,'{}')
+      `).run("fix-round-heavy-prior-attempt", node.nodeId, priorTask.taskId);
+      db.prepare(`
+        UPDATE plan_revisions
+        SET assumptions_json=?
+        WHERE work_item_id=? AND state='confirmed'
+      `).run(JSON.stringify(Array.from({ length: 46 }, () => "a".repeat(4_000))), migrate.workItemId);
+      db.prepare(`
+        UPDATE work_nodes
+        SET state='ready',current_stage='implementation',version=version+1,updated_at=?
+        WHERE node_id=?
+      `).run(NOW, node.nodeId);
+      db.prepare(`
+        UPDATE work_items
+        SET state='fixing',current_stage='implementation',version=version+1,updated_at=?
+        WHERE work_item_id=?
+      `).run(NOW, migrate.workItemId);
+    } finally {
+      db.close();
+    }
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+
+    fixture.board.reconcileWorkflows(consumer.projectId);
+
+    assert.equal(childNode(fixture.board, migrate).node.state, "active");
+    assert.equal(fixture.board.requireTask(orphan.taskId).status, "queued");
+    const linked = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(linked.prepare(`
+        SELECT COUNT(*) AS count
+        FROM stage_attempts
+        WHERE node_id=? AND task_id=? AND stage='implementation' AND attempt=2
+      `).get(node.nodeId, orphan.taskId)?.count), 1);
+    } finally {
+      linked.close();
+    }
+    const fixClaim = fixture.board.claimRun(engineer.agentId, {
+      claimId: "claim-fix-round-reused-orphan",
+      messageCursor: orphanCursor,
+    });
+    assert.ok(fixClaim);
+    assert.equal(fixClaim.task?.taskId, orphan.taskId);
+    assert.equal(fixClaim.context.messageCursor, orphanCursor);
+    assert.deepEqual(fixClaim.context.messages, []);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("oversized assembled Migrate context blocks readiness once without replacement-task churn", async () => {
+  const interfaceMarkdown = "I".repeat(60 * 1_024);
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    }),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Aggregate readiness provider",
+    description: "Publishes the interface consumed by Migrate.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Aggregate readiness consumer",
+    description: "Consumes the published provider interface.",
+    repoPath: "/repos/claim-consumer",
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "aggregate-context-bound"),
+      "aggregate-context-bound",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    const { node } = childNode(fixture.board, migrate);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        UPDATE plan_revisions
+        SET assumptions_json=?
+        WHERE work_item_id=? AND state='confirmed'
+      `).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
+    } finally {
+      db.close();
+    }
+
+    forceFinalApproval(fixture.path, expand.workItemId, VERIFIED_SHAS[0]);
+    fixture.board.reconcileWorkflows(provider.projectId);
+    fixture.board.reconcileWorkflows(consumer.projectId);
+    fixture.board.reconcileWorkflows(consumer.projectId);
+    assert.match(
+      latestNodeBlock(fixture.path, node.nodeId) ?? "",
+      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u,
+    );
+    const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
+      assert.equal(Number(inspected.prepare(`
+        SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
+      `).get(node.nodeId)?.count), 0);
+      assert.equal(Number(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM project_events
+        WHERE node_id=? AND event_type='node_blocked'
+          AND summary GLOB 'blocked: assembled context * KiB exceeds 256 KiB budget'
+      `).get(node.nodeId)?.count), 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a hazardous Migrate claim carries its interface inside the design-record budget", async () => {
+  const interfaceMarkdown = "I".repeat(60 * 1_024);
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    }),
+    mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
+  });
+  const provider = fixture.board.createProject({
+    name: "Hazardous interface provider",
+    description: "Publishes the interface for a hazardous migration.",
+    repoPath: "/repos/claim-provider",
+  });
+  const consumer = fixture.board.createProject({
+    name: "Hazardous interface consumer",
+    description: "Designs and executes the hazardous migration.",
+    repoPath: "/repos/claim-consumer",
+  });
+
+  try {
+    const decomposition = proposeParent(
+      fixture.board,
+      provider.projectId,
+      phasedChildren(provider.projectId, consumer.projectId, "hazardous-context-budget"),
+      "hazardous-context-budget",
+      "blast_radius",
+      "hazardous",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        UPDATE plan_revisions
+        SET assumptions_json=?
+        WHERE work_item_id=? AND state='confirmed'
+      `).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
+    } finally {
+      db.close();
+    }
+
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+    fixture.board.reconcileWorkflows(consumer.projectId);
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "designing");
+    const designTask = await waitForQueuedRoleTask(fixture.board, consumer.projectId, "manager");
+    assert.ok(designTask.assignedAgentId);
+    const design = fixture.board.claimRun(designTask.assignedAgentId, {
+      claimId: "claim-hazardous-migrate-design",
+      messageCursor: null,
+    });
+    assert.ok(design);
+    fixture.board.settleRun(design.run.runId, designTask.assignedAgentId, {
+      outcome: "completed",
+      result: "The hazardous Migrate design is confirmed.",
+      designRecord: hazardousDesignRecord(),
+    });
+
+    const implementationTask = await waitForQueuedRoleTask(fixture.board, consumer.projectId, "engineer");
+    assert.ok(implementationTask.assignedAgentId);
+    const claim = fixture.board.claimRun(implementationTask.assignedAgentId, {
+      claimId: "claim-hazardous-migrate-implementation",
+      messageCursor: null,
+    });
+    assert.ok(claim);
+    const mapped = mapClaimContext(parseClaimRunResult(claim), null);
+    assert.ok(mapped);
+    const bytes = Buffer.byteLength(JSON.stringify(mapped), "utf8");
+    assert.ok(bytes > MAX_AGENT_CONTEXT_BYTES, `${bytes} should exceed the ordinary context budget`);
+    assert.ok(bytes <= MAX_DESIGN_CONTEXT_BYTES, `${bytes} should fit the design-record budget`);
+    assert.equal(mapped.workflow?.pipeline?.tier, "hazardous");
+    assert.ok(mapped.workflow?.pipeline?.designRecord);
+    assert.equal(mapped.crossRepoContext?.markdown, interfaceMarkdown);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a claim-time aggregate block is re-evaluated against the next task shape", async () => {
+  const interfaceMarkdown = "# Residual aggregate interface\n";
+  const fixture = await migrateReadinessFixture("residual-aggregate-key", (operation) => {
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+    return interfaceMarkdown;
+  }, ["writing-design-docs"]);
+
+  try {
+    const { node } = childNode(fixture.board, fixture.migrate);
+    const firstTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "engineer",
+    );
+    assert.ok(firstTask?.assignedAgentId);
+    fixture.board.appendHumanMessage(firstTask.taskId, {
+      clientEventId: "residual-aggregate-context-message",
+      kind: "note",
+      body: "Preserve this queued-task message in the readiness digest.",
+    });
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(`
+        UPDATE plan_revisions
+        SET assumptions_json=?
+        WHERE work_item_id=? AND state='confirmed'
+      `).run(JSON.stringify(Array.from({ length: 54 }, () => "a".repeat(5_000))), fixture.migrate.workItemId);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () => fixture.board.claimRun(firstTask.assignedAgentId!, {
+        claimId: "claim-residual-aggregate-key",
+        messageCursor: null,
+      }),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+    );
+    const residualReason = "blocked: persisted claim-side residual digest matched";
+    const keyed = new DatabaseSync(fixture.path);
+    try {
+      const event = keyed.prepare(`
+        SELECT event_id,json_extract(data_json,'$.interfaceContextDigest') AS digest
+        FROM task_events
+        WHERE task_id=? AND event_type='task_cancelled'
+          AND json_extract(data_json,'$.interfaceExpandSha')=?
+        ORDER BY created_at DESC,rowid DESC
+        LIMIT 1
+      `).get(firstTask.taskId, MERGE_SHAS[0]);
+      assert.match(String(event?.digest), /^[0-9a-f]{64}$/u);
+      assert.equal(Number(keyed.prepare(`
+        UPDATE task_events
+        SET data_json=json_set(data_json,'$.reason',?)
+        WHERE event_id=?
+      `).run(residualReason, String(event?.event_id)).changes), 1);
+    } finally {
+      keyed.close();
+    }
+    for (let pass = 0; pass < 3; pass += 1) fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    assert.match(
+      latestNodeBlock(fixture.path, node.nodeId) ?? "",
+      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u,
+    );
+    const blocked = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(Number(blocked.prepare(`
+        SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
+      `).get(node.nodeId)?.count), 1);
+      assert.equal(Number(blocked.prepare(`
+        SELECT COUNT(*) AS count
+        FROM task_events
+        WHERE task_id=? AND event_type='task_cancelled'
+          AND json_extract(data_json,'$.interfaceExpandSha')=?
+          AND json_extract(data_json,'$.interfaceContextDigest') IS NOT NULL
+      `).get(firstTask.taskId, MERGE_SHAS[0])?.count), 1);
+    } finally {
+      blocked.close();
+    }
+
+    const changed = new DatabaseSync(fixture.path);
+    try {
+      changed.prepare(`
+        UPDATE plan_revisions SET assumptions_json='[]'
+        WHERE work_item_id=? AND state='confirmed'
+      `).run(fixture.migrate.workItemId);
+    } finally {
+      changed.close();
+    }
+    fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    const replacement = fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
+      (task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId,
+    );
+    assert.equal(replacement.length, 1);
+    assert.equal(replacement[0]?.status, "queued");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("legacy Migrate claim replay reports a typed interface failure", async () => {
+  const interfaceMarkdown = "# Legacy replay interface\n";
+  let showCalls = 0;
+  const fixture = await migrateReadinessFixture("legacy-replay-typed", (operation) => {
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+    showCalls += 1;
+    return showCalls <= 2 ? interfaceMarkdown : "invalid \0 interface";
+  });
+
+  try {
+    const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
+      (task) => task.status === "queued" && task.assignedRole === "engineer",
+    );
+    assert.ok(implementationTask?.assignedAgentId);
+    const request = { claimId: "claim-migrate-legacy-replay-typed", messageCursor: null } as const;
+    const first = fixture.board.claimRun(implementationTask.assignedAgentId, request);
+    assert.ok(first);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      assert.equal(Number(db.prepare(
+        "UPDATE runs SET claim_result_json=NULL WHERE run_id=?",
+      ).run(first.run.runId).changes), 1);
+    } finally {
+      db.close();
+    }
+    assert.throws(
+      () => fixture.board.claimRun(implementationTask.assignedAgentId!, request),
+      (error: unknown) => error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+    );
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("a duplicate deploy attestation retries Contract readiness reconciliation", async () => {
   let failNextContractRefresh = false;
   const fixture = await boardFixture(undefined, undefined, {
@@ -1681,7 +3383,7 @@ test("phased automatic merge withdraws an approval when the provider base advanc
       key: "expand",
       objective: "Expand the provider before its base advances.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/base-advance-expand"],
+      declaredScope: ["src/base-advance-expand", "docs/interface.md"],
       acceptanceCriteria: ["Stale verification never merges."],
       phase: "expand",
       splitBy: "phase",
@@ -1698,7 +3400,7 @@ test("phased automatic merge withdraws an approval when the provider base advanc
       key: "contract",
       objective: "Remain downstream of migration deployment.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/base-advance-contract"],
+      declaredScope: ["src/base-advance-contract", "docs/interface.md"],
       acceptanceCriteria: ["Contraction remains gated."],
       phase: "contract",
       splitBy: "phase",
@@ -2184,7 +3886,13 @@ test("resuming an unphased parent with only abandoned children completes it", as
 });
 
 test("resuming a parked parent activates a newly ready phased child in the same call", async () => {
-  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  const fixture = await boardFixture(undefined, undefined, {
+    git: crossRepoGit((operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return "19\n";
+      return "# Resume interface\n";
+    }),
+  });
   try {
     const consumer = fixture.board.createProject({
       name: "Resume reconciliation consumer",
@@ -2195,7 +3903,7 @@ test("resuming a parked parent activates a newly ready phased child in the same 
       key: "expand",
       objective: "Merge before the parked family resumes.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-expand"],
+      declaredScope: ["src/resume-expand", "docs/interface.md"],
       acceptanceCriteria: ["The expansion satisfies migration readiness."],
       phase: "expand",
       splitBy: "phase",
@@ -2212,7 +3920,7 @@ test("resuming a parked parent activates a newly ready phased child in the same 
       key: "contract",
       objective: "Provide a terminal child that parks the parent before resume.",
       projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-contract"],
+      declaredScope: ["src/resume-contract", "docs/interface.md"],
       acceptanceCriteria: ["The parent can be resumed after this child fails."],
       phase: "contract",
       splitBy: "phase",

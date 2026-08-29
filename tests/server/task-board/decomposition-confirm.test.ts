@@ -725,6 +725,84 @@ test("confirm revalidates the persisted declaration against the resolved parent 
   }
 });
 
+test("confirm revalidates persisted Expand and Contract interface publication scope", async () => {
+  let gitCalls = 0;
+  const fixture = await boardFixture(undefined, undefined, {
+    git: () => {
+      gitCalls += 1;
+      return `${PROVIDER_SHA}\n`;
+    },
+  });
+  const consumer = fixture.board.createProject({
+    name: "Scope revalidation consumer",
+    description: "Consumes a provider interface only after publication scope is valid.",
+    repoPath: "/repos/scope-revalidation-consumer",
+  });
+  const valid: readonly DeclaredChild[] = [{
+    key: "expand",
+    objective: "Publish the additive provider interface.",
+    projectId: fixture.project.projectId,
+    declaredScope: ["src/provider", "docs/interface.md"],
+    acceptanceCriteria: ["The additive interface is published."],
+    phase: "expand",
+    splitBy: "phase",
+  }, {
+    key: "migrate",
+    objective: "Migrate the consumer.",
+    projectId: consumer.projectId,
+    declaredScope: ["src/consumer"],
+    acceptanceCriteria: ["The consumer uses the additive interface."],
+    phase: "migrate",
+    dependsOn: ["expand"],
+    splitBy: "consumer",
+  }, {
+    key: "contract",
+    objective: "Remove the legacy provider interface.",
+    projectId: fixture.project.projectId,
+    declaredScope: ["src/provider", "docs/interface.md"],
+    acceptanceCriteria: ["The legacy interface is removed."],
+    phase: "contract",
+    dependsOn: ["migrate"],
+    splitBy: "phase",
+  }];
+  const { parent, revision } = proposeDecomposedPlan(
+    fixture.board,
+    fixture.project.projectId,
+    valid,
+    "blast_radius",
+    "persisted-interface-scope-revalidation",
+  );
+
+  try {
+    const invalid = valid.map((child) => child.phase === "contract"
+      ? { ...child, declaredScope: ["src/provider"] }
+      : child);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      assert.equal(Number(db.prepare(`
+        UPDATE plan_revisions SET children=? WHERE plan_revision_id=? AND state='proposed'
+      `).run(JSON.stringify(invalid), revision.planRevisionId).changes), 1);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 400
+        && error.code === "WORKFLOW_INVALID"
+        && /contract.*docs\/interface\.md/u.test(error.message),
+    );
+    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
+      (plan) => plan.planRevisionId === revision.planRevisionId,
+    )?.state, "proposed");
+    assert.equal(fixture.board.listChildren(parent.workItemId).length, 0);
+    assert.equal(gitCalls, 0);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("child pipeline executor drift rejects before Git or confirmation writes", async () => {
   let gitCalls = 0;
   const fixture = await boardFixture(undefined, undefined, {

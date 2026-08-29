@@ -11,6 +11,8 @@ const KNOWN_TEMPLATES: ReadonlySet<string> = new Set([
   "bright-line",
   "designer",
   "engineer-fix",
+  "engineer-cross-repo-interface",
+  "engineer-interface-phase-authorization",
   "engineer",
   "hazardous-implementation",
   "hazardous-review",

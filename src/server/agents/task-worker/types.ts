@@ -2,6 +2,7 @@ import {
   WAKEUP_REASONS,
   type AgentRole,
   type ClaimRunPinning,
+  type CrossRepoContext,
   type SkillSnapshot,
   type StageHandoff,
   type WorkflowStage,
@@ -15,6 +16,7 @@ import {
   type TaskKind,
   type TaskPhaseStage,
   type TaskPhaseStatus,
+  type WorkItemPhase,
 } from "#shared/task-board-contract";
 import type { RuntimeEvent } from "../runtime/adapter.js";
 
@@ -152,6 +154,9 @@ export interface BoundedAgentContext {
     status: "open" | "answered";
   }>[];
   readonly workspaceRefs: readonly string[];
+  /** Claim control data consumed by the envelope; omitted from the echoed model context. */
+  readonly phase?: WorkItemPhase | null;
+  readonly crossRepoContext?: CrossRepoContext;
   readonly workflow: Readonly<{
     planRevisionId: string;
     nodeId: string;

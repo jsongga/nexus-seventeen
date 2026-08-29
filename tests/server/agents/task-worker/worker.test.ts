@@ -2130,7 +2130,7 @@ test("launcher receives only the bounded contract fields", async () => {
     await taskWorker.dispatchOnce();
     assert.deepEqual(Object.keys(launcher.requests[0]?.context ?? {}).sort(), [
       "agentId", "apiVersion", "areaMemory", "design", "intake", "messages", "messagesSinceCursor", "mission", "nextMessageCursor",
-      "openQuestions", "parentEvidence", "projectId", "projectMemory", "task", "taskId", "triggerQuestion",
+      "openQuestions", "parentEvidence", "phase", "projectId", "projectMemory", "task", "taskId", "triggerQuestion",
       "workflow", "workspaceRefs",
     ]);
     assert.equal("token" in (launcher.requests[0]?.context ?? {}), false);

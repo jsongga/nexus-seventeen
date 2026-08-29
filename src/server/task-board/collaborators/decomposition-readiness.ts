@@ -1,11 +1,53 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { WorkItemPhase, WorkItemState } from "#shared/task-board-contract";
+import type {
+  AgentRole,
+  CrossRepoContext,
+  PublishedInterfaceFailureReason,
+  WorkflowStage,
+  WorkItemPhase,
+  WorkItemState,
+} from "#shared/task-board-contract";
+import {
+  PUBLISHED_INTERFACE_PATH,
+  type PublishedInterfaceReadResult,
+} from "./interface-context.js";
 
 export interface DecompositionReadinessBlocker {
   readonly workItemId: string;
   readonly phase: WorkItemPhase | null;
   readonly state: WorkItemState;
   readonly deployAttested: boolean;
+}
+
+export interface MigrateInterfaceProvider {
+  readonly workItemId: string;
+  readonly projectId: string;
+  readonly repoName: string;
+  readonly repoPath: string;
+  readonly sha: string;
+}
+
+export type MigrateInterfaceReadiness =
+  | Readonly<{ kind: "ready"; context: CrossRepoContext }>
+  | Readonly<{
+      kind: "blocked";
+      reason: Exclude<PublishedInterfaceFailureReason, "over_budget">;
+      sha: string;
+      summary: string;
+    }>;
+
+export type PublishedInterfaceReader = (
+  repoPath: string,
+  sha: string,
+  path: typeof PUBLISHED_INTERFACE_PATH,
+) => PublishedInterfaceReadResult;
+
+/** Mirrors the claim-side role gate for published provider context. */
+export function migrateTaskCarriesCrossRepoContext(
+  stage: WorkflowStage | string,
+  assignedRole: AgentRole | string | null,
+): boolean {
+  return stage === "implementation" && assignedRole === "engineer";
 }
 
 /** The parent row and every child row form one project-scoped family. */
@@ -95,5 +137,129 @@ export function decompositionReadinessBlocker(
     phase: blocker.phase,
     state: blocker.state,
     deployAttested: blocker.deploy_attested === 1,
+  });
+}
+
+/** Resolves the newest durable Expand merge used by a Migrate child. */
+export function migrateInterfaceProvider(
+  db: DatabaseSync,
+  workItemId: string,
+): MigrateInterfaceProvider | null {
+  const provider = db.prepare(`
+    SELECT predecessor.work_item_id,predecessor.state,
+      project.project_id,project.name,project.repo_path,
+      (
+        SELECT action.merge_sha
+        FROM gate_actions action
+        WHERE action.work_item_id=predecessor.work_item_id
+          AND action.gate='final_approve'
+          AND action.merge_sha IS NOT NULL
+        ORDER BY action.created_at DESC,action.rowid DESC
+        LIMIT 1
+      ) AS merge_sha
+    FROM work_item_dependencies dependency
+    JOIN work_items owner ON owner.work_item_id=dependency.work_item_id AND owner.phase='migrate'
+    JOIN work_items predecessor
+      ON predecessor.work_item_id=dependency.depends_on_work_item_id
+      AND predecessor.phase='expand'
+    JOIN projects project ON project.project_id=predecessor.resolved_project_id
+    WHERE dependency.work_item_id=?
+    ORDER BY predecessor.child_ordinal,predecessor.work_item_id
+    LIMIT 1
+  `).get(workItemId) as Readonly<{
+    work_item_id: string;
+    state: WorkItemState;
+    project_id: string;
+    name: string;
+    repo_path: string;
+    merge_sha: string | null;
+  }> | undefined;
+  if (provider === undefined || provider.state !== "merged" || provider.merge_sha === null) return null;
+  return Object.freeze({
+    workItemId: provider.work_item_id,
+    projectId: provider.project_id,
+    repoName: provider.name,
+    repoPath: provider.repo_path,
+    sha: provider.merge_sha,
+  });
+}
+
+export function publishedInterfaceBlockSummary(
+  result: Exclude<PublishedInterfaceReadResult, { kind: "present" }>,
+  sha: string,
+): string {
+  if (result.reason === "invalid_markdown" && result.detail === "invalid_utf8") {
+    return `blocked: provider docs/interface.md contains invalid UTF-8 at ${sha}; cancel the parent to abandon the decomposition`;
+  }
+  return publishedInterfaceReasonSummary(result.reason, sha);
+}
+
+export function publishedInterfaceFailureLabel(
+  result: Exclude<PublishedInterfaceReadResult, { kind: "present" }>,
+): string {
+  if (result.reason === "invalid_markdown") {
+    return result.detail === "invalid_utf8" ? "invalid UTF-8" : "prohibited characters";
+  }
+  return result.reason;
+}
+
+export function publishedInterfaceReasonSummary(
+  reason: PublishedInterfaceFailureReason,
+  sha: string,
+  assembledBytes?: number,
+  budgetBytes?: number,
+): string {
+  switch (reason) {
+    case "absent":
+      return `blocked: provider published no docs/interface.md at ${sha}; cancel the parent to abandon the decomposition`;
+    case "too_large":
+      return `blocked: provider docs/interface.md exceeds 64 KiB at ${sha}; cancel the parent to abandon the decomposition`;
+    case "not_file":
+      return `blocked: provider docs/interface.md is not a file at ${sha}; cancel the parent to abandon the decomposition`;
+    case "invalid_markdown":
+      return `blocked: provider docs/interface.md contains prohibited characters at ${sha}; cancel the parent to abandon the decomposition`;
+    case "empty":
+      return `blocked: provider docs/interface.md is empty at ${sha}; cancel the parent to abandon the decomposition`;
+    case "read_error":
+      return `blocked: provider repository unreadable at ${sha} — retrying`;
+    case "over_budget":
+      if (assembledBytes === undefined || budgetBytes === undefined) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_context_budget_missing");
+      }
+      return `blocked: assembled context ${Math.ceil(assembledBytes / 1_024)} KiB exceeds ${Math.floor(budgetBytes / 1_024)} KiB budget`;
+  }
+}
+
+/** Evaluates the interface-specific portion of Migrate decomposition readiness. */
+export function migrateInterfaceReadiness(
+  db: DatabaseSync,
+  workItemId: string,
+  read: PublishedInterfaceReader,
+): MigrateInterfaceReadiness | null {
+  const provider = migrateInterfaceProvider(db, workItemId);
+  if (provider === null) return null;
+  let published: PublishedInterfaceReadResult;
+  try {
+    published = read(provider.repoPath, provider.sha, PUBLISHED_INTERFACE_PATH);
+  } catch {
+    published = Object.freeze({ kind: "blocked", reason: "read_error" });
+  }
+  if (published.kind !== "present") {
+    return Object.freeze({
+      kind: "blocked",
+      reason: published.reason,
+      sha: provider.sha,
+      summary: publishedInterfaceBlockSummary(published, provider.sha),
+    });
+  }
+  return Object.freeze({
+    kind: "ready",
+    context: Object.freeze({
+      providerProjectId: provider.projectId,
+      providerRepoName: provider.repoName,
+      interfacePath: PUBLISHED_INTERFACE_PATH,
+      sha: provider.sha,
+      markdown: published.markdown,
+    }),
   });
 }

@@ -1,9 +1,6 @@
 import {
-  MAX_AREA_MEMORY_RESULT_CHARACTERS,
-  MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
-  type ClaimRunResult,
   type RunStatus,
 } from "#shared/task-board-contract";
 import {
@@ -18,7 +15,8 @@ import {
   timestamp as contractTimestamp,
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
-import { parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
+import { mapClaimContext as mapSharedClaimContext } from "../../shared/claim-context.js";
+import { parseTaskWakeClaim } from "./schema.js";
 import {
   POISONED_CLAIM_REASON,
   TASK_BOARD_PAUSED_CLAIM,
@@ -28,7 +26,6 @@ import type {
   AgentTaskPhase,
   AgentRunInterrupt,
   AppendRunOutputRequest,
-  BoundedAgentContext,
   ClaimedAgentRun,
   ClaimNextWakeRequest,
   CreateAgentTaskPhaseRequest,
@@ -172,10 +169,6 @@ function bounded(value: unknown, label: string, maximum: number): string {
   }
   const clean = value.trim();
   return clean.length <= maximum ? clean : `${clean.slice(0, Math.max(1, maximum - 16)).trimEnd()}\n[truncated]`;
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function errorCode(value: unknown): string | null {
@@ -335,165 +328,7 @@ function claimHandleFromResponse(value: unknown, request: ClaimNextWakeRequest):
   }
 }
 
-function questionProjection(value: ClaimRunResult["context"]["triggerQuestion"], requireAnswer: boolean): BoundedAgentContext["triggerQuestion"] {
-  if (value === null) return null;
-  if (requireAnswer && (value.status !== "answered" || value.answer === null)) {
-    throw new Error("Human-answer wake omitted its answered trigger question");
-  }
-  if (value.answer === null) return null;
-  return {
-    questionId: id(value.questionId, "triggerQuestion.questionId"),
-    question: bounded(value.question, "triggerQuestion.question", 2_000),
-    answer: bounded(value.answer, "triggerQuestion.answer", 4_000),
-  };
-}
-
-function mapContext(result: ClaimRunResult, requestedCursor: number | null): BoundedAgentContext | null {
-  const { run, wakeup, task, context } = result;
-  if (wakeup.taskId === null) {
-    if (task !== null) throw new Error("Taskless wake included a task");
-    return null;
-  }
-  if (
-    task === null || task.taskId !== wakeup.taskId || task.projectId !== run.projectId ||
-    task.assignedAgentId !== run.agentId || context.agent.agentId !== run.agentId ||
-    context.agent.projectId !== run.projectId || context.projectMemory.projectId !== run.projectId ||
-    context.acceptanceCriteria !== task.acceptanceCriteria || !sameStrings(context.workspaceRefs, task.workspaceRefs)
-  ) {
-    throw new Error("Claim task and bounded context binding is invalid");
-  }
-  const messages = context.messages.slice(-12).map((message) => ({
-    messageId: id(message.messageId, "message.messageId"),
-    cursor: nonNegative(message.sequence, "message.sequence"),
-    author: message.actorType,
-    body: bounded(message.body, "message.body", 2_000),
-    createdAt: timestamp(message.createdAt, "message.createdAt"),
-  }));
-  const areaMemory = context.areaMemory.map((memory, index) => ({
-    taskId: id(memory.taskId, "areaMemory[" + index + "].taskId"),
-    title: bounded(memory.title, "areaMemory[" + index + "].title", 512),
-    result: bounded(memory.result, "areaMemory[" + index + "].result", MAX_AREA_MEMORY_RESULT_CHARACTERS),
-    endedAt: timestamp(memory.endedAt, "areaMemory[" + index + "].endedAt"),
-  }));
-  if (areaMemory.some((memory) => memory.taskId === task.taskId)) {
-    throw new Error("Claim area memory includes the current task");
-  }
-  const parentEvidence = context.parentTask === null
-    ? null
-    : {
-        taskId: id(context.parentTask.taskId, "parent.taskId"),
-        title: bounded(context.parentTask.title, "parent.title", 512),
-        objective: bounded(context.parentTask.objective, "parent.objective", 8_000),
-        acceptanceCriteria: bounded(context.parentTask.acceptanceCriteria, "parent.acceptanceCriteria", 4_000),
-        status: bounded(context.parentTask.status, "parent.status", 64),
-        assignedAgentId: context.parentTask.assignedAgentId === null
-          ? null
-          : id(context.parentTask.assignedAgentId, "parent.assignedAgentId"),
-        workspaceRefs: context.parentTask.workspaceRefs.map((reference, index) =>
-          bounded(reference, `parent.workspaceRefs[${index}]`, 512)),
-        startedAt: context.parentTask.startedAt === null ? null : timestamp(context.parentTask.startedAt, "parent.startedAt"),
-        endedAt: context.parentTask.endedAt === null ? null : timestamp(context.parentTask.endedAt, "parent.endedAt"),
-        result: context.parentTask.result === null ? null : bounded(context.parentTask.result, "parent.result", 4_000),
-        messages: context.parentMessages.slice(-12).map((message, index) => {
-          if (
-            message.taskId !== context.parentTask?.taskId || message.projectId !== run.projectId ||
-            message.actorType !== "human" && message.actorType !== "agent"
-          ) {
-            throw new Error(`Parent message ${index} is not bound to the parent task`);
-          }
-          return {
-            messageId: id(message.messageId, `parent.messages[${index}].messageId`),
-            author: message.actorType,
-            kind: message.kind,
-            body: bounded(message.body, `parent.messages[${index}].body`, 2_000),
-            createdAt: timestamp(message.createdAt, `parent.messages[${index}].createdAt`),
-          };
-        }),
-      };
-  if (context.parentTask === null && context.parentMessages.length !== 0) {
-    throw new Error("Claim context included parent messages without a parent task");
-  }
-  if (context.parentTask !== null && context.parentTask.taskId !== task.parentTaskId) {
-    throw new Error("Claim context parent does not match the task parent");
-  }
-  const internal = {
-    apiVersion: 1 as const,
-    projectId: run.projectId,
-    agentId: run.agentId,
-    taskId: task.taskId,
-    intake: context.intake,
-    ...(context.onboarding === true ? { onboarding: true as const } : {}),
-    design: context.design ?? false,
-    mission: {
-      role: context.agent.role,
-      area: bounded(context.agent.area, "agent.area", 256),
-      mission: bounded(context.agent.mission, "agent.mission", 2_000),
-    },
-    projectMemory: bounded(`${context.projectMemory.name}\n\n${context.projectMemory.description}`, "projectMemory", 4_000),
-    task: {
-      kind: task.kind,
-      requiredRole: task.requiredRole,
-      title: bounded(task.title, "task.title", 512),
-      objective: bounded(
-        task.objective,
-        "task.objective",
-        context.design === true ? MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS : 8_000,
-      ),
-      acceptanceCriteria: bounded(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
-      version: positive(task.version, "task.version"),
-      expectedAgentMinutes: estimateMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes"),
-      phases: (() => {
-        if (!Array.isArray(task.phases)) throw new Error("Claim task phases are invalid");
-        const parsed = task.phases.map((phase, index) => taskPhase(
-          phase,
-          run.projectId,
-          task.taskId,
-          `task.phases[${index}]`,
-        ));
-        if (parsed.length <= 64) return parsed;
-        const selected = new Set<number>();
-        for (let index = parsed.length - 1; index >= 0 && selected.size < 64; index -= 1) {
-          const phase = parsed[index];
-          if (phase !== undefined && phase.status !== "completed" && phase.status !== "failed") selected.add(index);
-        }
-        for (let index = parsed.length - 1; index >= 0 && selected.size < 64; index -= 1) selected.add(index);
-        return parsed.filter((_phase, index) => selected.has(index));
-      })(),
-    },
-    areaMemory,
-    parentEvidence,
-    messagesSinceCursor: requestedCursor,
-    nextMessageCursor: nonNegative(context.messageCursor, "context.messageCursor"),
-    messages,
-    triggerQuestion: questionProjection(context.triggerQuestion, wakeup.reason === "human_answer"),
-    openQuestions: context.openQuestions.slice(0, 4).map((question) => ({
-      questionId: id(question.questionId, "openQuestion.questionId"),
-      question: bounded(question.question, "openQuestion.question", 2_000),
-      answer: question.answer === null ? null : bounded(question.answer, "openQuestion.answer", 4_000),
-      status: question.status,
-    })),
-    workspaceRefs: context.workspaceRefs,
-    workflow: context.workflow === undefined || context.workflow === null
-      ? null
-      : {
-          ...context.workflow,
-          workspaceKey: context.workflow.workspaceKey ?? null,
-          pipeline: context.workflow.pipeline === undefined || context.workflow.pipeline === null
-            ? null
-            : {
-                ...context.workflow.pipeline,
-                designRecord: context.workflow.pipeline.designRecord ?? null,
-              },
-          review: context.workflow.review === undefined || context.workflow.review === null
-            ? null
-            : {
-                ...context.workflow.review,
-                mechanicalPortions: context.workflow.review.mechanicalPortions ?? [],
-              },
-        },
-  };
-  return parseBoundedAgentContext(internal);
-}
+export const mapClaimContext = mapSharedClaimContext;
 
 export class HttpTaskBoardClient implements TaskBoardClient {
   readonly #http: JsonClient;
@@ -565,7 +400,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       });
       return Object.freeze({
         claim,
-        context: mapContext(claimed, requestedMessageCursor),
+        context: mapClaimContext(claimed, requestedMessageCursor),
         pinned: Object.freeze({
           runtime: claimed.run.runtime,
           runtimeVersion: claimed.run.runtimeVersion,

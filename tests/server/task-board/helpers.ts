@@ -114,7 +114,17 @@ export async function boardFixture(
   configOverrides?: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">>,
 ) {
   const resolvedPath = path ?? await databasePath();
-  const board = await TaskBoard.open(config(resolvedPath, now, configOverrides), dependencies);
+  const git = dependencies.git;
+  const resolvedDependencies = git !== undefined && git.bytes === undefined
+    ? Object.freeze({
+        ...dependencies,
+        git: Object.assign(
+          (arguments_: readonly string[]) => git(arguments_),
+          { bytes: (arguments_: readonly string[]) => Buffer.from(git(arguments_), "utf8") },
+        ),
+      })
+    : dependencies;
+  const board = await TaskBoard.open(config(resolvedPath, now, configOverrides), resolvedDependencies);
   const project = board.createProject({ name: "Checkout reliability", description: "Keep customer checkout dependable." });
   const engineer = board.createAgent(project.projectId, {
     agentId: "engineer-one",

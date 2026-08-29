@@ -30,6 +30,44 @@ test("onboarding context is optional and accepts only the true discriminator", (
   );
 });
 
+test("cross-repo context is optional, bounded, and preserves the published provider interface", () => {
+  const crossRepoContext = {
+    providerProjectId: "project-provider",
+    providerRepoName: "provider-api",
+    interfacePath: "docs/interface.md",
+    sha: "a".repeat(40),
+    markdown: "# Published interface\n\n- `GET /v1/orders`\n",
+  } as const;
+
+  assert.equal(Object.hasOwn(parseBoundedAgentContext(context()), "crossRepoContext"), false);
+  assert.deepEqual(
+    parseBoundedAgentContext(context({ crossRepoContext })).crossRepoContext,
+    crossRepoContext,
+  );
+  for (const markdown of ["# Emoji 😀 interface\n", "# CJK Extension B 𠀀 interface\n"]) {
+    assert.equal(
+      parseBoundedAgentContext(context({
+        crossRepoContext: { ...crossRepoContext, markdown },
+      })).crossRepoContext?.markdown,
+      markdown,
+    );
+  }
+  for (const markdown of ["NUL \0 control", "ESC \u001b control", "C1 \u0085 control", "lone \ud800 surrogate"]) {
+    assert.throws(
+      () => parseBoundedAgentContext(context({
+        crossRepoContext: { ...crossRepoContext, markdown },
+      })),
+      /crossRepoContext\.markdown is invalid/u,
+    );
+  }
+  assert.throws(
+    () => parseBoundedAgentContext(context({
+      crossRepoContext: { ...crossRepoContext, markdown: "x".repeat(64 * 1_024 + 1) },
+    })),
+    /crossRepoContext\.markdown exceeds 64 KiB/u,
+  );
+});
+
 test("legacy workflow contexts default absent pipeline fields to null", () => {
   const parsed = parseBoundedAgentContext(context({ workflow: workflow() }));
 
@@ -123,6 +161,28 @@ test("design claims admit their bounded evidence without widening ordinary conte
     design: true,
     task: { ...context().task, objective: oversizedObjective },
   })).task.objective, oversizedObjective);
+  assert.equal(parseBoundedAgentContext(context({
+    design: true,
+    task: { ...context().task, objective: oversizedObjective },
+    crossRepoContext: {
+      providerProjectId: "project-provider",
+      providerRepoName: "provider-api",
+      interfacePath: "docs/interface.md",
+      sha: "a".repeat(40),
+      markdown: "# Published interface\n",
+    },
+  })).task.objective, oversizedObjective);
+
+  assert.equal(parseBoundedAgentContext({
+    ...hazardous,
+    crossRepoContext: {
+      providerProjectId: "project-provider",
+      providerRepoName: "provider-api",
+      interfacePath: "docs/interface.md",
+      sha: "a".repeat(40),
+      markdown: "# Published interface\n",
+    },
+  }).workflow?.pipeline?.designRecord?.transitions.length, DESIGN_RECORD_MAX_TRANSITIONS);
 });
 
 test("pipeline workflow contexts accept implementation, verify, and review workspace keys bound to one task branch", () => {

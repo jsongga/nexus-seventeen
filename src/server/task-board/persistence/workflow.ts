@@ -4,6 +4,8 @@ import {
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
   REVIEW_WORKSPACE_SUFFIX,
+  STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
+  STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS,
   TASK_BOARD_ERROR_CODES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
@@ -63,6 +65,11 @@ import {
 import { reviewFindingFromRow, type Row } from "./rows.js";
 
 export const RETIRED_WAKEUP_EVENT_PREFIX = "retired-wakeup:";
+
+export interface ExpandInterfacePublicationFailure {
+  readonly finding: string;
+  readonly actual: string;
+}
 
 export function retiredWakeupEventId(wakeupId: string): string {
   return RETIRED_WAKEUP_EVENT_PREFIX + wakeupId;
@@ -627,10 +634,31 @@ export class TransparentWorkflow {
     taskId: string,
     reviewInspection: PipelineInspection | null,
   ): ClaimRunResult["context"]["workflow"] {
+    const attempt = this.db.prepare(`
+      SELECT node_id,stage,skill_digests_json
+      FROM stage_attempts
+      WHERE task_id=?
+      ORDER BY attempt DESC
+      LIMIT 1
+    `).get(taskId) as Row | undefined;
+    if (attempt === undefined) return null;
+    return this.claimContextForStage(
+      String(attempt.node_id),
+      String(attempt.stage) as WorkflowStage,
+      json<Record<string, string>>(attempt.skill_digests_json),
+      reviewInspection,
+    );
+  }
+
+  claimContextForStage(
+    nodeId: string,
+    stage: WorkflowStage,
+    digests: Readonly<Record<string, string>>,
+    reviewInspection: PipelineInspection | null = null,
+  ): NonNullable<ClaimRunResult["context"]["workflow"]> {
     const row = this.db.prepare(`
       SELECT
-        a.stage,
-        a.skill_digests_json,
+        ? AS stage,
         n.node_id,
         n.plan_revision_id,
         plan.work_item_id,
@@ -648,15 +676,13 @@ export class TransparentWorkflow {
         (SELECT payload_json FROM design_records design
           WHERE design.work_item_id=plan.work_item_id AND design.plan_revision_id=plan.plan_revision_id
         ) AS design_record_json
-      FROM stage_attempts a
-      JOIN work_nodes n ON n.node_id=a.node_id
+      FROM work_nodes n
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=plan.project_id
-      WHERE a.task_id=?
-    `).get(taskId) as Row | undefined;
-    if (!row) return null;
-    const digests = json<Record<string, string>>(row.skill_digests_json);
+      WHERE n.node_id=? AND plan.state='confirmed'
+    `).get(stage, nodeId) as Row | undefined;
+    if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_missing");
     const skills = this.skills.loadSync(Object.keys(digests));
     for (const skill of skills) if (digests[skill.skillId] !== skill.digest) throw new TaskBoardError(409, "SKILL_DIGEST_CHANGED", `Skill ${skill.skillId} changed after confirmation`);
     const handoffs = (this.db.prepare(`SELECT h.payload_json FROM work_node_dependencies d JOIN stage_handoffs h ON h.node_id=d.dependency_node_id
@@ -1745,6 +1771,178 @@ export class TransparentWorkflow {
     scopeCheck: AttemptScopeCheckResult | null = null,
   ): readonly WorkNode[] {
     return this.settleAttemptInternal(taskId, outcome, result, draft, reviewFindings, scopeCheck);
+  }
+
+  recordExpandInterfacePublicationFailureInTransaction(
+    taskId: string,
+    failure: ExpandInterfacePublicationFailure,
+  ): readonly WorkNode[] {
+    const attempt = this.db.prepare(`
+      SELECT attempt.node_id,attempt.attempt,node.project_id,node.title,node.objective,
+        node.acceptance_criteria_json,node.state AS node_state,node.current_stage,
+        plan.work_item_id,item.state AS work_item_state,item.pipeline_branch
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      WHERE attempt.task_id=? AND attempt.stage='verification' AND item.phase='expand'
+    `).get(taskId) as Row | undefined;
+    if (attempt === undefined) return Object.freeze([]);
+
+    const nodeId = String(attempt.node_id);
+    const projectId = String(attempt.project_id);
+    const systemTaskId = `task_interface_publication_${taskId}`;
+    if (this.db.prepare("SELECT 1 FROM tasks WHERE task_id=?").get(systemTaskId) !== undefined) {
+      return Object.freeze(this.nodesForIds([nodeId]));
+    }
+    if (attempt.node_state !== "completed" || attempt.current_stage !== null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:interface_publication_node_not_completed");
+    }
+
+    const sourceRow = this.db.prepare(
+      "SELECT payload_json FROM stage_handoffs WHERE task_id=?",
+    ).get(taskId) as Row | undefined;
+    if (sourceRow === undefined) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:interface_publication_source_handoff");
+    }
+    const source = json<StageHandoff>(sourceRow.payload_json);
+    const finding = redactForPersistence(failure.finding);
+    const suffix = ` — ${finding}`;
+    const retainedSummaryLength = Math.max(0, STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS - suffix.length);
+    const summary = `${source.summary.slice(0, retainedSummaryLength).trimEnd()}${suffix}`;
+    const originalBlockers = source.blockers.filter((blocker) => blocker !== finding);
+    const blockers = Object.freeze([
+      ...originalBlockers.slice(-(STAGE_HANDOFF_BLOCKERS_MAX_ITEMS - 1)),
+      finding,
+    ]);
+    const now = this.now().toISOString();
+    const orderKey = Number(this.db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
+    this.db.prepare(`
+      INSERT INTO tasks(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json,
+        status, assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      ) VALUES (?, ?, NULL, 'work', NULL, 0, ?, ?, ?, '[]', 'failed', NULL, NULL, 15, NULL,
+        NULL, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      systemTaskId,
+      projectId,
+      `Interface publication: ${String(attempt.title)}`.slice(0, 240),
+      String(attempt.objective),
+      json<string[]>(attempt.acceptance_criteria_json).join("\n"),
+      orderKey,
+      now,
+      now,
+      finding,
+      now,
+      now,
+    );
+    this.db.prepare(`
+      INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
+      VALUES (?, ?, ?, 'system', 'system:interface-publication', 'task_created', ?, ?)
+    `).run(
+      randomUUID(),
+      projectId,
+      systemTaskId,
+      JSON.stringify({ kind: "work", requiresReview: false, status: "failed", sourceTaskId: taskId }),
+      now,
+    );
+    const handoff: StageHandoff = Object.freeze({
+      apiVersion: "steward.task-board/v1",
+      handoffId: `handoff_interface_publication_${taskId}`,
+      nodeId,
+      taskId: systemTaskId,
+      stage: "verification",
+      outcome: "failed",
+      summary,
+      evidence: Object.freeze([...source.evidence]),
+      artifactIds: Object.freeze([...source.artifactIds]),
+      acceptanceCriteria: Object.freeze([...source.acceptanceCriteria]),
+      blockers,
+      recommendedReturnStage: "implementation",
+      createdAt: now,
+    });
+    this.db.prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(
+      handoff.handoffId,
+      nodeId,
+      systemTaskId,
+      handoff.stage,
+      handoff.outcome,
+      JSON.stringify(handoff),
+      now,
+    );
+    this.db.prepare(`
+      INSERT INTO review_findings(
+        finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
+      ) VALUES (?,?, 'verification', ?, 'docs/interface.md', NULL, 'correctness', 'major', ?, ?, 1, ?)
+    `).run(
+      `finding_interface_publication_${taskId}`,
+      nodeId,
+      Number(attempt.attempt),
+      finding,
+      redactForPersistence(failure.actual),
+      now,
+    );
+    const attemptNumber = Number(attempt.attempt);
+    const maxAttempts = attempt.pipeline_branch === null ? 3 : 4;
+    const workItemState = String(attempt.work_item_state) as WorkItemState;
+    if (attemptNumber >= maxAttempts) {
+      const nodeUpdate = this.db.prepare(`
+        UPDATE work_nodes
+        SET state='blocked',version=version+1,updated_at=?
+        WHERE node_id=? AND state='completed' AND current_stage IS NULL
+      `).run(now, nodeId);
+      if (Number(nodeUpdate.changes) !== 1) {
+        throw new Error("TASK_BOARD_DATABASE_CORRUPT:interface_publication_node_not_completed");
+      }
+      if (!isTerminalWorkItemState(workItemState)) {
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(attempt.work_item_id),
+          to: "dead_letter",
+          actorType: "system",
+          actorId: "system:workflow",
+          now,
+          endedAt: now,
+          currentStage: null,
+        });
+      }
+      this.event(
+        projectId,
+        nodeId,
+        systemTaskId,
+        "stage_failed",
+        `verification publication check failed at attempt ${attemptNumber} of ${maxAttempts}`,
+        now,
+      );
+      return Object.freeze([]);
+    }
+    if (isTerminalWorkItemState(workItemState)) return Object.freeze([]);
+    const nodeUpdate = this.db.prepare(`
+      UPDATE work_nodes
+      SET state='ready',current_stage='implementation',version=version+1,updated_at=?
+      WHERE node_id=? AND state='completed' AND current_stage IS NULL
+    `).run(now, nodeId);
+    if (Number(nodeUpdate.changes) !== 1) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:interface_publication_node_not_completed");
+    }
+    transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+      workItemId: String(attempt.work_item_id),
+      to: "fixing",
+      actorType: "system",
+      actorId: "system:interface-publication",
+      now,
+      currentStage: "implementation",
+    });
+    this.event(
+      projectId,
+      nodeId,
+      systemTaskId,
+      "stage_retry_ready",
+      `verification publication check failed; returning to implementation (attempt ${attemptNumber + 1} of ${maxAttempts})`,
+      now,
+    );
+    return Object.freeze(this.nodesForIds([nodeId]));
   }
 
   settleMachineVerifyAttemptInTransaction(

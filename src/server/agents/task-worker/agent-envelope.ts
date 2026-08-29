@@ -14,7 +14,9 @@ import {
   REVIEW_FINDING_DRAFT_MAX_ITEMS,
   REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
   REVIEW_FINDING_SEVERITIES,
+  STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
   STAGE_HANDOFF_OUTCOMES,
+  STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   WORK_ITEM_PHASES,
@@ -149,7 +151,7 @@ export const RESULT_SCHEMA = Object.freeze({
           type: "object", additionalProperties: false,
           properties: {
             outcome: { type: "string", enum: STAGE_HANDOFF_OUTCOMES },
-            summary: { type: "string", minLength: 1, maxLength: 4_000 },
+            summary: { type: "string", minLength: 1, maxLength: STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS },
             evidence: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
             artifactIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 128 } },
             acceptanceCriteria: {
@@ -163,7 +165,11 @@ export const RESULT_SCHEMA = Object.freeze({
                 required: ["criterion", "passed", "evidence"],
               },
             },
-            blockers: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            blockers: {
+              type: "array",
+              maxItems: STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
+              items: { type: "string", minLength: 1, maxLength: 2_000 },
+            },
             recommendedReturnStage: { type: ["string", "null"], enum: [...WORKFLOW_STAGES, null] },
           },
           required: ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"],
@@ -395,7 +401,29 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
     request.context.workflow?.stage === "verification" && renderedDesignRecord !== null
     ? promptBlock(prompts, "hazardous-review", { designRecord: renderedDesignRecord })
     : null;
-  const brightLineBlock = promptBlock(prompts, "bright-line");
+  const crossRepoInterface = fixedRole === "engineer" && request.context.crossRepoContext !== undefined
+    ? promptBlock(prompts, "engineer-cross-repo-interface", {
+        interfacePath: request.context.crossRepoContext.interfacePath,
+        sha: request.context.crossRepoContext.sha,
+        providerProjectId: request.context.crossRepoContext.providerProjectId,
+        providerRepoName: request.context.crossRepoContext.providerRepoName,
+        markdown: request.context.crossRepoContext.markdown,
+      })
+    : null;
+  const interfacePhase = request.context.phase === "expand" || request.context.phase === "contract"
+    ? request.context.phase
+    : null;
+  const brightLineBlock = promptBlock(prompts, "bright-line", {
+    publishedInterfaceRule: interfacePhase === null
+      ? "change a published interface"
+      : "change a published interface other than docs/interface.md",
+  });
+  const interfacePhaseAuthorization = fixedRole === "engineer" &&
+    request.context.workflow?.stage === "implementation" && pipeline != null && interfacePhase !== null
+    ? promptBlock(prompts, "engineer-interface-phase-authorization", {
+        phase: interfacePhase === "expand" ? "Expand" : "Contract",
+      })
+    : null;
   const pipelineImplementation = fixedRole === "engineer" &&
     request.context.workflow?.stage === "implementation" && pipeline != null
     ? (() => {
@@ -495,7 +523,7 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
   const trailer = promptBlock(prompts, "trailer", {
     planningInstruction: promptBlock(prompts, planningRun ? "intake-return" : "workflow-plan-return"),
     wakeReason: request.wakeReason,
-    context: JSON.stringify(request.context),
+    context: JSON.stringify((({ phase: _phase, ...context }) => context)(request.context)),
   });
   return [
     promptBlock(prompts, "header", {
@@ -505,6 +533,8 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
     }),
     ...workflow,
     ...pipelineImplementation,
+    ...(interfacePhaseAuthorization === null ? [] : [interfacePhaseAuthorization]),
+    ...(crossRepoInterface === null ? [] : [crossRepoInterface]),
     ...(hazardousImplementationDesign === null ? [] : [hazardousImplementationDesign]),
     ...(pipelineReview === null ? [] : pipelineReview),
     ...(hazardousReviewDesign === null ? [] : [hazardousReviewDesign]),

@@ -8,9 +8,11 @@ import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { parseSections } from "../../../../src/server/shared/sections.js";
 
 const SHIPPED_PROMPT_DIGESTS = {
-  "bright-line": "sha256:12db39383b20d373c581d082aa37ca98bd1a67aea744269e3154c6ab465eea02",
+  "bright-line": "sha256:cc0a0bcddcf716e4134e1e587caf4cb3b0e12e976eaf78c863893605a812c706",
   "designer": "sha256:4d59d58946cf59460320b09d98df27d560643415308e57e25233208b2f3e0ee6",
   "engineer-fix": "sha256:c62ccbadafda09f21511d9ea22000fe73b234d9accdd3dab864bb9b43f3264ac",
+  "engineer-cross-repo-interface": "sha256:05dd016a68e611832a8e24b1d6e4a437ca5d83a72ad48a5c6a99f868c2f5ded5",
+  "engineer-interface-phase-authorization": "sha256:9d761f5ac93de304c12f4c46372aa63f3a4fe476d12ede421006782dc8f9ca1a",
   "engineer": "sha256:93afa3ac6876899830f2eb06499157cba2c3008a717a580ffa5b49720c7cf08b",
   "hazardous-implementation": "sha256:731c2c92051213cbffb1b76f12e4701312714128d8ec304968c42d908a5983af",
   "hazardous-review": "sha256:81eb184b03e693fb0411142dd93e3215bb2c5b302b994e9462094029efc64c99",
@@ -75,7 +77,7 @@ test("promptsSha is independent of section order and preserves the shipped diges
   assert.equal(PromptRegistry.loadSync(secondFile).promptsSha, PromptRegistry.loadSync(firstFile).promptsSha);
   assert.equal(
     PromptRegistry.loadSync(resolve("config/prompts.md")).promptsSha,
-    "sha256:ec906621465482a49fc85132f797b6d4a056c8c502dcf614f4c757b2e836cc33",
+    "sha256:10ec44467ee49bce3c3fdf510f11ed061b1e6c149976ef3f3f2ee325702f6848",
   );
   assert.deepEqual(
     Object.fromEntries([...parseSections(source, {})].map(([name, content]) => [

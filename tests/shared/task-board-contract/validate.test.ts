@@ -18,6 +18,7 @@ import {
   TASK_STATUSES,
   WAKEUP_REASONS,
   WORKFLOW_STAGES,
+  WORK_ITEM_PHASES,
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_TASK_TYPES,
@@ -327,6 +328,62 @@ test("claim result validation preserves canonical timestamps and the legacy proj
     ...claim,
     run: { ...claim.run, startedAt: "2026-08-09T13:00:00-07:00" },
   })), "run.startedAt is invalid");
+
+  for (const phase of WORK_ITEM_PHASES) {
+    const phasedClaim = { ...claim, context: { ...claim.context, phase } };
+    assert.equal(parseClaimRunResult(phasedClaim), phasedClaim);
+  }
+  assert.throws(
+    () => parseClaimRunResult({ ...claim, context: { ...claim.context, phase: "future-phase" } }),
+    /context\.phase/u,
+  );
+
+  const crossRepoContext = {
+    providerProjectId: "project-provider",
+    providerRepoName: "provider-api",
+    interfacePath: "docs/interface.md",
+    sha: "a".repeat(40),
+    markdown: "# Published interface\n\n- `GET /v1/orders`\n",
+  };
+  const crossRepoClaim = {
+    ...claim,
+    context: { ...claim.context, crossRepoContext },
+  };
+  assert.equal(parseClaimRunResult(crossRepoClaim), crossRepoClaim);
+  for (const markdown of [
+    "# Emoji 😀 interface\n",
+    "# CJK Extension B 𠀀 interface\n",
+  ]) {
+    assert.equal(parseClaimRunResult({
+      ...crossRepoClaim,
+      context: {
+        ...crossRepoClaim.context,
+        crossRepoContext: { ...crossRepoContext, markdown },
+      },
+    }).context.crossRepoContext?.markdown, markdown);
+  }
+  for (const markdown of ["NUL \0 control", "ESC \u001b control", "C1 \u0085 control", "lone \ud800 surrogate"]) {
+    assert.throws(
+      () => parseClaimRunResult({
+        ...crossRepoClaim,
+        context: {
+          ...crossRepoClaim.context,
+          crossRepoContext: { ...crossRepoContext, markdown },
+        },
+      }),
+      /crossRepoContext\.markdown is invalid/u,
+    );
+  }
+  assert.throws(
+    () => parseClaimRunResult({
+      ...crossRepoClaim,
+      context: {
+        ...crossRepoClaim.context,
+        crossRepoContext: { ...crossRepoContext, sha: "not-a-merge-sha" },
+      },
+    }),
+    /crossRepoContext\.sha is invalid/u,
+  );
 });
 
 test("timestamp accepts ISO spellings for web millisecond projection and can require canonical worker form", () => {
@@ -538,6 +595,8 @@ test("worker context shapes accept exactly the shared role, task, and phase enum
   assertAcceptedSet(TASK_PHASE_STATUSES, (status) => parseWorkerAgentContext(context({ task: { ...(context().task as object), phases: [{
     phaseId: "phase-one", title: "Inspect", stage: "research", status, parallelGroup: null, orderKey: 0, version: 1,
   }] } })));
+  assertAcceptedSet(WORK_ITEM_PHASES, (phase) => parseWorkerAgentContext(context({ phase })));
+  assert.equal((parseWorkerAgentContext(context()) as { phase?: string | null }).phase, null);
 });
 
 test("worker expected minutes rejects an explicitly undefined value", () => {
@@ -640,6 +699,56 @@ test("pipeline plan-record fields round-trip through board and worker draft vali
     plan,
   );
   assert.deepEqual(parseWorkerAgentRunOutcome(outcome(null, plan)).workflowPlan, plan);
+});
+
+test("phased plans require Expand and Contract scope to cover docs/interface.md", () => {
+  const children = [{
+    key: "expand",
+    objective: "Publish the additive provider interface.",
+    projectId: "provider-project",
+    declaredScope: ["src/provider", "docs/"],
+    acceptanceCriteria: ["The additive interface is published."],
+    phase: "expand",
+    splitBy: "phase",
+  }, {
+    key: "migrate",
+    objective: "Migrate the consumer.",
+    projectId: "consumer-project",
+    declaredScope: ["src/consumer"],
+    acceptanceCriteria: ["The consumer uses the additive interface."],
+    phase: "migrate",
+    dependsOn: ["expand"],
+    splitBy: "consumer",
+  }, {
+    key: "contract",
+    objective: "Remove the legacy provider interface.",
+    projectId: "provider-project",
+    declaredScope: ["src/provider", "docs/interface.md"],
+    acceptanceCriteria: ["The legacy interface is removed."],
+    phase: "contract",
+    dependsOn: ["migrate"],
+    splitBy: "phase",
+  }] as const;
+  const valid = pipelinePlan({ changeShape: "blast_radius", children });
+  assert.doesNotThrow(() => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: valid }));
+  assert.doesNotThrow(() => parseWorkerAgentRunOutcome(outcome(null, valid)));
+
+  for (const phase of ["expand", "contract"] as const) {
+    const invalid = pipelinePlan({
+      changeShape: "blast_radius",
+      children: children.map((child) => child.phase === phase
+        ? { ...child, declaredScope: ["src/provider"] }
+        : child),
+    });
+    assert.throws(
+      () => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: invalid }),
+      new RegExp(`${phase}.*docs/interface\\.md`, "u"),
+    );
+    assert.throws(
+      () => parseWorkerAgentRunOutcome(outcome(null, invalid)),
+      new RegExp(`${phase}.*docs/interface\\.md`, "u"),
+    );
+  }
 });
 
 test("plan-record enums, revision entities, and verify-attempt types expose the v20 contract", () => {

@@ -24,6 +24,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   TASK_BOARD_PIPELINE_PLAN_INCOMPLETE: "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE",
   TASK_BOARD_PIPELINE_REPO_BUSY: "TASK_BOARD_PIPELINE_REPO_BUSY",
   TASK_BOARD_PIPELINE_REPO_UNAVAILABLE: "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
+  TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE: "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
   // retired campaign 7 — kept for old clients
   TASK_BOARD_PIPELINE_SERIAL_CONFLICT: "TASK_BOARD_PIPELINE_SERIAL_CONFLICT",
   TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED: "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
@@ -56,6 +57,18 @@ export const REVIEW_WORKSPACE_SUFFIX = "-review";
 export const VERIFY_WORKSPACE_SUFFIX = "-verify";
 export const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
+export const MAX_AGENT_CONTEXT_BYTES = 256 * 1_024;
+export const MAX_DESIGN_CONTEXT_BYTES = 4 * 1_024 * 1_024;
+export const PUBLISHED_INTERFACE_FAILURE_REASONS = Object.freeze([
+  "absent",
+  "not_file",
+  "too_large",
+  "invalid_markdown",
+  "empty",
+  "read_error",
+  "over_budget",
+] as const);
+export type PublishedInterfaceFailureReason = typeof PUBLISHED_INTERFACE_FAILURE_REASONS[number];
 export const AGENT_GAP_REPORT_MAX_CHARACTERS = 32_000;
 export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
 
@@ -104,6 +117,13 @@ export function declaredScopesOverlap(a: readonly string[], b: readonly string[]
  */
 export const IDENTIFIER_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" as const;
 export const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+
+const PROHIBITED_CROSS_REPO_MARKDOWN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ud800-\udfff]/u;
+
+/** Accepts Unicode scalar text while excluding controls unsafe for persisted prompts. */
+export function isValidCrossRepoMarkdown(value: string): boolean {
+  return !PROHIBITED_CROSS_REPO_MARKDOWN.test(value);
+}
 
 export const AGENT_ROLES = ["engineer", "manager", "verifier"] as const;
 export type AgentRole = typeof AGENT_ROLES[number];
@@ -458,6 +478,8 @@ export type WorkNodeState = typeof WORK_NODE_STATES[number];
 
 export const STAGE_HANDOFF_OUTCOMES = ["passed", "failed", "needs_input"] as const;
 export type StageHandoffOutcome = typeof STAGE_HANDOFF_OUTCOMES[number];
+export const STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS = 4_000;
+export const STAGE_HANDOFF_BLOCKERS_MAX_ITEMS = 32;
 export type ArtifactMediaType =
   | "text/markdown"
   | "text/vnd.mermaid"
@@ -1098,6 +1120,14 @@ export interface BoardSnapshot {
   readonly recentEvents: readonly TaskEvent[];
 }
 
+export interface CrossRepoContext {
+  readonly providerProjectId: string;
+  readonly providerRepoName: string;
+  readonly interfacePath: "docs/interface.md";
+  readonly sha: string;
+  readonly markdown: string;
+}
+
 export interface ClaimRunResult {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly run: AgentRun;
@@ -1123,6 +1153,9 @@ export interface ClaimRunResult {
     parentMessages: readonly TaskMessage[];
     acceptanceCriteria: string | null;
     workspaceRefs: readonly string[];
+    /** Absent is accepted from claim replays created before phased prompt authorization. */
+    readonly phase?: WorkItemPhase | null;
+    readonly crossRepoContext?: CrossRepoContext;
     messageCursor: number;
     messages: readonly TaskMessage[];
     triggerQuestion: HumanQuestion | null;

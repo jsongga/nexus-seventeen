@@ -1,5 +1,5 @@
 ## bright-line
-Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.
+Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, {{publishedInterfaceRule}}, violate a non-goal, find the plan infeasible, or delete/skip an existing test.
 ## designer
 Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.
 ## engineer-fix
@@ -7,6 +7,15 @@ Fix round {{round}} on branch {{branch}}. A reviewer found the defects below; th
 Review findings:
 {{findings}}
 {{brightLine}}
+## engineer-cross-repo-interface
+Integrate against the provider's PUBLISHED interface below ({{interfacePath}} @ {{sha}}); never read or modify the provider's source.
+Provider project: {{providerProjectId}}
+Provider repository: {{providerRepoName}}
+--- BEGIN PUBLISHED INTERFACE ---
+{{markdown}}
+--- END PUBLISHED INTERFACE ---
+## engineer-interface-phase-authorization
+This is the {{phase}} phase of a planned interface change. You are AUTHORIZED — and for Expand, REQUIRED — to change the published interface docs/interface.md within your declared scope; the bright-line rule about published interfaces does not apply to that file. Consumers will integrate against the version you publish.
 ## engineer
 Follow a research → plan → execute → test loop inside this one run.
 Repeat that loop only when a test fails, and stop only when the acceptance criteria pass, work fails, or a human answer is required.
