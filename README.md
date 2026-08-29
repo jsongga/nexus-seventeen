@@ -28,6 +28,8 @@ The product deliberately has no deployment endpoint. Agents can implement and re
 
 A request can stay as one executable work item or become a **coordination family**: a branchless parent plus independently mergeable child work items. Each child owns one project, repository, branch, and merge; the parent preserves the overall request, approved split, dependency order, and completion state.
 
+One board Project has one `repoPath`, and decomposition assigns each child to one Project. A product grouped into one Project but spread across several repositories—such as Cicada Sense/HomeDots—therefore cannot decompose work across those repositories yet. Repository identity must first become separate from the product Project; see [roadmap item 9.9](orchestrator-roadmap.md#99-repository-identity-separate-from-the-product-project).
+
 The proposed plan declares each child’s objective, project, scope, acceptance criteria, dependencies, and optional phase before the human confirms it.
 
 | Change shape | Allowed declaration |
@@ -41,7 +43,7 @@ Expand and Contract stay in the provider project and both cover `docs/interface.
 
 Merge policy is keyed on phases, not change shape:
 
-- **Unphased family, including unphased `blast_radius`** — children run independently. **Approve & merge children** succeeds only when every remaining unmerged child is in `final_approval`; it then merges them in dependency order and skips children already merged.
+- **Unphased family, including unphased `blast_radius`** — children run independently. **Approve & merge children** succeeds only when every remaining unmerged child is in `final_approval`; it then checks each child's base, merges in dependency order, and skips children already merged. Same-repository siblings may need a second parent approval when an earlier merge advances a later sibling's base and sends it back for re-verification.
 - **Phased family** — confirming the parent plan pre-authorizes Expand and Migrate to auto-merge after verification and review. Each merged Expand/Migrate child still needs a human **Attest deployed** action. Contract remains blocked until every such sibling is merged and attested, then requires its own human approval.
 
 The full coordination state, audit actions, recovery rules, operator UI, and rolling-upgrade order are in [Transparent workflow architecture](docs/WORKFLOW_ARCHITECTURE.md#decomposition-and-cross-repository-coordination).
@@ -196,6 +198,8 @@ npm run build               # production server and browser artifacts
 ```
 
 `bootstrap:apply` requires a private `STEWARD_OPERATOR_TOKEN` containing at least 32 characters. It uses `STEWARD_BOARD_URL` and stores one-time agent credentials in the macOS Keychain service named by `STEWARD_AGENT_KEYCHAIN_SERVICE`. Run `bootstrap:validate` first; validation does not contact or modify the board.
+
+Catalog repository paths are board-runtime paths under `/var/lib/steward/repos`, not workstation paths. Before onboarding in Dokploy, clone each catalog repository into the `steward-data` volume at its configured path, or bind-mount the checkouts there. The checked-in local-container mechanism is [`docker-compose.dev.yml`](docker-compose.dev.yml): set `STEWARD_DEV_REPOS_ROOT` to a directory containing the named checkouts, then start Compose with both the Dokploy file and the dev override. The board sees the same `/var/lib/steward/repos/<repo>` paths in both environments; host-native development must create the equivalent `/var/lib/steward/repos` symlink before applying the catalog.
 
 Generated output is written to `build/`, `dist/`, `.test-dist/`, and `test-results/`.
 

@@ -26,6 +26,7 @@ import {
   type CreatePlanRevisionRequest,
   type CreateProjectArtifactRequest,
   type CreateProjectRequest,
+  type UpdateProjectRequest,
   type CreateTaskMessageRequest,
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
@@ -370,7 +371,9 @@ export class TaskBoard {
   }
 
   resumeWorkItem(workItemId: string): WorkItemDetail {
-    this.#workItems.resumeDecomposedParent(workItemId);
+    if (!this.#projects.resumeBaseDivergedWorkItem(workItemId)) {
+      this.#workItems.resumeDecomposedParent(workItemId);
+    }
     return this.#workItems.requireWorkItem(workItemId);
   }
 
@@ -434,6 +437,10 @@ export class TaskBoard {
 
   createProject(request: CreateProjectRequest): Project {
     return this.#projects.createProject(request);
+  }
+
+  updateProject(projectId: string, request: UpdateProjectRequest): Project {
+    return this.#projects.updateProject(projectId, request);
   }
 
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {

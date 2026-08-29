@@ -8,7 +8,7 @@ import {
   inspectPipelineBranch,
   type PipelineInspection,
 } from "#server/task-board/collaborators/pipeline-inspection";
-import type { GitRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
 
 const SHA = "a".repeat(40);
 const SAFE_PREFIX = [
@@ -26,7 +26,7 @@ function runGit(cwd: string, args: readonly string[]): Promise<string> {
 
 test("pipeline inspection uses safe git argv and maps name-status paths into review evidence", async () => {
   const calls: string[][] = [];
-  const git: GitRunner = (arguments_) => {
+  const git: GitTextRunner = (arguments_) => {
     calls.push([...arguments_]);
     if (arguments_.includes("log")) return `${SHA}\0Implement the review context\0`;
     if (arguments_.includes("--stat")) return " 3 files changed, 2 insertions(+), 1 deletion(-)\n";
@@ -63,7 +63,7 @@ test("pipeline inspection uses safe git argv and maps name-status paths into rev
 });
 
 test("pipeline inspection reuses declared-scope prefix checks for status paths", async () => {
-  const git: GitRunner = (arguments_) => {
+  const git: GitTextRunner = (arguments_) => {
     if (arguments_.includes("log") || arguments_.includes("--stat")) return "";
     return "M\0docs/outside.md\0";
   };

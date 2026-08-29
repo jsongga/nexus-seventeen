@@ -12,6 +12,7 @@ import {
   type CreatePlanRevisionRequest,
   type CreateProjectArtifactRequest,
   type CreateProjectRequest,
+  type UpdateProjectRequest,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
@@ -51,7 +52,7 @@ import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
-import type { NotificationsCollaborator } from "./notifications.js";
+import { NotificationsCollaborator } from "./notifications.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
 import { claimTaskProjectionInputs } from "./claim-projection.js";
 import { createLazyExecutorInTransaction } from "./agent-identities.js";
@@ -71,7 +72,11 @@ import {
   type MergePipelineResult,
 } from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
-import { declaredScopesOverlap } from "./scope-check.js";
+import {
+  declaredScopesOverlap,
+  withGitBytes,
+  type GitTextRunner,
+} from "./scope-check.js";
 import {
   decompositionFamilyTouchesProjectSql,
   decompositionReadinessBlocker,
@@ -150,6 +155,7 @@ export class ProjectsCollaborator {
   readonly #verifyAttempts: VerifyAttemptsCollaborator;
   readonly #boardPause: BoardPauseCollaborator;
   readonly #publishedInterfaceCache: PublishedInterfaceCache;
+  readonly #git: WorkflowGitRunner;
   // Process-local by ruling: one task-board process owns a repository/database pair.
   readonly #finalApprovalLocks = new Map<string, Promise<void>>();
   #startDesignInTransaction: ((workItemId: string) => void) | undefined;
@@ -159,27 +165,28 @@ export class ProjectsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
-    private readonly git: WorkflowGitRunner = runWorkflowGit,
+    git: WorkflowGitRunner | GitTextRunner = runWorkflowGit,
     verifyDependencies: ProjectsVerifyDependencies = {},
     private readonly mergePipeline: PipelineMergeExecutor = mergePipelineBranch,
-    private readonly notifications?: NotificationsCollaborator,
+    private readonly notifications: NotificationsCollaborator = new NotificationsCollaborator(runtime),
     boardPause?: BoardPauseCollaborator,
   ) {
+    this.#git = withGitBytes(git);
     this.#workflow = new TransparentWorkflow(
       runtime.store.db,
       new SkillRegistry(resolve("config/skills.md")),
       runtime.config.now,
       (operation) => runtime.store.transaction(operation),
       (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),
-      git,
+      this.#git,
       (input) => runtime.insertGateActionInTransaction(input),
     );
     this.#artifacts = new ArtifactStore(runtime.store.db, runtime.config.artifactRoot, runtime.config.now);
     this.#boardPause = boardPause ?? new BoardPauseCollaborator(runtime);
-    this.#publishedInterfaceCache = new PublishedInterfaceCache(git);
+    this.#publishedInterfaceCache = new PublishedInterfaceCache(this.#git);
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
       ...verifyDependencies,
-      git,
+      git: this.#git,
       settleInTransaction: (nodeId, stage, passed, evidence) =>
         this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, stage, passed, evidence),
       activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
@@ -335,7 +342,7 @@ export class ProjectsCollaborator {
         baseSha,
         branch,
         declaredScope,
-        git: this.git,
+        git: this.#git,
       });
     } catch (error) {
       throw new TaskBoardError(
@@ -416,7 +423,7 @@ export class ProjectsCollaborator {
       branchTip = resolvePipelineBranchTip({
         repoPath: context.repoPath,
         branch: context.branch,
-        git: this.git,
+        git: this.#git,
       });
     } catch (error) {
       throw new TaskBoardError(
@@ -441,7 +448,7 @@ export class ProjectsCollaborator {
         branch: context.branch,
         branchSha: branchTip,
         baseSha: context.baseSha,
-        git: this.git,
+        git: this.#git,
       });
     } catch (error) {
       throw new TaskBoardError(
@@ -547,6 +554,7 @@ export class ProjectsCollaborator {
         WHERE ${decompositionFamilyTouchesProjectSql("?", "project.project_id")}
         ORDER BY project.project_id
       `).all(workItemId, workItemId) as Row[]).map((row) => String(row.project_id)));
+      let approvalInterrupted = false;
       for (const child of orderedChildren) {
         const current = this.runtime.requireWorkItem(child.workItemId);
         if (current.state === "merged") continue;
@@ -557,15 +565,83 @@ export class ProjectsCollaborator {
             `Child ${current.workItemId} is not awaiting final approval`,
           );
         }
-        const merged = await this.approvePipelineMergeAuthorized(
-          current.workItemId,
-          { version: current.version },
-          authorization,
-          false,
-        );
-        if (merged.state !== "merged") {
-          throw new TaskBoardError(409, "PARENT_CHILD_MERGE_CONFLICT", `Child ${merged.workItemId} did not merge`);
+        const outcome = await this.withFinalApprovalLock(current.workItemId, () => {
+          const lockedCurrent = this.runtime.requireWorkItem(current.workItemId);
+          if (lockedCurrent.state !== "final_approval") {
+            throw new TaskBoardError(
+              409,
+              "PARENT_CHILDREN_NOT_READY",
+              `Child ${lockedCurrent.workItemId} is not awaiting final approval`,
+            );
+          }
+          const context = this.pipelineMergeContext(lockedCurrent.workItemId, lockedCurrent.version);
+          const baseAdvance = inspectPipelineBaseAdvance({
+            repoPath: context.repoPath,
+            branch: context.branch,
+            baseSha: context.baseSha,
+            git: this.#git,
+          });
+          if (baseAdvance.kind === "advanced") {
+            return Object.freeze({
+              kind: "withdrawn" as const,
+              applied: this.withdrawFinalApprovalForBaseAdvanceWithLockHeld({
+                workItemId: lockedCurrent.workItemId,
+                expectedVersion: lockedCurrent.version,
+                expectedBaseSha: context.baseSha,
+                head: baseAdvance.head,
+                note: `base branch advanced to ${baseAdvance.head}; rebase onto it and re-verify`,
+                now: exactNow(this.runtime.config.now),
+              }),
+            });
+          }
+          if (baseAdvance.kind === "diverged") {
+            return Object.freeze({
+              kind: "parked" as const,
+              applied: this.parkFinalApprovalForBaseDivergenceWithLockHeld({
+                workItemId: lockedCurrent.workItemId,
+                expectedVersion: lockedCurrent.version,
+                expectedBaseSha: context.baseSha,
+                head: baseAdvance.head,
+                reason: `base branch history rewritten (was ${context.baseSha}, now ${baseAdvance.head})`,
+                now: exactNow(this.runtime.config.now),
+              }),
+            });
+          }
+          if (baseAdvance.kind === "repo_busy") {
+            throw new TaskBoardError(
+              409,
+              TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_BUSY,
+              "The pipeline repository is busy; check out a clean non-task merge target and retry",
+            );
+          }
+          return Object.freeze({
+            kind: "merged" as const,
+            workItem: this.approveSinglePipelineMerge(
+              lockedCurrent.workItemId,
+              { version: lockedCurrent.version },
+              authorization,
+              false,
+            ),
+          });
+        });
+        if (outcome.kind !== "merged") {
+          if (!outcome.applied) {
+            throw new TaskBoardError(
+              409,
+              "PARENT_CHILD_MERGE_CONFLICT",
+              `Child ${current.workItemId} base-change recovery was not applied`,
+            );
+          }
+          approvalInterrupted = true;
+          break;
         }
+        if (outcome.workItem.state !== "merged") {
+          throw new TaskBoardError(409, "PARENT_CHILD_MERGE_CONFLICT", `Child ${outcome.workItem.workItemId} did not merge`);
+        }
+      }
+      if (approvalInterrupted) {
+        for (const projectId of familyProjectIds) this.reconcileWorkflowsBestEffort(projectId);
+        return this.runtime.requireWorkItem(workItemId);
       }
       this.runtime.store.transaction(() => {
         this.#workflow.settleParentCompletionInTransaction(
@@ -788,7 +864,7 @@ export class ProjectsCollaborator {
         now: input.now,
         dedupeToken: input.head,
       });
-      this.notifications?.insertNotificationAtInTransaction({
+      this.notifications.insertNotificationAtInTransaction({
         kind: "final_approval_withdrawn",
         dedupeKey: `final_approval_withdrawn:${input.workItemId}:${input.head}`,
         projectId: current.resolved_project_id === null ? null : String(current.resolved_project_id),
@@ -859,7 +935,7 @@ export class ProjectsCollaborator {
         currentStage: null,
         park: { category: "base_diverged", reason: input.reason },
       });
-      this.notifications?.insertNotificationAtInTransaction({
+      this.notifications.insertNotificationAtInTransaction({
         kind: "final_approval_withdrawn",
         dedupeKey: `final_approval_withdrawn:${input.workItemId}:base-diverged:${input.head}`,
         projectId: current.resolved_project_id === null ? null : String(current.resolved_project_id),
@@ -898,13 +974,50 @@ export class ProjectsCollaborator {
       now: input.now,
       currentStage: null,
     });
-    this.notifications?.insertNotificationAtInTransaction({
+    this.notifications.insertNotificationAtInTransaction({
       kind: "final_approval_withdrawn",
       dedupeKey: `final_approval_withdrawn:${parentId}:${input.childWorkItemId}:${input.dedupeToken}`,
       projectId: parent.resolved_project_id === null ? null : String(parent.resolved_project_id),
       workItemId: parentId,
       summary: `Parent approval withdrawn: child ${input.childWorkItemId} needs re-verification`,
     }, input.now);
+    return true;
+  }
+
+  resumeBaseDivergedWorkItem(workItemId: string): boolean {
+    const current = this.runtime.requireWorkItem(workItemId);
+    const openPark = this.runtime.store.db.prepare(`
+      SELECT category
+      FROM park_records
+      WHERE work_item_id=? AND resolved_at IS NULL
+      ORDER BY parked_at DESC,rowid DESC
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    if (openPark?.category !== "base_diverged") return false;
+    if (current.state !== "parked" || current.resolvedProjectId === null || current.pipelineBranch === null) {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
+        "Only a pipeline work item parked after base divergence can be resumed",
+      );
+    }
+    const baseSha = this.#workflow.pipelineBaseShaForProject(current.resolvedProjectId);
+    const readyNodes = this.runtime.store.transaction(() =>
+      this.#workflow.returnFinalApprovalToImplementationInTransaction(
+        workItemId,
+        {
+          version: current.version,
+          note: "Resume implementation after rebasing onto the current project repository head.",
+        },
+        this.runtime.config.humanPrincipal,
+        "implementing",
+        null,
+        "human",
+        baseSha,
+        "parked",
+      ));
+    this.activateWorkflowNodes(readyNodes);
+    this.reconcileWorkflowsBestEffort(current.resolvedProjectId);
     return true;
   }
 
@@ -1005,6 +1118,26 @@ export class ProjectsCollaborator {
       `).run(projectId, request.name, request.description, request.repoPath ?? request.description, now, now);
       this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "project_created", {
         name: request.name,
+      }, now);
+    });
+    return this.runtime.requireProject(projectId);
+  }
+
+  updateProject(projectId: string, request: UpdateProjectRequest): Project {
+    this.runtime.requireProject(projectId);
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.transaction(() => {
+      this.runtime.store.db.prepare(`
+        UPDATE projects
+        SET name=COALESCE(?, name),
+          description=COALESCE(?, description),
+          repo_path=COALESCE(?, repo_path),
+          version=version+1,
+          updated_at=?
+        WHERE project_id=?
+      `).run(request.name ?? null, request.description ?? null, request.repoPath ?? null, now, projectId);
+      this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "project_updated", {
+        fields: Object.keys(request).sort(),
       }, now);
     });
     return this.runtime.requireProject(projectId);
@@ -1230,7 +1363,7 @@ export class ProjectsCollaborator {
           FROM work_item_dependencies dependency
           JOIN work_items predecessor ON predecessor.work_item_id=dependency.depends_on_work_item_id
           WHERE dependency.work_item_id=?
-            AND predecessor.state NOT IN ('merged','abandoned','dead_letter')
+            AND predecessor.state <> 'merged'
           LIMIT 1
         `).get(child.workItemId);
         if (unmetDependency !== undefined) continue;
@@ -1241,7 +1374,7 @@ export class ProjectsCollaborator {
               repoPath: context.repoPath,
               branch: context.branch,
               baseSha: context.baseSha,
-              git: this.git,
+              git: this.#git,
             });
             if (baseAdvance.kind === "advanced") {
               const note = `base branch advanced to ${baseAdvance.head}; rebase onto it and re-verify`;
@@ -1351,7 +1484,7 @@ export class ProjectsCollaborator {
         now: exactNow(this.runtime.config.now),
         currentStage: null,
       });
-      this.notifications?.insertNotificationInTransaction({
+      this.notifications.insertNotificationInTransaction({
         kind: "parent_ready_for_approval",
         dedupeKey: `parent_ready_for_approval:${parentId}:${transition.version}`,
         projectId: current.resolvedProjectId,
@@ -1368,7 +1501,7 @@ export class ProjectsCollaborator {
     version: number,
   ): void {
     this.runtime.store.transaction(() => {
-      this.notifications?.insertNotificationInTransaction({
+      this.notifications.insertNotificationInTransaction({
         kind: "final_approval_withdrawn",
         dedupeKey: `final_approval_withdrawn:${childId}:automatic-merge:${version}`,
         projectId,
@@ -1560,7 +1693,7 @@ export class ProjectsCollaborator {
     const now = agent.createdAt;
     const workspaceRefs = Object.freeze([] as string[]);
     const taskId = orphan === undefined ? "preview-migrate-task" : String(orphan.task_id);
-    const requestedCursor = orphan === undefined ? 0 : this.latestClaimMessageCursor(taskId);
+    const requestedCursor = orphan === undefined ? 0 : this.latestWorkerMessageCursor(taskId);
     const projectionInputs = orphan === undefined
       ? null
       : claimTaskProjectionInputs(this.runtime, taskId, requestedCursor);
@@ -1668,15 +1801,27 @@ export class ProjectsCollaborator {
     });
   }
 
-  private latestClaimMessageCursor(taskId: string): number {
-    const row = this.runtime.store.db.prepare(`
+  private latestWorkerMessageCursor(taskId: string): number {
+    const workerRequest = this.runtime.store.db.prepare(`
+      SELECT json_extract(data_json,'$.messageCursor') AS message_cursor
+      FROM task_events
+      WHERE task_id=? AND event_type='agent_run_claimed'
+        AND json_type(data_json,'$.messageCursor') IS NOT NULL
+      ORDER BY created_at DESC,rowid DESC
+      LIMIT 1
+    `).get(taskId) as Row | undefined;
+    if (workerRequest !== undefined) {
+      const cursor = Number(workerRequest.message_cursor ?? 0);
+      return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+    }
+    const legacyClaim = this.runtime.store.db.prepare(`
       SELECT json_extract(claim_result_json,'$.context.messageCursor') AS message_cursor
       FROM runs
       WHERE task_id=? AND claim_result_json IS NOT NULL
       ORDER BY started_at DESC,rowid DESC
       LIMIT 1
     `).get(taskId) as Row | undefined;
-    const cursor = Number(row?.message_cursor ?? 0);
+    const cursor = Number(legacyClaim?.message_cursor ?? 0);
     return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
   }
 

@@ -3,7 +3,7 @@ import test from "node:test";
 import { TaskBoard, createTaskBoardService } from "#server/task-board";
 import { HUMAN_TOKEN, databasePath } from "./helpers.js";
 
-test("the reconciler timers invoke the public verify, park-lifecycle, wall-clock, and base-branch sweeps", async (t) => {
+test("startup replays verify cleanup before reconciler timers invoke every public sweep", async (t) => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const intervals: Array<{ callback: () => void; delay: number | undefined }> = [];
@@ -37,15 +37,65 @@ test("the reconciler timers invoke the public verify, park-lifecycle, wall-clock
     });
     assert.equal(intervals.length, 5);
     assert.equal(intervals.every((interval) => interval.delay === 1_000), true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(verifySweep.mock.callCount(), 1);
 
     for (const interval of intervals) interval.callback();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    assert.equal(verifySweep.mock.callCount(), 1);
+    assert.equal(verifySweep.mock.callCount(), 2);
     assert.equal(parkSweep.mock.callCount(), 1);
     assert.equal(wallClockSweep.mock.callCount(), 1);
     assert.equal(baseBranchSweep.mock.callCount(), 1);
   } finally {
+    await service?.close();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
+test("closing immediately waits for the startup verify sweep before closing the board", async (t) => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const fakeTimer = { unref: () => undefined } as unknown as NodeJS.Timeout;
+  globalThis.setInterval = (() => fakeTimer) as typeof setInterval;
+  globalThis.clearInterval = (() => undefined) as typeof clearInterval;
+  let releaseSweep!: () => void;
+  const sweepHeld = new Promise<void>((resolve) => { releaseSweep = resolve; });
+  let sweepStarted!: () => void;
+  const started = new Promise<void>((resolve) => { sweepStarted = resolve; });
+  t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => {
+    sweepStarted();
+    await sweepHeld;
+    return 0;
+  });
+  const boardClose = t.mock.method(TaskBoard.prototype, "close", () => undefined);
+  const logged = t.mock.method(console, "error", () => undefined);
+  let service: Awaited<ReturnType<typeof createTaskBoardService>> | undefined;
+  try {
+    service = await createTaskBoardService({
+      dbPath: await databasePath(),
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      reconcileIntervalSeconds: 0,
+    });
+    await started;
+    const closing = service.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(boardClose.mock.callCount(), 0);
+
+    releaseSweep();
+    await closing;
+    service = undefined;
+
+    assert.equal(boardClose.mock.callCount(), 1);
+    assert.equal(
+      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] machine-verify reconciliation failed"),
+      false,
+    );
+  } finally {
+    releaseSweep();
     await service?.close();
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
@@ -112,10 +162,12 @@ test("verify, park lifecycle, wall clock, and base branch keep 60-second sweeps 
     assert.equal(intervals.length, 4);
     assert.equal(intervals.every((interval) => interval.delay === 60_000), true);
     assert.equal(intervals.every((interval) => interval.unrefed), true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(verifySweep.mock.callCount(), 1);
     for (const interval of intervals) interval.callback();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    assert.equal(verifySweep.mock.callCount(), 1);
+    assert.equal(verifySweep.mock.callCount(), 2);
     assert.equal(parkSweep.mock.callCount(), 1);
     assert.equal(wallClockSweep.mock.callCount(), 1);
     assert.equal(baseBranchSweep.mock.callCount(), 1);

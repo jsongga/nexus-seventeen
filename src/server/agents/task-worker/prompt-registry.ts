@@ -9,6 +9,7 @@ const PROMPT_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 const PLACEHOLDER = /\{\{(?<name>[a-z][a-zA-Z0-9]*)\}\}/gu;
 const KNOWN_TEMPLATES: ReadonlySet<string> = new Set([
   "bright-line",
+  "board-projects",
   "designer",
   "engineer-fix",
   "engineer-cross-repo-interface",
@@ -23,6 +24,7 @@ const KNOWN_TEMPLATES: ReadonlySet<string> = new Set([
   "onboarding-intake",
   "oversight",
   "pipeline-implementation",
+  "previous-plan-rejection",
   "reviewer-evidence",
   "reviewer-legacy",
   "reviewer-prior-findings-truncated",

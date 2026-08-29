@@ -4,6 +4,7 @@
     {
       "key": "cicada-sense",
       "name": "Cicada Sense / HomeDots",
+      "repoPath": "/var/lib/steward/repos/DotBackendLuo",
       "summary": "The connected-care product and its HomeDots infrastructure, spanning device operations, caregiver apps, backend services, and the deployed vital-sign AI.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo" },
@@ -30,6 +31,7 @@
     {
       "key": "cicada-ethos",
       "name": "Cicada Ethos",
+      "repoPath": "/var/lib/steward/repos/cicada-ethos",
       "summary": "The health-research product line and its independent Node, Postgres, object-storage, and web stack.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-ethos" },
@@ -44,6 +46,7 @@
     {
       "key": "cicada-steward",
       "name": "Cicada Steward",
+      "repoPath": "/var/lib/steward/repos/nexus-seventeen",
       "summary": "The internal task board, agent-control plane, and automation runtime being built for Cicada's project work.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo-steward" },
@@ -56,6 +59,7 @@
     {
       "key": "cicada-website",
       "name": "Cicada Website",
+      "repoPath": "/var/lib/steward/repos/landing-website",
       "summary": "The shared company and marketing website for Cicada Sense and Cicada Ethos.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-website" },
@@ -68,6 +72,7 @@
     {
       "key": "cicada-prism",
       "name": "Cicada Prism",
+      "repoPath": "/var/lib/steward/repos/prism",
       "summary": "A standalone experimental side project with its own repository and deployment boundary.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/prism" },
@@ -79,6 +84,7 @@
     {
       "key": "cicada-platform",
       "name": "Cicada Platform / Operations",
+      "repoPath": "/var/lib/steward/repos/platform-docs",
       "summary": "Cross-product architecture, repository inventory, deployment mapping, and operational documentation.",
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/platform-docs" },

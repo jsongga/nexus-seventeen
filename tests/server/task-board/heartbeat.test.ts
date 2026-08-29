@@ -618,7 +618,7 @@ test("a swept implementation retries through verification to merged with truthfu
   }
 });
 
-test("cancelled work item does not prevent its stale planning run from settling interrupted", async () => {
+test("cancelling a work item interrupts its active planning run before the stale sweep", async () => {
   let now = new Date("2026-08-16T12:00:00.000Z");
   const fixture = await boardFixture(undefined, () => now);
   try {
@@ -638,12 +638,17 @@ test("cancelled work item does not prevent its stale planning run from settling 
     });
     assert.equal(cancelled.state, "abandoned");
     assert.equal(fixture.board.requireTask(claim!.task!.taskId).status, "cancelled");
+    const interrupted = fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (item) => item.runId === claim!.run.runId,
+    );
+    assert.equal(interrupted?.status, "interrupted");
+    assert.equal(interrupted?.result, "The operator cancelled intake while planning was running.");
 
     now = new Date("2026-08-16T12:10:00.000Z");
-    assert.equal(fixture.board.reconcileStaleRuns(), 1);
+    assert.equal(fixture.board.reconcileStaleRuns(), 0);
     const run = fixture.board.snapshot(fixture.project.projectId).recentRuns.find((item) => item.runId === claim!.run.runId);
     assert.equal(run?.status, "interrupted");
-    assert.equal(run?.result, "run heartbeat lost");
+    assert.equal(run?.result, "The operator cancelled intake while planning was running.");
     assert.equal(fixture.board.requireWorkItem(created.workItemId).state, "abandoned");
     assert.equal(fixture.board.requireTask(claim!.task!.taskId).status, "cancelled");
   } finally {

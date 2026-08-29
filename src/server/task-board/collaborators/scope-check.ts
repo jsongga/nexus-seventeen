@@ -6,9 +6,19 @@ const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const SETTLEMENT_RESULT_LIMIT = 2_000;
 
-export type GitRunner = ((arguments_: readonly string[]) => string) & Readonly<{
-  bytes?: (arguments_: readonly string[]) => Buffer;
+export type GitTextRunner = (arguments_: readonly string[]) => string;
+
+export type GitRunner = GitTextRunner & Readonly<{
+  bytes: (arguments_: readonly string[]) => Buffer;
 }>;
+
+export function withGitBytes(runner: GitTextRunner): GitRunner {
+  if ("bytes" in runner && typeof runner.bytes === "function") return runner as GitRunner;
+  return Object.assign(
+    (arguments_: readonly string[]) => runner(arguments_),
+    { bytes: (arguments_: readonly string[]) => Buffer.from(runner(arguments_), "utf8") },
+  );
+}
 
 export type DeclaredScopeCheckResult =
   | Readonly<{ ok: true }>
@@ -44,7 +54,7 @@ export function checkDeclaredScope(request: Readonly<{
   baseSha: string;
   branch: string;
   declaredScope: readonly string[];
-  git: GitRunner;
+  git: GitTextRunner;
 }>): DeclaredScopeCheckResult {
   const normalizedScope = normalizeDeclaredScope(request.declaredScope);
   const output = request.git([

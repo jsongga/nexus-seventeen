@@ -578,6 +578,7 @@ export class TaskWorker {
         outcome: null,
         nextOutputIndex: 0,
         correctableSettlementRejections: 0,
+        previousPlanRejectionDetail: null,
       });
       const next: TaskWorkerJournal = {
         ...this.#state,
@@ -840,6 +841,9 @@ export class TaskWorker {
           runId: active.claim.runId,
           wakeReason: active.claim.reason as TaskWakeReason,
           context,
+          ...(active.previousPlanRejectionDetail === null || active.previousPlanRejectionDetail === undefined
+            ? {}
+            : { previousPlanRejectionDetail: active.previousPlanRejectionDetail }),
         });
         this.#activeHandle = handle;
         await this.#serial.run(async () => {
@@ -1332,6 +1336,10 @@ export class TaskWorker {
         throw new Error("Active run changed while a correctable settlement was rejected");
       }
       const correctableSettlementRejections = current.correctableSettlementRejections + 1;
+      const previousPlanRejectionDetail = safeDetail(
+        rejection.detail,
+        "The previous plan was rejected by task-board validation.",
+      );
       capReached = correctableSettlementRejections >= MAX_CORRECTABLE_SETTLEMENT_REJECTIONS;
       const next: TaskWorkerJournal = {
         ...this.#state,
@@ -1341,6 +1349,7 @@ export class TaskWorker {
               outcome: failedOutcome(rejection.detail, "Task-board settlement correction limit was reached."),
               nextOutputIndex: 0,
               correctableSettlementRejections,
+              previousPlanRejectionDetail,
             }
           : {
               ...current,
@@ -1350,6 +1359,7 @@ export class TaskWorker {
               outcome: null,
               nextOutputIndex: 0,
               correctableSettlementRejections,
+              previousPlanRejectionDetail,
             },
       };
       await this.#saveState(next);

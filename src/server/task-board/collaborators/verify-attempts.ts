@@ -11,7 +11,7 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
-import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
+import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
 
 const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
@@ -111,8 +111,8 @@ export interface VerifyAttemptsDependencies {
   readonly supervisorPath?: string;
   readonly workspaceManagerFactory?: (repositoryPath: string) => MachineVerifyWorkspaceManager;
   readonly runnerFactory?: (options: VerifyRunnerOptions) => MachineVerifyRunner;
-  readonly executeCheck?: (command: string, cwd: string) => Promise<CriterionCheckExecution>;
-  readonly git?: GitRunner;
+  readonly executeCheck?: (command: string, cwd: string, signal: AbortSignal) => Promise<CriterionCheckExecution>;
+  readonly git?: GitTextRunner;
   readonly settleInTransaction: (
     nodeId: string,
     stage: WorkflowStage,
@@ -213,7 +213,7 @@ function commandArgv(command: string): readonly string[] {
   return Object.freeze(argv);
 }
 
-function executeCriterionCheck(command: string, cwd: string): Promise<CriterionCheckExecution> {
+function executeCriterionCheck(command: string, cwd: string, signal: AbortSignal): Promise<CriterionCheckExecution> {
   let argv: readonly string[];
   try {
     argv = commandArgv(command);
@@ -231,6 +231,7 @@ function executeCriterionCheck(command: string, cwd: string): Promise<CriterionC
       windowsHide: true,
       shell: false,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      signal,
     }, (error, stdout, stderr) => {
       if (error === null) {
         resolve({ passed: true, detail: "exit 0" });
@@ -285,11 +286,12 @@ export class VerifyAttemptsCollaborator {
   readonly #supervisorPath: string;
   readonly #workspaceManagerFactory: (repositoryPath: string) => MachineVerifyWorkspaceManager;
   readonly #runnerFactory: (options: VerifyRunnerOptions) => MachineVerifyRunner;
-  readonly #executeCheck: (command: string, cwd: string) => Promise<CriterionCheckExecution>;
-  readonly #git: GitRunner;
+  readonly #executeCheck: (command: string, cwd: string, signal: AbortSignal) => Promise<CriterionCheckExecution>;
+  readonly #git: GitTextRunner;
   readonly #boardPause: BoardPauseCollaborator;
   readonly #inFlightStarts = new Set<string>();
   readonly #startAbortControllers = new Map<string, AbortController>();
+  readonly #criterionAbortControllers = new Map<string, AbortController>();
   readonly #retirementOperations = new Set<Promise<void>>();
   readonly #terminationClaims = new Set<string>();
   readonly #workspaceCleanupClaims = new Set<string>();
@@ -314,11 +316,9 @@ export class VerifyAttemptsCollaborator {
     this.#unregisterRetirementListener = registerRetirementListener(runtime, (retirement) => {
       if (this.#closed) return;
       const controller = this.#startAbortControllers.get(retirement.verifyAttemptId);
-      if (controller !== undefined) {
-        controller.abort();
-        return;
-      }
-      this.#trackRetirement(this.#retireAttemptResources(retirement.verifyAttemptId));
+      controller?.abort();
+      this.#criterionAbortControllers.get(retirement.verifyAttemptId)?.abort();
+      if (controller === undefined) this.#trackRetirement(this.#retireAttemptResources(retirement.verifyAttemptId));
     });
   }
 
@@ -393,12 +393,14 @@ export class VerifyAttemptsCollaborator {
 
   close(): void {
     this.#closed = true;
+    for (const controller of this.#criterionAbortControllers.values()) controller.abort();
     this.#unregisterRetirementListener();
   }
 
   async #sweepAndDrainRetirements(): Promise<number> {
     await this.#drainRetirements();
-    const processed = await this.#sweepOpenAttempts();
+    if (this.#closed) return 0;
+    const processed = await this.#sweepRetiredAttempts() + await this.#sweepOpenAttempts();
     await this.#drainRetirements();
     return processed;
   }
@@ -415,39 +417,69 @@ export class VerifyAttemptsCollaborator {
   }
 
   async #retireAttemptResources(verifyAttemptId: string): Promise<void> {
+    if (this.#closed) return;
     const current = this.#context(verifyAttemptId);
     if (current === undefined || current.state !== "retired") return;
-    if (current.verifyRunId !== null && current.workspacePath !== null) {
+    let terminated = current.verifyRunId === null;
+    if (current.verifyRunId !== null) {
       try {
         const runner = this.#runnerFactory({
-          repoRoot: current.workspacePath,
+          repoRoot: current.workspacePath ?? current.repositoryPath,
           supervisorPath: this.#supervisorPath,
         });
-        await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
+        terminated = await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
       } catch (error) {
         console.error(`[task-board] could not prepare termination for retired verify attempt ${verifyAttemptId}`, error);
       }
     }
-    if (current.workspacePath === null) return;
-    try {
-      const workspace = this.#workspaceManagerFactory(current.repositoryPath);
-      await this.#removeAttemptWorkspaceBestEffort(
-        current.verifyAttemptId,
-        workspace,
-        current.workItemId,
-        current.workspacePath,
-      );
-    } catch (error) {
-      console.error(`[task-board] could not prepare retired verify workspace cleanup for ${verifyAttemptId}`, error);
+    let workspaceRemoved = current.workspacePath === null;
+    if (current.workspacePath !== null) {
       try {
-        await removeRecordedTaskWorkspace(this.runtime.config.verifyWorkspaceRoot, current.workspacePath);
-      } catch (cleanupError) {
-        console.error(`[task-board] could not remove recorded verify workspace for ${current.workItemId}`, cleanupError);
+        const workspace = this.#workspaceManagerFactory(current.repositoryPath);
+        workspaceRemoved = await this.#removeAttemptWorkspaceBestEffort(
+          current.verifyAttemptId,
+          workspace,
+          current.workItemId,
+          current.workspacePath,
+        );
+      } catch (error) {
+        console.error(`[task-board] could not prepare retired verify workspace cleanup for ${verifyAttemptId}`, error);
+        try {
+          await removeRecordedTaskWorkspace(this.runtime.config.verifyWorkspaceRoot, current.workspacePath);
+          workspaceRemoved = true;
+        } catch (cleanupError) {
+          console.error(`[task-board] could not remove recorded verify workspace for ${current.workItemId}`, cleanupError);
+        }
       }
     }
+    if (this.#closed) return;
+    this.runtime.store.db.prepare(`
+      UPDATE verify_attempts
+      SET verify_run_id=CASE WHEN ?=1 THEN NULL ELSE verify_run_id END,
+        workspace_path=CASE WHEN ?=1 THEN NULL ELSE workspace_path END
+      WHERE verify_attempt_id=? AND state='retired'
+    `).run(terminated ? 1 : 0, workspaceRemoved ? 1 : 0, verifyAttemptId);
+  }
+
+  async #sweepRetiredAttempts(): Promise<number> {
+    if (this.#closed) return 0;
+    const attemptIds = (this.runtime.store.db.prepare(`
+      SELECT verify_attempt_id
+      FROM verify_attempts
+      WHERE state='retired' AND (verify_run_id IS NOT NULL OR workspace_path IS NOT NULL)
+      ORDER BY created_at,verify_attempt_id
+    `).all() as Row[]).map((row) => String(row.verify_attempt_id));
+    let processed = 0;
+    for (const verifyAttemptId of attemptIds) {
+      if (this.#closed) break;
+      await this.#retireAttemptResources(verifyAttemptId);
+      processed += 1;
+    }
+    return processed;
   }
 
   async #sweepOpenAttempts(): Promise<number> {
+    if (this.#closed) return 0;
     const attemptIds = (this.runtime.store.db.prepare(`
       SELECT verify_attempt_id
       FROM verify_attempts
@@ -495,7 +527,6 @@ export class VerifyAttemptsCollaborator {
     const abortController = new AbortController();
     this.#startAbortControllers.set(verifyAttemptId, abortController);
     let current: AttemptContext | undefined;
-    let initialState: "starting" | "failed_to_start" | undefined;
     let workspacePath: string | null = null;
     let workspace: MachineVerifyWorkspaceManager | null = null;
     try {
@@ -503,7 +534,6 @@ export class VerifyAttemptsCollaborator {
       if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) {
         return false;
       }
-      initialState = current.state;
       workspace = this.#workspaceManagerFactory(current.repositoryPath);
       workspacePath = await workspace.create(
         `${current.workItemId}${VERIFY_WORKSPACE_SUFFIX}`,
@@ -516,7 +546,7 @@ export class VerifyAttemptsCollaborator {
         beforeSpawn === undefined ||
         (beforeSpawn.state !== "starting" && beforeSpawn.state !== "failed_to_start")
       ) {
-        if (beforeSpawn?.state === "retired" && initialState === "starting") {
+        if (beforeSpawn?.state === "retired") {
           await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
         } else {
           await this.#removeBestEffort(workspace, current.workItemId);
@@ -577,7 +607,7 @@ export class VerifyAttemptsCollaborator {
       }
       current = this.#context(verifyAttemptId);
       if (current === undefined || (current.state !== "starting" && current.state !== "failed_to_start")) {
-        if (current?.state === "retired" && workspace !== null && initialState === "starting") {
+        if (current?.state === "retired" && workspace !== null) {
           await this.#removeAttemptWorkspaceBestEffort(verifyAttemptId, workspace, current.workItemId);
         }
         return false;
@@ -673,6 +703,7 @@ export class VerifyAttemptsCollaborator {
 
     const checks = await this.#runChecks(current);
     if (this.#closed) return false;
+    if (this.#context(current.verifyAttemptId)?.state !== "running") return true;
     if (checks.failures.length > 0) {
       const detail = redactForPersistence(
         `Machine verify criterion checks failed: ${checks.failures.join("; ")}`,
@@ -721,21 +752,30 @@ export class VerifyAttemptsCollaborator {
     const results: Array<{ criterion: string; check: string; passed: boolean }> = [];
     const failures: string[] = [];
     const failureDetailsByIndex: Array<string | null> = [];
-    for (const check of current.criterionChecks) {
-      if (this.#closed) break;
-      let execution: CriterionCheckExecution;
-      try {
-        execution = await this.#executeCheck(check.check, current.workspacePath);
-      } catch (error) {
-        execution = { passed: false, detail: errorDetail(error) };
+    const controller = new AbortController();
+    this.#criterionAbortControllers.set(current.verifyAttemptId, controller);
+    try {
+      for (const check of current.criterionChecks) {
+        if (this.#closed || controller.signal.aborted) break;
+        let execution: CriterionCheckExecution;
+        try {
+          execution = await this.#executeCheck(check.check, current.workspacePath, controller.signal);
+        } catch (error) {
+          execution = { passed: false, detail: errorDetail(error) };
+        }
+        if (controller.signal.aborted || this.#context(current.verifyAttemptId)?.state !== "running") break;
+        const criterion = redactForPersistence(check.criterion);
+        const command = redactForPersistence(check.check);
+        const detail = redactForPersistence(execution.detail, 2_000);
+        results.push({ criterion, check: command, passed: execution.passed });
+        const failure = execution.passed ? null : `${criterion}: ${detail}`;
+        failureDetailsByIndex.push(failure);
+        if (failure !== null) failures.push(failure);
       }
-      const criterion = redactForPersistence(check.criterion);
-      const command = redactForPersistence(check.check);
-      const detail = redactForPersistence(execution.detail, 2_000);
-      results.push({ criterion, check: command, passed: execution.passed });
-      const failure = execution.passed ? null : `${criterion}: ${detail}`;
-      failureDetailsByIndex.push(failure);
-      if (failure !== null) failures.push(failure);
+    } finally {
+      if (this.#criterionAbortControllers.get(current.verifyAttemptId) === controller) {
+        this.#criterionAbortControllers.delete(current.verifyAttemptId);
+      }
     }
     return Object.freeze({
       results: Object.freeze(results),
@@ -816,19 +856,7 @@ export class VerifyAttemptsCollaborator {
     if (!settled) {
       const latest = this.#context(current.verifyAttemptId);
       if (latest?.state === "retired") {
-        if (current.verifyRunId !== null && current.workspacePath !== null) {
-          const runner = this.#runnerFactory({
-            repoRoot: current.workspacePath,
-            supervisorPath: this.#supervisorPath,
-          });
-          await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
-        }
-        const workspace = this.#workspaceManagerFactory(current.repositoryPath);
-        await this.#removeAttemptWorkspaceBestEffort(
-          current.verifyAttemptId,
-          workspace,
-          current.workItemId,
-        );
+        await this.#retireAttemptResources(current.verifyAttemptId);
       }
       return;
     }
@@ -845,13 +873,17 @@ export class VerifyAttemptsCollaborator {
     verifyAttemptId: string,
     runner: MachineVerifyRunner,
     verifyRunId: string,
-  ): Promise<void> {
-    if (this.#terminationClaims.has(verifyAttemptId)) return;
+  ): Promise<boolean> {
+    if (this.#terminationClaims.has(verifyAttemptId)) return false;
     this.#terminationClaims.add(verifyAttemptId);
     try {
       await runner.terminate(verifyRunId);
+      return true;
     } catch (error) {
       console.error(`[task-board] could not terminate retired verify attempt ${verifyAttemptId}`, error);
+      return false;
+    } finally {
+      this.#terminationClaims.delete(verifyAttemptId);
     }
   }
 
@@ -860,18 +892,28 @@ export class VerifyAttemptsCollaborator {
     workspace: MachineVerifyWorkspaceManager,
     workItemId: string,
     recordedPath?: string,
-  ): Promise<void> {
-    if (this.#workspaceCleanupClaims.has(verifyAttemptId)) return;
+  ): Promise<boolean> {
+    if (this.#workspaceCleanupClaims.has(verifyAttemptId)) return false;
     this.#workspaceCleanupClaims.add(verifyAttemptId);
-    if (recordedPath !== undefined && workspace.removeRecordedPath !== undefined) {
-      try {
-        await workspace.removeRecordedPath(recordedPath);
-        return;
-      } catch (error) {
-        console.error(`[task-board] could not remove recorded verify workspace for ${workItemId}`, error);
+    try {
+      if (recordedPath !== undefined && workspace.removeRecordedPath !== undefined) {
+        try {
+          await workspace.removeRecordedPath(recordedPath);
+          return true;
+        } catch (error) {
+          console.error(`[task-board] could not remove recorded verify workspace for ${workItemId}`, error);
+        }
       }
+      try {
+        await workspace.remove(`${workItemId}${VERIFY_WORKSPACE_SUFFIX}`);
+        return true;
+      } catch (error) {
+        console.error(`[task-board] could not remove green verify workspace for ${workItemId}`, error);
+        return false;
+      }
+    } finally {
+      this.#workspaceCleanupClaims.delete(verifyAttemptId);
     }
-    await this.#removeBestEffort(workspace, workItemId);
   }
 
   async #removeBestEffort(workspace: MachineVerifyWorkspaceManager, workItemId: string): Promise<void> {

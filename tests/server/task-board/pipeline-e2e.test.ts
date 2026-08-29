@@ -273,6 +273,24 @@ process.stdin.on("end", () => {
     process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
     return;
   }
+  const contextMatch = /Bounded task context follows as JSON:\\n([^\\n]+)\\nReturn only/u.exec(input);
+  if (contextMatch === null) throw new Error("manager prompt omitted bounded task context");
+  const boundedContext = JSON.parse(contextMatch[1]);
+  const boardProjects = boundedContext.boardProjects;
+  const projectRoutes = ${JSON.stringify(projectRoutes)};
+  if (!Array.isArray(boardProjects) || boardProjects.length < 1 || boardProjects.length > 64) {
+    throw new Error("manager prompt omitted bounded board projects");
+  }
+  for (const project of boardProjects) {
+    if (Object.keys(project).sort().join(",") !== "name,projectId,repoName") {
+      throw new Error("manager prompt carried an invalid board project");
+    }
+  }
+  for (const projectId of [projectRoutes.providerProjectId, projectRoutes.consumerProjectId].filter(Boolean)) {
+    if (!boardProjects.some((project) => project.projectId === projectId)) {
+      throw new Error("manager prompt omitted a routed board project");
+    }
+  }
   let workflowPlan = {
     objective: "Deliver the scoped Pipeline v2 fixture plan v" + revision + ".",
     assumptions: ["The fixture repository stays available."],
@@ -296,7 +314,6 @@ process.stdin.on("end", () => {
       stageTemplate: ["implementation", "testing", "verification"]
     }]
   };
-  const projectRoutes = ${JSON.stringify(projectRoutes)};
   if (input.includes(${JSON.stringify(BLAST_RADIUS_MARKER)})) {
     if (projectRoutes.consumerProjectId === null) throw new Error("blast-radius fixture requires a consumer project");
     workflowPlan = {
@@ -443,12 +460,24 @@ process.stdin.on("end", () => {
   const fixRound = fixMatch === null ? null : Number(fixMatch[1]);
   const isExpand = input.includes("This is the Expand phase of a planned interface change.");
   const isContract = input.includes("This is the Contract phase of a planned interface change.");
-  if (mode === "phased_consumer") {
-    const contextMatch = /Bounded task context follows as JSON:\\n([^\\n]+)\\nReturn only/u.exec(input);
-    if (contextMatch === null) throw new Error("consumer prompt omitted bounded task context");
-    const context = JSON.parse(contextMatch[1]);
-    const crossRepo = context.crossRepoContext;
-    if (crossRepo === undefined) throw new Error("consumer claim omitted crossRepoContext");
+  const baseAdvanceRetry = input.includes("base branch advanced to") && input.includes("rebase onto it and re-verify");
+  if (baseAdvanceRetry) {
+    runGit(["rebase", "main"]);
+  } else if (mode === "phased_consumer") {
+    const interfaceHeader = /PUBLISHED interface below \\(([^\\s]+) @ ([0-9a-f]{40,64})\\);/u.exec(input);
+    const providerProject = /Provider project: ([^\\n]+)\\n/u.exec(input);
+    const providerRepository = /Provider repository: ([^\\n]+)\\n/u.exec(input);
+    const publishedMarkdown = /--- BEGIN PUBLISHED INTERFACE ---\\n([\\s\\S]*?)\\n--- END PUBLISHED INTERFACE ---/u.exec(input);
+    if (interfaceHeader === null || providerProject === null || providerRepository === null || publishedMarkdown === null) {
+      throw new Error("consumer prompt omitted the published interface section");
+    }
+    const crossRepo = {
+      interfacePath: interfaceHeader[1],
+      sha: interfaceHeader[2],
+      providerProjectId: providerProject[1],
+      providerRepoName: providerRepository[1],
+      markdown: publishedMarkdown[1],
+    };
     if (crossRepo.providerProjectId !== phased.providerProjectId) throw new Error("consumer received the wrong provider project");
     if (crossRepo.providerRepoName !== phased.providerRepoName) throw new Error("consumer received the wrong provider repository name");
     if (crossRepo.interfacePath !== "docs/interface.md") throw new Error("consumer received the wrong interface path");
@@ -2233,7 +2262,7 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
   }
 });
 
-test("campaign 10 exit: a feature split merges its children under one parent approval", async () => {
+test("campaign 10 exit: a same-repository feature split re-verifies after the first parent approval", async () => {
   const fixture = await createFixture({
     suffix: "exit-feature-split",
     originalRequest: `Deliver the ${FEATURE_SPLIT_MARKER} in one repository.`,
@@ -2272,18 +2301,41 @@ test("campaign 10 exit: a feature split merges its children under one parent app
       notification.kind === "parent_ready_for_approval" &&
       notification.workItemId === fixture.workItem.workItemId).length, 1);
 
-    const merged = await jsonRequest<{ workItem: WorkItem }>(
+    const coordinating = await jsonRequest<{ workItem: WorkItem }>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
       { body: { version: parentApproval.version } },
     );
-    assert.equal(merged.workItem.state, "merged");
+    assert.equal(coordinating.workItem.state, "coordinating");
     assert.deepEqual(
       await Promise.all([first, second].map(async (child) => (await currentWorkItem(fixture, child.workItemId)).state)),
-      ["merged", "merged"],
+      ["merged", "implementing"],
     );
+    assert.ok((await jsonRequest<{ unread: Array<{ kind: string; workItemId: string | null }> }>(
+      fixture.origin,
+      "/v1/notifications",
+      "GET",
+      200,
+    )).unread.some((notification) =>
+      notification.kind === "final_approval_withdrawn" && notification.workItemId === second.workItemId));
+
+    assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
+    await driveVerifyItem(fixture, second.workItemId, "reviewing");
+    assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
+    assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "final_approval");
+    const secondParentApproval = await currentWorkItem(fixture);
+    assert.equal(secondParentApproval.state, "final_approval");
+    const merged = await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
+      "POST",
+      200,
+      { body: { version: secondParentApproval.version } },
+    );
+    assert.equal(merged.workItem.state, "merged");
+    assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "merged");
     const [firstApproval, secondApproval] = [first, second].map((child) =>
       singleFinalApproval(fixture, child.workItemId));
     assert.ok(firstApproval);
@@ -2366,13 +2418,33 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     assert.ok(parks.open.some((park) =>
       park.workItemId === fixture.workItem.workItemId && park.category === "child_failed"));
 
-    const resumed = await jsonRequest<{ workItem: WorkItem }>(
+    const rejectedResumeSideEffects = () => {
+      const inspected = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        return Object.freeze({
+          tasks: Number(inspected.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count),
+          wakeups: Number(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count),
+          transitions: Number(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_transitions").get()?.count),
+          notifications: Number(inspected.prepare("SELECT COUNT(*) AS count FROM notifications").get()?.count),
+          taskEvents: Number(inspected.prepare("SELECT COUNT(*) AS count FROM task_events").get()?.count),
+          projectEvents: Number(inspected.prepare("SELECT COUNT(*) AS count FROM project_events").get()?.count),
+        });
+      } finally {
+        inspected.close();
+      }
+    };
+    const beforeRejectedResume = rejectedResumeSideEffects();
+
+    const rejectedResume = await jsonRequest<{ error: { code: string; message: string } }>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/resume`,
       "POST",
-      200,
+      409,
     );
-    assert.equal(resumed.workItem.state, "coordinating");
+    assert.equal(rejectedResume.error.code, "PARENT_PHASED_FAILED");
+    assert.deepEqual(rejectedResumeSideEffects(), beforeRejectedResume, "a rejected resume must be side-effect-free");
+    const parkedParent = await currentWorkItem(fixture);
+    assert.equal(parkedParent.state, "parked");
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
     assert.equal(latestNodeBlock(fixture, contract.workItemId),
       `blocked: ${migrate.workItemId} (migrate) dead_letter`);
@@ -2469,7 +2541,7 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
       200,
       {
         body: {
-          version: resumed.workItem.version,
+          version: parkedParent.version,
           action: "cancel",
           reason: "Cancel the unsafe phased family after the migration dead-lettered.",
         },
@@ -2479,7 +2551,11 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "merged");
     assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "dead_letter");
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "abandoned");
-    assert.equal(await fixture.sweepBoard.sweepVerifyAttempts(), 0);
+    assert.equal(
+      await fixture.sweepBoard.sweepVerifyAttempts(),
+      1,
+      "the durable retired verifier seeded by this arc is replayed once",
+    );
     const cleanupDeadline = Date.now() + 5_000;
     while (Date.now() < cleanupDeadline) {
       try {

@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   expandedAgentProfiles,
   mergeAutomationConfiguration,
+  projectCatalogPatch,
   projectDescription,
   sameEditableAutomation,
   validateCatalog,
@@ -19,6 +20,33 @@ test('the checked-in company catalog satisfies board constraints', () => {
   assert.equal(validateCatalog(structuredClone(catalog)).version, 1);
   assert.equal(expandedAgentProfiles(catalog).length, catalog.projects.length * 3);
   assert.match(projectDescription(catalog.projects[0]), /^Summary:/u);
+  assert.ok(catalog.projects.every((project) => typeof project.repoPath === 'string'));
+});
+
+test('catalog projects require an explicit repository path', () => {
+  const missing = structuredClone(catalog);
+  delete missing.projects[0].repoPath;
+  assert.throws(
+    () => validateCatalog(missing),
+    /projects\[0\] must contain exactly key, name, repoPath, resources, summary/u,
+  );
+});
+
+test('catalog reconciliation repairs description and repository-path drift', () => {
+  const desired = catalog.projects[0];
+  assert.deepEqual(projectCatalogPatch({
+    name: desired.name,
+    description: 'Backfilled legacy description',
+    repoPath: '/legacy/host/path',
+  }, desired), {
+    description: projectDescription(desired),
+    repoPath: desired.repoPath,
+  });
+  assert.equal(projectCatalogPatch({
+    name: desired.name,
+    description: projectDescription(desired),
+    repoPath: desired.repoPath,
+  }, desired), null);
 });
 
 test('automation merge retains unknown immutable types and adds desired types', () => {

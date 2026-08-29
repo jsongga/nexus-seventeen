@@ -3,10 +3,12 @@ import {
   BoardPauseVersionGuard,
   WorkItemDetailLoadCoordinator,
   changeBoardPause,
+  routedWorkItemSelection,
   pausePopoverShouldClose,
   refreshBoardSnapshot,
   resolveDialogTriggerAction,
   snapshotLostSelectedWorkItem,
+  workItemDetailReloadPending,
 } from './BoardApp';
 import { BoardApiError, type TaskBoardClient } from './data/client';
 import type { RawBoardPause } from './data/parse';
@@ -224,11 +226,24 @@ describe('work-item detail navigation coordination', () => {
     const listed = [{ id: 'archived-child' }] as BoardWorkItem[];
     expect(snapshotLostSelectedWorkItem('archived-child', listed, [])).toBe(true);
     expect(snapshotLostSelectedWorkItem('another-child', listed, [])).toBe(false);
+    const cached = { id: 'archived-child' } as BoardWorkItemDetail;
+    expect(routedWorkItemSelection(
+      { kind: 'intake', workItemId: 'archived-child' },
+      [],
+      cached,
+      listed,
+    )).toBeUndefined();
 
     const coordinator = new WorkItemDetailLoadCoordinator();
     await expect(coordinator.load('archived-child', async () => {
       throw new BoardApiError('Not found', 404, 'NOT_FOUND');
     })).resolves.toEqual({ kind: 'not-found' });
+  });
+
+  it('holds the intake route while its disappeared-detail reload is pending', () => {
+    const page = { kind: 'intake', workItemId: 'archived-child' } as const;
+    expect(workItemDetailReloadPending(page, '#/intake/archived-child')).toBe(true);
+    expect(workItemDetailReloadPending(page, null)).toBe(false);
   });
 });
 

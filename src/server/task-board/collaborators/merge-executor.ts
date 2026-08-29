@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
-import type { GitRunner } from "./scope-check.js";
+import type { GitTextRunner } from "./scope-check.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
@@ -13,14 +13,26 @@ const neutralized = (repoPath: string, arguments_: readonly string[]): readonly 
   ...arguments_,
 ];
 
-export const runMergeGit: GitRunner = (arguments_) => execFileSync("git", [...arguments_], {
-  encoding: "utf8",
-  timeout: GIT_TIMEOUT_MS,
-  maxBuffer: GIT_MAX_BYTES,
-  windowsHide: true,
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-});
+export const runMergeGit: GitTextRunner = Object.assign(
+  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BYTES,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  }),
+  {
+    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+      encoding: "buffer",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BYTES,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    }),
+  },
+);
 
 export type MergePipelineResult =
   | Readonly<{ kind: "merged"; mergeSha: string }>
@@ -42,7 +54,7 @@ export type PipelineBaseAdvanceInspection =
 export function inspectPipelineMergeTarget(request: Readonly<{
   repoPath: string;
   branch: string;
-  git: GitRunner;
+  git: GitTextRunner;
 }>): PipelineMergeTarget {
   let currentBranch: string;
   let dirty: string;
@@ -68,7 +80,7 @@ export function isPipelineBaseAncestor(request: Readonly<{
   repoPath: string;
   baseSha: string;
   target: string;
-  git: GitRunner;
+  git: GitTextRunner;
 }>): boolean {
   try {
     request.git(neutralized(request.repoPath, [
@@ -90,7 +102,7 @@ export function inspectPipelineBaseAdvance(request: Readonly<{
   repoPath: string;
   branch: string;
   baseSha: string;
-  git: GitRunner;
+  git: GitTextRunner;
 }>): PipelineBaseAdvanceInspection {
   const target = inspectPipelineMergeTarget(request);
   if (target.kind === "repo_busy") return target;
@@ -111,7 +123,7 @@ export function inspectPipelineBaseAdvance(request: Readonly<{
 export function resolvePipelineBranchTip(request: Readonly<{
   repoPath: string;
   branch: string;
-  git: GitRunner;
+  git: GitTextRunner;
 }>): string {
   const sha = request.git(neutralized(request.repoPath, [
     "rev-parse", "--verify", `${request.branch}^{commit}`,
@@ -120,7 +132,7 @@ export function resolvePipelineBranchTip(request: Readonly<{
   return sha;
 }
 
-function optionalGit(git: GitRunner, arguments_: readonly string[]): string | null {
+function optionalGit(git: GitTextRunner, arguments_: readonly string[]): string | null {
   try {
     return git(arguments_);
   } catch {
@@ -143,7 +155,7 @@ export function mergePipelineBranch(request: Readonly<{
   branch: string;
   branchSha: string;
   baseSha: string;
-  git: GitRunner;
+  git: GitTextRunner;
 }>): MergePipelineResult {
   if (!GIT_OBJECT_ID_PATTERN.test(request.branchSha)) {
     throw new Error("pipeline branch object id is invalid");

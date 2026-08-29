@@ -1,7 +1,7 @@
 import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
-import type { GitRunner } from "./scope-check.js";
+import type { GitTextRunner } from "./scope-check.js";
 import { inspectPipelineBaseAdvance } from "./merge-executor.js";
 import { ProjectsCollaborator, runWorkflowGit } from "./projects.js";
 
@@ -41,7 +41,7 @@ export class BaseBranchPollCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly projects: ProjectsCollaborator,
-    private readonly git: GitRunner = runWorkflowGit,
+    private readonly git: GitTextRunner = runWorkflowGit,
   ) {}
 
   sweepBaseBranch(now: string): BaseBranchSweepResult {

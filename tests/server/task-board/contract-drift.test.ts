@@ -730,7 +730,13 @@ test("populated v25 data upgrades through the v26 rebuild without weakening new 
     legacy.exec(`
       PRAGMA foreign_keys = ON;
       INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
-      VALUES ('v26-project', 'V26 migration', '/repos/provider', 3, '${createdAt}', '${createdAt}');
+      VALUES
+        ('v26-project', 'V26 migration', '/repos/provider', 3, '${createdAt}', '${createdAt}'),
+        ('v26-catalog-project', 'Catalog migration',
+          'Summary: Catalog-managed provider
+Docs: https://docs.example.com/provider
+Workspace: /repos/catalog-provider',
+          2, '${createdAt}', '${createdAt}');
       INSERT INTO work_items(
         work_item_id, original_request, refined_objective, priority, project_target_mode,
         target_project_id, resolved_project_id, pipeline_branch, base_sha, state, current_stage,
@@ -803,15 +809,22 @@ test("populated v25 data upgrades through the v26 rebuild without weakening new 
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    assert.deepEqual({ ...upgraded.db.prepare(`
+    assert.deepEqual(upgraded.db.prepare(`
       SELECT name, description, repo_path, version
-      FROM projects WHERE project_id='v26-project'
-    `).get() }, {
+      FROM projects
+      WHERE project_id IN ('v26-catalog-project', 'v26-project')
+      ORDER BY project_id
+    `).all().map((row) => ({ ...row })), [{
+      name: "Catalog migration",
+      description: "Summary: Catalog-managed provider\nDocs: https://docs.example.com/provider\nWorkspace: /repos/catalog-provider",
+      repo_path: "/repos/catalog-provider",
+      version: 2,
+    }, {
       name: "V26 migration",
       description: "/repos/provider",
       repo_path: "/repos/provider",
       version: 3,
-    });
+    }]);
     assert.deepEqual(upgraded.db.prepare(`
       SELECT work_item_id, parent_work_item_id, phase, child_ordinal, state, version
       FROM work_items ORDER BY work_item_id

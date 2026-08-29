@@ -66,6 +66,26 @@ test("projects persist an explicit repo path and default legacy requests to desc
   }
 });
 
+test("projects can update descriptive fields and repository identity independently", async () => {
+  const fixture = await boardFixture();
+  try {
+    const updated = fixture.board.updateProject(fixture.project.projectId, {
+      name: "Checkout platform",
+      description: "Owns the customer checkout experience.",
+      repoPath: "/var/lib/steward/repos/checkout-platform",
+    });
+
+    assert.equal(updated.name, "Checkout platform");
+    assert.equal(updated.description, "Owns the customer checkout experience.");
+    assert.equal(updated.repoPath, "/var/lib/steward/repos/checkout-platform");
+    assert.equal(updated.version, fixture.project.version + 1);
+    assert.equal(fixture.board.listProjects().find((project) => project.projectId === updated.projectId)?.repoPath,
+      "/var/lib/steward/repos/checkout-platform");
+  } finally {
+    fixture.board.close();
+  }
+});
+
 async function installV24Schema(path: string): Promise<void> {
   const { DatabaseSync } = await import("node:sqlite");
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -2181,7 +2201,7 @@ test("retry and recoverable reassignment reactivate a node without reopening its
   }
 });
 
-test("a cancelled work item keeps its live final-stage task cancelled while its run settles", async () => {
+test("a cancelled work item absorbs and idempotently replays its live final-stage settlement", async () => {
   const fixture = await activeSettlementWorkflow("cancelled-final-stage");
   try {
     const current = fixture.board.requireWorkItem(fixture.workItem.workItemId);
@@ -2192,15 +2212,28 @@ test("a cancelled work item keeps its live final-stage task cancelled while its 
     });
     const cancelled = fixture.board.requireWorkItem(fixture.workItem.workItemId);
 
-    const settled = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
-      outcome: "completed",
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === fixture.claim.run.runId,
+    )?.status, "interrupted");
+    const cancelledTask = fixture.board.requireTask(fixture.claim.task!.taskId);
+    const cancelledNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes[0];
+    const settlement = {
+      outcome: "completed" as const,
       result: "The already-running verification completed after cancellation.",
       handoff: settlementHandoff("passed"),
-    });
-
+    };
+    const settled = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, settlement);
     assert.equal(settled.run.status, "completed");
-    assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "cancelled");
-    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "completed");
+    assert.equal(settled.duplicate, false);
+    assert.deepEqual(fixture.board.requireTask(fixture.claim.task!.taskId), cancelledTask);
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0], cancelledNode);
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
+
+    const replay = fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, settlement);
+    assert.equal(replay.run.status, "completed");
+    assert.equal(replay.duplicate, true);
+    assert.deepEqual(fixture.board.requireTask(fixture.claim.task!.taskId), cancelledTask);
+    assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0], cancelledNode);
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
   } finally {
     fixture.board.close();
@@ -2228,7 +2261,7 @@ test("a cancelled work item's stage task rejects new questions", async () => {
       }),
       (error: unknown) => error instanceof TaskBoardError
         && error.status === 409
-        && error.code === "TASK_TERMINAL",
+        && error.code === "RUN_NOT_ACTIVE",
     );
     assert.equal(fixture.board.snapshot(fixture.project.projectId).openQuestions.some(
       (candidate) => candidate.taskId === taskId,
@@ -2432,11 +2465,20 @@ test("a completed planning run missing workflowPlan remains active and accepts a
 });
 
 test("planning settlement defers auto-target project context, persists children, and corrects explicit mismatches", async () => {
-  const fixture = await boardFixture();
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${"a".repeat(40)}\n` });
   let board: TaskBoard | null = fixture.board;
   try {
     board.updateAutomationConfiguration(automationConfigurationRequest({
       agentTypes: [{
+        agentTypeId: "decomposition-implementer",
+        name: "Decomposition implementer",
+        description: "Implements confirmed decomposition children.",
+        role: "engineer",
+        supplementalInstructions: "Implement only the confirmed child scope.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }, {
         agentTypeId: "decomposition-verifier",
         name: "Decomposition verifier",
         description: "Verifies decomposition planning nodes.",
@@ -2447,6 +2489,8 @@ test("planning settlement defers auto-target project context, persists children,
         enabled: true,
       }],
       stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: "decomposition-implementer" },
+        testing: { kind: "machine_verify" },
         verification: { kind: "agent_type", agentTypeId: "decomposition-verifier" },
       }),
     }));
@@ -2524,6 +2568,21 @@ test("planning settlement defers auto-target project context, persists children,
       messageCursor: null,
     });
     assert.ok(automaticClaim);
+    const boardProjects = (automaticClaim.context as {
+      boardProjects?: readonly Readonly<{ projectId: string; name: string; repoName: string }>[];
+    }).boardProjects;
+    assert.deepEqual(boardProjects, [{
+      projectId: fixture.project.projectId,
+      name: fixture.project.name,
+      repoName: fixture.project.repoPath,
+    }, {
+      projectId: consumer.projectId,
+      name: consumer.name,
+      repoName: "decomposition-consumer",
+    }]);
+    const migrateTarget = boardProjects?.find((project) => project.name === consumer.name);
+    assert.ok(migrateTarget);
+    assert.equal(children.find((child) => child.phase === "migrate")?.projectId, migrateTarget.projectId);
     assert.throws(
       () => board!.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
         outcome: "completed",
@@ -2554,6 +2613,11 @@ test("planning settlement defers auto-target project context, persists children,
     );
     assert.ok(projected);
     assert.deepEqual(projected.children, children);
+    board.confirmWorkflow(projected.planRevisionId, { expectedState: "proposed" });
+    assert.equal(
+      board.listChildren(automatic.workItemId).find((child) => child.phase === "migrate")?.resolvedProjectId,
+      migrateTarget.projectId,
+    );
 
     board.close();
     board = await TaskBoard.open(config(fixture.path));
@@ -2562,6 +2626,7 @@ test("planning settlement defers auto-target project context, persists children,
     );
     assert.ok(reread);
     assert.deepEqual(reread.children, children);
+    assert.equal(reread.state, "confirmed");
 
     board.createWorkItemAndStartPlanning(workItemRequest({
       originalRequest: "Reject a provider phase declared in the consumer project.",
@@ -3278,7 +3343,7 @@ test("cancelling redacts every durable reason projection and preserves idempoten
   }
 });
 
-test("a completed planning settlement discards its proposal after the work item is cancelled", async () => {
+test("a completed planning settlement is absorbed and its proposal discarded after cancellation", async () => {
   const fixture = await boardFixture();
   try {
     fixture.board.createAgent(fixture.project.projectId, {
@@ -3320,7 +3385,10 @@ test("a completed planning settlement discards its proposal after the work item 
       reason: "The request was withdrawn while planning was still running.",
     });
 
-    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === claim.run.runId,
+    )?.status, "interrupted");
+    const settlement = {
       outcome: "completed",
       result: "A valid plan was completed just after cancellation.",
       workflowPlan: {
@@ -3336,8 +3404,10 @@ test("a completed planning settlement discards its proposal after the work item 
           stageTemplate: ["verification"],
         }],
       },
-    });
+    } as const;
+    const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, settlement);
     assert.equal(settled.run.status, "completed");
+    assert.equal(settled.duplicate, false);
     assert.equal(fixture.board.requireTask(created.planningTaskId).status, "cancelled");
 
     const { DatabaseSync } = await import("node:sqlite");
@@ -3369,7 +3439,7 @@ test("a completed planning settlement discards its proposal after the work item 
   }
 });
 
-test("a failed planning settlement completes after cancellation without reopening the work item", async () => {
+test("a failed planning settlement is absorbed after cancellation without reopening the work item", async () => {
   const fixture = await boardFixture();
   try {
     const created = postWorkItem(fixture.board, workItemRequest({
@@ -3393,8 +3463,8 @@ test("a failed planning settlement completes after cancellation without reopenin
       outcome: "failed",
       result: "The in-flight planning attempt failed after cancellation.",
     });
-
     assert.equal(settled.run.status, "failed");
+    assert.equal(settled.duplicate, false);
     assert.equal(fixture.board.requireTask(created.planningTaskId).status, "cancelled");
     assert.deepEqual(fixture.board.requireWorkItem(created.workItemId), cancelled);
     const discarded = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (

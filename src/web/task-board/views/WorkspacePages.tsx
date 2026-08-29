@@ -163,13 +163,16 @@ export function ProjectPage({
   }, [artifacts, client]);
 
   const updates = updatesForProject(snapshot, project.id);
-  const metadata = parseProjectMetadata(project.repoPath);
+  const metadata = parseProjectMetadata(project.description ?? '');
   const tasks = snapshot.tasks
     .filter((task) => task.projectId === project.id)
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const documents = contextDocuments(metadata.entries);
+  const documents = contextDocuments([
+    { key: 'repository', label: 'Repository', kind: 'workspace', value: project.repoPath, href: null },
+    ...metadata.entries,
+  ]);
   const feedUpdates = activityUpdates(updates, artifacts);
   const activeRuns = snapshot.runs.filter((run) => (
     run.projectId === project.id

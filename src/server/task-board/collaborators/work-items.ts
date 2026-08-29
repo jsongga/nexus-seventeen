@@ -11,6 +11,7 @@ import {
   type ChildWorkItem,
   type CreateWorkItemRequest,
   type GateAction,
+  type ParkCategory,
   type ParentCompletion,
   type UpdateWorkItemRequest,
   type WorkItem,
@@ -37,7 +38,7 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
-import type { NotificationsCollaborator } from "./notifications.js";
+import { NotificationsCollaborator } from "./notifications.js";
 import { createLazyManagerInTransaction } from "./agent-identities.js";
 import {
   decompositionFamilyTouchesProjectSql,
@@ -54,6 +55,7 @@ export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boo
 export type WorkItemDetail = WorkItem & Readonly<{
   transitions: readonly WorkItemTransition[];
   gapReportArtifactId?: string | null;
+  parkCategory?: ParkCategory;
 }>;
 type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
 
@@ -104,7 +106,7 @@ export class WorkItemsCollaborator {
     private readonly automation: AutomationCollaborator,
     private readonly tasks: TasksCollaborator,
     private readonly reconcileWorkflowsBestEffort: (projectId: string) => void = () => undefined,
-    private readonly notifications?: NotificationsCollaborator,
+    private readonly notifications: NotificationsCollaborator = new NotificationsCollaborator(runtime),
   ) {
     registerParentTerminationCascade(this.runtime.store, (input) => {
       this.cancelChildrenForParentTerminationInTransaction(input);
@@ -262,6 +264,25 @@ export class WorkItemsCollaborator {
           "Only a parked decomposed parent can be resumed",
         );
       }
+      const phasedFailure = this.runtime.store.db.prepare(`
+        SELECT 1
+        FROM park_records park
+        WHERE park.work_item_id=?
+          AND park.resolved_at IS NULL
+          AND park.category='child_failed'
+          AND EXISTS(
+            SELECT 1
+            FROM work_items child
+            WHERE child.parent_work_item_id=? AND child.phase IS NOT NULL
+          )
+        LIMIT 1
+      `).get(workItemId, workItemId);
+      if (phasedFailure !== undefined) {
+        throw conflict(
+          TASK_BOARD_ERROR_CODES.PARENT_PHASED_FAILED,
+          "A phased parent with a failed child cannot resume; cancel the parent instead",
+        );
+      }
       transitionWorkItemInTransaction(this.runtime.store, {
         workItemId,
         to: "coordinating",
@@ -345,7 +366,7 @@ export class WorkItemsCollaborator {
         const parentId = stringValue(contract, "parent_work_item_id");
         const projectId = stringValue(contract, "resolved_project_id");
         projectIds.add(projectId);
-        this.notifications?.insertNotificationInTransaction({
+        this.notifications.insertNotificationInTransaction({
           kind: "phase_ready",
           dedupeKey: `phase_ready:${parentId}:${contractId}`,
           projectId,
@@ -378,7 +399,16 @@ export class WorkItemsCollaborator {
   requireWorkItem(workItemId: string): WorkItemDetail {
     const workItem = this.runtime.requireWorkItem(workItemId);
     const transitions = this.workItemTransitions(workItemId);
-    if (workItem.taskType !== "onboarding") return Object.freeze({ ...workItem, transitions });
+    const openPark = this.runtime.store.db.prepare(`
+      SELECT category
+      FROM park_records
+      WHERE work_item_id=? AND resolved_at IS NULL
+      ORDER BY parked_at DESC,rowid DESC
+      LIMIT 1
+    `).get(workItemId) as Row | undefined;
+    const parkCategory = openPark === undefined ? null : stringValue(openPark, "category") as ParkCategory;
+    const parkProjection = parkCategory === null ? {} : { parkCategory };
+    if (workItem.taskType !== "onboarding") return Object.freeze({ ...workItem, transitions, ...parkProjection });
     const gapReport = this.runtime.store.db.prepare(`
       SELECT gap_report_artifact_id
       FROM work_item_onboarding_tasks
@@ -388,6 +418,7 @@ export class WorkItemsCollaborator {
     return Object.freeze({
       ...workItem,
       transitions,
+      ...parkProjection,
       gapReportArtifactId: gapReport.gap_report_artifact_id === null
         ? null
         : stringValue(gapReport, "gap_report_artifact_id"),
@@ -1017,7 +1048,7 @@ export class WorkItemsCollaborator {
               actor,
               now: input.now,
               refId: input.parentWorkItemId,
-              terminateActiveRuns: false,
+              terminateActiveRuns: true,
             });
           } catch (fallbackError) {
             this.logChildCancellationFailure(input.parentWorkItemId, childWorkItemId, fallbackError, "fallback");
@@ -1046,7 +1077,7 @@ export class WorkItemsCollaborator {
       }
       if (abandoned === null) continue;
       try {
-        this.notifications?.insertNotificationAtInTransaction({
+        this.notifications.insertNotificationAtInTransaction({
           kind: "park_auto_abandoned",
           dedupeKey: `park_auto_abandoned:${abandoned.workItemId}:${input.parentWorkItemId}`,
           projectId: abandoned.resolvedProjectId,
@@ -1199,7 +1230,7 @@ export class WorkItemsCollaborator {
         actor,
         now,
         refId: null,
-        terminateActiveRuns: false,
+        terminateActiveRuns: true,
       });
     });
     for (const projectId of projectIds) this.reconcileWorkflowsBestEffort(projectId);

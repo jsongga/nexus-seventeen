@@ -5,14 +5,14 @@ import { enumerateDocs } from "./enumerate.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
 import {
   runDeclaredScopeGit,
-  type GitRunner,
+  type GitTextRunner,
 } from "../task-board/collaborators/scope-check.js";
 
 export interface PublishReport { readonly repo: string; readonly created: number; readonly updated: number; readonly archived: number; readonly unchanged: number; readonly failures: readonly string[] }
 
 const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ blob ([0-9a-f]{12})\./su;
 
-function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
+function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
   return runner([
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=",
@@ -61,7 +61,7 @@ function sourceBlobPrefix(text: string): string | undefined {
 export async function publishRepo(
   entry: DocsPublishRepo,
   sink: DocsSink,
-  runner: GitRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit,
 ): Promise<PublishReport> {
   let sources: ReturnType<typeof enumerateDocs>;
   try {

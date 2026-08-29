@@ -4,12 +4,15 @@ import {
   type RunStatus,
 } from "#shared/task-board-contract";
 import {
+  boundedClaimText as bounded,
+  claimEstimateMinutes as estimateMinutes,
   exact,
   identifier,
   integer as contractInteger,
-  parseAgentTaskPhaseResponse,
   parseClaimRunPausedResult,
   parseClaimRunResult,
+  positiveClaimInteger as positive,
+  projectAgentTaskPhase as taskPhase,
   parseRunEntity,
   record,
   timestamp as contractTimestamp,
@@ -134,41 +137,6 @@ function timestamp(value: unknown, label: string): string {
 
 function nonNegative(value: unknown, label: string): number {
   return contractInteger(value, label, 0, `${label} is invalid`);
-}
-
-function positive(value: unknown, label: string): number {
-  const parsed = nonNegative(value, label);
-  if (parsed === 0) throw new Error(`${label} is invalid`);
-  return parsed;
-}
-
-function estimateMinutes(value: unknown, label: string): number | null {
-  if (value === null) return null;
-  if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
-    throw new Error(`${label} is invalid`);
-  }
-  return Number(value);
-}
-
-function taskPhase(value: unknown, projectId: string, taskId: string, label: string): AgentTaskPhase {
-  const item = parseAgentTaskPhaseResponse(value, projectId, taskId, label);
-  return Object.freeze({
-    phaseId: item.phaseId,
-    title: bounded(item.title, `${label}.title`, 240),
-    stage: item.stage,
-    status: item.status,
-    parallelGroup: item.parallelGroup,
-    orderKey: item.orderKey,
-    version: item.version,
-  });
-}
-
-function bounded(value: unknown, label: string, maximum: number): string {
-  if (typeof value !== "string" || value.trim().length === 0 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  const clean = value.trim();
-  return clean.length <= maximum ? clean : `${clean.slice(0, Math.max(1, maximum - 16)).trimEnd()}\n[truncated]`;
 }
 
 function errorCode(value: unknown): string | null {

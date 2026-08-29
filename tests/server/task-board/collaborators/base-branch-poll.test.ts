@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { WorkflowPlanDraft } from "#shared/task-board-contract";
-import type { GitRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
 import {
   automationConfigurationRequest,
   automationStages,
@@ -28,7 +28,7 @@ interface FakeGitControl {
   commands: string[][];
 }
 
-function fakeGit(control: FakeGitControl): GitRunner {
+function fakeGit(control: FakeGitControl): GitTextRunner {
   return (arguments_) => {
     const repoIndex = arguments_.indexOf("-C");
     const command = [...arguments_.slice(repoIndex + 2)];
@@ -288,6 +288,21 @@ test("rewritten base history parks the item as base_diverged", async () => {
       });
     } finally {
       database.close();
+    }
+
+    const resumed = fixture.board.resumeWorkItem(fixture.workItemId);
+    assert.equal(resumed.state, "implementing");
+    assert.equal(resumed.currentStage, "implementation");
+    assert.equal(resumed.baseSha, ADVANCED_SHA);
+    const resumedDatabase = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.equal(resumedDatabase.prepare(`
+        SELECT COUNT(*) AS count
+        FROM park_records
+        WHERE work_item_id=? AND resolved_at IS NULL
+      `).get(fixture.workItemId)?.count, 0);
+    } finally {
+      resumedDatabase.close();
     }
   } finally {
     fixture.board.close();

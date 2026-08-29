@@ -1290,6 +1290,25 @@ export function migrateVersion25To26(db: DatabaseSync): void {
     ? ""
     : "ALTER TABLE plan_revisions ADD COLUMN children TEXT NULL;";
   const backfillProjectRepoPath = !hasColumns(db, "projects", ["repo_path"]);
+  const legacyProjectRepoPath = backfillProjectRepoPath
+    ? `CASE
+        WHEN instr(char(10) || description || char(10), char(10) || 'Workspace: ') = 0
+          THEN description
+        ELSE substr(
+          char(10) || description || char(10),
+          instr(char(10) || description || char(10), char(10) || 'Workspace: ')
+            + length(char(10) || 'Workspace: '),
+          instr(
+            substr(
+              char(10) || description || char(10),
+              instr(char(10) || description || char(10), char(10) || 'Workspace: ')
+                + length(char(10) || 'Workspace: ')
+            ),
+            char(10)
+          ) - 1
+        )
+      END`
+    : "repo_path";
   const backfillParentWorkItemId = !hasColumns(db, "work_items", ["parent_work_item_id"]);
   const backfillWorkItemPhase = !hasColumns(db, "work_items", ["phase"]);
   const backfillChildOrdinal = !hasColumns(db, "work_items", ["child_ordinal"]);
@@ -1420,7 +1439,7 @@ export function migrateVersion25To26(db: DatabaseSync): void {
 
       ${PROJECTS_SCHEMA}
       INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
-      SELECT project_id, name, description, ${backfillProjectRepoPath ? "description" : "repo_path"},
+      SELECT project_id, name, description, ${legacyProjectRepoPath},
         version, created_at, updated_at
       FROM projects_v25
       ORDER BY rowid;

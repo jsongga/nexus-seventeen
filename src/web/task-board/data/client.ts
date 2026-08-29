@@ -9,6 +9,7 @@ import type {
   BoardWorkItemDependency,
   BoardWorkItemDetail,
   CreateProjectInput,
+  UpdateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
   DeployAttestationResult,
@@ -336,6 +337,7 @@ export interface TaskBoardClient {
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
+  updateProject(projectId: string, input: UpdateProjectInput): Promise<BoardProject>;
   getHostProjectRoots(signal?: AbortSignal): Promise<HostProjectRoot[]>;
   getHostDirectories(path?: string, signal?: AbortSignal): Promise<HostDirectoryListing>;
   createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItemDetail>;
@@ -779,6 +781,15 @@ export function createTaskBoardClient(options: {
           body: JSON.stringify(input),
         }),
         'create project response',
+      );
+    },
+    async updateProject(projectId, input) {
+      return projectFromEnvelope(
+        await json(`/v1/projects/${encodeURIComponent(projectId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        }),
+        'update project response',
       );
     },
     async getHostProjectRoots(signal) {

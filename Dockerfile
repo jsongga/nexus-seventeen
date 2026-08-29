@@ -24,7 +24,7 @@ COPY --from=build /build/package.json ./package.json
 COPY --from=build /build/build ./build
 COPY --from=build /build/config/skills.md ./config/skills.md
 
-RUN mkdir -p /srv/steward /var/lib/steward/private \
+RUN mkdir -p /srv/steward /var/lib/steward/private /var/lib/steward/repos \
   && chown -R node:node /var/lib/steward \
   && chmod 0700 /var/lib/steward /var/lib/steward/private
 

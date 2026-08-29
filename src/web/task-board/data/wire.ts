@@ -20,6 +20,7 @@ import {
   GATE_KINDS,
   IDENTIFIER_PATTERN,
   NOTIFICATION_KINDS,
+  PARK_CATEGORIES,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   RUN_STATUSES,
@@ -45,6 +46,7 @@ import {
   isHardTerminalTaskStatus,
   isRecoverableTaskStatus,
   type AgentStatus,
+  type ParkCategory,
   type RunStatus,
   type TaskStatus,
   type WakeupReason,
@@ -61,7 +63,7 @@ export type WireWorkerConnection = WorkerConnection;
 
 // Renamed to the vocabulary the web app already uses.
 export type WakeReason = WakeupReason;
-export type { WorkflowStage };
+export type { ParkCategory, WorkflowStage };
 export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 
 export const apiVersion = TASK_BOARD_API_VERSION;
@@ -90,6 +92,7 @@ export const planRevisionStateValues = PLAN_REVISION_STATES;
 export const workNodeStateValues = WORK_NODE_STATES;
 export const stageHandoffOutcomeValues = STAGE_HANDOFF_OUTCOMES;
 export const notificationKindValues = NOTIFICATION_KINDS;
+export const parkCategoryValues = PARK_CATEGORIES;
 export const gateKindValues = GATE_KINDS;
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
@@ -115,4 +118,5 @@ export const planRevisionStates = new Set(planRevisionStateValues);
 export const workNodeStates = new Set(workNodeStateValues);
 export const stageHandoffOutcomes = new Set(stageHandoffOutcomeValues);
 export const notificationKinds = new Set(notificationKindValues);
+export const parkCategories = new Set(parkCategoryValues);
 export const gateKinds = new Set(gateKindValues);

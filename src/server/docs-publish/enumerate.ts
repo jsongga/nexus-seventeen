@@ -1,6 +1,6 @@
 import {
   runDeclaredScopeGit,
-  type GitRunner,
+  type GitTextRunner,
 } from "../task-board/collaborators/scope-check.js";
 import { validateExcludePattern } from "./exclude.js";
 
@@ -16,7 +16,7 @@ interface TreeEntry { readonly path: string; readonly blobSha: string }
 
 const TREE_ENTRY_PREVIEW_CHARACTERS = 120;
 
-function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
+function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
   return runner([
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=",
@@ -64,7 +64,7 @@ export function enumerateDocs(
   repoPath: string,
   ref: string,
   options: EnumerateOptions = {},
-  runner: GitRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit,
 ): readonly DocSource[] {
   const prefixes = excludePrefixes(options.exclude ?? []);
   const output = git(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--", "README.md", "docs"]);

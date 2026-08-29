@@ -6,6 +6,7 @@ import {
 import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
 
 export const PUBLISHED_INTERFACE_MAX_BYTES = 64 * 1_024;
+export const PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES = 128;
 export const PUBLISHED_INTERFACE_PATH = "docs/interface.md" as const;
 
 export type PublishedInterfaceContentFailureDetail =
@@ -40,7 +41,7 @@ function git(runner: GitRunner, repoPath: string, arguments_: readonly string[])
 }
 
 function gitBytes(runner: GitRunner, repoPath: string, arguments_: readonly string[]): Buffer {
-  return runner.bytes!(gitArguments(repoPath, arguments_));
+  return runner.bytes(gitArguments(repoPath, arguments_));
 }
 
 function publishedTreeEntry(tree: string, path: string): "absent" | "blob" | "not_file" | "read_error" {
@@ -96,7 +97,6 @@ export function readPublishedInterface(
   runner: GitRunner = runDeclaredScopeGit,
 ): PublishedInterfaceReadResult {
   assertReadTarget(repoPath, sha, path);
-  if (runner.bytes === undefined) throw new TypeError("Git runner byte path is required for interface reads");
   let tree: string;
   try {
     tree = git(runner, repoPath, ["ls-tree", "-z", sha, "--", path]);
@@ -142,9 +142,19 @@ export class PublishedInterfaceCache {
   read(repoPath: string, sha: string, path = PUBLISHED_INTERFACE_PATH): PublishedInterfaceReadResult {
     const key = `${repoPath}\0${sha}\0${path}`;
     const prior = this.#entries.get(key);
-    if (prior !== undefined) return prior;
+    if (prior !== undefined) {
+      this.#entries.delete(key);
+      this.#entries.set(key, prior);
+      return prior;
+    }
     const result = readPublishedInterface(repoPath, sha, path, this.runner);
-    if (result.kind === "present" || result.reason !== "read_error") this.#entries.set(key, result);
+    if (result.kind === "present" || result.reason !== "read_error") {
+      if (this.#entries.size >= PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES) {
+        const oldest = this.#entries.keys().next().value as string | undefined;
+        if (oldest !== undefined) this.#entries.delete(oldest);
+      }
+      this.#entries.set(key, result);
+    }
     return result;
   }
 

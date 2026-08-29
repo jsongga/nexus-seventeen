@@ -7,6 +7,7 @@ import {
   expandedAgentProfiles,
   loadCatalog,
   mergeAutomationConfiguration,
+  projectCatalogPatch,
   projectDescription,
   sameEditableAutomation,
 } from './bootstrap-lib.mjs';
@@ -82,18 +83,25 @@ async function reconcileProjects(catalog) {
     if (matches.length > 1) throw new Error(`Project drift: ${project.name} has ${matches.length} records`);
     const description = projectDescription(project);
     let actual = matches[0];
-    if (actual && actual.description !== description) {
-      throw new Error(`Project drift: ${project.name} description differs and the API has no update route`);
-    }
     if (!actual) {
       const created = await request('/v1/projects', {
         method: 'POST',
-        body: JSON.stringify({ name: project.name, description }),
+        body: JSON.stringify({ name: project.name, description, repoPath: project.repoPath }),
       });
       actual = created.project;
       log(`created project: ${project.name}`);
     } else {
-      log(`reused project: ${project.name}`);
+      const patch = projectCatalogPatch(actual, project);
+      if (patch === null) {
+        log(`reused project: ${project.name}`);
+      } else {
+        const updated = await request(`/v1/projects/${encodeURIComponent(actual.projectId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        });
+        actual = updated.project;
+        log(`updated project: ${project.name}`);
+      }
     }
     byKey.set(project.key, actual);
   }

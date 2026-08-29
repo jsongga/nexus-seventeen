@@ -1,0 +1,6 @@
+# Local container override. The host directory must contain repository
+# checkouts named exactly like config/company-bootstrap.json's repoPath suffixes.
+services:
+  steward:
+    volumes:
+      - ${STEWARD_DEV_REPOS_ROOT:?set to the host directory containing Steward repository checkouts}:/var/lib/steward/repos

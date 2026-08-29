@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
@@ -60,6 +61,7 @@ import {
   questionFromRow,
   runFromRow,
   stringValue,
+  type Row,
   wakeupFromRow,
 } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
@@ -100,6 +102,8 @@ import {
   runDeclaredScopeGit,
   scopeViolationResult,
   type GitRunner,
+  type GitTextRunner,
+  withGitBytes,
 } from "./scope-check.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
@@ -167,14 +171,18 @@ function attemptSettlementResult(
 const TOKEN_ROTATION_INTERRUPT_REASON = "Agent token rotated by an operator.";
 
 export class RunsCollaborator {
+  readonly #git: GitRunner;
+
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly automation: AutomationCollaborator,
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
-    private readonly git: GitRunner = runDeclaredScopeGit,
+    git: GitRunner | GitTextRunner = runDeclaredScopeGit,
     private readonly boardPause: BoardPauseCollaborator = new BoardPauseCollaborator(runtime),
-  ) {}
+  ) {
+    this.#git = withGitBytes(git);
+  }
 
   private scopeCheckForSettlement(taskId: string, outcome: SettleRunRequest["outcome"]): AttemptScopeCheckResult | null {
     if (outcome !== "completed") return null;
@@ -213,7 +221,7 @@ export class RunsCollaborator {
         baseSha: row.base_sha,
         branch: row.pipeline_branch,
         declaredScope,
-        git: this.git,
+        git: this.#git,
       });
     } catch {
       return Object.freeze({ ok: false, error: "scope check failed" });
@@ -244,7 +252,7 @@ export class RunsCollaborator {
     if (row === undefined) return null;
     const repoPath = typeof row.repo_path === "string" ? row.repo_path : "";
     const branch = typeof row.pipeline_branch === "string" ? row.pipeline_branch : "";
-    const check = onboardingDeliverablesCheck(repoPath, branch, gapReport, this.git);
+    const check = onboardingDeliverablesCheck(repoPath, branch, gapReport, this.#git);
     if (!check.ok) {
       throw new TaskBoardError(
         400,
@@ -300,7 +308,7 @@ export class RunsCollaborator {
     if (match?.[1] === undefined) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_verified_sha_missing");
     }
-    const published = readPublishedInterface(row.repo_path, match[1], PUBLISHED_INTERFACE_PATH, this.git);
+    const published = readPublishedInterface(row.repo_path, match[1], PUBLISHED_INTERFACE_PATH, this.#git);
     if (published.kind === "present") return null;
     if (published.reason === "read_error") {
       throw new TaskBoardError(
@@ -326,6 +334,49 @@ export class RunsCollaborator {
         AND json_extract(data_json,'$.outcome')='interrupted'
       LIMIT 1
     `).get(current.runId) !== undefined;
+  }
+
+  private wasInterruptedBeforeWorkItemCancellation(current: AgentRun): boolean {
+    if (current.taskId === null) return false;
+    return this.runtime.store.db.prepare(`
+      WITH linked_work_item(work_item_id) AS (
+        SELECT work_item_id
+        FROM work_item_planning_tasks
+        WHERE task_id=?
+        UNION
+        SELECT work_item_id
+        FROM work_item_design_tasks
+        WHERE task_id=?
+        UNION
+        SELECT plan.work_item_id
+        FROM stage_attempts attempt
+        JOIN work_nodes node ON node.node_id=attempt.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE attempt.task_id=?
+      )
+      SELECT 1
+      FROM linked_work_item link
+      JOIN work_items item ON item.work_item_id=link.work_item_id
+      JOIN interrupts interrupt
+        ON interrupt.run_id=? AND interrupt.idempotency_key='suspend:' || ?
+      WHERE item.state='abandoned'
+        AND item.ended_at IS NOT NULL
+        AND item.cancelled_reason IS NOT NULL
+      LIMIT 1
+    `).get(current.taskId, current.taskId, current.taskId, current.runId, current.runId) !== undefined;
+  }
+
+  private wasSettledByAgent(current: AgentRun, agentId: string, outcome: SettleRunRequest["outcome"]): boolean {
+    return this.runtime.store.db.prepare(`
+      SELECT 1
+      FROM task_events
+      WHERE event_type='agent_run_settled'
+        AND actor_type='agent'
+        AND actor_id=?
+        AND json_extract(data_json,'$.runId')=?
+        AND json_extract(data_json,'$.outcome')=?
+      LIMIT 1
+    `).get(agentId, current.runId, outcome) !== undefined;
   }
 
   resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
@@ -719,6 +770,7 @@ export class RunsCollaborator {
         claimId: request.claimId,
         wakeupId: wakeup.wakeupId,
         wakeReason: wakeup.reason,
+        messageCursor: claimMessageCursor(request, wakeup.taskId),
       }, now);
       const result = this.claimResult(
         runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
@@ -735,12 +787,16 @@ export class RunsCollaborator {
           const reason = publishedInterfaceValidationReason(error);
           if (reason === null || projectedContext === null) throw error;
           const usage = workerAgentContextUsage(projectedContext);
+          const providerRow = this.runtime.store.db.prepare(
+            "SELECT repo_path FROM projects WHERE project_id=?",
+          ).get(crossRepoContext.providerProjectId) as Readonly<{ repo_path?: unknown }> | undefined;
+          const providerRepoPath = typeof providerRow?.repo_path === "string" ? providerRow.repo_path : null;
           throw new MigrateInterfaceClaimError(
             publishedInterfaceReasonSummary(reason, crossRepoContext.sha, usage.bytes, usage.budget),
             crossRepoContext.sha,
             sha256(claimContextInputForDigest(projectedContext)),
             reason,
-            null,
+            providerRepoPath,
             { cause: error },
           );
         }
@@ -966,10 +1022,12 @@ export class RunsCollaborator {
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
     const persistedResult = redactForPersistence(request.result);
-    if (current.status !== "active" && this.wasInterruptedBySystem(current)) {
+    const interruptedBeforeCancellation = current.status !== "active"
+      && this.wasInterruptedBeforeWorkItemCancellation(current);
+    if (current.status !== "active" && !interruptedBeforeCancellation && this.wasInterruptedBySystem(current)) {
       return { run: current, duplicate: true };
     }
-    this.designSettlement(current.taskId, request);
+    const design = this.designSettlement(current.taskId, request);
     if (request.reviewFindings !== undefined) {
       const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
         SELECT 1
@@ -986,6 +1044,9 @@ export class RunsCollaborator {
           "Review findings are only allowed for pipeline verification",
         );
       }
+    }
+    if (interruptedBeforeCancellation) {
+      return this.absorbSettlementAfterWorkItemCancellation(current, agentId, request, persistedResult, design);
     }
     if (current.status !== "active") {
       if (current.status === request.outcome && current.result === persistedResult) {
@@ -1054,6 +1115,94 @@ export class RunsCollaborator {
     this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
     this.projects.reconcileWorkflowsBestEffort(current.projectId);
     return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
+  }
+
+  private absorbSettlementAfterWorkItemCancellation(
+    current: AgentRun,
+    agentId: string,
+    request: SettleRunRequest,
+    persistedResult: string,
+    design: ReturnType<RunsCollaborator["designSettlement"]>,
+  ): { run: AgentRun; duplicate: boolean } {
+    if (
+      current.status === request.outcome && current.result === persistedResult
+      && this.wasSettledByAgent(current, agentId, request.outcome)
+    ) {
+      return { run: current, duplicate: true };
+    }
+    if (current.status !== "interrupted") throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+
+    const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+      SELECT item.*
+      FROM work_item_planning_tasks link
+      JOIN work_items item ON item.work_item_id=link.work_item_id
+      WHERE link.task_id=?
+    `).get(current.taskId);
+    if (planning !== undefined && request.outcome === "completed") {
+      if (request.workflowPlan === undefined || request.workflowPlan === null) {
+        throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
+      }
+      try {
+        validateWorkflowPlanChildren(
+          request.workflowPlan,
+          planning.resolved_project_id === null ? undefined : String(planning.resolved_project_id),
+          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id),
+        );
+      } catch (error) {
+        if (error instanceof ContractValidationError) {
+          throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
+        }
+        throw error;
+      }
+      const pipelineNode = request.workflowPlan.nodes.length === 1 ? request.workflowPlan.nodes[0] : undefined;
+      if (pipelineNode !== undefined && pipelineTemplateShape(pipelineNode.stageTemplate) === "v1") {
+        throw new TaskBoardError(
+          400,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
+          "pipeline plans must end in a verification stage (template [\"implementation\",\"testing\",\"verification\"])",
+        );
+      }
+    } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
+      throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
+    }
+
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.transaction(() => {
+      const update = this.runtime.store.db.prepare(`
+        UPDATE runs
+        SET status=?,ended_at=?,result=?
+        WHERE run_id=? AND agent_id=? AND status='interrupted'
+      `).run(request.outcome, now, persistedResult, current.runId, agentId);
+      if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
+      if (planning !== undefined) {
+        this.runtime.insertEvent(
+          current.projectId,
+          current.taskId,
+          { type: "agent", id: agentId },
+          "work_item_plan_discarded",
+          { workItemId: String(planning.work_item_id), runId: current.runId, reason: "work_item_ended" },
+          now,
+        );
+      }
+      if (design.row !== undefined && design.record !== null) {
+        this.runtime.insertEvent(
+          current.projectId,
+          current.taskId,
+          { type: "agent", id: agentId },
+          "work_item_design_discarded",
+          { workItemId: String(design.row.work_item_id), runId: current.runId, reason: "work_item_ended" },
+          now,
+        );
+      }
+      this.runtime.insertEvent(current.projectId, current.taskId, { type: "agent", id: agentId }, "agent_run_settled", {
+        runId: current.runId,
+        outcome: request.outcome,
+      }, now);
+    });
+    return {
+      run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id=?").get(current.runId)!),
+      duplicate: false,
+    };
   }
 
   private recordCorrectableSettlementRejection(
@@ -1471,13 +1620,15 @@ export class RunsCollaborator {
         endedAt: stringValue(row, "ended_at"),
       }));
     const project = this.runtime.requireProject(run.projectId);
+    const intake = taskProjection?.intake ?? false;
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       run,
       wakeup,
       task,
       context: Object.freeze({
-        intake: taskProjection?.intake ?? false,
+        intake,
+        ...(intake ? { boardProjects: this.boardProjectContexts(run.projectId) } : {}),
         ...(task !== null && this.runtime.store.db.prepare(`
           SELECT 1
           FROM work_item_onboarding_tasks onboarding
@@ -1512,6 +1663,19 @@ export class RunsCollaborator {
         workflow,
       }),
     });
+  }
+
+  private boardProjectContexts(parentProjectId: string): NonNullable<ClaimRunResult["context"]["boardProjects"]> {
+    return Object.freeze((this.runtime.store.db.prepare(`
+      SELECT project_id,name,repo_path
+      FROM projects
+      ORDER BY CASE WHEN project_id=? THEN 0 ELSE 1 END,created_at,project_id
+      LIMIT 64
+    `).all(parentProjectId) as Row[]).map((row) => Object.freeze({
+      projectId: stringValue(row, "project_id"),
+      name: stringValue(row, "name"),
+      repoName: basename(stringValue(row, "repo_path")),
+    })));
   }
 
   private claimWorkItemPhase(taskId: string): WorkItemPhase | null {
@@ -1559,7 +1723,7 @@ export class RunsCollaborator {
     const readiness = migrateInterfaceReadiness(
       this.runtime.store.db,
       owner.work_item_id,
-      (repoPath, sha, path) => readPublishedInterface(repoPath, sha, path, this.git),
+      (repoPath, sha, path) => readPublishedInterface(repoPath, sha, path, this.#git),
     );
     if (readiness === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_provider_merge_missing");
     if (readiness.kind === "blocked") {
@@ -1575,7 +1739,7 @@ export class RunsCollaborator {
   }
 
   private rejectMigrateInterfaceClaim(taskId: string, error: MigrateInterfaceClaimError): never {
-    if (error.reason === "read_error" && error.repoPath !== null) {
+    if (error.repoPath !== null) {
       this.projects.evictPublishedInterface(error.repoPath, error.sha);
     }
     this.projects.blockMigrateInterfaceClaim(taskId, error.summary, error.contextDigest === null ? null : {
@@ -1627,6 +1791,9 @@ export class RunsCollaborator {
         context.intake = currentRun?.taskId !== null && currentRun?.taskId !== undefined &&
           this.runtime.store.db.prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
             .get(currentRun.taskId) !== undefined;
+      }
+      if (context.intake === true && !Object.hasOwn(context, "boardProjects") && currentRun !== null) {
+        context.boardProjects = this.boardProjectContexts(currentRun.projectId);
       }
       if (!Object.hasOwn(context, "design")) context.design = false;
       if (!Object.hasOwn(context, "phase")) {

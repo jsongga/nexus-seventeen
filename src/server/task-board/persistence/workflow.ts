@@ -55,7 +55,7 @@ import {
 import {
   scopeViolationResult,
   type DeclaredScopeCheckResult,
-  type GitRunner,
+  type GitTextRunner,
 } from "../collaborators/scope-check.js";
 import {
   inspectPipelineBranchSync,
@@ -298,7 +298,7 @@ function pipelineExecutorDrift(): TaskBoardError {
   );
 }
 
-function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
+function pipelineBaseSha(repositoryPath: string, projectName: string, git: GitTextRunner): string {
   try {
     const output = git([
       "-c", "core.fsmonitor=",
@@ -311,8 +311,8 @@ function pipelineBaseSha(repositoryPath: string, git: GitRunner): string {
   } catch (error) {
     throw new TaskBoardError(
       409,
-      TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-      "The pipeline repository is unavailable",
+      TASK_BOARD_ERROR_CODES.PROJECT_REPO_PATH_INVALID,
+      `Project ${projectName} does not have a valid Git repository path`,
       { cause: error },
     );
   }
@@ -424,7 +424,7 @@ export class TransparentWorkflow {
     readonly now: () => Date,
     readonly transaction: <T>(operation: () => T) => T,
     readonly queueEvent: ((event: ProjectEvent) => void) | undefined,
-    readonly git: GitRunner,
+    readonly git: GitTextRunner,
     insertGateActionInTransaction?: (input: GateActionInput) => GateAction,
   ) {
     const transitionStore = workItemTransitionStoreForDatabase(db);
@@ -788,11 +788,11 @@ export class TransparentWorkflow {
   }
 
   pipelineBaseShaForProject(projectId: string): string {
-    const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(projectId);
+    const project = this.db.prepare("SELECT name,repo_path FROM projects WHERE project_id=?").get(projectId);
     if (project === undefined) {
       throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     }
-    return pipelineBaseSha(String(project.repo_path), this.git);
+    return pipelineBaseSha(String(project.repo_path), String(project.name), this.git);
   }
 
   pipelineBaseShasForConfirm(
@@ -1452,6 +1452,7 @@ export class TransparentWorkflow {
     gateAction: "final_reject" | null,
     actorType: "human" | "system",
     newBaseSha?: string,
+    sourceState: "final_approval" | "parked" = "final_approval",
   ): readonly WorkNode[] {
     const persistedNote = redactForPersistence(request.note);
     const row = this.db.prepare(`
@@ -1469,11 +1470,13 @@ export class TransparentWorkflow {
     if (Number(row.version) !== request.version) {
       throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
     }
-    if (row.state !== "final_approval") {
+    if (row.state !== sourceState) {
       throw new TaskBoardError(
         409,
         TASK_BOARD_ERROR_CODES.WORK_ITEM_ILLEGAL_TRANSITION,
-        "Work item is not awaiting final approval",
+        sourceState === "final_approval"
+          ? "Work item is not awaiting final approval"
+          : "Work item is not parked for recovery",
       );
     }
     const template = json<WorkflowStage[]>(row.stage_template_json);
@@ -1557,8 +1560,8 @@ export class TransparentWorkflow {
       const baseUpdate = this.db.prepare(`
         UPDATE work_items
         SET base_sha=?
-        WHERE work_item_id=? AND state='final_approval' AND version=?
-      `).run(newBaseSha, workItemId, request.version);
+        WHERE work_item_id=? AND state=? AND version=?
+      `).run(newBaseSha, workItemId, sourceState, request.version);
       if (Number(baseUpdate.changes) !== 1) {
         throw new TaskBoardError(409, "WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       }

@@ -19,6 +19,11 @@ import {
   type TaskBoardConfig,
   type TaskBoardDependencies,
 } from "#server/task-board";
+import type { GitRunner, GitTextRunner } from "#server/task-board/collaborators/scope-check";
+
+type FixtureTaskBoardDependencies = Omit<TaskBoardDependencies, "git"> & Readonly<{
+  git?: GitRunner | GitTextRunner;
+}>;
 
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
 export const AGENT_ONE_TOKEN = "task-board-agent-one-token-0123456789";
@@ -110,20 +115,23 @@ export function config(
 export async function boardFixture(
   path?: string,
   now?: () => Date,
-  dependencies: TaskBoardDependencies = {},
+  dependencies: FixtureTaskBoardDependencies = {},
   configOverrides?: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">>,
 ) {
   const resolvedPath = path ?? await databasePath();
-  const git = dependencies.git;
-  const resolvedDependencies = git !== undefined && git.bytes === undefined
-    ? Object.freeze({
-        ...dependencies,
-        git: Object.assign(
+  const { git, ...otherDependencies } = dependencies;
+  const resolvedGit: GitRunner | undefined = git === undefined
+    ? undefined
+    : "bytes" in git
+      ? git as GitRunner
+      : Object.assign(
           (arguments_: readonly string[]) => git(arguments_),
           { bytes: (arguments_: readonly string[]) => Buffer.from(git(arguments_), "utf8") },
-        ),
-      })
-    : dependencies;
+        );
+  const resolvedDependencies: TaskBoardDependencies = Object.freeze({
+    ...otherDependencies,
+    ...(resolvedGit === undefined ? {} : { git: resolvedGit }),
+  });
   const board = await TaskBoard.open(config(resolvedPath, now, configOverrides), resolvedDependencies);
   const project = board.createProject({ name: "Checkout reliability", description: "Keep customer checkout dependable." });
   const engineer = board.createAgent(project.projectId, {

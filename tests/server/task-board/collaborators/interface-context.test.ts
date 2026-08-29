@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
+  PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES,
   PublishedInterfaceCache,
   readPublishedInterface,
 } from "#server/task-board/collaborators/interface-context";
@@ -308,4 +309,24 @@ test("evicts one immutable interface entry after a claim-side repository read er
   cache.evict("/repos/provider", sha);
   assert.deepEqual(cache.read("/repos/provider", sha), { kind: "present", markdown });
   assert.equal(treeReads, 2);
+});
+
+test("bounds immutable published-interface entries with least-recently-used eviction", () => {
+  let treeReads = 0;
+  const cache = new PublishedInterfaceCache(interfaceGit((arguments_) => {
+    if (arguments_.includes("ls-tree")) {
+      treeReads += 1;
+      return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+    }
+    if (arguments_.includes("cat-file")) return "12\n";
+    if (arguments_.includes("show")) return "# Interface\n";
+    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+  }));
+  for (let index = 0; index < PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES; index += 1) {
+    assert.equal(cache.read(`/repos/provider-${index}`, "a".repeat(40)).kind, "present");
+  }
+  assert.equal(cache.read("/repos/provider-0", "a".repeat(40)).kind, "present");
+  assert.equal(cache.read("/repos/provider-overflow", "a".repeat(40)).kind, "present");
+  assert.equal(cache.read("/repos/provider-1", "a".repeat(40)).kind, "present");
+  assert.equal(treeReads, PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES + 2);
 });

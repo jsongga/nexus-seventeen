@@ -271,6 +271,27 @@ export function snapshotLostSelectedWorkItem(
     && !current.some((workItem) => workItem.id === workItemId);
 }
 
+export function workItemDetailReloadPending(
+  page: BoardPage,
+  sourceHash: string | null,
+): boolean {
+  return page.kind === 'intake' && sourceHash === pageToHash(page);
+}
+
+export function routedWorkItemSelection(
+  page: BoardPage,
+  snapshotWorkItems: readonly BoardWorkItem[],
+  loadedDetail: BoardWorkItemDetail | null,
+  previousSnapshotWorkItems: readonly Pick<BoardWorkItem, 'id'>[],
+): BoardWorkItem | BoardWorkItemDetail | undefined {
+  if (page.kind !== 'intake') return undefined;
+  const selected = snapshotWorkItems.find((workItem) => workItem.id === page.workItemId);
+  const cachedSelectionWasRemoved = selected === undefined
+    && loadedDetail?.id === page.workItemId
+    && snapshotLostSelectedWorkItem(page.workItemId, previousSnapshotWorkItems, snapshotWorkItems);
+  return selected ?? (loadedDetail?.id === page.workItemId && !cachedSelectionWasRemoved ? loadedDetail : undefined);
+}
+
 export async function refreshBoardSnapshot(
   client: TaskBoardClient,
   kind: BoardRefreshKind,
@@ -488,6 +509,7 @@ export function BoardApp() {
     if (snapshot === null) return;
     if (page.kind === 'intake' && loadedWorkItemDetail?.id === page.workItemId) return;
     if (page.kind === 'intake' && workItemDetailLoadingId === page.workItemId) return;
+    if (workItemDetailReloadPending(page, workItemDetailLoadSourceHash.current)) return;
     const fallback = missingRouteFallback(page, snapshot, observedTaskIds.current);
     if (fallback !== null) navigate(fallback, 'replace');
   }, [loadedWorkItemDetail, page, snapshot, workItemDetailLoadingId]);
@@ -557,13 +579,12 @@ export function BoardApp() {
   const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id)), [snapshot]);
   const allWorkItems = snapshot?.workItems ?? [];
   const groupedWorkItems = useMemo(() => groupWorkItems(allWorkItems), [allWorkItems]);
-  const snapshotSelectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
-  const cachedSelectionWasRemoved = page.kind === 'intake'
-    && snapshotSelectedWorkItem === undefined
-    && loadedWorkItemDetail?.id === page.workItemId
-    && snapshotLostSelectedWorkItem(page.workItemId, previousSnapshotWorkItems.current, allWorkItems);
-  const selectedWorkItem = snapshotSelectedWorkItem
-    ?? (page.kind === 'intake' && loadedWorkItemDetail?.id === page.workItemId && !cachedSelectionWasRemoved ? loadedWorkItemDetail : undefined);
+  const selectedWorkItem = routedWorkItemSelection(
+    page,
+    allWorkItems,
+    loadedWorkItemDetail,
+    previousSnapshotWorkItems.current,
+  );
   const workItemDetailOpen = selectedWorkItem !== undefined;
   const selectedTaskId = routedTaskId;
   const taskDetailOpen = selectedTaskId !== undefined;

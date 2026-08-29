@@ -55,6 +55,7 @@ import {
   parseUpdateAutomationConfiguration,
   parseUpdateTask,
   parseUpdateTaskPhase,
+  parseUpdateProject,
   parseUpdateWorkItem,
   parseWorkItemAudit,
 } from "./schema.js";
@@ -168,6 +169,7 @@ export class TaskBoardService {
   #parkLifecycleTimer: NodeJS.Timeout | undefined;
   #wallClockTimer: NodeJS.Timeout | undefined;
   #baseBranchTimer: NodeJS.Timeout | undefined;
+  #startupVerifySweep: Promise<void> | undefined;
   #started = false;
   #closing = false;
 
@@ -195,11 +197,17 @@ export class TaskBoardService {
     const verifyIntervalSeconds = config.reconcileIntervalSeconds > 0
       ? config.reconcileIntervalSeconds
       : 60;
-    this.#verifyTimer = setInterval(() => {
-      void this.#board.sweepVerifyAttempts().catch((error: unknown) => {
+    const sweepVerifyAttempts = (): Promise<void> => this.#board.sweepVerifyAttempts().then(
+      () => undefined,
+      (error: unknown) => {
         console.error("[task-board] machine-verify reconciliation failed", error);
-      });
-    }, verifyIntervalSeconds * 1_000);
+      },
+    );
+    this.#startupVerifySweep = sweepVerifyAttempts();
+    void this.#startupVerifySweep.finally(() => {
+      this.#startupVerifySweep = undefined;
+    }).catch(() => undefined);
+    this.#verifyTimer = setInterval(() => void sweepVerifyAttempts(), verifyIntervalSeconds * 1_000);
     this.#verifyTimer.unref();
     this.#parkLifecycleTimer = setInterval(() => {
       try {
@@ -501,6 +509,16 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 201, { project: this.#board.createProject(parseCreateProject(await readJsonBody(request, this.config.maxBodyBytes))) });
+      return;
+    }
+    const projectMatch = /^\/v1\/projects\/([^/]+)$/u.exec(url.pathname);
+    if (projectMatch && request.method === "PATCH") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, { project: this.#board.updateProject(
+        parseRouteIdentifier(projectMatch[1], "projectId"),
+        parseUpdateProject(await readJsonBody(request, this.config.maxBodyBytes)),
+      ) });
       return;
     }
     const boardMatch = /^\/v1\/projects\/([^/]+)\/board$/u.exec(url.pathname);
@@ -897,6 +915,18 @@ export class TaskBoardService {
       this.#server.closeIdleConnections();
       await stopped;
       this.#started = false;
+    }
+    const startupVerifySweep = this.#startupVerifySweep;
+    if (startupVerifySweep !== undefined) {
+      let timeout: NodeJS.Timeout | undefined;
+      await Promise.race([
+        startupVerifySweep,
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, 5_000);
+          timeout.unref();
+        }),
+      ]);
+      if (timeout !== undefined) clearTimeout(timeout);
     }
     this.#board.close();
   }

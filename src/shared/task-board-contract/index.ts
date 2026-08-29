@@ -13,7 +13,9 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   PLAN_NOT_FOUND: "PLAN_NOT_FOUND",
   PLAN_NOT_PROPOSED: "PLAN_NOT_PROPOSED",
   PLANNING_UNAVAILABLE: "PLANNING_UNAVAILABLE",
+  PROJECT_REPO_PATH_INVALID: "PROJECT_REPO_PATH_INVALID",
   PROJECT_REQUIRED: "PROJECT_REQUIRED",
+  PARENT_PHASED_FAILED: "PARENT_PHASED_FAILED",
   TASK_NOT_RECOVERABLE: "TASK_NOT_RECOVERABLE",
   TASK_RECOVERY_REQUIRED: "TASK_RECOVERY_REQUIRED",
   TASK_BOARD_PIPELINE_EXECUTOR_DRIFT: "TASK_BOARD_PIPELINE_EXECUTOR_DRIFT",
@@ -1128,6 +1130,12 @@ export interface CrossRepoContext {
   readonly markdown: string;
 }
 
+export interface BoardProjectContext {
+  readonly projectId: string;
+  readonly name: string;
+  readonly repoName: string;
+}
+
 export interface ClaimRunResult {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly run: AgentRun;
@@ -1135,6 +1143,8 @@ export interface ClaimRunResult {
   readonly task: BoardTask | null;
   readonly context: Readonly<{
     intake: boolean;
+    /** Present on intake claims; absent on legacy persisted claims and non-intake work. */
+    boardProjects?: readonly BoardProjectContext[];
     onboarding?: true;
     design: boolean;
     agent: AgentProfile;
@@ -1181,6 +1191,12 @@ export interface ClaimRunResult {
 export interface CreateProjectRequest {
   readonly name: string;
   readonly description: string;
+  readonly repoPath?: string;
+}
+
+export interface UpdateProjectRequest {
+  readonly name?: string;
+  readonly description?: string;
   readonly repoPath?: string;
 }
 

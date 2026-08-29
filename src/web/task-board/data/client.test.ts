@@ -1445,6 +1445,38 @@ describe('task-board HTTP client', () => {
     );
   });
 
+  it('updates project metadata and repository identity through the project PATCH route', async () => {
+    const updated = {
+      ...project,
+      description: 'Updated project context.',
+      repoPath: '/var/lib/steward/repos/cicada-platform',
+      version: project.version + 1,
+    };
+    const request = vi.fn(async () => new Response(JSON.stringify({ project: updated })));
+    const client = createTaskBoardClient({
+      baseUrl: 'https://board.example.test',
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.updateProject(project.projectId, {
+      description: updated.description,
+      repoPath: updated.repoPath,
+    })).resolves.toMatchObject({
+      description: updated.description,
+      repoPath: updated.repoPath,
+    });
+    expect(request).toHaveBeenCalledWith(
+      `https://board.example.test/v1/projects/${project.projectId}`,
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          description: updated.description,
+          repoPath: updated.repoPath,
+        }),
+      }),
+    );
+  });
+
   it('rotates an agent token with its current version and parses the one-time token response', async () => {
     const token = 'rotated-token-012345678901234567890123456789';
     const calls: Array<[string, RequestInit | undefined]> = [];

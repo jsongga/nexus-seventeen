@@ -8,7 +8,7 @@ import test from "node:test";
 import type { AgentRole, ClaimRunPinning, WorkflowPlanDraft } from "#shared/task-board-contract";
 import { HttpTaskBoardClient } from "#server/agents/task-worker/http-board-client";
 import { TaskBoardError } from "#server/task-board";
-import type { GitRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
 import {
   automationConfigurationRequest,
   automationStages,
@@ -101,7 +101,7 @@ function completeTask(
 async function reviewFixture(
   suffix: string,
   implementPin: ClaimRunPinning | undefined = IMPLEMENT_PIN,
-  boardGit?: GitRunner,
+  boardGit?: GitTextRunner,
 ) {
   const fixture = await boardFixture(undefined, undefined, boardGit === undefined ? {} : { git: boardGit });
   const { repo, baseSha } = await repository();
@@ -478,7 +478,7 @@ test("oversized review Git evidence is bounded before persistence and round-trip
   ).join("");
   let fixturePath: string | null = null;
   let inspectionCalls = 0;
-  const syntheticGit: GitRunner = (arguments_) => {
+  const syntheticGit: GitTextRunner = (arguments_) => {
     if (arguments_.includes("rev-parse")) return syntheticSha;
     if (arguments_.includes("log")) {
       inspectionCalls += 1;

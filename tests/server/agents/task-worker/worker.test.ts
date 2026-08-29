@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DESIGN_FAILURE_POINTS, WAKEUP_REASONS, type ClaimRunPinning } from "#shared/task-board-contract";
 import type { RuntimeEvent } from "../../../../src/server/agents/runtime/adapter.js";
-import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
+import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
@@ -1079,9 +1079,20 @@ test("three correctable settlement rejections durably take the failed path witho
   const taskWorker = await worker(root, board, launcher);
   try {
     assert.equal(await taskWorker.dispatchOnce(), true);
-    assert.equal(JSON.parse(await readFile(journalPath, "utf8")).active.correctableSettlementRejections, 1);
+    const afterFirst = JSON.parse(await readFile(journalPath, "utf8"));
+    assert.equal(afterFirst.active.correctableSettlementRejections, 1);
+    assert.equal(
+      afterFirst.active.previousPlanRejectionDetail,
+      "Onboarding deliverables are missing: gap report is missing or empty",
+    );
+    assert.doesNotMatch(agentPrompt(launcher.requests[0]!, PROMPTS), /Previous plan was rejected:/u);
     assert.equal(await taskWorker.dispatchOnce(), true);
-    assert.equal(JSON.parse(await readFile(journalPath, "utf8")).active.correctableSettlementRejections, 2);
+    const afterSecond = JSON.parse(await readFile(journalPath, "utf8"));
+    assert.equal(afterSecond.active.correctableSettlementRejections, 2);
+    assert.match(
+      agentPrompt(launcher.requests[1]!, PROMPTS),
+      /Previous plan was rejected: Onboarding deliverables are missing: gap report is missing or empty/u,
+    );
     assert.equal(await taskWorker.dispatchOnce(), true);
 
     assert.equal(launcher.requests.length, 3);

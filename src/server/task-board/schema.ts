@@ -11,6 +11,7 @@ import {
   parseBoardConfirmPlan,
   parseBoardCreateAgent,
   parseBoardCreateProject,
+  parseBoardUpdateProject,
   parseBoardCreateTask,
   parseBoardCreateTaskPhase,
   parseBoardCreateWorkItem,
@@ -44,6 +45,7 @@ import type {
   CreateHumanQuestionRequest,
   CreateHumanTaskMessageRequest,
   CreateProjectRequest,
+  UpdateProjectRequest,
   CreateTaskMessageRequest,
   CreateTaskPhaseRequest,
   CreateTaskRequest,
@@ -82,6 +84,7 @@ export function parseIdentifier(value: unknown, field: string): string {
 }
 
 export function parseCreateProject(value: unknown): CreateProjectRequest { return adapt(() => parseBoardCreateProject(value)); }
+export function parseUpdateProject(value: unknown): UpdateProjectRequest { return adapt(() => parseBoardUpdateProject(value)); }
 export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest { return adapt(() => parseBoardConfirmPlan(value)); }
 export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest { return adapt(() => parseBoardRejectPlan(value)); }
 export function parseApprovePipelineMergeRequest(value: unknown): ApprovePipelineMergeRequest { return adapt(() => parseBoardApprovePipelineMerge(value)); }

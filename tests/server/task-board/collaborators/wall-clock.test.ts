@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { withGitBytes } from "#server/task-board/collaborators/scope-check";
 import type { BoardNotification, WorkflowPlanDraft } from "#shared/task-board-contract";
 import {
   TaskBoard,
@@ -77,7 +78,7 @@ async function capFixture(caps: Readonly<{
     now: () => clock,
     ...caps,
   }), {
-    git: () => BASE_SHA,
+    git: withGitBytes(() => BASE_SHA),
     notificationDelivery: delivery,
   });
   const project = board.createProject({

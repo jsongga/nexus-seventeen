@@ -10,7 +10,7 @@ import type {
   SinkCollection,
   SinkDocument,
 } from "../../../src/server/docs-publish/sink.js";
-import type { GitRunner } from "../../../src/server/task-board/collaborators/scope-check.js";
+import type { GitTextRunner } from "../../../src/server/task-board/collaborators/scope-check.js";
 
 const ENTRY: DocsPublishRepo = Object.freeze({ name: "sample", path: "/repo", ref: "main" });
 const COLLECTION: SinkCollection = Object.freeze({ id: "collection-1", name: "sample docs" });
@@ -22,7 +22,7 @@ function gitBlobSha(markdown: string): string {
     .digest("hex");
 }
 
-function gitWithDocs(files: Readonly<Record<string, string>>, resolvedSha = RESOLVED_SHA): GitRunner {
+function gitWithDocs(files: Readonly<Record<string, string>>, resolvedSha = RESOLVED_SHA): GitTextRunner {
   return (arguments_) => {
     if (arguments_.includes("ls-tree")) {
       const separator = arguments_.includes("-z") ? "\0" : "\n";
@@ -48,7 +48,7 @@ test("resolves a moving ref once and uses that SHA for every content read", asyn
   const calls: Array<readonly string[]> = [];
   const markdown = "# Readme\n";
   const blobSha = gitBlobSha(markdown);
-  const runner: GitRunner = (arguments_) => {
+  const runner: GitTextRunner = (arguments_) => {
     calls.push([...arguments_]);
     if (arguments_.includes("rev-parse")) return `${RESOLVED_SHA}\n`;
     if (arguments_.includes("ls-tree")) return `100644 blob ${blobSha}\tREADME.md\0`;
@@ -232,7 +232,7 @@ test("records a per-document sink failure and continues publishing later documen
 
 test("reports enumeration failures without preparing the collection", async () => {
   const sink = new MemorySink();
-  const runner: GitRunner = (arguments_) => {
+  const runner: GitTextRunner = (arguments_) => {
     if (arguments_.includes("rev-parse")) return `${RESOLVED_SHA}\n`;
     if (arguments_.includes("ls-tree")) throw new Error("stdout maxBuffer length exceeded");
     throw new Error(`unexpected git call: ${arguments_.join(" ")}`);

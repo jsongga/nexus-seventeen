@@ -250,24 +250,39 @@ test("a completed design is discarded when cancellation wins the settlement race
       reason: "The operator cancelled while the design run was active.",
     });
     assert.equal(cancelled.state, "abandoned");
+    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === designClaim.run.runId,
+    )?.status, "interrupted");
+    const cancelledTask = fixture.board.requireTask(designClaim.task.taskId);
+    assert.equal(cancelledTask.status, "cancelled");
 
-    const settled = fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
+    const settlement = {
       outcome: "completed",
       result: "The design completed after cancellation.",
       designRecord: designRecord(),
-    });
+    } as const;
+    const settled = fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, settlement);
     assert.equal(settled.run.status, "completed");
+    assert.equal(settled.duplicate, false);
     const afterSettlement = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(afterSettlement.state, "abandoned");
     assert.equal(afterSettlement.version, cancelled.version);
     assert.equal(afterSettlement.endedAt, cancelled.endedAt);
     assert.equal(afterSettlement.cancelledReason, cancelled.cancelledReason);
+    assert.deepEqual(fixture.board.requireTask(designClaim.task.taskId), cancelledTask);
+    const replay = fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, settlement);
+    assert.equal(replay.run.status, "completed");
+    assert.equal(replay.duplicate, true);
+    assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), afterSettlement);
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(db.prepare(
         "SELECT COUNT(*) AS count FROM design_records WHERE work_item_id=?",
       ).get(fixture.workItem.workItemId)?.count, 0);
+      assert.equal(db.prepare(
+        "SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?",
+      ).get(designClaim.run.runId)?.count, 1);
       const node = db.prepare(`
         SELECT state,current_stage
         FROM work_nodes
@@ -286,6 +301,11 @@ test("a completed design is discarded when cancellation wins the settlement race
         runId: designClaim.run.runId,
         reason: "work_item_ended",
       });
+      assert.equal(db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM task_events
+        WHERE task_id=? AND event_type='work_item_design_discarded'
+      `).get(designClaim.task.taskId)?.count, 1);
     } finally {
       db.close();
     }

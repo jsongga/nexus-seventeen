@@ -1,5 +1,5 @@
 import { parseVerifyContract } from "../../agents/verify/contract.js";
-import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
+import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
 const REQUIRED_FILES = Object.freeze([
   "README.md",
   "docs/architecture.md",
@@ -13,7 +13,7 @@ interface OnboardingCheckResult {
   readonly missing: readonly string[];
 }
 
-function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
+function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
   return runner([
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=",
@@ -22,7 +22,7 @@ function git(runner: GitRunner, repoPath: string, arguments_: readonly string[])
   ]);
 }
 
-function branchFile(runner: GitRunner, repoPath: string, branch: string, path: string): string | null {
+function branchFile(runner: GitTextRunner, repoPath: string, branch: string, path: string): string | null {
   try {
     return git(runner, repoPath, ["show", `${branch}:${path}`]);
   } catch {
@@ -34,7 +34,7 @@ export function onboardingDeliverablesCheck(
   repoPath: string,
   branch: string,
   gapReport: string | undefined,
-  runner: GitRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit,
 ): OnboardingCheckResult {
   const missing: string[] = [];
   if (typeof repoPath !== "string" || repoPath.trim().length === 0) {

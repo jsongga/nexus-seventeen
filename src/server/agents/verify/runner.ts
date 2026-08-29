@@ -394,6 +394,7 @@ export class VerifyRunner {
     if (parsed.id !== id) throw new Error(`verify status id mismatch at ${path}`);
     if (parsed.state !== "running" || parsed.pid === undefined) return;
     try {
+      // Steward deploys on macOS and Linux; the Windows fallback terminates only the supervisor process.
       process.kill(process.platform === "win32" ? parsed.pid : -parsed.pid, "SIGTERM");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;

@@ -101,6 +101,7 @@ This example follows the implemented publication check, merge-SHA interface look
 **Hard limits**
 
 - **One level** — validation rejects a child plan that declares children ([`validate.ts`](../src/shared/task-board-contract/validate.ts#L3166-L3175)).
+- **One repository per Project** — every child targets one board Project, and every Project has one `repo_path`. A product grouped into one Project but spanning several repositories, including Cicada Sense/HomeDots, cannot be decomposed across those repositories until repository identity is modeled separately from the product Project ([roadmap item 9.9](../orchestrator-roadmap.md#99-repository-identity-separate-from-the-product-project)).
 - **No re-merge** — unphased fan-out skips merged children, and phased auto-merge considers only children in `final_approval`. Expand publication is enforced during verification before merge; a merged Expand is not reopened for that check ([`projects.ts`](../src/server/task-board/collaborators/projects.ts#L515-L569), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L1225-L1236), [`runs.ts`](../src/server/task-board/collaborators/runs.ts#L274-L315)).
 - **Phased failure has one exit** — an abandoned or dead-lettered Expand/Migrate keeps Contract blocked. Cancelling the parent is the only exit from that family ([`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts#L84-L163), [`work-item-detail.ts`](../src/web/task-board/model/work-item-detail.ts#L36-L59)).
 
@@ -181,7 +182,7 @@ Phases—not `changeShape`—select merge policy. A feature split is unphased, a
 
 | Policy | Merge behavior | Human gate |
 |---|---|---|
-| Unphased | Children run independently. When every non-terminal, unmerged child is in `final_approval`, the parent enters `final_approval`; one fan-out merges unmerged children in dependency order. Already merged children are skipped. | One parent **Approve & merge children** action. |
+| Unphased | Children run independently. When every non-terminal, unmerged child is in `final_approval`, the parent enters `final_approval`; fan-out checks base movement before each child, merges in dependency order, and skips children already merged. | One parent **Approve & merge children** action when every child repository base remains current. |
 | Phased Expand/Migrate | Each child auto-merges on reaching `final_approval`, after the normal branch-tip and base-advance guards. Transient failures retry on a later reconciliation pass; one child’s failure does not stop another eligible child or family. | Parent plan confirmation is explicit pre-authorization. |
 | Phased Contract | Contract remains blocked until every Expand/Migrate sibling is merged and deploy-attested, then follows the ordinary merge path. | Contract always has its own human final approval. |
 
@@ -204,6 +205,8 @@ Every merge and human decision remains auditable:
 | Family cancelled | Human/system `cancel` on the parent and every non-terminal child; each child action references the parent. |
 
 An unphased parent tolerates children merged independently. If the last child merges outside fan-out, reconciliation settles the parent directly. If a promoted child leaves `final_approval` because of rejection, base movement, or merge conflict, the parent returns to `coordinating` until all remaining children are ready again.
+
+The per-child base check also runs between fan-out merges. If sibling A advances a repository shared with sibling B, B is withdrawn to implementation for re-verification, the parent returns to `coordinating`, and reconciliation re-promotes it when B reaches `final_approval` again. The already merged child and final completion note are preserved, so same-repository feature splits may require a second parent approval. Cross-repository siblings do not advance one another's bases and normally complete under one approval.
 
 ### Notifications, recovery, and operations
 
@@ -236,11 +239,16 @@ The parent detail is the control surface for a coordination family:
 - The Children table is ordered by declaration and has Ordinal, Phase, Project, State, Attestation, and Actions columns. Merged unattested Expand/Migrate rows provide inline **Attest deployed**; each child’s Audit gate-action timeline shows its merge SHA.
 - An unphased parent exposes one **Approve & merge children** action and **Send back to coordination**. Contract detail shows all transitive sibling attestations and disables approval until they are ready.
 - A `child_failed` park exposes **Resume coordination** only for unphased families. Phased failure explains that cancellation is the exit.
+- Any pipeline item parked for `base_diverged`, whether an ordinary item or a phased child, pins **Resume after base change** to its detail footer. The **Resume child** confirmation (or **Resume work item** for an ordinary item) refreshes the base, resolves the park, and returns implementation to the active stage.
 - Terminal parents retain the family table for audit. Child detail links back to the parent.
 
 ### Rolling upgrade
 
-Claims now carry `phase` and, for Migrate implementation engineers, `crossRepoContext`. Older workers use a closed claim schema and reject those new fields. Upgrade every worker first, then deploy the board/web version that emits decomposition claims. Existing pre-decomposition claim replays remain readable because the new worker treats absent `phase` as `null` and omits absent interface context.
+Every claim now carries `phase`; ordinary claims carry `phase: null`. Migrate implementation claims may also carry `crossRepoContext`. Older workers use a closed claim schema, so every old worker rejects every new-board claim, not only decomposition work. Upgrade every worker first, then deploy the board/web version. Existing pre-decomposition claim replays remain readable because the new worker treats absent `phase` as `null` and omits absent interface context.
+
+After upgrading a database to version 26, every Project used by a pipeline or decomposition child must have an explicit `repoPath`, supplied through `PATCH /v1/projects/:id` or the checked-in catalog. Catalog reconciliation repairs description and repository-path drift; duplicates with the same catalog name remain a conflict. The migration’s `description → repo_path` backfill and project-creation default are compatibility shims only; descriptive text is not a usable repository identity. Correct those rows before confirming decomposition plans.
+
+Catalog paths are container paths under `/var/lib/steward/repos`. Operators must clone provider and consumer repositories into the persistent `steward-data` volume at those paths, or bind-mount them there, before onboarding. Local container development uses the checked-in `docker-compose.dev.yml` override with `STEWARD_DEV_REPOS_ROOT`; host-native development uses an equivalent `/var/lib/steward/repos` symlink. Repository existence is checked when a plan is confirmed, not when a Project path is patched.
 
 ### Implementation map
 

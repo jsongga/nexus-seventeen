@@ -11,8 +11,10 @@ import {
   FinalApprovalActions,
   FinalRejectionForm,
   GapReportSection,
+  ParentWorkItemLink,
   WorkItemFooterActions,
   WorkItemDetail,
+  familyNotParentAfterSnapshot,
 } from './WorkItemDetail';
 
 vi.mock('../../components/ui', async (importOriginal) => {
@@ -258,6 +260,21 @@ describe('work-item confirmation surfaces', () => {
 });
 
 describe('decomposition detail sections', () => {
+  it('opens a child parent through the per-id detail loader and clears a stale non-parent latch', () => {
+    const open = vi.fn();
+    const markup = renderToStaticMarkup(createElement(ParentWorkItemLink, {
+      parentWorkItemId: 'parent-one',
+      parentWorkItem: parkedWorkItem,
+      onOpenWorkItem: open,
+    }));
+
+    expect(markup).toContain('data-detail-source="work-item-id"');
+    expect(markup).toContain('<button');
+    expect(markup).not.toContain('href=');
+    expect(familyNotParentAfterSnapshot(true, true)).toBe(false);
+    expect(familyNotParentAfterSnapshot(true, false)).toBe(true);
+  });
+
   it('renders the ordered children table with phase, project, state, attestation, and links', () => {
     const markup = renderToStaticMarkup(createElement(ChildrenSection, {
       children: [expandChild, {
@@ -525,6 +542,48 @@ describe('decomposition detail sections', () => {
     expect(phased).toContain('Cancel work item');
     expect(unphased).toContain('Resume coordination');
     expect(unphased).not.toContain('A phase failed — cancel the coordination to abandon it');
+  });
+
+  it('pins the anchored base-change resume action on a parked child detail', () => {
+    vi.mocked(Modal).mockClear();
+    const ok = async () => ({ ok: true as const });
+    const baseDivergedChild = {
+      ...parkedWorkItem,
+      id: 'base-diverged-child',
+      parentWorkItemId: parkedWorkItem.id,
+      phase: 'expand' as const,
+      planningTaskId: null,
+      currentStage: null,
+      parkCategory: 'base_diverged' as const,
+    };
+
+    const markup = renderToStaticMarkup(createElement(WorkItemDetail, {
+      workItem: baseDivergedChild,
+      snapshotRevision: 1,
+      projectName: 'Project one',
+      projects: [],
+      parentWorkItem: parkedWorkItem,
+      planningTask: null,
+      openQuestion: null,
+      client: {} as TaskBoardClient,
+      initialFamily: { state: 'ready', children: [], dependencies: [], error: null },
+      busy: false,
+      onClose: vi.fn(),
+      onAnswer: ok,
+      onConfirm: ok,
+      onAttestDeploy: ok,
+      onResumeCoordination: ok,
+      onCancel: ok,
+      onArchive: ok,
+    }));
+
+    expect(markup).toContain('Resume after base change');
+    expect(markup).not.toContain('Resume coordination');
+    expect(vi.mocked(Modal).mock.calls.find(([props]) => props.title === 'Resume child')?.[0]).toMatchObject({
+      variant: 'anchored',
+      anchorRef: { current: null },
+      description: expect.stringContaining('current repository head'),
+    });
   });
 
   it('renders Retry in a child deployment-attestation failure section', () => {

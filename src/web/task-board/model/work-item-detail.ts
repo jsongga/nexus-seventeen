@@ -3,6 +3,7 @@ import type {
   BoardChildWorkItem,
   BoardWorkItem,
   BoardWorkItemDependency,
+  ParkCategory,
   ProjectWorkflow,
   TaskStatus,
   WorkflowNode,
@@ -24,6 +25,7 @@ interface WorkItemDetailAffordances {
 export interface DecompositionAffordances {
   approveAndMergeChildren: boolean;
   resumeCoordination: boolean;
+  resumeAfterBaseChange: boolean;
   attestDeployment: boolean;
 }
 
@@ -35,6 +37,7 @@ export function deriveDecompositionAffordances(input: {
   phasedFamily: boolean;
   childFailed: boolean;
   deployAttested: boolean;
+  parkCategory?: ParkCategory | null;
 }): DecompositionAffordances {
   const attestablePhase = input.phase === 'expand' || input.phase === 'migrate';
   const decomposedParent = input.parentWorkItemId === null && input.hasChildren;
@@ -45,6 +48,8 @@ export function deriveDecompositionAffordances(input: {
     resumeCoordination: decomposedParent
       && input.workItemState === 'parked'
       && !(input.phasedFamily && input.childFailed),
+    resumeAfterBaseChange: input.workItemState === 'parked'
+      && input.parkCategory === 'base_diverged',
     attestDeployment: input.parentWorkItemId !== null
       && attestablePhase
       && input.workItemState === 'merged'

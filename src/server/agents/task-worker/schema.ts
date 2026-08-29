@@ -119,9 +119,11 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
   if (item.active !== null) {
     const rawActive = record(item.active, "Active run");
     const hasRejectionCounter = Object.hasOwn(rawActive, "correctableSettlementRejections");
+    const hasRejectionDetail = Object.hasOwn(rawActive, "previousPlanRejectionDetail");
     const entry = exact(item.active, [
       "claim", "phase", "contextDigest", "launchStartedAt", "interruptReason", "outcome", "nextOutputIndex",
       ...(hasRejectionCounter ? ["correctableSettlementRejections"] : []),
+      ...(hasRejectionDetail ? ["previousPlanRejectionDetail"] : []),
     ], "Active run");
     if (entry.phase !== "claimed" && entry.phase !== "launch_started" && entry.phase !== "running" && entry.phase !== "outputs_pending") {
       throw new Error("Active run phase is invalid");
@@ -136,6 +138,9 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
     const correctableSettlementRejections = hasRejectionCounter
       ? nonNegativeInteger(entry.correctableSettlementRejections, "correctableSettlementRejections")
       : 0;
+    const previousPlanRejectionDetail = hasRejectionDetail
+      ? nullableProse(entry.previousPlanRejectionDetail, "previousPlanRejectionDetail", 2_000)
+      : null;
     if (
       (entry.phase === "claimed" && (contextDigest !== null || launchStartedAt !== null || outcome !== null)) ||
       ((entry.phase === "launch_started" || entry.phase === "running") && (contextDigest === null || launchStartedAt === null || outcome !== null)) ||
@@ -153,6 +158,7 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
       outcome,
       nextOutputIndex,
       correctableSettlementRejections,
+      previousPlanRejectionDetail,
     });
     if (legacy && claim.taskId !== null && legacyCursor !== null) messageCursors = Object.freeze({ [claim.taskId]: legacyCursor });
   }

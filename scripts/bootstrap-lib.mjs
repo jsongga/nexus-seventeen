@@ -41,6 +41,14 @@ export function projectDescription(project) {
   return [`Summary: ${project.summary}`, ...project.resources.map((resource) => `${resource.label}: ${resource.value}`)].join('\n');
 }
 
+export function projectCatalogPatch(actual, desired) {
+  const description = projectDescription(desired);
+  const patch = {};
+  if (actual.description !== description) patch.description = description;
+  if (actual.repoPath !== desired.repoPath) patch.repoPath = desired.repoPath;
+  return Object.keys(patch).length === 0 ? null : Object.freeze(patch);
+}
+
 export function expandedAgentProfiles(catalog) {
   return catalog.projects.flatMap((project) => catalog.projectAgentProfiles.map((profile) => ({
     projectKey: project.key,
@@ -63,10 +71,12 @@ export function validateCatalog(catalog) {
   const projectKeys = new Set();
   const projectNames = new Set();
   for (const [index, project] of catalog.projects.entries()) {
-    exactKeys(project, ['key', 'name', 'summary', 'resources'], `projects[${index}]`);
+    exactKeys(project, ['key', 'name', 'repoPath', 'summary', 'resources'], `projects[${index}]`);
     boundedText(project.key, 80, `projects[${index}].key`);
     assert(/^[a-z0-9][a-z0-9-]*$/u.test(project.key), `projects[${index}].key must be lowercase kebab-case`);
     boundedText(project.name, 160, `projects[${index}].name`);
+    boundedText(project.repoPath, 8_000, `projects[${index}].repoPath`);
+    assert(project.repoPath.startsWith('/'), `projects[${index}].repoPath must be an absolute path`);
     boundedText(project.summary, 2_000, `projects[${index}].summary`);
     assert(!projectKeys.has(project.key), `duplicate project key ${project.key}`);
     assert(!projectNames.has(project.name), `duplicate project name ${project.name}`);

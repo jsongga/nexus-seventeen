@@ -174,6 +174,7 @@ describe('decomposition affordances', () => {
       }), `parent/${workItemState}`).toEqual({
         approveAndMergeChildren: workItemState === 'final_approval',
         resumeCoordination: workItemState === 'parked',
+        resumeAfterBaseChange: false,
         attestDeployment: false,
       });
 
@@ -188,6 +189,7 @@ describe('decomposition affordances', () => {
       }), `child/${workItemState}`).toEqual({
         approveAndMergeChildren: false,
         resumeCoordination: false,
+        resumeAfterBaseChange: false,
         attestDeployment: workItemState === 'merged',
       });
 
@@ -202,6 +204,7 @@ describe('decomposition affordances', () => {
       }), `ordinary/${workItemState}`).toEqual({
         approveAndMergeChildren: false,
         resumeCoordination: false,
+        resumeAfterBaseChange: false,
         attestDeployment: false,
       });
     }
@@ -236,6 +239,29 @@ describe('decomposition affordances', () => {
       childFailed: true,
       deployAttested: false,
     }).resumeCoordination).toBe(true);
+  });
+
+  it('offers base-change recovery only for an item parked as base_diverged', () => {
+    expect(deriveDecompositionAffordances({
+      workItemState: 'parked',
+      parentWorkItemId: 'parent-one',
+      phase: 'expand',
+      hasChildren: false,
+      phasedFamily: false,
+      childFailed: false,
+      deployAttested: false,
+      parkCategory: 'base_diverged',
+    }).resumeAfterBaseChange).toBe(true);
+    expect(deriveDecompositionAffordances({
+      workItemState: 'parked',
+      parentWorkItemId: null,
+      phase: null,
+      hasChildren: false,
+      phasedFamily: false,
+      childFailed: false,
+      deployAttested: false,
+      parkCategory: 'planning_run_failed',
+    }).resumeAfterBaseChange).toBe(false);
   });
 
   it('keys family refreshes to only the parent and its children', () => {

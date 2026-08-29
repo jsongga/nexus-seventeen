@@ -81,6 +81,7 @@ import type {
   AutomationStageExecutor,
   BoardWorkItemDependency,
   DeployAttestationResult,
+  ParkCategory,
   ProjectArtifact,
   ProjectWorkflow,
   WorkflowEvent,
@@ -88,7 +89,7 @@ import type {
   WorkflowNode,
   WorkflowPlan,
 } from '../types';
-import { maximumAutomationConfigurationBytes, maximumWorkItemCursorBytes } from './wire';
+import { maximumAutomationConfigurationBytes, maximumWorkItemCursorBytes, parkCategories } from './wire';
 
 export { maximumWorkItemCursorBytes };
 export type { JsonRecord };
@@ -110,6 +111,7 @@ type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
 export type RawWorkItemDetail = RawWorkItem & Readonly<{
   transitions: RawWorkItemTransition[];
   gapReportArtifactId: string | null;
+  parkCategory?: ParkCategory | null;
 }>;
 type RawGateAction = WithMs<TolerantGateAction, 'createdAt'>;
 export interface RawWorkItemAudit {
@@ -243,6 +245,9 @@ export function parseWorkItemDetail(value: unknown, path: string): RawWorkItemDe
     gapReportArtifactId: item.gapReportArtifactId === undefined || item.gapReportArtifactId === null
       ? null
       : identifier(item.gapReportArtifactId, `${path}.gapReportArtifactId`),
+    parkCategory: item.parkCategory === undefined || item.parkCategory === null
+      ? null
+      : member(item.parkCategory, parkCategories, `${path}.parkCategory`),
   };
 }
 function projectAgent(item: AgentProfile): RawAgent {

@@ -139,8 +139,32 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
             area: "Campaign intake",
             mission: "Turn the campaign request into an observable workflow plan.",
           },
-        }),
+          boardProjects: [
+            { projectId: "project-one", name: "Provider API", repoName: "provider-api" },
+            { projectId: "project-consumer", name: "Consumer web", repoName: "consumer-web" },
+          ],
+        } as never),
       }),
+    },
+    {
+      name: "manager-intake-retry",
+      prompt: renderPrompt({
+        runId: "run-golden-manager-intake-retry",
+        wakeReason: "human_assignment",
+        previousPlanRejectionDetail: "Every Migrate child must depend on the Expand child.",
+        context: context({
+          intake: true,
+          mission: {
+            role: "manager",
+            area: "Campaign intake",
+            mission: "Turn the campaign request into an observable workflow plan.",
+          },
+          boardProjects: [
+            { projectId: "project-one", name: "Provider API", repoName: "provider-api" },
+            { projectId: "project-consumer", name: "Consumer web", repoName: "consumer-web" },
+          ],
+        } as never),
+      } as never),
     },
     {
       name: "onboarding-intake",
@@ -278,6 +302,29 @@ test("agent prompt context matrix matches byte-identical golden fixtures", () =>
   }
 });
 
+test("manager intake prompt states every enforced decomposition split rule and lists eligible project ids", () => {
+  const prompt = goldenPromptCases().find((fixture) => fixture.name === "manager-intake")?.prompt ?? "";
+  assert.match(prompt, /Board projects/u);
+  assert.match(prompt, /project-consumer.*Consumer web.*consumer-web/u);
+  assert.match(prompt, /use these projectId values for children/u);
+  assert.match(prompt, /mechanical_sweep.*no children/u);
+  assert.match(prompt, /feature.*optional unphased children.*independently mergeable.*same-project.*overlap/u);
+  assert.match(prompt, /blast_radius.*children required.*splitBy/u);
+  assert.match(prompt, /phases.*all-or-none/u);
+  assert.match(prompt, /exactly one Expand.*at least one Migrate.*exactly one Contract/u);
+  assert.match(prompt, /every Migrate.*Expand.*Contract.*every Migrate/u);
+  assert.match(prompt, /Expand and Contract.*parent project.*Migrate.*other projects/u);
+  assert.match(prompt, /docs\/interface\.md/u);
+  assert.match(prompt, /one level/u);
+});
+
+test("previous-plan rejection feedback is conditional and bounded", () => {
+  const first = goldenPromptCases().find((fixture) => fixture.name === "manager-intake")?.prompt ?? "";
+  const retry = goldenPromptCases().find((fixture) => fixture.name === "manager-intake-retry")?.prompt ?? "";
+  assert.doesNotMatch(first, /Previous plan was rejected:/u);
+  assert.match(retry, /Previous plan was rejected: Every Migrate child must depend on the Expand child\./u);
+});
+
 test("pipeline implementation engineer prompt appends the declared-scope bright-line block verbatim", () => {
   const prompt = renderPrompt({
     runId: "run-pipeline-implementation",
@@ -349,6 +396,7 @@ test("engineer prompt renders published cross-repo context if and only if it is 
     /Integrate against the provider's PUBLISHED interface below \(docs\/interface\.md @ c{40}\); never read or modify the provider's source\./u,
   );
   assert.ok(withContext.includes(CROSS_REPO_CONTEXT.markdown));
+  assert.doesNotMatch(withContext, /"crossRepoContext":/u);
   assert.doesNotMatch(withoutContext, /provider's PUBLISHED interface/u);
 });
 
@@ -416,6 +464,7 @@ test("fix-round engineer prompt replaces the plain implementation block and rend
   const fixBlock = "Fix round 2 on branch task/work-item-one. A reviewer found the defects below; the diff is on the branch. Fix each finding, then re-trace the whole flow end to end — not just the patch. Loop: run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units. The declared scope, non-goals, and BRIGHT_LINE rules from the original task still apply verbatim.";
   assert.ok(prompt.includes(fixBlock));
   assert.match(prompt, /src\/server\/fix\.ts/u);
+  assert.match(prompt, /The retry reaches machine verification\./u);
   assert.match(prompt, /The retry skipped machine verification\./u);
   assert.match(prompt, /Reversible mid-run decisions:/u);
   assert.doesNotMatch(prompt, /Pipeline task on branch task\/work-item-one/u);

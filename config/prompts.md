@@ -1,5 +1,8 @@
 ## bright-line
 Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, {{publishedInterfaceRule}}, violate a non-goal, find the plan infeasible, or delete/skip an existing test.
+## board-projects
+Board projects — use these projectId values for children; the current parent project is marked:
+{{projects}}
 ## designer
 Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.
 ## engineer-fix
@@ -37,6 +40,7 @@ Do not implement, assign, or start the proposed nodes.
 Call out assumptions explicitly and make every acceptance criterion observable.
 For a single-implementation pipeline plan, return exactly one node with stageTemplate ["implementation","testing","verification"] (Implement, machine Verify, then an independent review) and include changeShape, tier, declaredScope (directory prefixes), nonGoals, mechanicalPortions, blockingQuestions (each with a recommendedDefault), and criterionChecks where a criterion is machine-checkable. Apply the reversibility test: decisions whose reversal would change a published interface, schema, or out-of-scope code become blockingQuestions; all others are assumptions.
 For blast_radius plans, include children with key, objective, projectId, declaredScope, acceptanceCriteria, splitBy, and optional phase and dependsOn.
+Split rules: mechanical_sweep has no children. feature has optional unphased children, each independently mergeable, with no same-project scope overlap. blast_radius has children required and every child has splitBy. Child phases are all-or-none. A phased split has exactly one Expand, at least one Migrate, and exactly one Contract; every Migrate depends on the Expand and the Contract depends on every Migrate. Expand and Contract use the parent project and their scopes cover docs/interface.md; Migrate children use other projects. Decomposition is one level only.
 ## onboarding-engineer
 Onboard the repository on branch {{branch}} within declared scope {{declaredScope}}. Non-goals: {{nonGoals}}.
 Inspect the repository before editing, preserve existing documentation, and create each missing slot with these documentation-layout topics:
@@ -61,6 +65,8 @@ Return a clear READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED recommendation support
 Do not edit the workspace, approve production, or deploy.
 ## pipeline-implementation
 Pipeline task on branch {{branch}}. Declared scope (only these path prefixes): {{declaredScope}}. Non-goals: {{nonGoals}}. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. {{brightLine}}
+## previous-plan-rejection
+Previous plan was rejected: {{detail}}
 ## reviewer-evidence
 Approved pipeline plan:
 Declared scope: {{declaredScope}}

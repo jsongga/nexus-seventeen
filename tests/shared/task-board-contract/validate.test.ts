@@ -26,6 +26,8 @@ import {
 } from "#shared/task-board-contract";
 import {
   BROWSER_SCALAR_MESSAGES,
+  boundedClaimText,
+  claimEstimateMinutes,
   ContractValidationError,
   NAMED_EXACT_MESSAGES,
   PATH_EXACT_MESSAGES,
@@ -47,7 +49,9 @@ import {
   parseWorkItemEntity,
   parseWorkerAgentContext,
   parseWorkerAgentRunOutcome,
+  positiveClaimInteger,
   prose,
+  projectAgentTaskPhase,
   timestamp,
 } from "#shared/task-board-contract/validate";
 
@@ -195,6 +199,40 @@ function pipelinePlan(overrides: Record<string, unknown> = {}): Record<string, u
 function stages(): Array<Readonly<{ stage: string; executor: Readonly<{ kind: string }> }>> {
   return WORK_ITEM_STAGES.map((stage) => ({ stage, executor: { kind: stage === "human_review" ? "human" : "disabled" } }));
 }
+
+test("shared claim projection validators preserve the worker boundary", () => {
+  assert.equal(boundedClaimText("  ready  ", "claim.title", 20), "ready");
+  assert.equal(boundedClaimText("a".repeat(30), "claim.title", 20), "aaaa\n[truncated]");
+  assert.equal(positiveClaimInteger(2, "claim.version"), 2);
+  assert.throws(() => positiveClaimInteger(0, "claim.version"), /claim\.version is invalid/u);
+  assert.equal(claimEstimateMinutes(null, "claim.estimate"), null);
+  assert.equal(claimEstimateMinutes(30, "claim.estimate"), 30);
+  assert.throws(() => claimEstimateMinutes(17, "claim.estimate"), /claim\.estimate is invalid/u);
+  assert.deepEqual(projectAgentTaskPhase({
+    apiVersion: TASK_BOARD_API_VERSION,
+    phaseId: "phase-one",
+    projectId: "project-one",
+    taskId: "task-one",
+    title: "  Implement contract  ",
+    stage: "execution",
+    status: "pending",
+    parallelGroup: null,
+    orderKey: 1,
+    startedAt: null,
+    endedAt: null,
+    version: 2,
+    createdAt: NOW,
+    updatedAt: NOW,
+  }, "project-one", "task-one", "claim.phase"), {
+    phaseId: "phase-one",
+    title: "Implement contract",
+    stage: "execution",
+    status: "pending",
+    parallelGroup: null,
+    orderKey: 1,
+    version: 2,
+  });
+});
 
 test("exact supports generic, named-field, and browser path-compatible messages", () => {
   assert.equal(thrownMessage(() => exact({ a: 1, b: 2 }, ["a"], "Payload")),
@@ -597,6 +635,28 @@ test("worker context shapes accept exactly the shared role, task, and phase enum
   }] } })));
   assertAcceptedSet(WORK_ITEM_PHASES, (phase) => parseWorkerAgentContext(context({ phase })));
   assert.equal((parseWorkerAgentContext(context()) as { phase?: string | null }).phase, null);
+});
+
+test("worker intake context accepts a bounded closed-world board-project list", () => {
+  const boardProjects = [
+    { projectId: "project-one", name: "Provider API", repoName: "provider-api" },
+    { projectId: "project-consumer", name: "Consumer web", repoName: "consumer-web" },
+  ];
+  assert.deepEqual(
+    (parseWorkerAgentContext(context({ intake: true, boardProjects })) as { boardProjects?: unknown }).boardProjects,
+    boardProjects,
+  );
+  assert.throws(
+    () => parseWorkerAgentContext(context({
+      intake: true,
+      boardProjects: Array.from({ length: 65 }, (_, index) => ({
+        projectId: `project-${index}`,
+        name: `Project ${index}`,
+        repoName: `repo-${index}`,
+      })),
+    })),
+    /boardProjects/u,
+  );
 });
 
 test("worker expected minutes rejects an explicitly undefined value", () => {

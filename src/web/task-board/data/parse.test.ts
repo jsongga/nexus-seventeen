@@ -588,10 +588,16 @@ describe('browser task-board validator adapter', () => {
       actorId: 'human:operator',
       createdAt: NOW,
     };
-    expect(parseWorkItemDetail({ ...workItem, transitions: [transition] }, 'workItem').transitions).toEqual([{
+    const detail = parseWorkItemDetail({
+      ...workItem,
+      transitions: [transition],
+      parkCategory: 'base_diverged',
+    }, 'workItem');
+    expect(detail.transitions).toEqual([{
       ...transition,
       createdAtMs: Date.parse(NOW),
     }]);
+    expect(detail.parkCategory).toBe('base_diverged');
     expect(() => parseWorkItemDetail({
       ...workItem,
       transitions: [{ ...transition, toState: 'future_work_item_state' }],

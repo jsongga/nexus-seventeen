@@ -128,6 +128,37 @@ export function GapReportSection({
   );
 }
 
+export function familyNotParentAfterSnapshot(current: boolean, knownParent: boolean): boolean {
+  return knownParent ? false : current;
+}
+
+export function ParentWorkItemLink({
+  parentWorkItemId,
+  parentWorkItem,
+  onOpenWorkItem,
+}: {
+  parentWorkItemId: string;
+  parentWorkItem: BoardWorkItem | null;
+  onOpenWorkItem?: (workItemId: string) => void;
+}) {
+  const label = parentWorkItem?.refinedObjective?.trim()
+    || parentWorkItem?.originalRequest
+    || parentWorkItemId;
+  const className = 'break-words text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover';
+  return onOpenWorkItem === undefined ? (
+    <a className={className} href={`#/intake/${encodeURIComponent(parentWorkItemId)}`}>{label}</a>
+  ) : (
+    <button
+      type="button"
+      className={`${className} text-left`}
+      data-detail-source="work-item-id"
+      onClick={() => onOpenWorkItem(parentWorkItemId)}
+    >
+      {label}
+    </button>
+  );
+}
+
 const auditDateTime = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
@@ -974,6 +1005,7 @@ export function WorkItemFooterActions({
   busy,
   finalActionBusy,
   showResume,
+  resumeLabel = 'Resume coordination',
   showCancel,
   showArchive,
   archiveDisabled,
@@ -988,6 +1020,7 @@ export function WorkItemFooterActions({
   busy: boolean;
   finalActionBusy: boolean;
   showResume: boolean;
+  resumeLabel?: string;
   showCancel: boolean;
   showArchive: boolean;
   archiveDisabled: boolean;
@@ -1001,7 +1034,7 @@ export function WorkItemFooterActions({
 }) {
   return (
     <footer className="flex flex-wrap justify-end gap-2 px-4 py-4 sm:px-5">
-      {showResume ? <Button ref={resumeAnchorRef} className="scroll-mt-14 lg:scroll-mt-0" variant="primary" disabled={busy || finalActionBusy} onClick={onResume}>Resume coordination</Button> : null}
+      {showResume ? <Button ref={resumeAnchorRef} className="scroll-mt-14 lg:scroll-mt-0" variant="primary" disabled={busy || finalActionBusy} onClick={onResume}>{resumeLabel}</Button> : null}
       {showCancel && cancelHint ? <p className="self-center text-xs text-urgent">{cancelHint}</p> : null}
       {showCancel ? <Button variant="danger" disabled={busy} onClick={onCancel}>Cancel work item</Button> : null}
       {showArchive ? (
@@ -1146,7 +1179,9 @@ export function WorkItemDetail({
     phasedFamily,
     childFailed,
     deployAttested,
+    parkCategory: workItem.parkCategory,
   });
+  const resumeAfterBaseChange = decompositionAffordances.resumeAfterBaseChange;
   const phasedChildFailure = workItem.parentWorkItemId === null
     && workItem.state === 'parked'
     && phasedFamily
@@ -1180,6 +1215,13 @@ export function WorkItemDetail({
     setFinalActionBusy(false);
     setConfirmation(null);
   }, [workItem.id]);
+
+  useEffect(() => {
+    familyNotParentRef.current = familyNotParentAfterSnapshot(
+      familyNotParentRef.current,
+      knownParent,
+    );
+  }, [knownParent, workItem.id]);
 
   useEffect(() => {
     if (!familyRelevant) {
@@ -1532,9 +1574,11 @@ export function WorkItemDetail({
               <div className="sm:col-span-2">
                 <dt className="text-xs font-medium text-muted">Parent work item</dt>
                 <dd className="mt-1">
-                  <a className="break-words text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" href={`#/intake/${encodeURIComponent(workItem.parentWorkItemId)}`}>
-                    {parentWorkItem?.refinedObjective?.trim() || parentWorkItem?.originalRequest || workItem.parentWorkItemId}
-                  </a>
+                  <ParentWorkItemLink
+                    parentWorkItemId={workItem.parentWorkItemId}
+                    parentWorkItem={parentWorkItem}
+                    onOpenWorkItem={onOpenWorkItem}
+                  />
                 </dd>
               </div>
             )}
@@ -1778,7 +1822,8 @@ export function WorkItemDetail({
           <WorkItemFooterActions
             busy={busy}
             finalActionBusy={finalActionBusy}
-            showResume={decompositionAffordances.resumeCoordination}
+            showResume={decompositionAffordances.resumeCoordination || resumeAfterBaseChange}
+            resumeLabel={resumeAfterBaseChange ? 'Resume after base change' : 'Resume coordination'}
             showCancel={affordances.cancel}
             showArchive={affordances.archive}
             archiveDisabled={archiveRequiresAttestation}
@@ -1907,8 +1952,12 @@ export function WorkItemDetail({
         onClose={closeConfirmation}
         variant="anchored"
         anchorRef={resumeConfirmationAnchorRef}
-        title="Resume coordination"
-        description="Return this parked decomposed parent to coordination and continue the remaining child work."
+        title={resumeAfterBaseChange
+          ? workItem.parentWorkItemId === null ? 'Resume work item' : 'Resume child'
+          : 'Resume coordination'}
+        description={resumeAfterBaseChange
+          ? 'Refresh the pipeline base to the current repository head, resolve the base-diverged park, and return to implementation.'
+          : 'Return this parked decomposed parent to coordination and continue the remaining child work.'}
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
           <Button variant="primary" disabled={busy || finalActionBusy} onClick={() => { void submitResumeCoordination(); }}>Resume</Button>

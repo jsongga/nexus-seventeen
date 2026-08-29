@@ -1,6 +1,7 @@
 import {
   WAKEUP_REASONS,
   type AgentRole,
+  type BoardProjectContext,
   type ClaimRunPinning,
   type CrossRepoContext,
   type SkillSnapshot,
@@ -132,6 +133,7 @@ export interface BoundedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly boardProjects?: readonly BoardProjectContext[];
   readonly onboarding?: true;
   readonly design: boolean;
   readonly mission: AgentMission;
@@ -201,6 +203,8 @@ export interface AgentLaunchRequest {
   readonly runId: string;
   readonly wakeReason: TaskWakeReason;
   readonly context: BoundedAgentContext;
+  /** Durable correction feedback from the prior rejected settlement for this run. */
+  readonly previousPlanRejectionDetail?: string;
   /** Per-launch working tree. Absent for local-process lanes constructed with a fixed directory. */
   readonly workspace?: AgentWorkspace;
 }
@@ -399,6 +403,8 @@ interface ActiveRunJournalEntry {
   readonly outcome: AgentRunOutcome | null;
   readonly nextOutputIndex: number;
   readonly correctableSettlementRejections: number;
+  /** Absent only in journals written before correction feedback was persisted. */
+  readonly previousPlanRejectionDetail?: string | null;
 }
 
 export interface TaskWorkerJournal {

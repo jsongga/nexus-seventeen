@@ -319,7 +319,7 @@ test("an unavailable pipeline repository rolls the entire confirm transaction ba
       (error: unknown) => (
         error instanceof TaskBoardError &&
         error.status === 409 &&
-        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+        error.code === "PROJECT_REPO_PATH_INVALID"
       ),
     );
 
@@ -602,7 +602,7 @@ test("a throwing injected git runner fails before opening the confirm transactio
       (error: unknown) => (
         error instanceof TaskBoardError &&
         error.status === 409 &&
-        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+        error.code === "PROJECT_REPO_PATH_INVALID"
       ),
     );
 
@@ -636,7 +636,7 @@ test("a malformed pipeline HEAD is reported as an unavailable repository", async
       (error: unknown) => (
         error instanceof TaskBoardError &&
         error.status === 409 &&
-        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
+        error.code === "PROJECT_REPO_PATH_INVALID"
       ),
     );
   } finally {

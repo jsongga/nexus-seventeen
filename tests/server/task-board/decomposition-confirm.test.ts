@@ -725,6 +725,47 @@ test("confirm revalidates the persisted declaration against the resolved parent 
   }
 });
 
+test("confirm reports an invalid project repository path with a project-naming 409", async () => {
+  const fixture = await boardFixture(undefined, undefined, {
+    git: (arguments_) => {
+      if (arguments_.includes("/not/a/git/repository")) throw new Error("fatal: cannot change directory");
+      return `${PROVIDER_SHA}\n`;
+    },
+  });
+  const invalidProject = fixture.board.createProject({
+    name: "Invalid repository project",
+    description: "Its compatibility fallback must never leak into a raw Git error.",
+    repoPath: "/not/a/git/repository",
+  });
+  const { parent, revision } = proposeDecomposedPlan(
+    fixture.board,
+    fixture.project.projectId,
+    [{
+      key: "invalid-repository-child",
+      objective: "Reject this child before materialization.",
+      projectId: invalidProject.projectId,
+      declaredScope: ["src/invalid-repository"],
+      acceptanceCriteria: ["The repository failure is typed."],
+    }],
+    "feature",
+    "invalid-project-repository-path",
+  );
+
+  try {
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 409
+        && error.code === "PROJECT_REPO_PATH_INVALID"
+        && error.message === "Project Invalid repository project does not have a valid Git repository path",
+    );
+    assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "plan_approval");
+    assert.equal(fixture.board.listChildren(parent.workItemId).length, 0);
+  } finally {
+    fixture.board.close();
+  }
+});
+
 test("confirm revalidates persisted Expand and Contract interface publication scope", async () => {
   let gitCalls = 0;
   const fixture = await boardFixture(undefined, undefined, {

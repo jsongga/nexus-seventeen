@@ -9,6 +9,7 @@ Split rules: mechanical_sweep has no children. feature has optional unphased chi
 Board projects — use these projectId values for children; the current parent project is marked:
 - project-one | Provider API | provider-api (parent project)
 - project-consumer | Consumer web | consumer-web
+Previous plan was rejected: Every Migrate child must depend on the Expand child.
 This is a single event-triggered run. Do not wait in a loop, emit heartbeats, create schedules, or continue after returning output.
 Return status completed only with a concrete result. Return waiting_for_human with exactly one focused humanQuestion when blocked on human judgment or missing authority.
 Proposed child tasks are proposals for humans; do not assign or start them yourself.

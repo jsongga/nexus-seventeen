@@ -9,6 +9,7 @@ import { parseSections } from "../../../../src/server/shared/sections.js";
 
 const SHIPPED_PROMPT_DIGESTS = {
   "bright-line": "sha256:cc0a0bcddcf716e4134e1e587caf4cb3b0e12e976eaf78c863893605a812c706",
+  "board-projects": "sha256:b624ddc68a2c9063968a993ffe0aa9ee196251dfa3a16410d80ac025dab75f8a",
   "designer": "sha256:4d59d58946cf59460320b09d98df27d560643415308e57e25233208b2f3e0ee6",
   "engineer-fix": "sha256:c62ccbadafda09f21511d9ea22000fe73b234d9accdd3dab864bb9b43f3264ac",
   "engineer-cross-repo-interface": "sha256:05dd016a68e611832a8e24b1d6e4a437ca5d83a72ad48a5c6a99f868c2f5ded5",
@@ -18,11 +19,12 @@ const SHIPPED_PROMPT_DIGESTS = {
   "hazardous-review": "sha256:81eb184b03e693fb0411142dd93e3215bb2c5b302b994e9462094029efc64c99",
   "header": "sha256:300f504780744eb8eb9d30d4d3a738335b00a25e32bf2ab5880d8d7a1c950c9d",
   "intake-return": "sha256:0c2e0f346da40f900e8614d35ee410508c241dcf6dd5a1db097ebd3aea0afc7a",
-  "intake": "sha256:8466f6cb113c5face901e91b171d31f36dd9917fa555f538cd954f71303a2c04",
+  "intake": "sha256:3e53065ba4f5f7836f04d4daf9f13af5bd80a032db737b448343fda03f12040d",
   "onboarding-engineer": "sha256:37327052c3ad5eae5e668325c76a88b381ae130b44984e47bd0f15bc3b826bb1",
   "onboarding-intake": "sha256:7f470fffbe0b0e43868b6bbb9a92b13d73fc8c5363f0ab471589ca2cf84a2714",
   "oversight": "sha256:e59821fadd061f634019447413fa2a32043bc9f677faa2b96af67f3f96115826",
   "pipeline-implementation": "sha256:63bc2e3f821f62e3fde0062a87f8b5a58e7c7b2ebf2bc926830eb122962263f3",
+  "previous-plan-rejection": "sha256:0ab0486453b65419f5d78e1dee4c0057eb616a2e1ec047228f6b99964e56adc3",
   "reviewer-evidence": "sha256:f56a956682e38ddf74bd4df501fff7663eb164cfc82e82c46b5cfc748f8b321b",
   "reviewer-legacy": "sha256:d2a491fc22468ae5e468dc38d5d104d7c01dbbce128cb56cb4c8685d8d261e7d",
   "reviewer-prior-findings-truncated": "sha256:879d0dd2050d419cd71da57d6a5b3c62568f9ee91b58196b343b4be7078bfe03",
@@ -77,7 +79,7 @@ test("promptsSha is independent of section order and preserves the shipped diges
   assert.equal(PromptRegistry.loadSync(secondFile).promptsSha, PromptRegistry.loadSync(firstFile).promptsSha);
   assert.equal(
     PromptRegistry.loadSync(resolve("config/prompts.md")).promptsSha,
-    "sha256:10ec44467ee49bce3c3fdf510f11ed061b1e6c149976ef3f3f2ee325702f6848",
+    "sha256:f5cd1bba43712aa0d48a977d8db0ed24b761bf2c64f606cef5bad6b7215fd8ea",
   );
   assert.deepEqual(
     Object.fromEntries([...parseSections(source, {})].map(([name, content]) => [

@@ -70,7 +70,7 @@ beforeEach(() => {
 });
 
 describe('workspace confirmation surfaces', () => {
-  it('reads workspace metadata from repoPath rather than the descriptive text', () => {
+  it('renders project description as context and repoPath as its repository path', () => {
     const markup = renderToStaticMarkup(createElement(ProjectPage, {
       project,
       snapshot,
@@ -81,7 +81,8 @@ describe('workspace confirmation surfaces', () => {
     }));
 
     expect(markup).toContain('/repos/project-one');
-    expect(markup).not.toContain('Project context.');
+    expect(markup).toContain('Project context.');
+    expect(markup).toContain('Repository');
   });
 
   it('renders the interrupt and token-rotation confirms as anchored variants', () => {

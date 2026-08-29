@@ -390,6 +390,19 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
   const onboarding = request.context.onboarding === true;
+  const boardProjects = planningRun && request.context.boardProjects !== undefined
+    ? promptBlock(prompts, "board-projects", {
+        projects: request.context.boardProjects.map((project) =>
+          `- ${project.projectId} | ${project.name} | ${project.repoName}${
+            project.projectId === request.context.projectId ? " (parent project)" : ""
+          }`).join("\n"),
+      })
+    : null;
+  const previousPlanRejection = request.previousPlanRejectionDetail === undefined
+    ? null
+    : promptBlock(prompts, "previous-plan-rejection", {
+        detail: configText(request.previousPlanRejectionDetail, "previousPlanRejectionDetail", 2_000),
+      });
   const pipeline = request.context.workflow?.pipeline;
   const designRecord = pipeline?.designRecord ?? null;
   const renderedDesignRecord = designRecord === null ? null : JSON.stringify(designRecord);
@@ -523,7 +536,11 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
   const trailer = promptBlock(prompts, "trailer", {
     planningInstruction: promptBlock(prompts, planningRun ? "intake-return" : "workflow-plan-return"),
     wakeReason: request.wakeReason,
-    context: JSON.stringify((({ phase: _phase, ...context }) => context)(request.context)),
+    context: JSON.stringify((({
+      phase: _phase,
+      crossRepoContext: _crossRepoContext,
+      ...context
+    }) => context)(request.context)),
   });
   return [
     promptBlock(prompts, "header", {
@@ -532,12 +549,14 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
       mission: request.context.mission.mission,
     }),
     ...workflow,
+    ...(boardProjects === null ? [] : [boardProjects]),
     ...pipelineImplementation,
     ...(interfacePhaseAuthorization === null ? [] : [interfacePhaseAuthorization]),
     ...(crossRepoInterface === null ? [] : [crossRepoInterface]),
     ...(hazardousImplementationDesign === null ? [] : [hazardousImplementationDesign]),
     ...(pipelineReview === null ? [] : pipelineReview),
     ...(hazardousReviewDesign === null ? [] : [hazardousReviewDesign]),
+    ...(previousPlanRejection === null ? [] : [previousPlanRejection]),
     trailer,
   ].join("\n");
 }

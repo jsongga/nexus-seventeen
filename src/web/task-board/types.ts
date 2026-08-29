@@ -3,6 +3,7 @@ import {
   evaluatorProfileValues,
   gateKindValues,
   planRevisionStateValues,
+  type ParkCategory,
   questionStatusValues,
   stageHandoffOutcomeValues,
   taskKindValues,
@@ -21,7 +22,7 @@ import {
 } from './data/wire';
 import type { TolerantDeclaredChild } from '@shared/task-board-contract/validate';
 
-export type { WorkflowStage };
+export type { ParkCategory, WorkflowStage };
 
 export type AgentStatus =
   | 'sleeping'
@@ -159,6 +160,8 @@ export interface BoardWorkItem {
   cancelledReason: string | null;
   archivedAt: string | null;
   archivedAtMs: number | null;
+  /** Present on the per-id detail response, absent from list snapshots. */
+  parkCategory?: ParkCategory | null;
 }
 
 export interface BoardChildWorkItem extends BoardWorkItem {
@@ -202,6 +205,7 @@ export interface BoardWorkItemTransition {
 export interface BoardWorkItemDetail extends BoardWorkItem {
   transitions: BoardWorkItemTransition[];
   gapReportArtifactId: string | null;
+  parkCategory: ParkCategory | null;
 }
 
 export interface BoardProject {
@@ -450,6 +454,12 @@ export interface HostDirectoryListing {
 export interface CreateProjectInput {
   name: string;
   description: string;
+  repoPath?: string;
+}
+
+export interface UpdateProjectInput {
+  name?: string;
+  description?: string;
   repoPath?: string;
 }
 

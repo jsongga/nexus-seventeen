@@ -71,6 +71,7 @@ import {
   type AutomationPipelineStage,
   type AutomationStageExecutor,
   type BoardPause,
+  type BoardProjectContext,
   type BoardNotification,
   type BoardSnapshot,
   type BoardTask,
@@ -84,6 +85,7 @@ import {
   type CreateHumanQuestionRequest,
   type CreateHumanTaskMessageRequest,
   type CreateProjectRequest,
+  type UpdateProjectRequest,
   type CreateTaskMessageRequest,
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
@@ -337,6 +339,43 @@ export function integer(
 ): number {
   if (!Number.isSafeInteger(value) || Number(value) < minimum) throw new ContractValidationError(message);
   return Number(value);
+}
+
+/** Bounded non-empty text used by both server-side claim projections. */
+export function boundedClaimText(value: unknown, label: string, maximum: number): string {
+  if (typeof value !== "string" || value.trim().length === 0 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  const clean = value.trim();
+  return clean.length <= maximum ? clean : `${clean.slice(0, Math.max(1, maximum - 16)).trimEnd()}\n[truncated]`;
+}
+
+/** Positive safe integer used by both server-side claim projections. */
+export function positiveClaimInteger(value: unknown, label: string): number {
+  return integer(value, label, 1, `${label} is invalid`);
+}
+
+/** Nullable, quarter-hour task estimate used by both server-side claim projections. */
+export function claimEstimateMinutes(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return Number(value);
+}
+
+/** Minimal task-phase projection shared by in-process and HTTP claim consumers. */
+export function projectAgentTaskPhase(value: unknown, projectId: string, taskId: string, label: string) {
+  const item = parseAgentTaskPhaseResponse(value, projectId, taskId, label);
+  return Object.freeze({
+    phaseId: item.phaseId,
+    title: boundedClaimText(item.title, `${label}.title`, 240),
+    stage: item.stage,
+    status: item.status,
+    parallelGroup: item.parallelGroup,
+    orderKey: item.orderKey,
+    version: item.version,
+  });
 }
 
 export function arrayOf<T>(
@@ -2171,7 +2210,7 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     "createdAt", "claimedAt", "runId",
   ], "Claim wakeup");
   const context = exact(envelope.context, [
-    "intake", "onboarding", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
+    "intake", "boardProjects", "onboarding", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
     "phase", "crossRepoContext", "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
   ], "Claim context", {
     required: [
@@ -2235,7 +2274,19 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
     contractMember(context.phase, WORK_ITEM_PHASES, "context.phase");
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
-  booleanValue(context.intake, "context.intake");
+  const intake = booleanValue(context.intake, "context.intake");
+  const boardProjects = context.boardProjects === undefined
+    ? undefined
+    : parseBoardProjectContexts(context.boardProjects, "context.boardProjects");
+  if (intake && boardProjects === undefined) {
+    throw new ContractValidationError("Intake claim context is missing board projects");
+  }
+  if (!intake && boardProjects !== undefined) {
+    throw new ContractValidationError("Board projects are only valid for intake claim context");
+  }
+  if (boardProjects !== undefined && !boardProjects.some((project) => project.projectId === run.projectId)) {
+    throw new ContractValidationError("Intake claim context board projects omit the parent project");
+  }
   if (context.onboarding !== undefined && context.onboarding !== true) {
     throw new ContractValidationError("context.onboarding must be true when present");
   }
@@ -2284,6 +2335,7 @@ interface ValidatedAgentContext {
   readonly agentId: string;
   readonly taskId: string;
   readonly intake: boolean;
+  readonly boardProjects?: readonly BoardProjectContext[];
   readonly onboarding?: true;
   readonly design: boolean;
   readonly mission: Readonly<{ role: string; area: string; mission: string }>;
@@ -2482,6 +2534,25 @@ function workerNullableTimestamp(value: unknown, label: string): string | null {
 
 function workerNullableCursor(value: unknown, label: string): number | null {
   return value === null ? null : workerNonNegative(value, label);
+}
+
+function parseBoardProjectContexts(value: unknown, label: string): readonly BoardProjectContext[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 64) {
+    throw new ContractValidationError(`${label} is invalid`);
+  }
+  const projects = value.map((entry, index) => {
+    const itemLabel = `${label}[${index}]`;
+    const item = exact(entry, ["projectId", "name", "repoName"], itemLabel);
+    return Object.freeze({
+      projectId: identifier(item.projectId, `${itemLabel}.projectId`),
+      name: workerProse(item.name, `${itemLabel}.name`, 160),
+      repoName: workerProse(item.repoName, `${itemLabel}.repoName`, 256),
+    });
+  });
+  if (new Set(projects.map((project) => project.projectId)).size !== projects.length) {
+    throw new ContractValidationError(`${label} contains a duplicate project`);
+  }
+  return Object.freeze(projects);
 }
 
 function assertWorkerPhaseCompletion(stage: TaskPhaseStage, status: TaskPhaseStatus, label: string): void {
@@ -2758,7 +2829,7 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     throw new WorkerAgentContextBudgetError(usage, rawContext.crossRepoContext !== undefined);
   }
   const item = exact(value, [
-    "apiVersion", "projectId", "agentId", "taskId", "intake", "onboarding", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
+    "apiVersion", "projectId", "agentId", "taskId", "intake", "boardProjects", "onboarding", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
     "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "phase", "crossRepoContext", "workflow",
   ], "Agent context", {
     required: [
@@ -2767,6 +2838,16 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     ],
   });
   if (item.apiVersion !== 1) throw new ContractValidationError("Agent context version is invalid");
+  const intake = booleanValue(item.intake, "context.intake");
+  const boardProjects = item.boardProjects === undefined
+    ? undefined
+    : parseBoardProjectContexts(item.boardProjects, "context.boardProjects");
+  if (boardProjects !== undefined && !intake) {
+    throw new ContractValidationError("Board projects are only valid for intake agent context");
+  }
+  if (boardProjects !== undefined && !boardProjects.some((project) => project.projectId === item.projectId)) {
+    throw new ContractValidationError("Intake agent context board projects omit the parent project");
+  }
   if (item.onboarding !== undefined && item.onboarding !== true) {
     throw new ContractValidationError("context.onboarding must be true when present");
   }
@@ -2944,7 +3025,8 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   return Object.freeze({
     apiVersion: 1,
     projectId: identifier(item.projectId, "context.projectId"), agentId: identifier(item.agentId, "context.agentId"), taskId: currentTaskId,
-    intake: booleanValue(item.intake, "context.intake"),
+    intake,
+    ...(boardProjects === undefined ? {} : { boardProjects }),
     ...(item.onboarding === true ? { onboarding: true as const } : {}),
     design: booleanValue(item.design, "context.design"),
     mission: Object.freeze({ role: workerProse(mission.role, "mission.role", 64), area: workerProse(mission.area, "mission.area", 256), mission: workerProse(mission.mission, "mission.mission", 2_000) }),
@@ -3494,7 +3576,25 @@ export function parseBoardCreateProject(value: unknown): CreateProjectRequest {
   return Object.freeze({
     name: boardText(item.name, "name", 160),
     description,
-    repoPath: item.repoPath === undefined ? description : boardText(item.repoPath, "repoPath", 8_000),
+    repoPath: item.repoPath === undefined ? description : boardRepoPath(item.repoPath),
+  });
+}
+
+function boardRepoPath(value: unknown): string {
+  const repoPath = boardText(value, "repoPath", 8_000);
+  if (!repoPath.startsWith("/")) boardFailure("repoPath must be an absolute path");
+  return repoPath;
+}
+
+export function parseBoardUpdateProject(value: unknown): UpdateProjectRequest {
+  const raw = record(value, "Project update");
+  const fields = ["name", "description", "repoPath"].filter((field) => field in raw);
+  if (fields.length === 0) boardFailure("Project update must include name, description, or repoPath");
+  const item = boardExact(value, fields, "Project update");
+  return Object.freeze({
+    ...(item.name === undefined ? {} : { name: boardText(item.name, "name", 160) }),
+    ...(item.description === undefined ? {} : { description: boardText(item.description, "description", 8_000) }),
+    ...(item.repoPath === undefined ? {} : { repoPath: boardRepoPath(item.repoPath) }),
   });
 }
 

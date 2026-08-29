@@ -51,6 +51,13 @@ const NOW = "2026-08-29T14:00:00.000Z";
 const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 const execFileAsync = promisify(execFile);
 
+function staticCleanFanOutInspection(arguments_: readonly string[], head = BASE_SHA): string | null {
+  if (arguments_.includes("--abbrev-ref")) return "main\n";
+  if (arguments_.includes("--porcelain")) return "";
+  if (arguments_.includes("rev-parse") && arguments_.at(-1) === "HEAD") return `${head}\n`;
+  return null;
+}
+
 const IMPLEMENTER = {
   agentTypeId: "decomposition-runtime-implementer",
   name: "Decomposition runtime implementer",
@@ -452,7 +459,7 @@ function preparePhaseVerificationClaim(
   projectId: string,
   workItem: WorkItem,
   label: string,
-  attempt = 50,
+  attempt = 1,
 ) {
   const { node } = childNode(fixture.board, workItem);
   const verifier = fixture.board.createAgent(projectId, {
@@ -536,6 +543,8 @@ test("unphased dependencies order merges without blocking parallel child activat
   const mergeOrder: string[] = [];
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -725,6 +734,8 @@ test("feature parent approval merges children in dependency order and settles pa
   const mergeOrder: string[] = [];
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -807,6 +818,152 @@ test("feature parent approval merges children in dependency order and settles pa
       workItemId: provider.workItemId,
       mergeSha: MERGE_SHAS[0],
     }]);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("same-repository fan-out withdraws a later sibling after the first merge advances its base", async () => {
+  const verifiedByBranch = new Map<string, string>();
+  const heads = new Map<string, string>();
+  const mergeOrder: string[] = [];
+  const fixture = await boardFixture(undefined, undefined, {
+    git(arguments_) {
+      const repoPath = arguments_[arguments_.indexOf("-C") + 1] ?? "";
+      if (arguments_.includes("--abbrev-ref")) return "main\n";
+      if (arguments_.includes("--porcelain")) return "";
+      if (arguments_.includes("merge-base")) return "";
+      const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
+      if (verifiedRef !== undefined) {
+        return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
+      }
+      if (arguments_.includes("rev-parse") && arguments_.at(-1) === "HEAD") {
+        return `${heads.get(repoPath) ?? BASE_SHA}\n`;
+      }
+      return `${BASE_SHA}\n`;
+    },
+    mergePipeline(request) {
+      const childId = request.branch.slice("task/".length);
+      mergeOrder.push(childId);
+      const mergeSha = MERGE_SHAS[mergeOrder.length - 1]!;
+      heads.set(request.repoPath, mergeSha);
+      return { kind: "merged", mergeSha };
+    },
+  });
+  try {
+    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
+      key: "same-repo-a",
+      objective: "Merge the first same-repository child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/same-repo-a"],
+      acceptanceCriteria: ["The first child advances the repository base."],
+    }, {
+      key: "same-repo-b",
+      objective: "Re-verify the second child after its base advances.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/same-repo-b"],
+      acceptanceCriteria: ["The stale second verification is never merged."],
+      dependsOn: ["same-repo-a"],
+    }], "same-repository-fan-out");
+    const [first, second] = decomposition.children;
+    assert.ok(first);
+    assert.ok(second);
+    for (const [index, child] of [first, second].entries()) {
+      verifiedByBranch.set(child.pipelineBranch!, VERIFIED_SHAS[index]!);
+      forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
+    }
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const firstApproval = fixture.board.requireWorkItem(decomposition.parent.workItemId);
+
+    const coordinating = await fixture.board.approvePipelineMerge(firstApproval.workItemId, {
+      version: firstApproval.version,
+    });
+
+    assert.equal(coordinating.state, "coordinating");
+    assert.equal(fixture.board.requireWorkItem(first.workItemId).state, "merged");
+    const withdrawn = fixture.board.requireWorkItem(second.workItemId);
+    assert.equal(withdrawn.state, "implementing");
+    assert.equal(withdrawn.baseSha, MERGE_SHAS[0]);
+    assert.deepEqual(mergeOrder, [first.workItemId]);
+    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
+      notification.kind === "final_approval_withdrawn"
+      && notification.workItemId === second.workItemId
+      && notification.dedupeKey === `final_approval_withdrawn:${second.workItemId}:${MERGE_SHAS[0]}`
+    )));
+
+    verifiedByBranch.set(second.pipelineBranch!, VERIFIED_SHAS[2]);
+    forceFinalApproval(fixture.path, second.workItemId, VERIFIED_SHAS[2]);
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const secondApproval = fixture.board.requireWorkItem(decomposition.parent.workItemId);
+    assert.equal(secondApproval.state, "final_approval");
+    const completed = await fixture.board.approvePipelineMerge(secondApproval.workItemId, {
+      version: secondApproval.version,
+    });
+    assert.equal(completed.state, "merged");
+    assert.deepEqual(mergeOrder, [first.workItemId, second.workItemId]);
+    assert.equal(gateActions(fixture.path, completed.workItemId).at(-1)?.note, "2 children merged, 0 abandoned");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("cross-repository fan-out merges every ready sibling under one parent approval", async () => {
+  const verifiedByBranch = new Map<string, string>();
+  const heads = new Map<string, string>();
+  const mergeOrder: string[] = [];
+  const fixture = await boardFixture(undefined, undefined, {
+    git(arguments_) {
+      const repoPath = arguments_[arguments_.indexOf("-C") + 1] ?? "";
+      if (arguments_.includes("--abbrev-ref")) return "main\n";
+      if (arguments_.includes("--porcelain")) return "";
+      if (arguments_.includes("merge-base")) return "";
+      const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
+      if (verifiedRef !== undefined) {
+        return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
+      }
+      if (arguments_.includes("rev-parse") && arguments_.at(-1) === "HEAD") {
+        return `${heads.get(repoPath) ?? BASE_SHA}\n`;
+      }
+      return `${BASE_SHA}\n`;
+    },
+    mergePipeline(request) {
+      const childId = request.branch.slice("task/".length);
+      mergeOrder.push(childId);
+      const mergeSha = MERGE_SHAS[mergeOrder.length - 1]!;
+      heads.set(request.repoPath, mergeSha);
+      return { kind: "merged", mergeSha };
+    },
+  });
+  const secondProject = fixture.board.createProject({
+    name: "Cross-repository sibling",
+    description: "Owns the second independent feature child.",
+    repoPath: "/repos/cross-repository-sibling",
+  });
+  try {
+    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
+      key: "cross-repo-a",
+      objective: "Merge the first repository child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/cross-repo-a"],
+      acceptanceCriteria: ["The first repository merges."],
+    }, {
+      key: "cross-repo-b",
+      objective: "Merge the independent second repository child.",
+      projectId: secondProject.projectId,
+      declaredScope: ["src/cross-repo-b"],
+      acceptanceCriteria: ["The second repository merges under the same approval."],
+    }], "cross-repository-fan-out");
+    for (const [index, child] of decomposition.children.entries()) {
+      verifiedByBranch.set(child.pipelineBranch!, VERIFIED_SHAS[index]!);
+      forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
+    }
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+    const ready = fixture.board.requireWorkItem(decomposition.parent.workItemId);
+
+    const completed = await fixture.board.approvePipelineMerge(ready.workItemId, { version: ready.version });
+
+    assert.equal(completed.state, "merged");
+    assert.deepEqual(mergeOrder, decomposition.children.map((child) => child.workItemId));
   } finally {
     fixture.board.close();
   }
@@ -1358,6 +1515,8 @@ test("unphased parents promote with merged siblings and fan out only over unmerg
   const mergeOrder: string[] = [];
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -1410,6 +1569,8 @@ test("parent fan-out reconciles an overlapping pipeline in every child project b
   const verifiedByBranch = new Map<string, string>();
   const fixture = await boardFixture(undefined, () => now, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -1463,6 +1624,8 @@ test("parent fan-out resumes after a mid-way child merge conflict", async () => 
   let conflicted = false;
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -1595,6 +1758,8 @@ test("an unphased blast-radius parent uses the one-parent-approval policy", asyn
   const verifiedByBranch = new Map<string, string>();
   const fixture = await boardFixture(undefined, undefined, {
     git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_);
+      if (inspection !== null) return inspection;
       const verifiedRef = arguments_.find((argument) => argument.endsWith("^{commit}"));
       if (verifiedRef !== undefined) {
         return `${verifiedByBranch.get(verifiedRef.slice(0, -"^{commit}".length)) ?? BASE_SHA}\n`;
@@ -3498,6 +3663,20 @@ for (const inspection of ["diverged", "repo_busy"] as const) {
           && notification.workItemId === expand.workItemId
           && notification.dedupeKey === `final_approval_withdrawn:${expand.workItemId}:base-diverged:${ADVANCED_SHA}`
         )));
+        const resumed = fixture.board.resumeWorkItem(expand.workItemId);
+        assert.equal(resumed.state, "implementing");
+        assert.equal(resumed.currentStage, "implementation");
+        assert.equal(resumed.baseSha, ADVANCED_SHA);
+        const inspected = new DatabaseSync(fixture.path, { readOnly: true });
+        try {
+          assert.equal(inspected.prepare(`
+            SELECT COUNT(*) AS count
+            FROM park_records
+            WHERE work_item_id=? AND resolved_at IS NULL
+          `).get(expand.workItemId)?.count, 0);
+        } finally {
+          inspected.close();
+        }
       } else {
         assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "final_approval");
         assert.ok(logged.mock.calls.some((call) => (
@@ -3722,7 +3901,10 @@ test("an abandoned or dead-lettered child parks its parent as child_failed", asy
 
 test("resuming a child-failure park abandons the dead-lettered child and completes through the remaining child", async () => {
   const fixture = await boardFixture(undefined, undefined, {
-    git: () => `${VERIFIED_SHAS[0]}\n`,
+    git(arguments_) {
+      const inspection = staticCleanFanOutInspection(arguments_, VERIFIED_SHAS[0]);
+      return inspection ?? `${VERIFIED_SHAS[0]}\n`;
+    },
     mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
   });
   const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
@@ -3830,9 +4012,12 @@ test("a phased Contract reports an abandoned Migrate after Expand deploy attesta
       `blocked: ${migrate.workItemId} (migrate) abandoned`,
     );
 
-    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
-
-    assert.equal(resumed.state, "coordinating");
+    assert.throws(
+      () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 409
+        && error.code === "PARENT_PHASED_FAILED",
+    );
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
@@ -3842,7 +4027,7 @@ test("a phased Contract reports an abandoned Migrate after Expand deploy attesta
 
     const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
       action: "cancel",
-      version: resumed.version,
+      version: fixture.board.requireWorkItem(decomposition.parent.workItemId).version,
       reason: "Cancel the unsafe phased family.",
     });
 
@@ -3894,9 +4079,12 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
       `blocked: ${migrate.workItemId} (migrate) abandoned`,
     );
 
-    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
-
-    assert.equal(resumed.state, "coordinating");
+    assert.throws(
+      () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 409
+        && error.code === "PARENT_PHASED_FAILED",
+    );
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
@@ -3906,7 +4094,7 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
 
     const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
       action: "cancel",
-      version: resumed.version,
+      version: fixture.board.requireWorkItem(decomposition.parent.workItemId).version,
       reason: "Cancel the unsafe phased family.",
     });
 
@@ -3956,7 +4144,34 @@ test("resuming an unphased parent with only abandoned children completes it", as
   }
 });
 
-test("resuming a parked parent activates a newly ready phased child in the same call", async () => {
+test("a phased parent with no failed child completes after every child merges", async () => {
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  try {
+    const consumer = fixture.board.createProject({
+      name: "No-failure phased consumer",
+      description: "Completes the phased family without a failed child.",
+      repoPath: "/repos/no-failure-phased-consumer",
+    });
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      phasedChildren(fixture.project.projectId, consumer.projectId, "no-failed-child"),
+      "phased-no-failed-child",
+      "blast_radius",
+    );
+    for (const [index, child] of decomposition.children.entries()) {
+      forceMergedWithApproval(fixture.path, child.workItemId, MERGE_SHAS[index] ?? MERGE_SHAS[0]);
+    }
+
+    fixture.board.reconcileWorkflows(fixture.project.projectId);
+
+    assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "merged");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("a phased failed parent cannot resume after an earlier child later merges", async () => {
   const fixture = await boardFixture(undefined, undefined, {
     git: crossRepoGit((operation) => {
       if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
@@ -4010,11 +4225,73 @@ test("resuming a parked parent activates a newly ready phased child in the same 
     forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
     assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "queued");
 
-    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
+    assert.throws(
+      () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 409
+        && error.code === "PARENT_PHASED_FAILED",
+    );
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "queued");
+    assert.equal(childNode(fixture.board, migrate).node.state, "blocked");
+  } finally {
+    fixture.board.close();
+  }
+});
 
-    assert.equal(resumed.state, "coordinating");
-    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "implementing");
-    assert.equal(childNode(fixture.board, migrate).node.state, "active");
+test("phased activation reports an invalid child repository as a project-naming typed error", async (t) => {
+  const consumerPath = "/repos/invalid-activation-consumer";
+  let failConsumerHead = false;
+  const delegate = crossRepoGit((operation) => {
+    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+    if (operation === "cat-file") return "23\n";
+    return "# Activation interface\n";
+  });
+  const fixture = await boardFixture(undefined, undefined, {
+    git: Object.assign(
+      (arguments_: readonly string[]) => {
+        if (
+          failConsumerHead
+          && arguments_.includes(consumerPath)
+          && arguments_.includes("rev-parse")
+          && arguments_.at(-1) === "HEAD"
+        ) throw new Error("fatal: invalid activation repository");
+        return delegate(arguments_);
+      },
+      { bytes: delegate.bytes },
+    ),
+  });
+  const logged = t.mock.method(console, "error", () => undefined);
+  try {
+    const consumer = fixture.board.createProject({
+      name: "Invalid activation consumer",
+      description: "Becomes invalid only when its Migrate phase activates.",
+      repoPath: consumerPath,
+    });
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      phasedChildren(fixture.project.projectId, consumer.projectId, "invalid-activation-repository"),
+      "invalid-activation-repository",
+      "blast_radius",
+    );
+    const [expand, migrate] = decomposition.children;
+    assert.ok(expand);
+    assert.ok(migrate);
+    forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
+    failConsumerHead = true;
+
+    fixture.board.reconcileWorkflows(consumer.projectId);
+
+    const typed = logged.mock.calls.map((call) => call.arguments[1]).find(
+      (error) => error instanceof TaskBoardError && error.code === "PROJECT_REPO_PATH_INVALID",
+    );
+    assert.ok(typed instanceof TaskBoardError);
+    assert.equal(typed.status, 409);
+    assert.equal(
+      typed.message,
+      "Project Invalid activation consumer does not have a valid Git repository path",
+    );
+    assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "queued");
   } finally {
     fixture.board.close();
   }
@@ -4080,6 +4357,45 @@ test("cancelling a coordinating parent abandons active children and leaves merge
     assert.equal(cascadeNotifications.length, 1);
     assert.equal(fixture.board.requireWorkItem(mergedChild.workItemId).state, "merged");
     assert.deepEqual(gateActions(fixture.path, mergedChild.workItemId), mergedActionsBefore);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("cancelling a child directly interrupts its active run", async () => {
+  const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
+  try {
+    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
+      key: "direct-child-cancel",
+      objective: "Run until a human cancels this child directly.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/direct-child-cancel"],
+      acceptanceCriteria: ["Direct child cancellation interrupts active work."],
+    }], "direct-child-cancel");
+    const [child] = decomposition.children;
+    assert.ok(child);
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "direct-child-cancel-active-run",
+      messageCursor: null,
+    });
+    assert.equal(claim?.context.workflow?.workspaceKey, child.workItemId);
+
+    const cancelled = fixture.board.updateWorkItem(child.workItemId, {
+      action: "cancel",
+      version: fixture.board.requireWorkItem(child.workItemId).version,
+      reason: "Stop this child and its active work.",
+    });
+
+    assert.equal(cancelled.state, "abandoned");
+    assert.equal(fixture.board.requireTask(claim!.task!.taskId).status, "cancelled");
+    const db = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const run = db.prepare("SELECT status,ended_at FROM runs WHERE run_id=?").get(claim!.run.runId);
+      assert.equal(run?.status, "interrupted");
+      assert.equal(run?.ended_at, cancelled.endedAt);
+    } finally {
+      db.close();
+    }
   } finally {
     fixture.board.close();
   }
@@ -4286,7 +4602,7 @@ test("parent cancellation retires a child's running machine verification before 
       retired.close();
     }
 
-    assert.equal(await fixture.board.sweepVerifyAttempts(), 0);
+    assert.equal(await fixture.board.sweepVerifyAttempts(), 1);
     const settled = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(settled.prepare("SELECT 1 FROM tasks WHERE task_id=?")
@@ -4370,8 +4686,6 @@ ${JSON.stringify({
       transitionStore.close();
     }
     assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "parked");
-    const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
-    assert.equal(resumed.state, "coordinating");
     const contractNode = childNode(fixture.board, contract).node;
     assert.equal(contractNode.state, "blocked");
 
@@ -4440,7 +4754,7 @@ ${JSON.stringify({
 
     const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
       action: "cancel",
-      version: resumed.version,
+      version: fixture.board.requireWorkItem(decomposition.parent.workItemId).version,
       reason: "Cancel the unsafe phased family after migration dead-letter.",
     });
     assert.equal(cancelled.state, "abandoned");
@@ -4479,6 +4793,7 @@ ${JSON.stringify({
       inspected.close();
     }
   } finally {
+    fixture.board.close();
     if (verifyPid !== null) {
       try {
         process.kill(process.platform === "win32" ? verifyPid : -verifyPid, "SIGTERM");
@@ -4488,7 +4803,6 @@ ${JSON.stringify({
     } else if (verifyRunner !== null && verifyRunId !== null) {
       await verifyRunner.terminate(verifyRunId).catch(() => undefined);
     }
-    fixture.board.close();
   }
 });
 
@@ -4496,10 +4810,15 @@ test("park auto-abandon cascades to an active child while preserving a merged si
   let clock = new Date(NOW);
   const fixture = await boardFixture(undefined, () => clock, { git: () => `${BASE_SHA}\n` });
   try {
+    const childProject = fixture.board.createProject({
+      name: "Auto-abandon child project",
+      description: "Owns a child scope released by parent lifecycle expiry.",
+      repoPath: "/repos/auto-abandon-child",
+    });
     const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
       key: "active",
       objective: "Remain active until the parked parent auto-abandons.",
-      projectId: fixture.project.projectId,
+      projectId: childProject.projectId,
       declaredScope: ["src/auto-cascade-active"],
       acceptanceCriteria: ["Auto-abandon terminates this run."],
     }, {
@@ -4527,6 +4846,14 @@ test("park auto-abandon cascades to an active child while preserving a merged si
     );
     assert.ok(failedChild);
     assert.ok(mergedChild);
+    clock = new Date(Date.parse(NOW) + 1_000);
+    const held = proposeStandalonePipeline(
+      fixture.board,
+      childProject.projectId,
+      ["src/auto-cascade-active"],
+      "auto-cascade-scope-waiter",
+    );
+    assert.equal(childNode(fixture.board, held).node.state, "blocked");
     forceMergedWithApproval(fixture.path, mergedChild.workItemId, MERGE_SHAS[0]);
     const mergedActionsBefore = gateActions(fixture.path, mergedChild.workItemId);
     fixture.board.updateWorkItem(failedChild.workItemId, {
@@ -4558,6 +4885,8 @@ test("park auto-abandon cascades to an active child while preserving a merged si
     assert.equal(childCancel?.note, `parent ${parent.workItemId} abandoned`);
     assert.equal(fixture.board.requireWorkItem(mergedChild.workItemId).state, "merged");
     assert.deepEqual(gateActions(fixture.path, mergedChild.workItemId), mergedActionsBefore);
+    assert.equal(fixture.board.requireWorkItem(held.workItemId).state, "implementing");
+    assert.equal(childNode(fixture.board, held).node.state, "active");
   } finally {
     fixture.board.close();
   }

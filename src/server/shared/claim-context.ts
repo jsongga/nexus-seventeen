@@ -4,45 +4,15 @@ import {
   type ClaimRunResult,
 } from "#shared/task-board-contract";
 import {
+  boundedClaimText as bounded,
+  claimEstimateMinutes as estimateMinutes,
   identifier,
   integer,
-  parseAgentTaskPhaseResponse,
   parseWorkerAgentContext,
+  positiveClaimInteger as positive,
+  projectAgentTaskPhase as taskPhase,
   timestamp,
 } from "#shared/task-board-contract/validate";
-
-function bounded(value: unknown, label: string, maximum: number): string {
-  if (typeof value !== "string" || value.trim().length === 0 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  const clean = value.trim();
-  return clean.length <= maximum ? clean : `${clean.slice(0, Math.max(1, maximum - 16)).trimEnd()}\n[truncated]`;
-}
-
-function positive(value: number, label: string): number {
-  return integer(value, label, 1, `${label} is invalid`);
-}
-
-function estimateMinutes(value: number | null, label: string): number | null {
-  if (value === null) return null;
-  if (!Number.isSafeInteger(value) || value < 15 || value > 10_080 || value % 15 !== 0) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
-}
-
-function taskPhase(value: unknown, projectId: string, taskId: string, label: string) {
-  const item = parseAgentTaskPhaseResponse(value, projectId, taskId, label);
-  return Object.freeze({
-    phaseId: item.phaseId,
-    title: bounded(item.title, `${label}.title`, 240),
-    stage: item.stage,
-    status: item.status,
-    parallelGroup: item.parallelGroup,
-    orderKey: item.orderKey,
-    version: item.version,
-  });
-}
 
 function canonicalTimestamp(value: string, label: string): string {
   return timestamp(value, label, `${label} is invalid`, true);
@@ -155,6 +125,13 @@ export function projectClaimContext(
     agentId: run.agentId,
     taskId: task.taskId,
     intake: context.intake,
+    ...(context.boardProjects === undefined ? {} : {
+      boardProjects: context.boardProjects.slice(0, 64).map((project, index) => ({
+        projectId: identifier(project.projectId, `boardProjects[${index}].projectId`),
+        name: bounded(project.name, `boardProjects[${index}].name`, 160),
+        repoName: bounded(project.repoName, `boardProjects[${index}].repoName`, 256),
+      })),
+    }),
     ...(context.onboarding === true ? { onboarding: true as const } : {}),
     design: context.design ?? false,
     mission: {
@@ -228,9 +205,17 @@ export function projectClaimContext(
   });
 }
 
-/** Removes the allocation-time task identifier from readiness input identity. */
+/** Removes allocation-time task identity, version, and initial cursor differences from readiness identity. */
 export function claimContextInputForDigest(
   value: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
-  return Object.freeze({ ...value, taskId: "migrate-task" });
+  const task = value.task !== null && typeof value.task === "object" && !Array.isArray(value.task)
+    ? value.task as Readonly<Record<string, unknown>>
+    : null;
+  return Object.freeze({
+    ...value,
+    taskId: "migrate-task",
+    ...(task === null ? {} : { task: Object.freeze({ ...task, version: 1 }) }),
+    messagesSinceCursor: 0,
+  });
 }

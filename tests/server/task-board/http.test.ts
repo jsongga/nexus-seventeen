@@ -66,6 +66,58 @@ async function within<T>(promise: Promise<T>, milliseconds: number): Promise<T> 
   }
 }
 
+test("project PATCH is human-only, updates supplied fields, and requires an absolute repo path", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    reconcileIntervalSeconds: 0,
+  });
+  const address = await service.start();
+  try {
+    const createdResponse = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+      name: "Project remediation",
+      description: "Old description",
+      repoPath: "/var/lib/steward/repos/old-project",
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json() as { project: { projectId: string; version: number } }).project;
+
+    assert.equal((await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", AGENT_ONE_TOKEN, {
+      repoPath: "/var/lib/steward/repos/new-project",
+    })).status, 401);
+    const relative = await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", HUMAN_TOKEN, {
+      repoPath: "repos/new-project",
+    });
+    assert.equal(relative.status, 400);
+    assert.match(JSON.stringify(await relative.json()), /absolute path/u);
+
+    const response = await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", HUMAN_TOKEN, {
+      name: "Repaired project",
+      description: "New description",
+      repoPath: "/var/lib/steward/repos/new-project",
+    });
+    assert.equal(response.status, 200);
+    const updated = (await response.json() as {
+      project: { name: string; description: string; repoPath: string; version: number };
+    }).project;
+    assert.deepEqual({
+      name: updated.name,
+      description: updated.description,
+      repoPath: updated.repoPath,
+      version: updated.version,
+    }, {
+      name: "Repaired project",
+      description: "New description",
+      repoPath: "/var/lib/steward/repos/new-project",
+      version: created.version + 1,
+    });
+  } finally {
+    await service.close();
+  }
+});
+
 test("unexpected route failures are logged once with redacted structured context", async () => {
   const path = await databasePath();
   const service = await createTaskBoardService({

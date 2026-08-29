@@ -94,6 +94,15 @@ Runtime units per task (contract, migration equivalence, split-rule matrix, read
 
 - **Block-summary precedence** (Task 6 review): a terminal (abandoned/dead-lettered) sibling is reported first, then unmerged predecessors, then unattested ones — the permanent reason wins over the recoverable one; the summary names the sibling's actual terminal state (`abandoned` or `dead_letter`).
 
+### Rulings added in the final whole-branch pass (2026-08-29)
+
+- **Resume is refused by the API for a phased family parked `child_failed`** (409) — cancel is the only exit, enforced server-side.
+- **Repository paths are explicit**: the catalog carries `repoPath` (container paths under the mounted volume), reconcile-bootstrap repairs `repo_path` from it, `PATCH /v1/projects/:id` sets it, the v26 backfill parses a catalog-shaped `Workspace:` description, and confirm/activation fail with a typed `PROJECT_REPO_PATH_INVALID` naming the project.
+- **Fan-out honours the base-advance guard**: after one same-repository sibling merges, the next is withdrawn for re-verification instead of merged on a stale base — a same-repo feature split may need a second parent approval.
+- **Cancellation always terminates runs**; verifier identities are cleared only after their own cleanup succeeds; the startup retirement sweep is awaited on close.
+- **Real managers get what the validator demands**: the intake context lists eligible board projects (id, name, repo name), the intake prompt states the split rules, and a `WORKFLOW_INVALID` retry carries the rejection detail.
+- **Every pipeline `base_diverged` park resumes through the same item route**, including phased children and ordinary items, with an anchored UI action.
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

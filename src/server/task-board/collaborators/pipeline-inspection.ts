@@ -1,19 +1,31 @@
 import { execFileSync } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
-import { checkDeclaredScopePaths, type GitRunner } from "./scope-check.js";
+import { checkDeclaredScopePaths, type GitTextRunner } from "./scope-check.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
 const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
 
-const runPipelineInspectionGit: GitRunner = (arguments_) => execFileSync("git", [...arguments_], {
-  encoding: "utf8",
-  timeout: GIT_TIMEOUT_MS,
-  maxBuffer: GIT_MAX_BYTES,
-  windowsHide: true,
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-});
+const runPipelineInspectionGit: GitTextRunner = Object.assign(
+  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BYTES,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  }),
+  {
+    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
+      encoding: "buffer",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BYTES,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    }),
+  },
+);
 
 type Row = Record<string, unknown>;
 
@@ -32,7 +44,7 @@ interface PipelineInspectionOptions {
   readonly baseSha: string;
   readonly branch: string;
   readonly declaredScope: readonly string[];
-  readonly git?: GitRunner;
+  readonly git?: GitTextRunner;
 }
 
 export function inspectPipelineBranchSync(options: PipelineInspectionOptions): PipelineInspection {
