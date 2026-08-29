@@ -1,4 +1,5 @@
 /** Browser adapter for the shared task-board runtime contract. */
+import { GIT_OBJECT_ID_PATTERN } from '@shared/task-board-contract';
 import type {
   AgentInterrupt,
   AgentProfile,
@@ -78,6 +79,8 @@ import type {
   AutomationConfiguration,
   AutomationStageConfiguration,
   AutomationStageExecutor,
+  BoardWorkItemDependency,
+  DeployAttestationResult,
   ProjectArtifact,
   ProjectWorkflow,
   WorkflowEvent,
@@ -99,6 +102,10 @@ type WithOptionalNullableMs<T, K extends string> = T & Partial<Record<`${K}Ms`, 
 type WithoutApi<T> = Omit<T, 'apiVersion'>;
 export type RawProject = WithMs<WithMs<WithoutApi<Project>, 'createdAt'>, 'updatedAt'>;
 export type RawWorkItem = WithOptionalNullableMs<WithOptionalNullableMs<WithNullableMs<WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, 'createdAt'>, 'updatedAt'>, 'endedAt'>, 'archivedAt'>, 'stateSince'>, 'heartbeatAt'>;
+export type RawChildWorkItem = RawWorkItem & Readonly<{
+  deployAttested: boolean;
+  mergeSha: string | null;
+}>;
 type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, 'createdAt'>;
 export type RawWorkItemDetail = RawWorkItem & Readonly<{
   transitions: RawWorkItemTransition[];
@@ -201,6 +208,26 @@ function projectWorkItem(item: TolerantWorkItemEntity): RawWorkItem {
 }
 export function parseWorkItem(value: unknown, path: string): RawWorkItem {
   return projectWorkItem(parseWorkItemEntity(value, path, loose));
+}
+export function parseChildWorkItem(value: unknown, path: string): RawChildWorkItem {
+  const item = contractRecord(value, path);
+  const mergeSha = item.mergeSha === null ? null : stringValue(item.mergeSha, `${path}.mergeSha`);
+  if (mergeSha !== null && !GIT_OBJECT_ID_PATTERN.test(mergeSha)) {
+    throw new Error(`${path}.mergeSha must be a Git object id or null`);
+  }
+  return {
+    ...projectWorkItem(parseWorkItemEntity(item, path, loose)),
+    deployAttested: booleanValue(item.deployAttested, `${path}.deployAttested`),
+    mergeSha,
+  };
+}
+
+export function parseWorkItemDependency(value: unknown, path: string): BoardWorkItemDependency {
+  const item = contractRecord(value, path);
+  return {
+    workItemId: stringValue(item.workItemId, `${path}.workItemId`),
+    dependsOnWorkItemId: stringValue(item.dependsOnWorkItemId, `${path}.dependsOnWorkItemId`),
+  };
 }
 function parseWorkItemTransitions(value: unknown, path: string): RawWorkItemTransition[] {
   return arrayOf(value, path, (entry, entryPath) => {
@@ -331,6 +358,27 @@ export function parseBoardPause(value: unknown, path: string): RawBoardPause {
 
 export function parseGateAction(value: unknown, path: string): TolerantGateAction {
   return parseGateActionContract(value, path, loose);
+}
+
+export function parseDeployAttestationResult(value: unknown, path: string): DeployAttestationResult {
+  const item = contractRecord(value, path);
+  const action = parseGateActionContract(item.gateAction, `${path}.gateAction`, loose);
+  return {
+    gateAction: {
+      id: action.gateActionId,
+      workItemId: action.workItemId,
+      gate: action.gate,
+      actorId: action.actorId,
+      planRevisionId: action.planRevisionId,
+      verifiedSha: action.verifiedSha,
+      mergeSha: action.mergeSha,
+      refId: action.refId,
+      note: action.note,
+      createdAt: action.createdAt,
+      createdAtMs: ms(action.createdAt),
+    },
+    duplicate: booleanValue(item.duplicate, `${path}.duplicate`),
+  };
 }
 
 export function parseWorkItemAudit(value: unknown, path: string): RawWorkItemAudit {

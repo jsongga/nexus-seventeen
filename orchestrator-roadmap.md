@@ -171,7 +171,9 @@ external env vars) called out.
 `machine-verify-integration` and `pipeline-e2e` arcs pin fixed windows
 ("verify sweep did not reach reviewing"; a 122 s kill-switch run gets
 wall-clock-parked) and fail whenever a reviewer runs tests concurrently;
-campaign 10 needed three isolated/quiet reruns. Make the windows scale with
+campaign 10 needed repeated isolated/quiet reruns; the Playwright
+`a pending pause keeps its reason and error when the rail breakpoint changes`
+arc is intermittent under load too (0/5 failures isolated, 1/3 loaded). Make the windows scale with
 observed sweep latency (or gate on state transitions instead of elapsed
 time) so a loaded machine cannot fake a regression.
 

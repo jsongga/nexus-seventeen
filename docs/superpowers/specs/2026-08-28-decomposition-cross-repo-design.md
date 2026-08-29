@@ -90,6 +90,8 @@ Runtime units per task (contract, migration equivalence, split-rule matrix, read
 
 - **Expand and Contract engineers are authorized to change `docs/interface.md`** — the engineer prompt renders a phase-authorization block for those claims (the published-interface bright line is suspended for that file only); Migrate and ordinary claims keep the bright line.
 
+- **UI rulings (Task 5 review)** — the plan gate shows every declared child's scope and acceptance criteria before confirm (confirmation pre-approves them); the web hides *Resume coordination* for a phased family parked `child_failed` (cancel is the only exit) and offers inline deployment attestation on the parent's children rows; a parent's Children section renders only once a non-empty children list arrives, including for terminal parents.
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   BoardPauseVersionGuard,
+  WorkItemDetailLoadCoordinator,
   changeBoardPause,
   pausePopoverShouldClose,
   refreshBoardSnapshot,
   resolveDialogTriggerAction,
+  snapshotLostSelectedWorkItem,
 } from './BoardApp';
-import type { TaskBoardClient } from './data/client';
+import { BoardApiError, type TaskBoardClient } from './data/client';
 import type { RawBoardPause } from './data/parse';
 import { NotificationLoadCoordinator } from './model/notification-load';
 import { taskPhasesByOrder, taskRunsByCreatedAt } from './views/TaskDetail';
-import type { BoardRun, BoardSnapshot, BoardTaskPhase } from './types';
+import type { BoardRun, BoardSnapshot, BoardTaskPhase, BoardWorkItem, BoardWorkItemDetail } from './types';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -194,6 +196,39 @@ describe('notification refresh coordination', () => {
     await olderLoad;
 
     expect(applied).toEqual(['refreshed-after-read']);
+  });
+});
+
+describe('work-item detail navigation coordination', () => {
+  const detail = (id: string) => ({ id } as BoardWorkItemDetail);
+
+  it('commits only the latest child detail when requests resolve out of order', async () => {
+    const coordinator = new WorkItemDetailLoadCoordinator();
+    const first = deferred<BoardWorkItemDetail>();
+    const second = deferred<BoardWorkItemDetail>();
+    let firstSignal: AbortSignal | undefined;
+    const firstLoad = coordinator.load('child-first', (signal) => {
+      firstSignal = signal;
+      return first.promise;
+    });
+    const secondLoad = coordinator.load('child-second', () => second.promise);
+
+    second.resolve(detail('child-second'));
+    await expect(secondLoad).resolves.toEqual({ kind: 'loaded', detail: detail('child-second') });
+    first.resolve(detail('child-first'));
+    await expect(firstLoad).resolves.toEqual({ kind: 'stale' });
+    expect(firstSignal?.aborted).toBe(true);
+  });
+
+  it('detects a selected snapshot row disappearing and classifies its 404 refresh', async () => {
+    const listed = [{ id: 'archived-child' }] as BoardWorkItem[];
+    expect(snapshotLostSelectedWorkItem('archived-child', listed, [])).toBe(true);
+    expect(snapshotLostSelectedWorkItem('another-child', listed, [])).toBe(false);
+
+    const coordinator = new WorkItemDetailLoadCoordinator();
+    await expect(coordinator.load('archived-child', async () => {
+      throw new BoardApiError('Not found', 404, 'NOT_FOUND');
+    })).resolves.toEqual({ kind: 'not-found' });
   });
 });
 

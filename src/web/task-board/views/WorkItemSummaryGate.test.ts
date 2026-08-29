@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PipelineSummary } from '@shared/task-board-contract';
 import type { TaskBoardClient } from '../data/client';
 import type { RawWorkItemAudit } from '../data/parse';
-import type { BoardWorkItem } from '../types';
+import type { BoardChildWorkItem, BoardWorkItem } from '../types';
 
 const hookHarness = vi.hoisted(() => ({
   stateCursor: 0,
@@ -61,7 +61,7 @@ vi.mock('react', async (importOriginal) => {
   };
 });
 
-import { AuditSection, PipelineSummaryDetails, StatusTimeline, WorkItemDetail } from './WorkItemDetail';
+import { AuditSection, ChildrenSection, PipelineSummaryDetails, StatusTimeline, WorkItemDetail } from './WorkItemDetail';
 
 const timestamp = '2026-08-19T12:00:00.000Z';
 const summary: PipelineSummary = {
@@ -137,26 +137,95 @@ function resetHookHarness() {
   hookHarness.effects.length = 0;
 }
 
-function renderDetail(workItem: BoardWorkItem, client: TaskBoardClient, snapshotRevision = 1): ReactNode {
+function renderDetail(
+  workItem: BoardWorkItem,
+  client: TaskBoardClient,
+  snapshotRevision = 1,
+  familyVersionKey = `${workItem.id}:${workItem.version}`,
+  familyRefreshRevision = 0,
+): ReactNode {
   hookHarness.stateCursor = 0;
   hookHarness.refCursor = 0;
   hookHarness.effectCursor = 0;
   const noop = async () => ({ ok: true as const });
+  const familyClient = client as TaskBoardClient & {
+    getWorkItemChildren?: TaskBoardClient['getWorkItemChildren'];
+    getWorkItemDependencies?: TaskBoardClient['getWorkItemDependencies'];
+  };
+  familyClient.getWorkItemChildren ??= async () => [];
+  familyClient.getWorkItemDependencies ??= async () => [];
   return WorkItemDetail({
     workItem,
     snapshotRevision,
+    familyVersionKey,
+    familyRefreshRevision,
     projectName: 'Project one',
+    projects: [],
+    parentWorkItem: null,
     planningTask: null,
     openQuestion: null,
-    client,
+    client: familyClient,
     busy: false,
     onClose: vi.fn(),
     onAnswer: noop,
     onConfirm: noop,
+    onAttestDeploy: noop,
+    onResumeCoordination: noop,
     onCancel: noop,
     onArchive: noop,
   });
 }
+
+describe('decomposition family refresh', () => {
+  beforeEach(() => {
+    resetHookHarness();
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
+  });
+
+  afterEach(() => {
+    resetHookHarness();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the last family visible, ignores unrelated revisions, and retries on manual refresh', async () => {
+    const parent = { ...reviewingWorkItem(4), id: 'parent-one', state: 'final_approval' as const };
+    const child: BoardChildWorkItem = {
+      ...parent,
+      id: 'child-one',
+      parentWorkItemId: parent.id,
+      childOrdinal: 0,
+      state: 'final_approval',
+      deployAttested: false,
+      mergeSha: null,
+    };
+    const backgroundRefresh = new Promise<BoardChildWorkItem[]>(() => undefined);
+    const getWorkItemChildren = vi.fn()
+      .mockResolvedValueOnce([child])
+      .mockImplementation(() => backgroundRefresh);
+    const client = {
+      getWorkItemChildren,
+      getWorkItemAudit: vi.fn().mockResolvedValue({ gateActions: [], transitions: [] }),
+      getPipelineSummary: vi.fn().mockResolvedValue(summary),
+    } as unknown as TaskBoardClient;
+
+    renderDetail(parent, client, 10, 'parent-one:4|child-one:1');
+    await Promise.resolve();
+    await Promise.resolve();
+    const loaded = renderDetail(parent, client, 10, 'parent-one:4|child-one:1');
+    expect(findElement(loaded, ChildrenSection)?.props).toMatchObject({ state: 'ready', children: [child] });
+
+    renderDetail(parent, client, 11, 'parent-one:4|child-one:1');
+    expect(getWorkItemChildren).toHaveBeenCalledTimes(1);
+
+    renderDetail(parent, client, 11, 'parent-one:4|child-one:2');
+    const refreshing = renderDetail(parent, client, 11, 'parent-one:4|child-one:2');
+    expect(getWorkItemChildren).toHaveBeenCalledTimes(2);
+    expect(findElement(refreshing, ChildrenSection)?.props).toMatchObject({ state: 'ready', children: [child] });
+
+    renderDetail(parent, client, 11, 'parent-one:4|child-one:2', 1);
+    expect(getWorkItemChildren).toHaveBeenCalledTimes(3);
+  });
+});
 
 function findElement(node: ReactNode, type: unknown): ReactElement | null {
   if (Array.isArray(node)) {

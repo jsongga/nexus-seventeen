@@ -1,6 +1,7 @@
 import {
   agentRoleValues,
   evaluatorProfileValues,
+  gateKindValues,
   planRevisionStateValues,
   questionStatusValues,
   stageHandoffOutcomeValues,
@@ -68,6 +69,7 @@ export type WorkItemState = typeof workItemStateValues[number] | typeof unrecogn
 export type WorkItemPhase = typeof workItemPhaseValues[number] | typeof unrecognizedState;
 export type WorkItemStage = typeof workItemStageValues[number];
 export type WorkItemTaskType = typeof workItemTaskTypeValues[number];
+export type GateKind = typeof gateKindValues[number] | typeof unrecognizedState;
 export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
 export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = {
   refinement: ['manager'],
@@ -157,6 +159,35 @@ export interface BoardWorkItem {
   cancelledReason: string | null;
   archivedAt: string | null;
   archivedAtMs: number | null;
+}
+
+export interface BoardChildWorkItem extends BoardWorkItem {
+  deployAttested: boolean;
+  mergeSha: string | null;
+}
+
+export interface BoardWorkItemDependency {
+  workItemId: string;
+  dependsOnWorkItemId: string;
+}
+
+export interface BoardGateAction {
+  id: string;
+  workItemId: string;
+  gate: GateKind;
+  actorId: string;
+  planRevisionId: string | null;
+  verifiedSha: string | null;
+  mergeSha: string | null;
+  refId: string | null;
+  note: string | null;
+  createdAt: string;
+  createdAtMs: number;
+}
+
+export interface DeployAttestationResult {
+  gateAction: BoardGateAction;
+  duplicate: boolean;
 }
 
 export interface BoardWorkItemTransition {

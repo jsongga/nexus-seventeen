@@ -3,6 +3,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Button, Card, Pill, Toast, cn } from '../../components/ui';
 import type { ActionError } from '../model/action-errors';
 import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
+import type { WorkItemTreeRow } from '../model/work-item-tree';
 import {
   prettyStatus,
   taskStatusTone,
@@ -81,6 +82,11 @@ export function WorkItemRow({
   selected,
   onSelect,
   buttonRef,
+  depth = 0,
+  childCount = 0,
+  mergedChildCount = 0,
+  abandonedChildCount = 0,
+  dependencyHint = null,
   nowMs = Date.now(),
 }: {
   workItem: BoardWorkItem;
@@ -88,6 +94,11 @@ export function WorkItemRow({
   selected: boolean;
   onSelect: () => void;
   buttonRef: (element: HTMLButtonElement | null) => void;
+  depth?: WorkItemTreeRow['depth'];
+  childCount?: number;
+  mergedChildCount?: number;
+  abandonedChildCount?: number;
+  dependencyHint?: string | null;
   nowMs?: number;
 }) {
   const projectId = workItem.resolvedProjectId
@@ -103,8 +114,16 @@ export function WorkItemRow({
   const heartbeatAge = workItem.heartbeatAtMs === undefined || workItem.heartbeatAtMs === null
     ? null
     : elapsedMilliseconds(workItem.heartbeatAtMs, nowMs);
+  const phaseLabel = workItem.phase === null
+    ? null
+    : workItem.phase === 'unrecognized'
+      ? unknownStateLabel
+      : `${workItem.phase.charAt(0).toUpperCase()}${workItem.phase.slice(1)}`;
   return (
-    <article aria-label={`Work item: ${rowTitle}`} className="last:[&>button]:border-b-0">
+    <article
+      aria-label={`Work item: ${rowTitle}`}
+      className={cn('last:[&>button]:border-b-0', depth === 1 && 'relative before:absolute before:bottom-2 before:left-5 before:top-2 before:w-px before:bg-line')}
+    >
       <button
         ref={buttonRef}
         type="button"
@@ -112,6 +131,7 @@ export function WorkItemRow({
         onClick={onSelect}
         className={cn(
           'group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-paper/75 motion-safe:active:scale-[0.995]',
+          depth === 1 && 'ml-8 w-[calc(100%-2.5rem)] bg-muted-surface/35 pl-4',
           selected && 'bg-paper hover:bg-paper',
         )}
       >
@@ -123,6 +143,7 @@ export function WorkItemRow({
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{rowTitle}</h3>
             <Pill>{workItem.taskType}</Pill>
+            {phaseLabel === null ? null : <Pill tone="purple">{phaseLabel}</Pill>}
             <Pill tone={workItemPriorityTone[workItem.priority]}>{workItem.priority} priority</Pill>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
@@ -141,6 +162,13 @@ export function WorkItemRow({
               </span>
             )}
             <span>{projectName}</span>
+            {dependencyHint === null ? null : <span className="font-medium text-ink">{dependencyHint}</span>}
+            {childCount === 0 && abandonedChildCount === 0 ? null : (
+              <span className="font-medium text-ink">
+                {mergedChildCount} of {childCount} children merged
+                {abandonedChildCount > 0 ? ` · ${abandonedChildCount} abandoned` : null}
+              </span>
+            )}
           </div>
         </div>
         <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">

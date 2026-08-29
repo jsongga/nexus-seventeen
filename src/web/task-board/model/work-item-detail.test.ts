@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardWorkItem, TaskStatus, WorkItemState } from '../types';
-import { deriveWorkItemDetailAffordances, nodesForPlan, proposedPlanForWorkItem } from './work-item-detail';
+import type { BoardChildWorkItem, BoardWorkItem, TaskStatus, WorkItemState } from '../types';
+import {
+  contractApprovalIsReady,
+  contractDependencyStatuses,
+  decompositionFamilyVersionKey,
+  deriveDecompositionAffordances,
+  deriveWorkItemDetailAffordances,
+  nodesForPlan,
+  proposedPlanForWorkItem,
+} from './work-item-detail';
 import {
   notificationKindLabel,
   parkCategoryLabel,
@@ -40,6 +48,40 @@ const planningTaskStates: readonly (TaskStatus | null)[] = [
   'cancelled',
   'unrecognized',
 ];
+
+const timestamp = '2026-08-29T12:00:00.000Z';
+
+function child(id: string, overrides: Partial<BoardChildWorkItem> = {}): BoardChildWorkItem {
+  return {
+    id,
+    originalRequest: id,
+    refinedObjective: null,
+    priority: 'normal',
+    taskType: 'standard',
+    projectTarget: { mode: 'explicit', projectId: 'project-one' },
+    resolvedProjectId: 'project-one',
+    parentWorkItemId: 'parent-one',
+    phase: 'migrate',
+    childOrdinal: 1,
+    planningTaskId: null,
+    state: 'merged',
+    currentStage: null,
+    createdBy: 'human:operator',
+    version: 1,
+    createdAt: timestamp,
+    createdAtMs: Date.parse(timestamp),
+    updatedAt: timestamp,
+    updatedAtMs: Date.parse(timestamp),
+    endedAt: timestamp,
+    endedAtMs: Date.parse(timestamp),
+    cancelledReason: null,
+    archivedAt: null,
+    archivedAtMs: null,
+    deployAttested: true,
+    mergeSha: '0123456789abcdef0123456789abcdef01234567',
+    ...overrides,
+  };
+}
 
 const noAffordances = {
   answerQuestion: false,
@@ -115,6 +157,118 @@ describe('work-item workflow selection', () => {
 
     expect(proposedPlanForWorkItem(workflow, 'opened')?.planRevisionId).toBe('latest');
     expect(nodesForPlan(workflow, 'latest').map((node) => node.nodeId)).toEqual(['latest-node']);
+  });
+});
+
+describe('decomposition affordances', () => {
+  it('derives parent, child, and ordinary actions independently in every work-item state', () => {
+    for (const workItemState of workItemStates) {
+      expect(deriveDecompositionAffordances({
+        workItemState,
+        parentWorkItemId: null,
+        phase: null,
+        hasChildren: true,
+        phasedFamily: false,
+        childFailed: false,
+        deployAttested: false,
+      }), `parent/${workItemState}`).toEqual({
+        approveAndMergeChildren: workItemState === 'final_approval',
+        resumeCoordination: workItemState === 'parked',
+        attestDeployment: false,
+      });
+
+      expect(deriveDecompositionAffordances({
+        workItemState,
+        parentWorkItemId: 'parent-one',
+        phase: 'expand',
+        hasChildren: true,
+        phasedFamily: false,
+        childFailed: false,
+        deployAttested: false,
+      }), `child/${workItemState}`).toEqual({
+        approveAndMergeChildren: false,
+        resumeCoordination: false,
+        attestDeployment: workItemState === 'merged',
+      });
+
+      expect(deriveDecompositionAffordances({
+        workItemState,
+        parentWorkItemId: null,
+        phase: null,
+        hasChildren: false,
+        phasedFamily: false,
+        childFailed: false,
+        deployAttested: false,
+      }), `ordinary/${workItemState}`).toEqual({
+        approveAndMergeChildren: false,
+        resumeCoordination: false,
+        attestDeployment: false,
+      });
+    }
+
+    expect(deriveDecompositionAffordances({
+      workItemState: 'final_approval',
+      parentWorkItemId: null,
+      phase: null,
+      hasChildren: true,
+      phasedFamily: true,
+      childFailed: false,
+      deployAttested: false,
+    }).approveAndMergeChildren).toBe(false);
+  });
+
+  it('hides resume only when a phased coordination family has a terminal child', () => {
+    expect(deriveDecompositionAffordances({
+      workItemState: 'parked',
+      parentWorkItemId: null,
+      phase: null,
+      hasChildren: true,
+      phasedFamily: true,
+      childFailed: true,
+      deployAttested: false,
+    }).resumeCoordination).toBe(false);
+    expect(deriveDecompositionAffordances({
+      workItemState: 'parked',
+      parentWorkItemId: null,
+      phase: null,
+      hasChildren: true,
+      phasedFamily: false,
+      childFailed: true,
+      deployAttested: false,
+    }).resumeCoordination).toBe(true);
+  });
+
+  it('keys family refreshes to only the parent and its children', () => {
+    const parent = child('parent', { parentWorkItemId: null, phase: null, version: 4 });
+    const first = child('first', { parentWorkItemId: parent.id, version: 2 });
+    const second = child('second', { parentWorkItemId: parent.id, version: 7 });
+    const unrelated = child('unrelated', { parentWorkItemId: null, phase: null, version: 1 });
+
+    const initial = decompositionFamilyVersionKey(first, [parent, first, second, unrelated]);
+    expect(decompositionFamilyVersionKey(first, [parent, first, second, { ...unrelated, version: 99 }])).toBe(initial);
+    expect(decompositionFamilyVersionKey(first, [{ ...parent, version: 5 }, first, second, unrelated])).not.toBe(initial);
+    expect(decompositionFamilyVersionKey(parent, [parent, first, { ...second, version: 8 }, unrelated])).not.toBe(initial);
+  });
+
+  it('keeps an unrecognized Contract phase blocked even when sibling statuses are ready', () => {
+    const readyStatus = [{ child: child('expand'), direct: true, ready: true }];
+
+    expect(contractApprovalIsReady('contract', 'ready', readyStatus)).toBe(true);
+    expect(contractApprovalIsReady('unrecognized', 'ready', readyStatus)).toBe(false);
+  });
+
+  it('requires every non-Contract sibling and marks declared direct dependencies', () => {
+    const expand = child('expand', { phase: 'expand', childOrdinal: 0 });
+    const migrate = child('migrate', { phase: 'migrate', childOrdinal: 1, deployAttested: false });
+    const contract = child('contract', { phase: 'contract', childOrdinal: 2, state: 'final_approval', deployAttested: false, mergeSha: null });
+
+    expect(contractDependencyStatuses(contract.id, [contract, migrate, expand], [{
+      workItemId: contract.id,
+      dependsOnWorkItemId: migrate.id,
+    }])).toEqual([
+      { child: expand, direct: false, ready: true },
+      { child: migrate, direct: true, ready: false },
+    ]);
   });
 });
 

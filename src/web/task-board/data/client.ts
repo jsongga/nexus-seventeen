@@ -3,12 +3,15 @@ import type {
   AgentQueryConversationTurn,
   AgentRole,
   AutomationConfiguration,
+  BoardChildWorkItem,
   BoardProject,
   BoardSnapshot,
+  BoardWorkItemDependency,
   BoardWorkItemDetail,
   CreateProjectInput,
   CreateTaskInput,
   CreateWorkItemInput,
+  DeployAttestationResult,
   HostDirectoryListing,
   HostProjectEntry,
   HostProjectRoot,
@@ -37,6 +40,8 @@ import {
   parseAgent,
   parseBoardNotification,
   parseBoardPause,
+  parseChildWorkItem,
+  parseDeployAttestationResult,
   parseFindingsLedger,
   parseInterrupt,
   parseMessage,
@@ -49,6 +54,7 @@ import {
   parseWorkItem,
   parseWorkItemAudit,
   parseWorkItemDetail,
+  parseWorkItemDependency,
   parseWorkflowEvent,
   record,
   string,
@@ -65,6 +71,7 @@ import {
   type RawWorkItem,
 } from './parse';
 import {
+  childWorkItemProjection,
   normalize,
   projectProjection,
   workItemDetailProjection,
@@ -235,6 +242,16 @@ function workItemFromEnvelope(value: unknown, path: string): BoardWorkItemDetail
   return workItemDetailProjection(parseWorkItemDetail(envelope.workItem, `${path}.workItem`));
 }
 
+function childrenFromEnvelope(value: unknown, path: string): BoardChildWorkItem[] {
+  const envelope = record(value, path);
+  return array(envelope.children, `${path}.children`, parseChildWorkItem).map(childWorkItemProjection);
+}
+
+function dependenciesFromEnvelope(value: unknown, path: string): BoardWorkItemDependency[] {
+  const envelope = record(value, path);
+  return array(envelope.dependencies, `${path}.dependencies`, parseWorkItemDependency);
+}
+
 function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTokenResult {
   const envelope = exactRecord(value, path, ['agent', 'token']);
   const agent = parseAgent(envelope.agent, `${path}.agent`);
@@ -314,6 +331,8 @@ export interface TaskBoardClient {
   markNotificationRead(notificationId: string, version: number): Promise<RawBoardNotification>;
   getWorkItemAudit(workItemId: string, signal?: AbortSignal): Promise<RawWorkItemAudit>;
   getWorkItem(workItemId: string, signal?: AbortSignal): Promise<BoardWorkItemDetail>;
+  getWorkItemChildren(parentWorkItemId: string, signal?: AbortSignal): Promise<BoardChildWorkItem[]>;
+  getWorkItemDependencies(workItemId: string, signal?: AbortSignal): Promise<BoardWorkItemDependency[]>;
   getAutomationConfiguration(signal?: AbortSignal): Promise<AutomationConfiguration>;
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
@@ -347,6 +366,8 @@ export interface TaskBoardClient {
   getPipelineSummary(workItemId: string, signal?: AbortSignal): Promise<PipelineSummary>;
   approvePipelineMerge(workItemId: string, input: { version: number }): Promise<BoardWorkItemDetail>;
   rejectFinalApproval(workItemId: string, input: { version: number; note: string }): Promise<BoardWorkItemDetail>;
+  attestDeployment(workItemId: string, input: { note?: string }): Promise<DeployAttestationResult>;
+  resumeWorkItem(workItemId: string): Promise<BoardWorkItemDetail>;
   getProjectArtifacts(projectId: string, signal?: AbortSignal): Promise<ProjectArtifact[]>;
   confirmWorkflow(planRevisionId: string): Promise<ProjectWorkflow>;
   rejectWorkflowPlan(planRevisionId: string, note: string): Promise<RejectPlanRevisionResponse>;
@@ -583,6 +604,18 @@ export function createTaskBoardClient(options: {
         'work item detail response',
       );
     },
+    async getWorkItemChildren(parentWorkItemId, signal) {
+      return childrenFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(parentWorkItemId)}/children`, { signal }),
+        'work item children response',
+      );
+    },
+    async getWorkItemDependencies(workItemId, signal) {
+      return dependenciesFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/dependencies`, { signal }),
+        'work item dependencies response',
+      );
+    },
     async getPipelineSummary(workItemId, signal) {
       return parsePipelineSummary(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/pipeline-summary`, { signal }),
@@ -609,6 +642,24 @@ export function createTaskBoardClient(options: {
           }),
         }),
         'reject final approval response',
+      );
+    },
+    async attestDeployment(workItemId, input) {
+      const note = input.note?.trim() ?? '';
+      return parseDeployAttestationResult(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/attest-deploy`, {
+          method: 'POST',
+          body: JSON.stringify(note.length === 0 ? {} : {
+            note: boundedText(note, 'deployment attestation note', 2_000),
+          }),
+        }),
+        'deploy attestation response',
+      );
+    },
+    async resumeWorkItem(workItemId) {
+      return workItemFromEnvelope(
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/resume`, { method: 'POST' }),
+        'resume work item response',
       );
     },
     async getProjectWorkflow(projectId, signal) {

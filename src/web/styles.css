@@ -180,6 +180,12 @@ html {
   background: var(--canvas);
 }
 
+@media (max-width: 1023px) {
+  html {
+    scroll-padding-top: 3.5rem;
+  }
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;

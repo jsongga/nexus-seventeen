@@ -77,6 +77,50 @@ describe('plan approval record and controls', () => {
     expect(markup).not.toContain('Cancel work item');
   });
 
+  it('renders declared children and the phased merge authorization at the plan gate', () => {
+    const markup = renderToStaticMarkup(createElement(PlanRecordDetails, {
+      plan: {
+        ...plan(),
+        changeShape: 'blast_radius',
+        children: [{
+          key: 'expand-provider',
+          objective: 'Publish the additive provider interface.',
+          projectId: 'provider-project',
+          declaredScope: ['docs/interface.md'],
+          acceptanceCriteria: ['The interface is published.'],
+          phase: 'expand',
+          splitBy: 'phase',
+        }, {
+          key: 'migrate-consumer',
+          objective: 'Adopt the published provider interface.',
+          projectId: 'consumer-project',
+          declaredScope: ['src/consumer'],
+          acceptanceCriteria: ['The consumer uses the interface.'],
+          phase: 'migrate',
+          dependsOn: ['expand-provider'],
+          splitBy: 'consumer',
+        }],
+      },
+    }));
+
+    for (const text of [
+      'Declared children',
+      'Expand',
+      'Migrate',
+      'provider-project',
+      'Declared scope',
+      'docs/interface.md',
+      'src/consumer',
+      'Acceptance criteria',
+      'The interface is published.',
+      'The consumer uses the interface.',
+      'After expand-provider',
+      'Expand and Migrate children merge automatically once verified and reviewed; Contract requires your approval after deployment is attested',
+    ]) expect(markup).toContain(text);
+    expect(markup.match(/Declared scope/gu)).toHaveLength(3);
+    expect(markup.match(/Acceptance criteria/gu)).toHaveLength(3);
+  });
+
   it('renders a bounded revision-note form with revision rather than cancellation copy', () => {
     const markup = renderToStaticMarkup(createElement(PlanRejectionForm, {
       workItemId: 'work-item-one',

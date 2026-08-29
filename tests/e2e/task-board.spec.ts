@@ -258,6 +258,251 @@ async function installFinalApprovalBoard(page: Page) {
   return workItem;
 }
 
+async function installDecompositionBoard(page: Page) {
+  const consumerProject = {
+    ...project,
+    projectId: 'project-consumer',
+    name: 'Consumer project',
+    description: 'Consumes the provider interface.',
+  };
+  const now = '2026-08-29T12:00:00.000Z';
+  const workItem = (
+    workItemId: string,
+    refinedObjective: string,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    apiVersion,
+    workItemId,
+    originalRequest: refinedObjective,
+    refinedObjective,
+    priority: 'normal',
+    taskType: 'standard',
+    projectTarget: { mode: 'explicit', projectId: project.projectId },
+    resolvedProjectId: project.projectId,
+    parentWorkItemId: null,
+    phase: null,
+    childOrdinal: null,
+    planningTaskId: null,
+    state: 'coordinating',
+    currentStage: null,
+    createdBy: 'human:operator',
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    endedAt: null,
+    cancelledReason: null,
+    archivedAt: null,
+    ...overrides,
+  });
+
+  const phasedParent = workItem('parent-phased', 'Coordinate the phased rollout.');
+  const expand = workItem('child-expand', 'Expand the provider interface.', {
+    parentWorkItemId: phasedParent.workItemId,
+    phase: 'expand',
+    childOrdinal: 0,
+    state: 'merged',
+    endedAt: now,
+    version: 4,
+  });
+  const migrate = workItem('child-migrate', 'Migrate the consumer.', {
+    projectTarget: { mode: 'explicit', projectId: consumerProject.projectId },
+    resolvedProjectId: consumerProject.projectId,
+    parentWorkItemId: phasedParent.workItemId,
+    phase: 'migrate',
+    childOrdinal: 1,
+    state: 'merged',
+    endedAt: now,
+    version: 4,
+  });
+  const contract = workItem('child-contract', 'Contract the compatibility path.', {
+    parentWorkItemId: phasedParent.workItemId,
+    phase: 'contract',
+    childOrdinal: 2,
+    state: 'final_approval',
+    version: 6,
+  });
+  const featureParent = workItem('parent-feature', 'Coordinate the feature split.', {
+    state: 'final_approval',
+    version: 7,
+  });
+  const featureFirst = workItem('feature-first', 'Merge the first feature child.', {
+    parentWorkItemId: featureParent.workItemId,
+    childOrdinal: 0,
+    state: 'final_approval',
+    version: 3,
+  });
+  const featureSecond = workItem('feature-second', 'Merge the second feature child.', {
+    parentWorkItemId: featureParent.workItemId,
+    childOrdinal: 1,
+    state: 'final_approval',
+    version: 3,
+  });
+  const parkedParent = workItem('parent-parked', 'Resume the parked coordination family.', {
+    state: 'parked',
+    version: 5,
+  });
+  const archivedChild = workItem('child-archived', 'Inspect the archived terminal child.', {
+    parentWorkItemId: parkedParent.workItemId,
+    childOrdinal: 0,
+    state: 'merged',
+    version: 4,
+    endedAt: now,
+    updatedAt: now,
+    archivedAt: now,
+  });
+  let expandAttested = false;
+  let migrateAttested = false;
+  let featureApproved = false;
+  let parentApprovalRequest: Record<string, unknown> | null = null;
+
+  const snapshotWorkItems = () => [
+    phasedParent,
+    expand,
+    migrate,
+    contract,
+    {
+      ...featureParent,
+      ...(featureApproved ? { state: 'merged', version: 8, endedAt: now, updatedAt: now } : {}),
+    },
+    {
+      ...featureFirst,
+      ...(featureApproved ? { state: 'merged', version: 4, endedAt: now, updatedAt: now } : {}),
+    },
+    {
+      ...featureSecond,
+      ...(featureApproved ? { state: 'merged', version: 4, endedAt: now, updatedAt: now } : {}),
+    },
+    parkedParent,
+  ];
+  const phasedChildren = () => [
+    { ...expand, deployAttested: expandAttested, mergeSha: '1111111111111111111111111111111111111111' },
+    { ...migrate, deployAttested: migrateAttested, mergeSha: '2222222222222222222222222222222222222222' },
+    { ...contract, deployAttested: false, mergeSha: null },
+  ];
+  const featureChildren = () => snapshotWorkItems().filter((item) => item.parentWorkItemId === featureParent.workItemId)
+    .map((item) => ({
+      ...item,
+      deployAttested: false,
+      mergeSha: item.state === 'merged' ? '3333333333333333333333333333333333333333' : null,
+    }));
+  const pipelineSummary: PipelineSummary = {
+    commits: [{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'Contract compatibility path' }],
+    diffstat: ' docs/interface.md | 2 --',
+    filesTouched: ['docs/interface.md'],
+    declaredScope: ['docs/interface.md'],
+    scopeOk: true,
+    assumptions: [],
+    midRunAssumptions: [],
+    verify: [],
+    criteria: ['All prerequisite deployments are attested.'],
+    criterionChecks: [],
+    findings: [],
+    designRecord: null,
+  };
+
+  await installDefaultBoard(page, { emptyTaskList: true, workItems: snapshotWorkItems() });
+  await page.route('**/board-api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const method = request.method();
+    if (url.pathname === '/board-api/v1/work-items' && method === 'GET') {
+      await route.fulfill({ json: { workItems: snapshotWorkItems() } });
+      return;
+    }
+    if (url.pathname === '/board-api/v1/projects' && method === 'GET') {
+      await route.fulfill({ json: { projects: [project, consumerProject] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${project.projectId}/board`) {
+      await route.fulfill({ json: { ...board(), tasks: [] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/projects/${consumerProject.projectId}/board`) {
+      await route.fulfill({ json: { ...board(), project: consumerProject, agents: [], tasks: [] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${phasedParent.workItemId}/children`) {
+      await route.fulfill({ json: { children: phasedChildren() } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${featureParent.workItemId}/children`) {
+      await route.fulfill({ json: { children: featureChildren() } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${parkedParent.workItemId}/children`) {
+      await route.fulfill({ json: { children: [{ ...archivedChild, deployAttested: false, mergeSha: '4444444444444444444444444444444444444444' }] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${archivedChild.workItemId}` && method === 'GET') {
+      await route.fulfill({ json: { workItem: { ...archivedChild, transitions: [], gapReportArtifactId: null } } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${contract.workItemId}/dependencies`) {
+      await route.fulfill({ json: { dependencies: [{
+        workItemId: contract.workItemId,
+        dependsOnWorkItemId: migrate.workItemId,
+      }] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${contract.workItemId}/pipeline-summary`) {
+      await route.fulfill({ json: pipelineSummary });
+      return;
+    }
+    if (/^\/board-api\/v1\/work-items\/[^/]+\/audit$/u.test(url.pathname)) {
+      await route.fulfill({ json: { gateActions: [], transitions: [] } });
+      return;
+    }
+    if (url.pathname === `/board-api/v1/work-items/${featureParent.workItemId}/approve-merge` && method === 'POST') {
+      parentApprovalRequest = request.postDataJSON() as Record<string, unknown>;
+      featureApproved = true;
+      await route.fulfill({ json: {
+        workItem: {
+          ...featureParent,
+          state: 'merged',
+          version: 8,
+          endedAt: now,
+          transitions: [],
+        },
+      } });
+      return;
+    }
+    const attestMatch = /^\/board-api\/v1\/work-items\/(child-expand|child-migrate)\/attest-deploy$/u.exec(url.pathname);
+    if (attestMatch && method === 'POST') {
+      const childId = attestMatch[1]!;
+      if (childId === expand.workItemId) expandAttested = true;
+      if (childId === migrate.workItemId) migrateAttested = true;
+      const body = request.postDataJSON() as { note?: string };
+      await route.fulfill({ json: {
+        gateAction: {
+          gateActionId: `attestation-${childId}`,
+          workItemId: childId,
+          gate: 'deploy_attest',
+          actorId: 'human:operator',
+          planRevisionId: `plan-${childId}`,
+          verifiedSha: null,
+          mergeSha: null,
+          refId: null,
+          note: body.note ?? null,
+          createdAt: now,
+        },
+        duplicate: false,
+      } });
+      return;
+    }
+    await route.fallback();
+  });
+
+  return {
+    contract,
+    expand,
+    featureParent,
+    migrate,
+    parkedParent,
+    phasedParent,
+    parentApprovalRequest: () => parentApprovalRequest,
+  };
+}
+
 test('the board control pauses with a reason and resumes orchestration', async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto('/');
@@ -1794,6 +2039,123 @@ test('desktop final approval opens an anchored in-viewport merge confirmation th
   await taskDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(taskDialog).toHaveCount(0);
   await expect(confirmation).toHaveCount(0);
+});
+
+async function openDecompositionWorkItem(page: Page, objective: string): Promise<void> {
+  const back = page.getByRole('button', { name: 'Back to task list', exact: true });
+  if (await back.isVisible()) await back.click();
+  const row = page.getByRole('article', { name: `Work item: ${objective}`, exact: true });
+  await row.getByRole('button').click();
+  await expect(page.getByRole('heading', { name: 'Work-item details', exact: true })).toBeVisible();
+}
+
+test('decomposition families render as parent rows with ordered phase children', async ({ page }) => {
+  await installDecompositionBoard(page);
+  await page.goto('/');
+
+  const parent = page.getByRole('article', { name: 'Work item: Coordinate the phased rollout.', exact: true });
+  await expect(parent.getByText('2 of 3 children merged', { exact: true })).toBeVisible();
+  const expand = page.getByRole('article', { name: 'Work item: Expand the provider interface.', exact: true });
+  const migrate = page.getByRole('article', { name: 'Work item: Migrate the consumer.', exact: true });
+  const contract = page.getByRole('article', { name: 'Work item: Contract the compatibility path.', exact: true });
+  await expect(expand.getByText('Expand', { exact: true })).toBeVisible();
+  await expect(migrate.getByText('Migrate', { exact: true })).toBeVisible();
+  await expect(migrate.getByText('after Expand', { exact: true })).toBeVisible();
+  await expect(contract.getByText('Contract', { exact: true })).toBeVisible();
+  const rowOrder = await page.getByRole('article').evaluateAll((articles) => articles.map((article) => article.getAttribute('aria-label')));
+  expect(rowOrder.indexOf('Work item: Expand the provider interface.')).toBeLessThan(rowOrder.indexOf('Work item: Migrate the consumer.'));
+  expect(rowOrder.indexOf('Work item: Migrate the consumer.')).toBeLessThan(rowOrder.indexOf('Work item: Contract the compatibility path.'));
+});
+
+test('one parent approval confirms and merges every ready unphased child', async ({ page }) => {
+  const fixture = await installDecompositionBoard(page);
+  await page.goto('/');
+  await openDecompositionWorkItem(page, String(fixture.featureParent.refinedObjective));
+
+  const actions = page.getByRole('group', { name: 'Final approval actions', exact: true });
+  const approve = actions.getByRole('button', { name: 'Approve & merge children', exact: true });
+  await expect(approve).toBeEnabled();
+  await expect(actions.getByRole('button', { name: 'Send back to coordination', exact: true })).toBeVisible();
+  await approve.scrollIntoViewIfNeeded();
+  await expect(approve).toBeInViewport();
+  await approve.click();
+  const confirmation = page.getByRole('dialog', { name: 'Approve and merge children', exact: true });
+  await confirmation.getByRole('button', { name: 'Approve and merge', exact: true }).click();
+
+  await expect.poll(fixture.parentApprovalRequest).toEqual({ version: 7 });
+  await expect(confirmation).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Current status', exact: true }).getByText('Done', { exact: true })).toBeVisible();
+});
+
+test('parent rejection uses a uniquely named takeover and hides its detail background', async ({ page }) => {
+  const fixture = await installDecompositionBoard(page);
+  await page.goto('/');
+  await openDecompositionWorkItem(page, String(fixture.featureParent.refinedObjective));
+
+  await page.getByRole('group', { name: 'Final approval actions', exact: true })
+    .getByRole('button', { name: 'Send back to coordination', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Send back to coordination', exact: true });
+  await expect(dialog.getByRole('button', { name: 'Send back', exact: true })).toBeVisible();
+  await expect(page.locator('[role="region"][aria-labelledby^="work-item-detail-heading-"]')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('deployment attestations enable the Contract final-approval gate', async ({ page }) => {
+  const fixture = await installDecompositionBoard(page);
+  await page.goto('/');
+
+  await openDecompositionWorkItem(page, String(fixture.contract.refinedObjective));
+  let approveContract = page.getByRole('group', { name: 'Final approval actions', exact: true })
+    .getByRole('button', { name: 'Approve & merge', exact: true });
+  await expect(page.getByText('Deployment attestations', { exact: true })).toBeVisible();
+  await expect(page.getByText('Not attested', { exact: true })).toHaveCount(2);
+  await expect(approveContract).toBeDisabled();
+
+  await openDecompositionWorkItem(page, String(fixture.phasedParent.refinedObjective));
+  const childrenSection = page.getByRole('region', { name: 'Children', exact: true });
+  const expandRow = childrenSection.getByRole('row').filter({ hasText: 'Expand' });
+  const expandAttestation = expandRow.getByRole('button', { name: 'Attest deployed', exact: true });
+  await expandAttestation.scrollIntoViewIfNeeded();
+  await expect(expandAttestation).toBeInViewport();
+  await expandAttestation.click();
+  let attestation = page.getByRole('dialog', { name: 'Attest deployment', exact: true });
+  await attestation.getByRole('textbox', { name: 'Note', exact: true }).fill('Provider rollout complete.');
+  await attestation.getByRole('button', { name: 'Attest deployed', exact: true }).click();
+  await expect(attestation).toHaveCount(0);
+  await expect(expandRow.getByText('Attested', { exact: true })).toBeVisible();
+
+  await openDecompositionWorkItem(page, String(fixture.migrate.refinedObjective));
+  const migrateAttestation = page.getByRole('button', { name: 'Attest deployed', exact: true });
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeDisabled();
+  await expect(page.getByText('Attest deployment before archiving', { exact: true })).toBeVisible();
+  await migrateAttestation.scrollIntoViewIfNeeded();
+  await expect(migrateAttestation).toBeInViewport();
+  await migrateAttestation.click();
+  attestation = page.getByRole('dialog', { name: 'Attest deployment', exact: true });
+  await attestation.getByRole('button', { name: 'Attest deployed', exact: true }).click();
+  await expect(attestation).toHaveCount(0);
+
+  await openDecompositionWorkItem(page, String(fixture.contract.refinedObjective));
+  approveContract = page.getByRole('group', { name: 'Final approval actions', exact: true })
+    .getByRole('button', { name: 'Approve & merge', exact: true });
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
+  await expect(approveContract).toBeEnabled();
+});
+
+test('archived children remain openable and a parked parent can resume coordination', async ({ page }) => {
+  const fixture = await installDecompositionBoard(page);
+  await page.goto('/');
+  await openDecompositionWorkItem(page, String(fixture.parkedParent.refinedObjective));
+
+  const resume = page.getByRole('button', { name: 'Resume coordination', exact: true });
+  await resume.scrollIntoViewIfNeeded();
+  await expect(resume).toBeInViewport();
+  await resume.click();
+  await expect(page.getByRole('dialog', { name: 'Resume coordination', exact: true })).toBeVisible();
+  await page.getByRole('dialog', { name: 'Resume coordination', exact: true })
+    .getByRole('button', { name: 'Cancel', exact: true }).click();
+
+  await page.getByRole('link', { name: 'Open child', exact: true }).click();
+  await expect(page.getByText('Inspect the archived terminal child.', { exact: true })).toBeVisible();
 });
 
 test('work-item detail resolves planning input, confirms a workflow, archives completion, and cancels another intake', async ({ page }) => {

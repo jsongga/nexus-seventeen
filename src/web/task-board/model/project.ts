@@ -11,6 +11,7 @@
 import type {
   AgentStatus,
   BoardAgent,
+  BoardChildWorkItem,
   BoardMessage,
   BoardProject,
   BoardQuestion,
@@ -25,6 +26,7 @@ import type {
 } from '../types';
 import type {
   RawBoard,
+  RawChildWorkItem,
   RawEvent,
   RawMessage,
   RawProject,
@@ -115,7 +117,7 @@ export function projectProjection(raw: RawProject): BoardProject {
   };
 }
 
-function workItemProjection(raw: RawWorkItem): BoardWorkItem {
+export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
   return {
     id: raw.workItemId,
     originalRequest: raw.originalRequest,
@@ -150,6 +152,14 @@ function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     cancelledReason: raw.cancelledReason,
     archivedAt: raw.archivedAt,
     archivedAtMs: raw.archivedAtMs,
+  };
+}
+
+export function childWorkItemProjection(raw: RawChildWorkItem): BoardChildWorkItem {
+  return {
+    ...workItemProjection(raw),
+    deployAttested: raw.deployAttested,
+    mergeSha: raw.mergeSha,
   };
 }
 

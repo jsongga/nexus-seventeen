@@ -1,5 +1,15 @@
 import type { PipelineSummary, PlanRecordFields, PlanRevision, ReviewFinding } from '@shared/task-board-contract';
-import type { ProjectWorkflow, TaskStatus, WorkflowNode, WorkflowPlan, WorkItemState } from '../types';
+import type {
+  BoardChildWorkItem,
+  BoardWorkItem,
+  BoardWorkItemDependency,
+  ProjectWorkflow,
+  TaskStatus,
+  WorkflowNode,
+  WorkflowPlan,
+  WorkItemPhase,
+  WorkItemState,
+} from '../types';
 
 export type DetailedWorkflowPlan = WorkflowPlan & PlanRecordFields & Pick<PlanRevision, 'rejectedNote'>;
 
@@ -9,6 +19,96 @@ interface WorkItemDetailAffordances {
   rejectPlan: boolean;
   cancel: boolean;
   archive: boolean;
+}
+
+export interface DecompositionAffordances {
+  approveAndMergeChildren: boolean;
+  resumeCoordination: boolean;
+  attestDeployment: boolean;
+}
+
+export function deriveDecompositionAffordances(input: {
+  workItemState: WorkItemState;
+  parentWorkItemId: string | null;
+  phase: WorkItemPhase | null;
+  hasChildren: boolean;
+  phasedFamily: boolean;
+  childFailed: boolean;
+  deployAttested: boolean;
+}): DecompositionAffordances {
+  const attestablePhase = input.phase === 'expand' || input.phase === 'migrate';
+  const decomposedParent = input.parentWorkItemId === null && input.hasChildren;
+  return {
+    approveAndMergeChildren: decomposedParent
+      && !input.phasedFamily
+      && input.workItemState === 'final_approval',
+    resumeCoordination: decomposedParent
+      && input.workItemState === 'parked'
+      && !(input.phasedFamily && input.childFailed),
+    attestDeployment: input.parentWorkItemId !== null
+      && attestablePhase
+      && input.workItemState === 'merged'
+      && !input.deployAttested,
+  };
+}
+
+/**
+ * Produces a stable refetch key from only the opened decomposition family.
+ * Unrelated board activity must not blank or disable family controls.
+ */
+export function decompositionFamilyVersionKey(
+  workItem: BoardWorkItem,
+  snapshotWorkItems: readonly BoardWorkItem[],
+): string {
+  const parentId = workItem.parentWorkItemId ?? workItem.id;
+  const family = new Map<string, BoardWorkItem>();
+  family.set(workItem.id, workItem);
+  for (const candidate of snapshotWorkItems) {
+    if (candidate.id === parentId || candidate.parentWorkItemId === parentId) {
+      family.set(candidate.id, candidate);
+    }
+  }
+  return [...family.values()]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((candidate) => `${candidate.id}:${candidate.version}`)
+    .join('|');
+}
+
+export interface ContractDependencyStatus {
+  child: BoardChildWorkItem;
+  direct: boolean;
+  ready: boolean;
+}
+
+export function contractApprovalIsReady(
+  phase: WorkItemPhase | null,
+  state: 'loading' | 'ready' | 'error',
+  statuses: readonly ContractDependencyStatus[],
+): boolean {
+  return phase === 'contract'
+    && state === 'ready'
+    && statuses.length > 0
+    && statuses.every((status) => status.ready);
+}
+
+/** Contract readiness is transitive over every non-Contract sibling. */
+export function contractDependencyStatuses(
+  contractWorkItemId: string,
+  siblings: readonly BoardChildWorkItem[],
+  dependencies: readonly BoardWorkItemDependency[],
+): ContractDependencyStatus[] {
+  const directDependencies = new Set(dependencies
+    .filter((dependency) => dependency.workItemId === contractWorkItemId)
+    .map((dependency) => dependency.dependsOnWorkItemId));
+  return siblings
+    .filter((sibling) => sibling.id !== contractWorkItemId && sibling.phase !== 'contract')
+    .sort((left, right) => (left.childOrdinal ?? Number.MAX_SAFE_INTEGER) - (right.childOrdinal ?? Number.MAX_SAFE_INTEGER)
+      || left.id.localeCompare(right.id))
+    .map((child) => ({
+      child,
+      direct: directDependencies.has(child.id),
+      ready: child.state === 'merged' && child.deployAttested,
+    }));
 }
 
 export function deriveWorkItemDetailAffordances(input: {

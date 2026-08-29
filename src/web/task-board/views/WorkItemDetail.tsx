@@ -13,15 +13,19 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from '@shared/task-board-contract';
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from '../../components/ui';
 import { fieldsAreDirty } from '../../components/dialog-stack';
-import type { TaskBoardClient } from '../data/client';
+import { BoardApiError, type TaskBoardClient } from '../data/client';
 import type { RawWorkItemAudit } from '../data/parse';
 import {
   deriveWorkItemDetailAffordances,
+  contractApprovalIsReady,
+  contractDependencyStatuses,
+  deriveDecompositionAffordances,
   nodesForPlan,
   pipelineAssumptionReview,
   pipelineFindingRounds,
   pipelineFileReview,
   proposedPlanForWorkItem,
+  type ContractDependencyStatus,
   type DetailedWorkflowPlan,
 } from '../model/work-item-detail';
 import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
@@ -39,28 +43,48 @@ import {
   type ActionResult,
 } from '../model/action-errors';
 import type {
+  BoardChildWorkItem,
+  BoardProject,
   BoardQuestion,
   BoardTask,
   BoardWorkItem,
+  BoardWorkItemDependency,
   BoardWorkItemTransition,
   ProjectWorkflow,
   WorkflowNode,
 } from '../types';
 
+export interface InitialWorkItemFamily {
+  state: 'ready' | 'error';
+  children: readonly BoardChildWorkItem[];
+  dependencies: readonly BoardWorkItemDependency[];
+  error: string | null;
+  status?: number;
+}
+
 interface WorkItemDetailProps {
   workItem: BoardWorkItem;
   snapshotRevision: number;
+  familyVersionKey?: string;
+  familyRefreshRevision?: number;
+  knownParent?: boolean;
+  initialFamily?: InitialWorkItemFamily;
   projectName: string | null;
+  projects: readonly BoardProject[];
+  parentWorkItem: BoardWorkItem | null;
   planningTask: BoardTask | null;
   openQuestion: BoardQuestion | null;
   client: TaskBoardClient;
   busy: boolean;
   onClose: () => void;
+  onOpenWorkItem?: (workItemId: string) => void;
   onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
   onConfirm: (planRevisionId: string) => Promise<ActionResult>;
   onReject?: (planRevisionId: string, note: string) => Promise<ActionResult>;
   onApproveMerge?: () => Promise<ActionResult>;
   onRejectFinal?: (note: string) => Promise<ActionResult>;
+  onAttestDeploy: (workItemId: string, note?: string) => Promise<ActionResult>;
+  onResumeCoordination: () => Promise<ActionResult>;
   onCancel: (reason: string) => Promise<ActionResult>;
   onArchive: () => Promise<ActionResult>;
 }
@@ -188,8 +212,8 @@ export function AuditSection({ audit }: { audit: RawWorkItemAudit }) {
       {audit.gateActions.length === 0 ? (
         <p className="mt-2 text-xs text-muted">No gate actions were recorded.</p>
       ) : (
-        <div className="mt-3 overflow-x-auto rounded-md border border-line">
-          <table className="min-w-full border-collapse text-left text-xs">
+        <div className="mt-3 max-w-full overflow-x-auto rounded-md border border-line">
+          <table className="w-max min-w-full border-collapse text-left text-xs">
             <thead className="bg-muted-surface text-[11px] text-muted">
               <tr>{['Gate', 'Actor', 'Artifact references', 'Note', 'Timestamp'].map((heading) => <th key={heading} scope="col" className="whitespace-nowrap border-b border-line px-3 py-2 font-medium">{heading}</th>)}</tr>
             </thead>
@@ -304,6 +328,42 @@ export function PlanRecordDetails({ plan }: { plan: DetailedWorkflowPlan }) {
               ))}
             </dl>
           ) : <p className="mt-1 text-xs leading-5 text-muted">None declared.</p>}
+        </div>
+      )}
+      {plan.children === null || plan.children.length === 0 ? null : (
+        <div className="mt-3">
+          <p className="text-[11px] font-medium text-muted">Declared children</p>
+          <ol className="mt-1.5 space-y-2">
+            {plan.children.map((child, index) => {
+              const phase = child.phase === undefined
+                ? null
+                : child.phase === 'unrecognized'
+                  ? unknownStateLabel
+                  : planValueLabel(child.phase);
+              return (
+                <li key={child.key} className="rounded-md border border-line bg-muted-surface px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono text-[11px] text-muted">{index + 1}</span>
+                    {phase === null ? null : <Pill tone="purple">{phase}</Pill>}
+                    <span className="text-[11px] text-muted">{child.projectId}</span>
+                  </div>
+                  <p className="mt-1 text-xs font-medium leading-5 text-ink">{child.objective}</p>
+                  <PlanListSection title="Declared scope" items={child.declaredScope} />
+                  <PlanListSection title="Acceptance criteria" items={child.acceptanceCriteria} />
+                  <p className="mt-1 text-[11px] leading-5 text-muted">
+                    {child.dependsOn === undefined || child.dependsOn.length === 0
+                      ? 'No declared dependency.'
+                      : `After ${child.dependsOn.join(', ')}`}
+                  </p>
+                </li>
+              );
+            })}
+          </ol>
+          {plan.children.some((child) => child.phase !== undefined) ? (
+            <p className="mt-3 rounded-md border border-caution/30 bg-caution-soft px-3.5 py-3 text-xs leading-5 text-caution">
+              Expand and Migrate children merge automatically once verified and reviewed; Contract requires your approval after deployment is attested
+            </p>
+          ) : null}
         </div>
       )}
     </div>
@@ -440,6 +500,202 @@ export function ReviewFindingsPanel({ findings }: { findings: readonly ReviewFin
   );
 }
 
+function phaseDisplayLabel(phase: BoardWorkItem['phase']): string {
+  if (phase === null) return 'Unphased';
+  if (phase === 'unrecognized') return unknownStateLabel;
+  return planValueLabel(phase);
+}
+
+function childAttestationLabel(child: BoardChildWorkItem): string {
+  if (child.deployAttested) return 'Attested';
+  if (child.phase !== 'expand' && child.phase !== 'migrate') return 'Not required';
+  return child.state === 'merged' ? 'Not attested' : 'Waiting for merge';
+}
+
+export function ChildrenSection({
+  children,
+  projects,
+  state,
+  error,
+  onRetry,
+  onOpenChild,
+  onAttestChild,
+  attestationBusy = false,
+}: {
+  children: readonly BoardChildWorkItem[];
+  projects: readonly BoardProject[];
+  state: 'loading' | 'ready' | 'error';
+  error: string | null;
+  onRetry: () => void;
+  onOpenChild?: (workItemId: string) => void;
+  onAttestChild?: (workItemId: string, anchor: HTMLButtonElement) => void;
+  attestationBusy?: boolean;
+}) {
+  if (children.length === 0 && state !== 'error') return null;
+  const projectNames = new Map(projects.map((project) => [project.id, project.name] as const));
+  const loadError = error === null ? 'Children could not be loaded.' : `Children could not be loaded. ${error}`;
+  return (
+    <section className="min-w-0 max-w-full border-b border-line px-4 py-4 sm:px-5" aria-labelledby="work-item-children-heading">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 id="work-item-children-heading" className="text-xs font-semibold text-ink">Children</h3>
+          <p className="mt-1 text-xs leading-5 text-muted">Declared merge order and deployment readiness for this coordination family.</p>
+        </div>
+        {state === 'error' || error !== null ? <Button size="sm" icon={<RefreshCw size={14} />} onClick={onRetry}>Retry</Button> : null}
+      </div>
+      {state === 'ready' && error !== null ? <p className="mt-3 text-xs text-urgent" role="alert">{loadError} The last loaded children remain visible.</p> : null}
+      {state === 'loading' ? (
+        <div className="mt-3 flex min-h-24 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted" role="status">
+          <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> Loading children…
+        </div>
+      ) : state === 'error' ? (
+        <p className="mt-3 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+          {loadError}
+        </p>
+      ) : children.length === 0 ? (
+        <p className="mt-3 rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted">No materialized children.</p>
+      ) : (
+        <div className="mt-3 max-w-full overflow-x-auto rounded-md border border-line">
+          <table className="w-max min-w-full border-collapse text-left text-xs">
+            <thead className="bg-muted-surface text-[11px] text-muted">
+              <tr>{['Ordinal', 'Phase', 'Project', 'State', 'Attestation', 'Actions'].map((heading) => <th key={heading} scope="col" className="whitespace-nowrap border-b border-line px-3 py-2 font-medium">{heading}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {children.map((child, index) => (
+                <tr key={child.id} className="align-middle">
+                  <td className="px-3 py-3 font-mono text-[11px] text-ink">{child.childOrdinal === null ? index + 1 : child.childOrdinal + 1}</td>
+                  <td className="whitespace-nowrap px-3 py-3"><Pill tone="purple">{phaseDisplayLabel(child.phase)}</Pill></td>
+                  <td className="min-w-36 break-words px-3 py-3 text-ink">{child.resolvedProjectId === null ? 'Unresolved' : projectNames.get(child.resolvedProjectId) ?? child.resolvedProjectId}</td>
+                  <td className="whitespace-nowrap px-3 py-3"><Pill tone={workItemStateTone[child.state]} dot>{workItemStatusLabel(child)}</Pill></td>
+                  <td className="whitespace-nowrap px-3 py-3 text-ink">{childAttestationLabel(child)}</td>
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <a
+                        className="text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+                        data-detail-source="work-item-id"
+                        href={`#/intake/${encodeURIComponent(child.id)}`}
+                        onClick={onOpenChild === undefined ? undefined : (event) => {
+                          event.preventDefault();
+                          onOpenChild(child.id);
+                        }}
+                      >Open child</a>
+                      {onAttestChild !== undefined
+                        && (child.phase === 'expand' || child.phase === 'migrate')
+                        && child.state === 'merged'
+                        && !child.deployAttested ? (
+                          <Button
+                            size="sm"
+                            variant="mint"
+                            disabled={attestationBusy}
+                            onClick={(event) => onAttestChild(child.id, event.currentTarget)}
+                          >Attest deployed</Button>
+                        ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function ContractAttestationGate({
+  statuses,
+  phase,
+  state,
+  error,
+  onRetry,
+}: {
+  statuses: readonly ContractDependencyStatus[];
+  phase: BoardWorkItem['phase'];
+  state: 'loading' | 'ready' | 'error';
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const ready = contractApprovalIsReady(phase, state, statuses);
+  return (
+    <section className="mt-4 rounded-md border border-line bg-card p-3.5" aria-labelledby="contract-attestation-heading" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="contract-attestation-heading" className="text-xs font-semibold text-ink">Deployment attestations</h4>
+        <div className="flex items-center gap-2">
+          <Pill tone={ready ? 'green' : 'amber'}>{ready ? 'Ready' : 'Blocked'}</Pill>
+          {state === 'error' || error !== null ? <Button size="sm" icon={<RefreshCw size={14} />} onClick={onRetry}>Retry</Button> : null}
+        </div>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-muted">Contract approval requires every Expand and Migrate sibling to be merged and deployment-attested.</p>
+      {state === 'ready' && error !== null ? <p className="mt-3 text-xs text-urgent" role="alert">{error} The last loaded attestation status remains visible.</p> : null}
+      {state === 'loading' ? (
+        <p className="mt-3 text-xs text-muted" role="status">Loading dependency attestations…</p>
+      ) : state === 'error' ? (
+        <p className="mt-3 text-xs text-urgent" role="alert">{error ?? 'Attestation status is unavailable. Approval stays disabled.'}</p>
+      ) : statuses.length === 0 ? (
+        <p className="mt-3 text-xs text-muted">No dependency status is available. Approval stays disabled.</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-line rounded-md border border-line">
+          {statuses.map(({ child, direct, ready: childReady }) => (
+            <li key={child.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-xs">
+              <span className="min-w-0 break-words text-ink">
+                {phaseDisplayLabel(child.phase)} · {child.refinedObjective?.trim() || child.originalRequest}
+                {direct ? <span className="ml-1 text-[11px] text-muted">Direct dependency</span> : null}
+              </span>
+              <Pill tone={childReady ? 'green' : 'amber'}>{childReady ? 'Attested' : child.state === 'merged' ? 'Not attested' : 'Not merged'}</Pill>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+export function AttestDeploymentForm({
+  workItemId,
+  note,
+  busy,
+  errors,
+  onNoteChange,
+  onDismissError,
+  onSubmit,
+  onCancel,
+}: {
+  workItemId: string;
+  note: string;
+  busy: boolean;
+  errors: ActionErrorState;
+  onNoteChange: (note: string) => void;
+  onDismissError: (context: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <FieldLabel htmlFor={`work-item-attestation-note-${workItemId}`}>Note</FieldLabel>
+          <span id={`work-item-attestation-note-help-${workItemId}`} className="text-[11px] text-muted">Optional</span>
+        </div>
+        <textarea
+          id={`work-item-attestation-note-${workItemId}`}
+          className={cn(inputClass, 'min-h-24 resize-y py-3')}
+          data-dialog-initial-focus
+          aria-describedby={`work-item-attestation-note-help-${workItemId}`}
+          maxLength={2_000}
+          value={note}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="Deployment environment or evidence"
+        />
+      </div>
+      <InlineActionErrors errors={errors} onDismiss={onDismissError} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="submit" variant="mint" disabled={busy}>Attest deployed</Button>
+        <Button disabled={busy} onClick={onCancel}>Cancel</Button>
+      </div>
+    </form>
+  );
+}
+
 function DesignTable({
   title,
   headers,
@@ -455,8 +711,8 @@ function DesignTable({
       {rows.length === 0 ? (
         <p className="mt-1 text-xs leading-5 text-muted">None recorded.</p>
       ) : (
-        <div className="mt-1.5 overflow-x-auto rounded-md border border-line">
-          <table className="min-w-full border-collapse text-left text-xs">
+        <div className="mt-1.5 max-w-full overflow-x-auto rounded-md border border-line">
+          <table className="w-max min-w-full border-collapse text-left text-xs">
             <thead className="bg-muted-surface text-[11px] text-muted">
               <tr>
                 {headers.map((header) => <th key={header} scope="col" className="whitespace-nowrap border-b border-line px-3 py-2 font-medium">{header}</th>)}
@@ -642,22 +898,28 @@ export function PipelineSummaryDetails({ summary }: { summary: PipelineSummary }
 export function FinalApprovalActions({
   busy,
   approveAnchorRef,
+  mode = 'pipeline',
+  approveDisabled = false,
   onApprove,
   onRequestChanges,
 }: {
   busy: boolean;
   approveAnchorRef: RefObject<HTMLButtonElement | null>;
+  mode?: 'pipeline' | 'parent';
+  approveDisabled?: boolean;
   onApprove: () => void;
   onRequestChanges: () => void;
 }) {
   return (
     <div className="mt-4">
       <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Final approval actions">
-        <Button ref={approveAnchorRef} variant="mint" icon={<Check size={16} />} disabled={busy} onClick={onApprove}>Approve &amp; merge</Button>
-        <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>Request changes</Button>
+        <Button ref={approveAnchorRef} className="scroll-mt-14 lg:scroll-mt-0" variant="mint" icon={<Check size={16} />} disabled={busy || approveDisabled} onClick={onApprove}>{mode === 'parent' ? 'Approve & merge children' : 'Approve & merge'}</Button>
+        <Button variant="danger" icon={<CircleAlert size={16} />} disabled={busy} onClick={onRequestChanges}>{mode === 'parent' ? 'Send back to coordination' : 'Request changes'}</Button>
       </div>
       <p className="mt-2 text-xs leading-5 text-muted">
-        A merge conflict returns the work item to implementation with conflict details for the next engineering round.
+        {mode === 'parent'
+          ? 'One approval merges every unmerged child in dependency order. A conflict returns that child to implementation.'
+          : 'A merge conflict returns the work item to implementation with conflict details for the next engineering round.'}
       </p>
     </div>
   );
@@ -672,6 +934,7 @@ export function FinalRejectionForm({
   onDismissError,
   onSubmit,
   onKeep,
+  parent = false,
 }: {
   workItemId: string;
   note: string;
@@ -681,6 +944,7 @@ export function FinalRejectionForm({
   onDismissError: (context: string) => void;
   onSubmit: () => void;
   onKeep: () => void;
+  parent?: boolean;
 }) {
   return (
     <form className="space-y-4 p-5 sm:p-6" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
@@ -699,37 +963,128 @@ export function FinalRejectionForm({
       </div>
       <InlineActionErrors errors={errors} onDismiss={onDismissError} />
       <div className="grid gap-2 sm:grid-cols-2">
-        <Button type="submit" variant="danger" disabled={busy || note.trim().length === 0}>Send back to implementation</Button>
-        <Button disabled={busy} onClick={onKeep}>Keep in final review</Button>
+        <Button type="submit" variant="danger" disabled={busy || note.trim().length === 0}>{parent ? 'Send back' : 'Send back to implementation'}</Button>
+        <Button disabled={busy} onClick={onKeep}>{parent ? 'Keep in final approval' : 'Keep in final review'}</Button>
       </div>
     </form>
   );
 }
 
+export function WorkItemFooterActions({
+  busy,
+  finalActionBusy,
+  showResume,
+  showCancel,
+  showArchive,
+  archiveDisabled,
+  archiveHintId,
+  cancelHint,
+  resumeAnchorRef,
+  archiveAnchorRef,
+  onResume,
+  onCancel,
+  onArchive,
+}: {
+  busy: boolean;
+  finalActionBusy: boolean;
+  showResume: boolean;
+  showCancel: boolean;
+  showArchive: boolean;
+  archiveDisabled: boolean;
+  archiveHintId: string;
+  cancelHint?: string | null;
+  resumeAnchorRef: RefObject<HTMLButtonElement | null>;
+  archiveAnchorRef: RefObject<HTMLButtonElement | null>;
+  onResume: () => void;
+  onCancel: () => void;
+  onArchive: () => void;
+}) {
+  return (
+    <footer className="flex flex-wrap justify-end gap-2 px-4 py-4 sm:px-5">
+      {showResume ? <Button ref={resumeAnchorRef} className="scroll-mt-14 lg:scroll-mt-0" variant="primary" disabled={busy || finalActionBusy} onClick={onResume}>Resume coordination</Button> : null}
+      {showCancel && cancelHint ? <p className="self-center text-xs text-urgent">{cancelHint}</p> : null}
+      {showCancel ? <Button variant="danger" disabled={busy} onClick={onCancel}>Cancel work item</Button> : null}
+      {showArchive ? (
+        <Button
+          ref={archiveAnchorRef}
+          className="scroll-mt-14 lg:scroll-mt-0"
+          icon={<Archive size={15} />}
+          disabled={busy || archiveDisabled}
+          aria-describedby={archiveDisabled ? archiveHintId : undefined}
+          onClick={onArchive}
+        >Archive</Button>
+      ) : null}
+      {showArchive && archiveDisabled ? <p id={archiveHintId} className="w-full text-right text-xs text-muted">Attest deployment before archiving</p> : null}
+    </footer>
+  );
+}
+
+function initialFamilyState(
+  workItem: BoardWorkItem,
+  knownParent: boolean,
+  initialFamily: InitialWorkItemFamily | undefined,
+): Readonly<{
+  children: BoardChildWorkItem[];
+  dependencies: BoardWorkItemDependency[];
+  state: 'loading' | 'ready' | 'error';
+  error: string | null;
+  parentAbsent: boolean;
+}> {
+  if (initialFamily === undefined) {
+    return { children: [], dependencies: [], state: 'loading', error: null, parentAbsent: false };
+  }
+  const parentless = workItem.parentWorkItemId === null;
+  const notFound = parentless && initialFamily.state === 'error' && initialFamily.status === 404;
+  const empty = parentless && initialFamily.state === 'ready' && initialFamily.children.length === 0;
+  const knownFamily = !parentless || knownParent || initialFamily.children.length > 0;
+  if (notFound || empty || (initialFamily.state === 'error' && !knownFamily)) {
+    return { children: [], dependencies: [], state: 'ready', error: null, parentAbsent: notFound || empty };
+  }
+  return {
+    children: [...initialFamily.children],
+    dependencies: [...initialFamily.dependencies],
+    state: initialFamily.state,
+    error: initialFamily.error,
+    parentAbsent: false,
+  };
+}
+
 export function WorkItemDetail({
   workItem,
   snapshotRevision,
+  familyVersionKey = `${workItem.id}:${workItem.version}`,
+  familyRefreshRevision = 0,
+  knownParent = false,
+  initialFamily,
   projectName,
+  projects,
+  parentWorkItem,
   planningTask,
   openQuestion,
   client,
   busy,
   onClose,
+  onOpenWorkItem,
   onAnswer,
   onConfirm,
   onReject,
   onApproveMerge,
   onRejectFinal,
+  onAttestDeploy,
+  onResumeCoordination,
   onCancel,
   onArchive,
 }: WorkItemDetailProps) {
+  const seededFamily = initialFamilyState(workItem, knownParent, initialFamily);
   const [answer, setAnswer] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [rejectionNote, setRejectionNote] = useState('');
   const [finalChangeNote, setFinalChangeNote] = useState('');
+  const [attestationNote, setAttestationNote] = useState('');
+  const [attestationWorkItemId, setAttestationWorkItemId] = useState(workItem.id);
   const [rejecting, setRejecting] = useState(false);
   const [finalActionBusy, setFinalActionBusy] = useState(false);
-  const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'merge' | 'requestChanges' | 'archive' | null>(null);
+  const [confirmation, setConfirmation] = useState<'cancel' | 'reject' | 'merge' | 'requestChanges' | 'archive' | 'attest' | 'resume' | null>(null);
   const actionErrors = useActionErrors();
   const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
   const [workflowState, setWorkflowState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -745,16 +1100,27 @@ export function WorkItemDetail({
   const [gapReportState, setGapReportState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [gapReportError, setGapReportError] = useState<string | null>(null);
   const [gapReportAttempt, setGapReportAttempt] = useState(0);
+  const [familyChildren, setFamilyChildren] = useState<BoardChildWorkItem[]>(() => seededFamily.children);
+  const [familyDependencies, setFamilyDependencies] = useState<BoardWorkItemDependency[]>(() => seededFamily.dependencies);
+  const [familyState, setFamilyState] = useState<'loading' | 'ready' | 'error'>(() => seededFamily.state);
+  const [familyError, setFamilyError] = useState<string | null>(() => seededFamily.error);
+  const [familyAttempt, setFamilyAttempt] = useState(0);
+  const familyHasLastGoodRef = useRef(seededFamily.children.length > 0);
+  const familyNotParentRef = useRef(seededFamily.parentAbsent);
   const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
   const auditWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const mergeConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
   const archiveConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
+  const attestationConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
+  const resumeConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
   const detailHeadingId = `work-item-detail-heading-${workItem.id}`;
   const actionContexts = {
     rejectPlan: actionErrorContexts.workItemRejectPlan(workItem.id),
     approveMerge: `work-item:${encodeURIComponent(workItem.id)}:approve-merge`,
     rejectFinal: `work-item:${encodeURIComponent(workItem.id)}:reject-final`,
+    attestDeploy: `work-item:${encodeURIComponent(attestationWorkItemId)}:attest-deploy`,
+    resumeCoordination: `work-item:${encodeURIComponent(workItem.id)}:resume-coordination`,
     cancel: actionErrorContexts.workItemCancel(workItem.id),
     archive: actionErrorContexts.workItemArchive(workItem.id),
   } as const;
@@ -763,7 +1129,38 @@ export function WorkItemDetail({
     planningTaskState: planningTask?.status ?? null,
     archived: workItem.archivedAt !== null,
   });
-  const pipelineSummaryVisible = ['reviewing', 'fixing', 'final_approval'].includes(workItem.state);
+  const familyParentCandidate = workItem.parentWorkItemId === null
+    && ['coordinating', 'final_approval', 'parked', 'merged', 'abandoned', 'dead_letter'].includes(workItem.state);
+  const familyRelevant = workItem.parentWorkItemId !== null || familyParentCandidate;
+  const hasChildren = workItem.parentWorkItemId === null && familyChildren.length > 0;
+  const phasedFamily = familyChildren.some((child) => child.phase !== null);
+  const childFailed = familyChildren.some((child) => child.state === 'abandoned' || child.state === 'dead_letter');
+  const isDecomposedParent = hasChildren;
+  const loadedChild = familyChildren.find((child) => child.id === workItem.id);
+  const deployAttested = loadedChild?.deployAttested ?? false;
+  const decompositionAffordances = deriveDecompositionAffordances({
+    workItemState: workItem.state,
+    parentWorkItemId: workItem.parentWorkItemId,
+    phase: workItem.phase,
+    hasChildren,
+    phasedFamily,
+    childFailed,
+    deployAttested,
+  });
+  const phasedChildFailure = workItem.parentWorkItemId === null
+    && workItem.state === 'parked'
+    && phasedFamily
+    && childFailed;
+  const dependencyStatuses = workItem.phase === 'contract'
+    ? contractDependencyStatuses(workItem.id, familyChildren, familyDependencies)
+    : [];
+  const contractApprovalEnabled = contractApprovalIsReady(workItem.phase, familyState, dependencyStatuses);
+  const archiveRequiresAttestation = workItem.parentWorkItemId !== null
+    && (workItem.phase === 'expand' || workItem.phase === 'migrate')
+    && workItem.state === 'merged'
+    && !deployAttested;
+  const archiveHintId = `work-item-archive-hint-${workItem.id}`;
+  const pipelineSummaryVisible = ['reviewing', 'fixing', 'final_approval'].includes(workItem.state) && !isDecomposedParent;
   const pipelineSummaryBelongsToWorkItem = pipelineSummaryWorkItemIdRef.current === workItem.id;
   const renderedPipelineSummary = pipelineSummaryBelongsToWorkItem ? pipelineSummary : null;
   const renderedPipelineSummaryState = pipelineSummaryBelongsToWorkItem ? pipelineSummaryState : 'loading';
@@ -777,10 +1174,77 @@ export function WorkItemDetail({
     setCancelReason('');
     setRejectionNote('');
     setFinalChangeNote('');
+    setAttestationNote('');
+    setAttestationWorkItemId(workItem.id);
     setRejecting(false);
     setFinalActionBusy(false);
     setConfirmation(null);
   }, [workItem.id]);
+
+  useEffect(() => {
+    if (!familyRelevant) {
+      familyHasLastGoodRef.current = false;
+      familyNotParentRef.current = false;
+      setFamilyChildren([]);
+      setFamilyDependencies([]);
+      setFamilyError(null);
+      setFamilyState('ready');
+      return;
+    }
+    const controller = new AbortController();
+    const parentId = workItem.parentWorkItemId ?? workItem.id;
+    const hasLastGood = familyHasLastGoodRef.current;
+    if (!hasLastGood) {
+      setFamilyState('loading');
+      setFamilyError(null);
+    }
+    const dependencies = workItem.phase === 'contract'
+      ? client.getWorkItemDependencies(workItem.id, controller.signal)
+      : Promise.resolve([]);
+    void Promise.all([
+      client.getWorkItemChildren(parentId, controller.signal),
+      dependencies,
+    ]).then(([children, nextDependencies]) => {
+      if (controller.signal.aborted) return;
+      setFamilyChildren(children);
+      setFamilyDependencies(nextDependencies);
+      setFamilyError(null);
+      setFamilyState('ready');
+      familyHasLastGoodRef.current = children.length > 0;
+      familyNotParentRef.current = workItem.parentWorkItemId === null && children.length === 0;
+    }).catch((caught: unknown) => {
+      if (controller.signal.aborted) return;
+      const parentNotFound = workItem.parentWorkItemId === null
+        && caught instanceof BoardApiError
+        && caught.status === 404;
+      if (parentNotFound) {
+        familyHasLastGoodRef.current = false;
+        familyNotParentRef.current = true;
+        setFamilyChildren([]);
+        setFamilyDependencies([]);
+        setFamilyError(null);
+        setFamilyState('ready');
+        return;
+      }
+      const knownFamily = workItem.parentWorkItemId !== null
+        || hasLastGood
+        || (knownParent && !familyNotParentRef.current);
+      if (!knownFamily) {
+        setFamilyChildren([]);
+        setFamilyDependencies([]);
+        setFamilyError(null);
+        setFamilyState('ready');
+        return;
+      }
+      setFamilyError(caught instanceof Error ? caught.message : 'The decomposition family could not be loaded.');
+      if (!hasLastGood) {
+        setFamilyChildren([]);
+        setFamilyDependencies([]);
+        setFamilyState('error');
+      }
+    });
+    return () => controller.abort();
+  }, [client, familyAttempt, familyRefreshRevision, familyRelevant, familyVersionKey, knownParent, workItem.id, workItem.parentWorkItemId, workItem.phase]);
 
   useEffect(() => {
     pipelineSummaryWorkItemIdRef.current = workItem.id;
@@ -868,7 +1332,7 @@ export function WorkItemDetail({
   }, [client, workItem.id, workItem.resolvedProjectId, workItem.state, workflowAttempt]);
 
   useEffect(() => {
-    if (!['reviewing', 'fixing', 'final_approval'].includes(workItem.state)) {
+    if (!pipelineSummaryVisible) {
       return;
     }
     const controller = new AbortController();
@@ -884,7 +1348,7 @@ export function WorkItemDetail({
       setPipelineSummaryState('error');
     });
     return () => controller.abort();
-  }, [client, pipelineSummaryAttempt, workItem.id, workItem.state, workItem.version]);
+  }, [client, pipelineSummaryAttempt, pipelineSummaryVisible, workItem.id, workItem.state, workItem.version]);
 
   const proposedPlan = useMemo(
     () => workflow === null ? null : proposedPlanForWorkItem(workflow, workItem.id),
@@ -960,12 +1424,43 @@ export function WorkItemDetail({
     }, closeConfirmation);
   }
 
+  async function submitDeploymentAttestation() {
+    if (confirmation !== 'attest') return;
+    const note = attestationNote.trim();
+    await save(actionContexts.attestDeploy, async () => {
+      setFinalActionBusy(true);
+      try {
+        return await onAttestDeploy(attestationWorkItemId, note.length === 0 ? undefined : note);
+      } finally {
+        setFinalActionBusy(false);
+      }
+    }, () => {
+      setAttestationNote('');
+      setFamilyAttempt((value) => value + 1);
+      closeConfirmation();
+    });
+  }
+
+  async function submitResumeCoordination() {
+    if (confirmation !== 'resume') return;
+    await save(actionContexts.resumeCoordination, async () => {
+      setFinalActionBusy(true);
+      try {
+        return await onResumeCoordination();
+      } finally {
+        setFinalActionBusy(false);
+      }
+    }, closeConfirmation);
+  }
+
   function confirmationContext(next: typeof confirmation): string | null {
     if (next === 'reject') return actionContexts.rejectPlan;
     if (next === 'merge') return actionContexts.approveMerge;
     if (next === 'requestChanges') return actionContexts.rejectFinal;
     if (next === 'cancel') return actionContexts.cancel;
     if (next === 'archive') return actionContexts.archive;
+    if (next === 'attest') return actionContexts.attestDeploy;
+    if (next === 'resume') return actionContexts.resumeCoordination;
     return null;
   }
 
@@ -974,7 +1469,17 @@ export function WorkItemDetail({
     if (next === 'cancel') setCancelReason('');
     if (next === 'reject') setRejectionNote('');
     if (next === 'requestChanges') setFinalChangeNote('');
+    if (next === 'attest') setAttestationNote('');
     setConfirmation(next);
+  }
+
+  function openDeploymentAttestation(targetWorkItemId: string, anchor?: HTMLButtonElement) {
+    const context = `work-item:${encodeURIComponent(targetWorkItemId)}:attest-deploy`;
+    actionErrors.dismiss(context);
+    if (anchor !== undefined) attestationConfirmationAnchorRef.current = anchor;
+    setAttestationWorkItemId(targetWorkItemId);
+    setAttestationNote('');
+    setConfirmation('attest');
   }
 
   function closeConfirmation() {
@@ -983,10 +1488,14 @@ export function WorkItemDetail({
     setConfirmation(null);
   }
 
+  const takeoverOpen = confirmation === 'cancel'
+    || confirmation === 'reject'
+    || confirmation === 'requestChanges';
+
   return (
     <>
-      <div role="region" aria-labelledby={detailHeadingId}>
-        <Card className="overflow-hidden" as="article">
+      <div className="min-w-0 max-w-full" role="region" aria-labelledby={detailHeadingId} aria-hidden={takeoverOpen ? true : undefined}>
+        <Card className="min-w-0 max-w-full overflow-hidden" as="article">
         <header className="border-b border-line px-4 py-5 sm:px-5">
           <div className="flex items-start justify-between gap-4">
             <div role="group" aria-label="Current status">
@@ -1019,6 +1528,16 @@ export function WorkItemDetail({
                 {planningTask ? <Pill>{planningTask.status === 'unrecognized' ? unknownStateLabel : prettyStatus(planningTask.status)}</Pill> : null}
               </dd>
             </div>
+            {workItem.parentWorkItemId === null ? null : (
+              <div className="sm:col-span-2">
+                <dt className="text-xs font-medium text-muted">Parent work item</dt>
+                <dd className="mt-1">
+                  <a className="break-words text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" href={`#/intake/${encodeURIComponent(workItem.parentWorkItemId)}`}>
+                    {parentWorkItem?.refinedObjective?.trim() || parentWorkItem?.originalRequest || workItem.parentWorkItemId}
+                  </a>
+                </dd>
+              </div>
+            )}
           </dl>
         </header>
 
@@ -1028,6 +1547,49 @@ export function WorkItemDetail({
           <h3 id="original-request-heading" className="text-xs font-semibold text-ink">Original request</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">{workItem.originalRequest}</p>
         </section>
+
+        {familyParentCandidate && (isDecomposedParent || familyState === 'error') ? (
+          <ChildrenSection
+            children={familyChildren}
+            projects={projects}
+            state={familyState}
+            error={familyError}
+            onRetry={() => setFamilyAttempt((value) => value + 1)}
+            onOpenChild={onOpenWorkItem}
+            onAttestChild={openDeploymentAttestation}
+            attestationBusy={busy || finalActionBusy}
+          />
+        ) : null}
+
+        {workItem.parentWorkItemId !== null
+          && (workItem.phase === 'expand' || workItem.phase === 'migrate')
+          && workItem.state === 'merged' ? (
+            <section className="min-w-0 border-b border-line px-4 py-4 sm:px-5" aria-labelledby="deployment-attestation-heading" aria-live="polite">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 id="deployment-attestation-heading" className="text-xs font-semibold text-ink">Deployment</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted">The merge is complete. Human attestation records that this phase is deployed.</p>
+                </div>
+                {familyState === 'ready' && deployAttested ? <Pill tone="green">Deployment attested</Pill> : null}
+              </div>
+              {familyState === 'ready' && familyError !== null ? (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-urgent" role="alert">
+                  <span>{familyError} The last loaded deployment status remains visible.</span>
+                  <Button size="sm" icon={<RefreshCw size={14} />} onClick={() => setFamilyAttempt((value) => value + 1)}>Retry</Button>
+                </div>
+              ) : null}
+              {familyState === 'error' ? (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-urgent" role="alert">
+                  <span>{familyError ?? 'Deployment attestation status could not be loaded.'}</span>
+                  <Button size="sm" icon={<RefreshCw size={14} />} onClick={() => setFamilyAttempt((value) => value + 1)}>Retry</Button>
+                </div>
+              ) : familyState === 'loading' ? (
+                <p className="mt-3 text-xs text-muted" role="status">Loading deployment attestation…</p>
+              ) : decompositionAffordances.attestDeployment ? (
+                <Button ref={attestationConfirmationAnchorRef} className="mt-3 scroll-mt-14 lg:scroll-mt-0" variant="mint" disabled={busy || finalActionBusy} onClick={() => openDeploymentAttestation(workItem.id)}>Attest deployed</Button>
+              ) : null}
+            </section>
+          ) : null}
 
         {workItem.taskType === 'onboarding' ? (
           <GapReportSection
@@ -1045,7 +1607,7 @@ export function WorkItemDetail({
           </section>
         ) : null}
 
-        {workItem.state === 'parked' && openQuestion !== null ? (
+        {workItem.state === 'parked' && !isDecomposedParent && openQuestion !== null ? (
           <form
             className="border-b border-caution-fill/30 bg-caution-soft/55 px-4 py-4 sm:px-5"
             onSubmit={(event) => {
@@ -1081,11 +1643,25 @@ export function WorkItemDetail({
               </div>
             )}
           </form>
-        ) : workItem.state === 'parked' ? (
+        ) : workItem.state === 'parked' && !isDecomposedParent ? (
           <section className="border-b border-line px-4 py-4 sm:px-5">
             <div className="rounded-md border border-line bg-muted-surface px-3.5 py-3 text-sm text-muted" role="status">
               Parked — no open question. Retry or reassign from the task view.
             </div>
+          </section>
+        ) : null}
+
+        {decompositionAffordances.approveAndMergeChildren && onApproveMerge !== undefined && onRejectFinal !== undefined ? (
+          <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="parent-final-approval-heading">
+            <h3 id="parent-final-approval-heading" className="text-xs font-semibold text-ink">Final approval</h3>
+            <p className="mt-1 text-xs leading-5 text-muted">Every remaining child is verified and ready. One approval merges them in dependency order.</p>
+            <FinalApprovalActions
+              busy={busy || finalActionBusy}
+              approveAnchorRef={mergeConfirmationAnchorRef}
+              mode="parent"
+              onApprove={() => openConfirmation('merge')}
+              onRequestChanges={() => openConfirmation('requestChanges')}
+            />
           </section>
         ) : null}
 
@@ -1161,10 +1737,20 @@ export function WorkItemDetail({
             ) : renderedPipelineSummaryState === 'ready' && renderedPipelineSummary !== null ? (
               <>
                 <PipelineSummaryDetails summary={renderedPipelineSummary} />
+                {(workItem.phase === 'contract' || workItem.phase === 'unrecognized') && workItem.state === 'final_approval' ? (
+                  <ContractAttestationGate
+                    statuses={dependencyStatuses}
+                    phase={workItem.phase}
+                    state={familyState}
+                    error={familyError}
+                    onRetry={() => setFamilyAttempt((value) => value + 1)}
+                  />
+                ) : null}
                 {workItem.state === 'final_approval' && onApproveMerge !== undefined && onRejectFinal !== undefined ? (
                   <FinalApprovalActions
                     busy={busy || finalActionBusy}
                     approveAnchorRef={mergeConfirmationAnchorRef}
+                    approveDisabled={(workItem.phase === 'contract' || workItem.phase === 'unrecognized') && !contractApprovalEnabled}
                     onApprove={() => openConfirmation('merge')}
                     onRequestChanges={() => openConfirmation('requestChanges')}
                   />
@@ -1189,10 +1775,21 @@ export function WorkItemDetail({
         />
 
         {affordances.cancel || affordances.archive ? (
-          <footer className="flex flex-wrap justify-end gap-2 px-4 py-4 sm:px-5">
-            {affordances.cancel ? <Button variant="danger" disabled={busy} onClick={() => openConfirmation('cancel')}>Cancel work item</Button> : null}
-            {affordances.archive ? <Button ref={archiveConfirmationAnchorRef} icon={<Archive size={15} />} disabled={busy} onClick={() => openConfirmation('archive')}>Archive</Button> : null}
-          </footer>
+          <WorkItemFooterActions
+            busy={busy}
+            finalActionBusy={finalActionBusy}
+            showResume={decompositionAffordances.resumeCoordination}
+            showCancel={affordances.cancel}
+            showArchive={affordances.archive}
+            archiveDisabled={archiveRequiresAttestation}
+            archiveHintId={archiveHintId}
+            cancelHint={phasedChildFailure ? 'A phase failed — cancel the coordination to abandon it' : null}
+            resumeAnchorRef={resumeConfirmationAnchorRef}
+            archiveAnchorRef={archiveConfirmationAnchorRef}
+            onResume={() => openConfirmation('resume')}
+            onCancel={() => openConfirmation('cancel')}
+            onArchive={() => openConfirmation('archive')}
+          />
         ) : null}
         </Card>
       </div>
@@ -1250,12 +1847,14 @@ export function WorkItemDetail({
         onClose={closeConfirmation}
         variant="anchored"
         anchorRef={mergeConfirmationAnchorRef}
-        title="Approve and merge pipeline"
-        description="This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the work item to implementation with conflict details."
+        title={isDecomposedParent ? 'Approve and merge children' : 'Approve and merge pipeline'}
+        description={isDecomposedParent
+          ? 'This merges every unmerged child in dependency order, then completes the parent. A conflict returns that child to implementation.'
+          : 'This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the work item to implementation with conflict details.'}
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
-          <Button variant="mint" icon={<Check size={15} />} disabled={busy || finalActionBusy} onClick={() => { void submitMergeApproval(); }}>Approve &amp; merge</Button>
-          <Button disabled={busy || finalActionBusy} onClick={closeConfirmation}>Keep in final review</Button>
+          <Button variant="mint" icon={<Check size={15} />} disabled={busy || finalActionBusy} onClick={() => { void submitMergeApproval(); }}>{isDecomposedParent ? 'Approve and merge' : 'Approve & merge'}</Button>
+          <Button disabled={busy || finalActionBusy} onClick={closeConfirmation}>{isDecomposedParent ? 'Keep in final approval' : 'Keep in final review'}</Button>
           <InlineActionErrors className="sm:col-span-2" errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.approveMerge)} onDismiss={actionErrors.dismiss} />
         </div>
       </Modal>
@@ -1264,8 +1863,10 @@ export function WorkItemDetail({
         open={confirmation === 'requestChanges'}
         onClose={closeConfirmation}
         isDirty={() => fieldsAreDirty([finalChangeNote])}
-        title="Request implementation changes"
-        description="The work item returns to implementation with this note attached to the next engineering round."
+        title={isDecomposedParent ? 'Send back to coordination' : 'Request implementation changes'}
+        description={isDecomposedParent
+          ? 'Every unmerged child in final approval returns to implementation with this note. The parent returns to coordination.'
+          : 'The work item returns to implementation with this note attached to the next engineering round.'}
       >
         {(requestClose) => <FinalRejectionForm
           workItemId={workItem.id}
@@ -1276,7 +1877,44 @@ export function WorkItemDetail({
           onDismissError={actionErrors.dismiss}
           onSubmit={() => { void submitFinalRejection(); }}
           onKeep={requestClose}
+          parent={isDecomposedParent}
         />}
+      </Modal>
+
+      <Modal
+        open={confirmation === 'attest'}
+        onClose={closeConfirmation}
+        isDirty={() => fieldsAreDirty([attestationNote])}
+        variant="anchored"
+        anchorRef={attestationConfirmationAnchorRef}
+        title="Attest deployment"
+        description="Record that this merged phase is deployed. The optional note is stored with the human gate action."
+      >
+        {(requestClose) => <AttestDeploymentForm
+          workItemId={attestationWorkItemId}
+          note={attestationNote}
+          busy={busy || finalActionBusy}
+          errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.attestDeploy)}
+          onNoteChange={setAttestationNote}
+          onDismissError={actionErrors.dismiss}
+          onSubmit={() => { void submitDeploymentAttestation(); }}
+          onCancel={requestClose}
+        />}
+      </Modal>
+
+      <Modal
+        open={confirmation === 'resume'}
+        onClose={closeConfirmation}
+        variant="anchored"
+        anchorRef={resumeConfirmationAnchorRef}
+        title="Resume coordination"
+        description="Return this parked decomposed parent to coordination and continue the remaining child work."
+      >
+        <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
+          <Button variant="primary" disabled={busy || finalActionBusy} onClick={() => { void submitResumeCoordination(); }}>Resume</Button>
+          <Button disabled={busy || finalActionBusy} onClick={closeConfirmation}>Cancel</Button>
+          <InlineActionErrors className="sm:col-span-2" errors={actionErrors.errors.filter((entry) => entry.context === actionContexts.resumeCoordination)} onDismiss={actionErrors.dismiss} />
+        </div>
       </Modal>
 
       <Modal

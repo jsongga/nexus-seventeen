@@ -6,7 +6,7 @@ import { AutomationPage } from './views/AutomationPage';
 import { emptyAutomationEditorState } from './model/automation-model';
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from './data/client';
 import type { RawBoardNotification, RawBoardPause } from './data/parse';
-import { missingRouteFallback } from './routing/routing';
+import { missingRouteFallback, pageToHash } from './routing/routing';
 import { useHashRoute } from './routing/useHashRoute';
 import { AgentPage, ProjectPage } from './views/WorkspacePages';
 import { WorkspaceFrame, type BoardPage } from './views/WorkspaceSidebar';
@@ -22,7 +22,9 @@ import { createTaskDetailDraftState, taskDetailDraftReducer } from './model/task
 import { signInFailure } from './model/sign-in-failure';
 import { NotificationLoadCoordinator } from './model/notification-load';
 import { notificationKindLabel } from './model/work-item-labels';
-import type { BoardSnapshot, CreateProjectInput, CreateWorkItemInput } from './types';
+import { groupWorkItems } from './model/work-item-tree';
+import { decompositionFamilyVersionKey } from './model/work-item-detail';
+import type { BoardSnapshot, BoardWorkItem, BoardWorkItemDetail, CreateProjectInput, CreateWorkItemInput } from './types';
 
 const notificationDateTime = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -218,6 +220,57 @@ export class BoardPauseVersionGuard {
   }
 }
 
+export type WorkItemDetailLoadResult =
+  | Readonly<{ kind: 'loaded'; detail: BoardWorkItemDetail }>
+  | Readonly<{ kind: 'not-found' }>
+  | Readonly<{ kind: 'failed'; error: unknown }>
+  | Readonly<{ kind: 'stale' }>;
+
+/** Aborts superseded detail reads and rejects responses from older navigation intents. */
+export class WorkItemDetailLoadCoordinator {
+  #generation = 0;
+  #controller: AbortController | null = null;
+
+  async load(
+    workItemId: string,
+    read: (signal: AbortSignal) => Promise<BoardWorkItemDetail>,
+  ): Promise<WorkItemDetailLoadResult> {
+    this.#controller?.abort();
+    const controller = new AbortController();
+    const generation = ++this.#generation;
+    this.#controller = controller;
+    try {
+      const detail = await read(controller.signal);
+      if (!this.#isCurrent(generation, controller)) return { kind: 'stale' };
+      if (detail.id !== workItemId) return { kind: 'failed', error: new Error('The loaded work item did not match the requested child.') };
+      return { kind: 'loaded', detail };
+    } catch (caught) {
+      if (!this.#isCurrent(generation, controller)) return { kind: 'stale' };
+      if (caught instanceof BoardApiError && caught.status === 404) return { kind: 'not-found' };
+      return { kind: 'failed', error: caught };
+    }
+  }
+
+  invalidate(): void {
+    this.#generation += 1;
+    this.#controller?.abort();
+    this.#controller = null;
+  }
+
+  #isCurrent(generation: number, controller: AbortController): boolean {
+    return generation === this.#generation && controller === this.#controller && !controller.signal.aborted;
+  }
+}
+
+export function snapshotLostSelectedWorkItem(
+  workItemId: string,
+  previous: readonly Pick<BoardWorkItem, 'id'>[],
+  current: readonly Pick<BoardWorkItem, 'id'>[],
+): boolean {
+  return previous.some((workItem) => workItem.id === workItemId)
+    && !current.some((workItem) => workItem.id === workItemId);
+}
+
 export async function refreshBoardSnapshot(
   client: TaskBoardClient,
   kind: BoardRefreshKind,
@@ -266,6 +319,9 @@ export function BoardApp() {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
   const [notificationsAttempt, setNotificationsAttempt] = useState(0);
+  const [familyRefreshRevision, setFamilyRefreshRevision] = useState(0);
+  const [loadedWorkItemDetail, setLoadedWorkItemDetail] = useState<BoardWorkItemDetail | null>(null);
+  const [workItemDetailLoadingId, setWorkItemDetailLoadingId] = useState<string | null>(null);
   const [boardPause, setBoardPause] = useState<RawBoardPause | null>(null);
   const [pausePopoverOpen, setPausePopoverOpen] = useState(false);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -273,7 +329,12 @@ export function BoardApp() {
   const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
   const pauseVersions = useMemo(() => new BoardPauseVersionGuard(), []);
+  const workItemDetailLoads = useMemo(() => new WorkItemDetailLoadCoordinator(), []);
   const observedTaskIds = useRef(new Set<string>());
+  const previousSnapshotWorkItems = useRef<readonly BoardWorkItem[]>([]);
+  const currentPageRef = useRef(page);
+  const currentSnapshotRef = useRef(snapshot);
+  const workItemDetailLoadSourceHash = useRef<string | null>(null);
   const workItemRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const taskRowRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastOpenWorkItemId = useRef<string | null>(null);
@@ -292,6 +353,8 @@ export function BoardApp() {
     fallbackTaskDialogAnchorRef,
   );
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
+  currentPageRef.current = page;
+  currentSnapshotRef.current = snapshot;
 
   const loadNotifications = useCallback(async (token: number, afterMarkRead = false) => {
     setNotificationsLoading(true);
@@ -331,6 +394,15 @@ export function BoardApp() {
   useLayoutEffect(() => () => {
     snapshotCommits.drain();
   }, [snapshotCommits]);
+
+  useEffect(() => () => workItemDetailLoads.invalidate(), [workItemDetailLoads]);
+
+  useEffect(() => {
+    if (workItemDetailLoadingId === null || workItemDetailLoadSourceHash.current === pageToHash(page)) return;
+    workItemDetailLoads.invalidate();
+    workItemDetailLoadSourceHash.current = null;
+    setWorkItemDetailLoadingId(null);
+  }, [page, workItemDetailLoadingId, workItemDetailLoads]);
 
   useEffect(() => {
     notificationLoads.activate();
@@ -379,6 +451,10 @@ export function BoardApp() {
   const refresh = useCallback((kind: BoardRefreshKind = 'foreground') => (
     refreshCoordinator.refresh(kind)
   ), [refreshCoordinator]);
+  const refreshManually = useCallback(() => {
+    setFamilyRefreshRevision((value) => value + 1);
+    return refresh('foreground');
+  }, [refresh]);
 
   useEffect(() => {
     refreshCoordinator.activate();
@@ -400,9 +476,21 @@ export function BoardApp() {
 
   useEffect(() => {
     if (snapshot === null) return;
+    const previous = previousSnapshotWorkItems.current;
+    previousSnapshotWorkItems.current = snapshot.workItems;
+    if (page.kind === 'intake' && snapshotLostSelectedWorkItem(page.workItemId, previous, snapshot.workItems)) {
+      setLoadedWorkItemDetail((current) => current?.id === page.workItemId ? null : current);
+      void refreshRemovedWorkItemDetail(page.workItemId);
+    }
+  }, [page, snapshot]);
+
+  useEffect(() => {
+    if (snapshot === null) return;
+    if (page.kind === 'intake' && loadedWorkItemDetail?.id === page.workItemId) return;
+    if (page.kind === 'intake' && workItemDetailLoadingId === page.workItemId) return;
     const fallback = missingRouteFallback(page, snapshot, observedTaskIds.current);
     if (fallback !== null) navigate(fallback, 'replace');
-  }, [navigate, page, snapshot]);
+  }, [loadedWorkItemDetail, page, snapshot, workItemDetailLoadingId]);
 
   useEffect(() => {
     if (snapshot === null) return;
@@ -468,7 +556,14 @@ export function BoardApp() {
 
   const allTasks = useMemo(() => [...(snapshot?.tasks ?? [])].sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id)), [snapshot]);
   const allWorkItems = snapshot?.workItems ?? [];
-  const selectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
+  const groupedWorkItems = useMemo(() => groupWorkItems(allWorkItems), [allWorkItems]);
+  const snapshotSelectedWorkItem = page.kind === 'intake' ? allWorkItems.find((workItem) => workItem.id === page.workItemId) : undefined;
+  const cachedSelectionWasRemoved = page.kind === 'intake'
+    && snapshotSelectedWorkItem === undefined
+    && loadedWorkItemDetail?.id === page.workItemId
+    && snapshotLostSelectedWorkItem(page.workItemId, previousSnapshotWorkItems.current, allWorkItems);
+  const selectedWorkItem = snapshotSelectedWorkItem
+    ?? (page.kind === 'intake' && loadedWorkItemDetail?.id === page.workItemId && !cachedSelectionWasRemoved ? loadedWorkItemDetail : undefined);
   const workItemDetailOpen = selectedWorkItem !== undefined;
   const selectedTaskId = routedTaskId;
   const taskDetailOpen = selectedTaskId !== undefined;
@@ -543,7 +638,63 @@ export function BoardApp() {
   }
 
   function openWorkItem(workItemId: string) {
+    setLoadedWorkItemDetail(null);
     navigate({ kind: 'intake', workItemId });
+  }
+
+  async function refreshRemovedWorkItemDetail(workItemId: string) {
+    const sourceHash = pageToHash(currentPageRef.current);
+    workItemDetailLoadSourceHash.current = sourceHash;
+    setWorkItemDetailLoadingId(workItemId);
+    const result = await workItemDetailLoads.load(
+      workItemId,
+      (signal) => client.getWorkItem(workItemId, signal),
+    );
+    if (result.kind === 'stale') return;
+    if (pageToHash(currentPageRef.current) !== sourceHash) return;
+    workItemDetailLoadSourceHash.current = null;
+    setWorkItemDetailLoadingId(null);
+    if (result.kind === 'loaded') {
+      setLoadedWorkItemDetail(result.detail);
+      return;
+    }
+    const context = `work-item:${encodeURIComponent(workItemId)}:open-detail`;
+    if (result.kind === 'failed') {
+      dispatchErrorPipeline({ type: 'action-failed', context, error: actionErrorMessage(result.error) });
+      return;
+    }
+    const currentSnapshot = currentSnapshotRef.current;
+    if (currentSnapshot === null) return;
+    const fallback = missingRouteFallback(currentPageRef.current, currentSnapshot, observedTaskIds.current);
+    if (fallback !== null) navigate(fallback, 'replace');
+  }
+
+  async function openWorkItemFromFamily(workItemId: string) {
+    const context = `work-item:${encodeURIComponent(workItemId)}:open-detail`;
+    const sourceHash = pageToHash(currentPageRef.current);
+    dispatchErrorPipeline({ type: 'action-started', context });
+    workItemDetailLoadSourceHash.current = sourceHash;
+    setWorkItemDetailLoadingId(workItemId);
+    const result = await workItemDetailLoads.load(
+      workItemId,
+      (signal) => client.getWorkItem(workItemId, signal),
+    );
+    if (result.kind === 'stale') return;
+    if (pageToHash(currentPageRef.current) !== sourceHash) return;
+    workItemDetailLoadSourceHash.current = null;
+    setWorkItemDetailLoadingId(null);
+    if (result.kind === 'loaded') {
+      setLoadedWorkItemDetail(result.detail);
+      navigate({ kind: 'intake', workItemId });
+      return;
+    }
+    dispatchErrorPipeline({
+      type: 'action-failed',
+      context,
+      error: result.kind === 'not-found'
+        ? 'This work item is no longer available.'
+        : actionErrorMessage(result.error),
+    });
   }
 
   async function markNotificationRead(notification: RawBoardNotification) {
@@ -643,6 +794,9 @@ export function BoardApp() {
   }
 
   function navigate(next: BoardPage, mode: 'push' | 'replace' = 'push', event?: Event) {
+    workItemDetailLoads.invalidate();
+    workItemDetailLoadSourceHash.current = null;
+    setWorkItemDetailLoadingId(null);
     markDialogSwitchEvent(event, CREATE_DIALOG_SWITCH_TARGET);
     if (dialog === null) {
       navigateRoute(next, mode);
@@ -774,7 +928,7 @@ export function BoardApp() {
           <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
             <Button ref={headerAddTaskRef} data-dialog-trigger="task" className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" variant="primary" icon={<Plus size={18} strokeWidth={1.6} />} aria-label="Add task" title="Add task" disabled={!connected} onClick={(event) => openDialog('task', { anchor: headerAddTaskRef }, event.nativeEvent)} />
             <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<FolderKanban size={17} strokeWidth={1.5} />} aria-label="Add project" title="Add project from disk" disabled={!connected} onClick={(event) => openDialog('project', {}, event.nativeEvent)} />
-            {anyDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refresh()} /> : null}
+            {anyDetailOpen ? <Button className="size-11 min-h-0 rounded-[99px] p-0 sm:size-10" size="sm" icon={<RefreshCw size={17} strokeWidth={1.5} className={loading ? 'animate-spin' : ''} />} aria-label="Refresh" title="Refresh" disabled={loading} onClick={() => void refreshManually()} /> : null}
           </div>
         </header>
         <main className="w-full max-w-[1600px] p-4 sm:px-8 sm:py-6 lg:px-12 lg:py-8">
@@ -796,15 +950,20 @@ export function BoardApp() {
                       <h2 id="automation-intake-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">Automation intake</h2>
                       <span className="text-xs text-muted">{allWorkItems.length}</span>
                     </div>
-                    <div>{allWorkItems.map((workItem) => <WorkItemRow
-                      key={workItem.id}
-                      workItem={workItem}
+                    <div>{groupedWorkItems.map((row) => <WorkItemRow
+                      key={row.workItem.id}
+                      workItem={row.workItem}
                       projects={snapshot.projects}
-                      selected={workItemDetailOpen && workItem.id === selectedWorkItem.id}
-                      onSelect={() => openWorkItem(workItem.id)}
+                      depth={row.depth}
+                      childCount={row.childCount}
+                      mergedChildCount={row.mergedChildCount}
+                      abandonedChildCount={row.abandonedChildCount}
+                      dependencyHint={row.dependencyHint}
+                      selected={workItemDetailOpen && row.workItem.id === selectedWorkItem.id}
+                      onSelect={() => openWorkItem(row.workItem.id)}
                       buttonRef={(element) => {
-                        if (element) workItemRowRefs.current.set(workItem.id, element);
-                        else workItemRowRefs.current.delete(workItem.id);
+                        if (element) workItemRowRefs.current.set(row.workItem.id, element);
+                        else workItemRowRefs.current.delete(row.workItem.id);
                       }}
                     />)}</div>
                   </section>
@@ -859,23 +1018,31 @@ export function BoardApp() {
                 : null}
               </div>
             </div>
-            <div className={cn(anyDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
-              {anyDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={workItemDetailOpen ? closeWorkItem : closeTask}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refresh()}>Refresh</Button></div> : null}
+            <div className={cn('min-w-0 max-w-full', anyDetailOpen ? 'cicada-page-enter block' : 'hidden')}>
+              {anyDetailOpen ? <div className="mb-3 flex items-center justify-between gap-2 xl:hidden"><Button size="sm" icon={<ArrowLeft size={15} />} onClick={workItemDetailOpen ? closeWorkItem : closeTask}>Back to task list</Button><Button size="sm" icon={<RefreshCw size={15} className={loading ? 'animate-spin' : ''} />} disabled={loading} onClick={() => void refreshManually()}>Refresh</Button></div> : null}
               {selectedWorkItem ? <WorkItemDetail
                 key={selectedWorkItem.id}
                 workItem={selectedWorkItem}
                 snapshotRevision={snapshot.revision}
+                familyVersionKey={decompositionFamilyVersionKey(selectedWorkItem, allWorkItems)}
+                familyRefreshRevision={familyRefreshRevision}
+                knownParent={selectedWorkItem.parentWorkItemId === null && allWorkItems.some((candidate) => candidate.parentWorkItemId === selectedWorkItem.id)}
                 projectName={snapshot.projects.find((project) => project.id === selectedWorkItem.resolvedProjectId)?.name ?? null}
+                projects={snapshot.projects}
+                parentWorkItem={selectedWorkItem.parentWorkItemId === null ? null : allWorkItems.find((candidate) => candidate.id === selectedWorkItem.parentWorkItemId) ?? null}
                 planningTask={snapshot.tasks.find((task) => task.id === selectedWorkItem.planningTaskId) ?? null}
                 openQuestion={snapshot.questions.find((question) => question.taskId === selectedWorkItem.planningTaskId && question.status === 'open') ?? null}
                 client={client}
                 busy={busy || !connected}
                 onClose={closeWorkItem}
+                onOpenWorkItem={(workItemId) => { void openWorkItemFromFamily(workItemId); }}
                 onAnswer={(questionId, answer) => mutateWorkItemDetail(() => client.answerQuestion(questionId, { answer }))}
                 onConfirm={(planRevisionId) => mutateWorkItemDetail(() => client.confirmWorkflow(planRevisionId))}
                 onReject={(planRevisionId, note) => mutateWorkItemDetail(() => client.rejectWorkflowPlan(planRevisionId, note))}
                 onApproveMerge={() => mutateWorkItemDetail(() => client.approvePipelineMerge(selectedWorkItem.id, { version: selectedWorkItem.version }))}
                 onRejectFinal={(note) => mutateWorkItemDetail(() => client.rejectFinalApproval(selectedWorkItem.id, { version: selectedWorkItem.version, note }))}
+                onAttestDeploy={(workItemId, note) => mutateWorkItemDetail(() => client.attestDeployment(workItemId, note === undefined ? {} : { note }))}
+                onResumeCoordination={() => mutateWorkItemDetail(() => client.resumeWorkItem(selectedWorkItem.id))}
                 onCancel={(reason) => mutateWorkItemDetail(() => client.cancelWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version, reason }))}
                 onArchive={async () => {
                   const result = await mutateWorkItemDetail(() => client.archiveWorkItem(selectedWorkItem.id, { version: selectedWorkItem.version }));
