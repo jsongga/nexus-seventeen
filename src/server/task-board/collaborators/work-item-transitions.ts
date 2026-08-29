@@ -48,6 +48,10 @@ export function workItemStateForStage(
   return "planning";
 }
 
+export function workItemStateOwnsWorkflowExecution(state: WorkItemState): boolean {
+  return state !== "coordinating" && state !== "parked" && !isTerminalWorkItemState(state);
+}
+
 export function workItemStateForNodeStage(
   db: TaskBoardStore["db"],
   workItemId: string,

@@ -379,6 +379,28 @@ export class TaskBoardService {
       sendJson(response, 200, body);
       return;
     }
+    const workItemChildrenMatch = /^\/v1\/work-items\/([^/]+)\/children$/u.exec(url.pathname);
+    if (workItemChildrenMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, {
+        children: this.#board.listChildren(
+          parseRouteIdentifier(workItemChildrenMatch[1], "workItemId"),
+        ),
+      });
+      return;
+    }
+    const workItemDependenciesMatch = /^\/v1\/work-items\/([^/]+)\/dependencies$/u.exec(url.pathname);
+    if (workItemDependenciesMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      sendJson(response, 200, {
+        dependencies: this.#board.dependenciesFor(
+          parseRouteIdentifier(workItemDependenciesMatch[1], "workItemId"),
+        ),
+      });
+      return;
+    }
     const pipelineSummaryMatch = /^\/v1\/work-items\/([^/]+)\/pipeline-summary$/u.exec(url.pathname);
     if (pipelineSummaryMatch && request.method === "GET") {
       noQuery(url);

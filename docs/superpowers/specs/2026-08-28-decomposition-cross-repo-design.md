@@ -55,6 +55,12 @@ Task list groups children under their parent (indent, phase pill, dependency hin
 
 Runtime units per task (contract, migration equivalence, split-rule matrix, readiness, merge order, attestation gate, prompt section rendering with regenerated goldens); web SSR pins; Playwright for the tree and gates with mocked API. **Exit** in `pipeline-e2e.test.ts`: a two-repo fixture (provider + consumer, each with its own agent identities; the fake manager emits a blast-radius plan declaring Expand/Migrate/Contract) — Expand auto-merges after verify/review; Migrate starts only after that, receives the provider's `docs/interface.md` context at the Expand sha, auto-merges; Contract stays blocked until the human attests both deploys, then its human approval merges it; the parent reaches `merged` with a `final_approve` action listing all three.
 
+### Rulings added during implementation (campaign 10 Task 2 review, 2026-08-29)
+
+- **Decomposed parents always go `plan_approval → coordinating`**, whatever their tier, and never receive a branch or base sha. The parent's plan confirm is the human gate at parent level; a hazardous tier is inherited by every child, and each hazardous child runs the existing single-item Design stage itself. *(Why: `designing` has no edge to `coordinating`; a parent-level design doc would duplicate the children's.)*
+- **Child plans are leaves**: `changeShape = feature`, tier inherited from the parent (else `standard`), `criterionChecks = []` — a declaration carries acceptance-criteria text only. Follow-up candidate: `DeclaredChild.criterionChecks`.
+- **Children are target-locked from creation** and exempt from intake planning (`workItemAwaitsIntakePlanning`); the child's v2 template must pass the executor-drift check at confirm.
+
 ## Alternatives considered
 
 - Multi-node plans as parents — rejected: single-node pipeline assertions in three places; nodes have no branch/approval.

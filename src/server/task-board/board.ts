@@ -53,6 +53,7 @@ import {
   type Wakeup,
   type WorkItem,
   type WorkItemAudit,
+  type WorkItemDependency,
   type WorkItemPage,
 } from "#shared/task-board-contract";
 import { tokenMatches } from "./canonical.js";
@@ -370,6 +371,14 @@ export class TaskBoard {
 
   listWorkItems(includeArchived = false): readonly WorkItem[] {
     return this.#workItems.listWorkItems(includeArchived);
+  }
+
+  listChildren(parentWorkItemId: string): readonly WorkItem[] {
+    return this.#workItems.listChildren(parentWorkItemId);
+  }
+
+  dependenciesFor(workItemId: string): readonly WorkItemDependency[] {
+    return this.#workItems.dependenciesFor(workItemId);
   }
 
   requireWorkItem(workItemId: string): WorkItemDetail {

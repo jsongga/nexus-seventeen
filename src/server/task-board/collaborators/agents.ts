@@ -42,7 +42,12 @@ export class AgentsCollaborator {
       const pending = this.runtime.store.db.prepare(
         "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='queued' AND ended_at IS NULL ORDER BY created_at,work_item_id",
       ).all(projectId);
-      for (const row of pending) this.workItems.startWorkItemPlanning(String(row.work_item_id));
+      for (const row of pending) {
+        const workItemId = String(row.work_item_id);
+        if (this.workItems.workItemAwaitsIntakePlanning(workItemId)) {
+          this.workItems.startWorkItemPlanning(workItemId);
+        }
+      }
     }
     this.projects.reconcileWorkflowsBestEffort(projectId);
     return created;

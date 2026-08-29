@@ -26,16 +26,24 @@ import {
   type StageHandoffDraft,
   type WorkNode,
   type WorkItemState,
+  type WorkflowPlanDraft,
   type WorkflowPipelineContext,
   type WorkflowReviewContext,
   type WorkflowStage,
 } from "#shared/task-board-contract";
-import { parseDesignRecordDraft } from "#shared/task-board-contract/validate";
+import {
+  ContractValidationError,
+  parseDesignRecordDraft,
+  parseWorkflowPlanDraft,
+  validateWorkflowPlanChildren,
+} from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
+import { sha256 } from "../canonical.js";
 import { TaskBoardError } from "../errors.js";
 import { GateActionWriter, type GateActionInput } from "./gate-actions.js";
 import { SkillRegistry } from "../skills.js";
 import {
+  recordInitialWorkItemTransitionInTransaction,
   transitionWorkItemInTransaction,
   workItemStateForStage,
   workItemStateForNodeStage,
@@ -107,6 +115,11 @@ const REVIEW_FILE_TRUNCATION_MARKER = Object.freeze({
   path: "[truncated: additional files omitted]",
   status: "modified" as const,
 });
+const CHILD_PIPELINE_STAGE_TEMPLATE = Object.freeze([
+  "implementation",
+  "testing",
+  "verification",
+] as const);
 
 function truncateWithMarker(value: string, maximum: number, marker: string): string {
   if (value.length <= maximum) return value;
@@ -251,6 +264,14 @@ function verificationStageUsesEnabledAgentType(db: DatabaseSync): boolean {
     agentTypes.some((agentType) => agentType.agentTypeId === executor.agentTypeId && agentType.enabled === true);
 }
 
+function pipelineExecutorsAreCompatible(
+  db: DatabaseSync,
+  shape: NonNullable<ReturnType<typeof pipelineTemplateShape>>,
+): boolean {
+  return testingStageUsesMachineVerify(db) &&
+    (shape !== "v2" || verificationStageUsesEnabledAgentType(db));
+}
+
 function storedPlanPipelineShape(
   db: DatabaseSync,
   planRevisionId: string,
@@ -319,6 +340,47 @@ function planFromRow(row: Row): PlanRevision {
   });
 }
 
+function storedWorkflowPlanDraft(db: DatabaseSync, row: Row): WorkflowPlanDraft {
+  const nodes = (db.prepare(`
+    SELECT *
+    FROM work_nodes
+    WHERE plan_revision_id=?
+    ORDER BY created_at,node_id
+  `).all(String(row.plan_revision_id)) as Row[]).map((node) => ({
+    nodeId: String(node.node_id),
+    title: String(node.title),
+    objective: String(node.objective),
+    acceptanceCriteria: json<unknown>(node.acceptance_criteria_json),
+    dependencyNodeIds: (db.prepare(`
+      SELECT dependency_node_id
+      FROM work_node_dependencies
+      WHERE node_id=?
+      ORDER BY dependency_node_id
+    `).all(String(node.node_id)) as Row[]).map((dependency) => String(dependency.dependency_node_id)),
+    stageTemplate: json<unknown>(node.stage_template_json),
+  }));
+  return parseWorkflowPlanDraft({
+    objective: row.objective,
+    assumptions: json<unknown>(row.assumptions_json),
+    acceptanceCriteria: json<unknown>(row.acceptance_criteria_json),
+    ...(row.change_shape === null ? {} : { changeShape: row.change_shape }),
+    ...(row.tier === null ? {} : { tier: row.tier }),
+    ...(row.declared_scope_json === null ? {} : { declaredScope: json<unknown>(row.declared_scope_json) }),
+    ...(row.non_goals_json === null ? {} : { nonGoals: json<unknown>(row.non_goals_json) }),
+    ...(row.mechanical_portions_json === null
+      ? {}
+      : { mechanicalPortions: json<unknown>(row.mechanical_portions_json) }),
+    ...(row.blocking_questions_json === null
+      ? {}
+      : { blockingQuestions: json<unknown>(row.blocking_questions_json) }),
+    ...(row.criterion_checks_json === null
+      ? {}
+      : { criterionChecks: json<unknown>(row.criterion_checks_json) }),
+    ...(row.children === null ? {} : { children: json<unknown>(row.children) }),
+    nodes,
+  });
+}
+
 export interface ProjectWorkflowSnapshot {
   readonly plans: readonly PlanRevision[];
   readonly nodes: readonly WorkNode[];
@@ -329,6 +391,11 @@ export interface ProjectWorkflowSnapshot {
 interface ConfirmWorkflowTransactionResult {
   readonly readyNodes: readonly WorkNode[];
   readonly outcome?: "parked_hazardous" | "designing";
+}
+
+interface ConfirmPipelineBaseShas {
+  readonly parentBaseSha: string | null;
+  readonly childBaseShas: ReadonlyMap<string, string>;
 }
 
 export interface RejectWorkflowTransactionResult extends RejectPlanRevisionResponse {
@@ -686,27 +753,212 @@ export class TransparentWorkflow {
   }
 
   pipelineBaseShaForConfirm(planId: string, request: ConfirmPlanRevisionRequest): string | null {
+    return this.pipelineBaseShasForConfirm(planId, request).parentBaseSha;
+  }
+
+  pipelineBaseShasForConfirm(
+    planId: string,
+    request: ConfirmPlanRevisionRequest,
+  ): ConfirmPipelineBaseShas {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
     const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
     if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
     if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+    let parsedPlan: WorkflowPlanDraft;
+    try {
+      parsedPlan = storedWorkflowPlanDraft(this.db, row);
+      validateWorkflowPlanChildren(parsedPlan, String(row.project_id));
+    } catch (error) {
+      if (error instanceof ContractValidationError) {
+        throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
+      }
+      throw error;
+    }
     const pipelineShape = storedPlanPipelineShape(this.db, planId);
     const hasPipelineShape = pipelineShape !== null;
+    const hasDeclaredChildren = (parsedPlan.children?.length ?? 0) > 0;
+    const childPipelineShape = pipelineTemplateShape(CHILD_PIPELINE_STAGE_TEMPLATE);
+    if (childPipelineShape === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:child_pipeline_template");
     if (
-      pipelineShape !== null &&
-      (!testingStageUsesMachineVerify(this.db) ||
-        (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
+      hasDeclaredChildren
+        ? !pipelineExecutorsAreCompatible(this.db, childPipelineShape)
+        : pipelineShape !== null && !pipelineExecutorsAreCompatible(this.db, pipelineShape)
     ) throw pipelineExecutorDrift();
-    if (!hasPipelineShape) return null;
-    const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(String(row.project_id));
-    if (project === undefined) {
-      throw new TaskBoardError(
-        409,
-        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-        "The pipeline repository is unavailable",
-      );
+    const childProjectIds = (parsedPlan.children ?? []).map((child) => child.projectId);
+    const projectIds = new Set(childProjectIds);
+    if (hasPipelineShape && !hasDeclaredChildren) projectIds.add(String(row.project_id));
+    const baseShas = new Map<string, string>();
+    for (const projectId of projectIds) {
+      const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(projectId);
+      if (project === undefined) {
+        throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
+      }
+      baseShas.set(projectId, pipelineBaseSha(String(project.repo_path), this.git));
     }
-    return pipelineBaseSha(String(project.repo_path), this.git);
+    return Object.freeze({
+      parentBaseSha: hasPipelineShape && !hasDeclaredChildren
+        ? baseShas.get(String(row.project_id)) ?? null
+        : null,
+      childBaseShas: baseShas,
+    });
+  }
+
+  private materializeDeclaredChildrenInTransaction(
+    row: Row,
+    plan: WorkflowPlanDraft,
+    actor: string,
+    resolvedBaseShas: ReadonlyMap<string, string>,
+    now: string,
+  ): readonly string[] {
+    const children = plan.children ?? [];
+    if (children.length === 0) return Object.freeze([]);
+    const parentWorkItemId = String(row.work_item_id);
+    const parent = this.db.prepare(`
+      SELECT original_request,priority,created_by
+      FROM work_items
+      WHERE work_item_id=? AND ended_at IS NULL
+    `).get(parentWorkItemId) as Row | undefined;
+    if (parent === undefined) {
+      throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+    }
+
+    const childRecords = children.map((child) => {
+      const resolvedBaseSha = resolvedBaseShas.get(child.projectId);
+      if (resolvedBaseSha === undefined) {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+          "The pipeline repository is unavailable",
+        );
+      }
+      if (!GIT_OBJECT_ID_PATTERN.test(resolvedBaseSha)) {
+        throw new TaskBoardError(
+          409,
+          TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+          "The pipeline repository is unavailable",
+        );
+      }
+      return Object.freeze({
+        child,
+        workItemId: randomUUID(),
+        planRevisionId: `plan_${randomUUID()}`,
+        nodeId: `node_${randomUUID()}`,
+        baseSha: resolvedBaseSha,
+      });
+    });
+    const byKey = new Map(childRecords.map((record) => [record.child.key, record] as const));
+
+    for (const [ordinal, record] of childRecords.entries()) {
+      const { child, workItemId, planRevisionId, nodeId, baseSha } = record;
+      const idempotencyKey = `decomposition:${parentWorkItemId}:${child.key}`;
+      this.db.prepare(`
+        INSERT INTO work_items(
+          work_item_id,original_request,refined_objective,priority,
+          project_target_mode,target_project_id,resolved_project_id,
+          parent_work_item_id,phase,child_ordinal,pipeline_branch,base_sha,
+          state,current_stage,created_by,idempotency_key,request_hash,
+          version,created_at,updated_at,ended_at,cancelled_reason,archived_at
+        ) VALUES (
+          ?,?,?,?,'explicit',?,?,?,?,?,?,?,
+          'queued',NULL,?,?,?,1,?,?,NULL,NULL,NULL
+        )
+      `).run(
+        workItemId,
+        String(parent.original_request),
+        child.objective,
+        String(parent.priority),
+        child.projectId,
+        child.projectId,
+        parentWorkItemId,
+        child.phase ?? null,
+        ordinal,
+        `task/${workItemId}`,
+        baseSha,
+        String(parent.created_by),
+        idempotencyKey,
+        sha256({
+          action: "create_decomposed_work_item",
+          parentPlanRevisionId: String(row.plan_revision_id),
+          child,
+        }),
+        now,
+        now,
+      );
+      recordInitialWorkItemTransitionInTransaction(workItemTransitionStoreForDatabase(this.db), {
+        workItemId,
+        actorType: "human",
+        actorId: actor,
+        now,
+      });
+      this.db.prepare(`
+        INSERT INTO plan_revisions(
+          plan_revision_id,work_item_id,revision,objective,assumptions_json,
+          acceptance_criteria_json,change_shape,tier,declared_scope_json,non_goals_json,
+          mechanical_portions_json,blocking_questions_json,criterion_checks_json,rejected_note,
+          project_id,skill_digests_json,state,created_by,confirmed_by,created_at,confirmed_at,children
+        ) VALUES (
+          ?,?,1,?,?,?,?,?,?,?,?,?,?,NULL,?,?,'confirmed',?,?,?,?,NULL
+        )
+      `).run(
+        planRevisionId,
+        workItemId,
+        child.objective,
+        String(row.assumptions_json),
+        JSON.stringify(child.acceptanceCriteria),
+        "feature",
+        row.tier ?? "standard",
+        JSON.stringify(child.declaredScope),
+        row.non_goals_json,
+        row.mechanical_portions_json,
+        row.blocking_questions_json,
+        "[]",
+        child.projectId,
+        String(row.skill_digests_json),
+        String(row.created_by),
+        actor,
+        now,
+        now,
+      );
+      this.db.prepare(`
+        INSERT INTO work_nodes(
+          node_id,plan_revision_id,project_id,title,objective,acceptance_criteria_json,
+          stage_template_json,current_stage,state,version,created_at,updated_at
+        ) VALUES (?,?,?,?,?,?,?,NULL,'pending',1,?,?)
+      `).run(
+        nodeId,
+        planRevisionId,
+        child.projectId,
+        child.objective.slice(0, 256),
+        child.objective,
+        JSON.stringify(child.acceptanceCriteria),
+        JSON.stringify(CHILD_PIPELINE_STAGE_TEMPLATE),
+        now,
+        now,
+      );
+      this.#insertGateActionInTransaction({
+        workItemId,
+        gate: "plan_confirm",
+        actorId: actor,
+        planRevisionId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: parentWorkItemId,
+        note: null,
+      });
+    }
+    for (const record of childRecords) {
+      for (const dependencyKey of record.child.dependsOn ?? []) {
+        const dependency = byKey.get(dependencyKey);
+        if (dependency === undefined) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:declared_child_dependency");
+        }
+        this.db.prepare(`
+          INSERT INTO work_item_dependencies(work_item_id,depends_on_work_item_id)
+          VALUES (?,?)
+        `).run(record.workItemId, dependency.workItemId);
+      }
+    }
+    return Object.freeze(childRecords.map((record) => record.workItemId));
   }
 
   confirm(
@@ -714,6 +966,7 @@ export class TransparentWorkflow {
     request: ConfirmPlanRevisionRequest,
     actor: string,
     resolvedBaseSha: string | null,
+    resolvedChildBaseShas: ReadonlyMap<string, string>,
     startDesignInTransaction?: (workItemId: string) => void,
   ): ConfirmWorkflowTransactionResult {
     if (request.expectedState !== "proposed") throw new TaskBoardError(400, "WORKFLOW_INVALID", "Expected state must be proposed");
@@ -722,15 +975,28 @@ export class TransparentWorkflow {
       const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_revision_id=?").get(planId) as Row | undefined;
       if (!row) throw new TaskBoardError(404, TASK_BOARD_ERROR_CODES.PLAN_NOT_FOUND, "Plan was not found");
       if (row.state !== "proposed") throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLAN_NOT_PROPOSED, "Plan is no longer proposed");
+      let parsedPlan: WorkflowPlanDraft;
+      try {
+        parsedPlan = storedWorkflowPlanDraft(this.db, row);
+        validateWorkflowPlanChildren(parsedPlan, String(row.project_id));
+      } catch (error) {
+        if (error instanceof ContractValidationError) {
+          throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
+        }
+        throw error;
+      }
       const pipelineShape = storedPlanPipelineShape(this.db, planId);
       const hasPipelineShape = pipelineShape !== null;
+      const hasDeclaredChildren = (parsedPlan.children?.length ?? 0) > 0;
+      const childPipelineShape = pipelineTemplateShape(CHILD_PIPELINE_STAGE_TEMPLATE);
+      if (childPipelineShape === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:child_pipeline_template");
       if (
-        pipelineShape !== null &&
-        (!testingStageUsesMachineVerify(this.db) ||
-          (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
+        hasDeclaredChildren
+          ? !pipelineExecutorsAreCompatible(this.db, childPipelineShape)
+          : pipelineShape !== null && !pipelineExecutorsAreCompatible(this.db, pipelineShape)
       ) throw pipelineExecutorDrift();
       let identity: Readonly<{ branch: string; baseSha: string }> | null = null;
-      if (hasPipelineShape) {
+      if (hasPipelineShape && !hasDeclaredChildren) {
         if (resolvedBaseSha === null || !GIT_OBJECT_ID_PATTERN.test(resolvedBaseSha)) {
           throw new TaskBoardError(
             409,
@@ -753,6 +1019,16 @@ export class TransparentWorkflow {
       if (Number(projectUpdate.changes) !== 1) {
         throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
       }
+      if (hasDeclaredChildren) {
+        const branchlessUpdate = this.db.prepare(`
+          UPDATE work_items
+          SET pipeline_branch=NULL,base_sha=NULL
+          WHERE work_item_id=? AND ended_at IS NULL
+        `).run(String(row.work_item_id));
+        if (Number(branchlessUpdate.changes) !== 1) {
+          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.WORK_ITEM_ENDED, "Work item has ended");
+        }
+      }
       if (identity !== null) {
         const identityUpdate = this.db.prepare(`
           UPDATE work_items
@@ -773,6 +1049,32 @@ export class TransparentWorkflow {
         refId: String(row.revision),
         note: null,
       });
+      const materializedChildren = this.materializeDeclaredChildrenInTransaction(
+        row,
+        parsedPlan,
+        actor,
+        resolvedChildBaseShas,
+        now,
+      );
+      if (materializedChildren.length > 0) {
+        transitionWorkItemInTransaction(workItemTransitionStoreForDatabase(this.db), {
+          workItemId: String(row.work_item_id),
+          to: "coordinating",
+          actorType: "human",
+          actorId: actor,
+          now,
+          currentStage: null,
+        });
+        this.event(
+          String(row.project_id),
+          null,
+          null,
+          "plan_confirmed",
+          `Plan revision ${row.revision} confirmed with ${materializedChildren.length} children`,
+          now,
+        );
+        return Object.freeze({ readyNodes: Object.freeze([]) });
+      }
       if (row.tier === "hazardous" && !hasPipelineShape) {
         const result = "hazardous tier requires a pipeline plan";
         this.recordPlanningResult(String(row.work_item_id), result, now);

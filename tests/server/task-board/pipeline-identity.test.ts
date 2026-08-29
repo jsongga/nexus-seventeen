@@ -545,7 +545,13 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
       { expectedState: "proposed" },
     );
     assert.equal(transactions, 0);
-    workflow.confirm(revision.planRevisionId, { expectedState: "proposed" }, "human:alice", baseSha);
+    workflow.confirm(
+      revision.planRevisionId,
+      { expectedState: "proposed" },
+      "human:alice",
+      baseSha,
+      new Map(),
+    );
 
     assert.deepEqual(calls, [[
       "-c", "core.fsmonitor=",

@@ -38,12 +38,12 @@ function standardPlan(suffix: string): WorkflowPlanDraft {
   };
 }
 
-function hazardousPlan(projectId: string): WorkflowPlanDraft {
+function hazardousPlan(): WorkflowPlanDraft {
   return {
     objective: "Change a hazardous checkout control.",
     assumptions: ["The change requires a later Design stage."],
     acceptanceCriteria: ["Hazardous work does not activate directly."],
-    changeShape: "blast_radius",
+    changeShape: "feature",
     tier: "hazardous",
     declaredScope: ["src/checkout"],
     nonGoals: ["Do not activate implementation before design."],
@@ -55,14 +55,6 @@ function hazardousPlan(projectId: string): WorkflowPlanDraft {
     criterionChecks: [{
       criterion: "Hazardous work remains parked.",
       check: "Inspect the work-item state and workflow node state.",
-    }],
-    children: [{
-      key: "checkout-consumer",
-      objective: "Change the hazardous checkout consumer after design.",
-      projectId,
-      declaredScope: ["src/checkout"],
-      acceptanceCriteria: ["The checkout consumer honors the selected control."],
-      splitBy: "consumer",
     }],
     nodes: [{
       nodeId: "hazardous-checkout-control",
@@ -295,7 +287,7 @@ test("confirming a hazardous non-pipeline plan parks without activating its node
     const plan = settlePlanning(
       fixture,
       "hazardous-plan-confirm-claim-0001",
-      hazardousPlan(fixture.project.projectId),
+      hazardousPlan(),
     );
 
     const confirmed = fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });

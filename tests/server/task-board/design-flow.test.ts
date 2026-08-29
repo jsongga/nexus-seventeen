@@ -47,7 +47,6 @@ function designRecord(): DesignRecordDraft {
 }
 
 function hazardousPlan(
-  projectId: string,
   stageTemplate: WorkflowPlanDraft["nodes"][number]["stageTemplate"] = [
     "implementation",
     "testing",
@@ -58,7 +57,7 @@ function hazardousPlan(
     objective: "Make hazardous delivery recoverable across every process boundary.",
     assumptions: ["The remote supports idempotency keys."],
     acceptanceCriteria: ["Every failure point has a tested recovery path."],
-    changeShape: "blast_radius",
+    changeShape: "feature",
     tier: "hazardous",
     declaredScope: ["src/server", "tests/server"],
     nonGoals: ["Do not change the database schema."],
@@ -67,14 +66,6 @@ function hazardousPlan(
     criterionChecks: [{
       criterion: "The runtime suite passes.",
       check: "npm run test:runtime",
-    }],
-    children: [{
-      key: "hazardous-delivery-consumer",
-      objective: "Implement the hazardous delivery consumer after design.",
-      projectId,
-      declaredScope: ["src/server", "tests/server"],
-      acceptanceCriteria: ["The consumer follows the crash-safe design."],
-      splitBy: "consumer",
     }],
     nodes: [{
       nodeId: "hazardous-delivery",
@@ -136,7 +127,7 @@ async function prepareHazardousPipeline(suffix: string, duplicateManagers = fals
   fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
     outcome: "completed",
     result: "The hazardous pipeline plan is ready.",
-    workflowPlan: hazardousPlan(fixture.project.projectId),
+    workflowPlan: hazardousPlan(),
   });
   const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
     (candidate) => candidate.state === "proposed",
@@ -169,7 +160,7 @@ test("hazardous pipeline confirmation enters designing with identity and a claim
     assert.equal((claim.context as { design?: boolean }).design, true);
     assert.equal(
       claim.task.title,
-      `Design workflow: ${hazardousPlan(fixture.project.projectId).objective}`,
+      `Design workflow: ${hazardousPlan().objective}`,
     );
     assert.match(claim.task.objective, /"tier":"hazardous"/u);
     assert.match(claim.task.objective, /"nodes":\[/u);
@@ -520,7 +511,7 @@ test("hazardous non-pipeline confirmation remains parked with the pipeline-plan 
     fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The non-pipeline plan is ready.",
-      workflowPlan: hazardousPlan(fixture.project.projectId, ["verification"]),
+      workflowPlan: hazardousPlan(["verification"]),
     });
     const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
       (candidate) => candidate.state === "proposed",

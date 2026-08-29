@@ -63,20 +63,12 @@ function suspendPlan(): WorkflowPlanDraft {
   };
 }
 
-function hazardousSuspendPlan(projectId: string): WorkflowPlanDraft {
+function hazardousSuspendPlan(): WorkflowPlanDraft {
   return {
     ...suspendPlan(),
     objective: "Design interrupted hazardous work before implementation.",
-    changeShape: "blast_radius",
+    changeShape: "feature",
     tier: "hazardous",
-    children: [{
-      key: "suspend-consumer",
-      objective: "Resume the hazardous consumer after design.",
-      projectId,
-      declaredScope: ["src"],
-      acceptanceCriteria: ["The consumer resumes without consuming the failure cap."],
-      splitBy: "consumer",
-    }],
   };
 }
 
@@ -529,7 +521,7 @@ test("suspending an active design run leaves the work item for the cap caller to
   fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
     outcome: "completed",
     result: "The hazardous plan is ready for design.",
-    workflowPlan: hazardousSuspendPlan(fixture.project.projectId),
+    workflowPlan: hazardousSuspendPlan(),
   });
   const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
     (candidate) => candidate.state === "proposed",

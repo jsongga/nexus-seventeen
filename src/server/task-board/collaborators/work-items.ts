@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import {
   TASK_BOARD_ERROR_CODES,
   WORK_ITEM_PAGE_SIZE,
@@ -9,6 +10,7 @@ import {
   type UpdateWorkItemRequest,
   type WorkItem,
   type WorkItemAudit,
+  type WorkItemDependency,
   type WorkItemPage,
   type WorkItemState,
   type WorkItemTaskType,
@@ -38,6 +40,22 @@ export type WorkItemDetail = WorkItem & Readonly<{
   gapReportArtifactId?: string | null;
 }>;
 type PlanningStartResult = Readonly<{ task: BoardTask | null; wakeAgentId: string | null }>;
+
+export function workItemAwaitsIntakePlanning(db: DatabaseSync, workItemId: string): boolean {
+  return db.prepare(`
+    SELECT 1
+    FROM work_items item
+    WHERE item.work_item_id=?
+      AND item.state='queued'
+      AND item.ended_at IS NULL
+      AND item.parent_work_item_id IS NULL
+      AND NOT EXISTS(
+        SELECT 1
+        FROM plan_revisions plan
+        WHERE plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      )
+  `).get(workItemId) !== undefined;
+}
 
 const PLANNING_ACCEPTANCE_CRITERIA_PREFIX = "Return a concise workflowPlan with explicit acceptance criteria, acyclic dependencies, and valid unique stage sequences. Available automated stages: ";
 const ONBOARDING_ACCEPTANCE_CRITERIA = "Return a single-node v2 workflowPlan with stageTemplate [\"implementation\",\"testing\",\"verification\"], declaredScope covering README.md, the prefix \"docs\" (covering everything under docs/), and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.";
@@ -138,6 +156,38 @@ export class WorkItemsCollaborator {
 
   listWorkItems(includeArchived = false): readonly WorkItem[] {
     return this.listWorkItemsPage(undefined, includeArchived).workItems;
+  }
+
+  listChildren(parentWorkItemId: string): readonly WorkItem[] {
+    this.runtime.requireWorkItem(parentWorkItemId);
+    const rows = this.runtime.store.db.prepare(`
+      SELECT work_item.*,
+        CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
+        (SELECT task_id FROM work_item_planning_tasks planning
+          WHERE planning.work_item_id=work_item.work_item_id
+        ) AS planning_task_id
+      FROM work_items work_item
+      LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
+      WHERE work_item.parent_work_item_id=?
+      ORDER BY work_item.child_ordinal,work_item.created_at,work_item.work_item_id
+    `).all(parentWorkItemId);
+    return Object.freeze(rows.map(workItemFromRow));
+  }
+
+  dependenciesFor(workItemId: string): readonly WorkItemDependency[] {
+    this.runtime.requireWorkItem(workItemId);
+    const dependencies = this.runtime.store.db.prepare(`
+      SELECT dependency.work_item_id,dependency.depends_on_work_item_id
+      FROM work_item_dependencies dependency
+      JOIN work_items predecessor
+        ON predecessor.work_item_id=dependency.depends_on_work_item_id
+      WHERE dependency.work_item_id=?
+      ORDER BY predecessor.child_ordinal,dependency.depends_on_work_item_id
+    `).all(workItemId).map((row) => Object.freeze({
+      workItemId: stringValue(row, "work_item_id"),
+      dependsOnWorkItemId: stringValue(row, "depends_on_work_item_id"),
+    }));
+    return Object.freeze(dependencies);
   }
 
   requireWorkItem(workItemId: string): WorkItemDetail {
@@ -326,6 +376,10 @@ export class WorkItemsCollaborator {
     return planning.task;
   }
 
+  workItemAwaitsIntakePlanning(workItemId: string): boolean {
+    return workItemAwaitsIntakePlanning(this.runtime.store.db, workItemId);
+  }
+
   startWorkItemPlanningRevisionInTransaction(workItemId: string, revisionNote: string): PlanningStartResult {
     return this.startWorkItemPlanningInTransaction(workItemId, false, revisionNote);
   }
@@ -428,6 +482,9 @@ export class WorkItemsCollaborator {
     const existing = this.runtime.store.db.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?").get(workItemId);
     if (existing && revisionNote === undefined) {
       return Object.freeze({ task: this.runtime.requireTask(String(existing.task_id)), wakeAgentId: null });
+    }
+    if (revisionNote === undefined && !this.workItemAwaitsIntakePlanning(workItemId)) {
+      return Object.freeze({ task: null, wakeAgentId: null });
     }
     if (existing) {
       const priorTask = this.runtime.requireTask(String(existing.task_id));
@@ -557,7 +614,10 @@ export class WorkItemsCollaborator {
       const current = this.runtime.requireWorkItem(workItemId);
       if (current.version !== request.version) throw conflict("WORK_ITEM_VERSION_CONFLICT", "Work item version changed");
       if (current.endedAt !== null) throw conflict("WORK_ITEM_TERMINAL", "Terminal work items are immutable");
-      if (request.projectTarget !== undefined && current.state !== "queued") {
+      if (
+        request.projectTarget !== undefined &&
+        (current.state !== "queued" || current.parentWorkItemId !== null)
+      ) {
         throw conflict("WORK_ITEM_TARGET_LOCKED", "Project target cannot change after intake begins processing");
       }
       const projectTarget = request.projectTarget ?? current.projectTarget;

@@ -5,7 +5,6 @@ import {
   SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
-  isTerminalWorkItemState,
   pipelineTemplateShape,
   type ApprovePipelineMergeRequest,
   type ClaimRunResult,
@@ -61,6 +60,7 @@ import { declaredScopesOverlap } from "./scope-check.js";
 import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
+  workItemStateOwnsWorkflowExecution,
 } from "./work-item-transitions.js";
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
@@ -201,12 +201,13 @@ export class ProjectsCollaborator {
     request: ConfirmPlanRevisionRequest,
     startDesignInTransaction?: (workItemId: string) => void,
   ): ConfirmWorkflowResult {
-    const baseSha = this.#workflow.pipelineBaseShaForConfirm(planRevisionId, request);
+    const baseShas = this.#workflow.pipelineBaseShasForConfirm(planRevisionId, request);
     const confirmation = this.#workflow.confirm(
       planRevisionId,
       request,
       this.runtime.config.humanPrincipal,
-      baseSha,
+      baseShas.parentBaseSha,
+      baseShas.childBaseShas,
       startDesignInTransaction,
     );
     for (const node of confirmation.readyNodes) this.activateWorkflowNode(node);
@@ -689,7 +690,7 @@ export class ProjectsCollaborator {
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE plan.state='confirmed'
         ${projectFilter}
-        AND item.state NOT IN ('parked','merged','abandoned','dead_letter')
+        AND item.state NOT IN ('coordinating','parked','merged','abandoned','dead_letter')
         AND node.current_stage IS NOT NULL
         AND (
           (
@@ -775,7 +776,7 @@ export class ProjectsCollaborator {
         throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_owner");
       }
       const ownerState = owner.state as WorkItemState;
-      if (ownerState === "parked" || isTerminalWorkItemState(ownerState)) return;
+      if (!workItemStateOwnsWorkflowExecution(ownerState)) return;
       if (current.state === "blocked") {
         const latestLifecycleEvent = this.runtime.store.db.prepare(`
           SELECT event.event_type
