@@ -172,6 +172,28 @@ test("extracts bounded parallel phase signals only from completed tool output", 
   }), phaseSignalFromEvent), null, "the legacy done stage requires completed status");
 });
 
+test("redacts PEM material and AWS access keys from provider phase activity", () => {
+  const title = [
+    "Inspect -----BEGIN PRIVATE KEY-----",
+    "private-material",
+    "-----END PRIVATE KEY----- then AKIA1234567890ABCDEF",
+  ].join("\n");
+  const marker = `STEWARD_PHASE_JSON=${JSON.stringify({
+    key: "security-check",
+    title,
+    stage: "execution",
+    status: "in_progress",
+    parallelGroup: null,
+  })}\n`;
+  const signal = firstDerived(codexAdapter, JSON.stringify({
+    type: "item.completed",
+    item: { type: "command_execution", aggregated_output: marker },
+  }), phaseSignalFromEvent);
+
+  assert.equal(signal?.title, "Inspect [credential redacted] then [credential redacted]");
+  assert.doesNotMatch(signal?.title ?? "", /private-material|AKIA1234567890ABCDEF/u);
+});
+
 test("activity sanitizer removes likely credentials, links, and local paths and enforces a bound", () => {
   const safe = sanitizeActivity(
     "Checking /Users/alice/private/repo with sk-proj-abcdefghijklmnopqrstuvwxyz at https://internal.example/path " + "x".repeat(200),
@@ -181,6 +203,13 @@ test("activity sanitizer removes likely credentials, links, and local paths and 
   assert.ok(safe.length <= 96);
   assert.doesNotMatch(safe, /alice|sk-proj|internal\.example/u);
   assert.match(safe, /\[local path\]|\[credential redacted\]|\[link redacted\]/u);
+});
+
+test("activity sanitizer keeps credential-bearing URLs on the link display contract", () => {
+  assert.equal(
+    sanitizeActivity("Fetching https://build-user:pass1234@example.com/private"),
+    "Fetching [link redacted]",
+  );
 });
 
 test("activity buffer deduplicates and holds only the latest rate-limited update", () => {

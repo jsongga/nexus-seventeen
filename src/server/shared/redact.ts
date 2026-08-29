@@ -7,6 +7,20 @@ const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/gu;
 const CONTROL_CHARACTER_EXCEPT_NEWLINE_PATTERN = /[\u0000-\u0009\u000b-\u001f\u007f]/gu;
 const REDACTION_MARKER_PATTERN = /^\[redacted:(?:token|bearer|pem|url-credential)\]/u;
 
+export interface CredentialRedactionMarkers {
+  readonly token: string;
+  readonly bearer: string;
+  readonly pem: string;
+  readonly urlCredential: string;
+}
+
+const PERSISTENCE_CREDENTIAL_MARKERS: CredentialRedactionMarkers = Object.freeze({
+  token: "[redacted:token]",
+  bearer: "[redacted:bearer]",
+  pem: "[redacted:pem]",
+  urlCredential: "[redacted:url-credential]",
+});
+
 function truncatePreservingRedactionMarkers(value: string, maxLength: number): string {
   const limit = Math.max(0, Math.trunc(maxLength));
   if (limit === 0) return "";
@@ -23,14 +37,21 @@ function redact(
   controlCharacters: RegExp,
   maxLength: number | undefined,
 ): string {
-  const redacted = value
-    .replace(controlCharacters, "")
-    .replace(PRIVATE_KEY_PATTERN, "[redacted:pem]")
-    .replace(URL_CREDENTIAL_PATTERN, "[redacted:url-credential]")
-    .replace(BEARER_PATTERN, "[redacted:bearer]")
-    .replace(PREFIXED_TOKEN_PATTERN, "[redacted:token]")
-    .replace(AWS_ACCESS_KEY_PATTERN, "[redacted:token]");
+  const redacted = redactRecognizedCredentials(value.replace(controlCharacters, ""));
   return maxLength === undefined ? redacted : truncatePreservingRedactionMarkers(redacted, maxLength);
+}
+
+/** Applies the repository's credential patterns with caller-selected display markers. */
+export function redactRecognizedCredentials(
+  value: string,
+  markers: CredentialRedactionMarkers = PERSISTENCE_CREDENTIAL_MARKERS,
+): string {
+  return value
+    .replace(PRIVATE_KEY_PATTERN, () => markers.pem)
+    .replace(URL_CREDENTIAL_PATTERN, () => markers.urlCredential)
+    .replace(BEARER_PATTERN, () => markers.bearer)
+    .replace(PREFIXED_TOKEN_PATTERN, () => markers.token)
+    .replace(AWS_ACCESS_KEY_PATTERN, () => markers.token);
 }
 
 /** Pattern-based only — a secret in an unrecognized format persists. Entropy scanning is out of scope (spec §Redact). */

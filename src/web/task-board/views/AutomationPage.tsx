@@ -35,6 +35,12 @@ import {
 
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 const machineVerifyExecutorValue = '__machine_verify__';
+const updatedDateTime = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 const stageLabels: Record<WorkItemStage, string> = {
   refinement: 'Refinement',
@@ -89,12 +95,8 @@ function authorityForRole(role: AgentRole): { label: string; detail: string } {
 }
 
 function formatUpdatedAt(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value));
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? value : updatedDateTime.format(parsed);
 }
 
 function eligibleAgentTypes(stage: WorkItemStage, agentTypes: AutomationAgentType[]): AutomationAgentType[] {

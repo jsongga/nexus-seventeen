@@ -4,10 +4,18 @@ import {
   type TaskPhaseStage,
   type TaskPhaseStatus,
 } from "#shared/task-board-contract";
+import { redactRecognizedCredentials, type CredentialRedactionMarkers } from "../../shared/redact.js";
 import type { RuntimeEvent } from "./adapter.js";
 
 const MAX_EVENT_CHARACTERS = 256 * 1024;
 const DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS = 160;
+const ACTIVITY_CREDENTIAL_MARKERS: CredentialRedactionMarkers = Object.freeze({
+  token: "[credential redacted]",
+  bearer: "[credential redacted]",
+  pem: "[credential redacted]",
+  urlCredential: "[link redacted]",
+});
+const ACTIVITY_LINK_PATTERN = /(?:\bhttps?:\/\/|\[link redacted\])(?:\[(?:credential|link) redacted\]|[^\s)>\]])*/giu;
 
 type JsonObject = Record<string, unknown>;
 
@@ -49,20 +57,6 @@ function estimateFromText(value: unknown): number | null {
     : null;
 }
 
-function sanitizePhaseTitle(value: string): string | null {
-  let result = value
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\bhttps?:\/\/[^\s)>\]]+/giu, "[link redacted]")
-    .replace(/\b(?:Bearer\s+)?(?:sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[baprs]-)[A-Za-z0-9._~+\/-]{8,}/gu, "[credential redacted]")
-    .replace(/(^|[\s("'`])\/(?:Users|home|var|tmp|private|opt|srv|workspaces?|repos?|mnt|Volumes)\/[^\s"'`),;]*/gu, "$1[local path]")
-    .replace(/\b[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]*/gu, "[local path]")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (result.length === 0) return null;
-  if (result.length > 120) result = `${result.slice(0, 119).trimEnd()}…`;
-  return result;
-}
-
 function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
   if (typeof value !== "string" || value.length > MAX_EVENT_CHARACTERS) return null;
   const matches = [...value.matchAll(/(?:^|\r?\n)STEWARD_PHASE_JSON=([^\r\n]{2,768})(?=\r?\n|$)/gu)];
@@ -85,7 +79,7 @@ function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
   ) {
     return null;
   }
-  const title = typeof item.title === "string" ? sanitizePhaseTitle(item.title) : null;
+  const title = typeof item.title === "string" ? sanitizeActivity(item.title, 120) : null;
   if (title === null) return null;
   return Object.freeze({
     key: item.key,
@@ -247,13 +241,14 @@ function positiveInteger(value: number, label: string, minimum: number): number 
   return value;
 }
 
-/** Defense-in-depth for fixed lifecycle labels; runtime payloads must never be passed here. */
+/** Defense-in-depth for bounded provider activity and phase telemetry. */
 export function sanitizeActivity(value: string, maximumCharacters = DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS): string | null {
   positiveInteger(maximumCharacters, "maximumCharacters", 32);
-  let result = value
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\bhttps?:\/\/[^\s)>\]]+/giu, "[link redacted]")
-    .replace(/\b(?:Bearer\s+)?(?:sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[baprs]-)[A-Za-z0-9._~+\/-]{8,}/gu, "[credential redacted]")
+  let result = redactRecognizedCredentials(
+    value.replace(/[\u0000-\u001f\u007f]+/gu, " "),
+    ACTIVITY_CREDENTIAL_MARKERS,
+  )
+    .replace(ACTIVITY_LINK_PATTERN, "[link redacted]")
     .replace(/(^|[\s("'`])\/(?:Users|home|var|tmp|private|opt|srv|workspaces?|repos?|mnt|Volumes)\/[^\s"'`),;]*/gu, "$1[local path]")
     .replace(/\b[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]*/gu, "[local path]")
     .replace(/\s+/gu, " ")

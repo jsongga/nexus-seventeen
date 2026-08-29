@@ -1,6 +1,6 @@
 # Steward agent system
 
-**Status** — catalog configured; execution pipeline dormant · **Author** — Cicada · **Date** — 2026-07-21 · **Scope** — company projects, reusable agent types, specialty skills, handoffs, evaluation, and cache-aware scheduling
+**Status** — catalog configured; execution pipeline active · **Author** — Cicada · **Date** — 2026-07-21 · **Scope** — company projects, reusable agent types, specialty skills, handoffs, evaluation, and cache-aware scheduling
 
 ## Summary
 
@@ -8,7 +8,7 @@ Cicada Steward gives a human one place to submit work, then uses short-lived age
 
 The checked-in catalog at [`config/company-bootstrap.json`](../config/company-bootstrap.json) defines six product-level projects, 18 fixed authority profiles, 16 reusable agent types, and the safe linear portion of the pipeline. [`scripts/reconcile-bootstrap.mjs`](../scripts/reconcile-bootstrap.mjs) applies it without duplicating existing records and stores one-time agent credentials in macOS Keychain.
 
-Saving this catalog does **not** start automation. The current automation registry is deliberately dormant: it records ownership for the UI but does not bind an agent type to a fixed profile, launch a worker, or evaluate a transition. That boundary is verified in [`tests/server/task-board/board.test.ts`](../tests/server/task-board/board.test.ts).
+Dormant automation configuration persists atomically without creating executable work ([`board.test.ts`](../tests/server/task-board/board.test.ts#L5052)). The active pipeline rejects unavailable executors during planning, then starts machine verification or selects a compatible agent from an enabled type during activation ([`runs.ts`](../src/server/task-board/collaborators/runs.ts#L1329-L1336), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L2073-L2205)).
 
 ## The four records
 

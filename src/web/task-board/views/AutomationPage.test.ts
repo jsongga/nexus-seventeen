@@ -69,4 +69,27 @@ describe('automation executor display', () => {
   it('maps the machine-verify selection sentinel to the saved configuration payload', () => {
     expect(automationExecutorFromValue('__machine_verify__')).toEqual({ kind: 'machine_verify' });
   });
+
+  it('renders an invalid saved timestamp verbatim', () => {
+    const configuration: AutomationConfiguration = {
+      id: 'company-default',
+      agentTypes: [],
+      stages: [],
+      version: 1,
+      createdAt: timestamp,
+      createdAtMs: Date.parse(timestamp),
+      updatedAt: 'invalid-timestamp',
+      updatedAtMs: Number.NaN,
+      updatedBy: 'human:operator',
+    };
+
+    const markup = renderToStaticMarkup(createElement(AutomationPage, {
+      client: {} as TaskBoardClient,
+      connected: true,
+      editorState: { saved: configuration, draft: configuration, remote: null },
+      onEditorStateChange: () => undefined,
+    }));
+
+    expect(markup).toContain('Updated invalid-timestamp by human:operator');
+  });
 });
