@@ -198,6 +198,27 @@ board (claims now carry `phase` + `crossRepoContext`). Limits: one level of
 decomposition; one repository per Project (→ 9.9); an abandoned Expand/Migrate
 leaves cancel as the only exit.
 
+**11. Codebase health — formatting, comments, shared plumbing** *(proposed
+2026-08-29; spec `docs/superpowers/specs/2026-08-29-codebase-health-audit.md`)* —
+prettier as one whitespace-only commit, then the adopted comment convention
+(`/** header */` + `/* —— Section —— */` banners, ratcheted by a tooling test,
+not eslint) over the nine highest-value files; one `server/shared/git.ts` for
+four byte-identical git factories; single-source credential recognition and the
+automation stage→role table; five cheap moves that delete redundant levels; two
+dead exports. Exit: the style test is green with an allowlist that only shrinks.
+
+**12. Layering — workflow orchestration out of persistence** *(proposed
+2026-08-29)* — break the `persistence/` ↔ `collaborators/` cycle (workflow.ts
+imports three collaborators; 18 of 24 import back), split `ProjectsCollaborator`
+and `validate.ts` behind unchanged façades. Exit: a dependency-direction test
+that fails on a back-import.
+
+**13. Web feature seams** *(proposed 2026-08-29)* — flatten
+`src/web/task-board/*` → `src/web/*` (21 import lines), move `BoardPage` to
+routing ownership, split `WorkItemDetail.tsx` along the seam its five test files
+already use, then slice model/views into feature folders. Exit: no file over
+~600 lines in `src/web`.
+
 ## Migration risks
 
 - **State-machine cutover (campaign 1)** is the contract quake: enums, SQL
