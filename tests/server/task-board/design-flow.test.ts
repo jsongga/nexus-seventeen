@@ -46,11 +46,14 @@ function designRecord(): DesignRecordDraft {
   };
 }
 
-function hazardousPlan(stageTemplate: WorkflowPlanDraft["nodes"][number]["stageTemplate"] = [
-  "implementation",
-  "testing",
-  "verification",
-]): WorkflowPlanDraft {
+function hazardousPlan(
+  projectId: string,
+  stageTemplate: WorkflowPlanDraft["nodes"][number]["stageTemplate"] = [
+    "implementation",
+    "testing",
+    "verification",
+  ],
+): WorkflowPlanDraft {
   return {
     objective: "Make hazardous delivery recoverable across every process boundary.",
     assumptions: ["The remote supports idempotency keys."],
@@ -64,6 +67,14 @@ function hazardousPlan(stageTemplate: WorkflowPlanDraft["nodes"][number]["stageT
     criterionChecks: [{
       criterion: "The runtime suite passes.",
       check: "npm run test:runtime",
+    }],
+    children: [{
+      key: "hazardous-delivery-consumer",
+      objective: "Implement the hazardous delivery consumer after design.",
+      projectId,
+      declaredScope: ["src/server", "tests/server"],
+      acceptanceCriteria: ["The consumer follows the crash-safe design."],
+      splitBy: "consumer",
     }],
     nodes: [{
       nodeId: "hazardous-delivery",
@@ -125,7 +136,7 @@ async function prepareHazardousPipeline(suffix: string, duplicateManagers = fals
   fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
     outcome: "completed",
     result: "The hazardous pipeline plan is ready.",
-    workflowPlan: hazardousPlan(),
+    workflowPlan: hazardousPlan(fixture.project.projectId),
   });
   const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
     (candidate) => candidate.state === "proposed",
@@ -156,7 +167,10 @@ test("hazardous pipeline confirmation enters designing with identity and a claim
     assert.ok(claim?.task);
     assert.equal(claim.context.intake, false);
     assert.equal((claim.context as { design?: boolean }).design, true);
-    assert.equal(claim.task.title, `Design workflow: ${hazardousPlan().objective}`);
+    assert.equal(
+      claim.task.title,
+      `Design workflow: ${hazardousPlan(fixture.project.projectId).objective}`,
+    );
     assert.match(claim.task.objective, /"tier":"hazardous"/u);
     assert.match(claim.task.objective, /"nodes":\[/u);
     assert.match(claim.task.objective, new RegExp(RAW_REQUEST, "u"));
@@ -506,7 +520,7 @@ test("hazardous non-pipeline confirmation remains parked with the pipeline-plan 
     fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The non-pipeline plan is ready.",
-      workflowPlan: hazardousPlan(["verification"]),
+      workflowPlan: hazardousPlan(fixture.project.projectId, ["verification"]),
     });
     const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
       (candidate) => candidate.state === "proposed",

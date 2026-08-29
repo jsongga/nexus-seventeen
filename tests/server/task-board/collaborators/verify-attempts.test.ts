@@ -179,7 +179,7 @@ async function attemptFixture(
   const verifyAttemptId = `verify-attempt-${suffix}`;
   const workspacePath = join(await mkdtemp(join(tmpdir(), "machine-verify-workspace-")), "checkout");
   store.transaction(() => {
-    store.db.prepare("UPDATE projects SET description=? WHERE project_id=?")
+    store.db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
       .run("/target/repository", fixture.project.projectId);
     store.db.prepare(`
       UPDATE work_items

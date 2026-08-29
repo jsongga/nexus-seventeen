@@ -23,6 +23,7 @@ import {
   TASK_STATUSES,
   WAKEUP_REASONS,
   WORK_ITEM_PRIORITIES,
+  WORK_ITEM_PHASES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
   WORK_ITEM_TERMINAL_STATES,
@@ -31,7 +32,7 @@ import {
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
 
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 export function workItemPriorityCases(indentation: string): string {
   return WORK_ITEM_PRIORITIES
@@ -87,7 +88,7 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
   created_by TEXT NOT NULL,
   confirmed_by TEXT,
   created_at TEXT NOT NULL,
-  confirmed_at TEXT,
+  confirmed_at TEXT, children TEXT NULL,
   UNIQUE(work_item_id, revision)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS work_nodes (
@@ -147,6 +148,14 @@ CREATE TABLE IF NOT EXISTS work_item_planning_tasks (
 ) STRICT;
 `;
 
+const WORK_ITEM_DEPENDENCIES_SCHEMA = `
+CREATE TABLE work_item_dependencies (
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  depends_on_work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  PRIMARY KEY(work_item_id, depends_on_work_item_id), CHECK(work_item_id <> depends_on_work_item_id)
+) STRICT, WITHOUT ROWID;
+`;
+
 const WORK_ITEM_ONBOARDING_SCHEMA = `
 CREATE TABLE IF NOT EXISTS work_item_onboarding_tasks (
   work_item_id TEXT PRIMARY KEY REFERENCES work_items(work_item_id),
@@ -188,16 +197,7 @@ CREATE TABLE IF NOT EXISTS work_item_design_tasks (
 ) STRICT;
 `;
 
-const LEDGER_OBSERVABILITY_SCHEMA = `
-CREATE TABLE IF NOT EXISTS park_records (
-  park_record_id TEXT PRIMARY KEY,
-  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
-  category TEXT NOT NULL CHECK (category IN (${sqlStringList(PARK_CATEGORIES)})),
-  reason TEXT NOT NULL,
-  parked_at TEXT NOT NULL,
-  resolved_at TEXT NULL,
-  resolution TEXT NULL CHECK (resolution IN (${sqlStringList(PARK_RESOLUTIONS)}))
-) STRICT;
+const NOTIFICATIONS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS notifications (
   notification_id TEXT PRIMARY KEY,
   sequence INTEGER NOT NULL UNIQUE,
@@ -210,6 +210,9 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at TEXT NULL,
   version INTEGER NOT NULL
 ) STRICT;
+`;
+
+const GATE_ACTIONS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS gate_actions (
   gate_action_id TEXT PRIMARY KEY,
   work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
@@ -222,6 +225,24 @@ CREATE TABLE IF NOT EXISTS gate_actions (
   note TEXT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
+`;
+
+const PARK_RECORDS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS park_records (
+  park_record_id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  category TEXT NOT NULL CHECK (category IN (${sqlStringList(PARK_CATEGORIES)})),
+  reason TEXT NOT NULL,
+  parked_at TEXT NOT NULL,
+  resolved_at TEXT NULL,
+  resolution TEXT NULL CHECK (resolution IN (${sqlStringList(PARK_RESOLUTIONS)}))
+) STRICT;
+`;
+
+const LEDGER_OBSERVABILITY_SCHEMA = `
+${PARK_RECORDS_SCHEMA}
+${NOTIFICATIONS_SCHEMA}
+${GATE_ACTIONS_SCHEMA}
 `;
 
 const MIGRATE_VERSION_1_TO_2 = `
@@ -379,6 +400,9 @@ CREATE TABLE work_items (
   project_target_mode TEXT NOT NULL CHECK (project_target_mode IN ('auto', 'explicit')),
   target_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
   resolved_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  parent_work_item_id TEXT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  phase TEXT NULL CHECK (phase IS NULL OR phase IN (${sqlStringList(WORK_ITEM_PHASES)})),
+  child_ordinal INTEGER NULL,
   pipeline_branch TEXT NULL,
   base_sha TEXT NULL,
   state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_ITEM_STATES)})),
@@ -478,38 +502,19 @@ INSERT INTO board_pause(pause_id, paused, reason, version, updated_at, updated_b
   VALUES ('board', 0, NULL, 1, '1970-01-01T00:00:00.000Z', 'system:steward-default');
 `;
 
-const SCHEMA = `
+const PROJECTS_SCHEMA = `
 CREATE TABLE projects (
   project_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
+  repo_path TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 ) STRICT;
+`;
 
-${WORK_ITEM_SCHEMA}
-${WORK_ITEM_TRANSITIONS_SCHEMA}
-
-${AUTOMATION_CONFIGURATION_SCHEMA}
-${BOARD_PAUSE_SCHEMA}
-${WORKFLOW_SCHEMA}
-${WORK_ITEM_PLANNING_SCHEMA}
-
-CREATE TABLE agents (
-  agent_id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
-  role TEXT NOT NULL CHECK (role IN (${sqlStringList(AGENT_ROLES)})),
-  area TEXT NOT NULL,
-  mission TEXT NOT NULL,
-  model TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  last_error TEXT,
-  version INTEGER NOT NULL CHECK (version >= 1),
-  created_at TEXT NOT NULL
-) STRICT;
-CREATE INDEX agents_project ON agents(project_id, created_at, agent_id);
-
+const TASKS_SCHEMA = `
 CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
@@ -550,6 +555,35 @@ CREATE INDEX tasks_agent ON tasks(assigned_agent_id, status, updated_at);
 CREATE UNIQUE INDEX tasks_one_review_stage
   ON tasks(parent_task_id, task_kind)
   WHERE parent_task_id IS NOT NULL AND task_kind IN ('manager_review', 'human_check');
+`;
+
+const SCHEMA = `
+${PROJECTS_SCHEMA}
+
+${WORK_ITEM_SCHEMA}
+${WORK_ITEM_TRANSITIONS_SCHEMA}
+${WORK_ITEM_DEPENDENCIES_SCHEMA}
+
+${AUTOMATION_CONFIGURATION_SCHEMA}
+${BOARD_PAUSE_SCHEMA}
+${WORKFLOW_SCHEMA}
+${WORK_ITEM_PLANNING_SCHEMA}
+
+CREATE TABLE agents (
+  agent_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  role TEXT NOT NULL CHECK (role IN (${sqlStringList(AGENT_ROLES)})),
+  area TEXT NOT NULL,
+  mission TEXT NOT NULL,
+  model TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  last_error TEXT,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX agents_project ON agents(project_id, created_at, agent_id);
+
+${TASKS_SCHEMA}
 
 ${WORK_ITEM_ONBOARDING_SCHEMA}
 
@@ -669,7 +703,7 @@ function migrateVersion12To13(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE; ${addClaimResult} PRAGMA user_version = 13; COMMIT;`);
 }
 
-function migrateVersion13To14(db: DatabaseSync): void {
+export function migrateVersion13To14(db: DatabaseSync): void {
   const hasModernTasks = hasColumns(db, "tasks", [
     "task_id", "project_id", "parent_task_id", "task_kind", "required_role", "requires_review",
     "title", "objective", "acceptance_criteria", "workspace_refs_json", "status",
@@ -1221,6 +1255,235 @@ function migrateVersion24To25(db: DatabaseSync): void {
   }
 }
 
+export function migrateVersion25To26(db: DatabaseSync): void {
+  const hasProjects = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'",
+  ).get() !== undefined;
+  const hasWorkItems = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_items'",
+  ).get() !== undefined;
+  // The v1/v2 regression fixtures intentionally contain only skeletal tables.
+  if (!hasProjects || !hasWorkItems) {
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      db.exec(WORK_ITEM_DEPENDENCIES_SCHEMA.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "));
+      const violations = db.prepare("PRAGMA foreign_key_check").all();
+      if (violations.length !== 0) {
+        throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      }
+      const integrity = db.prepare("PRAGMA quick_check").get();
+      if (integrity?.quick_check !== "ok") {
+        throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+      }
+      db.exec("PRAGMA user_version = 26; COMMIT;");
+      return;
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // Preserve the migration failure.
+      }
+      throw error;
+    }
+  }
+  const addPlanRevisionChildren = hasColumns(db, "plan_revisions", ["children"])
+    ? ""
+    : "ALTER TABLE plan_revisions ADD COLUMN children TEXT NULL;";
+  const backfillProjectRepoPath = !hasColumns(db, "projects", ["repo_path"]);
+  const backfillParentWorkItemId = !hasColumns(db, "work_items", ["parent_work_item_id"]);
+  const backfillWorkItemPhase = !hasColumns(db, "work_items", ["phase"]);
+  const backfillChildOrdinal = !hasColumns(db, "work_items", ["child_ordinal"]);
+  const hasWorkItemDependencies = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_dependencies'",
+  ).get() !== undefined;
+  const createWorkItemDependencies = hasWorkItemDependencies ? "" : WORK_ITEM_DEPENDENCIES_SCHEMA;
+  const hasLegacyQuotedTasks = String(db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
+  ).get()?.sql).startsWith('CREATE TABLE "tasks"');
+  const hasLegacyQuotedWakeups = String(db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'",
+  ).get()?.sql).startsWith('CREATE TABLE "wakeups"');
+  const canonicalizeLegacyTasks = hasLegacyQuotedTasks
+    ? `
+      CREATE TEMP TABLE tasks_v25_rows AS SELECT * FROM tasks ORDER BY rowid;
+      DROP TABLE tasks;
+      ${TASKS_SCHEMA}
+      INSERT INTO tasks(
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json, status,
+        assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      )
+      SELECT
+        task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
+        title, objective, acceptance_criteria, workspace_refs_json, status,
+        assigned_agent_id, assigned_role, expected_agent_minutes, agent_estimate_minutes,
+        estimate_recorded_at, order_key, started_at, ended_at, result, version, created_at, updated_at
+      FROM tasks_v25_rows
+      ORDER BY rowid;
+      DROP TABLE tasks_v25_rows;
+    `
+    : "";
+  const canonicalizeLegacyWakeups = hasLegacyQuotedWakeups
+    ? `
+      CREATE TEMP TABLE wakeups_v25_rows AS SELECT * FROM wakeups ORDER BY rowid;
+      DROP TABLE wakeups;
+      ${WAKEUP_SCHEMA}
+      INSERT INTO wakeups(
+        wakeup_id, project_id, agent_id, reason, source_key, task_id, question_id,
+        detail, created_by, created_at, claimed_at, run_id
+      )
+      SELECT
+        wakeup_id, project_id, agent_id, reason, source_key, task_id, question_id,
+        detail, created_by, created_at, claimed_at, run_id
+      FROM wakeups_v25_rows
+      ORDER BY rowid;
+      DROP TABLE wakeups_v25_rows;
+    `
+    : "";
+  const alreadyVersion26 = hasColumns(db, "projects", ["repo_path"])
+    && hasColumns(db, "work_items", ["parent_work_item_id", "phase", "child_ordinal"])
+    && hasColumns(db, "plan_revisions", ["children"])
+    && hasWorkItemDependencies
+    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_items'").get()?.sql)
+      .includes("'coordinating'")
+    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'").get()?.sql)
+      .includes("'phase_ready'")
+    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gate_actions'").get()?.sql)
+      .includes("'deploy_attest'")
+    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='park_records'").get()?.sql)
+      .includes("'child_failed'");
+  if (alreadyVersion26) {
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      const violations = db.prepare("PRAGMA foreign_key_check").all();
+      if (violations.length !== 0) {
+        throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      }
+      const integrity = db.prepare("PRAGMA quick_check").get();
+      if (integrity?.quick_check !== "ok") {
+        throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+      }
+      db.exec("PRAGMA user_version = 26; COMMIT;");
+      return;
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // Preserve the migration failure.
+      }
+      throw error;
+    }
+  }
+  db.exec("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON; BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      ${addPlanRevisionChildren}
+      ${canonicalizeLegacyTasks}
+      ${canonicalizeLegacyWakeups}
+      ALTER TABLE work_item_transitions RENAME TO work_item_transitions_v25;
+      DROP INDEX work_items_updated;
+      DROP INDEX work_items_display_order;
+      DROP INDEX work_items_unarchived_display_order;
+      DROP TRIGGER work_items_original_request_immutable;
+      ALTER TABLE work_items RENAME TO work_items_v25;
+      ALTER TABLE notifications RENAME TO notifications_v25;
+      ALTER TABLE gate_actions RENAME TO gate_actions_v25;
+      ALTER TABLE park_records RENAME TO park_records_v25;
+      ALTER TABLE projects RENAME TO projects_v25;
+
+      ${PROJECTS_SCHEMA}
+      INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
+      SELECT project_id, name, description, ${backfillProjectRepoPath ? "description" : "repo_path"},
+        version, created_at, updated_at
+      FROM projects_v25
+      ORDER BY rowid;
+
+      ${WORK_ITEM_SCHEMA}
+      INSERT INTO work_items(
+        work_item_id, original_request, refined_objective, priority,
+        project_target_mode, target_project_id, resolved_project_id,
+        parent_work_item_id, phase, child_ordinal, pipeline_branch, base_sha,
+        state, current_stage, created_by, idempotency_key, request_hash,
+        version, created_at, updated_at, ended_at, cancelled_reason, archived_at
+      )
+      SELECT
+        work_item_id, original_request, refined_objective, priority,
+        project_target_mode, target_project_id, resolved_project_id,
+        ${backfillParentWorkItemId ? "NULL" : "parent_work_item_id"},
+        ${backfillWorkItemPhase ? "NULL" : "phase"},
+        ${backfillChildOrdinal ? "NULL" : "child_ordinal"}, pipeline_branch, base_sha,
+        state, current_stage, created_by, idempotency_key, request_hash,
+        version, created_at, updated_at, ended_at, cancelled_reason, archived_at
+      FROM work_items_v25
+      ORDER BY rowid;
+
+      ${WORK_ITEM_TRANSITIONS_SCHEMA}
+      INSERT INTO work_item_transitions(
+        work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
+      )
+      SELECT work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
+      FROM work_item_transitions_v25
+      ORDER BY work_item_id, sequence;
+
+      ${PARK_RECORDS_SCHEMA}
+      INSERT INTO park_records(
+        park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      )
+      SELECT park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
+      FROM park_records_v25
+      ORDER BY rowid;
+
+      ${NOTIFICATIONS_SCHEMA}
+      INSERT INTO notifications(
+        notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      )
+      SELECT notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
+        summary, created_at, read_at, version
+      FROM notifications_v25
+      ORDER BY rowid;
+
+      ${GATE_ACTIONS_SCHEMA}
+      INSERT INTO gate_actions(
+        gate_action_id, work_item_id, gate, actor_id, plan_revision_id,
+        verified_sha, merge_sha, ref_id, note, created_at
+      )
+      SELECT gate_action_id, work_item_id, gate, actor_id, plan_revision_id,
+        verified_sha, merge_sha, ref_id, note, created_at
+      FROM gate_actions_v25
+      ORDER BY rowid;
+
+      ${createWorkItemDependencies}
+
+      DROP TABLE work_item_transitions_v25;
+      DROP TABLE park_records_v25;
+      DROP TABLE notifications_v25;
+      DROP TABLE gate_actions_v25;
+      DROP TABLE work_items_v25;
+      DROP TABLE projects_v25;
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+    }
+    const integrity = db.prepare("PRAGMA quick_check").get();
+    if (integrity?.quick_check !== "ok") {
+      throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+    }
+    db.exec("PRAGMA user_version = 26; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  } finally {
+    db.exec("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON;");
+  }
+}
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1527,6 +1790,8 @@ export class TaskBoardStore {
         // Onboarding work-item links are added below.
       } else if (version === 24) {
         // Pen-document storage is retired below.
+      } else if (version === 25) {
+        // Work-item decomposition and durable project repository paths are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -1553,6 +1818,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 22) migrateVersion22To23(db);
       if (version >= 1 && version <= 23) migrateVersion23To24(db);
       if (version >= 1 && version <= 24) migrateVersion24To25(db);
+      if (version >= 1 && version <= 25) migrateVersion25To26(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

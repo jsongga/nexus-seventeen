@@ -40,6 +40,9 @@ function workItem(overrides: Partial<BoardWorkItem> = {}): BoardWorkItem {
     archivedAt: null,
     archivedAtMs: null,
     ...overrides,
+    parentWorkItemId: overrides.parentWorkItemId ?? null,
+    phase: overrides.phase ?? null,
+    childOrdinal: overrides.childOrdinal ?? null,
   };
 }
 
@@ -230,7 +233,7 @@ describe('default observability view', () => {
         heartbeatAt: '2026-08-21T11:58:31.000Z',
         heartbeatAtMs: Date.parse('2026-08-21T11:58:31.000Z'),
       }),
-      projects: [{ id: 'project-one', name: 'Project one', description: null, createdAt: now, createdAtMs: nowMs, updatedAt: now, updatedAtMs: nowMs }],
+      projects: [{ id: 'project-one', name: 'Project one', description: null, repoPath: '/repos/project-one', createdAt: now, createdAtMs: nowMs, updatedAt: now, updatedAtMs: nowMs }],
       selected: false,
       onSelect: vi.fn(),
       buttonRef: vi.fn(),

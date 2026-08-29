@@ -62,7 +62,7 @@ async function fixtureRepo(verifyPasses: boolean): Promise<string> {
 function updateProjectPath(fixture: Fixture, repositoryPath: string): void {
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET description=? WHERE project_id=?")
+    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
       .run(repositoryPath, fixture.project.projectId);
   } finally {
     db.close();

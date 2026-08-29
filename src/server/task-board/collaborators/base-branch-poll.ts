@@ -61,7 +61,7 @@ export class BaseBranchPollCollaborator {
         item.pipeline_branch,
         item.base_sha,
         item.resolved_project_id AS project_id,
-        project.description AS repo_path
+        project.repo_path
       FROM work_items item
       LEFT JOIN projects project ON project.project_id=item.resolved_project_id
       WHERE item.state='final_approval' AND item.pipeline_branch IS NOT NULL

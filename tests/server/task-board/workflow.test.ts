@@ -114,7 +114,7 @@ async function reviewFixture(
     token: `review-verifier-token-${suffix}-0123456789abcdef`,
   });
   const db = new DatabaseSync(fixture.path);
-  db.prepare("UPDATE projects SET description=? WHERE project_id=?").run(repo, fixture.project.projectId);
+  db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
   db.close();
   completeTask(fixture.board, fixture.project.projectId, fixture.engineer.agentId, fixture.engineer.role, `${suffix}-engineer`);
   completeTask(fixture.board, fixture.project.projectId, verifier.agentId, verifier.role, `${suffix}-verifier`);

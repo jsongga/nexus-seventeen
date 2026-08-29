@@ -295,11 +295,15 @@ function planFromRow(row: Row): PlanRevision {
   const mechanicalPortions = optionalJsonList<string>(row.mechanical_portions_json);
   const blockingQuestions = optionalJsonList<{ readonly question: string; readonly recommendedDefault: string }>(row.blocking_questions_json);
   const criterionChecks = optionalJsonList<{ readonly criterion: string; readonly check: string }>(row.criterion_checks_json);
+  const children = row.children === null
+    ? null
+    : Object.freeze(json<NonNullable<PlanRevision["children"]>>(row.children));
   return Object.freeze({
     apiVersion: "steward.task-board/v1", planRevisionId: String(row.plan_revision_id),
     workItemId: String(row.work_item_id), revision: Number(row.revision), objective: String(row.objective),
     assumptions: Object.freeze(json<string[]>(row.assumptions_json)),
     acceptanceCriteria: Object.freeze(json<string[]>(row.acceptance_criteria_json)),
+    children,
     ...(row.change_shape === null ? {} : { changeShape: String(row.change_shape) as NonNullable<PlanRevision["changeShape"]> }),
     ...(row.tier === null ? {} : { tier: String(row.tier) as NonNullable<PlanRevision["tier"]> }),
     ...(declaredScope === undefined ? {} : { declaredScope }),
@@ -453,8 +457,8 @@ export class TransparentWorkflow {
           acceptance_criteria_json, change_shape, tier, declared_scope_json, non_goals_json,
           mechanical_portions_json, blocking_questions_json, criterion_checks_json,
           project_id, skill_digests_json, state, created_by,
-          confirmed_by, created_at, confirmed_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          confirmed_by, created_at, confirmed_at, children
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         planId,
         workItemId,
@@ -476,6 +480,7 @@ export class TransparentWorkflow {
         null,
         createdAt,
         null,
+        raw.children === undefined ? null : JSON.stringify(raw.children),
       );
       for (const node of nodes) {
         const storedId = storedIds.get(node.nodeId)!;
@@ -516,7 +521,7 @@ export class TransparentWorkflow {
         plan.declared_scope_json,
         item.pipeline_branch,
         item.base_sha,
-        project.description AS repo_path
+        project.repo_path
       FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
@@ -567,7 +572,7 @@ export class TransparentWorkflow {
         plan.mechanical_portions_json,
         item.pipeline_branch,
         item.base_sha,
-        project.description AS repo_path,
+        project.repo_path,
         (SELECT payload_json FROM design_records design
           WHERE design.work_item_id=plan.work_item_id AND design.plan_revision_id=plan.plan_revision_id
         ) AS design_record_json
@@ -693,7 +698,7 @@ export class TransparentWorkflow {
         (pipelineShape === "v2" && !verificationStageUsesEnabledAgentType(this.db)))
     ) throw pipelineExecutorDrift();
     if (!hasPipelineShape) return null;
-    const project = this.db.prepare("SELECT description FROM projects WHERE project_id=?").get(String(row.project_id));
+    const project = this.db.prepare("SELECT repo_path FROM projects WHERE project_id=?").get(String(row.project_id));
     if (project === undefined) {
       throw new TaskBoardError(
         409,
@@ -701,7 +706,7 @@ export class TransparentWorkflow {
         "The pipeline repository is unavailable",
       );
     }
-    return pipelineBaseSha(String(project.description), this.git);
+    return pipelineBaseSha(String(project.repo_path), this.git);
   }
 
   confirm(

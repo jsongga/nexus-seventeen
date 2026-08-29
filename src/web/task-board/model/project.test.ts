@@ -6,6 +6,7 @@ const project: RawProject = {
   projectId: 'project-one',
   name: 'Project one',
   description: 'A test project.',
+  repoPath: '/repos/project-one',
   version: 1,
   createdAt: '2026-08-09T10:00:00.000Z',
   createdAtMs: Date.parse('2026-08-09T10:00:00.000Z'),

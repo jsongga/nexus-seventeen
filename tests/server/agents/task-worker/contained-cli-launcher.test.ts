@@ -27,8 +27,10 @@ import {
   STAGE_HANDOFF_OUTCOMES,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
+  WORK_ITEM_PHASES,
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
+import { ContractValidationError, parseWorkflowPlanDraft } from "#shared/task-board-contract/validate";
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
@@ -36,6 +38,43 @@ import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
 
 const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
+
+function jsonSchemaAccepts(schemaValue: unknown, value: unknown): boolean {
+  if (schemaValue === null || typeof schemaValue !== "object" || Array.isArray(schemaValue)) return false;
+  const schema = schemaValue as Record<string, unknown>;
+  if (Array.isArray(schema.anyOf)) return schema.anyOf.some((candidate) => jsonSchemaAccepts(candidate, value));
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => Object.is(candidate, value))) return false;
+  const acceptedTypes = Array.isArray(schema.type) ? schema.type : [schema.type];
+  const actualType = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  if (schema.type !== undefined && !acceptedTypes.includes(actualType)) return false;
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) return false;
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return false;
+    if (typeof schema.pattern === "string" && !(new RegExp(schema.pattern, "u")).test(value)) return false;
+  }
+  if (typeof value === "number") {
+    if (actualType === "number" && acceptedTypes.includes("integer") && !Number.isInteger(value)) return false;
+    if (typeof schema.minimum === "number" && value < schema.minimum) return false;
+    if (typeof schema.maximum === "number" && value > schema.maximum) return false;
+    if (typeof schema.multipleOf === "number" && value % schema.multipleOf !== 0) return false;
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) return false;
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) return false;
+    if (schema.uniqueItems === true && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) return false;
+    if (schema.items !== undefined && value.some((item) => !jsonSchemaAccepts(schema.items, item))) return false;
+  }
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    const properties = schema.properties as Record<string, unknown> | undefined;
+    if (Array.isArray(schema.required) && schema.required.some((field) => typeof field !== "string" || !(field in object))) return false;
+    if (schema.additionalProperties === false && properties !== undefined && Object.keys(object).some((field) => !(field in properties))) return false;
+    if (properties !== undefined && Object.entries(object).some(([field, item]) => (
+      properties[field] !== undefined && !jsonSchemaAccepts(properties[field], item)
+    ))) return false;
+  }
+  return true;
+}
 
 function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
   return agentPrompt(request, PROMPTS);
@@ -123,6 +162,71 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern, IDENTIFIER_PATTERN);
 });
 
+test("workflow plan child JSON schema stays in parity with the draft validator", () => {
+  const children = [{
+    key: "expand-provider",
+    objective: "Publish the expanded provider interface.",
+    projectId: "provider-project",
+    declaredScope: ["src/provider/interface.ts"],
+    acceptanceCriteria: ["The expanded interface is verified."],
+    phase: "expand",
+    dependsOn: [],
+    splitBy: "phase",
+  }, {
+    key: "migrate-consumer",
+    objective: "Migrate the consumer to the expanded interface.",
+    projectId: "consumer-project",
+    declaredScope: ["src/consumer"],
+    acceptanceCriteria: ["The consumer uses the expanded interface."],
+    phase: "migrate",
+    dependsOn: ["expand-provider"],
+    splitBy: "consumer",
+  }, {
+    key: "contract-provider",
+    objective: "Remove the old provider interface.",
+    projectId: "provider-project",
+    declaredScope: ["src/provider/interface.ts"],
+    acceptanceCriteria: ["The old interface is removed."],
+    phase: "contract",
+    dependsOn: ["migrate-consumer"],
+    splitBy: "phase",
+  }] as const;
+  const draft = {
+    objective: "Coordinate a phased provider migration.",
+    assumptions: [],
+    acceptanceCriteria: ["Every phase is verified."],
+    changeShape: "blast_radius",
+    tier: "standard",
+    declaredScope: ["src"],
+    nonGoals: [],
+    mechanicalPortions: [],
+    blockingQuestions: [],
+    criterionChecks: [],
+    nodes: [{
+      nodeId: "coordinate-provider-migration",
+      title: "Coordinate provider migration",
+      objective: "Keep the parent plan available for confirmation.",
+      acceptanceCriteria: ["The declaration is durable."],
+      dependencyNodeIds: [],
+      stageTemplate: ["implementation", "testing", "verification"],
+    }],
+    children,
+  } as const;
+  const workflowSchema = RESULT_SCHEMA.properties.workflowPlan.anyOf[1];
+  const childSchema = workflowSchema.properties.children.items;
+
+  assert.equal(jsonSchemaAccepts(workflowSchema, draft), true);
+  assert.deepEqual(parseWorkflowPlanDraft(draft).children, children);
+  assert.deepEqual(childSchema.required, ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"]);
+  assert.deepEqual(childSchema.properties.phase.enum, WORK_ITEM_PHASES);
+  assert.deepEqual(childSchema.properties.splitBy.enum, ["consumer", "phase"]);
+  assert.equal(childSchema.properties.dependsOn.uniqueItems, true);
+  assert.throws(
+    () => parseWorkflowPlanDraft({ ...draft, children: undefined }),
+    ContractValidationError,
+  );
+});
+
 test("structured provider outcomes accept and thread an optional bounded gap report", () => {
   const gapReport = "# Gaps\n\n- Branch protection is deferred.";
   const outcome = structuredOutcome({
@@ -187,6 +291,10 @@ test("manager planning prompt branches on intake rather than the task title", ()
   assert.match(
     intakePrompt,
     /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing","verification"\] \(Implement, machine Verify, then an independent review\)/u,
+  );
+  assert.match(
+    intakePrompt,
+    /For blast_radius plans, include children with key, objective, projectId, declaredScope, acceptanceCriteria, splitBy, and optional phase and dependsOn/u,
   );
   assert.match(intakePrompt, /Apply the reversibility test/u);
 });

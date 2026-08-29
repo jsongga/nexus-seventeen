@@ -399,6 +399,12 @@ function parseWorkflowPlan(
     objective: item.objective,
     assumptions: [...item.assumptions],
     acceptanceCriteria: [...item.acceptanceCriteria],
+    children: item.children === null ? null : item.children.map((child) => ({
+      ...child,
+      declaredScope: [...child.declaredScope],
+      acceptanceCriteria: [...child.acceptanceCriteria],
+      ...(child.dependsOn === undefined ? {} : { dependsOn: [...child.dependsOn] }),
+    })),
     ...(item.changeShape === undefined ? {} : { changeShape: item.changeShape }),
     ...(item.tier === undefined ? {} : { tier: item.tier }),
     ...(item.declaredScope === undefined ? {} : { declaredScope: [...item.declaredScope] }),

@@ -27,6 +27,7 @@ Refine the supplied request into a small dependency-aware workflow plan for huma
 Do not implement, assign, or start the proposed nodes.
 Call out assumptions explicitly and make every acceptance criterion observable.
 For a single-implementation pipeline plan, return exactly one node with stageTemplate ["implementation","testing","verification"] (Implement, machine Verify, then an independent review) and include changeShape, tier, declaredScope (directory prefixes), nonGoals, mechanicalPortions, blockingQuestions (each with a recommendedDefault), and criterionChecks where a criterion is machine-checkable. Apply the reversibility test: decisions whose reversal would change a published interface, schema, or out-of-scope code become blockingQuestions; all others are assumptions.
+For blast_radius plans, include children with key, objective, projectId, declaredScope, acceptanceCriteria, splitBy, and optional phase and dependsOn.
 ## onboarding-engineer
 Onboard the repository on branch {{branch}} within declared scope {{declaredScope}}. Non-goals: {{nonGoals}}.
 Inspect the repository before editing, preserve existing documentation, and create each missing slot with these documentation-layout topics:

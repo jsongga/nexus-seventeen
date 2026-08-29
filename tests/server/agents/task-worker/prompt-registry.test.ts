@@ -16,7 +16,7 @@ const SHIPPED_PROMPT_DIGESTS = {
   "hazardous-review": "sha256:81eb184b03e693fb0411142dd93e3215bb2c5b302b994e9462094029efc64c99",
   "header": "sha256:300f504780744eb8eb9d30d4d3a738335b00a25e32bf2ab5880d8d7a1c950c9d",
   "intake-return": "sha256:0c2e0f346da40f900e8614d35ee410508c241dcf6dd5a1db097ebd3aea0afc7a",
-  "intake": "sha256:c735f9a0561be5709917c8c1fb1c41e4478d66dfea7a287dd7fc4d65dd408fbd",
+  "intake": "sha256:8466f6cb113c5face901e91b171d31f36dd9917fa555f538cd954f71303a2c04",
   "onboarding-engineer": "sha256:37327052c3ad5eae5e668325c76a88b381ae130b44984e47bd0f15bc3b826bb1",
   "onboarding-intake": "sha256:7f470fffbe0b0e43868b6bbb9a92b13d73fc8c5363f0ab471589ca2cf84a2714",
   "oversight": "sha256:e59821fadd061f634019447413fa2a32043bc9f677faa2b96af67f3f96115826",
@@ -75,7 +75,7 @@ test("promptsSha is independent of section order and preserves the shipped diges
   assert.equal(PromptRegistry.loadSync(secondFile).promptsSha, PromptRegistry.loadSync(firstFile).promptsSha);
   assert.equal(
     PromptRegistry.loadSync(resolve("config/prompts.md")).promptsSha,
-    "sha256:e0e0c2a508653508918a5aa6453ddbe3728849a2d77afbea6f9e82d78cf9e0fb",
+    "sha256:ec906621465482a49fc85132f797b6d4a056c8c502dcf614f4c757b2e836cc33",
   );
   assert.deepEqual(
     Object.fromEntries([...parseSections(source, {})].map(([name, content]) => [

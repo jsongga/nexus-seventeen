@@ -316,7 +316,7 @@ test("settlement accepts the server-redacted result while sending the original r
 });
 
 test("typed correctable settle 400s are distinguished from poisoned HTTP failures", async () => {
-  for (const code of ["WORKFLOW_PLAN_REQUIRED", "ONBOARDING_DELIVERABLES_MISSING"] as const) {
+  for (const code of ["WORKFLOW_PLAN_REQUIRED", "WORKFLOW_INVALID", "ONBOARDING_DELIVERABLES_MISSING"] as const) {
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,

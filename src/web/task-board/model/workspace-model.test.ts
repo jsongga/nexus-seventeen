@@ -36,6 +36,7 @@ const project: BoardProject = {
   id: 'project-one',
   name: 'Platform',
   description: 'Keep customer workflows dependable.',
+  repoPath: '/repos/platform',
   createdAt: '2026-07-19T10:00:00.000Z',
   createdAtMs: Date.parse('2026-07-19T10:00:00.000Z'),
   updatedAt: '2026-07-19T10:10:00.000Z',

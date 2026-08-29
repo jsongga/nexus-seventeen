@@ -17,6 +17,7 @@ import {
   STAGE_HANDOFF_OUTCOMES,
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
+  WORK_ITEM_PHASES,
   WORKFLOW_STAGES,
   type AgentRole,
 } from "#shared/task-board-contract";
@@ -227,6 +228,31 @@ export const RESULT_SCHEMA = Object.freeze({
                   check: { type: "string", minLength: 1, maxLength: 512, pattern: "^[^\\u0000-\\u001f\\u007f]+$" },
                 },
                 required: ["criterion", "check"],
+              },
+            },
+            children: {
+              type: "array", maxItems: 64, items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  key: { type: "string", pattern: IDENTIFIER_PATTERN },
+                  objective: { type: "string", minLength: 1, maxLength: 4_000 },
+                  projectId: { type: "string", pattern: IDENTIFIER_PATTERN },
+                  declaredScope: {
+                    type: "array", minItems: 1, maxItems: 64,
+                    items: { type: "string", minLength: 1, maxLength: 256, pattern: "^(?!/)(?!.*\\.\\.).+$" },
+                  },
+                  acceptanceCriteria: {
+                    type: "array", minItems: 1, maxItems: 64,
+                    items: { type: "string", minLength: 1, maxLength: 2_000 },
+                  },
+                  phase: { type: "string", enum: WORK_ITEM_PHASES },
+                  dependsOn: {
+                    type: "array", maxItems: 64, uniqueItems: true,
+                    items: { type: "string", pattern: IDENTIFIER_PATTERN },
+                  },
+                  splitBy: { type: "string", enum: ["consumer", "phase"] },
+                },
+                required: ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"],
               },
             },
             nodes: {

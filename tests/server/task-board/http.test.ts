@@ -559,12 +559,28 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
   const workItem = fixture.board.createWorkItem(workItemRequest({
     projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
   }), "http-confirm-validation-0001").workItem;
+  const children = [{
+    key: "http-provider",
+    objective: "Keep the provider declaration visible over HTTP.",
+    projectId: fixture.project.projectId,
+    declaredScope: ["src/provider"],
+    acceptanceCriteria: ["The provider declaration round-trips."],
+  }, {
+    key: "http-consumer",
+    objective: "Keep the consumer declaration visible over HTTP.",
+    projectId: fixture.project.projectId,
+    declaredScope: ["src/consumer"],
+    acceptanceCriteria: ["The consumer declaration round-trips."],
+    dependsOn: ["http-provider"],
+  }];
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
     projectId: fixture.project.projectId,
     objective: "Validate the plan confirmation request at the HTTP boundary.",
     assumptions: [],
     acceptanceCriteria: ["Invalid request bodies return structured client errors."],
+    changeShape: "feature",
+    children,
     skillIds: [],
     nodes: [{
       nodeId: "http-confirm-validation",
@@ -588,6 +604,20 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
   });
   const address = await service.start();
   try {
+    const workflowResponse = await request(
+      address.url,
+      `/v1/projects/${fixture.project.projectId}/workflow`,
+      "GET",
+      HUMAN_TOKEN,
+    );
+    assert.equal(workflowResponse.status, 200);
+    const workflowBody = await workflowResponse.json() as {
+      workflow: { plans: Array<{ planRevisionId: string; children?: unknown }> };
+    };
+    assert.deepEqual(
+      workflowBody.workflow.plans.find((plan) => plan.planRevisionId === planRevisionId)?.children,
+      children,
+    );
     const cases = [
       { body: null, field: "Plan confirmation" },
       { body: {}, field: "expectedState" },

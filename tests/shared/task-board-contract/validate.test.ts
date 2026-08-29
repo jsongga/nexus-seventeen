@@ -98,6 +98,9 @@ function workItemEntity(state: string): Record<string, unknown> {
     taskType: "standard",
     projectTarget: { mode: "auto" },
     resolvedProjectId: null,
+    parentWorkItemId: null,
+    phase: null,
+    childOrdinal: null,
     planningTaskId: null,
     state,
     currentStage: "refinement",
@@ -353,6 +356,44 @@ test("the browser profile buckets state enums and preserves unknown work-item ta
   }, "workItems[0]", browserProfile), /priority has an unsupported value/u);
 });
 
+test("the browser profile buckets future declared-child phases while strict plan parsing rejects them", () => {
+  const revision = {
+    apiVersion: TASK_BOARD_API_VERSION,
+    planRevisionId: "plan-future-child-phase",
+    workItemId: "work-item-one",
+    revision: 1,
+    objective: "Keep a future phased plan visible in an older browser.",
+    assumptions: [],
+    acceptanceCriteria: ["The plan remains visible."],
+    changeShape: "blast_radius",
+    tier: "standard",
+    declaredScope: ["src"],
+    nonGoals: [],
+    mechanicalPortions: [],
+    blockingQuestions: [],
+    criterionChecks: [],
+    children: [{
+      key: "future-child",
+      objective: "Apply the future phase.",
+      projectId: "project-one",
+      declaredScope: ["src/future"],
+      acceptanceCriteria: ["The future phase is represented."],
+      phase: "future_phase",
+      splitBy: "phase",
+    }],
+    projectId: "project-one",
+    skillDigests: {},
+    state: "proposed",
+    createdBy: "agent:planner",
+    confirmedBy: null,
+    createdAt: NOW,
+    confirmedAt: null,
+  };
+
+  assert.equal(parsePlanEntity(revision, "plan", browserProfile).children?.[0]?.phase, "unrecognized");
+  assert.throws(() => parsePlanEntity(revision, "plan"), /children\[0\]\.phase has an unsupported value/u);
+});
+
 test("work-item detail transitions are accepted in both profiles and remain strict", () => {
   const transition = {
     fromState: null,
@@ -600,6 +641,13 @@ test("plan-record enums, revision entities, and verify-attempt types expose the 
     mechanicalPortions: ["Add nullable schema columns."],
     blockingQuestions: [{ question: "Keep legacy plans?", recommendedDefault: "Yes." }],
     criterionChecks: [{ criterion: "The suite passes.", check: "npm test" }],
+    children: [{
+      key: "provider-child",
+      objective: "Publish the provider change.",
+      projectId: "project-one",
+      declaredScope: ["src/provider"],
+      acceptanceCriteria: ["The provider change is verified."],
+    }],
     projectId: "project-one",
     skillDigests: {},
     state: "rejected",

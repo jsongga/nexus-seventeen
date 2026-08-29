@@ -38,6 +38,34 @@ function postWorkItem(
   return board.createWorkItemAndStartPlanning(request, idempotencyKey);
 }
 
+test("projects persist an explicit repo path and default legacy requests to description", async () => {
+  const fixture = await boardFixture();
+  try {
+    assert.equal(fixture.project.repoPath, fixture.project.description);
+    const project = fixture.board.createProject({
+      name: "Provider API",
+      description: "Owns the stable provider interface.",
+      repoPath: "/repos/provider-api",
+    });
+    assert.equal(project.description, "Owns the stable provider interface.");
+    assert.equal(project.repoPath, "/repos/provider-api");
+    assert.equal(
+      fixture.board.listProjects().find((candidate) => candidate.projectId === project.projectId)?.repoPath,
+      "/repos/provider-api",
+    );
+    const workItem = fixture.board.createWorkItem(workItemRequest({
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    }), "repo-path-work-item").workItem;
+    assert.deepEqual({
+      parentWorkItemId: workItem.parentWorkItemId,
+      phase: workItem.phase,
+      childOrdinal: workItem.childOrdinal,
+    }, { parentWorkItemId: null, phase: null, childOrdinal: null });
+  } finally {
+    fixture.board.close();
+  }
+});
+
 async function installV24Schema(path: string): Promise<void> {
   const { DatabaseSync } = await import("node:sqlite");
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -2402,6 +2430,161 @@ test("a completed planning run missing workflowPlan remains active and accepts a
   }
 });
 
+test("planning settlement defers auto-target project context, persists children, and corrects explicit mismatches", async () => {
+  const fixture = await boardFixture();
+  let board: TaskBoard | null = fixture.board;
+  try {
+    board.updateAutomationConfiguration(automationConfigurationRequest({
+      agentTypes: [{
+        agentTypeId: "decomposition-verifier",
+        name: "Decomposition verifier",
+        description: "Verifies decomposition planning nodes.",
+        role: "verifier",
+        supplementalInstructions: "Verify the planned decomposition.",
+        skillIds: [],
+        evaluatorProfile: "tests",
+        enabled: true,
+      }],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "decomposition-verifier" },
+      }),
+    }));
+    const consumer = board.createProject({
+      name: "Decomposition consumer",
+      description: "Consumes the provider interface.",
+      repoPath: "/repos/decomposition-consumer",
+    });
+    const children = [{
+      key: "expand-provider",
+      objective: "Publish the expanded provider interface.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/provider/interface.ts"],
+      acceptanceCriteria: ["The expanded interface is verified."],
+      phase: "expand" as const,
+      dependsOn: [],
+      splitBy: "phase" as const,
+    }, {
+      key: "migrate-consumer",
+      objective: "Migrate the consumer to the expanded interface.",
+      projectId: consumer.projectId,
+      declaredScope: ["src/consumer"],
+      acceptanceCriteria: ["The consumer uses the expanded interface."],
+      phase: "migrate" as const,
+      dependsOn: ["expand-provider"],
+      splitBy: "consumer" as const,
+    }, {
+      key: "contract-provider",
+      objective: "Remove the old provider interface.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/provider/interface.ts"],
+      acceptanceCriteria: ["The old interface is removed."],
+      phase: "contract" as const,
+      dependsOn: ["migrate-consumer"],
+      splitBy: "phase" as const,
+    }];
+    const workflowPlan = {
+      objective: "Coordinate a phased cross-repository change.",
+      assumptions: [],
+      acceptanceCriteria: ["Every declared child is verified."],
+      changeShape: "blast_radius" as const,
+      tier: "standard" as const,
+      declaredScope: ["src"],
+      nonGoals: [],
+      mechanicalPortions: [],
+      blockingQuestions: [],
+      criterionChecks: [],
+      nodes: [{
+        nodeId: "coordinate-decomposition",
+        title: "Coordinate decomposition",
+        objective: "Keep the parent declaration ready for confirmation.",
+        acceptanceCriteria: ["The declaration remains byte-equal."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification" as const],
+      }],
+      children,
+    };
+
+    const automatic = board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Coordinate an auto-target phased migration.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "auto-target-phased-settlement").workItem;
+    const direct = new (await import("node:sqlite")).DatabaseSync(fixture.path);
+    try {
+      assert.equal(Number(direct.prepare(`
+        UPDATE work_items
+        SET project_target_mode='auto',target_project_id=NULL,resolved_project_id=NULL
+        WHERE work_item_id=?
+      `).run(automatic.workItemId).changes), 1);
+    } finally {
+      direct.close();
+    }
+    const automaticClaim = board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-auto-target-phased-settlement",
+      messageCursor: null,
+    });
+    assert.ok(automaticClaim);
+    const settled = board.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
+      outcome: "completed",
+      result: "The phased plan is ready for confirmation.",
+      workflowPlan,
+    });
+    assert.equal(settled.run.status, "completed");
+    const projected = board.projectWorkflow(fixture.project.projectId).plans.find(
+      (plan) => plan.workItemId === automatic.workItemId,
+    );
+    assert.ok(projected);
+    assert.deepEqual(projected.children, children);
+
+    board.close();
+    board = await TaskBoard.open(config(fixture.path));
+    const reread = board.projectWorkflow(fixture.project.projectId).plans.find(
+      (plan) => plan.workItemId === automatic.workItemId,
+    );
+    assert.ok(reread);
+    assert.deepEqual(reread.children, children);
+
+    board.createWorkItemAndStartPlanning(workItemRequest({
+      originalRequest: "Reject a provider phase declared in the consumer project.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }), "explicit-target-phased-mismatch").workItem;
+    const explicitClaim = board.claimRun(fixture.manager.agentId, {
+      claimId: "claim-explicit-target-phased-mismatch",
+      messageCursor: null,
+    });
+    assert.ok(explicitClaim);
+    const mismatchedChildren = children.map((child) => child.phase === "migrate"
+      ? { ...child, projectId: fixture.project.projectId }
+      : { ...child, projectId: consumer.projectId });
+    assert.throws(
+      () => board!.settleRun(explicitClaim.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "The mismatched plan must be corrected.",
+        workflowPlan: { ...workflowPlan, children: mismatchedChildren },
+      }),
+      (error: unknown) => error instanceof TaskBoardError
+        && error.status === 400
+        && error.code === "WORKFLOW_INVALID"
+        && /parent project/u.test(error.message),
+    );
+    assert.equal(board.snapshot(fixture.project.projectId).recentRuns.find(
+      (run) => run.runId === explicitClaim.run.runId,
+    )?.status, "active");
+    const inspected = new (await import("node:sqlite")).DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      const rejection = inspected.prepare(`
+        SELECT data_json FROM task_events
+        WHERE task_id=? AND event_type='settlement_rejected'
+        ORDER BY sequence DESC LIMIT 1
+      `).get(explicitClaim.task!.taskId);
+      assert.equal((JSON.parse(String(rejection?.data_json)) as { code?: unknown }).code, "WORKFLOW_INVALID");
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    board?.close();
+  }
+});
+
 test("pipeline planning requires the full plan record and the v2 review stage", async () => {
   const fixture = await boardFixture();
   try {
@@ -2837,7 +3020,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
         .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 26);
   } finally {
     direct.close();
   }
@@ -7440,7 +7623,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -7497,7 +7680,7 @@ test("schema version 8 migration adds every v19 work-item and run dependency", a
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
     assert.equal(
@@ -7548,7 +7731,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -7638,7 +7821,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -7709,7 +7892,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
   } finally {
@@ -7748,7 +7931,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
     const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
     assert.equal(task?.task_kind, "work");
@@ -7756,6 +7939,10 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
     assert.equal(task?.agent_estimate_minutes, null);
     assert.equal(task?.order_key, 0);
     assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_phases'").get()?.name, "task_phases");
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()?.name,
+      "work_item_dependencies",
+    );
   } finally {
     verified.close();
   }
@@ -7783,7 +7970,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
@@ -7792,12 +7979,16 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
     assert.equal(task?.order_key, 0);
     const index = verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_one_review_stage'").get();
     assert.equal(index?.name, "tasks_one_review_stage");
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()?.name,
+      "work_item_dependencies",
+    );
   } finally {
     verified.close();
   }
 });
 
-test("schema version 3 upgrades through v25, preserves existing board data, and retires document tables", async () => {
+test("schema version 3 upgrades through v26, preserves existing board data, and retires document tables", async () => {
   const path = await databasePath();
   await installV24Schema(path);
   const { DatabaseSync } = await import("node:sqlite");
@@ -7827,7 +8018,7 @@ test("schema version 3 upgrades through v25, preserves existing board data, and 
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     for (const table of ["document_events", "documents"]) {
       assert.equal(
         verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
@@ -7882,7 +8073,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
       "work_item_planning_tasks",
@@ -7921,7 +8112,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json",
@@ -7967,7 +8158,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
     assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
@@ -7997,7 +8188,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error",
@@ -8040,7 +8231,7 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
       "archived_at",
@@ -8077,7 +8268,7 @@ test("schema version 17 adds agent credential versions without changing existing
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 25);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
       "version",

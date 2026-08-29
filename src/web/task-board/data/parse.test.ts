@@ -227,6 +227,7 @@ describe('browser task-board validator adapter', () => {
       projectId: '',
       name: 'Legacy project',
       description: 'The browser historically treats response IDs as opaque strings.',
+      repoPath: 'The browser historically treats response IDs as opaque strings.',
       version: 1,
       createdAt: NOW,
       createdAtMs: Date.parse(NOW),
@@ -234,6 +235,27 @@ describe('browser task-board validator adapter', () => {
       updatedAtMs: Date.parse(NOW),
     });
     expect(parsed).not.toHaveProperty('apiVersion');
+  });
+
+  it('projects repository paths and decomposition fields while tolerating future phases', () => {
+    expect(parseProject({ ...project, repoPath: '/repos/project-one' }, 'project').repoPath)
+      .toBe('/repos/project-one');
+    expect(parseWorkItem({
+      ...workItem,
+      parentWorkItemId: 'parent-work-item',
+      phase: 'migrate',
+      childOrdinal: 2,
+    }, 'workItem')).toMatchObject({
+      parentWorkItemId: 'parent-work-item',
+      phase: 'migrate',
+      childOrdinal: 2,
+    });
+    expect(parseWorkItem({
+      ...workItem,
+      parentWorkItemId: null,
+      phase: 'future_phase',
+      childOrdinal: null,
+    }, 'workItem').phase).toBe('unrecognized');
   });
 
   it('validates a terminal task completion timestamp before projecting it to null', () => {

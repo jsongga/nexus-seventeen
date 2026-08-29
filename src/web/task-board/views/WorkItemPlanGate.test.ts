@@ -16,6 +16,7 @@ function plan(tier: 'standard' | 'hazardous' = 'standard'): DetailedWorkflowPlan
     objective: 'Implement and verify the bounded pipeline change.',
     assumptions: ['The current contract remains compatible.'],
     acceptanceCriteria: ['The new loop is covered end to end.'],
+    children: null,
     changeShape: 'feature',
     tier,
     declaredScope: ['src/server/task-board', 'src/web/task-board'],

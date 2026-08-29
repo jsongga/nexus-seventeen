@@ -12,6 +12,7 @@ const workItemStates: readonly WorkItemState[] = [
   'queued',
   'planning',
   'plan_approval',
+  'coordinating',
   'designing',
   'implementing',
   'verifying',
@@ -130,6 +131,7 @@ describe('work-item labels', () => {
       stage_cap_exceeded: 'Stage cap exceeded',
       task_cap_exceeded: 'Task cap exceeded',
       base_diverged: 'Base diverged',
+      child_failed: 'Child failed',
       unrecognized: 'Unknown category',
     });
     expect(notificationKindLabel).toEqual({
@@ -137,6 +139,8 @@ describe('work-item labels', () => {
       park_auto_abandoned: 'Park auto-abandoned',
       cap_parked: 'Cap parked',
       final_approval_withdrawn: 'Final approval withdrawn',
+      parent_ready_for_approval: 'Parent ready for approval',
+      phase_ready: 'Phase ready',
       unrecognized: 'Unknown notification',
     });
   });
@@ -146,6 +150,7 @@ describe('work-item labels', () => {
       queued: 'Queued',
       planning: 'Planning',
       plan_approval: 'Plan review',
+      coordinating: 'Coordinating',
       designing: 'Design',
       implementing: 'Implementing',
       verifying: 'Verifying',

@@ -22,9 +22,13 @@ async function linkedWorkFixture() {
   const agentId = "close-work-manager";
   const taskIds = ["close-planning-task", "close-design-task", "close-stage-task"] as const;
 
-  store.db.prepare("INSERT INTO projects VALUES(?,?,?,1,?,?)").run(
+  store.db.prepare(`
+    INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
+    VALUES(?,?,?,?,1,?,?)
+  `).run(
     projectId,
     "Close linked work",
+    "Exercise task-closing unification.",
     "Exercise task-closing unification.",
     CREATED_AT,
     CREATED_AT,

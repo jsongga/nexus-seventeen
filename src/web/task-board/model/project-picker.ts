@@ -13,7 +13,7 @@ interface PickerEntry {
 export function addedWorkspacePaths(projects: readonly BoardProject[]): Set<string> {
   const paths = new Set<string>();
   for (const project of projects) {
-    for (const entry of parseProjectMetadata(project.description).entries) {
+    for (const entry of parseProjectMetadata(project.repoPath).entries) {
       if (entry.kind === 'workspace') paths.add(entry.value.replace(/[\\/]+$/u, ''));
     }
   }

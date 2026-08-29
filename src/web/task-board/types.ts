@@ -12,11 +12,13 @@ import {
   workerConnectionValues,
   workNodeStateValues,
   workItemPriorityValues,
+  workItemPhaseValues,
   workItemStageValues,
   workItemStateValues,
   workItemTaskTypeValues,
   type WorkflowStage,
 } from './data/wire';
+import type { TolerantDeclaredChild } from '@shared/task-board-contract/validate';
 
 export type { WorkflowStage };
 
@@ -63,6 +65,7 @@ export type WakeReason = typeof wakeReasonValues[number];
 
 export type WorkItemPriority = typeof workItemPriorityValues[number];
 export type WorkItemState = typeof workItemStateValues[number] | typeof unrecognizedState;
+export type WorkItemPhase = typeof workItemPhaseValues[number] | typeof unrecognizedState;
 export type WorkItemStage = typeof workItemStageValues[number];
 export type WorkItemTaskType = typeof workItemTaskTypeValues[number];
 export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
@@ -132,6 +135,9 @@ export interface BoardWorkItem {
   taskType: string;
   projectTarget: WorkItemProjectTarget;
   resolvedProjectId: string | null;
+  parentWorkItemId: string | null;
+  phase: WorkItemPhase | null;
+  childOrdinal: number | null;
   planningTaskId: string | null;
   state: WorkItemState;
   currentStage: WorkItemStage | null;
@@ -171,6 +177,7 @@ export interface BoardProject {
   id: string;
   name: string;
   description: string | null;
+  repoPath: string;
   createdAt: string;
   createdAtMs: number;
   updatedAt: string;
@@ -315,6 +322,7 @@ export interface WorkflowPlan {
   objective: string;
   assumptions: string[];
   acceptanceCriteria: string[];
+  children: TolerantDeclaredChild[] | null;
   state: typeof planRevisionStateValues[number];
   createdAt: string;
   createdAtMs: number;
@@ -411,6 +419,7 @@ export interface HostDirectoryListing {
 export interface CreateProjectInput {
   name: string;
   description: string;
+  repoPath?: string;
 }
 
 export interface RotateAgentTokenResult {

@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AGENT_STATUSES,
+  GATE_KINDS,
+  NOTIFICATION_KINDS,
+  PARK_CATEGORIES,
   TASK_BOARD_ERROR_CODES,
   TASK_STATUSES,
   WAKEUP_REASONS,
   RUN_STATUSES,
   WORK_ITEM_STATES,
+  WORK_ITEM_PHASES,
   WORK_ITEM_TASK_TYPES,
   WORK_ITEM_TERMINAL_STATES,
   WORK_ITEM_TRANSITIONS,
@@ -68,7 +72,7 @@ test('work-item task types expose the standard default and onboarding discrimina
 
 test('work item states cover the durable lifecycle', () => {
   assert.deepEqual([...WORK_ITEM_STATES], [
-    'queued', 'planning', 'plan_approval', 'designing', 'implementing',
+    'queued', 'planning', 'plan_approval', 'coordinating', 'designing', 'implementing',
     'verifying', 'reviewing', 'fixing', 'final_approval', 'merged',
     'parked', 'abandoned', 'dead_letter',
   ]);
@@ -78,7 +82,8 @@ test('work item transition table is pinned edge for edge', () => {
   assert.deepEqual(WORK_ITEM_TRANSITIONS, {
     queued: ['planning', 'parked', 'abandoned', 'dead_letter'],
     planning: ['plan_approval', 'implementing', 'verifying', 'reviewing', 'parked', 'abandoned', 'dead_letter'],
-    plan_approval: ['designing', 'implementing', 'verifying', 'reviewing', 'planning', 'parked', 'abandoned', 'dead_letter'],
+    plan_approval: ['coordinating', 'designing', 'implementing', 'verifying', 'reviewing', 'planning', 'parked', 'abandoned', 'dead_letter'],
+    coordinating: ['final_approval', 'parked', 'abandoned', 'dead_letter'],
     designing: ['implementing', 'parked', 'abandoned', 'dead_letter'],
     implementing: ['verifying', 'reviewing', 'planning', 'merged', 'parked', 'abandoned', 'dead_letter'],
     verifying: ['reviewing', 'fixing', 'final_approval', 'implementing', 'planning', 'parked', 'abandoned', 'dead_letter'],
@@ -90,6 +95,18 @@ test('work item transition table is pinned edge for edge', () => {
     abandoned: [],
     dead_letter: [],
   });
+});
+
+test('decomposition enums expose phases, attestation, and parent notifications', () => {
+  assert.deepEqual([...WORK_ITEM_PHASES], ['expand', 'migrate', 'contract']);
+  assert.deepEqual([...PARK_CATEGORIES], [
+    'open_question', 'planning_run_failed', 'design_run_failed', 'hazardous_without_pipeline',
+    'plan_rejected_twice', 'bright_line', 'scope_violation', 'stage_cap_exceeded',
+    'task_cap_exceeded', 'base_diverged', 'child_failed',
+  ]);
+  assert.ok(GATE_KINDS.includes('deploy_attest'));
+  assert.ok(NOTIFICATION_KINDS.includes('parent_ready_for_approval'));
+  assert.ok(NOTIFICATION_KINDS.includes('phase_ready'));
 });
 
 test('work item terminal states are absorbing', () => {

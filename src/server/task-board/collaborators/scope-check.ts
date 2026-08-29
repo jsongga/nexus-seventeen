@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { normalizeDeclaredScope } from "#shared/task-board-contract";
+export { declaredScopesOverlap } from "#shared/task-board-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
@@ -21,21 +23,6 @@ export const runDeclaredScopeGit: GitRunner = (arguments_) => execFileSync("git"
 
 export function scopeViolationResult(files: readonly string[]): string {
   return `scope violation: ${files.join(", ")}`.slice(0, SETTLEMENT_RESULT_LIMIT);
-}
-
-function normalizeDeclaredScope(declaredScope: readonly string[]): readonly string[] {
-  const normalizedScope = declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
-  if (normalizedScope.some((prefix) => prefix.length === 0)) {
-    throw new Error("declared scope contains an empty path prefix");
-  }
-  return normalizedScope;
-}
-
-export function declaredScopesOverlap(a: readonly string[], b: readonly string[]): boolean {
-  const normalizedA = normalizeDeclaredScope(a);
-  const normalizedB = normalizeDeclaredScope(b);
-  return normalizedA.some((x) => normalizedB.some((y) =>
-    x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
 }
 
 export function checkDeclaredScope(request: Readonly<{

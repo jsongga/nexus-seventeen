@@ -26,6 +26,7 @@ const project: BoardProject = {
   id: 'project-one',
   name: 'Project one',
   description: 'Project context.',
+  repoPath: '/repos/project-one',
   createdAt: timestamp,
   createdAtMs: Date.parse(timestamp),
   updatedAt: timestamp,
@@ -69,6 +70,20 @@ beforeEach(() => {
 });
 
 describe('workspace confirmation surfaces', () => {
+  it('reads workspace metadata from repoPath rather than the descriptive text', () => {
+    const markup = renderToStaticMarkup(createElement(ProjectPage, {
+      project,
+      snapshot,
+      onTask: vi.fn(),
+      onAddTask: vi.fn(),
+      client: { getProjectArtifacts: vi.fn() } as unknown as TaskBoardClient,
+      connected: true,
+    }));
+
+    expect(markup).toContain('/repos/project-one');
+    expect(markup).not.toContain('Project context.');
+  });
+
   it('renders the interrupt and token-rotation confirms as anchored variants', () => {
     renderToStaticMarkup(createElement(ProjectPage, {
       project,

@@ -110,7 +110,7 @@ test("onboarding intake links one planning task per project and exposes onboardi
     const repository = await onboardingRepository();
     const writable = new DatabaseSync(fixture.path);
     try {
-      writable.prepare("UPDATE projects SET description=? WHERE project_id=?")
+      writable.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
         .run(repository, fixture.project.projectId);
     } finally {
       writable.close();

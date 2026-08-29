@@ -231,7 +231,7 @@ export class ProjectsCollaborator {
     this.runtime.requireWorkItem(workItemId);
     const row = this.runtime.store.db.prepare(`
       SELECT
-        item.pipeline_branch,item.base_sha,project.description AS repo_path,
+        item.pipeline_branch,item.base_sha,project.repo_path,
         plan.assumptions_json,plan.acceptance_criteria_json,plan.declared_scope_json,
         plan.criterion_checks_json,
         (SELECT design.payload_json FROM design_records design
@@ -592,7 +592,7 @@ export class ProjectsCollaborator {
       : VERIFIED_SHA_DETAIL.exec(String(latestGreen.detail))?.[1] ?? null;
     return Object.freeze({
       projectId: project.projectId,
-      repoPath: project.description,
+      repoPath: project.repoPath,
       branch: workItem.pipelineBranch,
       baseSha: workItem.baseSha,
       verifiedSha,
@@ -604,9 +604,9 @@ export class ProjectsCollaborator {
     const projectId = randomUUID();
     this.runtime.store.transaction(() => {
       this.runtime.store.db.prepare(`
-        INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
-        VALUES (?, ?, ?, 1, ?, ?)
-      `).run(projectId, request.name, request.description, now, now);
+        INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+      `).run(projectId, request.name, request.description, request.repoPath ?? request.description, now, now);
       this.runtime.insertEvent(projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "project_created", {
         name: request.name,
       }, now);

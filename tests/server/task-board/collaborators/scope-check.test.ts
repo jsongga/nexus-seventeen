@@ -10,6 +10,7 @@ import {
   runDeclaredScopeGit,
   scopeViolationResult,
 } from "#server/task-board/collaborators/scope-check";
+import { ContractValidationError } from "#shared/task-board-contract/validate";
 
 const BASE_SHA = "a".repeat(40);
 
@@ -58,8 +59,8 @@ test("declared-scope overlap matches exact and nested path prefixes", async (t) 
 });
 
 test("declared-scope overlap rejects empty normalized prefixes", () => {
-  assert.throws(() => declaredScopesOverlap([""], ["src"]), /empty path prefix/u);
-  assert.throws(() => declaredScopesOverlap(["src"], ["///"]), /empty path prefix/u);
+  assert.throws(() => declaredScopesOverlap([""], ["src"]), ContractValidationError);
+  assert.throws(() => declaredScopesOverlap(["src"], ["///"]), ContractValidationError);
 });
 
 test("declared-scope matching is exact at prefix boundaries", async (t) => {

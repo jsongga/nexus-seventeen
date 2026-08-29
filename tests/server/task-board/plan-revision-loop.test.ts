@@ -38,7 +38,7 @@ function standardPlan(suffix: string): WorkflowPlanDraft {
   };
 }
 
-function hazardousPlan(): WorkflowPlanDraft {
+function hazardousPlan(projectId: string): WorkflowPlanDraft {
   return {
     objective: "Change a hazardous checkout control.",
     assumptions: ["The change requires a later Design stage."],
@@ -55,6 +55,14 @@ function hazardousPlan(): WorkflowPlanDraft {
     criterionChecks: [{
       criterion: "Hazardous work remains parked.",
       check: "Inspect the work-item state and workflow node state.",
+    }],
+    children: [{
+      key: "checkout-consumer",
+      objective: "Change the hazardous checkout consumer after design.",
+      projectId,
+      declaredScope: ["src/checkout"],
+      acceptanceCriteria: ["The checkout consumer honors the selected control."],
+      splitBy: "consumer",
     }],
     nodes: [{
       nodeId: "hazardous-checkout-control",
@@ -284,7 +292,11 @@ test("confirming a hazardous non-pipeline plan parks without activating its node
     const workItem = startIntake(fixture, "hazardous-plan-confirm-0001");
     const planningTaskId = workItem.planningTaskId;
     assert.ok(planningTaskId);
-    const plan = settlePlanning(fixture, "hazardous-plan-confirm-claim-0001", hazardousPlan());
+    const plan = settlePlanning(
+      fixture,
+      "hazardous-plan-confirm-claim-0001",
+      hazardousPlan(fixture.project.projectId),
+    );
 
     const confirmed = fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, "parked_hazardous");

@@ -343,7 +343,7 @@ export class VerifyAttemptsCollaborator {
         plan.criterion_checks_json,
         item.base_sha,
         node.project_id,
-        project.description AS repository_path
+        project.repo_path AS repository_path
       FROM verify_attempts verify
       JOIN work_nodes node ON node.node_id=verify.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id

@@ -59,6 +59,31 @@ export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
 export const AGENT_GAP_REPORT_MAX_CHARACTERS = 32_000;
 export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
 
+export class ContractValidationError extends Error {
+  constructor(
+    message: string,
+    readonly code = "INVALID_REQUEST",
+  ) {
+    super(message);
+    this.name = "ContractValidationError";
+  }
+}
+
+export function normalizeDeclaredScope(declaredScope: readonly string[]): readonly string[] {
+  const normalizedScope = declaredScope.map((prefix) => prefix.replace(/\/+$/u, ""));
+  if (normalizedScope.some((prefix) => prefix.length === 0)) {
+    throw new ContractValidationError("declared scope contains an empty path prefix");
+  }
+  return normalizedScope;
+}
+
+export function declaredScopesOverlap(a: readonly string[], b: readonly string[]): boolean {
+  const normalizedA = normalizeDeclaredScope(a);
+  const normalizedB = normalizeDeclaredScope(b);
+  return normalizedA.some((x) => normalizedB.some((y) =>
+    x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
+}
+
 /**
  * Canonical identifier grammar shared by TypeScript validators and JSON Schema.
  *
@@ -68,7 +93,7 @@ export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
  * SQL CHECK-backed arrays are AGENT_ROLES, TASK_KINDS, TASK_STATUSES,
  * TASK_PHASE_STAGES, TASK_PHASE_STATUSES, TASK_MESSAGE_KINDS, ACTOR_TYPES,
  * QUESTION_STATUSES, WAKEUP_REASONS, RUN_STATUSES, TASK_MESSAGE_ACTOR_TYPES,
- * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
+ * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_PHASES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
  * PLAN_REVISION_STATES, WORK_NODE_STATES, STAGE_HANDOFF_OUTCOMES,
  * REVIEW_FINDING_CATEGORIES, REVIEW_FINDING_SEVERITIES, PARK_CATEGORIES,
  * PARK_RESOLUTIONS, NOTIFICATION_KINDS, and GATE_KINDS. Adding or removing a
@@ -141,6 +166,7 @@ export const WORK_ITEM_STATES = [
   "queued",
   "planning",
   "plan_approval",
+  "coordinating",
   "designing",
   "implementing",
   "verifying",
@@ -153,6 +179,9 @@ export const WORK_ITEM_STATES = [
   "dead_letter",
 ] as const;
 export type WorkItemState = typeof WORK_ITEM_STATES[number];
+
+export const WORK_ITEM_PHASES = ["expand", "migrate", "contract"] as const;
+export type WorkItemPhase = typeof WORK_ITEM_PHASES[number];
 
 export const WORK_ITEM_TERMINAL_STATES = ["merged", "abandoned", "dead_letter"] as const;
 
@@ -177,6 +206,7 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "dead_letter",
   ],
   plan_approval: [
+    "coordinating",
     "designing",
     "implementing",
     // legacy stage-driven flow — removed when campaign 4's pipeline drives these gates
@@ -189,6 +219,7 @@ export const WORK_ITEM_TRANSITIONS: Readonly<
     "abandoned",
     "dead_letter",
   ],
+  coordinating: ["final_approval", "parked", "abandoned", "dead_letter"],
   designing: ["implementing", "parked", "abandoned", "dead_letter"],
   implementing: [
     "verifying",
@@ -268,6 +299,7 @@ export const PARK_CATEGORIES = [
   "stage_cap_exceeded",
   "task_cap_exceeded",
   "base_diverged",
+  "child_failed",
 ] as const;
 export const PARK_RESOLUTIONS = ["resumed", "abandoned", "auto_abandoned", "dead_letter"] as const;
 export const NOTIFICATION_KINDS = [
@@ -275,6 +307,8 @@ export const NOTIFICATION_KINDS = [
   "park_auto_abandoned",
   "cap_parked",
   "final_approval_withdrawn",
+  "parent_ready_for_approval",
+  "phase_ready",
 ] as const;
 export const GATE_KINDS = [
   "plan_confirm",
@@ -283,6 +317,7 @@ export const GATE_KINDS = [
   "final_reject",
   "cancel",
   "question_answer",
+  "deploy_attest",
 ] as const;
 export type ParkCategory = typeof PARK_CATEGORIES[number];
 
@@ -360,6 +395,17 @@ export interface PlanBlockingQuestion {
 export interface PlanCriterionCheck {
   readonly criterion: string;
   readonly check: string;
+}
+
+export interface DeclaredChild {
+  readonly key: string;
+  readonly objective: string;
+  readonly projectId: string;
+  readonly declaredScope: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly phase?: WorkItemPhase;
+  readonly dependsOn?: readonly string[];
+  readonly splitBy?: "consumer" | "phase";
 }
 
 /** All optional; present together on pipeline plans. */
@@ -479,6 +525,9 @@ export interface WorkItem {
   readonly taskType: WorkItemTaskType;
   readonly projectTarget: WorkItemProjectTarget;
   readonly resolvedProjectId: string | null;
+  readonly parentWorkItemId: string | null;
+  readonly phase: WorkItemPhase | null;
+  readonly childOrdinal: number | null;
   /** Durable link to the manager task that refines and proposes this work item's workflow. */
   readonly planningTaskId: string | null;
   readonly pipelineBranch?: string | null;
@@ -499,6 +548,11 @@ export interface WorkItem {
   /** Human-supplied reason recorded uniformly when the item is cancelled. */
   readonly cancelledReason: string | null;
   readonly archivedAt: string | null;
+}
+
+export interface WorkItemDependency {
+  readonly workItemId: string;
+  readonly dependsOnWorkItemId: string;
 }
 
 export interface WorkItemPage {
@@ -523,6 +577,7 @@ export interface PlanRevision extends PlanRecordFields {
   readonly objective: string;
   readonly assumptions: readonly string[];
   readonly acceptanceCriteria: readonly string[];
+  readonly children: readonly DeclaredChild[] | null;
   readonly projectId: string;
   readonly skillDigests: Readonly<Record<string, string>>;
   readonly state: PlanRevisionState;
@@ -793,6 +848,7 @@ export interface WorkflowPlanDraft extends PlanRecordFields {
   readonly assumptions: readonly string[];
   readonly acceptanceCriteria: readonly string[];
   readonly nodes: readonly ProposedWorkNode[];
+  readonly children?: readonly DeclaredChild[];
 }
 
 export interface CreatePlanRevisionRequest extends PlanRecordFields {
@@ -800,6 +856,7 @@ export interface CreatePlanRevisionRequest extends PlanRecordFields {
   readonly objective: string;
   readonly assumptions: readonly string[];
   readonly acceptanceCriteria: readonly string[];
+  readonly children?: readonly DeclaredChild[];
   readonly projectId: string;
   readonly skillIds: readonly string[];
   readonly nodes: readonly ProposedWorkNode[];
@@ -838,6 +895,7 @@ export interface Project {
   readonly projectId: string;
   readonly name: string;
   readonly description: string;
+  readonly repoPath: string;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -1067,6 +1125,7 @@ export interface ClaimRunResult {
 export interface CreateProjectRequest {
   readonly name: string;
   readonly description: string;
+  readonly repoPath?: string;
 }
 
 export interface CreateWorkItemRequest {

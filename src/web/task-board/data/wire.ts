@@ -17,7 +17,9 @@ import {
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
   EVALUATOR_PROFILES,
+  GATE_KINDS,
   IDENTIFIER_PATTERN,
+  NOTIFICATION_KINDS,
   PLAN_REVISION_STATES,
   QUESTION_STATUSES,
   RUN_STATUSES,
@@ -33,6 +35,7 @@ import {
   WORKER_CONNECTIONS,
   WORK_ITEM_CURSOR_MAX_BYTES,
   WORK_ITEM_PAGE_SIZE,
+  WORK_ITEM_PHASES,
   WORK_ITEM_PRIORITIES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
@@ -79,12 +82,15 @@ export const questionStatusValues = QUESTION_STATUSES;
 export const wakeReasonValues = WAKEUP_REASONS;
 export const workItemPriorityValues = WORK_ITEM_PRIORITIES;
 export const workItemStateValues = WORK_ITEM_STATES;
+export const workItemPhaseValues = WORK_ITEM_PHASES;
 export const workItemTaskTypeValues = WORK_ITEM_TASK_TYPES;
 export const workItemStageValues = WORK_ITEM_STAGES;
 export const evaluatorProfileValues = EVALUATOR_PROFILES;
 export const planRevisionStateValues = PLAN_REVISION_STATES;
 export const workNodeStateValues = WORK_NODE_STATES;
 export const stageHandoffOutcomeValues = STAGE_HANDOFF_OUTCOMES;
+export const notificationKindValues = NOTIFICATION_KINDS;
+export const gateKindValues = GATE_KINDS;
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
 export const rawAgentStatuses = new Set(AGENT_STATUSES);
@@ -101,9 +107,12 @@ export const questionStatuses = new Set(questionStatusValues);
 export const wakeReasons = new Set(wakeReasonValues);
 export const workItemPriorities = new Set(workItemPriorityValues);
 export const workItemStates = new Set(workItemStateValues);
+export const workItemPhases = new Set(workItemPhaseValues);
 export const workItemStages = new Set(workItemStageValues);
 export const evaluatorProfiles = new Set(evaluatorProfileValues);
 export const workflowStages = new Set(WORKFLOW_STAGES);
 export const planRevisionStates = new Set(planRevisionStateValues);
 export const workNodeStates = new Set(workNodeStateValues);
 export const stageHandoffOutcomes = new Set(stageHandoffOutcomeValues);
+export const notificationKinds = new Set(notificationKindValues);
+export const gateKinds = new Set(gateKindValues);

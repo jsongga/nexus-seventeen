@@ -155,7 +155,7 @@ function configurePipeline(fixture: Fixture, suffix: string): void {
 function setProjectRepository(fixture: Fixture, repo: string): void {
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET description=? WHERE project_id=?").run(repo, fixture.project.projectId);
+    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
   } finally {
     db.close();
   }

@@ -14,6 +14,7 @@ const snapshot: BoardSnapshot = {
     id: 'project-one',
     name: 'Project one',
     description: '/workspace/project-one',
+    repoPath: '/workspace/project-one',
     createdAt: timestamp,
     createdAtMs: Date.parse(timestamp),
     updatedAt: timestamp,

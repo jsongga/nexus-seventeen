@@ -163,7 +163,7 @@ export function ProjectPage({
   }, [artifacts, client]);
 
   const updates = updatesForProject(snapshot, project.id);
-  const metadata = parseProjectMetadata(project.description);
+  const metadata = parseProjectMetadata(project.repoPath);
   const tasks = snapshot.tasks
     .filter((task) => task.projectId === project.id)
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));

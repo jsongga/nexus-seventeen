@@ -15,6 +15,7 @@ export const parkCategoryLabel: Record<ParkCategory | 'unrecognized', string> = 
   stage_cap_exceeded: 'Stage cap exceeded',
   task_cap_exceeded: 'Task cap exceeded',
   base_diverged: 'Base diverged',
+  child_failed: 'Child failed',
   unrecognized: 'Unknown category',
 };
 
@@ -23,6 +24,8 @@ export const notificationKindLabel: Record<(typeof NOTIFICATION_KINDS)[number] |
   park_auto_abandoned: 'Park auto-abandoned',
   cap_parked: 'Cap parked',
   final_approval_withdrawn: 'Final approval withdrawn',
+  parent_ready_for_approval: 'Parent ready for approval',
+  phase_ready: 'Phase ready',
   unrecognized: 'Unknown notification',
 };
 
@@ -30,6 +33,7 @@ export const workItemStateTone: Record<WorkItemState, WorkItemTone> = {
   queued: 'blue',
   planning: 'green',
   plan_approval: 'amber',
+  coordinating: 'purple',
   designing: 'green',
   implementing: 'green',
   verifying: 'green',
@@ -47,6 +51,7 @@ export const workItemStateLabel: Record<WorkItemState | 'unrecognized', string> 
   queued: 'Queued',
   planning: 'Planning',
   plan_approval: 'Plan review',
+  coordinating: 'Coordinating',
   designing: 'Design',
   implementing: 'Implementing',
   verifying: 'Verifying',

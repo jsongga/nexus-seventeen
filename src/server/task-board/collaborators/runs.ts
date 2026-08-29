@@ -24,7 +24,11 @@ import {
   type WorkItemState,
   type WorkflowStage,
 } from "#shared/task-board-contract";
-import { ContractValidationError, parseDesignRecordDraft } from "#shared/task-board-contract/validate";
+import {
+  ContractValidationError,
+  parseDesignRecordDraft,
+  validateWorkflowPlanChildren,
+} from "#shared/task-board-contract/validate";
 import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
@@ -93,6 +97,7 @@ const ONBOARDING_GAP_REPORT_CAPTION = "Onboarding gap report";
 const PAUSED_CLAIM_RESULT = Object.freeze({ paused: true as const });
 const CORRECTABLE_SETTLEMENT_ERROR_CODES = new Set<string>([
   "WORKFLOW_PLAN_REQUIRED",
+  "WORKFLOW_INVALID",
   TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
 ]);
 
@@ -132,7 +137,7 @@ export class RunsCollaborator {
     const row = this.runtime.store.db.prepare(`
       SELECT
         attempt.stage,
-        project.description AS repo_path,
+        project.repo_path,
         item.base_sha,
         item.pipeline_branch,
         plan.declared_scope_json
@@ -181,7 +186,7 @@ export class RunsCollaborator {
       SELECT
         item.work_item_id,
         project.project_id,
-        project.description AS repo_path,
+        project.repo_path,
         item.pipeline_branch,
         node.node_id
       FROM stage_attempts attempt
@@ -972,6 +977,17 @@ export class RunsCollaborator {
       if (request.workflowPlan === undefined || request.workflowPlan === null) {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
       }
+      try {
+        validateWorkflowPlanChildren(request.workflowPlan);
+        if (planning.resolved_project_id !== null) {
+          validateWorkflowPlanChildren(request.workflowPlan, String(planning.resolved_project_id));
+        }
+      } catch (error) {
+        if (error instanceof ContractValidationError) {
+          throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
+        }
+        throw error;
+      }
       const pipelineNode = request.workflowPlan.nodes.length === 1 ? request.workflowPlan.nodes[0] : undefined;
       const pipelineShape = pipelineNode === undefined ? null : pipelineTemplateShape(pipelineNode.stageTemplate);
       if (pipelineShape === "v1") {
@@ -1015,7 +1031,9 @@ export class RunsCollaborator {
           workflowProposal = {
             ...request.workflowPlan,
             workItemId,
-            projectId: String(planning.resolved_project_id),
+            projectId: planning.resolved_project_id === null
+              ? current.projectId
+              : String(planning.resolved_project_id),
             skillIds,
           };
         }

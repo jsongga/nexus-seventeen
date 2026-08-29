@@ -4,6 +4,7 @@ import {
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  ContractValidationError,
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
   DESIGN_RECORD_LABEL_MAX_LENGTH,
@@ -44,12 +45,14 @@ import {
   WAKEUP_REASONS,
   WORKER_CONNECTIONS,
   WORK_ITEM_PRIORITIES,
+  WORK_ITEM_PHASES,
   WORK_ITEM_STAGES,
   WORK_ITEM_STATES,
   WORK_ITEM_TASK_TYPES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
   isTerminalWorkItemState,
+  declaredScopesOverlap,
   type AgentInterrupt,
   type AgentProfile,
   type AgentRole,
@@ -82,6 +85,7 @@ import {
   type DesignFailurePointKind,
   type DesignRecord,
   type DesignRecordDraft,
+  type DeclaredChild,
   type FindingsLedger,
   type GateAction,
   type HumanQuestion,
@@ -124,6 +128,7 @@ import {
   type WorkItemAudit,
   type WorkItemProjectTarget,
   type WorkItemState,
+  type WorkItemPhase,
   type WorkItemTransition,
   type WorkNode,
   type WorkflowStage,
@@ -134,16 +139,7 @@ import {
 } from "./index.js";
 
 export type JsonRecord = Record<string, unknown>;
-
-export class ContractValidationError extends Error {
-  constructor(
-    message: string,
-    readonly code = "INVALID_REQUEST",
-  ) {
-    super(message);
-    this.name = "ContractValidationError";
-  }
-}
+export { ContractValidationError };
 
 interface ExactMessageMap {
   readonly unexpected: (label: string, field: string) => string;
@@ -360,9 +356,18 @@ export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
   status: TaskStatus | "unrecognized";
 }>;
 
-export type TolerantWorkItemEntity = Omit<WorkItem, "state" | "taskType"> & Readonly<{
+export type TolerantWorkItemEntity = Omit<WorkItem, "state" | "taskType" | "phase"> & Readonly<{
   state: WorkItemState | "unrecognized";
   taskType: string;
+  phase: WorkItemPhase | "unrecognized" | null;
+}>;
+
+export type TolerantDeclaredChild = Omit<DeclaredChild, "phase"> & Readonly<{
+  phase?: WorkItemPhase | "unrecognized";
+}>;
+
+export type TolerantPlanRevision = Omit<PlanRevision, "children"> & Readonly<{
+  children: readonly TolerantDeclaredChild[] | null;
 }>;
 
 export type TolerantParkRecord = Omit<ParkRecord, "category" | "resolution"> & Readonly<{
@@ -532,14 +537,16 @@ function expectedMinutes(value: unknown, label: string, options: ExpectedMinutes
 }
 
 export function parseProjectEntity(value: unknown, label: string, options: ShapeParserOptions = {}): Project {
-  const item = entity(value, label,
-    ["apiVersion", "projectId", "name", "description", "version", "createdAt", "updatedAt"],
-    ["apiVersion", "projectId", "name", "description", "version", "createdAt", "updatedAt"], options);
+  const fields = ["apiVersion", "projectId", "name", "description", "repoPath", "version", "createdAt", "updatedAt"];
+  const required = options.projection === "browser" ? fields.filter((field) => field !== "repoPath") : fields;
+  const item = entity(value, label, fields, required, options);
+  const description = stringValue(item.description, `${label}.description`);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     name: stringValue(item.name, `${label}.name`),
-    description: stringValue(item.description, `${label}.description`),
+    description,
+    repoPath: item.repoPath === undefined ? description : stringValue(item.repoPath, `${label}.repoPath`),
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
@@ -601,10 +608,13 @@ export function parseWorkItemEntity(
 ): WorkItem | TolerantWorkItemEntity {
   const fields = [
     "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "taskType", "projectTarget", "resolvedProjectId",
-    "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "stateSince", "reviewRound", "heartbeatAt",
+    "parentWorkItemId", "phase", "childOrdinal", "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "stateSince", "reviewRound", "heartbeatAt",
     "createdBy", "version", "createdAt", "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
   ];
-  const optional = new Set(["transitions", "pipelineBranch", "baseSha", "stateSince", "reviewRound", "heartbeatAt"]);
+  const optional = new Set([
+    "transitions", "pipelineBranch", "baseSha", "stateSince", "reviewRound", "heartbeatAt",
+    ...(options.projection === "browser" ? ["parentWorkItemId", "phase", "childOrdinal"] : []),
+  ]);
   const required = fields.filter((field) => !optional.has(field));
   const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
@@ -613,6 +623,9 @@ export function parseWorkItemEntity(
     : entityMember(item.taskType, WORK_ITEM_TASK_TYPES, `${label}.taskType`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
   const state = entityMember(item.state, WORK_ITEM_STATES, `${label}.state`, options, undefined, true);
+  const phase = item.phase === undefined || item.phase === null
+    ? null
+    : entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true);
   const endedAt = nullableTimestamp(item.endedAt, `${label}.endedAt`, options);
   const archivedAt = nullableTimestamp(item.archivedAt, `${label}.archivedAt`, options);
   const cancelledReason = nullableString(item.cancelledReason, `${label}.cancelledReason`);
@@ -640,6 +653,13 @@ export function parseWorkItemEntity(
     taskType,
     projectTarget,
     resolvedProjectId,
+    parentWorkItemId: item.parentWorkItemId === undefined
+      ? null
+      : nullableIdentifier(item.parentWorkItemId, `${label}.parentWorkItemId`, options),
+    phase,
+    childOrdinal: item.childOrdinal === undefined || item.childOrdinal === null
+      ? null
+      : integer(item.childOrdinal, `${label}.childOrdinal`),
     planningTaskId: nullableIdentifier(item.planningTaskId, `${label}.planningTaskId`, options),
     ...(item.pipelineBranch === undefined
       ? {}
@@ -1648,12 +1668,57 @@ function parsePlanRecordEntity(
   });
 }
 
-export function parsePlanEntity(value: unknown, label: string, options: ShapeParserOptions = {}): PlanRevision {
-  const required = [
+function parseDeclaredChildEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions,
+): TolerantDeclaredChild {
+  const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
+  const item = shape(
+    value,
+    label,
+    [...required, "phase", "dependsOn", "splitBy"],
+    required,
+    options,
+  );
+  return Object.freeze({
+    key: shapeIdentifier(item.key, `${label}.key`, options),
+    objective: planRecordText(item.objective, `${label}.objective`, 4_000),
+    projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
+    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
+      (entry, entryLabel) => planScopeEntry(entry, entryLabel, planRecordText)),
+    acceptanceCriteria: boundedPlanArray(item.acceptanceCriteria, `${label}.acceptanceCriteria`, 1, 64,
+      (entry, entryLabel) => planRecordText(entry, entryLabel, 2_000)),
+    ...(item.phase === undefined ? {} : {
+      phase: entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true),
+    }),
+    ...(item.dependsOn === undefined ? {} : {
+      dependsOn: boundedPlanArray(item.dependsOn, `${label}.dependsOn`, 0, 64,
+        (entry, entryLabel) => shapeIdentifier(entry, entryLabel, options)),
+    }),
+    ...(item.splitBy === undefined ? {} : {
+      splitBy: entityMember(item.splitBy, ["consumer", "phase"] as const, `${label}.splitBy`, options),
+    }),
+  });
+}
+
+export function parsePlanEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+): TolerantPlanRevision;
+export function parsePlanEntity(value: unknown, label: string, options?: ShapeParserOptions): PlanRevision;
+export function parsePlanEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {},
+): PlanRevision | TolerantPlanRevision {
+  const coreRequired = [
     "apiVersion", "planRevisionId", "workItemId", "revision", "objective", "assumptions", "acceptanceCriteria", "projectId",
     "skillDigests", "state", "createdBy", "confirmedBy", "createdAt", "confirmedAt",
   ];
-  const fields = [...required, ...PLAN_RECORD_FIELD_NAMES, "rejectedNote"];
+  const required = [...coreRequired, ...(options.projection === "browser" ? [] : ["children"])];
+  const fields = [...coreRequired, ...PLAN_RECORD_FIELD_NAMES, "children", "rejectedNote"];
   const item = entity(value, label, fields, required, options);
   const digests = record(item.skillDigests, `${label}.skillDigests`);
   const skillDigests: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -1667,6 +1732,10 @@ export function parsePlanEntity(value: unknown, label: string, options: ShapePar
     assumptions: Object.freeze(arrayOf(item.assumptions, `${label}.assumptions`, stringValue)),
     acceptanceCriteria: Object.freeze(arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`, stringValue)),
     ...parsePlanRecordEntity(item, label, options),
+    children: item.children === undefined || item.children === null
+      ? null
+      : boundedPlanArray(item.children, `${label}.children`, 0, 64,
+        (entry, entryLabel) => parseDeclaredChildEntity(entry, entryLabel, options)),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     skillDigests: Object.freeze(skillDigests),
     state: entityMember(item.state, PLAN_REVISION_STATES, `${label}.state`, options),
@@ -2953,6 +3022,138 @@ function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHand
   });
 }
 
+function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPolicy): DeclaredChild {
+  const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
+  const item = exact(
+    value,
+    [...required, "phase", "dependsOn", "splitBy"],
+    label,
+    { messages: policy.exactMessages, required },
+  );
+  const parseText = (entry: unknown, entryLabel: string, maximum: number): string =>
+    draftText(entry, entryLabel, maximum, policy);
+  return Object.freeze({
+    key: identifier(item.key, `${label}.key`),
+    objective: draftText(item.objective, `${label}.objective`, 4_000, policy),
+    projectId: identifier(item.projectId, `${label}.projectId`),
+    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
+      (entry, entryLabel) => planScopeEntry(entry, entryLabel, parseText)),
+    acceptanceCriteria: draftStringList(
+      item.acceptanceCriteria,
+      `${label}.acceptanceCriteria`,
+      policy,
+      64,
+      1,
+    ),
+    ...(item.phase === undefined ? {} : {
+      phase: contractMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, `${label}.phase is invalid`),
+    }),
+    ...(item.dependsOn === undefined ? {} : {
+      dependsOn: Object.freeze(draftStringList(item.dependsOn, `${label}.dependsOn`, policy, 64)
+        .map((dependency, dependencyIndex) => identifier(dependency, `${label}.dependsOn[${dependencyIndex}]`))),
+    }),
+    ...(item.splitBy === undefined ? {} : {
+      splitBy: contractMember(item.splitBy, ["consumer", "phase"] as const, `${label}.splitBy`, `${label}.splitBy is invalid`),
+    }),
+  });
+}
+
+export function validateWorkflowPlanChildren(
+  plan: Pick<WorkflowPlanDraft, "changeShape" | "children">,
+  parentProjectId?: string,
+): void {
+  const children = plan.children;
+  const hasChildren = children !== undefined && children.length > 0;
+  if (plan.changeShape === "mechanical_sweep" && hasChildren) {
+    throw new ContractValidationError("workflowPlan.children is invalid for a mechanical_sweep");
+  }
+  if (plan.changeShape === "blast_radius" && !hasChildren) {
+    throw new ContractValidationError("workflowPlan.children is required for a blast_radius");
+  }
+  if (!hasChildren) return;
+  if (plan.changeShape === "blast_radius" && children.some((child) => child.splitBy === undefined)) {
+    throw new ContractValidationError("every blast_radius child requires splitBy");
+  }
+  const phasedChildren = children.filter((child) => child.phase !== undefined);
+  if (phasedChildren.length > 0 && phasedChildren.length !== children.length) {
+    throw new ContractValidationError("every workflowPlan child requires phase when any phase is declared");
+  }
+  if (plan.changeShape === "feature" && phasedChildren.length > 0) {
+    throw new ContractValidationError("workflowPlan.children phases are invalid for a feature split");
+  }
+
+  const childrenByKey = new Map<string, DeclaredChild>();
+  for (const child of children) {
+    if (childrenByKey.has(child.key)) {
+      throw new ContractValidationError("workflowPlan.children contains a duplicate key");
+    }
+    childrenByKey.set(child.key, child);
+    const dependencies = child.dependsOn ?? [];
+    if (new Set(dependencies).size !== dependencies.length) {
+      throw new ContractValidationError(`workflowPlan child ${child.key} contains a duplicate dependency`);
+    }
+  }
+  for (const child of children) {
+    for (const dependency of child.dependsOn ?? []) {
+      if (!childrenByKey.has(dependency)) {
+        throw new ContractValidationError(`workflowPlan child ${child.key} has an unknown dependency`);
+      }
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (key: string): void => {
+    if (visiting.has(key)) throw new ContractValidationError("workflowPlan.children contains a dependency cycle");
+    if (visited.has(key)) return;
+    visiting.add(key);
+    for (const dependency of childrenByKey.get(key)?.dependsOn ?? []) visit(dependency);
+    visiting.delete(key);
+    visited.add(key);
+  };
+  for (const child of children) visit(child.key);
+
+  for (let left = 0; left < children.length; left += 1) {
+    for (let right = left + 1; right < children.length; right += 1) {
+      const a = children[left]!;
+      const b = children[right]!;
+      const requiresDisjointScopes =
+        (a.phase === undefined && b.phase === undefined) ||
+        (a.phase === "migrate" && b.phase === "migrate");
+      if (
+        requiresDisjointScopes && a.projectId === b.projectId &&
+        declaredScopesOverlap(a.declaredScope, b.declaredScope)
+      ) {
+        throw new ContractValidationError(`workflowPlan child scopes overlap in project ${a.projectId}`);
+      }
+    }
+  }
+
+  if (phasedChildren.length === 0) return;
+  const expands = children.filter((child) => child.phase === "expand");
+  const migrates = children.filter((child) => child.phase === "migrate");
+  const contracts = children.filter((child) => child.phase === "contract");
+  if (expands.length !== 1 || migrates.length < 1 || contracts.length !== 1) {
+    throw new ContractValidationError("workflowPlan.children has an invalid phased declaration");
+  }
+  const expand = expands[0]!;
+  const contract = contracts[0]!;
+  const providerProjectId = parentProjectId ?? expand.projectId;
+  if (expand.projectId !== providerProjectId || contract.projectId !== providerProjectId) {
+    throw new ContractValidationError("expand and contract children must use the parent project");
+  }
+  if (migrates.some((child) => child.projectId === providerProjectId)) {
+    throw new ContractValidationError("migrate children must use projects other than the parent project");
+  }
+  if (migrates.some((child) => !(child.dependsOn ?? []).includes(expand.key))) {
+    throw new ContractValidationError("every migrate child must depend on the expand child");
+  }
+  const contractDependencies = new Set(contract.dependsOn ?? []);
+  if (migrates.some((child) => !contractDependencies.has(child.key))) {
+    throw new ContractValidationError("the contract child must depend on every migrate child");
+  }
+}
+
 function parseDraftPlanRecord(item: JsonRecord, label: string, policy: DraftParserPolicy): PlanRecordFields {
   const parseText = (value: unknown, field: string, maximum: number): string =>
     draftText(value, field, maximum, policy);
@@ -3001,7 +3202,7 @@ function parseDraftPlanRecord(item: JsonRecord, label: string, policy: DraftPars
 function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowPlanDraft {
   const messages = policy.messages;
   const required = ["objective", "assumptions", "acceptanceCriteria", "nodes"];
-  const item = exact(value, [...required, ...PLAN_RECORD_FIELD_NAMES], messages.workflowPlanLabel, {
+  const item = exact(value, [...required, ...PLAN_RECORD_FIELD_NAMES, "children"], messages.workflowPlanLabel, {
     messages: policy.exactMessages,
     required,
   });
@@ -3039,13 +3240,23 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
       stageTemplate: Object.freeze(stageTemplate),
     });
   });
-  return Object.freeze({
+  const parsed = Object.freeze({
     objective: draftText(item.objective, "workflowPlan.objective", 8_000, policy),
     assumptions: draftStringList(item.assumptions, "workflowPlan.assumptions", policy, 64),
     acceptanceCriteria: draftStringList(item.acceptanceCriteria, "workflowPlan.acceptanceCriteria", policy, 64, 1),
     ...parseDraftPlanRecord(item, messages.workflowPlanLabel, policy),
     nodes: Object.freeze(nodes),
+    ...(item.children === undefined ? {} : {
+      children: boundedPlanArray(item.children, "workflowPlan.children", 0, 64,
+        (entry, entryLabel) => parseDeclaredChild(entry, entryLabel, policy)),
+    }),
   });
+  validateWorkflowPlanChildren(parsed);
+  return parsed;
+}
+
+export function parseWorkflowPlanDraft(value: unknown): WorkflowPlanDraft {
+  return parseWorkflowPlan(value, BOARD_DRAFT_POLICY);
 }
 
 export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOutcome {
@@ -3159,8 +3370,14 @@ function boardProjectTarget(value: unknown): Extract<WorkItemProjectTarget, { mo
 }
 
 export function parseBoardCreateProject(value: unknown): CreateProjectRequest {
-  const item = boardExact(value, ["name", "description"], "Project");
-  return Object.freeze({ name: boardText(item.name, "name", 160), description: boardText(item.description, "description", 8_000) });
+  const raw = record(value, "Project");
+  const item = boardExact(value, ["name", "description", ...("repoPath" in raw ? ["repoPath"] : [])], "Project");
+  const description = boardText(item.description, "description", 8_000);
+  return Object.freeze({
+    name: boardText(item.name, "name", 160),
+    description,
+    repoPath: item.repoPath === undefined ? description : boardText(item.repoPath, "repoPath", 8_000),
+  });
 }
 
 export function parseBoardConfirmPlan(value: unknown): ConfirmPlanRevisionRequest {

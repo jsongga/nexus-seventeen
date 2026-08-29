@@ -33,6 +33,7 @@ function at(seconds: number): Date {
 function pipelinePlan(
   tier: "standard" | "hazardous" = "standard",
   suffix = "default",
+  projectId = "wall-clock-project",
 ): WorkflowPlanDraft {
   return {
     objective: "Exercise wall-clock caps on a confirmed pipeline.",
@@ -45,6 +46,14 @@ function pipelinePlan(
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
+    children: tier === "hazardous" ? [{
+      key: `wall-clock-consumer-${suffix}`,
+      objective: "Exercise the hazardous consumer wall-clock cap.",
+      projectId,
+      declaredScope: ["src/server", "tests/server"],
+      acceptanceCriteria: ["The hazardous consumer is suspended at its cap."],
+      splitBy: "consumer",
+    }] : undefined,
     nodes: [{
       nodeId: `wall-clock-node-${suffix}`,
       title: "Exercise the wall-clock sweep",
@@ -185,7 +194,7 @@ async function startDesign(fixture: Awaited<ReturnType<typeof capFixture>>, suff
   fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
     outcome: "completed",
     result: "The hazardous wall-clock pipeline is ready for design.",
-    workflowPlan: pipelinePlan("hazardous", suffix),
+    workflowPlan: pipelinePlan("hazardous", suffix, fixture.project.projectId),
   });
   const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
     (candidate) => candidate.state === "proposed",

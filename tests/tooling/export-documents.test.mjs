@@ -58,6 +58,7 @@ const project = {
   project_id: 'project-1',
   name: 'Alpha / Project',
   description: 'Export fixture',
+  repo_path: 'Export fixture',
   version: 1,
   created_at: '2026-08-25T12:00:00.000Z',
   updated_at: '2026-08-25T12:00:00.000Z',
@@ -171,8 +172,8 @@ async function insertHistoricalRows(databasePath, projects, documentsToInsert, e
   try {
     database.exec('PRAGMA foreign_keys = ON');
     const insertProject = database.prepare(`
-      INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     for (const projectToInsert of projects) {
       insertProject.run(...Object.values(projectToInsert));

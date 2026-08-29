@@ -92,8 +92,11 @@ const oldWorkItem: WorkItem = {
   refinedObjective: null,
   priority: "normal",
   taskType: "standard",
-  projectTarget: { mode: "explicit", projectId: "project-one" },
-  resolvedProjectId: "project-one",
+      projectTarget: { mode: "explicit", projectId: "project-one" },
+      resolvedProjectId: "project-one",
+      parentWorkItemId: null,
+      phase: null,
+      childOrdinal: null,
   planningTaskId: null,
   pipelineBranch: null,
   baseSha: null,
@@ -151,14 +154,25 @@ test("ledger and observability vocabularies and error codes are pinned", () => {
   assert.deepEqual([...PARK_CATEGORIES], [
     "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
     "plan_rejected_twice", "bright_line", "scope_violation", "stage_cap_exceeded",
-    "task_cap_exceeded", "base_diverged",
+    "task_cap_exceeded", "base_diverged", "child_failed",
   ]);
   assert.deepEqual([...PARK_RESOLUTIONS], ["resumed", "abandoned", "auto_abandoned", "dead_letter"]);
   assert.deepEqual([...NOTIFICATION_KINDS], [
-    "park_aged", "park_auto_abandoned", "cap_parked", "final_approval_withdrawn",
+    "park_aged",
+    "park_auto_abandoned",
+    "cap_parked",
+    "final_approval_withdrawn",
+    "parent_ready_for_approval",
+    "phase_ready",
   ]);
   assert.deepEqual([...GATE_KINDS], [
-    "plan_confirm", "plan_reject", "final_approve", "final_reject", "cancel", "question_answer",
+    "plan_confirm",
+    "plan_reject",
+    "final_approve",
+    "final_reject",
+    "cancel",
+    "question_answer",
+    "deploy_attest",
   ]);
   assert.deepEqual({
     recordRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_REQUIRED,
