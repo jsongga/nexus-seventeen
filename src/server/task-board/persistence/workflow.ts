@@ -1,3 +1,7 @@
+/** Persists workflow plans and advances their state machine for task-board collaborators. */
+
+/* —— Imports —— */
+
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -63,6 +67,8 @@ import {
   type PipelineInspection,
 } from "../collaborators/pipeline-inspection.js";
 import { reviewFindingFromRow, type Row } from "./rows.js";
+
+/* —— Wakeup and review constraints —— */
 
 export const RETIRED_WAKEUP_EVENT_PREFIX = "retired-wakeup:";
 
@@ -330,6 +336,8 @@ function pipelineBaseSha(repositoryPath: string, projectName: string, git: GitTe
   }
 }
 
+/* —— Stored plan projections —— */
+
 function planFromRow(row: Row): PlanRevision {
   const declaredScope = optionalJsonList<string>(row.declared_scope_json);
   const nonGoals = optionalJsonList<string>(row.non_goals_json);
@@ -446,6 +454,8 @@ type PipelineMergeSettlement =
   | Readonly<{ kind: "merged"; mergeSha: string }>
   | Readonly<{ kind: "conflict"; summary: string }>;
 
+/* —— Workflow state machine —— */
+
 export class TransparentWorkflow {
   readonly #insertGateActionInTransaction: (input: GateActionInput) => GateAction;
 
@@ -470,6 +480,7 @@ export class TransparentWorkflow {
   }
 
   proposeInTransaction(raw: CreatePlanRevisionRequest, actor: string): ProjectWorkflowSnapshot {
+    // Agent proposals join task settlement so the plan cannot outlive the result that produced it.
     return this.proposeInternal(raw, "agent", actor, true);
   }
 
@@ -2896,6 +2907,7 @@ export class TransparentWorkflow {
     if (isTerminalWorkItemState(String(plan.state) as WorkItemState)) return;
     const currentState = String(plan.state) as WorkItemState;
     const mappedState = workItemStateForNodeStage(this.db, String(plan.work_item_id), nodeId, stage, currentState);
+    // An open question keeps the work item parked even if its workflow node has advanced.
     const parkedWithOpenQuestions =
       currentState === "parked" &&
       this.db
@@ -3022,6 +3034,7 @@ export class TransparentWorkflow {
     const sequence = Number(
       (this.db.prepare("SELECT sequence FROM project_events WHERE event_id=?").get(eventId) as Row).sequence
     );
+    // The injected queue owns after-commit delivery; the event row above stays in the caller's transaction.
     this.queueEvent?.(
       Object.freeze({
         apiVersion: "steward.task-board/v1",

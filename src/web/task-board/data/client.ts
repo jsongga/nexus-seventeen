@@ -1,3 +1,7 @@
+/** Provides the validated browser client for task-board HTTP and event-stream APIs. */
+
+/* —— Imports —— */
+
 import type { PipelineSummary, RejectPlanRevisionResponse } from "@shared/task-board-contract";
 import type {
   AgentQueryConversationTurn,
@@ -75,9 +79,12 @@ import { childWorkItemProjection, normalize, projectProjection, workItemDetailPr
 import { taskMessagePageSize, workItemPageSize } from "./wire";
 import { SseFrameParser } from "./sse";
 
+/* —— Browser utilities —— */
+
 export function randomUuid(): string {
   const source = globalThis.crypto;
   if (typeof source?.randomUUID === "function") return source.randomUUID();
+  // Older secure contexts may lack randomUUID; retain cryptographic IDs rather than falling back to Math.random.
   if (typeof source?.getRandomValues !== "function") {
     throw new Error("This browser cannot generate secure random identifiers");
   }
@@ -105,6 +112,8 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
+/* —— Agent query prompts —— */
+
 const maximumAgentQueryObjectiveCharacters = 8_000;
 const maximumAgentQueryConversationCharacters = 2_400;
 const maximumAgentQueryConversationTurns = 12;
@@ -121,7 +130,6 @@ export const agentQueryConversationContextMarker =
 export const agentQueryRoutingContextMarker =
   "\n\nCompany routing map (use this only to identify the best project or agent):\n";
 
-/** Parses the task-board's authoritative single-project snapshot into the frontend projection. */
 export function parseBoardSnapshot(value: unknown): BoardSnapshot {
   const board = parseRawBoard(value);
   return normalize([board], [board.project], [], []);
@@ -178,6 +186,8 @@ function appendAgentQuerySection(objective: string, marker: string, content: str
   if (availableCharacters <= 0) return objective;
   return `${objective}${marker}${truncateAgentQueryText(content, availableCharacters)}`;
 }
+
+/* —— Response envelopes —— */
 
 function automationConfigurationFromEnvelope(value: unknown, path: string): AutomationConfiguration {
   const envelope = exactRecord(value, path, ["configuration"]);
@@ -311,6 +321,8 @@ function workItemPageFromEnvelope(
   return { workItems, nextCursor };
 }
 
+/* —— Public client contract —— */
+
 export class BoardApiError extends Error {
   constructor(
     message: string,
@@ -395,6 +407,8 @@ export interface TaskBoardClient {
   getArtifactBlob(artifactId: string, signal?: AbortSignal): Promise<Blob>;
 }
 
+/* —— Transport boundary —— */
+
 async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;
   try {
@@ -413,6 +427,7 @@ function clientEventId(): string {
   return `ui-${randomUuid()}`;
 }
 
+// Remote boards require HTTPS; plain HTTP is accepted only for loopback development.
 function safeBaseUrl(value: string): string {
   const trimmed = value.replace(/\/$/, "");
   if (trimmed === "" || (trimmed.startsWith("/") && !trimmed.startsWith("//"))) return trimmed;
@@ -449,6 +464,7 @@ export function createTaskBoardClient(
   const runAgents = new Map<string, string>();
 
   async function request(path: string, init?: RequestInit): Promise<Response> {
+    // Cross-host boards must not receive ambient browser credentials or referrer details.
     const response = await requestFetch(`${baseUrl}${path}`, {
       ...init,
       cache: "no-store",

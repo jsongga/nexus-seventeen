@@ -1,3 +1,7 @@
+/** Supplies the task-board web app's shared controls, anchored dialogs, and feedback primitives. */
+
+/* —— Imports —— */
+
 import {
   useEffect,
   useLayoutEffect,
@@ -17,6 +21,8 @@ import {
   type DialogSwitchTarget,
 } from "./dialog-stack";
 
+/* —— Anchored modal geometry —— */
+
 const modalViewportInset = 16;
 const modalAnchorGap = 8;
 const modalAnchoredMinMaxHeight = 16 * 16;
@@ -24,6 +30,7 @@ const modalAnchoredTakeoverThreshold = 12 * 16;
 const modalAnchoredTakeoverExitThreshold = 16 * 16;
 
 export function resolveModalTakeover(maxHeight: number, currentlyTakeover: boolean): boolean {
+  // Separate enter and exit thresholds stop resize measurements oscillating between anchored and takeover layouts.
   return currentlyTakeover
     ? maxHeight < modalAnchoredTakeoverExitThreshold
     : maxHeight < modalAnchoredTakeoverThreshold;
@@ -39,6 +46,8 @@ export function resolveModalAnchorPlacement(spaceAbove: number, spaceBelow: numb
     takeover: resolveModalTakeover(maxHeight, currentlyTakeover),
   };
 }
+
+/* —— Basic controls —— */
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -141,6 +150,8 @@ export function Pill({
   );
 }
 
+/* —— Modal —— */
+
 export function Modal({
   open,
   onClose,
@@ -183,10 +194,12 @@ export function Modal({
   });
   const updateAnchorPositionRef = useRef<(() => void) | null>(null);
   const ignoreAnchorMeasurementRef = useRef(false);
+  // Anchored dialogs stay non-modal on desktop; phones, missing anchors, and tight space use takeover behavior.
   const anchoredOnDesktop = variant === "anchored" && desktopBreakpointMatches;
   const anchoredLayout = anchoredOnDesktop && anchorRef?.current?.isConnected === true && !anchorPosition.takeover;
   const takeoverLayout = !anchoredLayout;
   const previousScrollLockRef = useRef(takeoverLayout);
+  // Every dismissal path uses the same lazy dirty check, including Escape, scrim, and outside clicks.
   const {
     confirmationOpen,
     requestClose,
@@ -227,6 +240,7 @@ export function Modal({
 
   useLayoutEffect(() => {
     if (previousScrollLockRef.current === takeoverLayout) return;
+    // Changing body scroll lock can move viewport geometry, so anchoring is remeasured on the next frame.
     previousScrollLockRef.current = takeoverLayout;
     ignoreAnchorMeasurementRef.current = true;
     const frame = window.requestAnimationFrame(() => {
@@ -406,6 +420,8 @@ export function Modal({
     </>
   );
 }
+
+/* —— Fields and feedback —— */
 
 export function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor: string }) {
   return (

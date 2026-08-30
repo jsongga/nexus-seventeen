@@ -1,3 +1,7 @@
+/** Validates shared task-board entities at browser, board, and worker trust boundaries. */
+
+/* —— Imports —— */
+
 import {
   ACTOR_TYPES,
   AGENT_GAP_REPORT_MAX_CHARACTERS,
@@ -149,6 +153,8 @@ import {
   type WorkflowPlanDraft,
 } from "./index.js";
 
+/* —— Scalar validation —— */
+
 export type JsonRecord = Record<string, unknown>;
 export { ContractValidationError };
 
@@ -188,7 +194,7 @@ export function record(value: unknown, label: string): JsonRecord {
   return value as JsonRecord;
 }
 
-/** Validate both the permitted and required field sets without sorting user-controlled keys. */
+// Unexpected keys follow received order; missing keys follow required-field order.
 export function exact(
   value: unknown,
   fields: readonly string[],
@@ -216,7 +222,7 @@ interface ScalarMessageProfile {
   readonly integerAtLeast: (label: string, minimum: number) => string;
 }
 
-/** Browser responses historically reported scalar type errors before semantic errors. */
+// Browser responses preserve their historical scalar error wording for compatibility.
 export const BROWSER_SCALAR_MESSAGES: ScalarMessageProfile = Object.freeze({
   stringType: (label: string) => `${label} must be a string`,
   integerAtLeast: (label: string, minimum: number) => `${label} must be a safe integer of at least ${minimum}`,
@@ -228,11 +234,12 @@ interface TextOptions {
   readonly trim?: boolean;
   readonly message?: string;
   readonly scalarMessages?: ScalarMessageProfile;
-  /** Production worker writes normalize at `normalizeCarriageReturns` in task-worker/worker.ts. */
+  // normalizeCarriageReturns in task-worker/worker.ts normalizes production
+  // writes before the outbound worker client sends them.
   readonly carriageReturns?: "reject" | "normalize" | "preserve";
 }
 
-/** Human-entered board text: trim at the boundary and reject control characters. */
+// Human-entered board text is trimmed at the boundary and rejects control characters.
 function text(value: unknown, label: string, options: TextOptions = {}): string {
   const maximum = options.maximum ?? 8_000;
   if (typeof value !== "string") {
@@ -256,13 +263,13 @@ function text(value: unknown, label: string, options: TextOptions = {}): string 
 interface ProseOptions {
   readonly maximum: number;
   readonly allowEmpty?: boolean;
-  /** `preserve` is for worker-authored text normalized immediately before board writes. */
+  // Worker-authored text is normalized immediately before board writes.
   readonly carriageReturns?: "reject" | "normalize" | "preserve";
   readonly message?: string;
   readonly scalarMessages?: ScalarMessageProfile;
 }
 
-/** Contract prose is whitespace-stable; workers may normalize provider-authored CRs. */
+// Worker providers may emit carriage returns, while persisted contract prose stays whitespace-stable.
 export function prose(value: unknown, label: string, options: ProseOptions): string {
   const parsed = text(value, label, {
     maximum: options.maximum,
@@ -340,7 +347,6 @@ export function integer(
   return Number(value);
 }
 
-/** Bounded non-empty text used by both server-side claim projections. */
 export function boundedClaimText(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string" || value.trim().length === 0 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) {
     throw new Error(`${label} is invalid`);
@@ -349,12 +355,10 @@ export function boundedClaimText(value: unknown, label: string, maximum: number)
   return clean.length <= maximum ? clean : `${clean.slice(0, Math.max(1, maximum - 16)).trimEnd()}\n[truncated]`;
 }
 
-/** Positive safe integer used by both server-side claim projections. */
 export function positiveClaimInteger(value: unknown, label: string): number {
   return integer(value, label, 1, `${label} is invalid`);
 }
 
-/** Nullable, quarter-hour task estimate used by both server-side claim projections. */
 export function claimEstimateMinutes(value: unknown, label: string): number | null {
   if (value === null) return null;
   if (!Number.isSafeInteger(value) || Number(value) < 15 || Number(value) > 10_080 || Number(value) % 15 !== 0) {
@@ -363,7 +367,6 @@ export function claimEstimateMinutes(value: unknown, label: string): number | nu
   return Number(value);
 }
 
-/** Minimal task-phase projection shared by in-process and HTTP claim consumers. */
 export function projectAgentTaskPhase(value: unknown, projectId: string, taskId: string, label: string) {
   const item = parseAgentTaskPhaseResponse(value, projectId, taskId, label);
   return Object.freeze({
@@ -382,16 +385,18 @@ export function arrayOf<T>(value: unknown, label: string, parser: (item: unknown
   return value.map((item, index) => parser(item, `${label}[${index}]`));
 }
 
+/* —— Stored entity parsing —— */
+
 interface ShapeParserOptions {
-  /** False preserves the browser adapter's rolling compatibility with additive fields. */
+  // Browser response parsing remains forward-compatible with additive server fields.
   readonly exact?: false | ExactMessageMap;
-  /** Browser response projections historically treated wire IDs as opaque strings. */
+  // Browser projections historically treated wire IDs as opaque strings.
   readonly identifiers?: "contract" | "string";
   readonly identifierMessages?: "invalid" | "valid-identifier";
   readonly scalarMessages?: ScalarMessageProfile;
-  /** Skip fields that the browser's legacy raw projection intentionally discarded. */
+  // Browser projections intentionally discard server-only fields.
   readonly projection?: "contract" | "browser";
-  /** Bucket explicitly forward-compatible browser enum fields. */
+  // Browser enums bucket unknown future members instead of rejecting the response.
   readonly tolerantEnums?: boolean;
 }
 
@@ -601,6 +606,8 @@ function expectedMinutes(value: unknown, label: string, options: ExpectedMinutes
   return Number(value);
 }
 
+/* —— Project and work-item entities —— */
+
 export function parseProjectEntity(value: unknown, label: string, options: ShapeParserOptions = {}): Project {
   const fields = ["apiVersion", "projectId", "name", "description", "repoPath", "version", "createdAt", "updatedAt"];
   const required = options.projection === "browser" ? fields.filter((field) => field !== "repoPath") : fields;
@@ -797,6 +804,8 @@ export function parseWorkItemEntity(
   });
 }
 
+/* —— Task, run, and message entities —— */
+
 export function parseTaskPhaseEntity(value: unknown, label: string, options: ShapeParserOptions = {}): TaskPhase {
   const fields = [
     "apiVersion",
@@ -838,7 +847,7 @@ export function parseTaskPhaseEntity(value: unknown, label: string, options: Sha
   });
 }
 
-/** Task-worker HTTP response profile; preserves its canonical-time and legacy error contract. */
+// Task-worker HTTP responses preserve their canonical timestamps and legacy error wording.
 export function parseAgentTaskPhaseResponse(
   value: unknown,
   projectId: string,
@@ -1216,6 +1225,8 @@ export function parseInterruptEntity(value: unknown, label: string, options: Sha
     requestedAt: entityTimestamp(item.requestedAt, `${label}.requestedAt`, options),
   });
 }
+
+/* —— Plan results, reviews, board controls, and ledgers —— */
 
 function parseCriterionResult(value: unknown, label: string, options: ShapeParserOptions): CriterionResult {
   const item = shape(value, label, ["criterion", "passed", "evidence"], ["criterion", "passed", "evidence"], options);
@@ -1778,6 +1789,8 @@ export function parseParksLedger(
   }) as ParksLedger | TolerantParksLedger;
 }
 
+/* —— Design and plan entities —— */
+
 const DESIGN_RECORD_FIELDS = [
   "states",
   "transitions",
@@ -2125,6 +2138,8 @@ export function parsePlanEntity(
   });
 }
 
+/* —— Pipeline evidence and artifacts —— */
+
 const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start", "retired"] as const;
 function parseVerifyAttemptEntity(value: unknown, label: string, options: ShapeParserOptions = {}): VerifyAttempt {
   const fields = [
@@ -2419,6 +2434,8 @@ export function parseProjectArtifactEntity(
   });
 }
 
+/* —— Automation configuration —— */
+
 const AUTOMATION_STAGE_ROLES = Object.freeze({
   refinement: Object.freeze(["manager"] as const),
   project_resolution: Object.freeze(["manager"] as const),
@@ -2629,6 +2646,8 @@ export function parseAutomationConfigurationEntity(
         : identifier(item.updatedBy, `${label}.updatedBy`, `${label}.updatedBy is invalid`, options.scalarMessages),
   });
 }
+
+/* —— Snapshots and claim responses —— */
 
 export function parseBoardSnapshotEntity(value: unknown, options: ShapeParserOptions = {}): BoardSnapshot {
   const fields = [
@@ -2864,6 +2883,8 @@ export function parseClaimRunPausedResult(value: unknown): ClaimRunPausedResult 
   if (envelope.paused !== true) throw new ContractValidationError("Paused claim result is invalid");
   return Object.freeze({ paused: true });
 }
+
+/* —— Worker claim boundary —— */
 
 export type { StageHandoffDraft, WorkflowPlanDraft };
 
@@ -3231,6 +3252,8 @@ function parseWorkerPhaseUpdate(value: unknown, index: number): ValidatedAgentTa
     orderKey: workerNonNegative(item.orderKey, `${label}.orderKey`),
   });
 }
+
+/* —— Worker workflow context —— */
 
 function parseWorkflowPipelineFields(
   item: JsonRecord,
@@ -3800,6 +3823,8 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   });
 }
 
+/* —— Worker outputs —— */
+
 export function parseWorkerAgentRunOutput(value: unknown): ValidatedAgentRunOutput {
   const discriminator = record(value, "Agent output").type;
   if (discriminator === "progress" || discriminator === "result") {
@@ -3835,6 +3860,8 @@ export function parseWorkerAgentRunOutput(value: unknown): ValidatedAgentRunOutp
   }
   throw new ContractValidationError("Agent output type is invalid");
 }
+
+/* —— Shared plan-draft policy —— */
 
 interface DraftMessageMap {
   readonly handoffLabel: string;
@@ -4376,6 +4403,8 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
         }),
   });
 }
+
+/* —— Board request boundary —— */
 
 function boardFailure(message: string, code = "INVALID_REQUEST"): never {
   throw new ContractValidationError(message, code);

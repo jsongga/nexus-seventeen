@@ -1,3 +1,7 @@
+/** Coordinates shared task-board state, invariants, and process-local client signals for collaborators. */
+
+/* —— Imports —— */
+
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
@@ -50,6 +54,8 @@ import {
   type WorkItemTransitionRequest,
 } from "./work-item-transitions.js";
 
+/* —— Runtime state —— */
+
 export type Actor = Readonly<{ type: "human" | "agent"; id: string }>;
 type ReviewFollowupResult = Readonly<{ taskId: string; wakeAgentId: string | null }>;
 type WorkItemTransitionActor = Readonly<{ type: "human" | "agent" | "system"; id: string }>;
@@ -57,6 +63,8 @@ type WorkItemTransitionActor = Readonly<{ type: "human" | "agent" | "system"; id
 type ActiveWorkerConnection = Exclude<WorkerConnection, null>;
 type WorkerConnectionCounts = { waitingForWake: number; watchingRun: number };
 const REVIEW_WORKFLOW_ACTOR = "system:steward-review-workflow";
+
+/* —— Task-board runtime —— */
 
 export class TaskBoardRuntime {
   readonly interruptEvents = new EventEmitter();
@@ -390,6 +398,7 @@ export class TaskBoardRuntime {
       );
     }
     const nodeVersion = numberValue(link, "version");
+    // A stale handoff would make the retried attempt appear settled to downstream workflow reads.
     this.store.db.prepare("DELETE FROM stage_handoffs WHERE task_id = ?").run(taskId);
     const update = this.store.db
       .prepare(
@@ -448,6 +457,7 @@ export class TaskBoardRuntime {
       summary,
       createdAt: now,
     });
+    // Subscribers must never observe a recovery event for a transaction that later rolls back.
     this.store.afterCommit(() => {
       for (const listener of this.projectEvents.listeners(projectId)) {
         try {
@@ -724,6 +734,7 @@ export class TaskBoardRuntime {
     `
       )
       .all(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
+    // A human answer outranks generic wakeups because it carries the input that unblocks the task.
     const preferredByTask = new Map<string, { wakeupId: string; isHumanAnswer: boolean }>();
     for (const row of rows) {
       const wakeup = wakeupFromRow(row);

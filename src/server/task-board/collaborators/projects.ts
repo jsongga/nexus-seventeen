@@ -1,3 +1,7 @@
+/** Coordinates project workflows, artifacts, verification, and pipeline merges for task-board services. */
+
+/* —— Imports —— */
+
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -83,6 +87,8 @@ import {
   workItemStateOwnsWorkflowExecution,
 } from "./work-item-transitions.js";
 
+/* —— Git boundary —— */
+
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BYTES = 1024 * 1024;
@@ -110,6 +116,8 @@ export const runWorkflowGit: WorkflowGitRunner = Object.assign(
       }),
   }
 );
+
+/* —— Collaborator contracts —— */
 
 export type ConfirmWorkflowResult = ProjectWorkflowSnapshot &
   Readonly<{
@@ -142,6 +150,8 @@ type MigrateContextEstimate = Readonly<{
   digest: string;
 }>;
 
+/* —— Project workflow orchestration —— */
+
 export class ProjectsCollaborator {
   readonly #workflow: TransparentWorkflow;
   readonly #artifacts: ArtifactStore;
@@ -170,6 +180,7 @@ export class ProjectsCollaborator {
       new SkillRegistry(resolve("config/skills.md")),
       runtime.config.now,
       (operation) => runtime.store.transaction(operation),
+      // Broadcast project events only after commit so subscribers cannot observe rolled-back workflow state.
       (event) => runtime.store.afterCommit(() => this.emitProjectEvent(event)),
       this.#git,
       (input) => runtime.insertGateActionInTransaction(input)
@@ -2295,6 +2306,7 @@ export class ProjectsCollaborator {
           "stage_started",
           `${current.title} entered ${stage}`
         );
+        // Spawn only after commit so the process never races an attempt row that rolls back.
         this.runtime.store.afterCommit(() => this.#verifyAttempts.startAfterCommit(activation.verifyAttemptId));
         return;
       }

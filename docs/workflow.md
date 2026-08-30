@@ -66,6 +66,45 @@ Full runs in the background: the command prints a run id; observe with
 }
 ```
 
+## Comments
+
+Production modules start on line 1 with `/** One sentence naming what the
+module owns and for whom. */`. Expand that into a conventional multiline JSDoc
+header only when it must also record a constraint the code cannot show. Files
+with at least three top-level conceptual regions use foldable
+`/* —— Section —— */` banners at column 0, at roughly one per hundred lines
+where the code has a real boundary. Column 0 is functional: the editor folds on
+`^/\* ——`, so indentation would make a banner unfoldable. The `section banners
+use the foldable form at column zero` test in
+`tests/tooling/code-style.test.mjs` ratchets that exact marker. Use `//`
+immediately above code only when the reason is not recoverable from the
+implementation, such as transaction ordering, recovery policy, compatibility,
+or a security bound.
+
+Do not narrate syntax, restate names or types, document every contract field,
+put banners inside a class/function or in small files/tests, or write comments
+to meet a density target.
+
+For example, `persistence/store.ts` previously opened its migration ladder
+without warning maintainers that source order is not execution order:
+
+```ts
+const MIGRATE_VERSION_1_TO_2 = `
+```
+
+It now marks the real region and the historical constraint:
+
+```ts
+/* —— Schema and migrations 1–6 —— */
+
+// Applied migration bodies are historical compatibility code. Never rewrite one.
+// Add the next version, bump SCHEMA_VERSION, add its `else if (version === N)`
+// branch in open() or that version throws UNSUPPORTED_DATABASE_VERSION, and
+// update SCHEMA so fresh databases receive the same change. open() defines
+// execution order, which intentionally differs from source order.
+const MIGRATE_VERSION_1_TO_2 = `
+```
+
 ## Run
 
 - Board: `npm run dev:task-board` · fleet: `npm run dev:task-fleet` (config

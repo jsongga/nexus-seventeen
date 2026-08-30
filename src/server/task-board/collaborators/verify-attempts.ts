@@ -1,3 +1,7 @@
+/** Runs durable machine-verification attempts across SQL state, child processes, and isolated workspaces. */
+
+/* —— Imports —— */
+
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -12,6 +16,8 @@ import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
 import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
+
+/* —— Process bounds and retirement signals —— */
 
 const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
@@ -84,6 +90,7 @@ export function retireOpenVerifyAttemptsForWorkItemInTransaction(
         previousState: String(attempt.state) as OpenAttemptState,
       })
     );
+    // Process and workspace cleanup starts only after retirement is durable.
     runtime.store.afterCommit(() => {
       for (const listener of retirementListeners.get(runtime) ?? []) {
         for (const retirement of retirements) listener(retirement);
@@ -92,6 +99,8 @@ export function retireOpenVerifyAttemptsForWorkItemInTransaction(
   }
   return Number(retired.changes);
 }
+
+/* —— External lifecycle contracts —— */
 
 export interface MachineVerifyRunner {
   startFull(): Promise<string>;
@@ -154,6 +163,8 @@ type StartingVerifyAttemptResult =
   | Readonly<{ kind: "created"; verifyAttemptId: string }>
   | Readonly<{ kind: "ineligible" }>
   | Readonly<{ kind: "pipeline_required" }>;
+
+/* —— Command execution and row projections —— */
 
 function errorDetail(error: unknown): string {
   const value = error instanceof Error ? error.message : String(error);
@@ -233,6 +244,7 @@ function executeCriterionCheck(command: string, cwd: string, signal: AbortSignal
   const [program, ...args] = argv;
   if (program === undefined) return Promise.resolve({ passed: false, detail: "criterion check is empty" });
   return new Promise((resolve) => {
+    // Criterion checks come from plans; direct argv execution forbids shell expansion and command chaining.
     execFile(
       program,
       args,
@@ -297,6 +309,8 @@ function verifyAttempt(row: Row): VerifyAttempt {
     endedAt: row.ended_at === null ? null : String(row.ended_at),
   });
 }
+
+/* —— Verify-attempt lifecycle —— */
 
 export class VerifyAttemptsCollaborator {
   readonly #supervisorPath: string;
@@ -609,6 +623,7 @@ export class VerifyAttemptsCollaborator {
         current.baseSha ?? undefined,
         current.workItemId
       );
+      // Retirement can commit while workspace or process setup awaits, so durable state is checked on both sides of spawn.
       const beforeSpawn = this.#context(verifyAttemptId);
       if (
         abortController.signal.aborted ||
@@ -896,6 +911,7 @@ export class VerifyAttemptsCollaborator {
     const safeStoredDetail = redactForPersistence(storedDetail, 4_000);
     let settledNodes: readonly WorkNode[] = [];
     let settled = false;
+    // Settle the workflow in the same transaction as the terminal attempt state.
     this.runtime.store.transaction(() => {
       const update = this.runtime.store.db
         .prepare(
@@ -948,6 +964,7 @@ export class VerifyAttemptsCollaborator {
     this.dependencies.activateNodes(settledNodes);
     this.dependencies.reconcileProject(current.projectId);
     const workspace = this.#workspaceManagerFactory(current.repositoryPath);
+    // Failed workspaces are retained as diagnostic evidence; green workspaces are disposable.
     if (passed) {
       await this.#removeAttemptWorkspaceBestEffort(current.verifyAttemptId, workspace, current.workItemId);
     } else await this.#retainBestEffort(workspace, current.workItemId);

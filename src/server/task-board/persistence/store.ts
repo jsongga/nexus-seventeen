@@ -1,3 +1,7 @@
+/** Owns the task board's private SQLite database, schema, migrations, and transaction callbacks. */
+
+/* —— Imports —— */
+
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -31,6 +35,8 @@ import {
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "../errors.js";
+
+/* —— Current schema —— */
 
 const SCHEMA_VERSION = 26;
 
@@ -245,6 +251,13 @@ ${NOTIFICATIONS_SCHEMA}
 ${GATE_ACTIONS_SCHEMA}
 `;
 
+/* —— Schema and migrations 1–6 —— */
+
+// Applied migration bodies are historical compatibility code. Never rewrite one.
+// Add the next version, bump SCHEMA_VERSION, add its `else if (version === N)`
+// branch in open() or that version throws UNSUPPORTED_DATABASE_VERSION, and
+// update SCHEMA so fresh databases receive the same change. open() defines
+// execution order, which intentionally differs from source order.
 const MIGRATE_VERSION_1_TO_2 = `
 ALTER TABLE runs ADD COLUMN task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT;
 UPDATE runs
@@ -702,6 +715,8 @@ CREATE TABLE interrupts (
 CREATE INDEX interrupts_project ON interrupts(project_id, requested_at DESC);
 `;
 
+/* —— Migrations 12–19 —— */
+
 function hasColumns(db: DatabaseSync, table: string, expected: readonly string[]): boolean {
   const columns = new Set(
     db
@@ -1099,6 +1114,8 @@ function migrateVersion18To19(db: DatabaseSync): void {
     db.exec("PRAGMA foreign_keys = ON;");
   }
 }
+
+/* —— Migrations 19–26 —— */
 
 function migrateVersion19To20(db: DatabaseSync): void {
   const hasWorkItems =
@@ -1628,6 +1645,8 @@ export function migrateVersion25To26(db: DatabaseSync): void {
   }
 }
 
+/* —— Migrations 6–12 —— */
+
 function migrateVersion9To10(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -1845,6 +1864,8 @@ function migrateVersion6To7(db: DatabaseSync): void {
   }
 }
 
+/* —— Database path security —— */
+
 async function assertOwnerOnlyDirectory(path: string): Promise<void> {
   const created = await mkdir(path, { recursive: true, mode: 0o700 });
   if (created !== undefined) await chmod(path, 0o700);
@@ -1871,6 +1892,8 @@ async function assertOwnerOnlyFile(path: string): Promise<void> {
     throw new TaskBoardError(500, "UNSAFE_DATABASE_PATH", "Task board database must be a private regular file");
   }
 }
+
+/* —— Store lifecycle —— */
 
 export class TaskBoardStore {
   readonly db: DatabaseSync;
@@ -2046,6 +2069,7 @@ export class TaskBoardStore {
       throw error;
     }
     this.#transactionAfterCommitOperations = null;
+    // External observers run only after COMMIT; callback failures cannot roll back durable state.
     this.#pendingAfterCommitOperations.push(...afterCommitOperations);
     this.drainAfterCommitOperations();
     return value;

@@ -1,5 +1,9 @@
+/** Defines the shared task-board wire contract for servers, workers, and web clients. */
+
+/* —— Contract metadata and safety bounds —— */
+
 export const TASK_BOARD_API_VERSION = "steward.task-board/v1" as const;
-/** Stable error codes introduced for clients that branch on board HTTP failures. */
+// These codes are stable because board clients branch on them.
 export const TASK_BOARD_ERROR_CODES = Object.freeze({
   AGENT_VERSION_CONFLICT: "AGENT_VERSION_CONFLICT",
   HOST_PATH_NOT_DIRECTORY: "HOST_PATH_NOT_DIRECTORY",
@@ -49,9 +53,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   WORK_ITEM_NOT_TERMINAL: "WORK_ITEM_NOT_TERMINAL",
 } as const);
 export type TaskBoardErrorCode = (typeof TASK_BOARD_ERROR_CODES)[keyof typeof TASK_BOARD_ERROR_CODES];
-/** Maximum persisted UTF-8 JSON size of the { agentTypes, stages } automation aggregate. */
 export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
-/** Number of chronologically ordered task messages returned by one list read. */
 export const TASK_MESSAGE_PAGE_SIZE = 200;
 export const WORK_ITEM_PAGE_SIZE = 200;
 export const WORK_ITEM_CURSOR_MAX_BYTES = 512;
@@ -98,33 +100,28 @@ export function declaredScopesOverlap(a: readonly string[], b: readonly string[]
   return normalizedA.some((x) => normalizedB.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
 }
 
-/**
- * Canonical identifier grammar shared by TypeScript validators and JSON Schema.
- *
- * Grammar changes begin here; runtime validators, web types, and generated
- * schemas derive from these values.
- *
- * SQL CHECK-backed arrays are AGENT_ROLES, TASK_KINDS, TASK_STATUSES,
- * TASK_PHASE_STAGES, TASK_PHASE_STATUSES, TASK_MESSAGE_KINDS, ACTOR_TYPES,
- * QUESTION_STATUSES, WAKEUP_REASONS, RUN_STATUSES, TASK_MESSAGE_ACTOR_TYPES,
- * WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_PHASES, WORK_ITEM_STAGES, WORKFLOW_STAGES,
- * PLAN_REVISION_STATES, WORK_NODE_STATES, STAGE_HANDOFF_OUTCOMES,
- * REVIEW_FINDING_CATEGORIES, REVIEW_FINDING_SEVERITIES, PARK_CATEGORIES,
- * PARK_RESOLUTIONS, NOTIFICATION_KINDS, and GATE_KINDS. Adding or removing a
- * member from one of those arrays also requires a schema-version bump and
- * rebuild migration so existing databases receive the new CHECK constraint.
- * WORK_ITEM_STATES backs state CHECKs in both work_items and
- * work_item_transitions.
- */
+// Grammar changes begin here: runtime validators, web types, and generated schemas
+// derive from these values. store.ts interpolates these arrays into SQL CHECKs:
+// AGENT_ROLES, TASK_KINDS, TASK_STATUSES, TASK_PHASE_STAGES,
+// TASK_PHASE_STATUSES, TASK_MESSAGE_KINDS, ACTOR_TYPES, QUESTION_STATUSES,
+// WAKEUP_REASONS, RUN_STATUSES, TASK_MESSAGE_ACTOR_TYPES,
+// WORK_ITEM_PRIORITIES, WORK_ITEM_STATES, WORK_ITEM_TERMINAL_STATES,
+// WORK_ITEM_PHASES, WORK_ITEM_STAGES, WORKFLOW_STAGES, PLAN_REVISION_STATES,
+// WORK_NODE_STATES, STAGE_HANDOFF_OUTCOMES, REVIEW_FINDING_CATEGORIES,
+// REVIEW_FINDING_SEVERITIES, PARK_CATEGORIES, PARK_RESOLUTIONS,
+// NOTIFICATION_KINDS, GATE_KINDS, and DOCUMENT_ACTOR_TYPES. Changing one also
+// requires a schema-version bump and rebuild migration for existing databases.
 export const IDENTIFIER_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$" as const;
 export const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
 const PROHIBITED_CROSS_REPO_MARKDOWN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ud800-\udfff]/u;
 
-/** Accepts Unicode scalar text while excluding controls unsafe for persisted prompts. */
+// Persisted cross-repository prompts reject controls and unpaired surrogates.
 export function isValidCrossRepoMarkdown(value: string): boolean {
   return !PROHIBITED_CROSS_REPO_MARKDOWN.test(value);
 }
+
+/* —— State-machine vocabulary —— */
 
 export const AGENT_ROLES = ["engineer", "manager", "verifier"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -223,6 +220,8 @@ export const WORK_ITEM_TERMINAL_STATES = ["merged", "abandoned", "dead_letter"] 
 export function isTerminalWorkItemState(state: WorkItemState): boolean {
   return (WORK_ITEM_TERMINAL_STATES as readonly WorkItemState[]).includes(state);
 }
+
+/* —— Work-item transition policy —— */
 
 export const WORK_ITEM_TRANSITIONS: Readonly<Record<WorkItemState, readonly WorkItemState[]>> = {
   queued: ["planning", "designing", "implementing", "parked", "abandoned", "dead_letter"],
@@ -379,6 +378,8 @@ export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" 
   return null;
 }
 
+/* —— Review and design policy —— */
+
 export const REVIEW_FINDING_CATEGORIES = [
   "correctness",
   "security",
@@ -427,6 +428,8 @@ export type PlanRevisionState = (typeof PLAN_REVISION_STATES)[number];
 
 export const PLAN_CHANGE_SHAPES = ["mechanical_sweep", "feature", "blast_radius"] as const;
 export const PLAN_TIERS = ["standard", "hazardous"] as const;
+
+/* —— Workflow planning and automation —— */
 
 export interface PlanBlockingQuestion {
   readonly question: string;
@@ -507,12 +510,9 @@ export type ArtifactMediaType =
   | "image/jpeg"
   | "image/webp"
   | "image/svg+xml";
-export type WorkItemProjectTarget =
-  /**
-   * Retained for wire compatibility with existing data and older clients.
-   * Work-item request parsers currently reject automatic project targets.
-   */
-  Readonly<{ mode: "auto" }> | Readonly<{ mode: "explicit"; projectId: string }>;
+// Automatic targets remain readable for old clients and persisted records, while
+// current work-item request parsers accept only explicit projects.
+export type WorkItemProjectTarget = Readonly<{ mode: "auto" }> | Readonly<{ mode: "explicit"; projectId: string }>;
 export const EVALUATOR_PROFILES = ["tests", "editorial", "visual", "manual"] as const;
 export type AgentTypeEvaluatorProfile = (typeof EVALUATOR_PROFILES)[number];
 export type AutomationStageExecutor =
@@ -525,7 +525,7 @@ export interface AutomationAgentType {
   readonly agentTypeId: string;
   readonly name: string;
   readonly description: string;
-  /** Fixed authority ceiling. Supplemental configuration cannot expand this role. */
+  // Supplemental configuration cannot expand this fixed authority ceiling.
   readonly role: AgentRole;
   readonly supplementalInstructions: string;
   readonly skillIds: readonly string[];
@@ -549,6 +549,8 @@ export interface AutomationConfiguration {
   readonly updatedBy: string;
 }
 
+/* —— Board and work-item records —— */
+
 export interface BoardPause {
   readonly paused: boolean;
   readonly reason: string | null;
@@ -560,7 +562,7 @@ export interface BoardPause {
 export interface WorkItem {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly workItemId: string;
-  /** The accepted human submission. Refinement is stored separately and never overwrites it. */
+  // Refinement is stored separately so the accepted human submission remains immutable.
   readonly originalRequest: string;
   readonly refinedObjective: string | null;
   readonly priority: WorkItemPriority;
@@ -789,6 +791,8 @@ export interface WorkNode {
   readonly updatedAt: string;
 }
 
+/* —— Pipeline evidence, artifacts, and plan requests —— */
+
 export interface VerifyAttempt {
   readonly verifyAttemptId: string;
   readonly nodeId: string;
@@ -950,11 +954,13 @@ export interface RejectPlanRevisionResponse {
   readonly outcome: "revising" | "parked";
 }
 
-/** The outcome is absent for the existing activation path. */
+// The outcome stays optional for compatibility with the original activation response.
 export interface ConfirmPlanRevisionResponse<Workflow = unknown> {
   readonly workflow: Workflow;
   readonly outcome?: "parked_hazardous" | "designing";
 }
+
+/* —— Projects, tasks, and claim records —— */
 
 export interface Project {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
@@ -1207,6 +1213,8 @@ export interface ClaimRunResult {
   }>;
 }
 
+/* —— Mutating request payloads —— */
+
 export interface CreateProjectRequest {
   readonly name: string;
   readonly description: string;
@@ -1221,11 +1229,9 @@ export interface UpdateProjectRequest {
 
 export interface CreateWorkItemRequest {
   readonly originalRequest: string;
-  /** Defaults to normal. */
   readonly priority?: WorkItemPriority;
-  /** Defaults to standard. */
   readonly taskType?: WorkItemTaskType;
-  /** Required by the current server; automatic targets are rejected with PROJECT_REQUIRED. */
+  // Optional only for older clients; the current server rejects an absent or automatic target.
   readonly projectTarget?: WorkItemProjectTarget;
 }
 
