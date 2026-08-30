@@ -14,7 +14,7 @@ const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
 async function fakeDocker(
   root: string,
-  options: Readonly<{ run: string; inspect: string }>,
+  options: Readonly<{ run: string; inspect: string }>
 ): Promise<{ binary: string; log: string; marker: string; workspace: string }> {
   const bin = join(root, "bin");
   const workspace = join(root, "workspace");
@@ -23,7 +23,9 @@ async function fakeDocker(
   const marker = join(root, "run.pid");
   await mkdir(bin);
   await mkdir(workspace);
-  await writeFile(binary, `#!/usr/bin/env node
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
 const fs = require("node:fs");
 const command = process.argv[2];
 fs.appendFileSync(${JSON.stringify(log)}, command + "\\n");
@@ -38,14 +40,16 @@ if (command === "run") {
 } else {
   process.exit(2);
 }
-`, { mode: 0o700 });
+`,
+    { mode: 0o700 }
+  );
   await chmod(binary, 0o700);
   return { binary, log, marker, workspace };
 }
 
 function launcher(
   fixture: Readonly<{ binary: string; workspace: string }>,
-  terminationGraceMs = 20,
+  terminationGraceMs = 20
 ): ContainerAgentLauncher {
   return new ContainerAgentLauncher({
     adapter: codexAdapter,
@@ -62,11 +66,7 @@ function launcher(
   });
 }
 
-async function launch(
-  target: ContainerAgentLauncher,
-  workspace: string,
-  runId: string,
-) {
+async function launch(target: ContainerAgentLauncher, workspace: string, runId: string) {
   return target.launch({
     runId,
     wakeReason: "human_assignment",
@@ -86,14 +86,21 @@ test("constructor accepts an immutable image ID without allowing option injectio
     dockerBinary: "/nonexistent",
   };
 
-  assert.doesNotThrow(() => new ContainerAgentLauncher({
-    ...options,
-    image: `sha256:${"a".repeat(64)}`,
-  }));
-  assert.throws(() => new ContainerAgentLauncher({
-    ...options,
-    image: "--network=host",
-  }), /image is invalid/u);
+  assert.doesNotThrow(
+    () =>
+      new ContainerAgentLauncher({
+        ...options,
+        image: `sha256:${"a".repeat(64)}`,
+      })
+  );
+  assert.throws(
+    () =>
+      new ContainerAgentLauncher({
+        ...options,
+        image: "--network=host",
+      }),
+    /image is invalid/u
+  );
 });
 
 test("interrupt rejects when daemon errors prevent confirming container absence", async () => {
@@ -108,8 +115,8 @@ test("interrupt rejects when daemon errors prevent confirming container absence"
 
   await assert.rejects(
     handle.interrupt("Human interrupted this agent run"),
-    (error: unknown) => error instanceof AgentProcessError
-      && error.message === "Task container could not be confirmed absent",
+    (error: unknown) =>
+      error instanceof AgentProcessError && error.message === "Task container could not be confirmed absent"
   );
 });
 
@@ -139,12 +146,19 @@ test("interrupt waits for docker run to close before accepting explicit absence"
   })();
   void handle.completion.catch(() => undefined);
   await until(() => existsSync(fixture.marker), "fake docker run client");
-  await until(() => activityEvents.some((event) => event.type === "tool_call" && event.name === "container_attached"), "container attachment activity");
+  await until(
+    () => activityEvents.some((event) => event.type === "tool_call" && event.name === "container_attached"),
+    "container attachment activity"
+  );
 
   await handle.interrupt("Human interrupted this agent run");
   await assert.rejects(handle.completion, /interrupted directly/u);
   assert.deepEqual((await readFile(fixture.log, "utf8")).trim().split("\n"), [
-    "run", "stop", "inspect", "rm", "inspect",
+    "run",
+    "stop",
+    "inspect",
+    "rm",
+    "inspect",
   ]);
   assert.deepEqual(await collectedActivity, [
     { type: "tool_call", name: "container_starting", detail: "" },
@@ -163,6 +177,10 @@ test("an abnormal docker run close rejects with its teardown failure", async () 
 
   await assert.rejects(handle.completion, /Task container could not be confirmed absent/u);
   assert.deepEqual((await readFile(fixture.log, "utf8")).trim().split("\n"), [
-    "run", "stop", "inspect", "rm", "inspect",
+    "run",
+    "stop",
+    "inspect",
+    "rm",
+    "inspect",
   ]);
 });

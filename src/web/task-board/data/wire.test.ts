@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 import {
   ACTOR_TYPES,
   AGENT_ROLES,
@@ -27,7 +27,7 @@ import {
   WORK_ITEM_STATES,
   WORK_NODE_STATES,
   WORKFLOW_STAGES,
-} from '@shared/task-board-contract';
+} from "@shared/task-board-contract";
 import {
   actorTypes,
   apiVersion,
@@ -61,66 +61,66 @@ import {
   workItemStates,
   workNodeStates,
   workNodeStateValues,
-} from './wire';
+} from "./wire";
 
-describe('wire constants', () => {
-  it('resolves the shared contract from source through the @shared alias', () => {
-    expect(TASK_BOARD_API_VERSION).toBe('steward.task-board/v1');
+describe("wire constants", () => {
+  it("resolves the shared contract from source through the @shared alias", () => {
+    expect(TASK_BOARD_API_VERSION).toBe("steward.task-board/v1");
   });
 
-  it('re-exports contract constants rather than redeclaring them', () => {
+  it("re-exports contract constants rather than redeclaring them", () => {
     expect(apiVersion).toBe(TASK_BOARD_API_VERSION);
     expect(maximumAutomationConfigurationBytes).toBe(48 * 1_024);
     expect(taskMessagePageSize).toBe(TASK_MESSAGE_PAGE_SIZE);
     expect(workItemPageSize).toBe(WORK_ITEM_PAGE_SIZE);
     expect(identifierPattern.source).toBe(IDENTIFIER_PATTERN);
-    expect(unrecognizedState).toBe('unrecognized');
+    expect(unrecognizedState).toBe("unrecognized");
     expect(planRevisionStateValues).toBe(PLAN_REVISION_STATES);
     expect(workNodeStateValues).toBe(WORK_NODE_STATES);
     expect(stageHandoffOutcomeValues).toBe(STAGE_HANDOFF_OUTCOMES);
   });
 });
 
-describe('wire validators', () => {
-  it('builds the agent status validator from the contract', () => {
+describe("wire validators", () => {
+  it("builds the agent status validator from the contract", () => {
     expect([...rawAgentStatuses].sort()).toEqual([...AGENT_STATUSES].sort());
   });
 
-  it('builds the task status validator from the contract', () => {
+  it("builds the task status validator from the contract", () => {
     expect([...rawTaskStatuses].sort()).toEqual([...TASK_STATUSES].sort());
   });
 
   it.each([
-    ['actor types', actorTypes, ACTOR_TYPES],
-    ['worker connections', rawWorkerConnections, WORKER_CONNECTIONS],
-    ['run statuses', rawRunStatuses, RUN_STATUSES],
-    ['roles', roles, AGENT_ROLES],
-    ['task kinds', taskKinds, TASK_KINDS],
-    ['phase stages', taskPhaseStages, TASK_PHASE_STAGES],
-    ['phase statuses', taskPhaseStatuses, TASK_PHASE_STATUSES],
-    ['message kinds', messageKinds, TASK_MESSAGE_KINDS],
-    ['question statuses', questionStatuses, QUESTION_STATUSES],
-    ['wake reasons', wakeReasons, WAKEUP_REASONS],
-    ['work-item priorities', workItemPriorities, WORK_ITEM_PRIORITIES],
-    ['work-item phases', workItemPhases, WORK_ITEM_PHASES],
-    ['work-item states', workItemStates, WORK_ITEM_STATES],
-    ['work-item stages', workItemStages, WORK_ITEM_STAGES],
-    ['evaluator profiles', evaluatorProfiles, EVALUATOR_PROFILES],
-    ['workflow stages', workflowStages, WORKFLOW_STAGES],
-    ['plan revision states', planRevisionStates, PLAN_REVISION_STATES],
-    ['work-node states', workNodeStates, WORK_NODE_STATES],
-    ['handoff outcomes', stageHandoffOutcomes, STAGE_HANDOFF_OUTCOMES],
-    ['notification kinds', notificationKinds, NOTIFICATION_KINDS],
-    ['gate kinds', gateKinds, GATE_KINDS],
-  ] as const)('builds the %s validator from the contract', (_label, actual, expected) => {
+    ["actor types", actorTypes, ACTOR_TYPES],
+    ["worker connections", rawWorkerConnections, WORKER_CONNECTIONS],
+    ["run statuses", rawRunStatuses, RUN_STATUSES],
+    ["roles", roles, AGENT_ROLES],
+    ["task kinds", taskKinds, TASK_KINDS],
+    ["phase stages", taskPhaseStages, TASK_PHASE_STAGES],
+    ["phase statuses", taskPhaseStatuses, TASK_PHASE_STATUSES],
+    ["message kinds", messageKinds, TASK_MESSAGE_KINDS],
+    ["question statuses", questionStatuses, QUESTION_STATUSES],
+    ["wake reasons", wakeReasons, WAKEUP_REASONS],
+    ["work-item priorities", workItemPriorities, WORK_ITEM_PRIORITIES],
+    ["work-item phases", workItemPhases, WORK_ITEM_PHASES],
+    ["work-item states", workItemStates, WORK_ITEM_STATES],
+    ["work-item stages", workItemStages, WORK_ITEM_STAGES],
+    ["evaluator profiles", evaluatorProfiles, EVALUATOR_PROFILES],
+    ["workflow stages", workflowStages, WORKFLOW_STAGES],
+    ["plan revision states", planRevisionStates, PLAN_REVISION_STATES],
+    ["work-node states", workNodeStates, WORK_NODE_STATES],
+    ["handoff outcomes", stageHandoffOutcomes, STAGE_HANDOFF_OUTCOMES],
+    ["notification kinds", notificationKinds, NOTIFICATION_KINDS],
+    ["gate kinds", gateKinds, GATE_KINDS],
+  ] as const)("builds the %s validator from the contract", (_label, actual, expected) => {
     expect([...actual]).toEqual([...expected]);
   });
 
-  it('rejects view-layer vocabulary that never appears on the wire', () => {
+  it("rejects view-layer vocabulary that never appears on the wire", () => {
     // 'running' is what the view calls in_progress. If the wire validator
     // ever accepts it, the projection layer has leaked into parsing.
-    expect(rawTaskStatuses.has('running' as never)).toBe(false);
-    expect(rawAgentStatuses.has('sleeping' as never)).toBe(false);
+    expect(rawTaskStatuses.has("running" as never)).toBe(false);
+    expect(rawAgentStatuses.has("sleeping" as never)).toBe(false);
     expect(rawTaskStatuses.has(unrecognizedState as never)).toBe(false);
     expect(workItemStates.has(unrecognizedState as never)).toBe(false);
   });

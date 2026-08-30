@@ -10,9 +10,7 @@ const FAILURE_STATES = new Set(["cancelled", "error", "failed", "rejected"]);
 type JsonObject = Record<string, unknown>;
 
 function object(value: unknown): JsonObject | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as JsonObject
-    : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : null;
 }
 
 function eventFromLine(line: string): JsonObject | null {
@@ -26,7 +24,7 @@ function eventFromLine(line: string): JsonObject | null {
 }
 
 function failed(item: JsonObject): boolean {
-  if (item.is_error === true || item.error !== undefined && item.error !== null) return true;
+  if (item.is_error === true || (item.error !== undefined && item.error !== null)) return true;
   if (typeof item.exit_code === "number" && item.exit_code !== 0) return true;
   return typeof item.status === "string" && FAILURE_STATES.has(item.status.toLowerCase());
 }
@@ -90,11 +88,12 @@ function codexEvents(line: string): readonly RuntimeEvent[] {
             : frozenEvent({
                 type: "tool_result",
                 name,
-                output: itemType === "command_execution"
-                  ? text(item.aggregated_output)
-                  : itemType === "mcp_tool_call" || itemType === "tool_call" || itemType === "collaboration_tool_call"
-                    ? text(item.result ?? item.output)
-                    : "",
+                output:
+                  itemType === "command_execution"
+                    ? text(item.aggregated_output)
+                    : itemType === "mcp_tool_call" || itemType === "tool_call" || itemType === "collaboration_tool_call"
+                      ? text(item.result ?? item.output)
+                      : "",
                 failed: failed(item),
               });
         default:
@@ -120,20 +119,30 @@ function codexSandbox(profile: RuntimeProfile, role: AgentRole): string {
     throw new RuntimeCapabilityError(
       profile.runtime,
       role,
-      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`,
+      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`
     );
   }
   return sandbox;
 }
 
-function codexArgs(
-  options: ProviderArgumentOptions,
-  fixedRole: AgentRole,
-  profile: RuntimeProfile,
-): readonly string[] {
-  const includedEnvironment = options.proxyEgress === true
-    ? ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY"]
-    : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
+function codexArgs(options: ProviderArgumentOptions, fixedRole: AgentRole, profile: RuntimeProfile): readonly string[] {
+  const includedEnvironment =
+    options.proxyEgress === true
+      ? [
+          "PATH",
+          "HOME",
+          "TMPDIR",
+          "TEMP",
+          "TMP",
+          "LANG",
+          "LC_ALL",
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "NO_PROXY",
+        ]
+      : ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"];
   return Object.freeze([
     "exec",
     "--ephemeral",
@@ -165,8 +174,20 @@ function codexArgs(
 
 function codexEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const keys = [
-    "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
-    "CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ORGANIZATION", "OPENAI_PROJECT",
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CODEX_HOME",
+    "CODEX_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_ORGANIZATION",
+    "OPENAI_PROJECT",
   ] as const;
   const result: NodeJS.ProcessEnv = Object.create(null) as NodeJS.ProcessEnv;
   for (const key of keys) {
@@ -195,15 +216,18 @@ function codexResult(stdout: string): unknown {
   let completed = false;
   for (const line of stdout.split(/\r?\n/u)) {
     if (line.trim().length === 0) continue;
-    if (line.length > MAX_RESULT_EVENT_CHARACTERS) throw new AgentProcessError("Codex emitted an oversized JSONL event");
+    if (line.length > MAX_RESULT_EVENT_CHARACTERS)
+      throw new AgentProcessError("Codex emitted an oversized JSONL event");
     const event = outputObject(decodeJson(line, "Codex event"), "Codex event");
-    if (event.type === "turn.failed" || event.type === "error") throw new AgentProcessError("Codex reported a failed run");
+    if (event.type === "turn.failed" || event.type === "error")
+      throw new AgentProcessError("Codex reported a failed run");
     if (event.type === "turn.completed") completed = true;
     if (event.type !== "item.completed") continue;
     const item = outputObject(event.item, "Codex item");
     if (item.type === "agent_message" && typeof item.text === "string") message = item.text;
   }
-  if (!completed || message === undefined) throw new AgentProcessError("Codex ended without a completed structured result");
+  if (!completed || message === undefined)
+    throw new AgentProcessError("Codex ended without a completed structured result");
   return decodeJson(message, "Codex result");
 }
 

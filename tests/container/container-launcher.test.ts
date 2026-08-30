@@ -13,17 +13,10 @@ import {
 import { AgentProcessError, PromptRegistry, type AgentLaunchRequest } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
 import { CODEX_PROFILE } from "../server/agents/runtime/profile-fixtures.js";
-import {
-  agentImage,
-  context,
-  docker,
-  fixtureRepo,
-  requireDocker,
-  runGit,
-  tempRoot,
-} from "./helpers.js";
+import { agentImage, context, docker, fixtureRepo, requireDocker, runGit, tempRoot } from "./helpers.js";
 
-const DIRECT_EGRESS_PROBE = "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
+const DIRECT_EGRESS_PROBE =
+  "fetch('https://example.com',{signal:AbortSignal.timeout(4000)}).then(()=>process.exit(0),()=>process.exit(1))";
 const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 const CONNECT_PROBE = [
   "const net=require('node:net');",
@@ -56,7 +49,7 @@ function launcher(
   image: string,
   infrastructure: ContainerInfrastructure,
   manager: TaskWorkspaceManager,
-  options: Readonly<{ hang?: boolean; timeoutMs?: number; terminationGraceMs?: number }> = {},
+  options: Readonly<{ hang?: boolean; timeoutMs?: number; terminationGraceMs?: number }> = {}
 ): WorkspaceScopedLauncher {
   const inner = new ContainerAgentLauncher({
     adapter: codexAdapter,
@@ -76,32 +69,31 @@ function launcher(
 
 function dockerExitCode(args: readonly string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    execFile("docker", [...args], {
-      encoding: "utf8",
-      timeout: 120_000,
-      maxBuffer: 8 * 1024 * 1024,
-    }, (error, _stdout, stderr) => {
-      if (error === null) {
-        resolve(0);
-      } else if (typeof error.code === "number") {
-        resolve(error.code);
-      } else {
-        reject(new Error(`docker ${args[0]} failed: ${stderr.trim()}`, { cause: error }));
+    execFile(
+      "docker",
+      [...args],
+      {
+        encoding: "utf8",
+        timeout: 120_000,
+        maxBuffer: 8 * 1024 * 1024,
+      },
+      (error, _stdout, stderr) => {
+        if (error === null) {
+          resolve(0);
+        } else if (typeof error.code === "number") {
+          resolve(error.code);
+        } else {
+          reject(new Error(`docker ${args[0]} failed: ${stderr.trim()}`, { cause: error }));
+        }
       }
-    });
+    );
   });
 }
 
 async function waitForTaskContainer(containerName: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const output = await docker([
-      "ps",
-      "--filter",
-      "name=steward-task-",
-      "--format",
-      "{{.Names}}",
-    ]);
+    const output = await docker(["ps", "--filter", "name=steward-task-", "--format", "{{.Names}}"]);
     if (output.split(/\r?\n/u).includes(containerName)) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -144,48 +136,57 @@ test("agent network blocks direct egress and proxy CONNECT enforces the allowlis
   const image = await agentImage();
   const infrastructure = await prepareContainerInfrastructure({ image, allowedHosts: DEFAULT_ALLOWED_HOSTS });
 
-  assert.equal(await dockerExitCode([
-    "run",
-    "--rm",
-    "--network",
-    infrastructure.agentNetwork,
-    image,
-    "node",
-    "-e",
-    DIRECT_EGRESS_PROBE,
-  ]), 1);
-  assert.equal(await dockerExitCode([
-    "run",
-    "--rm",
-    "--network",
-    infrastructure.agentNetwork,
-    "-e",
-    `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
-    "-e",
-    "STEWARD_CONNECT_TARGET=example.com:443",
-    "-e",
-    "STEWARD_CONNECT_EXPECTATION=forbidden",
-    image,
-    "node",
-    "-e",
-    CONNECT_PROBE,
-  ]), 0);
-  assert.equal(await dockerExitCode([
-    "run",
-    "--rm",
-    "--network",
-    infrastructure.agentNetwork,
-    "-e",
-    `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
-    "-e",
-    "STEWARD_CONNECT_TARGET=registry.npmjs.org:443",
-    "-e",
-    "STEWARD_CONNECT_EXPECTATION=admitted",
-    image,
-    "node",
-    "-e",
-    CONNECT_PROBE,
-  ]), 0);
+  assert.equal(
+    await dockerExitCode([
+      "run",
+      "--rm",
+      "--network",
+      infrastructure.agentNetwork,
+      image,
+      "node",
+      "-e",
+      DIRECT_EGRESS_PROBE,
+    ]),
+    1
+  );
+  assert.equal(
+    await dockerExitCode([
+      "run",
+      "--rm",
+      "--network",
+      infrastructure.agentNetwork,
+      "-e",
+      `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
+      "-e",
+      "STEWARD_CONNECT_TARGET=example.com:443",
+      "-e",
+      "STEWARD_CONNECT_EXPECTATION=forbidden",
+      image,
+      "node",
+      "-e",
+      CONNECT_PROBE,
+    ]),
+    0
+  );
+  assert.equal(
+    await dockerExitCode([
+      "run",
+      "--rm",
+      "--network",
+      infrastructure.agentNetwork,
+      "-e",
+      `STEWARD_PROXY_URL=${infrastructure.proxyUrl}`,
+      "-e",
+      "STEWARD_CONNECT_TARGET=registry.npmjs.org:443",
+      "-e",
+      "STEWARD_CONNECT_EXPECTATION=admitted",
+      image,
+      "node",
+      "-e",
+      CONNECT_PROBE,
+    ]),
+    0
+  );
 });
 
 test("an externally killed task container fails uneventfully and retains its workspace", async (t) => {

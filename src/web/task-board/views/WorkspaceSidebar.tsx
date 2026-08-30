@@ -1,51 +1,36 @@
-import {
-  ChevronDown,
-  CircleAlert,
-  CirclePause,
-  CirclePlay,
-  CircleX,
-  Menu,
-  Plus,
-  X,
-} from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Popover } from '../../components/popover';
-import { Button, cn } from '../../components/ui';
-import type { BoardAgent, BoardSnapshot } from '../types';
-import type { RawBoardPause } from '../data/parse';
-import { agentWorkLabel, taskNeedsHumanAction } from '../model/workspace-model';
+import { ChevronDown, CircleAlert, CirclePause, CirclePlay, CircleX, Menu, Plus, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Popover } from "../../components/popover";
+import { Button, cn } from "../../components/ui";
+import type { BoardAgent, BoardSnapshot } from "../types";
+import type { RawBoardPause } from "../data/parse";
+import { agentWorkLabel, taskNeedsHumanAction } from "../model/workspace-model";
 
 export type BoardPage =
-  | { kind: 'tasks'; taskId?: string }
-  | { kind: 'intake'; workItemId: string }
-  | { kind: 'automation' }
-  | { kind: 'ledgers' }
-  | { kind: 'project'; projectId: string }
-  | { kind: 'agent'; agentId: string };
+  | { kind: "tasks"; taskId?: string }
+  | { kind: "intake"; workItemId: string }
+  | { kind: "automation" }
+  | { kind: "ledgers" }
+  | { kind: "project"; projectId: string }
+  | { kind: "agent"; agentId: string };
 
-function pageIs(page: BoardPage, kind: BoardPage['kind'], id?: string): boolean {
-  if (kind === 'tasks' && page.kind === 'intake') return true;
+function pageIs(page: BoardPage, kind: BoardPage["kind"], id?: string): boolean {
+  if (kind === "tasks" && page.kind === "intake") return true;
   if (page.kind !== kind) return false;
-  if (page.kind === 'project') return page.projectId === id;
-  if (page.kind === 'agent') return page.agentId === id;
-  if (page.kind === 'intake') return page.workItemId === id;
+  if (page.kind === "project") return page.projectId === id;
+  if (page.kind === "agent") return page.agentId === id;
+  if (page.kind === "intake") return page.workItemId === id;
   return true;
 }
 
 function AgentStatusMark({ agent }: { agent: BoardAgent }) {
-  const active = agent.status === 'running' || agent.status === 'queued';
-  const waiting = agent.status === 'waiting_for_human' || agent.status === 'interrupting';
+  const active = agent.status === "running" || agent.status === "queued";
+  const waiting = agent.status === "waiting_for_human" || agent.status === "interrupting";
   const label = `Work: ${agentWorkLabel(agent.status)}`;
-  if (agent.status === 'failed') return <CircleX size={12} className="shrink-0 text-urgent" aria-label={label} />;
+  if (agent.status === "failed") return <CircleX size={12} className="shrink-0 text-urgent" aria-label={label} />;
   if (waiting) return <CircleAlert size={12} className="shrink-0 text-caution" aria-label={label} />;
   return (
-    <span
-      className={cn(
-        'size-1.5 shrink-0 rounded-[99px]',
-        active ? 'bg-success-fill' : 'bg-taupe',
-      )}
-      title={label}
-    >
+    <span className={cn("size-1.5 shrink-0 rounded-[99px]", active ? "bg-success-fill" : "bg-taupe")} title={label}>
       <span className="sr-only">{label}</span>
     </span>
   );
@@ -75,18 +60,13 @@ export function PauseReasonPopover({
   const reasonId = useId();
   const errorId = useId();
   const close = () => {
-    onReasonChange('');
+    onReasonChange("");
     onClose();
   };
   const preserveRecovery = busy || error !== null;
 
   return (
-    <Popover
-      open={open}
-      onClose={preserveRecovery ? () => undefined : close}
-      anchorRef={anchorRef}
-      label="Pause board"
-    >
+    <Popover open={open} onClose={preserveRecovery ? () => undefined : close} anchorRef={anchorRef} label="Pause board">
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -95,8 +75,12 @@ export function PauseReasonPopover({
         }}
       >
         <div className="flex items-center justify-between gap-3">
-          <label htmlFor={reasonId} className="text-xs font-medium text-ink">Reason</label>
-          <span className="text-[10px] text-muted" aria-hidden="true">Optional</span>
+          <label htmlFor={reasonId} className="text-xs font-medium text-ink">
+            Reason
+          </label>
+          <span className="text-[10px] text-muted" aria-hidden="true">
+            Optional
+          </span>
         </div>
         <textarea
           id={reasonId}
@@ -112,13 +96,17 @@ export function PauseReasonPopover({
           className="mt-1.5 w-full resize-y rounded-sm border border-line bg-canvas px-3 py-2 text-sm leading-5 text-ink outline-none transition-colors placeholder:text-muted focus:border-taupe-hover disabled:cursor-not-allowed disabled:opacity-55"
         />
         {error === null ? null : (
-          <p id={errorId} className="mt-2 text-[11px] leading-4 text-urgent" role="alert">{error}</p>
+          <p id={errorId} className="mt-2 text-[11px] leading-4 text-urgent" role="alert">
+            {error}
+          </p>
         )}
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
           <Button type="submit" variant="primary" size="sm" disabled={busy || disabled}>
-            {busy ? 'Pausing…' : 'Confirm pause'}
+            {busy ? "Pausing…" : "Confirm pause"}
           </Button>
-          <Button size="sm" disabled={busy} onClick={close}>Cancel</Button>
+          <Button size="sm" disabled={busy} onClick={close}>
+            Cancel
+          </Button>
         </div>
       </form>
     </Popover>
@@ -165,13 +153,14 @@ function RailContent({
   onResumeBoard: () => void;
 }) {
   const attentionCount = snapshot?.tasks.filter(taskNeedsHumanAction).length ?? 0;
-  const parkedCount = snapshot?.workItems.filter((workItem) => workItem.state === 'parked').length ?? 0;
-  const finalApprovalCount = snapshot?.workItems.filter((workItem) => workItem.state === 'final_approval').length ?? 0;
+  const parkedCount = snapshot?.workItems.filter((workItem) => workItem.state === "parked").length ?? 0;
+  const finalApprovalCount = snapshot?.workItems.filter((workItem) => workItem.state === "final_approval").length ?? 0;
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const pauseAnchorRef = useRef<HTMLButtonElement>(null);
-  const navRow = 'group flex min-h-11 w-full items-center border-l-2 border-transparent px-3 text-left text-[12px] font-medium transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9';
-  const activeRow = 'border-l-taupe bg-surface text-ink';
-  const inactiveRow = 'text-ink hover:bg-surface';
+  const navRow =
+    "group flex min-h-11 w-full items-center border-l-2 border-transparent px-3 text-left text-[12px] font-medium transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9";
+  const activeRow = "border-l-taupe bg-surface text-ink";
+  const inactiveRow = "text-ink hover:bg-surface";
   const toggleProject = (projectId: string) => {
     setCollapsedProjects((current) => {
       const next = new Set(current);
@@ -184,7 +173,12 @@ function RailContent({
   return (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-ink">
       <div className="flex h-14 items-center gap-3 border-b border-line px-4 pr-14 lg:pr-4">
-        <span className="grid size-6 place-items-center rounded-sm bg-taupe text-[10px] font-bold text-white" aria-hidden="true">C</span>
+        <span
+          className="grid size-6 place-items-center rounded-sm bg-taupe text-[10px] font-bold text-white"
+          aria-hidden="true"
+        >
+          C
+        </span>
         <p className="whitespace-nowrap text-[11px] font-medium text-ink">Cicada Tech Systems LLC.</p>
       </div>
 
@@ -192,106 +186,126 @@ function RailContent({
         <nav aria-label="Company navigation" className="space-y-1">
           <button
             type="button"
-            aria-current={pageIs(page, 'tasks') ? 'page' : undefined}
-            className={cn(navRow, pageIs(page, 'tasks') ? activeRow : inactiveRow)}
-            onClick={(event) => onNavigate({ kind: 'tasks' }, event.nativeEvent)}
+            aria-current={pageIs(page, "tasks") ? "page" : undefined}
+            className={cn(navRow, pageIs(page, "tasks") ? activeRow : inactiveRow)}
+            onClick={(event) => onNavigate({ kind: "tasks" }, event.nativeEvent)}
           >
             <span className="min-w-0 flex-1">Task List</span>
             <span className="ml-2 flex shrink-0 flex-wrap justify-end gap-1">
               {parkedCount > 0 ? (
-                <span className={cn(
-                  'inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
-                  pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
-                )}>{parkedCount} parked</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4",
+                    pageIs(page, "tasks") ? "bg-taupe text-white" : "bg-canvas text-muted"
+                  )}
+                >
+                  {parkedCount} parked
+                </span>
               ) : null}
               {finalApprovalCount > 0 ? (
                 <span
-                  aria-label={`${finalApprovalCount} ${finalApprovalCount === 1 ? 'work item awaits' : 'work items await'} final approval`}
+                  aria-label={`${finalApprovalCount} ${finalApprovalCount === 1 ? "work item awaits" : "work items await"} final approval`}
                   className={cn(
-                    'inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
-                    pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
+                    "inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4",
+                    pageIs(page, "tasks") ? "bg-taupe text-white" : "bg-canvas text-muted"
                   )}
-                >{finalApprovalCount} final</span>
+                >
+                  {finalApprovalCount} final
+                </span>
               ) : null}
               {unreadNotifications > 0 ? (
                 <span
-                  aria-label={`${unreadNotifications} unread ${unreadNotifications === 1 ? 'notification' : 'notifications'}`}
+                  aria-label={`${unreadNotifications} unread ${unreadNotifications === 1 ? "notification" : "notifications"}`}
                   className={cn(
-                    'inline-flex min-w-5 items-center justify-center rounded-[99px] border border-caution/30 px-1.5 py-0.5 font-mono text-[9px] leading-4',
-                    pageIs(page, 'tasks') ? 'bg-caution-soft text-caution' : 'bg-canvas text-caution',
+                    "inline-flex min-w-5 items-center justify-center rounded-[99px] border border-caution/30 px-1.5 py-0.5 font-mono text-[9px] leading-4",
+                    pageIs(page, "tasks") ? "bg-caution-soft text-caution" : "bg-canvas text-caution"
                   )}
-                >{unreadNotifications}</span>
+                >
+                  {unreadNotifications}
+                </span>
               ) : null}
               {attentionCount > 0 ? (
                 <span
-                  aria-label={`${attentionCount} board ${attentionCount === 1 ? 'task needs' : 'tasks need'} human action`}
+                  aria-label={`${attentionCount} board ${attentionCount === 1 ? "task needs" : "tasks need"} human action`}
                   className={cn(
-                    'inline-flex min-w-5 items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4',
-                    pageIs(page, 'tasks') ? 'bg-taupe text-white' : 'bg-canvas text-muted',
+                    "inline-flex min-w-5 items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4",
+                    pageIs(page, "tasks") ? "bg-taupe text-white" : "bg-canvas text-muted"
                   )}
-                >{attentionCount}</span>
+                >
+                  {attentionCount}
+                </span>
               ) : null}
             </span>
           </button>
           <button
             type="button"
-            aria-current={pageIs(page, 'automation') ? 'page' : undefined}
-            className={cn(navRow, pageIs(page, 'automation') ? activeRow : inactiveRow)}
-            onClick={(event) => onNavigate({ kind: 'automation' }, event.nativeEvent)}
+            aria-current={pageIs(page, "automation") ? "page" : undefined}
+            className={cn(navRow, pageIs(page, "automation") ? activeRow : inactiveRow)}
+            onClick={(event) => onNavigate({ kind: "automation" }, event.nativeEvent)}
           >
             <span>Automation</span>
           </button>
           <button
             type="button"
-            aria-current={pageIs(page, 'ledgers') ? 'page' : undefined}
-            className={cn(navRow, pageIs(page, 'ledgers') ? activeRow : inactiveRow)}
-            onClick={(event) => onNavigate({ kind: 'ledgers' }, event.nativeEvent)}
+            aria-current={pageIs(page, "ledgers") ? "page" : undefined}
+            className={cn(navRow, pageIs(page, "ledgers") ? activeRow : inactiveRow)}
+            onClick={(event) => onNavigate({ kind: "ledgers" }, event.nativeEvent)}
           >
             <span>Ledgers</span>
           </button>
           {pointOfContact ? (
             <button
               type="button"
-              aria-current={pageIs(page, 'agent', pointOfContact.id) ? 'page' : undefined}
-              className={cn(navRow, pageIs(page, 'agent', pointOfContact.id) ? activeRow : inactiveRow)}
-              onClick={(event) => onNavigate({ kind: 'agent', agentId: pointOfContact.id }, event.nativeEvent)}
+              aria-current={pageIs(page, "agent", pointOfContact.id) ? "page" : undefined}
+              className={cn(navRow, pageIs(page, "agent", pointOfContact.id) ? activeRow : inactiveRow)}
+              onClick={(event) => onNavigate({ kind: "agent", agentId: pointOfContact.id }, event.nativeEvent)}
             >
               <span className="min-w-0 flex-1 truncate">{pointOfContact.name}</span>
-              <span className={cn(
-                'ml-2 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium',
-                pageIs(page, 'agent', pointOfContact.id) ? 'bg-taupe text-white' : 'bg-canvas text-muted',
-              )}>Agent</span>
-              <span className="ml-2"><AgentStatusMark agent={pointOfContact} /></span>
+              <span
+                className={cn(
+                  "ml-2 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium",
+                  pageIs(page, "agent", pointOfContact.id) ? "bg-taupe text-white" : "bg-canvas text-muted"
+                )}
+              >
+                Agent
+              </span>
+              <span className="ml-2">
+                <AgentStatusMark agent={pointOfContact} />
+              </span>
             </button>
           ) : null}
         </nav>
 
         <section className="mt-6" aria-labelledby="sidebar-projects-heading">
-          <h2 id="sidebar-projects-heading" className="px-3 text-[11px] font-semibold text-ink">Projects</h2>
+          <h2 id="sidebar-projects-heading" className="px-3 text-[11px] font-semibold text-ink">
+            Projects
+          </h2>
           <nav aria-label="Projects and agents" className="mt-2 space-y-1">
             {snapshot?.projects.map((project) => {
-              const agents = snapshot.agents.filter((agent) => agent.projectId === project.id && agent.id !== pointOfContact?.id);
+              const agents = snapshot.agents.filter(
+                (agent) => agent.projectId === project.id && agent.id !== pointOfContact?.id
+              );
               const collapsed = collapsedProjects.has(project.id);
               return (
                 <div key={project.id}>
                   <div
                     className={cn(
-                      'flex items-center border-l-2 border-transparent transition-colors duration-150',
-                      pageIs(page, 'project', project.id) ? activeRow : inactiveRow,
+                      "flex items-center border-l-2 border-transparent transition-colors duration-150",
+                      pageIs(page, "project", project.id) ? activeRow : inactiveRow
                     )}
                   >
                     <button
                       type="button"
-                      aria-current={pageIs(page, 'project', project.id) ? 'page' : undefined}
+                      aria-current={pageIs(page, "project", project.id) ? "page" : undefined}
                       className="min-h-11 min-w-0 flex-1 truncate py-2 pl-3 pr-2 text-left text-[12px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-9"
-                      onClick={(event) => onNavigate({ kind: 'project', projectId: project.id }, event.nativeEvent)}
+                      onClick={(event) => onNavigate({ kind: "project", projectId: project.id }, event.nativeEvent)}
                     >
                       {project.name}
                     </button>
                     <button
                       type="button"
                       aria-expanded={!collapsed}
-                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${project.name} agents`}
+                      aria-label={`${collapsed ? "Expand" : "Collapse"} ${project.name} agents`}
                       className="mr-1 flex size-9 shrink-0 items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
                       onClick={() => toggleProject(project.id)}
                     >
@@ -299,7 +313,7 @@ function RailContent({
                         aria-hidden="true"
                         size={15}
                         strokeWidth={1.5}
-                        className={cn('transition-transform duration-150', collapsed && '-rotate-90')}
+                        className={cn("transition-transform duration-150", collapsed && "-rotate-90")}
                       />
                     </button>
                   </div>
@@ -309,12 +323,12 @@ function RailContent({
                         <button
                           key={agent.id}
                           type="button"
-                          aria-current={pageIs(page, 'agent', agent.id) ? 'page' : undefined}
+                          aria-current={pageIs(page, "agent", agent.id) ? "page" : undefined}
                           className={cn(
-                            'flex min-h-9 w-full items-center gap-2 border-l-2 border-transparent py-1 pl-6 pr-3 text-left text-[11px] leading-4 transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-7',
-                            pageIs(page, 'agent', agent.id) ? activeRow : 'text-muted hover:bg-surface hover:text-ink',
+                            "flex min-h-9 w-full items-center gap-2 border-l-2 border-transparent py-1 pl-6 pr-3 text-left text-[11px] leading-4 transition-[background-color,border-color,color] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover lg:min-h-7",
+                            pageIs(page, "agent", agent.id) ? activeRow : "text-muted hover:bg-surface hover:text-ink"
                           )}
-                          onClick={(event) => onNavigate({ kind: 'agent', agentId: agent.id }, event.nativeEvent)}
+                          onClick={(event) => onNavigate({ kind: "agent", agentId: agent.id }, event.nativeEvent)}
                         >
                           <span className="min-w-0 flex-1 truncate">{agent.name}</span>
                           <AgentStatusMark agent={agent} />
@@ -343,42 +357,60 @@ function RailContent({
         </section>
       </div>
 
-      {boardPause === null ? null : <section aria-label="Board controls" className="border-t border-line p-3">
-        <div className="flex items-center justify-between gap-3 px-3 pb-2">
-          <p className="text-[11px] font-semibold text-ink">Orchestration</p>
-          {boardPause?.paused ? (
-            <span className="rounded-[99px] border border-caution/30 bg-caution-soft px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-caution">Paused</span>
-          ) : null}
-        </div>
-        <div className="relative">
-          <button
-            ref={pauseAnchorRef}
-            type="button"
-            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45 lg:min-h-9"
-            disabled={pauseBusy || pauseControlDisabled}
-            aria-expanded={boardPause.paused ? undefined : pausePopoverOpen}
-            aria-haspopup={boardPause.paused ? undefined : 'dialog'}
-            onClick={boardPause.paused ? onResumeBoard : onPauseBoard}
-          >
-            {boardPause.paused ? <CirclePlay size={14} aria-hidden="true" /> : <CirclePause size={14} aria-hidden="true" />}
-            {pauseBusy ? (boardPause.paused ? 'Resuming…' : 'Pausing…') : boardPause.paused ? 'Resume board' : 'Pause board'}
-          </button>
-          {boardPause.paused ? null : (
-            <PauseReasonPopover
-              open={pausePopoverOpen}
-              anchorRef={pauseAnchorRef}
-              reason={pauseReason}
-              busy={pauseBusy}
-              disabled={pauseControlDisabled}
-              error={pauseControlError}
-              onReasonChange={onPauseReasonChange}
-              onConfirm={onConfirmPause}
-              onClose={onCancelPause}
-            />
+      {boardPause === null ? null : (
+        <section aria-label="Board controls" className="border-t border-line p-3">
+          <div className="flex items-center justify-between gap-3 px-3 pb-2">
+            <p className="text-[11px] font-semibold text-ink">Orchestration</p>
+            {boardPause?.paused ? (
+              <span className="rounded-[99px] border border-caution/30 bg-caution-soft px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-caution">
+                Paused
+              </span>
+            ) : null}
+          </div>
+          <div className="relative">
+            <button
+              ref={pauseAnchorRef}
+              type="button"
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-canvas px-3 text-[12px] font-medium text-ink transition-colors hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover disabled:cursor-not-allowed disabled:opacity-45 lg:min-h-9"
+              disabled={pauseBusy || pauseControlDisabled}
+              aria-expanded={boardPause.paused ? undefined : pausePopoverOpen}
+              aria-haspopup={boardPause.paused ? undefined : "dialog"}
+              onClick={boardPause.paused ? onResumeBoard : onPauseBoard}
+            >
+              {boardPause.paused ? (
+                <CirclePlay size={14} aria-hidden="true" />
+              ) : (
+                <CirclePause size={14} aria-hidden="true" />
+              )}
+              {pauseBusy
+                ? boardPause.paused
+                  ? "Resuming…"
+                  : "Pausing…"
+                : boardPause.paused
+                  ? "Resume board"
+                  : "Pause board"}
+            </button>
+            {boardPause.paused ? null : (
+              <PauseReasonPopover
+                open={pausePopoverOpen}
+                anchorRef={pauseAnchorRef}
+                reason={pauseReason}
+                busy={pauseBusy}
+                disabled={pauseControlDisabled}
+                error={pauseControlError}
+                onReasonChange={onPauseReasonChange}
+                onConfirm={onConfirmPause}
+                onClose={onCancelPause}
+              />
+            )}
+          </div>
+          {!boardPause.paused || pauseControlError === null ? null : (
+            <p className="px-3 pt-2 text-[11px] leading-4 text-urgent" role="alert">
+              {pauseControlError}
+            </p>
           )}
-        </div>
-        {!boardPause.paused || pauseControlError === null ? null : <p className="px-3 pt-2 text-[11px] leading-4 text-urgent" role="alert">{pauseControlError}</p>}
-      </section>}
+        </section>
+      )}
     </div>
   );
 }
@@ -426,7 +458,7 @@ export function WorkspaceFrame({
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
-  const [pauseReason, setPauseReason] = useState('');
+  const [pauseReason, setPauseReason] = useState("");
   const pausePopoverOpenRef = useRef(pausePopoverOpen);
   const pauseBusyRef = useRef(pauseBusy);
   const onCancelPauseRef = useRef(onCancelPause);
@@ -435,56 +467,66 @@ export function WorkspaceFrame({
   onCancelPauseRef.current = onCancelPause;
 
   useEffect(() => {
-    if (!pausePopoverOpen) setPauseReason('');
+    if (!pausePopoverOpen) setPauseReason("");
   }, [pausePopoverOpen]);
 
   useEffect(() => {
-    const desktop = window.matchMedia('(min-width: 1024px)');
+    const desktop = window.matchMedia("(min-width: 1024px)");
     const onBreakpointChange = () => {
       if (pausePopoverOpenRef.current && !pauseBusyRef.current) onCancelPauseRef.current();
     };
-    desktop.addEventListener('change', onBreakpointChange);
-    return () => desktop.removeEventListener('change', onBreakpointChange);
+    desktop.addEventListener("change", onBreakpointChange);
+    return () => desktop.removeEventListener("change", onBreakpointChange);
   }, []);
 
   useEffect(() => {
     if (!drawerOpen) return;
     const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = "hidden";
     window.setTimeout(() => drawerRef.current?.focus(), 0);
-    const desktop = window.matchMedia('(min-width: 1024px)');
+    const desktop = window.matchMedia("(min-width: 1024px)");
     const onBreakpointChange = (event: MediaQueryListEvent) => {
       if (event.matches) {
         onDrawerChange(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         onDrawerChange(false);
         window.setTimeout(() => openerRef.current?.focus(), 0);
         return;
       }
-      if (event.key === 'Tab' && drawerRef.current) {
-        const focusable = [...drawerRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+      if (event.key === "Tab" && drawerRef.current) {
+        const focusable = [
+          ...drawerRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          ),
+        ];
         const first = focusable[0];
         const last = focusable.at(-1);
         if (!first || !last) {
           event.preventDefault();
-        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === drawerRef.current)) {
+        } else if (
+          event.shiftKey &&
+          (document.activeElement === first || document.activeElement === drawerRef.current)
+        ) {
           event.preventDefault();
           last.focus();
-        } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === drawerRef.current)) {
+        } else if (
+          !event.shiftKey &&
+          (document.activeElement === last || document.activeElement === drawerRef.current)
+        ) {
           event.preventDefault();
           first.focus();
         }
       }
     };
-    desktop.addEventListener('change', onBreakpointChange);
-    document.addEventListener('keydown', onKeyDown);
+    desktop.addEventListener("change", onBreakpointChange);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
-      desktop.removeEventListener('change', onBreakpointChange);
-      document.removeEventListener('keydown', onKeyDown);
+      desktop.removeEventListener("change", onBreakpointChange);
+      document.removeEventListener("keydown", onKeyDown);
     };
   }, [drawerOpen, onDrawerChange]);
 
@@ -508,19 +550,85 @@ export function WorkspaceFrame({
     <div className="min-h-dvh bg-canvas text-ink">
       <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-sidebar px-4 lg:hidden">
         <p className="min-w-0 truncate text-[11px] font-medium">Cicada Tech Systems LLC.</p>
-        <button ref={openerRef} type="button" className="flex size-10 shrink-0 items-center justify-center rounded-[99px] border border-line bg-taupe text-white transition-colors hover:bg-taupe-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Open navigation" aria-expanded={drawerOpen} onClick={() => onDrawerChange(true)}><Menu size={18} strokeWidth={1.5} /></button>
+        <button
+          ref={openerRef}
+          type="button"
+          className="flex size-10 shrink-0 items-center justify-center rounded-[99px] border border-line bg-taupe text-white transition-colors hover:bg-taupe-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+          aria-label="Open navigation"
+          aria-expanded={drawerOpen}
+          onClick={() => onDrawerChange(true)}
+        >
+          <Menu size={18} strokeWidth={1.5} />
+        </button>
       </header>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line lg:block">
-        <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={onNavigate} onAddProject={onAddProject} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen && !drawerOpen} pauseReason={pauseReason} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onPauseReasonChange={setPauseReason} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
+        <RailContent
+          snapshot={snapshot}
+          page={page}
+          pointOfContact={pointOfContact}
+          onNavigate={onNavigate}
+          onAddProject={onAddProject}
+          canAddProject={canAddProject}
+          unreadNotifications={unreadNotifications}
+          boardPause={boardPause}
+          pausePopoverOpen={pausePopoverOpen && !drawerOpen}
+          pauseReason={pauseReason}
+          pauseBusy={pauseBusy}
+          pauseControlDisabled={pauseControlDisabled}
+          pauseControlError={pauseControlError}
+          onPauseBoard={onPauseBoard}
+          onPauseReasonChange={setPauseReason}
+          onConfirmPause={onConfirmPause}
+          onCancelPause={onCancelPause}
+          onResumeBoard={onResumeBoard}
+        />
       </aside>
 
       {drawerOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button type="button" className="cicada-scrim-enter absolute inset-0 bg-ink/35" aria-label="Close navigation" onClick={() => closeDrawer()} />
-          <aside ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Company navigation" className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]">
-            <button type="button" className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover" aria-label="Close navigation" onClick={() => closeDrawer()}><X size={18} strokeWidth={1.5} /></button>
-            <RailContent snapshot={snapshot} page={page} pointOfContact={pointOfContact} onNavigate={navigate} onAddProject={addProjectFromDrawer} canAddProject={canAddProject} unreadNotifications={unreadNotifications} boardPause={boardPause} pausePopoverOpen={pausePopoverOpen} pauseReason={pauseReason} pauseBusy={pauseBusy} pauseControlDisabled={pauseControlDisabled} pauseControlError={pauseControlError} onPauseBoard={onPauseBoard} onPauseReasonChange={setPauseReason} onConfirmPause={onConfirmPause} onCancelPause={onCancelPause} onResumeBoard={onResumeBoard} />
+          <button
+            type="button"
+            className="cicada-scrim-enter absolute inset-0 bg-ink/35"
+            aria-label="Close navigation"
+            onClick={() => closeDrawer()}
+          />
+          <aside
+            ref={drawerRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Company navigation"
+            className="cicada-drawer-enter absolute inset-y-0 left-0 w-[min(88vw,240px)] border-r border-line bg-sidebar shadow-[12px_0_40px_var(--elevation-shadow-color)]"
+          >
+            <button
+              type="button"
+              className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-[99px] text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
+              aria-label="Close navigation"
+              onClick={() => closeDrawer()}
+            >
+              <X size={18} strokeWidth={1.5} />
+            </button>
+            <RailContent
+              snapshot={snapshot}
+              page={page}
+              pointOfContact={pointOfContact}
+              onNavigate={navigate}
+              onAddProject={addProjectFromDrawer}
+              canAddProject={canAddProject}
+              unreadNotifications={unreadNotifications}
+              boardPause={boardPause}
+              pausePopoverOpen={pausePopoverOpen}
+              pauseReason={pauseReason}
+              pauseBusy={pauseBusy}
+              pauseControlDisabled={pauseControlDisabled}
+              pauseControlError={pauseControlError}
+              onPauseBoard={onPauseBoard}
+              onPauseReasonChange={setPauseReason}
+              onConfirmPause={onConfirmPause}
+              onCancelPause={onCancelPause}
+              onResumeBoard={onResumeBoard}
+            />
           </aside>
         </div>
       ) : null}

@@ -42,7 +42,7 @@ async function request<T>(
   token: string,
   expectedStatus: number,
   body?: unknown,
-  idempotencyKey?: string,
+  idempotencyKey?: string
 ): Promise<T> {
   const response = await fetch(`${origin}${path}`, {
     method,
@@ -67,32 +67,18 @@ async function fixture(longPollMs = 1): Promise<Fixture> {
     port: 0,
   });
   const address = await service.start();
-  const { project } = await request<{ project: Project }>(
-    address.url,
-    "/v1/projects",
-    "POST",
-    HUMAN_TOKEN,
-    201,
-    {
-      name: "Checkout reliability",
-      description: "Keep customer checkout dependable while humans control production releases.",
-    },
-  );
-  await request(
-    address.url,
-    `/v1/projects/${project.projectId}/agents`,
-    "POST",
-    HUMAN_TOKEN,
-    201,
-    {
-      agentId: AGENT_ID,
-      role: "engineer",
-      area: "checkout",
-      mission: "Research, plan, implement, and test safe checkout changes.",
-      model: "codex-mini",
-      token: AGENT_TOKEN,
-    },
-  );
+  const { project } = await request<{ project: Project }>(address.url, "/v1/projects", "POST", HUMAN_TOKEN, 201, {
+    name: "Checkout reliability",
+    description: "Keep customer checkout dependable while humans control production releases.",
+  });
+  await request(address.url, `/v1/projects/${project.projectId}/agents`, "POST", HUMAN_TOKEN, 201, {
+    agentId: AGENT_ID,
+    role: "engineer",
+    area: "checkout",
+    mission: "Research, plan, implement, and test safe checkout changes.",
+    model: "codex-mini",
+    token: AGENT_TOKEN,
+  });
   const launcher = new FakeLauncher();
   const worker = await TaskWorker.create({
     identity: { workerId: "integration-worker", agentId: AGENT_ID },
@@ -107,7 +93,7 @@ async function fixture(longPollMs = 1): Promise<Fixture> {
 async function createTask(
   item: Fixture,
   title: string,
-  objective = "Customers can retry checkout without a duplicate charge.",
+  objective = "Customers can retry checkout without a duplicate charge."
 ): Promise<BoardTask> {
   const response = await request<{ task: BoardTask }>(
     item.origin,
@@ -124,7 +110,7 @@ async function createTask(
       assignedAgentId: AGENT_ID,
       assignedRole: "engineer",
       expectedAgentMinutes: 45,
-    },
+    }
   );
   assert.equal(response.task.status, "queued");
   assert.equal(response.task.expectedAgentMinutes, null, "human task input does not set the agent's estimate");
@@ -136,7 +122,7 @@ async function createAssignedTask(
   projectId: string,
   agentId: string,
   assignedRole: AgentRole,
-  title: string,
+  title: string
 ): Promise<BoardTask> {
   const response = await request<{ task: BoardTask }>(
     origin,
@@ -153,19 +139,13 @@ async function createAssignedTask(
       assignedAgentId: agentId,
       assignedRole,
       expectedAgentMinutes: 15,
-    },
+    }
   );
   return response.task;
 }
 
 async function snapshot(item: Fixture): Promise<BoardSnapshot> {
-  return request<BoardSnapshot>(
-    item.origin,
-    `/v1/projects/${item.project.projectId}/board`,
-    "GET",
-    HUMAN_TOKEN,
-    200,
-  );
+  return request<BoardSnapshot>(item.origin, `/v1/projects/${item.project.projectId}/board`, "GET", HUMAN_TOKEN, 200);
 }
 
 async function close(item: Fixture): Promise<void> {
@@ -217,15 +197,17 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
     assert.equal(completed?.expectedAgentMinutes, 60);
     assert.ok(completed?.estimateRecordedAt);
     assert.deepEqual(
-      completed?.phases.filter((phase) => phase.parallelGroup === "delivery").map((phase) => ({
-        title: phase.title,
-        stage: phase.stage,
-        status: phase.status,
-      })),
+      completed?.phases
+        .filter((phase) => phase.parallelGroup === "delivery")
+        .map((phase) => ({
+          title: phase.title,
+          stage: phase.stage,
+          status: phase.status,
+        })),
       [
         { title: "Implement retry guard", stage: "execution", status: "completed" },
         { title: "Verify retry behavior", stage: "testing", status: "completed" },
-      ],
+      ]
     );
     assert.ok(completed?.phases.some((phase) => phase.title === "Review task" && phase.status === "completed"));
     assert.ok(completed?.startedAt);
@@ -239,9 +221,12 @@ test("real HTTP board stays model-idle without a wake and atomically completes a
       `/v1/tasks/${task.taskId}/messages`,
       "GET",
       HUMAN_TOKEN,
-      200,
+      200
     );
-    assert.deepEqual(messages.map((message) => message.kind), ["progress", "proposal", "result"]);
+    assert.deepEqual(
+      messages.map((message) => message.kind),
+      ["progress", "proposal", "result"]
+    );
     assert.ok(messages.every((message) => message.runId === run?.runId));
   } finally {
     await close(item);
@@ -289,14 +274,14 @@ test("worker receives persistent area memory without crossing agent or project b
         mission: "Own separate checkout work without sharing another agent's memory.",
         model: "codex-mini",
         token: OTHER_AGENT_TOKEN,
-      },
+      }
     );
     const otherAgentTask = await createAssignedTask(
       item.origin,
       item.project.projectId,
       OTHER_AGENT_ID,
       "engineer",
-      "Other agent result",
+      "Other agent result"
     );
     const otherLauncher = new FakeLauncher();
     otherLauncher.outcomes.push(completedOutcome("This result belongs only to the other agent."));
@@ -321,7 +306,7 @@ test("worker receives persistent area memory without crossing agent or project b
       {
         name: "Account recovery",
         description: "Keep recovery work isolated from checkout.",
-      },
+      }
     );
     await request(
       item.origin,
@@ -336,14 +321,14 @@ test("worker receives persistent area memory without crossing agent or project b
         mission: "Own recovery work in a separate project.",
         model: "codex-mini",
         token: OTHER_PROJECT_TOKEN,
-      },
+      }
     );
     const otherProjectTask = await createAssignedTask(
       item.origin,
       otherProject.projectId,
       OTHER_PROJECT_AGENT_ID,
       "engineer",
-      "Other project result",
+      "Other project result"
     );
     const otherProjectLauncher = new FakeLauncher();
     otherProjectLauncher.outcomes.push(completedOutcome("This result belongs only to the other project."));
@@ -376,7 +361,7 @@ test("worker receives persistent area memory without crossing agent or project b
       item.project.projectId,
       AGENT_ID,
       "engineer",
-      "Use persistent checkout memory",
+      "Use persistent checkout memory"
     );
     const restartedLauncher = new FakeLauncher();
     restartedLauncher.outcomes.push(completedOutcome("The prior retry result informed this task."));
@@ -390,16 +375,22 @@ test("worker receives persistent area memory without crossing agent or project b
     assert.equal(await restartedWorker.dispatchOnce(), true);
 
     const memory = restartedLauncher.requests[0]?.context.areaMemory;
-    assert.deepEqual(memory?.map((entry) => entry.taskId), [remembered.taskId]);
+    assert.deepEqual(
+      memory?.map((entry) => entry.taskId),
+      [remembered.taskId]
+    );
     assert.equal(memory?.[0]?.title, remembered.title);
     assert.equal(memory?.[0]?.result, "Customers can retry without a duplicate charge.");
     assert.ok(memory?.[0]?.endedAt);
     assert.deepEqual(Object.keys(memory?.[0] ?? {}).sort(), ["endedAt", "result", "taskId", "title"]);
-    assert.ok(memory?.every((entry) => (
-      entry.taskId !== current.taskId &&
-      entry.taskId !== otherAgentTask.taskId &&
-      entry.taskId !== otherProjectTask.taskId
-    )));
+    assert.ok(
+      memory?.every(
+        (entry) =>
+          entry.taskId !== current.taskId &&
+          entry.taskId !== otherAgentTask.taskId &&
+          entry.taskId !== otherProjectTask.taskId
+      )
+    );
   } finally {
     await restartedWorker?.close();
     await restartedService?.close();
@@ -414,30 +405,23 @@ test("a review child receives bounded evidence from its completed engineer paren
   const item = await fixture();
   let managerWorker: TaskWorker | null = null;
   try {
-    await request(
-      item.origin,
-      `/v1/projects/${item.project.projectId}/agents`,
-      "POST",
-      HUMAN_TOKEN,
-      201,
-      {
-        agentId: MANAGER_ID,
-        role: "manager",
-        area: "checkout review",
-        mission: "Review completed checkout work and report whether it is ready for human approval.",
-        model: "codex-mini",
-        token: MANAGER_TOKEN,
-      },
-    );
+    await request(item.origin, `/v1/projects/${item.project.projectId}/agents`, "POST", HUMAN_TOKEN, 201, {
+      agentId: MANAGER_ID,
+      role: "manager",
+      area: "checkout review",
+      mission: "Review completed checkout work and report whether it is ready for human approval.",
+      model: "codex-mini",
+      token: MANAGER_TOKEN,
+    });
     const parent = await createTask(item, "Make checkout retries idempotent");
     item.launcher.outcomes.push({
       ...completedOutcome("Customers can retry without being charged twice."),
       detail: "The engineer completed implementation and focused verification.",
     });
     assert.equal(await item.worker.dispatchOnce(), true);
-    const review = (await snapshot(item)).tasks.find((candidate) => (
-      candidate.parentTaskId === parent.taskId && candidate.kind === "manager_review"
-    ));
+    const review = (await snapshot(item)).tasks.find(
+      (candidate) => candidate.parentTaskId === parent.taskId && candidate.kind === "manager_review"
+    );
     assert.ok(review);
     assert.equal(review.assignedAgentId, MANAGER_ID);
     assert.equal(review.status, "queued");
@@ -461,7 +445,10 @@ test("a review child receives bounded evidence from its completed engineer paren
     assert.equal(evidence?.status, "completed");
     assert.equal(evidence?.result, "Customers can retry without being charged twice.");
     assert.deepEqual(evidence?.workspaceRefs, parent.workspaceRefs);
-    assert.deepEqual(evidence?.messages.map((message) => message.kind), ["progress", "proposal", "result"]);
+    assert.deepEqual(
+      evidence?.messages.map((message) => message.kind),
+      ["progress", "proposal", "result"]
+    );
     assert.ok(evidence?.messages.every((message) => message.body.length <= 2_000));
   } finally {
     await managerWorker?.close();
@@ -502,7 +489,7 @@ test("a question atomically pauses the real run and its human answer is the next
       "POST",
       HUMAN_TOKEN,
       201,
-      { answer, version: question.version },
+      { answer, version: question.version }
     );
     assert.equal(answered.question.answer, answer);
 
@@ -516,7 +503,9 @@ test("a question atomically pauses the real run and its human answer is the next
     const completed = await snapshot(item);
     assert.equal(completed.openQuestions.length, 0);
     assert.equal(completed.tasks.find((candidate) => candidate.taskId === task.taskId)?.status, "completed");
-    assert.ok(completed.recentRuns.some((candidate) => candidate.taskId === task.taskId && candidate.status === "completed"));
+    assert.ok(
+      completed.recentRuns.some((candidate) => candidate.taskId === task.taskId && candidate.status === "completed")
+    );
   } finally {
     await close(item);
   }
@@ -537,7 +526,7 @@ test("a durable human interrupt reaches the active launcher and leaves the task 
       HUMAN_TOKEN,
       201,
       { reason },
-      "worker-interrupt-0001",
+      "worker-interrupt-0001"
     );
     assert.equal(await dispatch, true);
     assert.deepEqual(item.launcher.handles[0]?.interruptReasons, [reason]);

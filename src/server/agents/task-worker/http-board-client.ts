@@ -1,8 +1,4 @@
-import {
-  TASK_BOARD_API_VERSION,
-  TASK_BOARD_ERROR_CODES,
-  type RunStatus,
-} from "#shared/task-board-contract";
+import { TASK_BOARD_API_VERSION, TASK_BOARD_ERROR_CODES, type RunStatus } from "#shared/task-board-contract";
 import {
   boundedClaimText as bounded,
   claimEstimateMinutes as estimateMinutes,
@@ -20,11 +16,7 @@ import {
 import { redactForPersistence } from "../../shared/redact.js";
 import { mapClaimContext as mapSharedClaimContext } from "../../shared/claim-context.js";
 import { parseTaskWakeClaim } from "./schema.js";
-import {
-  POISONED_CLAIM_REASON,
-  TASK_BOARD_PAUSED_CLAIM,
-  TaskBoardClaimResponseError,
-} from "./types.js";
+import { POISONED_CLAIM_REASON, TASK_BOARD_PAUSED_CLAIM, TaskBoardClaimResponseError } from "./types.js";
 import type {
   AgentTaskPhase,
   AgentRunInterrupt,
@@ -46,7 +38,7 @@ export class TaskBoardHttpError extends Error {
     message: string,
     readonly status: number | null,
     readonly code: string | null,
-    readonly detail: string = message,
+    readonly detail: string = message
   ) {
     super(message);
     this.name = "TaskBoardHttpError";
@@ -69,7 +61,7 @@ export class RetryableSettlementError extends Error {
   constructor(
     readonly code: RetryableSettlementErrorCode,
     readonly detail: string,
-    cause: TaskBoardHttpError,
+    cause: TaskBoardHttpError
   ) {
     super(`Task-board settlement requires correction: ${code}`, { cause });
     this.name = "RetryableSettlementError";
@@ -81,7 +73,7 @@ export class InactiveClaimReplayError extends Error {
     readonly claim: TaskWakeClaim,
     readonly status: Exclude<RunStatus, "active">,
     readonly endedAt: string,
-    readonly heartbeatAt: string | null,
+    readonly heartbeatAt: string | null
   ) {
     super(`Task-board replayed a ${status} run`);
     this.name = "InactiveClaimReplayError";
@@ -104,13 +96,18 @@ interface HttpResult {
 function checkedUrl(value: string): string {
   const url = new URL(value);
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
-    url.search || url.hash || url.pathname !== "/"
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
   ) {
     throw new Error("Task-board URL must be an HTTP(S) origin without path, credentials, query, or fragment");
   }
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]";
-  if (url.protocol === "http:" && !loopback) throw new Error("Plaintext task-board HTTP is allowed only on exact loopback hosts");
+  if (url.protocol === "http:" && !loopback)
+    throw new Error("Plaintext task-board HTTP is allowed only on exact loopback hosts");
   return url.toString().replace(/\/$/u, "");
 }
 
@@ -214,7 +211,13 @@ class JsonClient {
     this.#fetch = options.fetchImplementation ?? globalThis.fetch;
   }
 
-  async request(method: "GET" | "POST" | "PATCH", path: string, body: unknown | null, signal?: AbortSignal, longPoll = false): Promise<HttpResult> {
+  async request(
+    method: "GET" | "POST" | "PATCH",
+    path: string,
+    body: unknown | null,
+    signal?: AbortSignal,
+    longPoll = false
+  ): Promise<HttpResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), longPoll ? 35_000 : this.#timeoutMs);
     timeout.unref();
@@ -246,7 +249,11 @@ class JsonClient {
       return { status: response.status, body: parsed };
     } catch (error) {
       if (error instanceof TaskBoardHttpError) throw error;
-      throw new TaskBoardHttpError(signal?.aborted ? "Task-board request was canceled" : "Task-board request failed", null, null);
+      throw new TaskBoardHttpError(
+        signal?.aborted ? "Task-board request was canceled" : "Task-board request failed",
+        null,
+        null
+      );
     } finally {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", abort);
@@ -263,22 +270,32 @@ function claimHandleFromResponse(value: unknown, request: ClaimNextWakeRequest):
     const run = record(envelope.run, "Claim run");
     const wakeup = record(envelope.wakeup, "Claim wakeup");
     const activeShape = run.status === "active" && run.endedAt === null && run.result === null;
-    const settledShape = (
-      run.status === "completed" || run.status === "failed" ||
-      run.status === "interrupted" || run.status === "waiting_for_human"
-    ) && typeof run.endedAt === "string" && typeof run.result === "string";
+    const settledShape =
+      (run.status === "completed" ||
+        run.status === "failed" ||
+        run.status === "interrupted" ||
+        run.status === "waiting_for_human") &&
+      typeof run.endedAt === "string" &&
+      typeof run.result === "string";
     if (
-      envelope.apiVersion !== TASK_BOARD_API_VERSION || run.apiVersion !== TASK_BOARD_API_VERSION ||
-      wakeup.apiVersion !== TASK_BOARD_API_VERSION || run.claimId !== request.claimId ||
-      run.agentId !== request.agentId || (!activeShape && !settledShape) ||
-      run.wakeupId !== wakeup.wakeupId || run.projectId !== wakeup.projectId || run.agentId !== wakeup.agentId ||
-      run.taskId !== wakeup.taskId || run.runId !== wakeup.runId || wakeup.claimedAt === null
+      envelope.apiVersion !== TASK_BOARD_API_VERSION ||
+      run.apiVersion !== TASK_BOARD_API_VERSION ||
+      wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
+      run.claimId !== request.claimId ||
+      run.agentId !== request.agentId ||
+      (!activeShape && !settledShape) ||
+      run.wakeupId !== wakeup.wakeupId ||
+      run.projectId !== wakeup.projectId ||
+      run.agentId !== wakeup.agentId ||
+      run.taskId !== wakeup.taskId ||
+      run.runId !== wakeup.runId ||
+      wakeup.claimedAt === null
     ) {
       return null;
     }
     const taskId = wakeup.taskId === null ? null : id(wakeup.taskId, "wakeup.taskId");
     timestamp(wakeup.claimedAt, "wakeup.claimedAt");
-    const requestedMessageCursor = taskId === null ? null : request.messageCursors[taskId] ?? null;
+    const requestedMessageCursor = taskId === null ? null : (request.messageCursors[taskId] ?? null);
     return parseTaskWakeClaim({
       apiVersion: 1,
       claimId: id(run.claimId, "run.claimId"),
@@ -301,7 +318,9 @@ export const mapClaimContext = mapSharedClaimContext;
 export class HttpTaskBoardClient implements TaskBoardClient {
   readonly #http: JsonClient;
 
-  constructor(options: HttpTaskBoardClientOptions) { this.#http = new JsonClient(options); }
+  constructor(options: HttpTaskBoardClientOptions) {
+    this.#http = new JsonClient(options);
+  }
 
   async claimNextWake(request: ClaimNextWakeRequest, signal?: AbortSignal): Promise<ClaimedAgentRun | null> {
     const result = await this.#claimNextWake(request, signal, false);
@@ -315,7 +334,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
   async #claimNextWake(
     request: ClaimNextWakeRequest,
     signal: AbortSignal | undefined,
-    distinguishPausedHold: boolean,
+    distinguishPausedHold: boolean
   ): Promise<TaskBoardClaimResult> {
     const result = await this.#http.request(
       "POST",
@@ -326,7 +345,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         ...(request.pinned === undefined ? {} : { pinned: request.pinned }),
       },
       signal,
-      request.longPollMs > 0,
+      request.longPollMs > 0
     );
     if (result.status === 204) return null;
     const claimHandle = claimHandleFromResponse(result.body, request);
@@ -341,19 +360,13 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         if (claimHandle === null || replayRun.endedAt === null) {
           throw new Error("Settled claim replay omitted its validated identity or end timestamp");
         }
-        throw new InactiveClaimReplayError(
-          claimHandle,
-          replayRun.status,
-          replayRun.endedAt,
-          replayRun.heartbeatAt,
-        );
+        throw new InactiveClaimReplayError(claimHandle, replayRun.status, replayRun.endedAt, replayRun.heartbeatAt);
       }
       const replayContext = record(replayEnvelope.context, "Claim context");
       if (!("design" in replayContext)) replayContext.design = false;
       const claimed = parseClaimRunResult(result.body);
-      const requestedMessageCursor = claimed.wakeup.taskId === null
-        ? null
-        : request.messageCursors[claimed.wakeup.taskId] ?? null;
+      const requestedMessageCursor =
+        claimed.wakeup.taskId === null ? null : (request.messageCursors[claimed.wakeup.taskId] ?? null);
       const claim = parseTaskWakeClaim({
         apiVersion: 1,
         claimId: claimed.run.claimId,
@@ -388,14 +401,21 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       "POST",
       `/v1/runs/${encodeURIComponent(claim.runId)}/heartbeat`,
       null,
-      signal,
+      signal
     );
     const envelope = exact(result.body, ["run"], "Run heartbeat response");
     const run = parseRunEntity(envelope.run, "Heartbeat run");
     if (
-      run.runId !== claim.runId || run.claimId !== claim.claimId || run.projectId !== claim.projectId ||
-      run.agentId !== claim.agentId || run.wakeupId !== claim.wakeupId || run.taskId !== claim.taskId ||
-      run.status !== "active" || run.heartbeatAt === null || run.endedAt !== null || run.result !== null
+      run.runId !== claim.runId ||
+      run.claimId !== claim.claimId ||
+      run.projectId !== claim.projectId ||
+      run.agentId !== claim.agentId ||
+      run.wakeupId !== claim.wakeupId ||
+      run.taskId !== claim.taskId ||
+      run.status !== "active" ||
+      run.heartbeatAt === null ||
+      run.endedAt !== null ||
+      run.result !== null
     ) {
       throw new Error("Task-board heartbeat response does not match the active run");
     }
@@ -406,7 +426,7 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       "POST",
       `/v1/agents/${encodeURIComponent(request.agentId)}/lane-error`,
       { detail: request.detail },
-      signal,
+      signal
     );
     if (result.status !== 204 || result.body !== null) throw new Error("Lane-error response is invalid");
   }
@@ -419,20 +439,34 @@ export class HttpTaskBoardClient implements TaskBoardClient {
         `/v1/runs/${encodeURIComponent(claim.runId)}/interrupts?after=${after}&waitMs=30000`,
         null,
         signal,
-        true,
+        true
       );
       if (result.status === 204) continue;
       const batch = exact(result.body, ["apiVersion", "items", "cursor"], "Interrupt batch");
-      if (batch.apiVersion !== TASK_BOARD_API_VERSION || !Array.isArray(batch.items)) throw new Error("Interrupt batch is invalid");
+      if (batch.apiVersion !== TASK_BOARD_API_VERSION || !Array.isArray(batch.items))
+        throw new Error("Interrupt batch is invalid");
       const cursor = nonNegative(batch.cursor, "interrupt.cursor");
       if (cursor < after) throw new Error("Interrupt cursor moved backwards");
       after = cursor;
       const first = batch.items[0];
       if (first === undefined) continue;
-      const item = exact(first, [
-        "apiVersion", "sequence", "interruptId", "projectId", "agentId", "runId", "reason", "requestedBy", "requestedAt",
-      ], "Agent interrupt");
-      if (item.apiVersion !== TASK_BOARD_API_VERSION || item.runId !== claim.runId) throw new Error("Agent interrupt binding is invalid");
+      const item = exact(
+        first,
+        [
+          "apiVersion",
+          "sequence",
+          "interruptId",
+          "projectId",
+          "agentId",
+          "runId",
+          "reason",
+          "requestedBy",
+          "requestedAt",
+        ],
+        "Agent interrupt"
+      );
+      if (item.apiVersion !== TASK_BOARD_API_VERSION || item.runId !== claim.runId)
+        throw new Error("Agent interrupt binding is invalid");
       return Object.freeze({
         sequence: nonNegative(item.sequence, "interrupt.sequence"),
         interruptId: id(item.interruptId, "interrupt.interruptId"),
@@ -456,13 +490,15 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       "PATCH",
       `/v1/tasks/${encodeURIComponent(taskId)}`,
       { version, expectedAgentMinutes: minutes },
-      signal,
+      signal
     );
     const envelope = exact(result.body, ["task"], "Estimate response");
     const task = record(envelope.task, "Estimated task");
     if (
-      task.taskId !== taskId || task.projectId !== request.claim.projectId ||
-      task.assignedAgentId !== request.claim.agentId || task.expectedAgentMinutes !== minutes
+      task.taskId !== taskId ||
+      task.projectId !== request.claim.projectId ||
+      task.assignedAgentId !== request.claim.agentId ||
+      task.expectedAgentMinutes !== minutes
     ) {
       throw new Error("Task-board estimate response belongs to another task or value");
     }
@@ -478,12 +514,14 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       "POST",
       `/v1/tasks/${encodeURIComponent(taskId)}/phases`,
       { title: request.title, stage: request.stage, parallelGroup: request.parallelGroup },
-      signal,
+      signal
     );
     const envelope = exact(result.body, ["phase"], "Phase creation response");
     const phase = taskPhase(envelope.phase, request.claim.projectId, taskId, "Created phase");
     if (
-      phase.title !== request.title || phase.stage !== request.stage || phase.status !== "pending" ||
+      phase.title !== request.title ||
+      phase.stage !== request.stage ||
+      phase.status !== "pending" ||
       phase.parallelGroup !== request.parallelGroup
     ) {
       throw new Error("Task-board phase creation response does not match the request");
@@ -508,17 +546,18 @@ export class HttpTaskBoardClient implements TaskBoardClient {
       "PATCH",
       `/v1/task-phases/${encodeURIComponent(request.phase.phaseId)}`,
       body,
-      signal,
+      signal
     );
     const envelope = exact(result.body, ["phase"], "Phase update response");
     const phase = taskPhase(envelope.phase, request.claim.projectId, taskId, "Updated phase");
     if (
-      phase.phaseId !== request.phase.phaseId || phase.version !== request.phase.version + 1 ||
-      request.title !== undefined && phase.title !== request.title ||
-      request.stage !== undefined && phase.stage !== request.stage ||
-      request.status !== undefined && phase.status !== request.status ||
-      "parallelGroup" in request && phase.parallelGroup !== request.parallelGroup ||
-      request.orderKey !== undefined && phase.orderKey !== request.orderKey
+      phase.phaseId !== request.phase.phaseId ||
+      phase.version !== request.phase.version + 1 ||
+      (request.title !== undefined && phase.title !== request.title) ||
+      (request.stage !== undefined && phase.stage !== request.stage) ||
+      (request.status !== undefined && phase.status !== request.status) ||
+      ("parallelGroup" in request && phase.parallelGroup !== request.parallelGroup) ||
+      (request.orderKey !== undefined && phase.orderKey !== request.orderKey)
     ) {
       throw new Error("Task-board phase update response does not match the request");
     }
@@ -528,21 +567,26 @@ export class HttpTaskBoardClient implements TaskBoardClient {
   async appendRunOutput(request: AppendRunOutputRequest, signal?: AbortSignal): Promise<void> {
     if (request.claim.taskId === null) throw new Error("A taskless run cannot append task output");
     const output = request.output;
-    const path = output.type === "human_question"
-      ? `/v1/tasks/${encodeURIComponent(request.claim.taskId)}/questions`
-      : `/v1/tasks/${encodeURIComponent(request.claim.taskId)}/messages`;
-    const body = output.type === "human_question"
-      ? { clientEventId: request.idempotencyKey, question: output.question, runId: request.claim.runId }
-      : {
-          clientEventId: request.idempotencyKey,
-          kind: output.type === "progress" ? "progress" : output.type === "result" ? "result" : "proposal",
-          body: output.type === "proposed_child_task" ? JSON.stringify({
-            title: output.title,
-            objective: output.objective,
-            acceptanceCriteria: output.acceptanceCriteria,
-          }) : output.body,
-          runId: request.claim.runId,
-        };
+    const path =
+      output.type === "human_question"
+        ? `/v1/tasks/${encodeURIComponent(request.claim.taskId)}/questions`
+        : `/v1/tasks/${encodeURIComponent(request.claim.taskId)}/messages`;
+    const body =
+      output.type === "human_question"
+        ? { clientEventId: request.idempotencyKey, question: output.question, runId: request.claim.runId }
+        : {
+            clientEventId: request.idempotencyKey,
+            kind: output.type === "progress" ? "progress" : output.type === "result" ? "result" : "proposal",
+            body:
+              output.type === "proposed_child_task"
+                ? JSON.stringify({
+                    title: output.title,
+                    objective: output.objective,
+                    acceptanceCriteria: output.acceptanceCriteria,
+                  })
+                : output.body,
+            runId: request.claim.runId,
+          };
     const result = await this.#http.request("POST", path, body, signal);
     const envelope = exact(result.body, [output.type === "human_question" ? "question" : "message"], "Output response");
     const value = record(envelope[output.type === "human_question" ? "question" : "message"], "Output record");
@@ -552,7 +596,8 @@ export class HttpTaskBoardClient implements TaskBoardClient {
   }
 
   async settleAgentRun(request: SettleAgentRunRequest, signal?: AbortSignal): Promise<void> {
-    if (request.outcome === "waiting_for_human") throw new Error("Human questions settle atomically through the question endpoint");
+    if (request.outcome === "waiting_for_human")
+      throw new Error("Human questions settle atomically through the question endpoint");
     let result: HttpResult;
     try {
       result = await this.#http.request(
@@ -567,11 +612,13 @@ export class HttpTaskBoardClient implements TaskBoardClient {
           ...(request.reviewFindings === undefined ? {} : { reviewFindings: request.reviewFindings }),
           ...(request.designRecord === undefined ? {} : { designRecord: request.designRecord }),
         },
-        signal,
+        signal
       );
     } catch (error) {
       if (
-        error instanceof TaskBoardHttpError && error.status === 400 && error.code !== null &&
+        error instanceof TaskBoardHttpError &&
+        error.status === 400 &&
+        error.code !== null &&
         RETRYABLE_SETTLEMENT_ERROR_CODES.has(error.code)
       ) {
         throw new RetryableSettlementError(error.code as RetryableSettlementErrorCode, error.detail, error);
@@ -584,8 +631,10 @@ export class HttpTaskBoardClient implements TaskBoardClient {
     const systemInterruptionAcknowledged =
       envelope.duplicate === true && run.status === "interrupted" && typeof run.result === "string";
     if (
-      typeof envelope.duplicate !== "boolean" || run.runId !== request.claim.runId || run.agentId !== request.claim.agentId ||
-      !systemInterruptionAcknowledged && (run.status !== request.outcome || run.result !== persistedResult)
+      typeof envelope.duplicate !== "boolean" ||
+      run.runId !== request.claim.runId ||
+      run.agentId !== request.claim.agentId ||
+      (!systemInterruptionAcknowledged && (run.status !== request.outcome || run.result !== persistedResult))
     ) {
       throw new Error("Task-board settlement response does not match the run outcome");
     }

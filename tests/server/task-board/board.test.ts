@@ -33,7 +33,7 @@ import {
 function postWorkItem(
   board: TaskBoard,
   request: Parameters<TaskBoard["createWorkItem"]>[0],
-  idempotencyKey: string,
+  idempotencyKey: string
 ): ReturnType<TaskBoard["createWorkItem"]> {
   return board.createWorkItemAndStartPlanning(request, idempotencyKey);
 }
@@ -51,16 +51,22 @@ test("projects persist an explicit repo path and default legacy requests to desc
     assert.equal(project.repoPath, "/repos/provider-api");
     assert.equal(
       fixture.board.listProjects().find((candidate) => candidate.projectId === project.projectId)?.repoPath,
-      "/repos/provider-api",
+      "/repos/provider-api"
     );
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      projectTarget: { mode: "explicit", projectId: project.projectId },
-    }), "repo-path-work-item").workItem;
-    assert.deepEqual({
-      parentWorkItemId: workItem.parentWorkItemId,
-      phase: workItem.phase,
-      childOrdinal: workItem.childOrdinal,
-    }, { parentWorkItemId: null, phase: null, childOrdinal: null });
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        projectTarget: { mode: "explicit", projectId: project.projectId },
+      }),
+      "repo-path-work-item"
+    ).workItem;
+    assert.deepEqual(
+      {
+        parentWorkItemId: workItem.parentWorkItemId,
+        phase: workItem.phase,
+        childOrdinal: workItem.childOrdinal,
+      },
+      { parentWorkItemId: null, phase: null, childOrdinal: null }
+    );
   } finally {
     fixture.board.close();
   }
@@ -79,8 +85,10 @@ test("projects can update descriptive fields and repository identity independent
     assert.equal(updated.description, "Owns the customer checkout experience.");
     assert.equal(updated.repoPath, "/var/lib/steward/repos/checkout-platform");
     assert.equal(updated.version, fixture.project.version + 1);
-    assert.equal(fixture.board.listProjects().find((project) => project.projectId === updated.projectId)?.repoPath,
-      "/var/lib/steward/repos/checkout-platform");
+    assert.equal(
+      fixture.board.listProjects().find((project) => project.projectId === updated.projectId)?.repoPath,
+      "/var/lib/steward/repos/checkout-platform"
+    );
   } finally {
     fixture.board.close();
   }
@@ -95,8 +103,11 @@ async function installV24Schema(path: string): Promise<void> {
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executable = frozen
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     database.exec(executable);
     database.exec("PRAGMA user_version = 24;");
@@ -114,12 +125,22 @@ async function stageWorkItemForWorkflow(path: string, workItemId: string): Promi
     const row = db.prepare("SELECT version FROM work_items WHERE work_item_id=? AND state='queued'").get(workItemId);
     assert.ok(row);
     const now = "2026-07-19T20:00:00.000Z";
-    assert.equal(Number(db.prepare(`
+    assert.equal(
+      Number(
+        db
+          .prepare(
+            `
       UPDATE work_items
       SET state='planning',current_stage='planning',version=version+1,updated_at=?
       WHERE work_item_id=? AND state='queued' AND version=?
-    `).run(now, workItemId, Number(row.version)).changes), 1);
-    db.prepare(`
+    `
+          )
+          .run(now, workItemId, Number(row.version)).changes
+      ),
+      1
+    );
+    db.prepare(
+      `
       INSERT INTO work_item_transitions(
         work_item_id,sequence,from_state,to_state,actor_type,actor_id,created_at
       ) VALUES (
@@ -127,7 +148,8 @@ async function stageWorkItemForWorkflow(path: string, workItemId: string): Promi
         1 + COALESCE((SELECT MAX(sequence) FROM work_item_transitions WHERE work_item_id=?), 0),
         'queued','planning','system','system:test-workflow-setup',?
       )
-    `).run(workItemId, workItemId, now);
+    `
+    ).run(workItemId, workItemId, now);
     db.exec("COMMIT");
   } catch (error) {
     try {
@@ -148,13 +170,16 @@ function completeAssignedTask(
   assignedRole: AgentRole,
   title: string,
   claimId: string,
-  result: string,
+  result: string
 ) {
-  const task = board.createTask(projectId, taskRequest({
-    title,
-    assignedAgentId: agentId,
-    assignedRole,
-  }));
+  const task = board.createTask(
+    projectId,
+    taskRequest({
+      title,
+      assignedAgentId: agentId,
+      assignedRole,
+    })
+  );
   const claim = board.claimRun(agentId, { claimId, messageCursor: null });
   assert.ok(claim);
   board.settleRun(claim.run.runId, agentId, { outcome: "completed", result });
@@ -171,25 +196,32 @@ async function activeSettlementWorkflow(suffix: string) {
     model: "codex-mini",
     token: "task-board-settlement-verifier-token-0123456789",
   });
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [{
-      agentTypeId: "settlement-verifier",
-      name: "Settlement verifier",
-      description: "Executes the workflow settlement regression fixture.",
-      role: "verifier",
-      supplementalInstructions: "Complete the confirmed verification node.",
-      skillIds: [],
-      evaluatorProfile: "tests",
-      enabled: true,
-    }],
-    stages: automationStages({
-      verification: { kind: "agent_type", agentTypeId: "settlement-verifier" },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [
+        {
+          agentTypeId: "settlement-verifier",
+          name: "Settlement verifier",
+          description: "Executes the workflow settlement regression fixture.",
+          role: "verifier",
+          supplementalInstructions: "Complete the confirmed verification node.",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+      ],
+      stages: automationStages({
+        verification: { kind: "agent_type", agentTypeId: "settlement-verifier" },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Verify atomic run settlement ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Verify atomic run settlement ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `atomic-settlement-${suffix}`).workItem;
+    `atomic-settlement-${suffix}`
+  ).workItem;
   await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
@@ -198,14 +230,16 @@ async function activeSettlementWorkflow(suffix: string) {
     assumptions: [],
     acceptanceCriteria: ["The run, task, and workflow node agree."],
     skillIds: [],
-    nodes: [{
-      nodeId: `settlement-${suffix}`,
-      title: `Atomic settlement ${suffix}`,
-      objective: "Verify atomic settlement behavior.",
-      acceptanceCriteria: ["Settlement is durable and retry-safe."],
-      dependencyNodeIds: [],
-      stageTemplate: ["verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `settlement-${suffix}`,
+        title: `Atomic settlement ${suffix}`,
+        objective: "Verify atomic settlement behavior.",
+        acceptanceCriteria: ["Settlement is durable and retry-safe."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
   });
   const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
   const node = confirmed.nodes[0]!;
@@ -229,41 +263,46 @@ async function parallelStageWorkflow(suffix: string, researchAdvancesThroughImpl
     model: "codex-mini",
     token: `parallel-verifier-token-${suffix}-0123456789`,
   });
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [
-      {
-        agentTypeId: `parallel-research-${suffix}`,
-        name: "Parallel researcher",
-        description: "Executes a research node alongside verification.",
-        role: "engineer",
-        supplementalInstructions: "Research the workflow evidence.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      },
-      {
-        agentTypeId: `parallel-verification-${suffix}`,
-        name: "Parallel verifier",
-        description: "Executes a verification node alongside research.",
-        role: "verifier",
-        supplementalInstructions: "Verify the workflow evidence.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      },
-    ],
-    stages: automationStages({
-      research: { kind: "agent_type", agentTypeId: `parallel-research-${suffix}` },
-      ...(researchAdvancesThroughImplementation
-        ? { implementation: { kind: "agent_type" as const, agentTypeId: `parallel-research-${suffix}` } }
-        : {}),
-      verification: { kind: "agent_type", agentTypeId: `parallel-verification-${suffix}` },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [
+        {
+          agentTypeId: `parallel-research-${suffix}`,
+          name: "Parallel researcher",
+          description: "Executes a research node alongside verification.",
+          role: "engineer",
+          supplementalInstructions: "Research the workflow evidence.",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+        {
+          agentTypeId: `parallel-verification-${suffix}`,
+          name: "Parallel verifier",
+          description: "Executes a verification node alongside research.",
+          role: "verifier",
+          supplementalInstructions: "Verify the workflow evidence.",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+      ],
+      stages: automationStages({
+        research: { kind: "agent_type", agentTypeId: `parallel-research-${suffix}` },
+        ...(researchAdvancesThroughImplementation
+          ? { implementation: { kind: "agent_type" as const, agentTypeId: `parallel-research-${suffix}` } }
+          : {}),
+        verification: { kind: "agent_type", agentTypeId: `parallel-verification-${suffix}` },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Exercise parallel workflow settlement ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Exercise parallel workflow settlement ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `parallel-workflow-${suffix}`).workItem;
+    `parallel-workflow-${suffix}`
+  ).workItem;
   await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const researchTitle = `Parallel research ${suffix}`;
   const verificationTitle = `Parallel verification ${suffix}`;
@@ -311,25 +350,32 @@ async function claimContextWorkflow(suffix: string) {
   const skillPath = join(process.cwd(), "config", "skills.md");
   const skillContent = await readFile(skillPath, "utf8");
   const agentTypeId = `claim-context-${suffix}`;
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [{
-      agentTypeId,
-      name: "Claim context researcher",
-      description: "Exercises claim-context validation inside the claim transaction.",
-      role: "engineer",
-      supplementalInstructions: "Return the confirmed skill context with the claimed run.",
-      skillIds: [CLAIM_CONTEXT_SKILL_ID],
-      evaluatorProfile: "tests",
-      enabled: true,
-    }],
-    stages: automationStages({
-      research: { kind: "agent_type", agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [
+        {
+          agentTypeId,
+          name: "Claim context researcher",
+          description: "Exercises claim-context validation inside the claim transaction.",
+          role: "engineer",
+          supplementalInstructions: "Return the confirmed skill context with the claimed run.",
+          skillIds: [CLAIM_CONTEXT_SKILL_ID],
+          evaluatorProfile: "tests",
+          enabled: true,
+        },
+      ],
+      stages: automationStages({
+        research: { kind: "agent_type", agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Verify atomic claim context ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Verify atomic claim context ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `claim-context-${suffix}`).workItem;
+    `claim-context-${suffix}`
+  ).workItem;
   await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const title = `Claim context ${suffix}`;
   const proposed = fixture.board.proposeWorkflow({
@@ -339,18 +385,22 @@ async function claimContextWorkflow(suffix: string) {
     assumptions: [],
     acceptanceCriteria: ["Rejected claim context leaves no durable claim state."],
     skillIds: [CLAIM_CONTEXT_SKILL_ID],
-    nodes: [{
-      nodeId: `claim-context-${suffix}`,
-      title,
-      objective: "Return a complete, validated claim payload.",
-      acceptanceCriteria: ["The run identifier and workflow context arrive together."],
-      dependencyNodeIds: [],
-      stageTemplate: ["research", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `claim-context-${suffix}`,
+        title,
+        objective: "Return a complete, validated claim payload.",
+        acceptanceCriteria: ["The run identifier and workflow context arrive together."],
+        dependencyNodeIds: [],
+        stageTemplate: ["research", "verification"],
+      },
+    ],
   });
   const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
   const node = confirmed.nodes[0]!;
-  const task = fixture.board.snapshot(fixture.project.projectId).tasks.find((candidate) => candidate.title === `research: ${title}`);
+  const task = fixture.board
+    .snapshot(fixture.project.projectId)
+    .tasks.find((candidate) => candidate.title === `research: ${title}`);
   assert.ok(task);
   assert.equal(task.status, "queued");
   return { ...fixture, workItem, node, task, skillPath, skillContent };
@@ -367,27 +417,23 @@ async function changeClaimContextSkill(skillPath: string, skillContent: string, 
   await writeFile(
     skillPath,
     `${skillContent.slice(0, bodyStart)}${changedBody}${skillContent.slice(bodyStart + body.length)}`,
-    "utf8",
+    "utf8"
   );
 }
 
 function assertSkillDigestChangedClaim(
   fixture: Awaited<ReturnType<typeof claimContextWorkflow>>,
-  claimId: string,
+  claimId: string
 ): void {
   assert.throws(
     () => fixture.board.claimRun(fixture.engineer.agentId, { claimId, messageCursor: null }),
-    (error: unknown) => (
-      error instanceof TaskBoardError &&
-      error.status === 409 &&
-      error.code === "SKILL_DIGEST_CHANGED"
-    ),
+    (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "SKILL_DIGEST_CHANGED"
   );
 }
 
 function assertCompleteClaimPayload(
   claim: NonNullable<ReturnType<TaskBoard["claimRun"]>>,
-  fixture: Awaited<ReturnType<typeof claimContextWorkflow>>,
+  fixture: Awaited<ReturnType<typeof claimContextWorkflow>>
 ): void {
   assert.match(claim.run.runId, /^[0-9a-f-]{36}$/u);
   assert.equal(claim.run.taskId, fixture.task.taskId);
@@ -397,7 +443,10 @@ function assertCompleteClaimPayload(
   assert.equal(claim.context.workflow?.planRevisionId, fixture.node.planRevisionId);
   assert.equal(claim.context.workflow?.nodeId, fixture.node.nodeId);
   assert.equal(claim.context.workflow?.stage, "research");
-  assert.deepEqual(claim.context.workflow?.skills.map((skill) => skill.skillId), [CLAIM_CONTEXT_SKILL_ID]);
+  assert.deepEqual(
+    claim.context.workflow?.skills.map((skill) => skill.skillId),
+    [CLAIM_CONTEXT_SKILL_ID]
+  );
 }
 
 function settlementHandoff(outcome: "passed" | "failed") {
@@ -406,11 +455,13 @@ function settlementHandoff(outcome: "passed" | "failed") {
     summary: outcome === "passed" ? "Atomic settlement verified." : "Atomic settlement could not be verified.",
     evidence: ["The persisted run, task, and node states were inspected."],
     artifactIds: [],
-    acceptanceCriteria: [{
-      criterion: "The run, task, and workflow node agree.",
-      passed: outcome === "passed",
-      evidence: outcome === "passed" ? "All terminal states agree." : "The verification run failed.",
-    }],
+    acceptanceCriteria: [
+      {
+        criterion: "The run, task, and workflow node agree.",
+        passed: outcome === "passed",
+        evidence: outcome === "passed" ? "All terminal states agree." : "The verification run failed.",
+      },
+    ],
     blockers: outcome === "passed" ? [] : ["Verification failed."],
     recommendedReturnStage: null,
   } as const;
@@ -419,12 +470,15 @@ function settlementHandoff(outcome: "passed" | "failed") {
 async function proposedActivationWorkflow(
   fixture: Awaited<ReturnType<typeof boardFixture>>,
   suffix: string,
-  stageTemplate: readonly ("research" | "verification")[],
+  stageTemplate: readonly ("research" | "verification")[]
 ) {
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Reconcile workflow activation ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `workflow-activation-${suffix}`).workItem;
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Reconcile workflow activation ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    `workflow-activation-${suffix}`
+  ).workItem;
   await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
@@ -433,14 +487,16 @@ async function proposedActivationWorkflow(
     assumptions: [],
     acceptanceCriteria: ["Every ready node has one coherent active attempt."],
     skillIds: [],
-    nodes: [{
-      nodeId: `workflow-activation-${suffix}`,
-      title: `Workflow activation ${suffix}`,
-      objective: "Create and link the stage task without a crash window.",
-      acceptanceCriteria: ["The task has claim context and can settle the node."],
-      dependencyNodeIds: [],
-      stageTemplate,
-    }],
+    nodes: [
+      {
+        nodeId: `workflow-activation-${suffix}`,
+        title: `Workflow activation ${suffix}`,
+        objective: "Create and link the stage task without a crash window.",
+        acceptanceCriteria: ["The task has claim context and can settle the node."],
+        dependencyNodeIds: [],
+        stageTemplate,
+      },
+    ],
   });
   return { workItem, plan: proposed.plans[0]!, node: proposed.nodes[0]! };
 }
@@ -448,48 +504,78 @@ async function proposedActivationWorkflow(
 function stageWorkflowForReconciliation(
   db: DatabaseSyncType,
   workflow: Awaited<ReturnType<typeof proposedActivationWorkflow>>,
-  stage: "research" | "verification",
+  stage: "research" | "verification"
 ): void {
   const confirmedAt = "2026-07-19T20:01:00.000Z";
   const workItemState = stage === "verification" ? "reviewing" : "planning";
-  assert.equal(Number(db.prepare(`
+  assert.equal(
+    Number(
+      db
+        .prepare(
+          `
     UPDATE plan_revisions
     SET state='confirmed',confirmed_by='human:alice',confirmed_at=?
     WHERE plan_revision_id=? AND state='proposed'
-  `).run(confirmedAt, workflow.plan.planRevisionId).changes), 1);
-  assert.equal(Number(db.prepare(`
+  `
+        )
+        .run(confirmedAt, workflow.plan.planRevisionId).changes
+    ),
+    1
+  );
+  assert.equal(
+    Number(
+      db
+        .prepare(
+          `
     UPDATE work_nodes
     SET state='ready',current_stage=?,version=version+1,updated_at=?
     WHERE node_id=? AND state='pending'
-  `).run(stage, confirmedAt, workflow.node.nodeId).changes), 1);
-  assert.equal(Number(db.prepare(`
+  `
+        )
+        .run(stage, confirmedAt, workflow.node.nodeId).changes
+    ),
+    1
+  );
+  assert.equal(
+    Number(
+      db
+        .prepare(
+          `
     UPDATE work_items
     SET state=?,current_stage=?,version=version+1,updated_at=?
     WHERE work_item_id=?
-  `).run(workItemState, stage, confirmedAt, workflow.workItem.workItemId).changes), 1);
+  `
+        )
+        .run(workItemState, stage, confirmedAt, workflow.workItem.workItemId).changes
+    ),
+    1
+  );
 }
 
 function configureActivationStages(
   board: TaskBoard,
-  stages: Readonly<Partial<Record<"research" | "verification", string>>>,
+  stages: Readonly<Partial<Record<"research" | "verification", string>>>
 ): void {
   const types = Object.entries(stages).map(([stage, agentTypeId]) => ({
     agentTypeId,
     name: `${stage} activation executor`,
     description: `Executes reconciled ${stage} workflow stages.`,
-    role: stage === "verification" ? "verifier" as const : "engineer" as const,
+    role: stage === "verification" ? ("verifier" as const) : ("engineer" as const),
     supplementalInstructions: "Exercise crash-safe workflow activation.",
     skillIds: [],
     evaluatorProfile: "tests" as const,
     enabled: true,
   }));
-  board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: types,
-    stages: automationStages(Object.fromEntries(Object.entries(stages).map(([stage, agentTypeId]) => [
-      stage,
-      { kind: "agent_type" as const, agentTypeId },
-    ]))),
-  }));
+  board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: types,
+      stages: automationStages(
+        Object.fromEntries(
+          Object.entries(stages).map(([stage, agentTypeId]) => [stage, { kind: "agent_type" as const, agentTypeId }])
+        )
+      ),
+    })
+  );
 }
 
 function sizedAutomationConfiguration(targetBytes: number) {
@@ -551,21 +637,48 @@ test("startup reconciles confirmed ready workflow nodes left before activation",
     try {
       partial.exec("PRAGMA foreign_keys = ON");
       const confirmedAt = "2026-07-19T20:01:00.000Z";
-      assert.equal(Number(partial.prepare(`
+      assert.equal(
+        Number(
+          partial
+            .prepare(
+              `
         UPDATE plan_revisions
         SET state='confirmed',confirmed_by='human:alice',confirmed_at=?
         WHERE plan_revision_id=? AND state='proposed'
-      `).run(confirmedAt, proposed.plan.planRevisionId).changes), 1);
-      assert.equal(Number(partial.prepare(`
+      `
+            )
+            .run(confirmedAt, proposed.plan.planRevisionId).changes
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          partial
+            .prepare(
+              `
         UPDATE work_nodes
         SET state='ready',current_stage='verification',version=version+1,updated_at=?
         WHERE node_id=? AND state='pending'
-      `).run(confirmedAt, proposed.node.nodeId).changes), 1);
-      assert.equal(Number(partial.prepare(`
+      `
+            )
+            .run(confirmedAt, proposed.node.nodeId).changes
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          partial
+            .prepare(
+              `
         UPDATE work_items
         SET state='reviewing',current_stage='verification',version=version+1,updated_at=?
         WHERE work_item_id=?
-      `).run(confirmedAt, proposed.workItem.workItemId).changes), 1);
+      `
+            )
+            .run(confirmedAt, proposed.workItem.workItemId).changes
+        ),
+        1
+      );
       assert.equal(partial.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 0);
     } finally {
       partial.close();
@@ -579,8 +692,11 @@ test("startup reconciles confirmed ready workflow nodes left before activation",
     assert.equal(tasks[0]?.assignedAgentId, verifier.agentId);
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
-        .get(repaired.nodes[0]!.nodeId)?.count, 1);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?").get(repaired.nodes[0]!.nodeId)
+          ?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -603,14 +719,17 @@ test("workflow activation rolls back its task and wakeup when attempt linkage fa
     try {
       assert.throws(
         () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
-        /INJECTED_ATTEMPT_LINK_FAILURE/u,
+        /INJECTED_ATTEMPT_LINK_FAILURE/u
       );
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
     }
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "ready");
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"), false);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"),
+      false
+    );
   } finally {
     fixture.board.close();
   }
@@ -625,18 +744,40 @@ test("workflow activation creates a compatible identity and activates it atomica
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
 
     assert.equal(confirmed.nodes[0]?.state, "active");
-    const verifier = fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.role === "verifier");
+    const verifier = fixture.board
+      .snapshot(fixture.project.projectId)
+      .agents.find((agent) => agent.role === "verifier");
     assert.ok(verifier);
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks[0]?.assignedAgentId, verifier.agentId);
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='verifier'")
-        .get(fixture.project.projectId)?.count), 1);
-      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
-        .get(confirmed.nodes[0]!.nodeId)?.count), 1);
-      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM task_events WHERE project_id=? AND event_type='agent_profile_created'")
-        .get(fixture.project.projectId)?.count), 3);
+      assert.equal(
+        Number(
+          inspected
+            .prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='verifier'")
+            .get(fixture.project.projectId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          inspected
+            .prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
+            .get(confirmed.nodes[0]!.nodeId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          inspected
+            .prepare(
+              "SELECT COUNT(*) AS count FROM task_events WHERE project_id=? AND event_type='agent_profile_created'"
+            )
+            .get(fixture.project.projectId)?.count
+        ),
+        3
+      );
     } finally {
       inspected.close();
     }
@@ -648,17 +789,22 @@ test("workflow activation creates a compatible identity and activates it atomica
 test("a disabled workflow executor stays policy-blocked without creating an identity", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      stages: automationStages({
-        verification: { kind: "disabled" },
-      }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        stages: automationStages({
+          verification: { kind: "disabled" },
+        }),
+      })
+    );
     const proposed = await proposedActivationWorkflow(fixture, "policy-blocked", ["verification"]);
 
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
 
     assert.equal(confirmed.nodes[0]?.state, "blocked");
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"), false);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).agents.some((agent) => agent.role === "verifier"),
+      false
+    );
     assert.ok(confirmed.events.some((event) => event.eventType === "node_blocked"));
   } finally {
     fixture.board.close();
@@ -668,32 +814,38 @@ test("a disabled workflow executor stays policy-blocked without creating an iden
 test("enabling a disabled workflow executor reconciles its policy-blocked node immediately", async () => {
   const fixture = await boardFixture();
   try {
-    const disabled = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      stages: automationStages({
-        verification: { kind: "disabled" },
-      }),
-    }));
+    const disabled = fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        stages: automationStages({
+          verification: { kind: "disabled" },
+        }),
+      })
+    );
     const proposed = await proposedActivationWorkflow(fixture, "config-reenabled", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.nodes[0]?.state, "blocked");
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 0);
 
-    const enabled = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      version: disabled.version,
-      agentTypes: [{
-        agentTypeId: "config-reenabled-verifier",
-        name: "Configuration recovery verifier",
-        description: "Executes verification after its disabled policy is changed.",
-        role: "verifier",
-        supplementalInstructions: "Verify that configuration updates reconcile blocked workflow nodes.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "config-reenabled-verifier" },
-      }),
-    }));
+    const enabled = fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        version: disabled.version,
+        agentTypes: [
+          {
+            agentTypeId: "config-reenabled-verifier",
+            name: "Configuration recovery verifier",
+            description: "Executes verification after its disabled policy is changed.",
+            role: "verifier",
+            supplementalInstructions: "Verify that configuration updates reconcile blocked workflow nodes.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "config-reenabled-verifier" },
+        }),
+      })
+    );
 
     assert.equal(enabled.version, disabled.version + 1);
     const recovered = fixture.board.projectWorkflow(fixture.project.projectId);
@@ -715,46 +867,50 @@ test("confirming a plan for a cancelled work item returns WORK_ITEM_ENDED withou
     const cancellation = new DatabaseSync(fixture.path);
     try {
       const endedAt = "2026-07-19T20:01:00.000Z";
-      assert.equal(Number(cancellation.prepare(`
+      assert.equal(
+        Number(
+          cancellation
+            .prepare(
+              `
         UPDATE work_items
         SET state='abandoned',current_stage=NULL,ended_at=?,version=version+1,updated_at=?
         WHERE work_item_id=? AND ended_at IS NULL
-      `).run(endedAt, endedAt, proposed.workItem.workItemId).changes), 1);
+      `
+            )
+            .run(endedAt, endedAt, proposed.workItem.workItemId).changes
+        ),
+        1
+      );
     } finally {
       cancellation.close();
     }
 
     const before = fixture.board.requireWorkItem(proposed.workItem.workItemId);
     assert.throws(
-      () => fixture.board.proposeWorkflow({
-        workItemId: proposed.workItem.workItemId,
-        projectId: fixture.project.projectId,
-        objective: "Do not propose another workflow for ended intake.",
-        assumptions: [],
-        acceptanceCriteria: ["Ended intake has no new workflow rows."],
-        skillIds: [],
-        nodes: [{
-          nodeId: "cancelled-item-second-plan",
-          title: "Cancelled item second plan",
-          objective: "Exercise the proposal fence.",
-          acceptanceCriteria: ["The proposal is rejected."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
-      }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 409 &&
-        error.code === "WORK_ITEM_ENDED"
-      ),
+      () =>
+        fixture.board.proposeWorkflow({
+          workItemId: proposed.workItem.workItemId,
+          projectId: fixture.project.projectId,
+          objective: "Do not propose another workflow for ended intake.",
+          assumptions: [],
+          acceptanceCriteria: ["Ended intake has no new workflow rows."],
+          skillIds: [],
+          nodes: [
+            {
+              nodeId: "cancelled-item-second-plan",
+              title: "Cancelled item second plan",
+              objective: "Exercise the proposal fence.",
+              acceptanceCriteria: ["The proposal is rejected."],
+              dependencyNodeIds: [],
+              stageTemplate: ["verification"],
+            },
+          ],
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "WORK_ITEM_ENDED"
     );
     assert.throws(
       () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 409 &&
-        error.code === "WORK_ITEM_ENDED"
-      ),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "WORK_ITEM_ENDED"
     );
     assert.deepEqual(fixture.board.requireWorkItem(proposed.workItem.workItemId), before);
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).plans[0]?.state, "proposed");
@@ -789,7 +945,7 @@ test("workflow project events are not published when confirmation rolls back", a
     try {
       assert.throws(
         () => fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" }),
-        /INJECTED_POST_EVENT_CONFIRM_FAILURE/u,
+        /INJECTED_POST_EVENT_CONFIRM_FAILURE/u
       );
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
@@ -800,7 +956,10 @@ test("workflow project events are not published when confirmation rolls back", a
     assert.deepEqual(published, []);
     const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.plans[0]?.state, "proposed");
-    assert.equal(workflow.events.some((event) => event.eventType === "plan_confirmed"), false);
+    assert.equal(
+      workflow.events.some((event) => event.eventType === "plan_confirmed"),
+      false
+    );
   } finally {
     fixture.board.close();
   }
@@ -823,7 +982,9 @@ test("committed workflow events preserve order and isolate throwing listeners", 
     const unsubscribeAfter = fixture.board.subscribeProjectEvents(fixture.project.projectId, (event) => {
       afterThrow.push(event.eventType);
     });
-    console.error = (...values: unknown[]) => { logged.push(values); };
+    console.error = (...values: unknown[]) => {
+      logged.push(values);
+    };
     try {
       const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
       assert.equal(confirmed.plans[0]?.state, "confirmed");
@@ -882,7 +1043,9 @@ test("after-commit delivery logs callback failures without failing the commit or
   const logged: unknown[][] = [];
   try {
     const delivered: string[] = [];
-    console.error = (...values: unknown[]) => { logged.push(values); };
+    console.error = (...values: unknown[]) => {
+      logged.push(values);
+    };
 
     let result: string | undefined;
     assert.doesNotThrow(() => {
@@ -932,11 +1095,21 @@ test("reconciler links a coherent half-created activation task and makes it sett
     try {
       partial.exec("PRAGMA foreign_keys = ON");
       assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?").run(task.taskId).changes), 1);
-      assert.equal(Number(partial.prepare(
-        "DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'",
-      ).run(node.nodeId, task.taskId).changes), 1);
-      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?")
-        .run(node.nodeId).changes), 1);
+      assert.equal(
+        Number(
+          partial
+            .prepare("DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'")
+            .run(node.nodeId, task.taskId).changes
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?").run(node.nodeId)
+            .changes
+        ),
+        1
+      );
     } finally {
       partial.close();
     }
@@ -946,8 +1119,14 @@ test("reconciler links a coherent half-created activation task and makes it sett
     const repaired = board.projectWorkflow(fixture.project.projectId).nodes[0]!;
     assert.equal(repaired.state, "active");
     assert.equal(board.snapshot(fixture.project.projectId).tasks.length, 1);
-    assert.equal(board.projectWorkflow(fixture.project.projectId).events.filter((event) =>
-      event.nodeId === node.nodeId && event.taskId === task.taskId && event.eventType === "stage_started").length, 1);
+    assert.equal(
+      board
+        .projectWorkflow(fixture.project.projectId)
+        .events.filter(
+          (event) => event.nodeId === node.nodeId && event.taskId === task.taskId && event.eventType === "stage_started"
+        ).length,
+      1
+    );
     const claim = board.claimRun(verifier.agentId, {
       claimId: "claim-reconciled-half-activation",
       messageCursor: null,
@@ -1025,12 +1204,13 @@ test("startup repairs a ready next stage after post-settlement activation crashe
     };
     try {
       assert.throws(
-        () => board!.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
-          outcome: "completed",
-          result: "Research completed before next-stage activation crashed.",
-          handoff: settlementHandoff("passed"),
-        }),
-        /INJECTED_POST_SETTLEMENT_ACTIVATION_CRASH/u,
+        () =>
+          board!.settleRun(researchClaim.run.runId, fixture.engineer.agentId, {
+            outcome: "completed",
+            result: "Research completed before next-stage activation crashed.",
+            handoff: settlementHandoff("passed"),
+          }),
+        /INJECTED_POST_SETTLEMENT_ACTIVATION_CRASH/u
       );
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
@@ -1122,11 +1302,9 @@ test("startup isolates a corrupt workflow candidate and repairs candidates in ot
     });
     configureActivationStages(board, { verification: "activation-isolation-type" });
     const corrupt = await proposedActivationWorkflow(fixture, "corrupt-candidate", ["verification"]);
-    const repairable = await proposedActivationWorkflow(
-      { ...fixture, project: otherProject },
-      "other-project",
-      ["verification"],
-    );
+    const repairable = await proposedActivationWorkflow({ ...fixture, project: otherProject }, "other-project", [
+      "verification",
+    ]);
     board.close();
     board = null;
 
@@ -1137,11 +1315,17 @@ test("startup isolates a corrupt workflow candidate and repairs candidates in ot
       partial.exec("PRAGMA foreign_keys = ON");
       stageWorkflowForReconciliation(partial, corrupt, "verification");
       stageWorkflowForReconciliation(partial, repairable, "verification");
-      assert.equal(Number(partial.prepare(
-        "UPDATE work_nodes SET acceptance_criteria_json='null' WHERE node_id=?",
-      ).run(corrupt.node.nodeId).changes), 1);
-      corruptVersion = Number(partial.prepare("SELECT version FROM work_nodes WHERE node_id=?")
-        .get(corrupt.node.nodeId)?.version);
+      assert.equal(
+        Number(
+          partial
+            .prepare("UPDATE work_nodes SET acceptance_criteria_json='null' WHERE node_id=?")
+            .run(corrupt.node.nodeId).changes
+        ),
+        1
+      );
+      corruptVersion = Number(
+        partial.prepare("SELECT version FROM work_nodes WHERE node_id=?").get(corrupt.node.nodeId)?.version
+      );
     } finally {
       partial.close();
     }
@@ -1160,14 +1344,21 @@ test("startup isolates a corrupt workflow candidate and repairs candidates in ot
     assert.ok(reconciliationErrors.some((message) => message.includes(corrupt.node.nodeId)));
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      const untouched = inspected.prepare("SELECT state,version FROM work_nodes WHERE node_id=?")
+      const untouched = inspected
+        .prepare("SELECT state,version FROM work_nodes WHERE node_id=?")
         .get(corrupt.node.nodeId);
       assert.equal(untouched?.state, "ready");
       assert.equal(Number(untouched?.version), corruptVersion);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
-        .get(corrupt.node.nodeId)?.count, 0);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE project_id=?")
-        .get(fixture.project.projectId)?.count, 0);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?").get(corrupt.node.nodeId)
+          ?.count,
+        0
+      );
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE project_id=?").get(fixture.project.projectId)
+          ?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -1197,13 +1388,22 @@ test("reconciler skips a claimed activation orphan and creates a fresh linked ta
     const partial = new DatabaseSync(fixture.path);
     try {
       partial.exec("PRAGMA foreign_keys = ON");
-      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?")
-        .run(orphan.taskId).changes), 1);
-      assert.equal(Number(partial.prepare(
-        "DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'",
-      ).run(node.nodeId, orphan.taskId).changes), 1);
-      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?")
-        .run(node.nodeId).changes), 1);
+      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?").run(orphan.taskId).changes), 1);
+      assert.equal(
+        Number(
+          partial
+            .prepare("DELETE FROM project_events WHERE node_id=? AND task_id=? AND event_type='stage_started'")
+            .run(node.nodeId, orphan.taskId).changes
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          partial.prepare("UPDATE work_nodes SET state='ready',version=version-1 WHERE node_id=?").run(node.nodeId)
+            .changes
+        ),
+        1
+      );
     } finally {
       partial.close();
     }
@@ -1217,17 +1417,24 @@ test("reconciler skips a claimed activation orphan and creates a fresh linked ta
     assert.equal(orphanClaim.context.workflow, null);
 
     fixture.board.reconcileWorkflows(fixture.project.projectId);
-    const tasks = fixture.board.snapshot(fixture.project.projectId).tasks.filter((task) =>
-      task.objective === proposed.node.objective);
+    const tasks = fixture.board
+      .snapshot(fixture.project.projectId)
+      .tasks.filter((task) => task.objective === proposed.node.objective);
     assert.equal(tasks.length, 2);
     const replacement = tasks.find((task) => task.taskId !== orphan.taskId);
     assert.ok(replacement);
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?")
-        .get(orphan.taskId)?.count, 0);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
-        .get(replacement.taskId, node.nodeId)?.count, 1);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?").get(orphan.taskId)?.count,
+        0
+      );
+      assert.equal(
+        inspected
+          .prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
+          .get(replacement.taskId, node.nodeId)?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -1274,11 +1481,18 @@ test("reconciler skips a dead blocked activation orphan and creates a fresh task
     const partial = new DatabaseSync(fixture.path);
     try {
       partial.exec("PRAGMA foreign_keys = ON");
-      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?")
-        .run(orphan.taskId).changes), 1);
-      assert.equal(Number(partial.prepare("UPDATE work_nodes SET state='ready',version=version+1 WHERE node_id=?")
-        .run(node.nodeId).changes), 1);
-      assert.equal(partial.prepare(`
+      assert.equal(Number(partial.prepare("DELETE FROM stage_attempts WHERE task_id=?").run(orphan.taskId).changes), 1);
+      assert.equal(
+        Number(
+          partial.prepare("UPDATE work_nodes SET state='ready',version=version+1 WHERE node_id=?").run(node.nodeId)
+            .changes
+        ),
+        1
+      );
+      assert.equal(
+        partial
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         WHERE wakeup.task_id=?
@@ -1286,24 +1500,35 @@ test("reconciler skips a dead blocked activation orphan and creates a fresh task
           AND NOT EXISTS(
             SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
           )
-      `).get(orphan.taskId)?.count, 0);
+      `
+          )
+          .get(orphan.taskId)?.count,
+        0
+      );
     } finally {
       partial.close();
     }
 
     fixture.board.reconcileWorkflows(fixture.project.projectId);
-    const tasks = fixture.board.snapshot(fixture.project.projectId).tasks.filter((task) =>
-      task.objective === proposed.node.objective);
+    const tasks = fixture.board
+      .snapshot(fixture.project.projectId)
+      .tasks.filter((task) => task.objective === proposed.node.objective);
     assert.equal(tasks.length, 2);
     const replacement = tasks.find((task) => task.taskId !== orphan.taskId);
     assert.ok(replacement);
     assert.equal(fixture.board.requireTask(orphan.taskId).status, "failed");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?")
-        .get(orphan.taskId)?.count, 0);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
-        .get(replacement.taskId, node.nodeId)?.count, 1);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=?").get(orphan.taskId)?.count,
+        0
+      );
+      assert.equal(
+        inspected
+          .prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE task_id=? AND node_id=?")
+          .get(replacement.taskId, node.nodeId)?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -1315,9 +1540,11 @@ test("reconciler skips a dead blocked activation orphan and creates a fresh task
 test("stale policy-blocked candidates are not resurrected after becoming failure-blocked", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      stages: automationStages({ verification: { kind: "disabled" } }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        stages: automationStages({ verification: { kind: "disabled" } }),
+      })
+    );
     const proposed = await proposedActivationWorkflow(fixture, "stale-blocked", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
     const blocked = confirmed.nodes[0]!;
@@ -1333,10 +1560,15 @@ test("stale policy-blocked candidates are not resurrected after becoming failure
         statement.all = ((...values: SQLInputValue[]) => {
           const rows = originalAll(...values);
           if (rows.some((row) => String(row.node_id) === blocked.nodeId)) {
-            originalPrepare.call(this, `
+            originalPrepare
+              .call(
+                this,
+                `
               INSERT INTO project_events(event_id,project_id,node_id,task_id,event_type,summary,created_at)
               VALUES ('event_stale_failure_block', ?, ?, NULL, 'stage_failed', 'Failure won the race.', ?)
-            `).run(fixture.project.projectId, blocked.nodeId, blocked.updatedAt);
+            `
+              )
+              .run(fixture.project.projectId, blocked.nodeId, blocked.updatedAt);
             interleaved = true;
           }
           return rows;
@@ -1367,9 +1599,11 @@ test("stale policy-blocked candidates are not resurrected after becoming failure
 test("repeated reconciliation does not churn a still policy-blocked node", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      stages: automationStages({ verification: { kind: "disabled" } }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        stages: automationStages({ verification: { kind: "disabled" } }),
+      })
+    );
     const proposed = await proposedActivationWorkflow(fixture, "still-blocked", ["verification"]);
     const confirmed = fixture.board.confirmWorkflow(proposed.plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.nodes[0]?.state, "blocked");
@@ -1388,24 +1622,54 @@ test("repeated reconciliation does not churn a still policy-blocked node", async
 test("confirmed workflow persists an acyclic graph and activates only dependency roots", async () => {
   const fixture = await boardFixture();
   try {
-    const item = fixture.board.createWorkItem(workItemRequest({
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "workflow-intake-0001").workItem;
+    const item = fixture.board.createWorkItem(
+      workItemRequest({
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "workflow-intake-0001"
+    ).workItem;
     await stageWorkItemForWorkflow(fixture.path, item.workItemId);
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "researcher", name: "Researcher", description: "Research", role: "engineer",
-        supplementalInstructions: "Research the confirmed node and return evidence.", skillIds: ["cicada-evidence-research"], evaluatorProfile: "editorial", enabled: true,
-      }],
-      stages: automationStages({ research: { kind: "agent_type", agentTypeId: "researcher" } }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "researcher",
+            name: "Researcher",
+            description: "Research",
+            role: "engineer",
+            supplementalInstructions: "Research the confirmed node and return evidence.",
+            skillIds: ["cicada-evidence-research"],
+            evaluatorProfile: "editorial",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({ research: { kind: "agent_type", agentTypeId: "researcher" } }),
+      })
+    );
     const proposed = await fixture.board.proposeWorkflow({
-      workItemId: item.workItemId, projectId: fixture.project.projectId,
-      objective: "Make retry behavior safe.", assumptions: [], acceptanceCriteria: ["Retry tests pass"],
+      workItemId: item.workItemId,
+      projectId: fixture.project.projectId,
+      objective: "Make retry behavior safe.",
+      assumptions: [],
+      acceptanceCriteria: ["Retry tests pass"],
       skillIds: ["cicada-evidence-research"],
       nodes: [
-        { nodeId: "investigate-retries", title: "Investigate retries", objective: "Find failure modes", acceptanceCriteria: ["Evidence recorded"], dependencyNodeIds: [], stageTemplate: ["research", "verification"] },
-        { nodeId: "implement-retries", title: "Implement retries", objective: "Make retries safe", acceptanceCriteria: ["Tests pass"], dependencyNodeIds: ["investigate-retries"], stageTemplate: ["research", "planning", "implementation", "testing", "verification"] },
+        {
+          nodeId: "investigate-retries",
+          title: "Investigate retries",
+          objective: "Find failure modes",
+          acceptanceCriteria: ["Evidence recorded"],
+          dependencyNodeIds: [],
+          stageTemplate: ["research", "verification"],
+        },
+        {
+          nodeId: "implement-retries",
+          title: "Implement retries",
+          objective: "Make retries safe",
+          acceptanceCriteria: ["Tests pass"],
+          dependencyNodeIds: ["investigate-retries"],
+          stageTemplate: ["research", "planning", "implementation", "testing", "verification"],
+        },
       ],
     });
     const plan = proposed.plans[0]!;
@@ -1414,15 +1678,42 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
     assert.equal(confirmed.plans[0]?.state, "confirmed");
     assert.equal(confirmed.nodes.find((node) => node.title === "Investigate retries")?.state, "active");
     assert.equal(confirmed.nodes.find((node) => node.title === "Implement retries")?.state, "pending");
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.some((task) => task.title === "research: Investigate retries"), true);
-    assert.throws(() => fixture.board.proposeWorkflow({
-      workItemId: item.workItemId, projectId: fixture.project.projectId, objective: "Cycle",
-      assumptions: [], acceptanceCriteria: ["Never"], skillIds: [],
-      nodes: [
-        { nodeId: "cycle-a", title: "A", objective: "A", acceptanceCriteria: ["A"], dependencyNodeIds: ["cycle-b"], stageTemplate: ["research", "verification"] },
-        { nodeId: "cycle-b", title: "B", objective: "B", acceptanceCriteria: ["B"], dependencyNodeIds: ["cycle-a"], stageTemplate: ["research", "verification"] },
-      ],
-    }), (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE");
+    assert.equal(
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .tasks.some((task) => task.title === "research: Investigate retries"),
+      true
+    );
+    assert.throws(
+      () =>
+        fixture.board.proposeWorkflow({
+          workItemId: item.workItemId,
+          projectId: fixture.project.projectId,
+          objective: "Cycle",
+          assumptions: [],
+          acceptanceCriteria: ["Never"],
+          skillIds: [],
+          nodes: [
+            {
+              nodeId: "cycle-a",
+              title: "A",
+              objective: "A",
+              acceptanceCriteria: ["A"],
+              dependencyNodeIds: ["cycle-b"],
+              stageTemplate: ["research", "verification"],
+            },
+            {
+              nodeId: "cycle-b",
+              title: "B",
+              objective: "B",
+              acceptanceCriteria: ["B"],
+              dependencyNodeIds: ["cycle-a"],
+              stageTemplate: ["research", "verification"],
+            },
+          ],
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_CYCLE"
+    );
   } finally {
     fixture.board.close();
   }
@@ -1431,10 +1722,13 @@ test("confirmed workflow persists an acyclic graph and activates only dependency
 test("re-proposing an unconfirmed plan invalidates an older work-item CAS version", async () => {
   const fixture = await boardFixture();
   try {
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Revise an unconfirmed workflow without leaving stale CAS versions valid.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "workflow-reproposal-cas-0001").workItem;
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Revise an unconfirmed workflow without leaving stale CAS versions valid.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "workflow-reproposal-cas-0001"
+    ).workItem;
     await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
     const first = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
@@ -1443,14 +1737,16 @@ test("re-proposing an unconfirmed plan invalidates an older work-item CAS versio
       assumptions: [],
       acceptanceCriteria: ["The plan remains open for revision."],
       skillIds: [],
-      nodes: [{
-        nodeId: "first-unconfirmed-plan",
-        title: "First unconfirmed plan",
-        objective: "Create the initial proposal.",
-        acceptanceCriteria: ["The proposal is stored."],
-        dependencyNodeIds: [],
-        stageTemplate: ["verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "first-unconfirmed-plan",
+          title: "First unconfirmed plan",
+          objective: "Create the initial proposal.",
+          acceptanceCriteria: ["The proposal is stored."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        },
+      ],
     });
     const beforeRevision = fixture.board.requireWorkItem(workItem.workItemId);
     assert.equal(beforeRevision.state, "plan_approval");
@@ -1462,14 +1758,16 @@ test("re-proposing an unconfirmed plan invalidates an older work-item CAS versio
       assumptions: ["The first draft needs correction."],
       acceptanceCriteria: ["The revised plan supersedes the first."],
       skillIds: [],
-      nodes: [{
-        nodeId: "second-unconfirmed-plan",
-        title: "Second unconfirmed plan",
-        objective: "Create the corrected proposal.",
-        acceptanceCriteria: ["The previous proposal is superseded."],
-        dependencyNodeIds: [],
-        stageTemplate: ["verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "second-unconfirmed-plan",
+          title: "Second unconfirmed plan",
+          objective: "Create the corrected proposal.",
+          acceptanceCriteria: ["The previous proposal is superseded."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        },
+      ],
     });
     const afterRevision = fixture.board.requireWorkItem(workItem.workItemId);
     assert.equal(first.plans[0]?.state, "proposed");
@@ -1478,11 +1776,12 @@ test("re-proposing an unconfirmed plan invalidates an older work-item CAS versio
     assert.equal(afterRevision.refinedObjective, "Draft the revised unconfirmed workflow.");
     assert.equal(afterRevision.transitions.length, beforeRevision.transitions.length);
     assert.throws(
-      () => fixture.board.updateWorkItem(workItem.workItemId, {
-        version: beforeRevision.version,
-        priority: "high",
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+      () =>
+        fixture.board.updateWorkItem(workItem.workItemId, {
+          version: beforeRevision.version,
+          priority: "high",
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT"
     );
   } finally {
     fixture.board.close();
@@ -1502,8 +1801,10 @@ test("claim-context rejection rolls back the run, wakeup claim, and task start",
     assert.equal(taskAfterRejection.startedAt, initialTask.startedAt);
     assert.equal(taskAfterRejection.version, initialTask.version);
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
-      false,
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
+      false
     );
 
     const { DatabaseSync } = await import("node:sqlite");
@@ -1511,11 +1812,11 @@ test("claim-context rejection rolls back the run, wakeup claim, and task start",
     try {
       assert.equal(
         inspected.prepare("SELECT COUNT(*) AS count FROM runs WHERE agent_id=?").get(fixture.engineer.agentId)?.count,
-        0,
+        0
       );
-      const wakeup = inspected.prepare(
-        "SELECT claimed_at,run_id FROM wakeups WHERE agent_id=? AND task_id=?",
-      ).get(fixture.engineer.agentId, fixture.task.taskId);
+      const wakeup = inspected
+        .prepare("SELECT claimed_at,run_id FROM wakeups WHERE agent_id=? AND task_id=?")
+        .get(fixture.engineer.agentId, fixture.task.taskId);
       assert.ok(wakeup);
       assert.equal(wakeup.claimed_at, null);
       assert.equal(wakeup.run_id, null);
@@ -1555,8 +1856,10 @@ test("the same claimId is a fresh attempt after claim-context rejection", async 
     await changeClaimContextSkill(fixture.skillPath, fixture.skillContent, "same-retry");
     assertSkillDigestChangedClaim(fixture, claimId);
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
-      false,
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .recentRuns.some((run) => run.agentId === fixture.engineer.agentId),
+      false
     );
 
     await writeFile(fixture.skillPath, fixture.skillContent, "utf8");
@@ -1606,9 +1909,12 @@ test("claim pinning round-trips verbatim and replay echoes the original pinned v
   const fixture = await boardFixture();
   try {
     const productionPromptsSha = PromptRegistry.loadSync(resolve("config/prompts.md")).promptsSha;
-    fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Pin the claim execution identity",
-    }));
+    fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Pin the claim execution identity",
+      })
+    );
     const originalRequest = {
       claimId: "claim-pinning-round-trip-0001",
       messageCursor: null,
@@ -1629,23 +1935,29 @@ test("claim pinning round-trips verbatim and replay echoes the original pinned v
         promptsSha: first.run.promptsSha,
         heartbeatAt: first.run.heartbeatAt,
       },
-      { ...originalRequest.pinned, heartbeatAt: null },
+      { ...originalRequest.pinned, heartbeatAt: null }
     );
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.deepEqual(
-        { ...inspected.prepare(`
+        {
+          ...inspected
+            .prepare(
+              `
           SELECT runtime,runtime_version,model,prompts_sha,heartbeat_at FROM runs WHERE run_id=?
-        `).get(first.run.runId) },
+        `
+            )
+            .get(first.run.runId),
+        },
         {
           runtime: originalRequest.pinned.runtime,
           runtime_version: originalRequest.pinned.runtimeVersion,
           model: originalRequest.pinned.model,
           prompts_sha: originalRequest.pinned.promptsSha,
           heartbeat_at: null,
-        },
+        }
       );
     } finally {
       inspected.close();
@@ -1670,7 +1982,7 @@ test("claim pinning round-trips verbatim and replay echoes the original pinned v
         model: replay.run.model,
         promptsSha: replay.run.promptsSha,
       },
-      originalRequest.pinned,
+      originalRequest.pinned
     );
   } finally {
     fixture.board.close();
@@ -1694,7 +2006,7 @@ test("an unpinned claim emits null execution identity and heartbeat fields", asy
         promptsSha: claim.run.promptsSha,
         heartbeatAt: claim.run.heartbeatAt,
       },
-      { runtime: null, runtimeVersion: null, model: null, promptsSha: null, heartbeatAt: null },
+      { runtime: null, runtimeVersion: null, model: null, promptsSha: null, heartbeatAt: null }
     );
   } finally {
     fixture.board.close();
@@ -1722,7 +2034,8 @@ test("legacy claim-result replay adds null run fields without changing claim ide
       for (const field of ["heartbeatAt", "runtime", "runtimeVersion", "model", "promptsSha"] as const) {
         delete legacyResult.run[field];
       }
-      const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
+      const seeded = direct
+        .prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
         .run(JSON.stringify(legacyResult), first.run.runId);
       assert.equal(Number(seeded.changes), 1);
     } finally {
@@ -1751,7 +2064,7 @@ test("legacy claim-result replay adds null run fields without changing claim ide
         runtimeVersion: null,
         model: null,
         promptsSha: null,
-      },
+      }
     );
   } finally {
     if (fixtureOpen) fixture.board.close();
@@ -1778,7 +2091,8 @@ test("legacy claim-result replay backfills a missing intake flag", async () => {
       assert.equal(typeof row?.claim_result_json, "string");
       const legacyResult = JSON.parse(String(row?.claim_result_json)) as { context: Record<string, unknown> };
       delete legacyResult.context.intake;
-      const seeded = direct.prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
+      const seeded = direct
+        .prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ?")
         .run(JSON.stringify(legacyResult), first.run.runId);
       assert.equal(Number(seeded.changes), 1);
     } finally {
@@ -1846,8 +2160,7 @@ test("same-claimId replay rebuilds legacy active runs without a persisted claim 
     const { DatabaseSync } = await import("node:sqlite");
     const direct = new DatabaseSync(fixture.path);
     try {
-      const cleared = direct.prepare("UPDATE runs SET claim_result_json = NULL WHERE run_id = ?")
-        .run(first.run.runId);
+      const cleared = direct.prepare("UPDATE runs SET claim_result_json = NULL WHERE run_id = ?").run(first.run.runId);
       assert.equal(Number(cleared.changes), 1);
     } finally {
       direct.close();
@@ -1880,28 +2193,43 @@ test("explicit work-item intake plans, confirms, executes, and completes without
       model: "codex-mini",
       token: "task-board-verifier-token-0123456789",
     });
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [
-        {
-          agentTypeId: "implementer", name: "Implementer", description: "Implements confirmed work.",
-          role: "engineer", supplementalInstructions: "Implement only the confirmed node.",
-          skillIds: ["cicada-software-implementation"], evaluatorProfile: "tests", enabled: true,
-        },
-        {
-          agentTypeId: "verifier", name: "Verifier", description: "Verifies completed work.",
-          role: "verifier", supplementalInstructions: "Verify every acceptance criterion independently.",
-          skillIds: ["cicada-outcome-evaluation"], evaluatorProfile: "tests", enabled: true,
-        },
-      ],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: "implementer" },
-        verification: { kind: "agent_type", agentTypeId: "verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "implementer",
+            name: "Implementer",
+            description: "Implements confirmed work.",
+            role: "engineer",
+            supplementalInstructions: "Implement only the confirmed node.",
+            skillIds: ["cicada-software-implementation"],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+          {
+            agentTypeId: "verifier",
+            name: "Verifier",
+            description: "Verifies completed work.",
+            role: "verifier",
+            supplementalInstructions: "Verify every acceptance criterion independently.",
+            skillIds: ["cicada-outcome-evaluation"],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: "implementer" },
+          verification: { kind: "agent_type", agentTypeId: "verifier" },
+        }),
+      })
+    );
+    const created = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Make checkout retries idempotent.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const created = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Make checkout retries idempotent.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "complete-workflow-intake-0001");
+      "complete-workflow-intake-0001"
+    );
     const planningTask = fixture.board.startWorkItemPlanning(created.workItem.workItemId);
     assert.equal(planningTask?.assignedAgentId, fixture.manager.agentId);
     const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
@@ -1916,14 +2244,16 @@ test("explicit work-item intake plans, confirms, executes, and completes without
         objective: "Make checkout retries idempotent.",
         assumptions: ["The checkout repository is available."],
         acceptanceCriteria: ["Repeated retries create one charge."],
-        nodes: [{
-          nodeId: "idempotent-checkout",
-          title: "Implement idempotent checkout",
-          objective: "Prevent duplicate charges during retry.",
-          acceptanceCriteria: ["Focused retry tests pass."],
-          dependencyNodeIds: [],
-          stageTemplate: ["implementation", "verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "idempotent-checkout",
+            title: "Implement idempotent checkout",
+            objective: "Prevent duplicate charges during retry.",
+            acceptanceCriteria: ["Focused retry tests pass."],
+            dependencyNodeIds: [],
+            stageTemplate: ["implementation", "verification"],
+          },
+        ],
       },
     });
     const proposed = fixture.board.projectWorkflow(fixture.project.projectId);
@@ -1937,7 +2267,10 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     });
     assert.ok(implementation);
     assert.equal(implementation.context.workflow?.stage, "implementation");
-    assert.deepEqual(implementation.context.workflow?.skills.map((skill) => skill.skillId), ["cicada-software-implementation"]);
+    assert.deepEqual(
+      implementation.context.workflow?.skills.map((skill) => skill.skillId),
+      ["cicada-software-implementation"]
+    );
     fixture.board.settleRun(implementation.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "Retry tests pass and duplicate charges are prevented.",
@@ -1949,7 +2282,10 @@ test("explicit work-item intake plans, confirms, executes, and completes without
     });
     assert.ok(verification);
     assert.equal(verification.context.workflow?.stage, "verification");
-    assert.deepEqual(verification.context.workflow?.skills.map((skill) => skill.skillId), ["cicada-outcome-evaluation"]);
+    assert.deepEqual(
+      verification.context.workflow?.skills.map((skill) => skill.skillId),
+      ["cicada-outcome-evaluation"]
+    );
     fixture.board.settleRun(verification.run.runId, verifier.agentId, {
       outcome: "completed",
       result: "The focused evidence satisfies the confirmed criterion.",
@@ -1974,25 +2310,32 @@ test("a non-pipeline multi-node DAG still completes as merged", async () => {
     token: "multi-node-dag-verifier-token-0123456789abcdef",
   });
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "multi-node-dag-verifier",
-        name: "Multi-node DAG verifier",
-        description: "Executes ordinary verification nodes in dependency order.",
-        role: "verifier",
-        supplementalInstructions: "Verify the active ordinary workflow node.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "multi-node-dag-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "multi-node-dag-verifier",
+            name: "Multi-node DAG verifier",
+            description: "Executes ordinary verification nodes in dependency order.",
+            role: "verifier",
+            supplementalInstructions: "Verify the active ordinary workflow node.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "multi-node-dag-verifier" },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Complete an ordinary two-node verification DAG.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Complete an ordinary two-node verification DAG.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "ordinary-multi-node-dag").workItem;
+      "ordinary-multi-node-dag"
+    ).workItem;
     await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
@@ -2040,7 +2383,7 @@ test("a non-pipeline multi-node DAG still completes as merged", async () => {
     assert.ok(completed.endedAt);
     assert.deepEqual(
       fixture.board.projectWorkflow(fixture.project.projectId).nodes.map((node) => node.state),
-      ["completed", "completed"],
+      ["completed", "completed"]
     );
   } finally {
     fixture.board.close();
@@ -2052,16 +2395,14 @@ test("contradictory handoff validation leaves an active workflow run settleable"
   try {
     const initialNodeVersion = fixture.node.version;
     assert.throws(
-      () => fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
-        outcome: "failed",
-        result: "Verification failed before settlement.",
-        handoff: settlementHandoff("passed"),
-      }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "HANDOFF_OUTCOME_MISMATCH"
-      ),
+      () =>
+        fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+          outcome: "failed",
+          result: "Verification failed before settlement.",
+          handoff: settlementHandoff("passed"),
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "HANDOFF_OUTCOME_MISMATCH"
     );
 
     const rejectedSnapshot = fixture.board.snapshot(fixture.project.projectId);
@@ -2071,18 +2412,20 @@ test("contradictory handoff validation leaves an active workflow run settleable"
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.version, initialNodeVersion);
 
     assert.throws(
-      () => fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
-        outcome: "failed",
-        result: "Verification failed before settlement.",
-        handoff: { ...settlementHandoff("failed"), artifactIds: ["missing-settlement-artifact"] },
-      }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "HANDOFF_ARTIFACT_INVALID"
-      ),
+      () =>
+        fixture.board.settleRun(fixture.claim.run.runId, fixture.verifier.agentId, {
+          outcome: "failed",
+          result: "Verification failed before settlement.",
+          handoff: { ...settlementHandoff("failed"), artifactIds: ["missing-settlement-artifact"] },
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "HANDOFF_ARTIFACT_INVALID"
     );
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === fixture.claim.run.runId)?.status, "active");
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === fixture.claim.run.runId)
+        ?.status,
+      "active"
+    );
     assert.equal(fixture.board.requireTask(fixture.claim.task!.taskId).status, "in_progress");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
 
@@ -2108,9 +2451,9 @@ test("an exhausted workflow failure dead-letters the work item with transition h
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      const update = seeded.prepare(
-        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
-      ).run(fixture.claim.task!.taskId);
+      const update = seeded
+        .prepare("UPDATE stage_attempts SET attempt=3 WHERE task_id=?")
+        .run(fixture.claim.task!.taskId);
       assert.equal(Number(update.changes), 1);
     } finally {
       seeded.close();
@@ -2144,9 +2487,10 @@ test("retry and recoverable reassignment reactivate a node without reopening its
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(seeded.prepare(
-        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
-      ).run(taskId).changes), 1);
+      assert.equal(
+        Number(seeded.prepare("UPDATE stage_attempts SET attempt=3 WHERE task_id=?").run(taskId).changes),
+        1
+      );
     } finally {
       seeded.close();
     }
@@ -2188,11 +2532,15 @@ test("retry and recoverable reassignment reactivate a node without reopening its
       model: "codex-mini",
       token: "dead-letter-recovery-verifier-token-0123456789",
     });
-    const reassigned = fixture.board.updateTask(taskId, {
-      version: failedAgain.version,
-      assignedAgentId: replacement.agentId,
-      assignedRole: replacement.role,
-    }, { type: "human", id: "human:alice" });
+    const reassigned = fixture.board.updateTask(
+      taskId,
+      {
+        version: failedAgain.version,
+        assignedAgentId: replacement.agentId,
+        assignedRole: replacement.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(reassigned.status, "queued");
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "active");
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), deadLettered);
@@ -2212,9 +2560,11 @@ test("a cancelled work item absorbs and idempotently replays its live final-stag
     });
     const cancelled = fixture.board.requireWorkItem(fixture.workItem.workItemId);
 
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === fixture.claim.run.runId,
-    )?.status, "interrupted");
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === fixture.claim.run.runId)
+        ?.status,
+      "interrupted"
+    );
     const cancelledTask = fixture.board.requireTask(fixture.claim.task!.taskId);
     const cancelledNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes[0];
     const settlement = {
@@ -2254,18 +2604,18 @@ test("a cancelled work item's stage task rejects new questions", async () => {
 
     assert.equal(fixture.board.requireTask(taskId).status, "cancelled");
     assert.throws(
-      () => fixture.board.askQuestion(taskId, fixture.verifier.agentId, {
-        clientEventId: "question-after-work-item-cancel-0001",
-        question: "Should the live verification preserve its recorded evidence?",
-        runId: fixture.claim.run.runId,
-      }),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 409
-        && error.code === "RUN_NOT_ACTIVE",
+      () =>
+        fixture.board.askQuestion(taskId, fixture.verifier.agentId, {
+          clientEventId: "question-after-work-item-cancel-0001",
+          question: "Should the live verification preserve its recorded evidence?",
+          runId: fixture.claim.run.runId,
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "RUN_NOT_ACTIVE"
     );
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).openQuestions.some(
-      (candidate) => candidate.taskId === taskId,
-    ), false);
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).openQuestions.some((candidate) => candidate.taskId === taskId),
+      false
+    );
     assert.deepEqual(fixture.board.requireWorkItem(fixture.workItem.workItemId), cancelled);
   } finally {
     fixture.board.close();
@@ -2284,9 +2634,13 @@ test("an already queued sibling settles but its next stage stays inert after dea
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(seeded.prepare(
-        "UPDATE stage_attempts SET attempt=3 WHERE task_id=?",
-      ).run(fixture.verificationTask.taskId).changes), 1);
+      assert.equal(
+        Number(
+          seeded.prepare("UPDATE stage_attempts SET attempt=3 WHERE task_id=?").run(fixture.verificationTask.taskId)
+            .changes
+        ),
+        1
+      );
     } finally {
       seeded.close();
     }
@@ -2312,17 +2666,24 @@ test("an already queued sibling settles but its next stage stays inert after dea
 
     assert.equal(settled.run.status, "completed");
     assert.equal(fixture.board.requireTask(fixture.researchTask.taskId).status, "completed");
-    const researchNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find((node) => (
-      node.title === "Parallel research dead-letter-sibling"
-    ));
+    const researchNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((node) => node.title === "Parallel research dead-letter-sibling");
     assert.equal(researchNode?.state, "ready");
     assert.equal(researchNode?.currentStage, "verification");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM stage_attempts
         WHERE node_id=? AND stage='verification'
-      `).get(researchNode?.nodeId)?.count, 0);
+      `
+          )
+          .get(researchNode?.nodeId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -2335,25 +2696,32 @@ test("an already queued sibling settles but its next stage stays inert after dea
 test("a completed planning run missing workflowPlan remains active and accepts a corrected retry", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "planning-verifier",
-        name: "Planning verifier",
-        description: "Executes planned verification nodes.",
-        role: "verifier",
-        supplementalInstructions: "Verify the confirmed workflow node.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "planning-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "planning-verifier",
+            name: "Planning verifier",
+            description: "Executes planned verification nodes.",
+            role: "verifier",
+            supplementalInstructions: "Verify the confirmed workflow node.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "planning-verifier" },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Plan an atomic settlement verification.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Plan an atomic settlement verification.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "atomic-settlement-planning-required").workItem;
+      "atomic-settlement-planning-required"
+    ).workItem;
     const planningTask = fixture.board.startWorkItemPlanning(workItem.workItemId);
     assert.ok(planningTask);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
@@ -2361,10 +2729,14 @@ test("a completed planning run missing workflowPlan remains active and accepts a
       messageCursor: null,
     });
     assert.ok(claim);
-    const pendingWakeup = fixture.board.resumeAgent(fixture.manager.agentId, {
-      reason: "Retry planning after the active run finishes.",
-      taskId: planningTask.taskId,
-    }, "atomic-settlement-planning-pending-wakeup").wakeup;
+    const pendingWakeup = fixture.board.resumeAgent(
+      fixture.manager.agentId,
+      {
+        reason: "Retry planning after the active run finishes.",
+        taskId: planningTask.taskId,
+      },
+      "atomic-settlement-planning-pending-wakeup"
+    ).wakeup;
     assert.equal(pendingWakeup.claimedAt, null);
     assert.equal(pendingWakeup.runId, null);
     fixture.board.appendAgentMessage(planningTask.taskId, fixture.manager.agentId, {
@@ -2381,39 +2753,44 @@ test("a completed planning run missing workflowPlan remains active and accepts a
     });
 
     assert.throws(
-      () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The plan is complete but was omitted from this request.",
-      }),
-      (error: unknown) => (
-        error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "WORKFLOW_PLAN_REQUIRED"
-      ),
+      () =>
+        fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The plan is complete but was omitted from this request.",
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "WORKFLOW_PLAN_REQUIRED"
     );
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status, "active");
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status,
+      "active"
+    );
     assert.equal(fixture.board.requireTask(planningTask.taskId).status, "in_progress");
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "planning");
     assert.deepEqual(
       fixture.board.listMessages(planningTask.taskId).map((message) => message.body),
-      ["The planning turn is still evaluating the required workflow shape."],
+      ["The planning turn is still evaluating the required workflow shape."]
     );
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const persistedWakeup = inspected.prepare(
-        "SELECT claimed_at,run_id FROM wakeups WHERE wakeup_id=?",
-      ).get(pendingWakeup.wakeupId);
+      const persistedWakeup = inspected
+        .prepare("SELECT claimed_at,run_id FROM wakeups WHERE wakeup_id=?")
+        .get(pendingWakeup.wakeupId);
       assert.ok(persistedWakeup);
       assert.equal(persistedWakeup.claimed_at, null);
       assert.equal(persistedWakeup.run_id, null);
-      const rejection = inspected.prepare(`
+      const rejection = inspected
+        .prepare(
+          `
         SELECT data_json
         FROM task_events
         WHERE task_id=? AND event_type='settlement_rejected'
         ORDER BY sequence DESC
         LIMIT 1
-      `).get(planningTask.taskId);
+      `
+        )
+        .get(planningTask.taskId);
       assert.deepEqual(JSON.parse(String(rejection?.data_json)), {
         code: "WORKFLOW_PLAN_REQUIRED",
         detail: "Planning tasks must return a workflow plan",
@@ -2437,14 +2814,16 @@ test("a completed planning run missing workflowPlan remains active and accepts a
         objective: "Verify atomic run settlement.",
         assumptions: [],
         acceptanceCriteria: ["Run and workflow states settle together."],
-        nodes: [{
-          nodeId: "verify-atomic-settlement",
-          title: "Verify atomic settlement",
-          objective: "Inspect the terminal run, task, and workflow state.",
-          acceptanceCriteria: ["All persisted states agree."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-atomic-settlement",
+            title: "Verify atomic settlement",
+            objective: "Inspect the terminal run, task, and workflow state.",
+            acceptanceCriteria: ["All persisted states agree."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     });
     assert.equal(settled.duplicate, false);
@@ -2457,7 +2836,7 @@ test("a completed planning run missing workflowPlan remains active and accepts a
       [
         "The planning turn is still evaluating the required workflow shape.",
         "The corrected request includes the completed plan.",
-      ],
+      ]
     );
   } finally {
     fixture.board.close();
@@ -2468,65 +2847,74 @@ test("planning settlement defers auto-target project context, persists children,
   const fixture = await boardFixture(undefined, undefined, { git: () => `${"a".repeat(40)}\n` });
   let board: TaskBoard | null = fixture.board;
   try {
-    board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "decomposition-implementer",
-        name: "Decomposition implementer",
-        description: "Implements confirmed decomposition children.",
-        role: "engineer",
-        supplementalInstructions: "Implement only the confirmed child scope.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }, {
-        agentTypeId: "decomposition-verifier",
-        name: "Decomposition verifier",
-        description: "Verifies decomposition planning nodes.",
-        role: "verifier",
-        supplementalInstructions: "Verify the planned decomposition.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: "decomposition-implementer" },
-        testing: { kind: "machine_verify" },
-        verification: { kind: "agent_type", agentTypeId: "decomposition-verifier" },
-      }),
-    }));
+    board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "decomposition-implementer",
+            name: "Decomposition implementer",
+            description: "Implements confirmed decomposition children.",
+            role: "engineer",
+            supplementalInstructions: "Implement only the confirmed child scope.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+          {
+            agentTypeId: "decomposition-verifier",
+            name: "Decomposition verifier",
+            description: "Verifies decomposition planning nodes.",
+            role: "verifier",
+            supplementalInstructions: "Verify the planned decomposition.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: "decomposition-implementer" },
+          testing: { kind: "machine_verify" },
+          verification: { kind: "agent_type", agentTypeId: "decomposition-verifier" },
+        }),
+      })
+    );
     const consumer = board.createProject({
       name: "Decomposition consumer",
       description: "Consumes the provider interface.",
       repoPath: "/repos/decomposition-consumer",
     });
-    const children = [{
-      key: "expand-provider",
-      objective: "Publish the expanded provider interface.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
-      acceptanceCriteria: ["The expanded interface is verified."],
-      phase: "expand" as const,
-      dependsOn: [],
-      splitBy: "phase" as const,
-    }, {
-      key: "migrate-consumer",
-      objective: "Migrate the consumer to the expanded interface.",
-      projectId: consumer.projectId,
-      declaredScope: ["src/consumer"],
-      acceptanceCriteria: ["The consumer uses the expanded interface."],
-      phase: "migrate" as const,
-      dependsOn: ["expand-provider"],
-      splitBy: "consumer" as const,
-    }, {
-      key: "contract-provider",
-      objective: "Remove the old provider interface.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
-      acceptanceCriteria: ["The old interface is removed."],
-      phase: "contract" as const,
-      dependsOn: ["migrate-consumer"],
-      splitBy: "phase" as const,
-    }];
+    const children = [
+      {
+        key: "expand-provider",
+        objective: "Publish the expanded provider interface.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
+        acceptanceCriteria: ["The expanded interface is verified."],
+        phase: "expand" as const,
+        dependsOn: [],
+        splitBy: "phase" as const,
+      },
+      {
+        key: "migrate-consumer",
+        objective: "Migrate the consumer to the expanded interface.",
+        projectId: consumer.projectId,
+        declaredScope: ["src/consumer"],
+        acceptanceCriteria: ["The consumer uses the expanded interface."],
+        phase: "migrate" as const,
+        dependsOn: ["expand-provider"],
+        splitBy: "consumer" as const,
+      },
+      {
+        key: "contract-provider",
+        objective: "Remove the old provider interface.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
+        acceptanceCriteria: ["The old interface is removed."],
+        phase: "contract" as const,
+        dependsOn: ["migrate-consumer"],
+        splitBy: "phase" as const,
+      },
+    ];
     const workflowPlan = {
       objective: "Coordinate a phased cross-repository change.",
       assumptions: [],
@@ -2538,28 +2926,42 @@ test("planning settlement defers auto-target project context, persists children,
       mechanicalPortions: [],
       blockingQuestions: [],
       criterionChecks: [],
-      nodes: [{
-        nodeId: "coordinate-decomposition",
-        title: "Coordinate decomposition",
-        objective: "Keep the parent declaration ready for confirmation.",
-        acceptanceCriteria: ["The declaration remains byte-equal."],
-        dependencyNodeIds: [],
-        stageTemplate: ["verification" as const],
-      }],
+      nodes: [
+        {
+          nodeId: "coordinate-decomposition",
+          title: "Coordinate decomposition",
+          objective: "Keep the parent declaration ready for confirmation.",
+          acceptanceCriteria: ["The declaration remains byte-equal."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification" as const],
+        },
+      ],
       children,
     };
 
-    const automatic = board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Coordinate an auto-target phased migration.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "auto-target-phased-settlement").workItem;
+    const automatic = board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Coordinate an auto-target phased migration.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "auto-target-phased-settlement"
+    ).workItem;
     const direct = new (await import("node:sqlite")).DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(direct.prepare(`
+      assert.equal(
+        Number(
+          direct
+            .prepare(
+              `
         UPDATE work_items
         SET project_target_mode='auto',target_project_id=NULL,resolved_project_id=NULL
         WHERE work_item_id=?
-      `).run(automatic.workItemId).changes), 1);
+      `
+            )
+            .run(automatic.workItemId).changes
+        ),
+        1
+      );
     } finally {
       direct.close();
     }
@@ -2568,99 +2970,120 @@ test("planning settlement defers auto-target project context, persists children,
       messageCursor: null,
     });
     assert.ok(automaticClaim);
-    const boardProjects = (automaticClaim.context as {
-      boardProjects?: readonly Readonly<{ projectId: string; name: string; repoName: string }>[];
-    }).boardProjects;
-    assert.deepEqual(boardProjects, [{
-      projectId: fixture.project.projectId,
-      name: fixture.project.name,
-      repoName: fixture.project.repoPath,
-    }, {
-      projectId: consumer.projectId,
-      name: consumer.name,
-      repoName: "decomposition-consumer",
-    }]);
+    const boardProjects = (
+      automaticClaim.context as {
+        boardProjects?: readonly Readonly<{ projectId: string; name: string; repoName: string }>[];
+      }
+    ).boardProjects;
+    assert.deepEqual(boardProjects, [
+      {
+        projectId: fixture.project.projectId,
+        name: fixture.project.name,
+        repoName: fixture.project.repoPath,
+      },
+      {
+        projectId: consumer.projectId,
+        name: consumer.name,
+        repoName: "decomposition-consumer",
+      },
+    ]);
     const migrateTarget = boardProjects?.find((project) => project.name === consumer.name);
     assert.ok(migrateTarget);
     assert.equal(children.find((child) => child.phase === "migrate")?.projectId, migrateTarget.projectId);
     assert.throws(
-      () => board!.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The phased plan omits publication scope and must be corrected.",
-        workflowPlan: {
-          ...workflowPlan,
-          children: children.map((child) => child.phase === "expand"
-            ? { ...child, declaredScope: ["src/provider/interface.ts"] }
-            : child),
-        },
-      }),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 400
-        && error.code === "WORKFLOW_INVALID"
-        && /expand.*docs\/interface\.md/u.test(error.message),
+      () =>
+        board!.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The phased plan omits publication scope and must be corrected.",
+          workflowPlan: {
+            ...workflowPlan,
+            children: children.map((child) =>
+              child.phase === "expand" ? { ...child, declaredScope: ["src/provider/interface.ts"] } : child
+            ),
+          },
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "WORKFLOW_INVALID" &&
+        /expand.*docs\/interface\.md/u.test(error.message)
     );
-    assert.equal(board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === automaticClaim.run.runId,
-    )?.status, "active");
+    assert.equal(
+      board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === automaticClaim.run.runId)
+        ?.status,
+      "active"
+    );
     const settled = board.settleRun(automaticClaim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
       result: "The phased plan is ready for confirmation.",
       workflowPlan,
     });
     assert.equal(settled.run.status, "completed");
-    const projected = board.projectWorkflow(fixture.project.projectId).plans.find(
-      (plan) => plan.workItemId === automatic.workItemId,
-    );
+    const projected = board
+      .projectWorkflow(fixture.project.projectId)
+      .plans.find((plan) => plan.workItemId === automatic.workItemId);
     assert.ok(projected);
     assert.deepEqual(projected.children, children);
     board.confirmWorkflow(projected.planRevisionId, { expectedState: "proposed" });
     assert.equal(
       board.listChildren(automatic.workItemId).find((child) => child.phase === "migrate")?.resolvedProjectId,
-      migrateTarget.projectId,
+      migrateTarget.projectId
     );
 
     board.close();
     board = await TaskBoard.open(config(fixture.path));
-    const reread = board.projectWorkflow(fixture.project.projectId).plans.find(
-      (plan) => plan.workItemId === automatic.workItemId,
-    );
+    const reread = board
+      .projectWorkflow(fixture.project.projectId)
+      .plans.find((plan) => plan.workItemId === automatic.workItemId);
     assert.ok(reread);
     assert.deepEqual(reread.children, children);
     assert.equal(reread.state, "confirmed");
 
-    board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Reject a provider phase declared in the consumer project.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "explicit-target-phased-mismatch").workItem;
+    board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Reject a provider phase declared in the consumer project.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "explicit-target-phased-mismatch"
+    ).workItem;
     const explicitClaim = board.claimRun(fixture.manager.agentId, {
       claimId: "claim-explicit-target-phased-mismatch",
       messageCursor: null,
     });
     assert.ok(explicitClaim);
-    const mismatchedChildren = children.map((child) => child.phase === "migrate"
-      ? { ...child, projectId: fixture.project.projectId }
-      : { ...child, projectId: consumer.projectId });
-    assert.throws(
-      () => board!.settleRun(explicitClaim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The mismatched plan must be corrected.",
-        workflowPlan: { ...workflowPlan, children: mismatchedChildren },
-      }),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 400
-        && error.code === "WORKFLOW_INVALID"
-        && /parent project/u.test(error.message),
+    const mismatchedChildren = children.map((child) =>
+      child.phase === "migrate"
+        ? { ...child, projectId: fixture.project.projectId }
+        : { ...child, projectId: consumer.projectId }
     );
-    assert.equal(board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === explicitClaim.run.runId,
-    )?.status, "active");
+    assert.throws(
+      () =>
+        board!.settleRun(explicitClaim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The mismatched plan must be corrected.",
+          workflowPlan: { ...workflowPlan, children: mismatchedChildren },
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "WORKFLOW_INVALID" &&
+        /parent project/u.test(error.message)
+    );
+    assert.equal(
+      board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === explicitClaim.run.runId)?.status,
+      "active"
+    );
     const inspected = new (await import("node:sqlite")).DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const rejection = inspected.prepare(`
+      const rejection = inspected
+        .prepare(
+          `
         SELECT data_json FROM task_events
         WHERE task_id=? AND event_type='settlement_rejected'
         ORDER BY sequence DESC LIMIT 1
-      `).get(explicitClaim.task!.taskId);
+      `
+        )
+        .get(explicitClaim.task!.taskId);
       assert.equal((JSON.parse(String(rejection?.data_json)) as { code?: unknown }).code, "WORKFLOW_INVALID");
     } finally {
       inspected.close();
@@ -2690,19 +3113,24 @@ test("pipeline planning requires the full plan record and the v2 review stage", 
       description: "Independently reviews a machine-verified pipeline plan.",
       role: "verifier" as const,
     };
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [implementationType, verificationType],
-      stages: automationStages({
-        research: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        testing: { kind: "machine_verify" },
-        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [implementationType, verificationType],
+        stages: automationStages({
+          research: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+          implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+          testing: { kind: "machine_verify" },
+          verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Add the explicit intake signal and validate the pipeline plan record.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Add the explicit intake signal and validate the pipeline plan record.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "pipeline-plan-record-0001").workItem;
+      "pipeline-plan-record-0001"
+    ).workItem;
     const planningTask = fixture.board.startWorkItemPlanning(workItem.workItemId);
     assert.ok(planningTask);
     const claimRequest = { claimId: "claim-pipeline-plan-record-0001", messageCursor: null } as const;
@@ -2725,19 +3153,22 @@ test("pipeline planning requires the full plan record and the v2 review stage", 
       acceptanceCriteria: ["The complete pipeline plan reaches plan approval."],
       nodes: [node],
     };
-    const expectIncomplete = (workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"], field: string): void => {
+    const expectIncomplete = (
+      workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"],
+      field: string
+    ): void => {
       assert.throws(
-        () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
-          outcome: "completed",
-          result: "The pipeline plan is ready for approval.",
-          workflowPlan,
-        }),
-        (error: unknown) => (
+        () =>
+          fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+            outcome: "completed",
+            result: "The pipeline plan is ready for approval.",
+            workflowPlan,
+          }),
+        (error: unknown) =>
           error instanceof TaskBoardError &&
           error.status === 400 &&
           error.code === "TASK_BOARD_PIPELINE_PLAN_INCOMPLETE" &&
           error.message.includes(field)
-        ),
       );
     };
     expectIncomplete(basePlan, "changeShape");
@@ -2752,37 +3183,45 @@ test("pipeline planning requires the full plan record and the v2 review stage", 
       declaredScope: ["src/server", "src/shared", "tests/server", "tests/shared"],
       nonGoals: ["Do not activate machine verification."],
       mechanicalPortions: ["Add intake: false to bounded-context fixtures."],
-      blockingQuestions: [{
-        question: "Should the public contract add the executor kind now?",
-        recommendedDefault: "Yes, add the kind without activating it.",
-      }],
-      criterionChecks: [{
-        criterion: "The runtime suite passes.",
-        check: "npm run test:runtime",
-      }],
+      blockingQuestions: [
+        {
+          question: "Should the public contract add the executor kind now?",
+          recommendedDefault: "Yes, add the kind without activating it.",
+        },
+      ],
+      criterionChecks: [
+        {
+          criterion: "The runtime suite passes.",
+          check: "npm run test:runtime",
+        },
+      ],
     };
-    const expectWorkflowInvalid = (workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"]): void => {
+    const expectWorkflowInvalid = (
+      workflowPlan: Parameters<typeof fixture.board.settleRun>[2]["workflowPlan"]
+    ): void => {
       assert.throws(
-        () => fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
-          outcome: "completed",
-          result: "The non-pipeline testing-terminal plan must be rejected.",
-          workflowPlan,
-        }),
-        (error: unknown) => (
+        () =>
+          fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
+            outcome: "completed",
+            result: "The non-pipeline testing-terminal plan must be rejected.",
+            workflowPlan,
+          }),
+        (error: unknown) =>
           error instanceof TaskBoardError &&
           error.status === 400 &&
           error.code === "WORKFLOW_INVALID" &&
           /ending in verification/u.test(error.message)
-        ),
       );
     };
     expectWorkflowInvalid({
       ...completePlan,
-      nodes: [{
-        ...node,
-        nodeId: "research-pipeline-plan-record",
-        stageTemplate: ["research", "testing"],
-      }],
+      nodes: [
+        {
+          ...node,
+          nodeId: "research-pipeline-plan-record",
+          stageTemplate: ["research", "testing"],
+        },
+      ],
     });
     const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, {
       outcome: "completed",
@@ -2793,23 +3232,26 @@ test("pipeline planning requires the full plan record and the v2 review stage", 
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "plan_approval");
     const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans[0];
     assert.ok(plan);
-    assert.deepEqual({
-      changeShape: plan.changeShape,
-      tier: plan.tier,
-      declaredScope: plan.declaredScope,
-      nonGoals: plan.nonGoals,
-      mechanicalPortions: plan.mechanicalPortions,
-      blockingQuestions: plan.blockingQuestions,
-      criterionChecks: plan.criterionChecks,
-    }, {
-      changeShape: completePlan.changeShape,
-      tier: completePlan.tier,
-      declaredScope: completePlan.declaredScope,
-      nonGoals: completePlan.nonGoals,
-      mechanicalPortions: completePlan.mechanicalPortions,
-      blockingQuestions: completePlan.blockingQuestions,
-      criterionChecks: completePlan.criterionChecks,
-    });
+    assert.deepEqual(
+      {
+        changeShape: plan.changeShape,
+        tier: plan.tier,
+        declaredScope: plan.declaredScope,
+        nonGoals: plan.nonGoals,
+        mechanicalPortions: plan.mechanicalPortions,
+        blockingQuestions: plan.blockingQuestions,
+        criterionChecks: plan.criterionChecks,
+      },
+      {
+        changeShape: completePlan.changeShape,
+        tier: completePlan.tier,
+        declaredScope: completePlan.declaredScope,
+        nonGoals: completePlan.nonGoals,
+        mechanicalPortions: completePlan.mechanicalPortions,
+        blockingQuestions: completePlan.blockingQuestions,
+        criterionChecks: completePlan.criterionChecks,
+      }
+    );
   } finally {
     fixture.board.close();
   }
@@ -2825,13 +3267,18 @@ test("a duplicate settle repairs a terminal run whose workflow node is still act
   const partial = new DatabaseSync(fixture.path);
   try {
     partial.exec("PRAGMA foreign_keys = ON");
-    partial.prepare("UPDATE runs SET status='completed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+    partial
+      .prepare("UPDATE runs SET status='completed',ended_at=?,result=? WHERE run_id=? AND status='active'")
       .run("2026-07-19T20:05:00.000Z", result, fixture.claim.run.runId);
-    partial.prepare(`
+    partial
+      .prepare(
+        `
       UPDATE tasks
       SET status='completed',ended_at=?,result=?,version=version+1,updated_at=?
       WHERE task_id=? AND ended_at IS NULL
-    `).run("2026-07-19T20:05:00.000Z", result, "2026-07-19T20:05:00.000Z", taskId);
+    `
+      )
+      .run("2026-07-19T20:05:00.000Z", result, "2026-07-19T20:05:00.000Z", taskId);
   } finally {
     partial.close();
   }
@@ -2864,41 +3311,60 @@ test("kill-switch suspension surfaces an active attempt linked to a non-active n
   try {
     const db = new DatabaseSync(fixture.path);
     try {
-      attemptId = String(db.prepare("SELECT attempt_id FROM stage_attempts WHERE task_id=?")
-        .get(fixture.claim.task!.taskId)?.attempt_id);
-      db.prepare("UPDATE work_nodes SET state='blocked' WHERE node_id=?")
-        .run(fixture.node.nodeId);
-      db.prepare("UPDATE work_items SET pipeline_branch=? WHERE work_item_id=?")
-        .run(`task/${fixture.workItem.workItemId}`, fixture.workItem.workItemId);
+      attemptId = String(
+        db.prepare("SELECT attempt_id FROM stage_attempts WHERE task_id=?").get(fixture.claim.task!.taskId)?.attempt_id
+      );
+      db.prepare("UPDATE work_nodes SET state='blocked' WHERE node_id=?").run(fixture.node.nodeId);
+      db.prepare("UPDATE work_items SET pipeline_branch=? WHERE work_item_id=?").run(
+        `task/${fixture.workItem.workItemId}`,
+        fixture.workItem.workItemId
+      );
     } finally {
       db.close();
     }
-    console.error = (...arguments_: unknown[]) => { logged.push(arguments_); };
+    console.error = (...arguments_: unknown[]) => {
+      logged.push(arguments_);
+    };
 
-    assert.deepEqual(fixture.board.suspendAllActiveRuns(
-      "board paused: report the non-active workflow node",
-      { type: "system", id: "system:kill-switch" },
-    ), { suspended: 0, failed: 1 });
+    assert.deepEqual(
+      fixture.board.suspendAllActiveRuns("board paused: report the non-active workflow node", {
+        type: "system",
+        id: "system:kill-switch",
+      }),
+      { suspended: 0, failed: 1 }
+    );
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(fixture.claim.run.runId)?.status, "interrupted");
-      assert.deepEqual({ ...inspected.prepare(`
+      assert.equal(
+        inspected.prepare("SELECT status FROM runs WHERE run_id=?").get(fixture.claim.run.runId)?.status,
+        "interrupted"
+      );
+      assert.deepEqual(
+        {
+          ...inspected
+            .prepare(
+              `
         SELECT task_id,event_type,summary
         FROM project_events
         WHERE node_id=? AND event_type='node_blocked'
         ORDER BY sequence DESC LIMIT 1
-      `).get(fixture.node.nodeId) }, {
-        task_id: fixture.claim.task!.taskId,
-        event_type: "node_blocked",
-        summary: "board paused: report the non-active workflow node",
-      });
+      `
+            )
+            .get(fixture.node.nodeId),
+        },
+        {
+          task_id: fixture.claim.task!.taskId,
+          event_type: "node_blocked",
+          summary: "board paused: report the non-active workflow node",
+        }
+      );
     } finally {
       inspected.close();
     }
-    const diagnostics = logged.filter((record) =>
-      record[0] === "[task-board] active attempt linked to non-active workflow node");
+    const diagnostics = logged.filter(
+      (record) => record[0] === "[task-board] active attempt linked to non-active workflow node"
+    );
     assert.equal(diagnostics.length, 1);
     assert.deepEqual(diagnostics[0]?.[1], {
       attemptId,
@@ -2922,13 +3388,18 @@ test("a duplicate failed settle repairs the legacy blocked-task workflow shape",
   const partial = new DatabaseSync(fixture.path);
   try {
     partial.exec("PRAGMA foreign_keys = ON");
-    partial.prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+    partial
+      .prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
       .run("2026-08-09T18:15:00.000Z", result, fixture.claim.run.runId);
-    partial.prepare(`
+    partial
+      .prepare(
+        `
       UPDATE tasks
       SET status='blocked',ended_at=NULL,result=NULL,version=version+1,updated_at=?
       WHERE task_id=? AND ended_at IS NULL
-    `).run("2026-08-09T18:15:00.000Z", taskId);
+    `
+      )
+      .run("2026-08-09T18:15:00.000Z", taskId);
   } finally {
     partial.close();
   }
@@ -2964,13 +3435,18 @@ test("an old duplicate settle does not repair a workflow after the task has resu
   const partial = new DatabaseSync(fixture.path);
   try {
     partial.exec("PRAGMA foreign_keys = ON");
-    partial.prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
+    partial
+      .prepare("UPDATE runs SET status='failed',ended_at=?,result=? WHERE run_id=? AND status='active'")
       .run("2026-07-19T20:05:00.000Z", oldResult, fixture.claim.run.runId);
-    partial.prepare(`
+    partial
+      .prepare(
+        `
       UPDATE tasks
       SET status='blocked',ended_at=NULL,result=NULL,version=version+1,updated_at=?
       WHERE task_id=? AND ended_at IS NULL
-    `).run("2026-07-19T20:05:00.000Z", taskId);
+    `
+      )
+      .run("2026-07-19T20:05:00.000Z", taskId);
   } finally {
     partial.close();
   }
@@ -2979,10 +3455,14 @@ test("an old duplicate settle does not repair a workflow after the task has resu
   try {
     const beforeResume = restarted.projectWorkflow(fixture.project.projectId).nodes[0]!;
     assert.equal(beforeResume.state, "active");
-    restarted.resumeAgent(fixture.verifier.agentId, {
-      reason: "Retry the failed verification task.",
-      taskId,
-    }, "resume-atomic-settlement-moved-on-retry");
+    restarted.resumeAgent(
+      fixture.verifier.agentId,
+      {
+        reason: "Retry the failed verification task.",
+        taskId,
+      },
+      "resume-atomic-settlement-moved-on-retry"
+    );
     const newer = restarted.claimRun(fixture.verifier.agentId, {
       claimId: "claim-atomic-settlement-moved-on-retry-newer",
       messageCursor: null,
@@ -3002,7 +3482,10 @@ test("an old duplicate settle does not repair a workflow after the task has resu
     assert.equal(afterReplay.nodes[0]?.state, "active");
     assert.equal(afterReplay.nodes[0]?.version, beforeResume.version + 1);
     assert.equal(afterReplay.handoffs.length, 0);
-    assert.equal(restarted.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === newer.run.runId)?.status, "active");
+    assert.equal(
+      restarted.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === newer.run.runId)?.status,
+      "active"
+    );
     assert.equal(restarted.requireTask(taskId).status, "in_progress");
 
     const settled = restarted.settleRun(newer.run.runId, fixture.verifier.agentId, {
@@ -3065,11 +3548,13 @@ test("run settlement redacts agent-authored handoff prose before stage-handoff p
         ...settlementHandoff("failed"),
         summary: `Summary exposed ${credential}`,
         evidence: [`Evidence exposed ${credential}`],
-        acceptanceCriteria: [{
-          criterion: "The persisted handoff is safe.",
-          passed: false,
-          evidence: `Criterion evidence exposed ${credential}`,
-        }],
+        acceptanceCriteria: [
+          {
+            criterion: "The persisted handoff is safe.",
+            passed: false,
+            evidence: `Criterion evidence exposed ${credential}`,
+          },
+        ],
         blockers: [`Blocker exposed ${credential}`],
       },
     });
@@ -3077,7 +3562,8 @@ test("run settlement redacts agent-authored handoff prose before stage-handoff p
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const row = inspected.prepare("SELECT payload_json FROM stage_handoffs WHERE task_id=?")
+      const row = inspected
+        .prepare("SELECT payload_json FROM stage_handoffs WHERE task_id=?")
         .get(fixture.claim.task!.taskId);
       assert.ok(row);
       const payload = String(row.payload_json);
@@ -3113,20 +3599,24 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
   assert.equal(replay.duplicate, true);
   assert.equal(replay.workItem.workItemId, created.workItem.workItemId);
   assert.throws(
-    () => fixture.board.createWorkItem(
-      workItemRequest({
-        originalRequest: "A different request.",
-        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-      }),
-      "work-item-create-explicit-0001",
-    ),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "IDEMPOTENCY_CONFLICT",
+    () =>
+      fixture.board.createWorkItem(
+        workItemRequest({
+          originalRequest: "A different request.",
+          projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+        }),
+        "work-item-create-explicit-0001"
+      ),
+    (error: unknown) => error instanceof TaskBoardError && error.code === "IDEMPOTENCY_CONFLICT"
   );
 
-  const urgent = fixture.board.createWorkItem(workItemRequest({
-    priority: "urgent",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "work-item-create-urgent-0001");
+  const urgent = fixture.board.createWorkItem(
+    workItemRequest({
+      priority: "urgent",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    "work-item-create-urgent-0001"
+  );
   assert.deepEqual(urgent.workItem.projectTarget, { mode: "explicit", projectId: fixture.project.projectId });
   assert.equal(urgent.workItem.resolvedProjectId, fixture.project.projectId);
   assert.equal(fixture.board.listWorkItems()[0]?.workItemId, urgent.workItem.workItemId);
@@ -3140,17 +3630,22 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
   assert.equal(updated.resolvedProjectId, fixture.project.projectId);
   assert.equal(updated.originalRequest, explicitRequest.originalRequest);
   assert.throws(
-    () => fixture.board.updateWorkItem(created.workItem.workItemId, {
-      version: created.workItem.version,
-      priority: "low",
-    }),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+    () =>
+      fixture.board.updateWorkItem(created.workItem.workItemId, {
+        version: created.workItem.version,
+        priority: "low",
+      }),
+    (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT"
   );
   assert.throws(
-    () => fixture.board.createWorkItem(workItemRequest({
-      projectTarget: { mode: "explicit", projectId: "missing-project" },
-    }), "work-item-missing-project-0001"),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "PROJECT_NOT_FOUND",
+    () =>
+      fixture.board.createWorkItem(
+        workItemRequest({
+          projectTarget: { mode: "explicit", projectId: "missing-project" },
+        }),
+        "work-item-missing-project-0001"
+      ),
+    (error: unknown) => error instanceof TaskBoardError && error.code === "PROJECT_NOT_FOUND"
   );
   fixture.board.close();
 
@@ -3158,9 +3653,11 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
   const direct = new DatabaseSync(path);
   try {
     assert.throws(
-      () => direct.prepare("UPDATE work_items SET original_request = ? WHERE work_item_id = ?")
-        .run("Replace the accepted request.", created.workItem.workItemId),
-      /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u,
+      () =>
+        direct
+          .prepare("UPDATE work_items SET original_request = ? WHERE work_item_id = ?")
+          .run("Replace the accepted request.", created.workItem.workItemId),
+      /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u
     );
     assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 26);
   } finally {
@@ -3169,7 +3666,10 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
 
   const restarted = await TaskBoard.open(config(path));
   try {
-    assert.equal(restarted.requireWorkItem(created.workItem.workItemId).originalRequest, explicitRequest.originalRequest);
+    assert.equal(
+      restarted.requireWorkItem(created.workItem.workItemId).originalRequest,
+      explicitRequest.originalRequest
+    );
     assert.equal(restarted.listWorkItems().length, 2);
   } finally {
     restarted.close();
@@ -3179,10 +3679,14 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
 test("cancelling a work item atomically ends its planning task and retires pending wakeups", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Cancel this intake and every pending planning continuation together.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-atomic-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Cancel this intake and every pending planning continuation together.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-atomic-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const request = {
       version: created.version,
@@ -3199,39 +3703,53 @@ test("cancelling a work item atomically ends its planning task and retires pendi
     const cancelAction = gateActions(fixture.path, created.workItemId).find((action) => action.gate === "cancel");
     assert.ok(cancelAction);
     assert.match(cancelAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...cancelAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: created.workItemId,
-      gate: "cancel",
-      actorId: "human:alice",
-      planRevisionId: null,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note: request.reason,
-      createdAt: cancelled.endedAt,
-    });
+    assert.deepEqual(
+      { ...cancelAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: created.workItemId,
+        gate: "cancel",
+        actorId: "human:alice",
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: request.reason,
+        createdAt: cancelled.endedAt,
+      }
+    );
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const planning = inspected.prepare(`
+      const planning = inspected
+        .prepare(
+          `
         SELECT task.status,task.ended_at,task.result,task.version
         FROM work_item_planning_tasks link
         JOIN tasks task ON task.task_id=link.task_id
         WHERE link.work_item_id=?
-      `).get(created.workItemId);
+      `
+        )
+        .get(created.workItemId);
       assert.equal(planning?.status, "cancelled");
       assert.ok(planning?.ended_at);
       assert.equal(planning?.result, request.reason);
       assert.equal(planning?.version, 2);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         JOIN work_item_planning_tasks link ON link.task_id=wakeup.task_id
         JOIN task_events event ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
         WHERE link.work_item_id=? AND wakeup.claimed_at IS NULL
-      `).get(created.workItemId)?.count, 1);
+      `
+          )
+          .get(created.workItemId)?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -3240,27 +3758,36 @@ test("cancelling a work item atomically ends its planning task and retires pendi
     assert.deepEqual(replay, cancelled);
     assert.equal(gateActions(fixture.path, created.workItemId).filter((action) => action.gate === "cancel").length, 1);
     assert.throws(
-      () => fixture.board.updateWorkItem(created.workItemId, {
-        ...request,
-        reason: "A different cancellation reason must not replay.",
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+      () =>
+        fixture.board.updateWorkItem(created.workItemId, {
+          ...request,
+          reason: "A different cancellation reason must not replay.",
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT"
     );
     assert.throws(
-      () => fixture.board.updateWorkItem(created.workItemId, {
-        ...request,
-        version: cancelled.version,
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT",
+      () =>
+        fixture.board.updateWorkItem(created.workItemId, {
+          ...request,
+          version: cancelled.version,
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_VERSION_CONFLICT"
     );
     const afterReplay = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(afterReplay.prepare(`
+      assert.equal(
+        afterReplay
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM task_events event
         JOIN work_item_planning_tasks link ON link.task_id=event.task_id
         WHERE link.work_item_id=? AND event.event_type='task_updated'
-      `).get(created.workItemId)?.count, 1);
+      `
+          )
+          .get(created.workItemId)?.count,
+        1
+      );
     } finally {
       afterReplay.close();
     }
@@ -3273,10 +3800,13 @@ test("cancelling redacts every durable reason projection and preserves idempoten
   const fixture = await boardFixture();
   const token = `github_pat_${"c".repeat(48)}`;
   try {
-    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Cancel an intake without persisting its credential.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-redaction-0001").workItem;
+    const created = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Cancel an intake without persisting its credential.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-redaction-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "work-item-cancel-redaction-claim-0001",
@@ -3304,22 +3834,37 @@ test("cancelling redacts every durable reason projection and preserves idempoten
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       const projections = [
-        inspected.prepare("SELECT cancelled_reason AS value FROM work_items WHERE work_item_id=?")
+        inspected
+          .prepare("SELECT cancelled_reason AS value FROM work_items WHERE work_item_id=?")
           .get(created.workItemId)?.value,
-        inspected.prepare("SELECT result AS value FROM tasks WHERE task_id=?")
-          .get(created.planningTaskId)?.value,
-        JSON.parse(String(inspected.prepare(`
+        inspected.prepare("SELECT result AS value FROM tasks WHERE task_id=?").get(created.planningTaskId)?.value,
+        JSON.parse(
+          String(
+            inspected
+              .prepare(
+                `
           SELECT data_json FROM task_events
           WHERE task_id=? AND event_type='task_updated'
           ORDER BY created_at DESC, rowid DESC LIMIT 1
-        `).get(created.planningTaskId)?.data_json)).result,
-        inspected.prepare("SELECT answer AS value FROM questions WHERE question_id=?")
-          .get(question.questionId)?.value,
-        JSON.parse(String(inspected.prepare(`
+        `
+              )
+              .get(created.planningTaskId)?.data_json
+          )
+        ).result,
+        inspected.prepare("SELECT answer AS value FROM questions WHERE question_id=?").get(question.questionId)?.value,
+        JSON.parse(
+          String(
+            inspected
+              .prepare(
+                `
           SELECT data_json FROM task_events
           WHERE task_id=? AND event_type='work_item_cancelled'
           ORDER BY created_at DESC, rowid DESC LIMIT 1
-        `).get(created.planningTaskId)?.data_json)).reason,
+        `
+              )
+              .get(created.planningTaskId)?.data_json
+          )
+        ).reason,
       ];
       assert.deepEqual(projections, [
         expectedReason,
@@ -3331,10 +3876,17 @@ test("cancelling redacts every durable reason projection and preserves idempoten
       for (const projection of projections) {
         assert.doesNotMatch(String(projection), new RegExp(token, "u"));
       }
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM task_events
         WHERE task_id=? AND event_type IN ('task_updated','work_item_cancelled')
-      `).get(created.planningTaskId)?.count, 2);
+      `
+          )
+          .get(created.planningTaskId)?.count,
+        2
+      );
     } finally {
       inspected.close();
     }
@@ -3354,25 +3906,33 @@ test("a completed planning settlement is absorbed and its proposal discarded aft
       model: "codex-mini",
       token: "late-proposal-verifier-token-0123456789",
     });
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "late-proposal-verifier",
-        name: "Late proposal verifier",
-        description: "Verifies a planning proposal when it remains live.",
-        role: "verifier",
-        supplementalInstructions: "Verify the proposed workflow.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "late-proposal-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "late-proposal-verifier",
+            name: "Late proposal verifier",
+            description: "Verifies a planning proposal when it remains live.",
+            role: "verifier",
+            supplementalInstructions: "Verify the proposed workflow.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "late-proposal-verifier" },
+        }),
+      })
+    );
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Discard a proposal if cancellation wins the race.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Discard a proposal if cancellation wins the race.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-discard-late-proposal-0001").workItem;
+      "work-item-discard-late-proposal-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-discard-late-proposal-0001",
@@ -3385,9 +3945,10 @@ test("a completed planning settlement is absorbed and its proposal discarded aft
       reason: "The request was withdrawn while planning was still running.",
     });
 
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === claim.run.runId,
-    )?.status, "interrupted");
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === claim.run.runId)?.status,
+      "interrupted"
+    );
     const settlement = {
       outcome: "completed",
       result: "A valid plan was completed just after cancellation.",
@@ -3395,14 +3956,16 @@ test("a completed planning settlement is absorbed and its proposal discarded aft
         objective: "Verify the late planning result without activating it.",
         assumptions: [],
         acceptanceCriteria: ["No workflow rows survive for cancelled intake."],
-        nodes: [{
-          nodeId: "verify-late-proposal",
-          title: "Verify late proposal",
-          objective: "Prove the ended-item fence.",
-          acceptanceCriteria: ["The proposal is durably discarded."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-late-proposal",
+            title: "Verify late proposal",
+            objective: "Prove the ended-item fence.",
+            acceptanceCriteria: ["The proposal is durably discarded."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     } as const;
     const settled = fixture.board.settleRun(claim.run.runId, fixture.manager.agentId, settlement);
@@ -3413,18 +3976,31 @@ test("a completed planning settlement is absorbed and its proposal discarded aft
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(
-        "SELECT COUNT(*) AS count FROM plan_revisions WHERE work_item_id=?",
-      ).get(created.workItemId)?.count, 0);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM plan_revisions WHERE work_item_id=?").get(created.workItemId)
+          ?.count,
+        0
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM work_nodes node
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         WHERE plan.work_item_id=?
-      `).get(created.workItemId)?.count, 0);
-      const discarded = inspected.prepare(`
+      `
+          )
+          .get(created.workItemId)?.count,
+        0
+      );
+      const discarded = inspected
+        .prepare(
+          `
         SELECT data_json FROM task_events
         WHERE task_id=? AND event_type='work_item_plan_discarded'
-      `).get(created.planningTaskId);
+      `
+        )
+        .get(created.planningTaskId);
       assert.ok(discarded);
       assert.deepEqual(JSON.parse(String(discarded.data_json)), {
         workItemId: created.workItemId,
@@ -3442,10 +4018,14 @@ test("a completed planning settlement is absorbed and its proposal discarded aft
 test("a failed planning settlement is absorbed after cancellation without reopening the work item", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Let a failed planning run settle after cancellation wins the race.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-then-fail-planning-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Let a failed planning run settle after cancellation wins the race.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-then-fail-planning-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-cancel-then-fail-planning-0001",
@@ -3467,9 +4047,11 @@ test("a failed planning settlement is absorbed after cancellation without reopen
     assert.equal(settled.duplicate, false);
     assert.equal(fixture.board.requireTask(created.planningTaskId).status, "cancelled");
     assert.deepEqual(fixture.board.requireWorkItem(created.workItemId), cancelled);
-    const discarded = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (
-      event.eventType === "work_item_plan_discarded" && event.data.runId === claim.run.runId
-    ));
+    const discarded = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.find(
+        (event) => event.eventType === "work_item_plan_discarded" && event.data.runId === claim.run.runId
+      );
     assert.equal(discarded?.data.reason, "work_item_ended");
   } finally {
     fixture.board.close();
@@ -3479,10 +4061,14 @@ test("a failed planning settlement is absorbed after cancellation without reopen
 test("cancelling a work item hard-terminates a failed planning task against retry and resume", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Do not let failed planning resume after intake cancellation.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-failed-planning-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Do not let failed planning resume after intake cancellation.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-failed-planning-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-cancel-failed-planning-0001",
@@ -3511,26 +4097,38 @@ test("cancelling a work item hard-terminates a failed planning task against retr
     assert.equal(cancelledTask.status, "cancelled");
     assert.throws(
       () => fixture.board.retryTask(cancelledTask.taskId, { version: cancelledTask.version }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL"
     );
     assert.throws(
-      () => fixture.board.resumeAgent(fixture.manager.agentId, {
-        reason: "Attempt to resume cancelled planning.",
-        taskId: cancelledTask.taskId,
-      }, "resume-cancelled-planning-0001"),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+      () =>
+        fixture.board.resumeAgent(
+          fixture.manager.agentId,
+          {
+            reason: "Attempt to resume cancelled planning.",
+            taskId: cancelledTask.taskId,
+          },
+          "resume-cancelled-planning-0001"
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL"
     );
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM wakeups wakeup
         WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
           AND NOT EXISTS(
             SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
           )
-      `).get(cancelledTask.taskId)?.count, 0);
+      `
+          )
+          .get(cancelledTask.taskId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -3542,10 +4140,14 @@ test("cancelling a work item hard-terminates a failed planning task against retr
 test("planning retry returns a parked work item to planning with transition history", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Resume planning after a recoverable manager failure.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-resume-failed-planning-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Resume planning after a recoverable manager failure.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-resume-failed-planning-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-resume-failed-planning-0001",
@@ -3559,10 +4161,14 @@ test("planning retry returns a parked work item to planning with transition hist
     const failed = fixture.board.requireTask(created.planningTaskId);
     assert.equal(fixture.board.requireWorkItem(created.workItemId).state, "parked");
 
-    fixture.board.resumeAgent(fixture.manager.agentId, {
-      reason: "Retry the planning task with corrected constraints.",
-      taskId: failed.taskId,
-    }, "resume-failed-planning-work-item-0001");
+    fixture.board.resumeAgent(
+      fixture.manager.agentId,
+      {
+        reason: "Retry the planning task with corrected constraints.",
+        taskId: failed.taskId,
+      },
+      "resume-failed-planning-work-item-0001"
+    );
 
     const planning = fixture.board.requireWorkItem(created.workItemId);
     assert.equal(planning.state, "planning");
@@ -3582,10 +4188,14 @@ test("a planning question parks its work item and the human answer resumes plann
   const fixture = await boardFixture();
   const questionText = "q".repeat(8_000);
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Ask for a missing planning constraint before proposing the workflow.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-question-planning-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Ask for a missing planning constraint before proposing the workflow.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-question-planning-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-question-planning-0001",
@@ -3626,22 +4236,25 @@ test("a planning question parks its work item and the human answer resumes plann
       createdAt: planning.updatedAt,
     });
     const answerAction = gateActions(fixture.path, created.workItemId).find(
-      (action) => action.gate === "question_answer",
+      (action) => action.gate === "question_answer"
     );
     assert.ok(answerAction);
     assert.match(answerAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...answerAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: created.workItemId,
-      gate: "question_answer",
-      actorId: "human:alice",
-      planRevisionId: null,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: question.questionId,
-      note: null,
-      createdAt: "2026-07-19T20:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...answerAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: created.workItemId,
+        gate: "question_answer",
+        actorId: "human:alice",
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: question.questionId,
+        note: null,
+        createdAt: "2026-07-19T20:00:00.000Z",
+      }
+    );
   } finally {
     fixture.board.close();
   }
@@ -3651,10 +4264,14 @@ test("a failed planning settlement parks with its 16000-character result truncat
   const fixture = await boardFixture();
   const result = "r".repeat(16_000);
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Park planning after a maximum-length failed settlement.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-long-failed-planning-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Park planning after a maximum-length failed settlement.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-long-failed-planning-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-long-failed-planning-0001",
@@ -3691,24 +4308,16 @@ test("a work item stays parked until every open question across its tasks is ans
     });
     assert.ok(researchClaim);
     assert.ok(verificationClaim);
-    const researchQuestion = fixture.board.askQuestion(
-      fixture.researchTask.taskId,
-      fixture.engineer.agentId,
-      {
-        clientEventId: "question-multiple-research-0001",
-        question: "Which research constraint should the sibling preserve?",
-        runId: researchClaim.run.runId,
-      },
-    );
-    const verificationQuestion = fixture.board.askQuestion(
-      fixture.verificationTask.taskId,
-      fixture.verifier.agentId,
-      {
-        clientEventId: "question-multiple-verification-0001",
-        question: "Which verification evidence should the sibling preserve?",
-        runId: verificationClaim.run.runId,
-      },
-    );
+    const researchQuestion = fixture.board.askQuestion(fixture.researchTask.taskId, fixture.engineer.agentId, {
+      clientEventId: "question-multiple-research-0001",
+      question: "Which research constraint should the sibling preserve?",
+      runId: researchClaim.run.runId,
+    });
+    const verificationQuestion = fixture.board.askQuestion(fixture.verificationTask.taskId, fixture.verifier.agentId, {
+      clientEventId: "question-multiple-verification-0001",
+      question: "Which verification evidence should the sibling preserve?",
+      runId: verificationClaim.run.runId,
+    });
     const parked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(parked.state, "parked");
 
@@ -3764,15 +4373,11 @@ test("an open question defers a sibling retry until its answer unparks the work 
       messageCursor: null,
     });
     assert.ok(parkedStageClaim);
-    const question = fixture.board.askQuestion(
-      fixture.verificationTask.taskId,
-      fixture.verifier.agentId,
-      {
-        clientEventId: "question-parked-stage-advance-0001",
-        question: "Should verification wait while the sibling advances?",
-        runId: verificationClaim.run.runId,
-      },
-    );
+    const question = fixture.board.askQuestion(fixture.verificationTask.taskId, fixture.verifier.agentId, {
+      clientEventId: "question-parked-stage-advance-0001",
+      question: "Should verification wait while the sibling advances?",
+      runId: verificationClaim.run.runId,
+    });
     const parked = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(parked.state, "parked");
     assert.equal(parked.currentStage, "research");
@@ -3833,10 +4438,14 @@ test("an open question defers a sibling retry until its answer unparks the work 
 test("cancelling a work item closes its planning question and fences later answers", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Close the planning question if this intake is cancelled.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-open-question-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Close the planning question if this intake is cancelled.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-open-question-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-cancel-open-question-0001",
@@ -3858,28 +4467,42 @@ test("cancelling a work item closes its planning question and fences later answe
     });
 
     const snapshot = fixture.board.snapshot(fixture.project.projectId);
-    assert.equal(snapshot.openQuestions.some((candidate) => candidate.questionId === question.questionId), false);
+    assert.equal(
+      snapshot.openQuestions.some((candidate) => candidate.questionId === question.questionId),
+      false
+    );
     const closed = snapshot.recentQuestions.find((candidate) => candidate.questionId === question.questionId);
     assert.equal(closed?.status, "answered");
     assert.equal(closed?.answer, `Closed because the work item was cancelled: ${reason}`);
     assert.throws(
-      () => fixture.board.answerQuestion(question.questionId, {
-        answer: "This answer must not create a wakeup.",
-        version: question.version,
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+      () =>
+        fixture.board.answerQuestion(question.questionId, {
+          answer: "This answer must not create a wakeup.",
+          version: question.version,
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL"
     );
 
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(
-        "SELECT COUNT(*) AS count FROM wakeups WHERE question_id=? AND reason='human_answer'",
-      ).get(question.questionId)?.count, 0);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare("SELECT COUNT(*) AS count FROM wakeups WHERE question_id=? AND reason='human_answer'")
+          .get(question.questionId)?.count,
+        0
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM task_events
         WHERE task_id=? AND event_type='human_question_closed'
-      `).get(created.planningTaskId)?.count, 1);
+      `
+          )
+          .get(created.planningTaskId)?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -3891,10 +4514,14 @@ test("cancelling a work item closes its planning question and fences later answe
 test("a failure after planning-task cancellation rolls the whole work-item cancellation back", async () => {
   const fixture = await boardFixture();
   try {
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Prove cancellation has no partial commit window.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-cancel-rollback-0001").workItem;
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Prove cancellation has no partial commit window.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-cancel-rollback-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
 
     const { DatabaseSync } = await import("node:sqlite");
@@ -3907,12 +4534,13 @@ test("a failure after planning-task cancellation rolls the whole work-item cance
     };
     try {
       assert.throws(
-        () => fixture.board.updateWorkItem(created.workItemId, {
-          version: created.version,
-          action: "cancel",
-          reason: "This write is deliberately interrupted.",
-        }),
-        /injected work-item cancellation failure/u,
+        () =>
+          fixture.board.updateWorkItem(created.workItemId, {
+            version: created.version,
+            action: "cancel",
+            reason: "This write is deliberately interrupted.",
+          }),
+        /injected work-item cancellation failure/u
       );
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
@@ -3920,12 +4548,25 @@ test("a failure after planning-task cancellation rolls the whole work-item cance
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(created.workItemId)?.state, "planning");
-      assert.equal(inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(created.planningTaskId)?.status, "queued");
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(created.workItemId)?.state,
+        "planning"
+      );
+      assert.equal(
+        inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(created.planningTaskId)?.status,
+        "queued"
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM task_events
         WHERE task_id=? AND event_type IN ('task_updated','agent_wakeup_retired','work_item_cancelled')
-      `).get(created.planningTaskId)?.count, 0);
+      `
+          )
+          .get(created.planningTaskId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -3945,25 +4586,33 @@ test("rejecting a proposed plan records its reason without rewriting the complet
       model: "codex-mini",
       token: "rejection-audit-verifier-token-0123456789",
     });
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "rejection-audit-verifier",
-        name: "Rejection audit verifier",
-        description: "Verifies the rejected workflow audit path.",
-        role: "verifier",
-        supplementalInstructions: "Inspect the rejection reason and report evidence.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "rejection-audit-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "rejection-audit-verifier",
+            name: "Rejection audit verifier",
+            description: "Verifies the rejected workflow audit path.",
+            role: "verifier",
+            supplementalInstructions: "Inspect the rejection reason and report evidence.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "rejection-audit-verifier" },
+        }),
+      })
+    );
+    const created = postWorkItem(
+      fixture.board,
+      workItemRequest({
+        originalRequest: "Propose a plan that the operator can reject with an audit reason.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const created = postWorkItem(fixture.board, workItemRequest({
-      originalRequest: "Propose a plan that the operator can reject with an audit reason.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-reject-reason-0001").workItem;
+      "work-item-reject-reason-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-work-item-reject-reason-0001",
@@ -3978,14 +4627,16 @@ test("rejecting a proposed plan records its reason without rewriting the complet
         objective: "Verify the proposed cancellation audit path.",
         assumptions: [],
         acceptanceCriteria: ["The rejection reason remains durable."],
-        nodes: [{
-          nodeId: "verify-rejection-audit",
-          title: "Verify rejection audit",
-          objective: "Inspect the cancellation event.",
-          acceptanceCriteria: ["The human reason is recorded."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-rejection-audit",
+            title: "Verify rejection audit",
+            objective: "Inspect the cancellation event.",
+            acceptanceCriteria: ["The human reason is recorded."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     });
     const reviewItem = fixture.board.requireWorkItem(created.workItemId);
@@ -4004,10 +4655,14 @@ test("rejecting a proposed plan records its reason without rewriting the complet
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const event = inspected.prepare(`
+      const event = inspected
+        .prepare(
+          `
         SELECT data_json FROM task_events
         WHERE task_id=? AND event_type='work_item_cancelled'
-      `).get(created.planningTaskId);
+      `
+        )
+        .get(created.planningTaskId);
       assert.ok(event);
       assert.equal((JSON.parse(String(event.data_json)) as { reason: string }).reason, reason);
     } finally {
@@ -4021,13 +4676,16 @@ test("rejecting a proposed plan records its reason without rewriting the complet
 test("archive is terminal-only, idempotent, and excluded from default work-item listing", async () => {
   const fixture = await boardFixture();
   try {
-    const created = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Archive this intake only after it ends.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "work-item-archive-0001").workItem;
+    const created = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Archive this intake only after it ends.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "work-item-archive-0001"
+    ).workItem;
     assert.throws(
       () => fixture.board.updateWorkItem(created.workItemId, { version: created.version, action: "archive" }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_NOT_TERMINAL",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_NOT_TERMINAL"
     );
 
     const cancelled = fixture.board.updateWorkItem(created.workItemId, {
@@ -4041,8 +4699,14 @@ test("archive is terminal-only, idempotent, and excluded from default work-item 
     });
     assert.ok(archived.archivedAt);
     assert.equal(archived.version, cancelled.version + 1);
-    assert.equal(fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId), false);
-    assert.equal(fixture.board.listWorkItems(true).find((item) => item.workItemId === created.workItemId)?.archivedAt, archived.archivedAt);
+    assert.equal(
+      fixture.board.listWorkItems().some((item) => item.workItemId === created.workItemId),
+      false
+    );
+    assert.equal(
+      fixture.board.listWorkItems(true).find((item) => item.workItemId === created.workItemId)?.archivedAt,
+      archived.archivedAt
+    );
 
     const replay = fixture.board.updateWorkItem(created.workItemId, {
       version: cancelled.version,
@@ -4064,17 +4728,19 @@ test("internal work-item creation rejects missing and automatic project targets"
     for (const [index, request] of invalid.entries()) {
       assert.throws(
         () => fixture.board.createWorkItem(request, `work-item-invalid-target-${index}`),
-        (error: unknown) => error instanceof TaskBoardError
-          && error.status === 400
-          && error.code === "PROJECT_REQUIRED"
-          && error.message === "Choose a project",
+        (error: unknown) =>
+          error instanceof TaskBoardError &&
+          error.status === 400 &&
+          error.code === "PROJECT_REQUIRED" &&
+          error.message === "Choose a project"
       );
       assert.throws(
         () => fixture.board.createWorkItemAndStartPlanning(request, `work-item-invalid-planning-target-${index}`),
-        (error: unknown) => error instanceof TaskBoardError
-          && error.status === 400
-          && error.code === "PROJECT_REQUIRED"
-          && error.message === "Choose a project",
+        (error: unknown) =>
+          error instanceof TaskBoardError &&
+          error.status === 400 &&
+          error.code === "PROJECT_REQUIRED" &&
+          error.message === "Choose a project"
       );
     }
 
@@ -4100,21 +4766,25 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
   const idempotencyKey = "work-item-planning-legacy-repair-0001";
   let board: TaskBoard | null = fixture.board;
   try {
-    board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "planning-repair-verifier",
-        name: "Planning repair verifier",
-        description: "Verifies the workflow proposed by the repaired planning task.",
-        role: "verifier",
-        supplementalInstructions: "Verify the repaired planning workflow.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "planning-repair-verifier" },
-      }),
-    }));
+    board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "planning-repair-verifier",
+            name: "Planning repair verifier",
+            description: "Verifies the workflow proposed by the repaired planning task.",
+            role: "verifier",
+            supplementalInstructions: "Verify the repaired planning workflow.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "planning-repair-verifier" },
+        }),
+      })
+    );
     const created = board.createWorkItem(request, idempotencyKey).workItem;
     const legacyPlanningTask = board.startWorkItemPlanning(created.workItemId);
     assert.ok(legacyPlanningTask);
@@ -4125,22 +4795,29 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
     const partial = new DatabaseSync(path);
     try {
       partial.exec("PRAGMA foreign_keys = ON");
-      const removedLink = partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?")
+      const removedLink = partial
+        .prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?")
         .run(created.workItemId);
       assert.equal(Number(removedLink.changes), 1);
-      const restoredSubmittedItem = partial.prepare(`
+      const restoredSubmittedItem = partial
+        .prepare(
+          `
         UPDATE work_items
         SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
-      `).run(created.version, created.updatedAt, created.workItemId);
+      `
+        )
+        .run(created.version, created.updatedAt, created.workItemId);
       assert.equal(Number(restoredSubmittedItem.changes), 1);
       assert.equal(
         partial.prepare("SELECT COUNT(*) AS count FROM tasks WHERE task_id=?").get(legacyPlanningTask.taskId)?.count,
-        1,
+        1
       );
       assert.equal(
-        partial.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND claimed_at IS NULL").get(legacyPlanningTask.taskId)?.count,
-        1,
+        partial
+          .prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
+          .get(legacyPlanningTask.taskId)?.count,
+        1
       );
     } finally {
       partial.close();
@@ -4155,11 +4832,19 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
 
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      const link = inspected.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
+      const link = inspected
+        .prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
         .get(created.workItemId);
       assert.equal(link?.task_id, legacyPlanningTask.taskId);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 1);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(legacyPlanningTask.taskId)?.count, 1);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count,
+        1
+      );
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(legacyPlanningTask.taskId)
+          ?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -4177,14 +4862,16 @@ test("duplicate work-item intake repairs a legacy linkless planning task and mak
         objective: "Keep planning-task creation and linkage atomic.",
         assumptions: [],
         acceptanceCriteria: ["A planning run always has its durable work-item link."],
-        nodes: [{
-          nodeId: "verify-repaired-planning-link",
-          title: "Verify repaired planning link",
-          objective: "Confirm the legacy planning task can settle with a workflow plan.",
-          acceptanceCriteria: ["Settlement proposes the workflow without a link error."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-repaired-planning-link",
+            title: "Verify repaired planning link",
+            objective: "Confirm the legacy planning task can settle with a workflow plan.",
+            acceptanceCriteria: ["Settlement proposes the workflow without a link error."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     });
     assert.equal(board.requireWorkItem(created.workItemId).state, "plan_approval");
@@ -4203,21 +4890,25 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
   const idempotencyKey = "work-item-planning-settled-orphan-0001";
   let board: TaskBoard | null = fixture.board;
   try {
-    board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "settled-orphan-verifier",
-        name: "Settled orphan verifier",
-        description: "Verifies the replacement workflow from a fresh planning task.",
-        role: "verifier",
-        supplementalInstructions: "Verify the replacement planning workflow.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "settled-orphan-verifier" },
-      }),
-    }));
+    board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "settled-orphan-verifier",
+            name: "Settled orphan verifier",
+            description: "Verifies the replacement workflow from a fresh planning task.",
+            role: "verifier",
+            supplementalInstructions: "Verify the replacement planning workflow.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "settled-orphan-verifier" },
+        }),
+      })
+    );
     const created = board.createWorkItem(request, idempotencyKey).workItem;
     const legacyPlanningTask = board.startWorkItemPlanning(created.workItemId);
     assert.ok(legacyPlanningTask);
@@ -4234,14 +4925,25 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
     try {
       partial.exec("PRAGMA foreign_keys = ON");
       assert.equal(
-        Number(partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes),
-        1,
+        Number(
+          partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes
+        ),
+        1
       );
-      assert.equal(Number(partial.prepare(`
+      assert.equal(
+        Number(
+          partial
+            .prepare(
+              `
         UPDATE work_items
         SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
-      `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
+      `
+            )
+            .run(created.version, created.updatedAt, created.workItemId).changes
+        ),
+        1
+      );
     } finally {
       partial.close();
     }
@@ -4258,7 +4960,10 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
       if (statement === "COMMIT" || statement === "ROLLBACK") settleTransactionOpen = false;
     };
     DatabaseSync.prototype.prepare = function trackingPlanningRead(this: DatabaseSyncType, sql: string) {
-      if (planningReadInSettleTransaction === null && /FROM work_item_planning_tasks link[\s\S]*WHERE link\.task_id=\?/u.test(sql)) {
+      if (
+        planningReadInSettleTransaction === null &&
+        /FROM work_item_planning_tasks link[\s\S]*WHERE link\.task_id=\?/u.test(sql)
+      ) {
         planningReadInSettleTransaction = settleTransactionOpen;
       }
       return originalPrepare.call(this, sql);
@@ -4285,20 +4990,27 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
     const inspected = new DatabaseSync(path, { readOnly: true });
     let replacementTaskId = "";
     try {
-      const replacement = inspected.prepare(`
+      const replacement = inspected
+        .prepare(
+          `
         SELECT link.task_id,task.status,task.ended_at,wakeup.claimed_at
         FROM work_item_planning_tasks link
         JOIN tasks task ON task.task_id=link.task_id
         JOIN wakeups wakeup ON wakeup.task_id=task.task_id
         WHERE link.work_item_id=?
-      `).get(created.workItemId);
+      `
+        )
+        .get(created.workItemId);
       assert.ok(replacement);
       replacementTaskId = String(replacement.task_id);
       assert.notEqual(replacementTaskId, legacyPlanningTask.taskId);
       assert.equal(replacement.status, "queued");
       assert.equal(replacement.ended_at, null);
       assert.equal(replacement.claimed_at, null);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 2);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count,
+        2
+      );
     } finally {
       inspected.close();
     }
@@ -4316,14 +5028,16 @@ test("duplicate work-item intake replaces a settled legacy planning orphan", asy
         objective: "Replace a settled planning orphan safely.",
         assumptions: [],
         acceptanceCriteria: ["Only the fresh runnable planning task is linked."],
-        nodes: [{
-          nodeId: "verify-settled-orphan-replacement",
-          title: "Verify settled orphan replacement",
-          objective: "Confirm a fresh planning task supplied the workflow.",
-          acceptanceCriteria: ["The replacement plan reaches human review."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-settled-orphan-replacement",
+            title: "Verify settled orphan replacement",
+            objective: "Confirm a fresh planning task supplied the workflow.",
+            acceptanceCriteria: ["The replacement plan reaches human review."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     });
     assert.equal(board.requireWorkItem(created.workItemId).state, "plan_approval");
@@ -4352,28 +5066,44 @@ test("duplicate work-item intake ignores a legacy planning orphan with only a re
     const partial = new DatabaseSync(path);
     try {
       partial.exec("PRAGMA foreign_keys = ON");
-      const wakeup = partial.prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
+      const wakeup = partial
+        .prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
         .get(legacyPlanningTask.taskId);
       assert.ok(wakeup);
       assert.equal(
-        Number(partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes),
-        1,
+        Number(
+          partial.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(created.workItemId).changes
+        ),
+        1
       );
-      assert.equal(Number(partial.prepare(`
+      assert.equal(
+        Number(
+          partial
+            .prepare(
+              `
         UPDATE work_items
         SET state='queued',current_stage='refinement',version=?,updated_at=?
         WHERE work_item_id=?
-      `).run(created.version, created.updatedAt, created.workItemId).changes), 1);
-      partial.prepare(`
+      `
+            )
+            .run(created.version, created.updatedAt, created.workItemId).changes
+        ),
+        1
+      );
+      partial
+        .prepare(
+          `
         INSERT INTO task_events(
           event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at
         ) VALUES (?, ?, ?, 'system', 'test:wakeup-retirement', 'agent_wakeup_retired', '{}', ?)
-      `).run(
-        `retired-wakeup:${String(wakeup.wakeup_id)}`,
-        fixture.project.projectId,
-        legacyPlanningTask.taskId,
-        created.updatedAt,
-      );
+      `
+        )
+        .run(
+          `retired-wakeup:${String(wakeup.wakeup_id)}`,
+          fixture.project.projectId,
+          legacyPlanningTask.taskId,
+          created.updatedAt
+        );
     } finally {
       partial.close();
     }
@@ -4385,12 +5115,19 @@ test("duplicate work-item intake ignores a legacy planning orphan with only a re
 
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      const link = inspected.prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
+      const link = inspected
+        .prepare("SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?")
         .get(created.workItemId);
       assert.ok(link);
       assert.notEqual(link.task_id, legacyPlanningTask.taskId);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 2);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count,
+        2
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         WHERE wakeup.task_id=?
@@ -4398,7 +5135,11 @@ test("duplicate work-item intake ignores a legacy planning orphan with only a re
           AND NOT EXISTS(
             SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
           )
-      `).get(String(link.task_id))?.count, 1);
+      `
+          )
+          .get(String(link.task_id))?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -4426,10 +5167,7 @@ test("planning-start failure rolls back its task, link, wakeup, and work-item mu
       return originalPrepare.call(this, sql);
     };
     try {
-      assert.throws(
-        () => fixture.board.startWorkItemPlanning(submitted.workItemId),
-        /INJECTED_PLANNING_LINK_FAILURE/u,
-      );
+      assert.throws(() => fixture.board.startWorkItemPlanning(submitted.workItemId), /INJECTED_PLANNING_LINK_FAILURE/u);
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
     }
@@ -4437,20 +5175,36 @@ test("planning-start failure rolls back its task, link, wakeup, and work-item mu
     const detail = fixture.board.requireWorkItem(submitted.workItemId);
     const { transitions, ...persisted } = detail;
     assert.deepEqual(persisted, submitted);
-    assert.deepEqual(transitions.map(({ fromState, toState }) => ({ fromState, toState })), [
-      { fromState: null, toState: "queued" },
-    ]);
+    assert.deepEqual(
+      transitions.map(({ fromState, toState }) => ({ fromState, toState })),
+      [{ fromState: null, toState: "queued" }]
+    );
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?").get(submitted.workItemId)?.count, 0);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 0);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?")
+          .get(submitted.workItemId)?.count,
+        0
+      );
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count,
+        0
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         JOIN tasks task ON task.task_id=wakeup.task_id
         WHERE task.objective=?
-      `).get(request.originalRequest)?.count, 0);
+      `
+          )
+          .get(request.originalRequest)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -4478,10 +5232,7 @@ test("fresh work-item intake failure rolls back the item with all planning state
       return originalPrepare.call(this, sql);
     };
     try {
-      assert.throws(
-        () => postWorkItem(fixture.board, request, idempotencyKey),
-        /INJECTED_PLANNING_LINK_FAILURE/u,
-      );
+      assert.throws(() => postWorkItem(fixture.board, request, idempotencyKey), /INJECTED_PLANNING_LINK_FAILURE/u);
     } finally {
       DatabaseSync.prototype.prepare = originalPrepare;
     }
@@ -4489,15 +5240,29 @@ test("fresh work-item intake failure rolls back the item with all planning state
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_items WHERE idempotency_key=?").get(idempotencyKey)?.count, 0);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count, 0);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM work_items WHERE idempotency_key=?").get(idempotencyKey)
+          ?.count,
+        0
+      );
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM tasks WHERE objective=?").get(request.originalRequest)?.count,
+        0
+      );
       assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks").get()?.count, 0);
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         JOIN tasks task ON task.task_id=wakeup.task_id
         WHERE task.objective=?
-      `).get(request.originalRequest)?.count, 0);
+      `
+          )
+          .get(request.originalRequest)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -4525,10 +5290,13 @@ test("duplicate work-item intake on a healthy processing item is a pure no-op", 
     assert.deepEqual(replay.workItem, beforeItem);
     const afterDetail = fixture.board.requireWorkItem(created.workItem.workItemId);
     assert.deepEqual(afterDetail, beforeDetail);
-    assert.deepEqual(beforeTransitions.map(({ fromState, toState }) => ({ fromState, toState })), [
-      { fromState: null, toState: "queued" },
-      { fromState: "queued", toState: "planning" },
-    ]);
+    assert.deepEqual(
+      beforeTransitions.map(({ fromState, toState }) => ({ fromState, toState })),
+      [
+        { fromState: null, toState: "queued" },
+        { fromState: "queued", toState: "planning" },
+      ]
+    );
     assert.deepEqual(fixture.board.snapshot(fixture.project.projectId), beforeSnapshot);
   } finally {
     fixture.board.close();
@@ -4538,21 +5306,25 @@ test("duplicate work-item intake on a healthy processing item is a pure no-op", 
 test("work-item POST atomically queues and links planning before the plan is settled", async () => {
   const fixture = await boardFixture();
   try {
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "atomic-planning-verifier",
-        name: "Atomic planning verifier",
-        description: "Verifies a plan produced by atomic work-item intake.",
-        role: "verifier",
-        supplementalInstructions: "Verify the atomic planning workflow.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "atomic-planning-verifier" },
-      }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "atomic-planning-verifier",
+            name: "Atomic planning verifier",
+            description: "Verifies a plan produced by atomic work-item intake.",
+            role: "verifier",
+            supplementalInstructions: "Verify the atomic planning workflow.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "atomic-planning-verifier" },
+        }),
+      })
+    );
     const request = workItemRequest({
       originalRequest: "Create and link this planning task in one transaction.",
       projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
@@ -4585,13 +5357,17 @@ test("work-item POST atomically queues and links planning before the plan is set
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     let planningTaskId = "";
     try {
-      const planning = inspected.prepare(`
+      const planning = inspected
+        .prepare(
+          `
         SELECT link.task_id,task.status,wakeup.claimed_at,wakeup.run_id
         FROM work_item_planning_tasks link
         JOIN tasks task ON task.task_id=link.task_id
         JOIN wakeups wakeup ON wakeup.task_id=task.task_id
         WHERE link.work_item_id=?
-      `).get(created.workItem.workItemId);
+      `
+        )
+        .get(created.workItem.workItemId);
       assert.ok(planning);
       planningTaskId = String(planning.task_id);
       assert.equal(planning.status, "queued");
@@ -4614,14 +5390,16 @@ test("work-item POST atomically queues and links planning before the plan is set
         objective: "Create work-item planning state atomically.",
         assumptions: [],
         acceptanceCriteria: ["The work item, task, wakeup, and link commit together."],
-        nodes: [{
-          nodeId: "verify-atomic-planning-intake",
-          title: "Verify atomic planning intake",
-          objective: "Inspect the committed planning state.",
-          acceptanceCriteria: ["Every planning row is present and consistent."],
-          dependencyNodeIds: [],
-          stageTemplate: ["verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "verify-atomic-planning-intake",
+            title: "Verify atomic planning intake",
+            objective: "Inspect the committed planning state.",
+            acceptanceCriteria: ["Every planning row is present and consistent."],
+            dependencyNodeIds: [],
+            stageTemplate: ["verification"],
+          },
+        ],
       },
     });
     assert.equal(fixture.board.requireWorkItem(created.workItem.workItemId).state, "plan_approval");
@@ -4664,18 +5442,23 @@ test("a first work-item POST creates the manager, planning task, link, and proce
     assert.equal(created.workItem.state, "planning");
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      const manager = inspected.prepare("SELECT agent_id,role,token_hash FROM agents WHERE project_id=? AND role='manager'")
+      const manager = inspected
+        .prepare("SELECT agent_id,role,token_hash FROM agents WHERE project_id=? AND role='manager'")
         .get(project.projectId);
       assert.equal(manager?.agent_id, "payment-tools-manager");
       assert.equal(manager?.role, "manager");
       assert.ok(String(manager?.token_hash).length > 0);
-      const planning = inspected.prepare(`
+      const planning = inspected
+        .prepare(
+          `
         SELECT task.assigned_agent_id,task.assigned_role,task.status,item.state,item.current_stage
         FROM work_item_planning_tasks link
         JOIN tasks task ON task.task_id=link.task_id
         JOIN work_items item ON item.work_item_id=link.work_item_id
         WHERE link.work_item_id=?
-      `).get(created.workItem.workItemId);
+      `
+        )
+        .get(created.workItem.workItemId);
       assert.equal(planning?.assigned_agent_id, manager?.agent_id);
       assert.equal(planning?.assigned_role, "manager");
       assert.equal(planning?.status, "queued");
@@ -4709,10 +5492,22 @@ test("duplicate work-item intake repairs a missing manager before starting plann
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
-        .get(project.projectId)?.count), 1);
-      assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?")
-        .get(created.workItem.workItemId)?.count), 1);
+      assert.equal(
+        Number(
+          inspected
+            .prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+            .get(project.projectId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          inspected
+            .prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks WHERE work_item_id=?")
+            .get(created.workItem.workItemId)?.count
+        ),
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -4733,10 +5528,13 @@ test("work-item planning uses the oldest manager when multiple manager identitie
       token: "manager-two-token-oldest-selection-0123456789",
     });
 
-    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Start planning with the oldest registered manager.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "multiple-manager-oldest-planning-0001").workItem;
+    const created = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Start planning with the oldest registered manager.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "multiple-manager-oldest-planning-0001"
+    ).workItem;
 
     assert.equal(created.state, "planning");
     assert.ok(created.planningTaskId);
@@ -4754,10 +5552,13 @@ test("registering a manager drains queued work items that previously had no mana
       name: "Queued manager enrollment",
       description: "/workspace/queued-manager-enrollment",
     });
-    const created = board.createWorkItem(workItemRequest({
-      originalRequest: "Wait for an explicitly registered manager before planning.",
-      projectTarget: { mode: "explicit", projectId: project.projectId },
-    }), "queued-manager-enrollment-0001").workItem;
+    const created = board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Wait for an explicitly registered manager before planning.",
+        projectTarget: { mode: "explicit", projectId: project.projectId },
+      }),
+      "queued-manager-enrollment-0001"
+    ).workItem;
     assert.equal(created.state, "queued");
     assert.equal(created.planningTaskId, null);
 
@@ -4773,25 +5574,28 @@ test("registering a manager drains queued work items that previously had no mana
     const planning = board.requireWorkItem(created.workItemId);
     assert.equal(planning.state, "planning");
     assert.ok(planning.planningTaskId);
-    assert.deepEqual(planning.transitions.map((transition) => ({
-      fromState: transition.fromState,
-      toState: transition.toState,
-      actorType: transition.actorType,
-      actorId: transition.actorId,
-    })), [
-      {
-        fromState: null,
-        toState: "queued",
-        actorType: "human",
-        actorId: "human:alice",
-      },
-      {
-        fromState: "queued",
-        toState: "planning",
-        actorType: "system",
-        actorId: "system:planning",
-      },
-    ]);
+    assert.deepEqual(
+      planning.transitions.map((transition) => ({
+        fromState: transition.fromState,
+        toState: transition.toState,
+        actorType: transition.actorType,
+        actorId: transition.actorId,
+      })),
+      [
+        {
+          fromState: null,
+          toState: "queued",
+          actorType: "human",
+          actorId: "human:alice",
+        },
+        {
+          fromState: "queued",
+          toState: "planning",
+          actorType: "system",
+          actorId: "system:planning",
+        },
+      ]
+    );
     assert.ok(planning.transitions.every((transition) => transition.createdAt === "2026-07-19T20:00:00.000Z"));
     const planningTask = board.requireTask(planning.planningTaskId);
     assert.equal(planningTask.assignedAgentId, manager.agentId);
@@ -4806,41 +5610,51 @@ test("existing and concurrent first intake create exactly one manager per projec
   const firstBoard = await TaskBoard.open(config(path));
   try {
     const project = firstBoard.createProject({ name: "Ledger tools", description: "/workspace/ledger-tools" });
-    const requests = ["one", "two"].map((suffix) => workItemRequest({
-      originalRequest: `Plan concurrent ledger intake ${suffix}.`,
-      projectTarget: { mode: "explicit", projectId: project.projectId },
-    }));
+    const requests = ["one", "two"].map((suffix) =>
+      workItemRequest({
+        originalRequest: `Plan concurrent ledger intake ${suffix}.`,
+        projectTarget: { mode: "explicit", projectId: project.projectId },
+      })
+    );
     const control = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
-    const workers = requests.map((request, index) => new Worker(
-      new URL("./concurrent-intake-worker.js", import.meta.url),
-      {
-        workerData: {
-          control,
-          dbPath: path,
-          idempotencyKey: `lazy-manager-concurrent-intake-000${index + 1}`,
-          request,
-        },
-      },
-    ));
-    await Promise.all(workers.map((worker) => new Promise<void>((resolve, reject) => {
-      worker.on("message", (message: unknown) => {
-        if ((message as { type?: string }).type === "ready") resolve();
-      });
-      worker.once("error", reject);
-    })));
+    const workers = requests.map(
+      (request, index) =>
+        new Worker(new URL("./concurrent-intake-worker.js", import.meta.url), {
+          workerData: {
+            control,
+            dbPath: path,
+            idempotencyKey: `lazy-manager-concurrent-intake-000${index + 1}`,
+            request,
+          },
+        })
+    );
+    await Promise.all(
+      workers.map(
+        (worker) =>
+          new Promise<void>((resolve, reject) => {
+            worker.on("message", (message: unknown) => {
+              if ((message as { type?: string }).type === "ready") resolve();
+            });
+            worker.once("error", reject);
+          })
+      )
+    );
     assert.equal(Atomics.load(new Int32Array(control), 0), 2);
-    const completions = workers.map((worker) => new Promise<void>((resolve, reject) => {
-      worker.on("message", (message: unknown) => {
-        const result = message as { type?: string; message?: string; state?: string };
-        if (result.type === "complete") {
-          assert.equal(result.state, "planning");
-          resolve();
-        } else if (result.type === "error") {
-          reject(new Error(result.message));
-        }
-      });
-      worker.once("error", reject);
-    }));
+    const completions = workers.map(
+      (worker) =>
+        new Promise<void>((resolve, reject) => {
+          worker.on("message", (message: unknown) => {
+            const result = message as { type?: string; message?: string; state?: string };
+            if (result.type === "complete") {
+              assert.equal(result.state, "planning");
+              resolve();
+            } else if (result.type === "error") {
+              reject(new Error(result.message));
+            }
+          });
+          worker.once("error", reject);
+        })
+    );
     Atomics.store(new Int32Array(control), 1, 1);
     Atomics.notify(new Int32Array(control), 1, workers.length);
     await Promise.all(completions);
@@ -4850,17 +5664,24 @@ test("existing and concurrent first intake create exactly one manager per projec
     let planningLinkCount = 0;
     const inspected = new DatabaseSync(path, { readOnly: true });
     try {
-      managerCount = Number(inspected.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
-        .get(project.projectId)?.count);
-      planningLinkCount = Number(inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks")
-        .get()?.count);
+      managerCount = Number(
+        inspected
+          .prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+          .get(project.projectId)?.count
+      );
+      planningLinkCount = Number(
+        inspected.prepare("SELECT COUNT(*) AS count FROM work_item_planning_tasks").get()?.count
+      );
     } finally {
       inspected.close();
     }
     assert.equal(managerCount, 1);
     assert.equal(planningLinkCount, 2);
 
-    const existingProject = firstBoard.createProject({ name: "Managed tools", description: "/workspace/managed-tools" });
+    const existingProject = firstBoard.createProject({
+      name: "Managed tools",
+      description: "/workspace/managed-tools",
+    });
     firstBoard.createAgent(existingProject.projectId, {
       agentId: "managed-tools-manager",
       role: "manager",
@@ -4869,14 +5690,24 @@ test("existing and concurrent first intake create exactly one manager per projec
       model: "auto",
       token: "managed-tools-manager-token-0123456789012345",
     });
-    postWorkItem(firstBoard, workItemRequest({
-      originalRequest: "Use the manager that already exists.",
-      projectTarget: { mode: "explicit", projectId: existingProject.projectId },
-    }), "lazy-manager-existing-intake-0001");
+    postWorkItem(
+      firstBoard,
+      workItemRequest({
+        originalRequest: "Use the manager that already exists.",
+        projectTarget: { mode: "explicit", projectId: existingProject.projectId },
+      }),
+      "lazy-manager-existing-intake-0001"
+    );
     const verified = new DatabaseSync(path, { readOnly: true });
     try {
-      assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
-        .get(existingProject.projectId)?.count), 1);
+      assert.equal(
+        Number(
+          verified
+            .prepare("SELECT COUNT(*) AS count FROM agents WHERE project_id=? AND role='manager'")
+            .get(existingProject.projectId)?.count
+        ),
+        1
+      );
     } finally {
       verified.close();
     }
@@ -4895,7 +5726,7 @@ test("work-item CAS readback stays bound to its mutation while another connectio
         originalRequest: "Keep a successful work-item PATCH response transaction-bound.",
         projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       },
-      "work-item-transaction-bound-0001",
+      "work-item-transaction-bound-0001"
     ).workItem;
     const { DatabaseSync } = await import("node:sqlite");
     const originalExec = DatabaseSync.prototype.exec;
@@ -4924,9 +5755,7 @@ test("work-item CAS readback stays bound to its mutation while another connectio
       if (!interceptedUpdate && /^\s*UPDATE\s+work_items\s+SET/u.test(sql)) {
         interceptedUpdate = true;
         const updateConnection = this;
-        const originalRun = statement.run.bind(statement) as (
-          ...values: SQLInputValue[]
-        ) => StatementResultingChanges;
+        const originalRun = statement.run.bind(statement) as (...values: SQLInputValue[]) => StatementResultingChanges;
         statement.run = ((...values: SQLInputValue[]): StatementResultingChanges => {
           const result = originalRun(...values);
           if (activeTransactions.has(updateConnection)) {
@@ -4979,25 +5808,38 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
   const path = await databasePath();
   const fixture = await boardFixture(path);
   try {
-    const active = Array.from({ length: 199 }, (_unused, index) => fixture.board.createWorkItem({
-      originalRequest: `Paginated active work item ${index}`,
-      priority: index < 70 ? "urgent" : index < 140 ? "high" : "opportunistic",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }, `pagination-active-${index}`).workItem);
-    const terminalUrgent = fixture.board.createWorkItem({
-      originalRequest: "Paginated terminal urgent work item",
-      priority: "urgent",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }, "pagination-terminal-urgent").workItem;
+    const active = Array.from(
+      { length: 199 },
+      (_unused, index) =>
+        fixture.board.createWorkItem(
+          {
+            originalRequest: `Paginated active work item ${index}`,
+            priority: index < 70 ? "urgent" : index < 140 ? "high" : "opportunistic",
+            projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+          },
+          `pagination-active-${index}`
+        ).workItem
+    );
+    const terminalUrgent = fixture.board.createWorkItem(
+      {
+        originalRequest: "Paginated terminal urgent work item",
+        priority: "urgent",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
+      "pagination-terminal-urgent"
+    ).workItem;
 
     const { DatabaseSync } = await import("node:sqlite");
     const ordering = new DatabaseSync(path);
     try {
-      ordering.prepare("UPDATE work_items SET created_at = ? WHERE work_item_id = ?")
+      ordering
+        .prepare("UPDATE work_items SET created_at = ? WHERE work_item_id = ?")
         .run("2026-07-18T20:00:00.000Z", active[0]!.workItemId);
-      ordering.prepare("UPDATE work_items SET created_at = ? WHERE work_item_id = ?")
+      ordering
+        .prepare("UPDATE work_items SET created_at = ? WHERE work_item_id = ?")
         .run("2026-07-20T20:00:00.000Z", active[1]!.workItemId);
-      ordering.prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
+      ordering
+        .prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
         .run("2026-07-21T20:00:00.000Z", terminalUrgent.workItemId);
     } finally {
       ordering.close();
@@ -5008,24 +5850,36 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
     assert.equal(exactPage.nextCursor, undefined);
     assert.equal(exactPage.workItems[0]?.workItemId, active[0]?.workItemId);
     assert.equal(exactPage.workItems[69]?.workItemId, active[1]?.workItemId);
-    assert.ok(exactPage.workItems.slice(0, 70).every((workItem) => workItem.priority === "urgent" && workItem.endedAt === null));
-    assert.ok(exactPage.workItems.slice(70, 140).every((workItem) => workItem.priority === "high" && workItem.endedAt === null));
-    assert.ok(exactPage.workItems.slice(140, 199).every((workItem) => workItem.priority === "opportunistic" && workItem.endedAt === null));
+    assert.ok(
+      exactPage.workItems.slice(0, 70).every((workItem) => workItem.priority === "urgent" && workItem.endedAt === null)
+    );
+    assert.ok(
+      exactPage.workItems.slice(70, 140).every((workItem) => workItem.priority === "high" && workItem.endedAt === null)
+    );
+    assert.ok(
+      exactPage.workItems
+        .slice(140, 199)
+        .every((workItem) => workItem.priority === "opportunistic" && workItem.endedAt === null)
+    );
     assert.equal(exactPage.workItems[199]?.workItemId, terminalUrgent.workItemId);
     assert.ok(exactPage.workItems[199]?.endedAt);
     assert.deepEqual(
       fixture.board.listWorkItems().map((workItem) => workItem.workItemId),
-      exactPage.workItems.map((workItem) => workItem.workItemId),
+      exactPage.workItems.map((workItem) => workItem.workItemId)
     );
 
-    const terminalLow = fixture.board.createWorkItem({
-      originalRequest: "Paginated terminal low-priority work item",
-      priority: "low",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }, "pagination-terminal-low").workItem;
+    const terminalLow = fixture.board.createWorkItem(
+      {
+        originalRequest: "Paginated terminal low-priority work item",
+        priority: "low",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
+      "pagination-terminal-low"
+    ).workItem;
     const terminal = new DatabaseSync(path);
     try {
-      terminal.prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
+      terminal
+        .prepare("UPDATE work_items SET state = 'merged', ended_at = ? WHERE work_item_id = ?")
         .run("2026-07-21T20:01:00.000Z", terminalLow.workItemId);
     } finally {
       terminal.close();
@@ -5036,10 +5890,13 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
     assert.ok(firstPage.nextCursor);
     assert.deepEqual(
       firstPage.workItems.map((workItem) => workItem.workItemId),
-      exactPage.workItems.map((workItem) => workItem.workItemId),
+      exactPage.workItems.map((workItem) => workItem.workItemId)
     );
     const secondPage = fixture.board.listWorkItemsPage(firstPage.nextCursor);
-    assert.deepEqual(secondPage.workItems.map((workItem) => workItem.workItemId), [terminalLow.workItemId]);
+    assert.deepEqual(
+      secondPage.workItems.map((workItem) => workItem.workItemId),
+      [terminalLow.workItemId]
+    );
     assert.equal(secondPage.nextCursor, undefined);
     const firstIds = new Set(firstPage.workItems.map((workItem) => workItem.workItemId));
     assert.ok(secondPage.workItems.every((workItem) => !firstIds.has(workItem.workItemId)));
@@ -5052,10 +5909,13 @@ test("work-item keyset pages preserve priority, terminal, timestamp, and id orde
 test("dormant automation configuration persists atomically without creating executable work", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  fixture.board.createTask(fixture.project.projectId, taskRequest({
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
+  fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
   const before = fixture.board.snapshot(fixture.project.projectId);
   const defaults = fixture.board.getAutomationConfiguration();
   assert.equal(defaults.configurationId, "company-default");
@@ -5094,18 +5954,20 @@ test("dormant automation configuration persists atomically without creating exec
     evaluatorProfile: "manual" as const,
     enabled: true,
   };
-  const configured = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [managerType, engineerType, verifierType],
-    stages: automationStages({
-      refinement: { kind: "agent_type", agentTypeId: managerType.agentTypeId },
-      project_resolution: { kind: "agent_type", agentTypeId: managerType.agentTypeId },
-      research: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
-      planning: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
-      implementation: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
-      testing: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
-      verification: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
-    }),
-  }));
+  const configured = fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [managerType, engineerType, verifierType],
+      stages: automationStages({
+        refinement: { kind: "agent_type", agentTypeId: managerType.agentTypeId },
+        project_resolution: { kind: "agent_type", agentTypeId: managerType.agentTypeId },
+        research: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
+        planning: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
+        implementation: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
+        testing: { kind: "agent_type", agentTypeId: engineerType.agentTypeId },
+        verification: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
+      }),
+    })
+  );
   assert.equal(configured.version, 2);
   assert.equal(configured.createdAt, "1970-01-01T00:00:00.000Z");
   assert.equal(configured.updatedBy, "human:alice");
@@ -5116,25 +5978,28 @@ test("dormant automation configuration persists atomically without creating exec
   assert.equal(after.recentEvents.length, before.recentEvents.length);
 
   assert.throws(
-    () => fixture.board.updateAutomationConfiguration({
-      version: defaults.version,
-      agentTypes: configured.agentTypes,
-      stages: configured.stages,
-    }),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "AUTOMATION_CONFIGURATION_VERSION_CONFLICT",
+    () =>
+      fixture.board.updateAutomationConfiguration({
+        version: defaults.version,
+        agentTypes: configured.agentTypes,
+        stages: configured.stages,
+      }),
+    (error: unknown) => error instanceof TaskBoardError && error.code === "AUTOMATION_CONFIGURATION_VERSION_CONFLICT"
   );
   assert.throws(
-    () => fixture.board.updateAutomationConfiguration({
-      version: configured.version,
-      agentTypes: configured.agentTypes.map((agentType) => agentType.agentTypeId === managerType.agentTypeId
-        ? { ...agentType, role: "engineer" as const }
-        : agentType),
-      stages: configured.stages.map((stage) => stage.executor.kind === "agent_type"
-        && stage.executor.agentTypeId === managerType.agentTypeId
-        ? { ...stage, executor: { kind: "disabled" as const } }
-        : stage),
-    }),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "AUTOMATION_AGENT_TYPE_ROLE_IMMUTABLE",
+    () =>
+      fixture.board.updateAutomationConfiguration({
+        version: configured.version,
+        agentTypes: configured.agentTypes.map((agentType) =>
+          agentType.agentTypeId === managerType.agentTypeId ? { ...agentType, role: "engineer" as const } : agentType
+        ),
+        stages: configured.stages.map((stage) =>
+          stage.executor.kind === "agent_type" && stage.executor.agentTypeId === managerType.agentTypeId
+            ? { ...stage, executor: { kind: "disabled" as const } }
+            : stage
+        ),
+      }),
+    (error: unknown) => error instanceof TaskBoardError && error.code === "AUTOMATION_AGENT_TYPE_ROLE_IMMUTABLE"
   );
   assert.deepEqual(fixture.board.getAutomationConfiguration(), configured);
   fixture.board.close();
@@ -5164,31 +6029,34 @@ test("automation configuration enforces its exported 48 KiB UTF-8 aggregate boun
     const boundary = sizedAutomationConfiguration(AUTOMATION_CONFIGURATION_MAX_BYTES);
     assert.equal(
       Buffer.byteLength(JSON.stringify({ agentTypes: boundary.agentTypes, stages: boundary.stages }), "utf8"),
-      AUTOMATION_CONFIGURATION_MAX_BYTES,
+      AUTOMATION_CONFIGURATION_MAX_BYTES
     );
     assert.ok(Buffer.byteLength(JSON.stringify(boundary), "utf8") < 64 * 1_024);
     const configured = fixture.board.updateAutomationConfiguration(boundary);
     assert.equal(configured.version, 2);
 
     const nearBoundary = sizedAutomationConfiguration(AUTOMATION_CONFIGURATION_MAX_BYTES - 3);
-    const multibyteAgentTypes = nearBoundary.agentTypes.map((agentType, index) => index === nearBoundary.agentTypes.length - 1
-      ? { ...agentType, name: `${agentType.name}💥` }
-      : agentType);
+    const multibyteAgentTypes = nearBoundary.agentTypes.map((agentType, index) =>
+      index === nearBoundary.agentTypes.length - 1 ? { ...agentType, name: `${agentType.name}💥` } : agentType
+    );
     const multibyteOversize = automationConfigurationRequest({
       version: configured.version,
       agentTypes: multibyteAgentTypes,
       stages: nearBoundary.stages,
     });
     assert.equal(
-      Buffer.byteLength(JSON.stringify({
-        agentTypes: multibyteOversize.agentTypes,
-        stages: multibyteOversize.stages,
-      }), "utf8"),
-      AUTOMATION_CONFIGURATION_MAX_BYTES + 1,
+      Buffer.byteLength(
+        JSON.stringify({
+          agentTypes: multibyteOversize.agentTypes,
+          stages: multibyteOversize.stages,
+        }),
+        "utf8"
+      ),
+      AUTOMATION_CONFIGURATION_MAX_BYTES + 1
     );
     assert.throws(
       () => fixture.board.updateAutomationConfiguration(multibyteOversize),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.equal(fixture.board.getAutomationConfiguration().version, configured.version);
   } finally {
@@ -5232,96 +6100,130 @@ test("automation configuration rejects unsafe stage references and registry iden
     ] as const;
     for (const { stage, agentType } of incompatibleAssignments) {
       assert.throws(
-        () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-          agentTypes: [agentType],
-          stages: automationStages({ [stage]: { kind: "agent_type", agentTypeId: agentType.agentTypeId } }),
-        })),
-        (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+        () =>
+          fixture.board.updateAutomationConfiguration(
+            automationConfigurationRequest({
+              agentTypes: [agentType],
+              stages: automationStages({ [stage]: { kind: "agent_type", agentTypeId: agentType.agentTypeId } }),
+            })
+          ),
+        (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
       );
     }
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [{ ...managerType, enabled: false }],
-        stages: automationStages({ research: { kind: "agent_type", agentTypeId: managerType.agentTypeId } }),
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [{ ...managerType, enabled: false }],
+            stages: automationStages({ research: { kind: "agent_type", agentTypeId: managerType.agentTypeId } }),
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [managerType],
-        stages: automationStages({ research: { kind: "agent_type", agentTypeId: "missing-type" } }),
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [managerType],
+            stages: automationStages({ research: { kind: "agent_type", agentTypeId: "missing-type" } }),
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [{ ...managerType, skillIds: ["https://skills.invalid/research"] }],
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [{ ...managerType, skillIds: ["https://skills.invalid/research"] }],
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [{ ...managerType, supplementalInstructions: "" }],
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [{ ...managerType, supplementalInstructions: "" }],
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: Array.from({ length: 33 }, (_unused, index) => ({
-          ...managerType,
-          agentTypeId: `manager-type-${index}`,
-        })),
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: Array.from({ length: 33 }, (_unused, index) => ({
+              ...managerType,
+              agentTypeId: `manager-type-${index}`,
+            })),
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [{
-          ...managerType,
-          skillIds: Array.from({ length: 33 }, (_unused, index) => `skill.${index}`),
-        }],
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [
+              {
+                ...managerType,
+                skillIds: Array.from({ length: 33 }, (_unused, index) => `skill.${index}`),
+              },
+            ],
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [{ ...managerType, skillIds: ["project.coordinate", "project.coordinate"] }],
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [{ ...managerType, skillIds: ["project.coordinate", "project.coordinate"] }],
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        agentTypes: [managerType, { ...managerType, name: "Duplicate manager type" }],
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            agentTypes: [managerType, { ...managerType, name: "Duplicate manager type" }],
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
-    const wrongReview = automationStages().map((stage) => stage.stage === "human_review"
-      ? { ...stage, executor: { kind: "disabled" as const } }
-      : stage);
+    const wrongReview = automationStages().map((stage) =>
+      stage.stage === "human_review" ? { ...stage, executor: { kind: "disabled" as const } } : stage
+    );
     assert.throws(
       () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({ stages: wrongReview })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
-    const wrongDeployment = automationStages().map((stage) => stage.stage === "deployment"
-      ? { ...stage, executor: { kind: "human" as const } }
-      : stage);
+    const wrongDeployment = automationStages().map((stage) =>
+      stage.stage === "deployment" ? { ...stage, executor: { kind: "human" as const } } : stage
+    );
     assert.throws(
       () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({ stages: wrongDeployment })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
     assert.throws(
-      () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-        stages: [...automationStages()].reverse(),
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST",
+      () =>
+        fixture.board.updateAutomationConfiguration(
+          automationConfigurationRequest({
+            stages: [...automationStages()].reverse(),
+          })
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
-    const verifierStages = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [verifierType],
-      stages: automationStages({
-        research: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
-        testing: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
-      }),
-    }));
+    const verifierStages = fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [verifierType],
+        stages: automationStages({
+          research: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
+          testing: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
+        }),
+      })
+    );
     assert.equal(verifierStages.version, 2);
   } finally {
     fixture.board.close();
@@ -5332,7 +6234,10 @@ test("projects, fixed agents, tasks, messages, and events survive a database res
   const path = await databasePath();
   const fixture = await boardFixture(path);
   const task = fixture.board.createTask(fixture.project.projectId, taskRequest());
-  const claimed = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-persist-0001", messageCursor: null });
+  const claimed = fixture.board.claimRun(fixture.engineer.agentId, {
+    claimId: "claim-persist-0001",
+    messageCursor: null,
+  });
   assert.ok(claimed);
   const progress = fixture.board.appendAgentMessage(task.taskId, fixture.engineer.agentId, {
     clientEventId: "message-persist-0001",
@@ -5373,7 +6278,10 @@ test("projects, fixed agents, tasks, messages, and events survive a database res
     assert.equal(snapshot.recentRuns[0]!.taskId, task.taskId);
     assert.equal(restarted.listMessages(task.taskId).length, 1);
     assert.ok(snapshot.recentEvents.some((event) => event.eventType === "agent_run_settled"));
-    assert.equal(restarted.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId).agentId, fixture.engineer.agentId);
+    assert.equal(
+      restarted.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId).agentId,
+      fixture.engineer.agentId
+    );
     const reviewClaim = restarted.claimRun(fixture.manager.agentId, {
       claimId: "claim-persisted-review-handoff-0001",
       messageCursor: null,
@@ -5421,7 +6329,10 @@ test("run settlement redacts a Bearer credential in both run and task results", 
 test("rotating an agent token invalidates the old credential and fences stale versions", async () => {
   const fixture = await boardFixture();
   try {
-    assert.equal(fixture.board.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId).agentId, fixture.engineer.agentId);
+    assert.equal(
+      fixture.board.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId).agentId,
+      fixture.engineer.agentId
+    );
 
     const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
 
@@ -5431,16 +6342,19 @@ test("rotating an agent token invalidates the old credential and fences stale ve
     assert.ok(rotated.token.length >= 32);
     assert.throws(
       () => fixture.board.authenticateAgent(AGENT_ONE_TOKEN, fixture.engineer.agentId),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 401,
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401
     );
-    assert.equal(fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId).agentId, fixture.engineer.agentId);
+    assert.equal(
+      fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId).agentId,
+      fixture.engineer.agentId
+    );
     assert.throws(
       () => fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_VERSION_CONFLICT",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_VERSION_CONFLICT"
     );
-    const snapshotAgent = fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => (
-      agent.agentId === fixture.engineer.agentId
-    ));
+    const snapshotAgent = fixture.board
+      .snapshot(fixture.project.projectId)
+      .agents.find((agent) => agent.agentId === fixture.engineer.agentId);
     assert.ok(snapshotAgent);
     assert.equal(snapshotAgent.version, rotated.agent.version);
     assert.equal("token" in snapshotAgent, false);
@@ -5453,10 +6367,13 @@ test("rotating an agent token invalidates the old credential and fences stale ve
 test("rotating a token interrupts the active run atomically and leaves its task recoverable by the new lane", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Recover work after credential rotation",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Recover work after credential rotation",
+        requiresReview: false,
+      })
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-active-during-token-rotation-0001",
       messageCursor: null,
@@ -5478,10 +6395,14 @@ test("rotating a token interrupts the active run atomically and leaves its task 
     assert.ok(interruptedTask);
     fixture.board.retryTask(task.taskId, { version: interruptedTask.version });
     const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
-    const replacement = fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-new-token-after-active-rotation-0001",
-      messageCursor: null,
-    }, authenticated.version);
+    const replacement = fixture.board.claimRun(
+      fixture.engineer.agentId,
+      {
+        claimId: "claim-new-token-after-active-rotation-0001",
+        messageCursor: null,
+      },
+      authenticated.version
+    );
     assert.equal(replacement?.task?.taskId, task.taskId);
   } finally {
     fixture.board.close();
@@ -5496,31 +6417,40 @@ test("rotation fences a held claim before it can consume a newly queued wakeup",
       { claimId: "claim-held-across-rotation-0001", messageCursor: null },
       30_000,
       new AbortController().signal,
-      fixture.engineer.version,
+      fixture.engineer.version
     );
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
-      "waiting_for_wake",
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
+      "waiting_for_wake"
     );
 
     const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Queue after worker credential rotation",
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Queue after worker credential rotation",
+      })
+    );
 
     await assert.rejects(
       waiting,
-      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED",
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED"
     );
     const afterOldClaim = fixture.board.snapshot(fixture.project.projectId);
     assert.equal(afterOldClaim.recentRuns.length, 0);
     assert.equal(afterOldClaim.tasks.find((candidate) => candidate.taskId === task.taskId)?.status, "queued");
 
     const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
-    const claimed = fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-new-token-after-rotation-0001",
-      messageCursor: null,
-    }, authenticated.version);
+    const claimed = fixture.board.claimRun(
+      fixture.engineer.agentId,
+      {
+        claimId: "claim-new-token-after-rotation-0001",
+        messageCursor: null,
+      },
+      authenticated.version
+    );
     assert.ok(claimed);
     assert.equal(claimed.task?.taskId, task.taskId);
   } finally {
@@ -5543,18 +6473,20 @@ test("rotation fences a held interrupt watch before it returns newly requested i
       0,
       30_000,
       new AbortController().signal,
-      fixture.engineer.version,
+      fixture.engineer.version
     );
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
-      "watching_run",
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.workerConnection,
+      "watching_run"
     );
 
     const rotated = fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
 
     await assert.rejects(
       waiting,
-      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED",
+      (error: unknown) => error instanceof TaskBoardError && error.status === 401 && error.code === "UNAUTHORIZED"
     );
     const authenticated = fixture.board.authenticateAgent(rotated.token, fixture.engineer.agentId);
     const batch = await fixture.board.waitForRunInterrupts(
@@ -5563,7 +6495,7 @@ test("rotation fences a held interrupt watch before it returns newly requested i
       0,
       0,
       new AbortController().signal,
-      authenticated.version,
+      authenticated.version
     );
     assert.match(batch?.items[0]?.reason ?? "", /token rotated/iu);
   } finally {
@@ -5574,25 +6506,35 @@ test("rotation fences a held interrupt watch before it returns newly requested i
 test("human notes and task edits do not create a durable task wakeup", async () => {
   const fixture = await boardFixture();
   try {
-    const backlog = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
+    const backlog = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
     fixture.board.appendHumanMessage(backlog.taskId, {
       clientEventId: "human-note-no-wake-0001",
       kind: "note",
       body: "Human context only; do not start an agent.",
     });
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-before-assignment-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-before-assignment-0001",
+        messageCursor: null,
+      }),
+      null
+    );
 
-    fixture.board.updateTask(backlog.taskId, {
-      version: backlog.version,
-      assignedAgentId: fixture.engineer.agentId,
-      assignedRole: fixture.engineer.role,
-    }, { type: "human", id: "human:alice" });
+    fixture.board.updateTask(
+      backlog.taskId,
+      {
+        version: backlog.version,
+        assignedAgentId: fixture.engineer.agentId,
+        assignedRole: fixture.engineer.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-after-assignment-0001",
       messageCursor: null,
@@ -5617,15 +6559,22 @@ test("human notes and task edits do not create a durable task wakeup", async () 
     assert.equal(blocked.status, "failed");
     assert.ok(blocked.endedAt);
     assert.equal(blocked.result, "The first implementation attempt needs another pass.");
-    const titleOnly = fixture.board.updateTask(backlog.taskId, {
-      version: blocked.version,
-      title: "Recover interrupted checkout safely",
-    }, { type: "human", id: "human:alice" });
+    const titleOnly = fixture.board.updateTask(
+      backlog.taskId,
+      {
+        version: blocked.version,
+        title: "Recover interrupted checkout safely",
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(titleOnly.version, blocked.version + 1);
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-after-messages-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-after-messages-0001",
+        messageCursor: null,
+      }),
+      null
+    );
   } finally {
     fixture.board.close();
   }
@@ -5657,10 +6606,13 @@ test("held worker requests expose transient ref-counted connections without hear
   try {
     const projectId = fixture.project.projectId;
     const agentId = fixture.engineer.agentId;
-    const backlog = fixture.board.createTask(projectId, taskRequest({
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
+    const backlog = fixture.board.createTask(
+      projectId,
+      taskRequest({
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
     const eventsBeforeWaiting = fixture.board.snapshot(projectId).recentEvents.length;
 
     const alreadyAborted = new AbortController();
@@ -5670,12 +6622,15 @@ test("held worker requests expose transient ref-counted connections without hear
         agentId,
         { claimId: "claim-already-aborted-0001", messageCursor: null },
         30_000,
-        alreadyAborted.signal,
+        alreadyAborted.signal
       ),
       new Promise<"still_waiting">((resolve) => setImmediate(() => resolve("still_waiting"))),
     ]);
     assert.equal(abortedResult, null);
-    assert.equal(fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection, null);
+    assert.equal(
+      fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
+      null
+    );
 
     const firstClaimAbort = new AbortController();
     const secondClaimAbort = new AbortController();
@@ -5683,17 +6638,17 @@ test("held worker requests expose transient ref-counted connections without hear
       agentId,
       { claimId: "claim-held-first-0001", messageCursor: null },
       30_000,
-      firstClaimAbort.signal,
+      firstClaimAbort.signal
     );
     const secondClaim = fixture.board.waitToClaimRun(
       agentId,
       { claimId: "claim-held-second-0001", messageCursor: null },
       30_000,
-      secondClaimAbort.signal,
+      secondClaimAbort.signal
     );
     assert.equal(
       fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
-      "waiting_for_wake",
+      "waiting_for_wake"
     );
     assert.equal(fixture.board.snapshot(projectId).recentEvents.length, eventsBeforeWaiting);
 
@@ -5701,20 +6656,27 @@ test("held worker requests expose transient ref-counted connections without hear
     assert.equal(await firstClaim, null);
     assert.equal(
       fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
-      "waiting_for_wake",
+      "waiting_for_wake"
     );
     assert.equal(fixture.board.snapshot(projectId).recentEvents.length, eventsBeforeWaiting);
 
-    fixture.board.updateTask(backlog.taskId, {
-      version: backlog.version,
-      assignedAgentId: agentId,
-      assignedRole: fixture.engineer.role,
-    }, { type: "human", id: "human:alice" });
+    fixture.board.updateTask(
+      backlog.taskId,
+      {
+        version: backlog.version,
+        assignedAgentId: agentId,
+        assignedRole: fixture.engineer.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     const claimed = await secondClaim;
     assert.ok(claimed);
     assert.equal(claimed.task?.taskId, backlog.taskId);
     assert.equal(claimed.context.agent.workerConnection, null);
-    assert.equal(fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection, null);
+    assert.equal(
+      fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
+      null
+    );
 
     const eventsBeforeWatching = fixture.board.snapshot(projectId).recentEvents.length;
     const firstWatchAbort = new AbortController();
@@ -5724,18 +6686,18 @@ test("held worker requests expose transient ref-counted connections without hear
       agentId,
       0,
       30_000,
-      firstWatchAbort.signal,
+      firstWatchAbort.signal
     );
     const secondWatch = fixture.board.waitForRunInterrupts(
       claimed.run.runId,
       agentId,
       0,
       30_000,
-      secondWatchAbort.signal,
+      secondWatchAbort.signal
     );
     assert.equal(
       fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
-      "watching_run",
+      "watching_run"
     );
     assert.equal(fixture.board.snapshot(projectId).recentEvents.length, eventsBeforeWatching);
 
@@ -5743,14 +6705,21 @@ test("held worker requests expose transient ref-counted connections without hear
     assert.equal(await firstWatch, null);
     assert.equal(
       fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
-      "watching_run",
+      "watching_run"
     );
     assert.equal(fixture.board.snapshot(projectId).recentEvents.length, eventsBeforeWatching);
 
-    fixture.board.interruptAgent(agentId, { reason: "Stop the connection registry test." }, "interrupt-held-watch-0001");
+    fixture.board.interruptAgent(
+      agentId,
+      { reason: "Stop the connection registry test." },
+      "interrupt-held-watch-0001"
+    );
     const interrupt = await secondWatch;
     assert.equal(interrupt?.items[0]?.reason, "Stop the connection registry test.");
-    assert.equal(fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection, null);
+    assert.equal(
+      fixture.board.snapshot(projectId).agents.find((agent) => agent.agentId === agentId)?.workerConnection,
+      null
+    );
     fixture.board.settleRun(claimed.run.runId, agentId, {
       outcome: "interrupted",
       result: "Stopped after testing transient worker connections.",
@@ -5763,31 +6732,44 @@ test("held worker requests expose transient ref-counted connections without hear
 test("a human can return queued work to the backlog before its wake is claimed", async () => {
   const fixture = await boardFixture();
   try {
-    const queued = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Correct queued work before execution",
-    }));
+    const queued = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Correct queued work before execution",
+      })
+    );
     assert.equal(queued.status, "queued");
     assert.equal(queued.assignedAgentId, fixture.engineer.agentId);
 
-    const corrected = fixture.board.updateTask(queued.taskId, {
-      version: queued.version,
-      assignedAgentId: null,
-      assignedRole: null,
-      status: "backlog",
-    }, { type: "human", id: "human:alice" });
+    const corrected = fixture.board.updateTask(
+      queued.taskId,
+      {
+        version: queued.version,
+        assignedAgentId: null,
+        assignedRole: null,
+        status: "backlog",
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(corrected.status, "backlog");
     assert.equal(corrected.assignedAgentId, null);
     assert.equal(corrected.assignedRole, null);
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-after-queued-task-correction-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-after-queued-task-correction-0001",
+        messageCursor: null,
+      }),
+      null
+    );
 
-    const retired = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (
-      event.taskId === queued.taskId &&
-      event.eventType === "agent_wakeup_retired" &&
-      event.data.retirementReason === "task_unassigned"
-    ));
+    const retired = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.find(
+        (event) =>
+          event.taskId === queued.taskId &&
+          event.eventType === "agent_wakeup_retired" &&
+          event.data.retirementReason === "task_unassigned"
+      );
     assert.ok(retired);
   } finally {
     fixture.board.close();
@@ -5797,18 +6779,28 @@ test("a human can return queued work to the backlog before its wake is claimed",
 test("persisted stale wakeups are retired without blocking the next valid task", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const staleTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Unassigned legacy task",
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
-  fixture.board.resumeAgent(fixture.engineer.agentId, {
-    reason: "Legacy resume created before assignment validation.",
-    taskId: staleTask.taskId,
-  }, "legacy-stale-resume-0001");
-  const validTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Valid work after stale wake",
-  }));
+  const staleTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Unassigned legacy task",
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
+  fixture.board.resumeAgent(
+    fixture.engineer.agentId,
+    {
+      reason: "Legacy resume created before assignment validation.",
+      taskId: staleTask.taskId,
+    },
+    "legacy-stale-resume-0001"
+  );
+  const validTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Valid work after stale wake",
+    })
+  );
   fixture.board.close();
 
   const restarted = await TaskBoard.open(config(path));
@@ -5819,26 +6811,37 @@ test("persisted stale wakeups are retired without blocking the next valid task",
     });
     assert.ok(claimed);
     assert.equal(claimed.task?.taskId, validTask.taskId);
-    assert.equal(restarted.resumeAgent(fixture.engineer.agentId, {
-      reason: "Legacy resume created before assignment validation.",
-      taskId: staleTask.taskId,
-    }, "legacy-stale-resume-0001").duplicate, true);
+    assert.equal(
+      restarted.resumeAgent(
+        fixture.engineer.agentId,
+        {
+          reason: "Legacy resume created before assignment validation.",
+          taskId: staleTask.taskId,
+        },
+        "legacy-stale-resume-0001"
+      ).duplicate,
+      true
+    );
 
-    const retired = restarted.snapshot(fixture.project.projectId).recentEvents.find((event) => (
-      event.eventType === "agent_wakeup_retired" && event.taskId === staleTask.taskId
-    ));
+    const retired = restarted
+      .snapshot(fixture.project.projectId)
+      .recentEvents.find((event) => event.eventType === "agent_wakeup_retired" && event.taskId === staleTask.taskId);
     assert.equal(retired?.data.retirementReason, "task_unassigned");
     restarted.settleRun(claimed.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "The valid task completed after the stale wake was retired.",
     });
-    assert.equal(restarted.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-after-retired-stale-wake-0002",
-      messageCursor: null,
-    }), null);
     assert.equal(
-      restarted.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)?.status,
-      "idle",
+      restarted.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-after-retired-stale-wake-0002",
+        messageCursor: null,
+      }),
+      null
+    );
+    assert.equal(
+      restarted.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)
+        ?.status,
+      "idle"
     );
   } finally {
     restarted.close();
@@ -5848,19 +6851,36 @@ test("persisted stale wakeups are retired without blocking the next valid task",
 test("reassignment and terminal decisions retire their pending wakes", async () => {
   const fixture = await boardFixture();
   try {
-    const reassigned = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Reassign before claim" }));
-    fixture.board.updateTask(reassigned.taskId, {
-      version: reassigned.version,
-      assignedAgentId: fixture.manager.agentId,
-      assignedRole: fixture.manager.role,
-    }, { type: "human", id: "human:alice" });
-    const cancelled = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Cancel before claim" }));
-    fixture.board.updateTask(cancelled.taskId, {
-      version: cancelled.version,
-      status: "cancelled",
-      result: "The human cancelled this task before an agent started.",
-    }, { type: "human", id: "human:alice" });
-    const valid = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Still valid engineer work" }));
+    const reassigned = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({ title: "Reassign before claim" })
+    );
+    fixture.board.updateTask(
+      reassigned.taskId,
+      {
+        version: reassigned.version,
+        assignedAgentId: fixture.manager.agentId,
+        assignedRole: fixture.manager.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
+    const cancelled = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({ title: "Cancel before claim" })
+    );
+    fixture.board.updateTask(
+      cancelled.taskId,
+      {
+        version: cancelled.version,
+        status: "cancelled",
+        result: "The human cancelled this task before an agent started.",
+      },
+      { type: "human", id: "human:alice" }
+    );
+    const valid = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({ title: "Still valid engineer work" })
+    );
 
     const engineerClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-after-reassignment-and-cancel-0001",
@@ -5875,8 +6895,9 @@ test("reassignment and terminal decisions retire their pending wakes", async () 
     assert.ok(managerClaim);
     assert.equal(managerClaim.task?.taskId, reassigned.taskId);
 
-    const reasons = fixture.board.snapshot(fixture.project.projectId).recentEvents
-      .filter((event) => event.eventType === "agent_wakeup_retired")
+    const reasons = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.filter((event) => event.eventType === "agent_wakeup_retired")
       .map((event) => event.data.retirementReason);
     assert.ok(reasons.includes("task_reassigned"));
     assert.ok(reasons.includes("task_cancelled"));
@@ -5896,11 +6917,18 @@ test("reassignment and terminal decisions retire their pending wakes", async () 
 test("the newest human trigger supersedes older unclaimed wakes for the same task", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Use only the latest trigger" }));
-    const latest = fixture.board.resumeAgent(fixture.engineer.agentId, {
-      reason: "Use the newest human direction for this task.",
-      taskId: task.taskId,
-    }, "newest-trigger-resume-0001");
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({ title: "Use only the latest trigger" })
+    );
+    const latest = fixture.board.resumeAgent(
+      fixture.engineer.agentId,
+      {
+        reason: "Use the newest human direction for this task.",
+        taskId: task.taskId,
+      },
+      "newest-trigger-resume-0001"
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-newest-trigger-only-0001",
       messageCursor: null,
@@ -5908,18 +6936,24 @@ test("the newest human trigger supersedes older unclaimed wakes for the same tas
     assert.ok(claim);
     assert.equal(claim.wakeup.wakeupId, latest.wakeup.wakeupId);
     assert.equal(claim.wakeup.reason, "human_resume");
-    const retired = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (
-      event.eventType === "agent_wakeup_retired" && event.data.retirementReason === "superseded_by_preferred_wakeup"
-    ));
+    const retired = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.find(
+        (event) =>
+          event.eventType === "agent_wakeup_retired" && event.data.retirementReason === "superseded_by_preferred_wakeup"
+      );
     assert.equal(retired?.data.supersededByWakeupId, latest.wakeup.wakeupId);
     fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
       outcome: "failed",
       result: "The newest trigger was handled once.",
     });
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-no-duplicate-trigger-0002",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-no-duplicate-trigger-0002",
+        messageCursor: null,
+      }),
+      null
+    );
   } finally {
     fixture.board.close();
   }
@@ -5934,10 +6968,13 @@ test("human question and answer prose is redacted across every durable projectio
   const rawAnswer = `Use ${answerSecret} only in the ephemeral process.`;
   const expectedAnswer = "Use [redacted:token] only in the ephemeral process.";
   try {
-    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Ask a credential-bearing planning question safely.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "question-answer-redaction-0001").workItem;
+    const created = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Ask a credential-bearing planning question safely.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "question-answer-redaction-0001"
+    ).workItem;
     assert.ok(created.planningTaskId);
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-question-answer-redaction-0001",
@@ -5971,17 +7008,18 @@ test("human question and answer prose is redacted across every durable projectio
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const persistedQuestion = inspected.prepare("SELECT question,answer FROM questions WHERE question_id=?")
+      const persistedQuestion = inspected
+        .prepare("SELECT question,answer FROM questions WHERE question_id=?")
         .get(question.questionId);
       assert.equal(persistedQuestion?.question, expectedQuestion);
       assert.equal(persistedQuestion?.answer, expectedAnswer);
       assert.equal(
         inspected.prepare("SELECT result FROM runs WHERE run_id=?").get(claim.run.runId)?.result,
-        `Waiting for human answer: ${expectedQuestion}`,
+        `Waiting for human answer: ${expectedQuestion}`
       );
       assert.equal(
         inspected.prepare("SELECT detail FROM wakeups WHERE wakeup_id=?").get(answered.wakeup.wakeupId)?.detail,
-        `Human answered: ${expectedAnswer}`,
+        `Human answered: ${expectedAnswer}`
       );
     } finally {
       inspected.close();
@@ -5995,7 +7033,10 @@ test("asking a question atomically releases the run and only the human answer wa
   const fixture = await boardFixture();
   try {
     const task = fixture.board.createTask(fixture.project.projectId, taskRequest());
-    const first = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-question-0001", messageCursor: null });
+    const first = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-question-0001",
+      messageCursor: null,
+    });
     assert.ok(first);
     assert.equal(first.task?.status, "in_progress");
     const startedAt = first.task?.startedAt;
@@ -6010,10 +7051,13 @@ test("asking a question atomically releases the run and only the human answer wa
     assert.equal(waitingForHuman.recentRuns[0]!.status, "waiting_for_human");
     assert.equal(waitingForHuman.tasks[0]?.status, "blocked");
     assert.equal(waitingForHuman.tasks[0]?.endedAt, null);
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-before-answer-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-before-answer-0001",
+        messageCursor: null,
+      }),
+      null
+    );
 
     const benignAnswer = "Yes. Preserve it and verify duplicate-submit behavior.";
     const answered = fixture.board.answerQuestion(question.questionId, {
@@ -6023,10 +7067,14 @@ test("asking a question atomically releases the run and only the human answer wa
     assert.equal(answered.duplicate, false);
     assert.equal(answered.question.answer, benignAnswer);
     assert.equal(answered.wakeup.reason, "human_answer");
-    const redundantResume = fixture.board.resumeAgent(fixture.engineer.agentId, {
-      reason: "Resume after recording the answer.",
-      taskId: task.taskId,
-    }, "resume-after-answer-0001");
+    const redundantResume = fixture.board.resumeAgent(
+      fixture.engineer.agentId,
+      {
+        reason: "Resume after recording the answer.",
+        taskId: task.taskId,
+      },
+      "resume-after-answer-0001"
+    );
     const resumed = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-after-answer-0001",
       messageCursor: null,
@@ -6042,9 +7090,12 @@ test("asking a question atomically releases the run and only the human answer wa
     const oversight = fixture.board.snapshot(fixture.project.projectId);
     assert.equal(oversight.openQuestions.length, 0);
     assert.equal(oversight.recentQuestions[0]?.answer, answered.question.answer);
-    assert.equal(oversight.recentEvents.some((event) => (
-      event.eventType === "agent_wakeup_retired" && event.data.wakeupId === answered.wakeup.wakeupId
-    )), false);
+    assert.equal(
+      oversight.recentEvents.some(
+        (event) => event.eventType === "agent_wakeup_retired" && event.data.wakeupId === answered.wakeup.wakeupId
+      ),
+      false
+    );
   } finally {
     fixture.board.close();
   }
@@ -6053,10 +7104,13 @@ test("asking a question atomically releases the run and only the human answer wa
 test("retry preserves an unclaimed human answer wakeup and its question context", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Keep the answered recovery question",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Keep the answered recovery question",
+        requiresReview: false,
+      })
+    );
     const first = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-answer-preserved-before-retry-0001",
       messageCursor: null,
@@ -6083,15 +7137,25 @@ test("retry preserves an unclaimed human answer wakeup and its question context"
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(inspected.prepare(`
+      assert.equal(
+        Number(
+          inspected
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         WHERE wakeup.task_id=? AND wakeup.reason='resumed' AND wakeup.claimed_at IS NULL
           AND NOT EXISTS(
             SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
           )
-      `).get(task.taskId)?.count), 0);
-      const persistedAnswer = inspected.prepare("SELECT claimed_at FROM wakeups WHERE wakeup_id=?")
+      `
+            )
+            .get(task.taskId)?.count
+        ),
+        0
+      );
+      const persistedAnswer = inspected
+        .prepare("SELECT claimed_at FROM wakeups WHERE wakeup_id=?")
         .get(answered.wakeup.wakeupId);
       assert.equal(persistedAnswer?.claimed_at, null);
     } finally {
@@ -6119,32 +7183,51 @@ test("only the assigned agent records a nullable estimate after inspecting work"
     const task = fixture.board.createTask(fixture.project.projectId, taskRequest());
     assert.equal(task.expectedAgentMinutes, null);
     assert.equal(task.estimateRecordedAt, null);
-    const claim = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-timing-0001", messageCursor: null });
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-timing-0001",
+      messageCursor: null,
+    });
     assert.ok(claim);
     assert.equal(claim.task?.status, "in_progress");
     assert.equal(claim.task?.startedAt, "2026-07-19T20:00:00.000Z");
     assert.equal(claim.task?.expectedCompletedAt, null);
     assert.equal(claim.task?.version, task.version + 1);
     await assert.rejects(
-      Promise.resolve().then(() => fixture.board.updateTask(task.taskId, {
-        version: claim.task!.version,
-        expectedAgentMinutes: 30,
-      }, { type: "human", id: "human:alice" })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_ESTIMATE_REQUIRED",
+      Promise.resolve().then(() =>
+        fixture.board.updateTask(
+          task.taskId,
+          {
+            version: claim.task!.version,
+            expectedAgentMinutes: 30,
+          },
+          { type: "human", id: "human:alice" }
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_ESTIMATE_REQUIRED"
     );
     now = new Date("2026-07-19T20:05:00.000Z");
-    const estimated = fixture.board.updateTask(task.taskId, {
-      version: claim.task!.version,
-      expectedAgentMinutes: 30,
-    }, { type: "agent", id: fixture.engineer.agentId });
+    const estimated = fixture.board.updateTask(
+      task.taskId,
+      {
+        version: claim.task!.version,
+        expectedAgentMinutes: 30,
+      },
+      { type: "agent", id: fixture.engineer.agentId }
+    );
     assert.equal(estimated.estimateRecordedAt, "2026-07-19T20:05:00.000Z");
     assert.equal(estimated.expectedCompletedAt, "2026-07-19T20:45:00.000Z");
     await assert.rejects(
-      Promise.resolve().then(() => fixture.board.updateTask(task.taskId, {
-        version: task.version,
-        status: "blocked",
-      }, { type: "agent", id: fixture.engineer.agentId })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_VERSION_CONFLICT",
+      Promise.resolve().then(() =>
+        fixture.board.updateTask(
+          task.taskId,
+          {
+            version: task.version,
+            status: "blocked",
+          },
+          { type: "agent", id: fixture.engineer.agentId }
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_VERSION_CONFLICT"
     );
     now = new Date("2026-07-19T20:35:00.000Z");
     fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
@@ -6169,10 +7252,14 @@ test("changing or clearing an assignee clears the previous agent's estimate", as
       const task = fixture.board.createTask(fixture.project.projectId, taskRequest({ title }));
       const claim = fixture.board.claimRun(fixture.engineer.agentId, { claimId, messageCursor: null });
       assert.ok(claim);
-      const estimated = fixture.board.updateTask(task.taskId, {
-        version: claim.task!.version,
-        expectedAgentMinutes: 45,
-      }, { type: "agent", id: fixture.engineer.agentId });
+      const estimated = fixture.board.updateTask(
+        task.taskId,
+        {
+          version: claim.task!.version,
+          expectedAgentMinutes: 45,
+        },
+        { type: "agent", id: fixture.engineer.agentId }
+      );
       assert.equal(estimated.expectedAgentMinutes, 45);
       assert.ok(estimated.estimateRecordedAt);
       fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
@@ -6186,27 +7273,34 @@ test("changing or clearing an assignee clears the previous agent's estimate", as
 
     const blockedForReassignment = estimatedBlockedTask(
       "Reassign an estimated task",
-      "claim-estimate-before-reassignment-0001",
+      "claim-estimate-before-reassignment-0001"
     );
-    const reassigned = fixture.board.updateTask(blockedForReassignment.taskId, {
-      version: blockedForReassignment.version,
-      assignedAgentId: fixture.manager.agentId,
-      assignedRole: fixture.manager.role,
-    }, { type: "human", id: "human:alice" });
+    const reassigned = fixture.board.updateTask(
+      blockedForReassignment.taskId,
+      {
+        version: blockedForReassignment.version,
+        assignedAgentId: fixture.manager.agentId,
+        assignedRole: fixture.manager.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(reassigned.assignedAgentId, fixture.manager.agentId);
     assert.equal(reassigned.expectedAgentMinutes, null);
     assert.equal(reassigned.estimateRecordedAt, null);
     assert.equal(reassigned.expectedCompletedAt, null);
-    const updateEvent = fixture.board.snapshot(fixture.project.projectId).recentEvents.find((event) => (
-      event.taskId === blockedForReassignment.taskId &&
-      event.eventType === "task_updated" &&
-      event.data.version === reassigned.version
-    ));
+    const updateEvent = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.find(
+        (event) =>
+          event.taskId === blockedForReassignment.taskId &&
+          event.eventType === "task_updated" &&
+          event.data.version === reassigned.version
+      );
     assert.equal(updateEvent?.data.expectedAgentMinutes, null);
 
     const blockedForBacklog = estimatedBlockedTask(
       "Unassign an estimated task",
-      "claim-estimate-before-unassignment-0001",
+      "claim-estimate-before-unassignment-0001"
     );
     const unassigned = fixture.board.backlogTask(blockedForBacklog.taskId, {
       version: blockedForBacklog.version,
@@ -6223,22 +7317,35 @@ test("changing or clearing an assignee clears the previous agent's estimate", as
 test("durable task order controls both snapshots and the next unclaimed wakeup", async () => {
   const fixture = await boardFixture();
   try {
-    const first = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Originally first",
-    }));
-    const second = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Promoted follow-up",
-    }));
+    const first = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Originally first",
+      })
+    );
+    const second = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Promoted follow-up",
+      })
+    );
     assert.ok(first.orderKey < second.orderKey);
 
-    const demotedFirst = fixture.board.updateTask(first.taskId, {
-      version: first.version,
-      orderKey: second.orderKey + 1024,
-    }, { type: "human", id: "human:alice" });
+    const demotedFirst = fixture.board.updateTask(
+      first.taskId,
+      {
+        version: first.version,
+        orderKey: second.orderKey + 1024,
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(demotedFirst.orderKey, second.orderKey + 1024);
     assert.deepEqual(
-      fixture.board.snapshot(fixture.project.projectId).tasks.slice(0, 2).map((task) => task.taskId),
-      [second.taskId, first.taskId],
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .tasks.slice(0, 2)
+        .map((task) => task.taskId),
+      [second.taskId, first.taskId]
     );
 
     const claimedSecond = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -6258,38 +7365,48 @@ test("durable task order controls both snapshots and the next unclaimed wakeup",
 test("task order is one global domain across projects, snapshots, reorders, and wake claims", async () => {
   const fixture = await boardFixture();
   try {
-    const originallyFirst = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Originally first across the company",
-    }));
+    const originallyFirst = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Originally first across the company",
+      })
+    );
     const otherProject = fixture.board.createProject({
       name: "Customer reporting",
       description: "Keep customer reports useful.",
     });
-    const crossProjectTask = fixture.board.createTask(otherProject.projectId, taskRequest({
-      title: "Interleaved work from another project",
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
-    const originallyLast = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Originally last across the company",
-    }));
-
-    assert.deepEqual(
-      [originallyFirst.orderKey, crossProjectTask.orderKey, originallyLast.orderKey],
-      [0, 1024, 2048],
+    const crossProjectTask = fixture.board.createTask(
+      otherProject.projectId,
+      taskRequest({
+        title: "Interleaved work from another project",
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
+    const originallyLast = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Originally last across the company",
+      })
     );
 
-    const movedFirst = fixture.board.updateTask(originallyFirst.taskId, {
-      version: originallyFirst.version,
-      orderKey: 3072,
-    }, { type: "human", id: "human:alice" });
+    assert.deepEqual([originallyFirst.orderKey, crossProjectTask.orderKey, originallyLast.orderKey], [0, 1024, 2048]);
+
+    const movedFirst = fixture.board.updateTask(
+      originallyFirst.taskId,
+      {
+        version: originallyFirst.version,
+        orderKey: 3072,
+      },
+      { type: "human", id: "human:alice" }
+    );
     const visibleAcrossProjects = [
       ...fixture.board.snapshot(fixture.project.projectId).tasks,
       ...fixture.board.snapshot(otherProject.projectId).tasks,
     ].sort((left, right) => left.orderKey - right.orderKey || left.taskId.localeCompare(right.taskId));
     assert.deepEqual(
       visibleAcrossProjects.map((task) => task.taskId),
-      [crossProjectTask.taskId, originallyLast.taskId, movedFirst.taskId],
+      [crossProjectTask.taskId, originallyLast.taskId, movedFirst.taskId]
     );
 
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -6308,14 +7425,22 @@ test("duplicate order keys use task id for the same visible and claim order", as
     const first = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Tied task one" }));
     const second = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Tied task two" }));
     const tiedOrderKey = 4_096;
-    fixture.board.updateTask(first.taskId, {
-      version: first.version,
-      orderKey: tiedOrderKey,
-    }, { type: "human", id: "human:alice" });
-    fixture.board.updateTask(second.taskId, {
-      version: second.version,
-      orderKey: tiedOrderKey,
-    }, { type: "human", id: "human:alice" });
+    fixture.board.updateTask(
+      first.taskId,
+      {
+        version: first.version,
+        orderKey: tiedOrderKey,
+      },
+      { type: "human", id: "human:alice" }
+    );
+    fixture.board.updateTask(
+      second.taskId,
+      {
+        version: second.version,
+        orderKey: tiedOrderKey,
+      },
+      { type: "human", id: "human:alice" }
+    );
 
     const expected = [first.taskId, second.taskId].sort((left, right) => left.localeCompare(right));
     const visible = fixture.board.snapshot(fixture.project.projectId).tasks.map((task) => task.taskId);
@@ -6339,48 +7464,81 @@ test("agents durably report independent phases that may progress in parallel", a
       messageCursor: null,
     });
     assert.ok(claim);
-    const apiPhase = fixture.board.createTaskPhase(task.taskId, {
-      title: "Implement API changes",
-      stage: "planning",
-      parallelGroup: "implementation",
-    }, fixture.engineer.agentId);
-    const clientPhase = fixture.board.createTaskPhase(task.taskId, {
-      title: "Implement client changes",
-      stage: "planning",
-      parallelGroup: "implementation",
-    }, fixture.engineer.agentId);
-    const runningApi = fixture.board.updateTaskPhase(apiPhase.phaseId, {
-      version: apiPhase.version,
-      stage: "execution",
-      status: "in_progress",
-    }, fixture.engineer.agentId);
-    const runningClient = fixture.board.updateTaskPhase(clientPhase.phaseId, {
-      version: clientPhase.version,
-      stage: "execution",
-      status: "in_progress",
-    }, fixture.engineer.agentId);
+    const apiPhase = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Implement API changes",
+        stage: "planning",
+        parallelGroup: "implementation",
+      },
+      fixture.engineer.agentId
+    );
+    const clientPhase = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Implement client changes",
+        stage: "planning",
+        parallelGroup: "implementation",
+      },
+      fixture.engineer.agentId
+    );
+    const runningApi = fixture.board.updateTaskPhase(
+      apiPhase.phaseId,
+      {
+        version: apiPhase.version,
+        stage: "execution",
+        status: "in_progress",
+      },
+      fixture.engineer.agentId
+    );
+    const runningClient = fixture.board.updateTaskPhase(
+      clientPhase.phaseId,
+      {
+        version: clientPhase.version,
+        stage: "execution",
+        status: "in_progress",
+      },
+      fixture.engineer.agentId
+    );
     const visible = fixture.board.requireTask(task.taskId).phases;
     assert.equal(visible.filter((phase) => phase.status === "in_progress").length, 2);
-    assert.deepEqual(visible.map((phase) => phase.parallelGroup), ["implementation", "implementation"]);
-    assert.throws(
-      () => fixture.board.updateTaskPhase(runningApi.phaseId, {
-        version: runningApi.version,
-        stage: "done",
-      }, fixture.engineer.agentId),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "PHASE_STATE_INVALID",
+    assert.deepEqual(
+      visible.map((phase) => phase.parallelGroup),
+      ["implementation", "implementation"]
     );
-    const completedApi = fixture.board.updateTaskPhase(runningApi.phaseId, {
-      version: runningApi.version,
-      status: "completed",
-    }, fixture.engineer.agentId);
+    assert.throws(
+      () =>
+        fixture.board.updateTaskPhase(
+          runningApi.phaseId,
+          {
+            version: runningApi.version,
+            stage: "done",
+          },
+          fixture.engineer.agentId
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "PHASE_STATE_INVALID"
+    );
+    const completedApi = fixture.board.updateTaskPhase(
+      runningApi.phaseId,
+      {
+        version: runningApi.version,
+        status: "completed",
+      },
+      fixture.engineer.agentId
+    );
     assert.ok(completedApi.endedAt);
     assert.equal(completedApi.stage, "execution");
     assert.throws(
-      () => fixture.board.updateTaskPhase(completedApi.phaseId, {
-        version: completedApi.version,
-        title: "Cannot rewrite a terminal phase",
-      }, fixture.engineer.agentId),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_PHASE_TERMINAL",
+      () =>
+        fixture.board.updateTaskPhase(
+          completedApi.phaseId,
+          {
+            version: completedApi.version,
+            title: "Cannot rewrite a terminal phase",
+          },
+          fixture.engineer.agentId
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_PHASE_TERMINAL"
     );
     assert.equal(runningClient.status, "in_progress");
   } finally {
@@ -6398,43 +7556,75 @@ test("terminal task transitions atomically settle every unfinished phase", async
       messageCursor: null,
     });
     assert.ok(claim);
-    const pending = fixture.board.createTaskPhase(task.taskId, {
-      title: "Pending research",
-      stage: "research",
-      parallelGroup: null,
-    }, fixture.engineer.agentId);
-    const execution = fixture.board.createTaskPhase(task.taskId, {
-      title: "Active implementation",
-      stage: "planning",
-      parallelGroup: "implementation",
-    }, fixture.engineer.agentId);
-    const running = fixture.board.updateTaskPhase(execution.phaseId, {
-      version: execution.version,
-      stage: "execution",
-      status: "in_progress",
-    }, fixture.engineer.agentId);
-    const review = fixture.board.createTaskPhase(task.taskId, {
-      title: "Blocked review",
-      stage: "review",
-      parallelGroup: null,
-    }, fixture.engineer.agentId);
-    const blocked = fixture.board.updateTaskPhase(review.phaseId, {
-      version: review.version,
-      status: "blocked",
-    }, fixture.engineer.agentId);
-    const alreadyDone = fixture.board.createTaskPhase(task.taskId, {
-      title: "Completed plan",
-      stage: "planning",
-      parallelGroup: null,
-    }, fixture.engineer.agentId);
-    const startedDone = fixture.board.updateTaskPhase(alreadyDone.phaseId, {
-      version: alreadyDone.version,
-      status: "in_progress",
-    }, fixture.engineer.agentId);
-    const completedBeforeTask = fixture.board.updateTaskPhase(alreadyDone.phaseId, {
-      version: startedDone.version,
-      status: "completed",
-    }, fixture.engineer.agentId);
+    const pending = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Pending research",
+        stage: "research",
+        parallelGroup: null,
+      },
+      fixture.engineer.agentId
+    );
+    const execution = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Active implementation",
+        stage: "planning",
+        parallelGroup: "implementation",
+      },
+      fixture.engineer.agentId
+    );
+    const running = fixture.board.updateTaskPhase(
+      execution.phaseId,
+      {
+        version: execution.version,
+        stage: "execution",
+        status: "in_progress",
+      },
+      fixture.engineer.agentId
+    );
+    const review = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Blocked review",
+        stage: "review",
+        parallelGroup: null,
+      },
+      fixture.engineer.agentId
+    );
+    const blocked = fixture.board.updateTaskPhase(
+      review.phaseId,
+      {
+        version: review.version,
+        status: "blocked",
+      },
+      fixture.engineer.agentId
+    );
+    const alreadyDone = fixture.board.createTaskPhase(
+      task.taskId,
+      {
+        title: "Completed plan",
+        stage: "planning",
+        parallelGroup: null,
+      },
+      fixture.engineer.agentId
+    );
+    const startedDone = fixture.board.updateTaskPhase(
+      alreadyDone.phaseId,
+      {
+        version: alreadyDone.version,
+        status: "in_progress",
+      },
+      fixture.engineer.agentId
+    );
+    const completedBeforeTask = fixture.board.updateTaskPhase(
+      alreadyDone.phaseId,
+      {
+        version: startedDone.version,
+        status: "completed",
+      },
+      fixture.engineer.agentId
+    );
 
     now = new Date("2026-07-19T20:15:00.000Z");
     fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
@@ -6444,7 +7634,10 @@ test("terminal task transitions atomically settle every unfinished phase", async
     const completedTask = fixture.board.requireTask(task.taskId);
     assert.equal(completedTask.status, "completed");
     assert.ok(completedTask.phases.every((phase) => phase.status === "completed"));
-    assert.deepEqual(completedTask.phases.map((phase) => phase.stage), ["research", "execution", "review", "planning"]);
+    assert.deepEqual(
+      completedTask.phases.map((phase) => phase.stage),
+      ["research", "execution", "review", "planning"]
+    );
     const settledPending = completedTask.phases.find((phase) => phase.phaseId === pending.phaseId)!;
     const settledRunning = completedTask.phases.find((phase) => phase.phaseId === running.phaseId)!;
     const settledBlocked = completedTask.phases.find((phase) => phase.phaseId === blocked.phaseId)!;
@@ -6458,35 +7651,49 @@ test("terminal task transitions atomically settle every unfinished phase", async
     assert.equal(settledBlocked.version, blocked.version + 1);
     assert.equal(preservedDone.version, completedBeforeTask.version);
     assert.equal(preservedDone.endedAt, completedBeforeTask.endedAt);
-    const reconciliationEvents = fixture.board.snapshot(fixture.project.projectId).recentEvents.filter((event) => (
-      event.taskId === task.taskId &&
-      event.eventType === "task_phase_updated" &&
-      event.data.terminalTaskStatus === "completed"
-    ));
+    const reconciliationEvents = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentEvents.filter(
+        (event) =>
+          event.taskId === task.taskId &&
+          event.eventType === "task_phase_updated" &&
+          event.data.terminalTaskStatus === "completed"
+      );
     assert.equal(reconciliationEvents.length, 3);
 
-    const failedTask = fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Fail unfinished phase" }));
+    const failedTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({ title: "Fail unfinished phase" })
+    );
     const failedClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-failed-terminal-phases-0001",
       messageCursor: null,
     });
     assert.ok(failedClaim);
-    const failedPhase = fixture.board.createTaskPhase(failedTask.taskId, {
-      title: "Unfinished test pass",
-      stage: "testing",
-      parallelGroup: null,
-    }, fixture.engineer.agentId);
+    const failedPhase = fixture.board.createTaskPhase(
+      failedTask.taskId,
+      {
+        title: "Unfinished test pass",
+        stage: "testing",
+        parallelGroup: null,
+      },
+      fixture.engineer.agentId
+    );
     fixture.board.settleRun(failedClaim.run.runId, fixture.engineer.agentId, {
       outcome: "failed",
       result: "The run stopped before tests finished.",
     });
     now = new Date("2026-07-19T20:30:00.000Z");
     const blockedTask = fixture.board.requireTask(failedTask.taskId);
-    const terminalFailure = fixture.board.updateTask(failedTask.taskId, {
-      version: blockedTask.version,
-      status: "failed",
-      result: "The human closed the unsuccessful task.",
-    }, { type: "human", id: "human:alice" });
+    const terminalFailure = fixture.board.updateTask(
+      failedTask.taskId,
+      {
+        version: blockedTask.version,
+        status: "failed",
+        result: "The human closed the unsuccessful task.",
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(terminalFailure.phases[0]?.status, "failed");
     assert.equal(terminalFailure.phases[0]?.stage, failedPhase.stage);
     assert.equal(terminalFailure.phases[0]?.startedAt, "2026-07-19T20:30:00.000Z");
@@ -6505,15 +7712,17 @@ test("claim area memory keeps the newest eight results, caps result text, and ex
     const longResult = `Customer impact: ${"x".repeat(1_200)}`;
     for (let index = 0; index < 10; index += 1) {
       if (index < 9) now = new Date(now.valueOf() + 15 * 60_000);
-      completed.push(completeAssignedTask(
-        fixture.board,
-        fixture.project.projectId,
-        fixture.engineer.agentId,
-        fixture.engineer.role,
-        `Completed area task ${index}`,
-        `claim-area-history-${index}`,
-        index === 9 ? longResult : `Result for completed area task ${index}.`,
-      ));
+      completed.push(
+        completeAssignedTask(
+          fixture.board,
+          fixture.project.projectId,
+          fixture.engineer.agentId,
+          fixture.engineer.role,
+          `Completed area task ${index}`,
+          `claim-area-history-${index}`,
+          index === 9 ? longResult : `Result for completed area task ${index}.`
+        )
+      );
     }
 
     now = new Date(now.valueOf() + 15 * 60_000);
@@ -6522,18 +7731,23 @@ test("claim area memory keeps the newest eight results, caps result text, and ex
     const claim = fixture.board.claimRun(fixture.engineer.agentId, request);
     assert.ok(claim);
 
-    const expected = [...completed].sort((left, right) => {
-      if (left.endedAt !== right.endedAt) return left.endedAt! > right.endedAt! ? -1 : 1;
-      if (left.taskId === right.taskId) return 0;
-      return left.taskId > right.taskId ? -1 : 1;
-    }).slice(0, 8);
-    assert.deepEqual(claim.context.areaMemory.map((entry) => entry.taskId), expected.map((task) => task.taskId));
+    const expected = [...completed]
+      .sort((left, right) => {
+        if (left.endedAt !== right.endedAt) return left.endedAt! > right.endedAt! ? -1 : 1;
+        if (left.taskId === right.taskId) return 0;
+        return left.taskId > right.taskId ? -1 : 1;
+      })
+      .slice(0, 8);
+    assert.deepEqual(
+      claim.context.areaMemory.map((entry) => entry.taskId),
+      expected.map((task) => task.taskId)
+    );
     assert.equal(claim.context.areaMemory.length, 8);
     assert.ok(claim.context.areaMemory.every((entry) => entry.taskId !== current.taskId));
     assert.ok(claim.context.areaMemory.every((entry, index) => entry.endedAt === expected[index]?.endedAt));
-    assert.ok(claim.context.areaMemory.every((entry) => (
-      Object.keys(entry).sort().join(",") === "endedAt,result,taskId,title"
-    )));
+    assert.ok(
+      claim.context.areaMemory.every((entry) => Object.keys(entry).sort().join(",") === "endedAt,result,taskId,title")
+    );
     const capped = claim.context.areaMemory.find((entry) => entry.title === "Completed area task 9");
     assert.equal(capped?.result, longResult.slice(0, 1_000));
     assert.equal(capped?.result.length, 1_000);
@@ -6544,7 +7758,10 @@ test("claim area memory keeps the newest eight results, caps result text, and ex
     });
     const replay = fixture.board.claimRun(fixture.engineer.agentId, request);
     assert.ok(replay);
-    assert.deepEqual(replay.context.areaMemory.map((entry) => entry.taskId), expected.map((task) => task.taskId));
+    assert.deepEqual(
+      replay.context.areaMemory.map((entry) => entry.taskId),
+      expected.map((task) => task.taskId)
+    );
     assert.ok(replay.context.areaMemory.every((entry) => entry.taskId !== current.taskId));
   } finally {
     fixture.board.close();
@@ -6564,7 +7781,7 @@ test("claim area memory is isolated to an agent and project and survives a file-
       fixture.engineer.role,
       "Remembered checkout improvement",
       "claim-area-isolation-engineer-0001",
-      "Customers can retry without a duplicate charge.",
+      "Customers can retry without a duplicate charge."
     );
     const otherAgent = completeAssignedTask(
       fixture.board,
@@ -6573,7 +7790,7 @@ test("claim area memory is isolated to an agent and project and survives a file-
       fixture.manager.role,
       "Other agent's release review",
       "claim-area-isolation-manager-0001",
-      "This belongs only to the manager's area memory.",
+      "This belongs only to the manager's area memory."
     );
 
     const otherProject = fixture.board.createProject({
@@ -6595,16 +7812,22 @@ test("claim area memory is isolated to an agent and project and survives a file-
       otherProjectEngineer.role,
       "Other project's recovery improvement",
       "claim-area-isolation-project-0001",
-      "This belongs only to the other project.",
+      "This belongs only to the other project."
     );
 
-    const current = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Use persistent area memory",
-    }));
+    const current = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Use persistent area memory",
+      })
+    );
     const request = { claimId: "claim-area-persist-0001", messageCursor: null } as const;
     const claim = fixture.board.claimRun(fixture.engineer.agentId, request);
     assert.ok(claim);
-    assert.deepEqual(claim.context.areaMemory.map((entry) => entry.taskId), [remembered.taskId]);
+    assert.deepEqual(
+      claim.context.areaMemory.map((entry) => entry.taskId),
+      [remembered.taskId]
+    );
     assert.ok(claim.context.areaMemory.every((entry) => entry.taskId !== otherAgent.taskId));
     assert.ok(claim.context.areaMemory.every((entry) => entry.taskId !== otherProjectTask.taskId));
     assert.ok(claim.context.areaMemory.every((entry) => entry.taskId !== current.taskId));
@@ -6614,12 +7837,14 @@ test("claim area memory is isolated to an agent and project and survives a file-
     restarted = await TaskBoard.open(config(path));
     const replay = restarted.claimRun(fixture.engineer.agentId, request);
     assert.ok(replay);
-    assert.deepEqual(replay.context.areaMemory, [{
-      taskId: remembered.taskId,
-      title: remembered.title,
-      result: remembered.result,
-      endedAt: remembered.endedAt,
-    }]);
+    assert.deepEqual(replay.context.areaMemory, [
+      {
+        taskId: remembered.taskId,
+        title: remembered.title,
+        result: remembered.result,
+        endedAt: remembered.endedAt,
+      },
+    ]);
   } finally {
     if (originalOpen) fixture.board.close();
     restarted?.close();
@@ -6629,19 +7854,25 @@ test("claim area memory is isolated to an agent and project and survives a file-
 test("claims isolate message cursors per task and expose bounded completed-parent evidence", async () => {
   const fixture = await boardFixture();
   try {
-    const olderTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Older unassigned follow-up",
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
+    const olderTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Older unassigned follow-up",
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
     const olderNote = fixture.board.appendHumanMessage(olderTask.taskId, {
       clientEventId: "older-task-note-0001",
       kind: "note",
       body: "This older note must not be hidden by another task's cursor.",
     });
-    const engineerTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Engineer implementation for review",
-    }));
+    const engineerTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Engineer implementation for review",
+      })
+    );
     fixture.board.appendHumanMessage(engineerTask.taskId, {
       clientEventId: "engineer-task-note-0001",
       kind: "note",
@@ -6652,7 +7883,10 @@ test("claims isolate message cursors per task and expose bounded completed-paren
       messageCursors: {},
     });
     assert.ok(engineerClaim);
-    assert.deepEqual(engineerClaim.context.messages.map((message) => message.taskId), [engineerTask.taskId]);
+    assert.deepEqual(
+      engineerClaim.context.messages.map((message) => message.taskId),
+      [engineerTask.taskId]
+    );
     fixture.board.appendAgentMessage(engineerTask.taskId, fixture.engineer.agentId, {
       clientEventId: "engineer-parent-progress-0001",
       kind: "progress",
@@ -6664,29 +7898,39 @@ test("claims isolate message cursors per task and expose bounded completed-paren
       result: "Checkout retries are safe and the focused tests pass.",
     });
 
-    const assignedOlder = fixture.board.updateTask(olderTask.taskId, {
-      version: olderTask.version,
-      assignedAgentId: fixture.engineer.agentId,
-      assignedRole: fixture.engineer.role,
-    }, { type: "human", id: "human:alice" });
+    const assignedOlder = fixture.board.updateTask(
+      olderTask.taskId,
+      {
+        version: olderTask.version,
+        assignedAgentId: fixture.engineer.agentId,
+        assignedRole: fixture.engineer.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     const olderClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-older-task-0001",
       messageCursors: { [engineerTask.taskId]: engineerClaim.context.messageCursor },
     });
     assert.ok(olderClaim);
     assert.equal(olderClaim.task?.version, assignedOlder.version + 1);
-    assert.deepEqual(olderClaim.context.messages.map((message) => message.messageId), [olderNote.messageId]);
+    assert.deepEqual(
+      olderClaim.context.messages.map((message) => message.messageId),
+      [olderNote.messageId]
+    );
     fixture.board.settleRun(olderClaim.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "The older follow-up was reviewed independently.",
     });
 
-    fixture.board.createTask(fixture.project.projectId, taskRequest({
-      parentTaskId: engineerTask.taskId,
-      title: "Manager review of completed engineer work",
-      assignedAgentId: fixture.manager.agentId,
-      assignedRole: fixture.manager.role,
-    }));
+    fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        parentTaskId: engineerTask.taskId,
+        title: "Manager review of completed engineer work",
+        assignedAgentId: fixture.manager.agentId,
+        assignedRole: fixture.manager.role,
+      })
+    );
     const reviewClaim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-manager-review-0001",
       messageCursors: {},
@@ -6695,7 +7939,10 @@ test("claims isolate message cursors per task and expose bounded completed-paren
     assert.equal(reviewClaim.context.parentTask?.taskId, engineerTask.taskId);
     assert.equal(reviewClaim.context.parentTask?.status, "completed");
     assert.equal(reviewClaim.context.parentTask?.result, "Checkout retries are safe and the focused tests pass.");
-    assert.deepEqual(reviewClaim.context.parentMessages.map((message) => message.kind), ["note", "progress"]);
+    assert.deepEqual(
+      reviewClaim.context.parentMessages.map((message) => message.kind),
+      ["note", "progress"]
+    );
   } finally {
     fixture.board.close();
   }
@@ -6706,22 +7953,33 @@ test("claim is exact-idempotent and the database permits only one active run per
   try {
     fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "First assigned task" }));
     fixture.board.createTask(fixture.project.projectId, taskRequest({ title: "Second assigned task" }));
-    const first = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-one-active-0001", messageCursor: 0 });
+    const first = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-one-active-0001",
+      messageCursor: 0,
+    });
     assert.ok(first);
-    const replay = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-one-active-0001", messageCursor: 0 });
+    const replay = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-one-active-0001",
+      messageCursor: 0,
+    });
     assert.equal(replay?.run.runId, first.run.runId);
     await assert.rejects(
-      Promise.resolve().then(() => fixture.board.claimRun(fixture.engineer.agentId, {
-        claimId: "claim-one-active-0002",
-        messageCursor: 0,
-      })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_RUN_ACTIVE",
+      Promise.resolve().then(() =>
+        fixture.board.claimRun(fixture.engineer.agentId, {
+          claimId: "claim-one-active-0002",
+          messageCursor: 0,
+        })
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "AGENT_RUN_ACTIVE"
     );
     fixture.board.settleRun(first.run.runId, fixture.engineer.agentId, {
       outcome: "completed",
       result: "First run complete.",
     });
-    const second = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-one-active-0002", messageCursor: 0 });
+    const second = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-one-active-0002",
+      messageCursor: 0,
+    });
     assert.ok(second);
     assert.notEqual(second.run.runId, first.run.runId);
   } finally {
@@ -6733,15 +7991,32 @@ test("human interrupt is durable, idempotent, visible immediately, and an explic
   const fixture = await boardFixture();
   try {
     fixture.board.createTask(fixture.project.projectId, taskRequest());
-    const claim = fixture.board.claimRun(fixture.engineer.agentId, { claimId: "claim-interrupt-0001", messageCursor: 0 });
+    const claim = fixture.board.claimRun(fixture.engineer.agentId, {
+      claimId: "claim-interrupt-0001",
+      messageCursor: 0,
+    });
     assert.ok(claim);
-    const first = fixture.board.interruptAgent(fixture.engineer.agentId, { reason: "Human changed deployment scope." }, "interrupt-key-0001");
-    const replay = fixture.board.interruptAgent(fixture.engineer.agentId, { reason: "Human changed deployment scope." }, "interrupt-key-0001");
+    const first = fixture.board.interruptAgent(
+      fixture.engineer.agentId,
+      { reason: "Human changed deployment scope." },
+      "interrupt-key-0001"
+    );
+    const replay = fixture.board.interruptAgent(
+      fixture.engineer.agentId,
+      { reason: "Human changed deployment scope." },
+      "interrupt-key-0001"
+    );
     assert.equal(first.duplicate, false);
     assert.equal(replay.duplicate, true);
     assert.equal(replay.interrupt.interruptId, first.interrupt.interruptId);
     assert.equal(fixture.board.snapshot(fixture.project.projectId).agents[0]!.status, "interrupting");
-    const batch = await fixture.board.waitForRunInterrupts(claim.run.runId, fixture.engineer.agentId, 0, 0, new AbortController().signal);
+    const batch = await fixture.board.waitForRunInterrupts(
+      claim.run.runId,
+      fixture.engineer.agentId,
+      0,
+      0,
+      new AbortController().signal
+    );
     assert.equal(batch?.items[0]?.reason, "Human changed deployment scope.");
     fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
       outcome: "interrupted",
@@ -6751,10 +8026,13 @@ test("human interrupt is durable, idempotent, visible immediately, and an explic
     assert.equal(blocked.status, "interrupted");
     assert.ok(blocked.endedAt);
     assert.equal(blocked.result, "Stopped after the durable human interrupt.");
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-after-interrupt-0001",
-      messageCursor: 0,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-after-interrupt-0001",
+        messageCursor: 0,
+      }),
+      null
+    );
     fixture.board.retryTask(blocked.taskId, { version: blocked.version });
     const resumed = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-resumed-after-interrupt-0001",
@@ -6771,10 +8049,13 @@ test("human interrupt is durable, idempotent, visible immediately, and an explic
 test("retry re-arms an assigned failed task and its next run settles end to end", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Retry failed checkout work",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Retry failed checkout work",
+        requiresReview: false,
+      })
+    );
     const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-recovery-failed-first-0001",
       messageCursor: null,
@@ -6794,13 +8075,16 @@ test("retry re-arms an assigned failed task and its next run settles end to end"
     assert.equal(retried.wakeup.reason, "resumed");
     assert.throws(
       () => fixture.board.retryTask(task.taskId, { version: failed.version }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_VERSION_CONFLICT",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_VERSION_CONFLICT"
     );
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND reason='resumed'")
-        .get(task.taskId)?.count, 1);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=? AND reason='resumed'").get(task.taskId)
+          ?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -6826,10 +8110,13 @@ test("retry re-arms an assigned failed task and its next run settles end to end"
 test("resume compat-retries assigned failed work and leaves it claimable and settleable", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Resume failed checkout work through the compatibility path",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Resume failed checkout work through the compatibility path",
+        requiresReview: false,
+      })
+    );
     const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-resume-recovery-failed-first-0001",
       messageCursor: null,
@@ -6841,10 +8128,14 @@ test("resume compat-retries assigned failed work and leaves it claimable and set
     });
     const failed = fixture.board.requireTask(task.taskId);
 
-    const resumed = fixture.board.resumeAgent(fixture.engineer.agentId, {
-      reason: "Retry through the existing Resume control.",
-      taskId: task.taskId,
-    }, "resume-recovery-failed-compat-0001");
+    const resumed = fixture.board.resumeAgent(
+      fixture.engineer.agentId,
+      {
+        reason: "Retry through the existing Resume control.",
+        taskId: task.taskId,
+      },
+      "resume-recovery-failed-compat-0001"
+    );
     const rearmed = fixture.board.requireTask(task.taskId);
     assert.equal(resumed.duplicate, false);
     assert.equal(resumed.wakeup.reason, "resumed");
@@ -6852,16 +8143,25 @@ test("resume compat-retries assigned failed work and leaves it claimable and set
     assert.equal(rearmed.result, null);
     assert.equal(rearmed.endedAt, null);
     assert.equal(rearmed.version, failed.version + 1);
-    assert.ok(fixture.board.snapshot(fixture.project.projectId).recentEvents.some((event) => (
-      event.taskId === task.taskId &&
-      event.eventType === "task_retried" &&
-      event.data.previousVersion === failed.version
-    )));
+    assert.ok(
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .recentEvents.some(
+          (event) =>
+            event.taskId === task.taskId &&
+            event.eventType === "task_retried" &&
+            event.data.previousVersion === failed.version
+        )
+    );
 
-    const replay = fixture.board.resumeAgent(fixture.engineer.agentId, {
-      reason: "Retry through the existing Resume control.",
-      taskId: task.taskId,
-    }, "resume-recovery-failed-compat-0001");
+    const replay = fixture.board.resumeAgent(
+      fixture.engineer.agentId,
+      {
+        reason: "Retry through the existing Resume control.",
+        taskId: task.taskId,
+      },
+      "resume-recovery-failed-compat-0001"
+    );
     assert.equal(replay.duplicate, true);
     assert.equal(replay.wakeup.wakeupId, resumed.wakeup.wakeupId);
 
@@ -6884,25 +8184,32 @@ test("resume compat-retries assigned failed work and leaves it claimable and set
 test("retry rejects an unassigned recoverable task without creating a wakeup", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Unassigned failed checkout work",
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Unassigned failed checkout work",
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      seeded.prepare(`
+      seeded
+        .prepare(
+          `
         UPDATE tasks
         SET status='failed', started_at=?, ended_at=?, result=?, version=version+1, updated_at=?
         WHERE task_id=?
-      `).run(
-        "2026-08-09T18:00:00.000Z",
-        "2026-08-09T18:00:00.000Z",
-        "No compatible agent was available for the failed pass.",
-        "2026-08-09T18:00:00.000Z",
-        task.taskId,
-      );
+      `
+        )
+        .run(
+          "2026-08-09T18:00:00.000Z",
+          "2026-08-09T18:00:00.000Z",
+          "No compatible agent was available for the failed pass.",
+          "2026-08-09T18:00:00.000Z",
+          task.taskId
+        );
     } finally {
       seeded.close();
     }
@@ -6910,18 +8217,26 @@ test("retry rejects an unassigned recoverable task without creating a wakeup", a
 
     assert.throws(
       () => fixture.board.retryTask(task.taskId, { version: failed.version }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED",
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED"
     );
     assert.throws(
-      () => fixture.board.resumeAgent(fixture.engineer.agentId, {
-        reason: "An unassigned failed task cannot be resumed.",
-        taskId: task.taskId,
-      }, "resume-unassigned-recovery-0001"),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED",
+      () =>
+        fixture.board.resumeAgent(
+          fixture.engineer.agentId,
+          {
+            reason: "An unassigned failed task cannot be resumed.",
+            taskId: task.taskId,
+          },
+          "resume-unassigned-recovery-0001"
+        ),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_UNASSIGNED"
     );
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count, 0);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -6941,10 +8256,13 @@ test("reassigning interrupted work retires the old agent and wakes the new agent
       model: "codex-mini",
       token: "task-board-engineer-two-token-0123456789",
     });
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Reassign interrupted checkout work",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Reassign interrupted checkout work",
+        requiresReview: false,
+      })
+    );
     const firstClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-recovery-interrupted-first-0001",
       messageCursor: null,
@@ -6957,17 +8275,24 @@ test("reassigning interrupted work retires the old agent and wakes the new agent
     const interrupted = fixture.board.requireTask(task.taskId);
     assert.equal(interrupted.status, "interrupted");
 
-    const reassigned = fixture.board.updateTask(task.taskId, {
-      version: interrupted.version,
-      assignedAgentId: replacement.agentId,
-      assignedRole: replacement.role,
-    }, { type: "human", id: "human:alice" });
+    const reassigned = fixture.board.updateTask(
+      task.taskId,
+      {
+        version: interrupted.version,
+        assignedAgentId: replacement.agentId,
+        assignedRole: replacement.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(reassigned.status, "queued");
     assert.equal(reassigned.assignedAgentId, replacement.agentId);
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-recovery-interrupted-old-agent-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-recovery-interrupted-old-agent-0001",
+        messageCursor: null,
+      }),
+      null
+    );
     const replacementClaim = fixture.board.claimRun(replacement.agentId, {
       claimId: "claim-recovery-interrupted-new-agent-0001",
       messageCursor: null,
@@ -6995,10 +8320,13 @@ test("retry, recoverable reassignment, and backlog reject an active task run ato
       model: "codex-mini",
       token: "active-recovery-replacement-token-0123456789",
     });
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Fence recovery against an active run",
-      requiresReview: false,
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Fence recovery against an active run",
+        requiresReview: false,
+      })
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-active-recovery-fence-0001",
       messageCursor: null,
@@ -7008,16 +8336,20 @@ test("retry, recoverable reassignment, and backlog reject an active task run ato
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      seeded.prepare(`
+      seeded
+        .prepare(
+          `
         UPDATE tasks
         SET status='failed', ended_at=?, result=?, version=version+1, updated_at=?
         WHERE task_id=?
-      `).run(
-        "2026-08-09T18:05:00.000Z",
-        "Direct legacy race fixture while the run remains active.",
-        "2026-08-09T18:05:00.000Z",
-        task.taskId,
-      );
+      `
+        )
+        .run(
+          "2026-08-09T18:05:00.000Z",
+          "Direct legacy race fixture while the run remains active.",
+          "2026-08-09T18:05:00.000Z",
+          task.taskId
+        );
     } finally {
       seeded.close();
     }
@@ -7025,33 +8357,44 @@ test("retry, recoverable reassignment, and backlog reject an active task run ato
     const inspectedBefore = new DatabaseSync(fixture.path, { readOnly: true });
     let wakeupsBefore = 0;
     try {
-      wakeupsBefore = Number(inspectedBefore.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-        .get(task.taskId)?.count);
+      wakeupsBefore = Number(
+        inspectedBefore.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count
+      );
     } finally {
       inspectedBefore.close();
     }
 
     const recoveryOperations = [
       () => fixture.board.retryTask(task.taskId, { version: before.version }),
-      () => fixture.board.updateTask(task.taskId, {
-        version: before.version,
-        assignedAgentId: replacement.agentId,
-        assignedRole: replacement.role,
-      }, { type: "human", id: "human:alice" }),
+      () =>
+        fixture.board.updateTask(
+          task.taskId,
+          {
+            version: before.version,
+            assignedAgentId: replacement.agentId,
+            assignedRole: replacement.role,
+          },
+          { type: "human", id: "human:alice" }
+        ),
       () => fixture.board.backlogTask(task.taskId, { version: before.version }),
     ];
     for (const operation of recoveryOperations) {
       assert.throws(
         operation,
-        (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "AGENT_RUN_ACTIVE",
+        (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "AGENT_RUN_ACTIVE"
       );
       assert.deepEqual(fixture.board.requireTask(task.taskId), before);
     }
     const inspectedAfter = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(inspectedAfter.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-        .get(task.taskId)?.count), wakeupsBefore);
-      assert.equal(inspectedAfter.prepare("SELECT status FROM runs WHERE run_id=?").get(claim.run.runId)?.status, "active");
+      assert.equal(
+        Number(inspectedAfter.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count),
+        wakeupsBefore
+      );
+      assert.equal(
+        inspectedAfter.prepare("SELECT status FROM runs WHERE run_id=?").get(claim.run.runId)?.status,
+        "active"
+      );
     } finally {
       inspectedAfter.close();
     }
@@ -7063,10 +8406,13 @@ test("retry, recoverable reassignment, and backlog reject an active task run ato
 test("generic task PATCH cannot enter or leave recovery state", async () => {
   const fixture = await boardFixture();
   try {
-    const activeTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Reject PATCH into recovery while active",
-      requiresReview: false,
-    }));
+    const activeTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Reject PATCH into recovery while active",
+        requiresReview: false,
+      })
+    );
     const activeClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-patch-into-recovery-0001",
       messageCursor: null,
@@ -7074,12 +8420,18 @@ test("generic task PATCH cannot enter or leave recovery state", async () => {
     assert.ok(activeClaim);
     const activeBefore = fixture.board.requireTask(activeTask.taskId);
     assert.throws(
-      () => fixture.board.updateTask(activeTask.taskId, {
-        version: activeBefore.version,
-        status: "failed",
-        result: "PATCH must not settle an active run.",
-      }, { type: "human", id: "human:alice" }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+      () =>
+        fixture.board.updateTask(
+          activeTask.taskId,
+          {
+            version: activeBefore.version,
+            status: "failed",
+            result: "PATCH must not settle an active run.",
+          },
+          { type: "human", id: "human:alice" }
+        ),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED"
     );
     assert.deepEqual(fixture.board.requireTask(activeTask.taskId), activeBefore);
     fixture.board.settleRun(activeClaim.run.runId, fixture.engineer.agentId, {
@@ -7089,11 +8441,17 @@ test("generic task PATCH cannot enter or leave recovery state", async () => {
 
     const failed = fixture.board.requireTask(activeTask.taskId);
     assert.throws(
-      () => fixture.board.updateTask(activeTask.taskId, {
-        version: failed.version,
-        status: "queued",
-      }, { type: "human", id: "human:alice" }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+      () =>
+        fixture.board.updateTask(
+          activeTask.taskId,
+          {
+            version: failed.version,
+            status: "queued",
+          },
+          { type: "human", id: "human:alice" }
+        ),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED"
     );
     assert.deepEqual(fixture.board.requireTask(activeTask.taskId), failed);
   } finally {
@@ -7104,13 +8462,17 @@ test("generic task PATCH cannot enter or leave recovery state", async () => {
 test("backlog unassigns blocked non-workflow work and retires every pending wakeup", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Return blocked checkout work to backlog",
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Return blocked checkout work to backlog",
+      })
+    );
     const { DatabaseSync } = await import("node:sqlite");
     const seeded = new DatabaseSync(fixture.path);
     try {
-      seeded.prepare("UPDATE tasks SET status='blocked',version=version+1,updated_at=? WHERE task_id=?")
+      seeded
+        .prepare("UPDATE tasks SET status='blocked',version=version+1,updated_at=? WHERE task_id=?")
         .run("2026-08-09T18:10:00.000Z", task.taskId);
     } finally {
       seeded.close();
@@ -7122,21 +8484,31 @@ test("backlog unassigns blocked non-workflow work and retires every pending wake
     assert.equal(returned.assignedAgentId, null);
     assert.equal(returned.assignedRole, null);
     assert.equal(returned.version, blocked.version + 1);
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-after-recovery-backlog-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-after-recovery-backlog-0001",
+        messageCursor: null,
+      }),
+      null
+    );
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
           AND NOT EXISTS(
             SELECT 1 FROM task_events event WHERE event.event_id='retired-wakeup:' || wakeup.wakeup_id
           )
-      `).get(task.taskId)?.count, 0);
+      `
+          )
+          .get(task.taskId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -7159,22 +8531,26 @@ test("workflow-bound tasks cannot return to backlog", async () => {
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     let wakeupsBefore = 0;
     try {
-      wakeupsBefore = Number(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-        .get(failed.taskId)?.count);
+      wakeupsBefore = Number(
+        inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(failed.taskId)?.count
+      );
     } finally {
       inspected.close();
     }
 
     assert.throws(
       () => fixture.board.backlogTask(failed.taskId, { version: failed.version }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_WORKFLOW_BOUND",
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_WORKFLOW_BOUND"
     );
     assert.deepEqual(fixture.board.requireTask(failed.taskId), failed);
     assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), beforeWorkflow);
     const verified = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-        .get(failed.taskId)?.count), wakeupsBefore);
+      assert.equal(
+        Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(failed.taskId)?.count),
+        wakeupsBefore
+      );
     } finally {
       verified.close();
     }
@@ -7187,15 +8563,22 @@ test("hard-terminal tasks reject resume, retry, assign, and backlog without new 
   const fixture = await boardFixture();
   try {
     const tasks = ["completed", "cancelled"].map((status) => {
-      const created = fixture.board.createTask(fixture.project.projectId, taskRequest({
-        title: `${status} task rejects recovery`,
-        requiresReview: false,
-      }));
-      return fixture.board.updateTask(created.taskId, {
-        version: created.version,
-        status: status as "completed" | "cancelled",
-        result: `The task is already ${status}.`,
-      }, { type: "human", id: "human:alice" });
+      const created = fixture.board.createTask(
+        fixture.project.projectId,
+        taskRequest({
+          title: `${status} task rejects recovery`,
+          requiresReview: false,
+        })
+      );
+      return fixture.board.updateTask(
+        created.taskId,
+        {
+          version: created.version,
+          status: status as "completed" | "cancelled",
+          result: `The task is already ${status}.`,
+        },
+        { type: "human", id: "human:alice" }
+      );
     });
     const { DatabaseSync } = await import("node:sqlite");
 
@@ -7203,34 +8586,47 @@ test("hard-terminal tasks reject resume, retry, assign, and backlog without new 
       const inspected = new DatabaseSync(fixture.path, { readOnly: true });
       let wakeupsBefore = 0;
       try {
-        wakeupsBefore = Number(inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-          .get(task.taskId)?.count);
+        wakeupsBefore = Number(
+          inspected.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count
+        );
       } finally {
         inspected.close();
       }
       const operations = [
-        () => fixture.board.resumeAgent(fixture.engineer.agentId, {
-          reason: "A terminal task must not wake an agent.",
-          taskId: task.taskId,
-        }, `terminal-resume-${task.status}-0001`),
+        () =>
+          fixture.board.resumeAgent(
+            fixture.engineer.agentId,
+            {
+              reason: "A terminal task must not wake an agent.",
+              taskId: task.taskId,
+            },
+            `terminal-resume-${task.status}-0001`
+          ),
         () => fixture.board.retryTask(task.taskId, { version: task.version }),
-        () => fixture.board.updateTask(task.taskId, {
-          version: task.version,
-          assignedAgentId: fixture.manager.agentId,
-          assignedRole: fixture.manager.role,
-        }, { type: "human", id: "human:alice" }),
+        () =>
+          fixture.board.updateTask(
+            task.taskId,
+            {
+              version: task.version,
+              assignedAgentId: fixture.manager.agentId,
+              assignedRole: fixture.manager.role,
+            },
+            { type: "human", id: "human:alice" }
+          ),
         () => fixture.board.backlogTask(task.taskId, { version: task.version }),
       ];
       for (const operation of operations) {
         assert.throws(
           operation,
-          (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL",
+          (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_TERMINAL"
         );
       }
       const verified = new DatabaseSync(fixture.path, { readOnly: true });
       try {
-        assert.equal(Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?")
-          .get(task.taskId)?.count), wakeupsBefore);
+        assert.equal(
+          Number(verified.prepare("SELECT COUNT(*) AS count FROM wakeups WHERE task_id=?").get(task.taskId)?.count),
+          wakeupsBefore
+        );
       } finally {
         verified.close();
       }
@@ -7247,24 +8643,37 @@ test("resume checks project scope before revealing hard-terminal task state", as
       name: "Private terminal work",
       description: "Must not leak task state across projects.",
     });
-    const task = fixture.board.createTask(otherProject.projectId, taskRequest({
-      title: "Cross-project completed task",
-      assignedAgentId: null,
-      assignedRole: null,
-      requiresReview: false,
-    }));
-    fixture.board.updateTask(task.taskId, {
-      version: task.version,
-      status: "completed",
-      result: "Completed in another project.",
-    }, { type: "human", id: "human:alice" });
+    const task = fixture.board.createTask(
+      otherProject.projectId,
+      taskRequest({
+        title: "Cross-project completed task",
+        assignedAgentId: null,
+        assignedRole: null,
+        requiresReview: false,
+      })
+    );
+    fixture.board.updateTask(
+      task.taskId,
+      {
+        version: task.version,
+        status: "completed",
+        result: "Completed in another project.",
+      },
+      { type: "human", id: "human:alice" }
+    );
 
     assert.throws(
-      () => fixture.board.resumeAgent(fixture.engineer.agentId, {
-        reason: "This caller must not learn that the task is terminal.",
-        taskId: task.taskId,
-      }, "cross-project-terminal-resume-0001"),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_PROJECT_MISMATCH",
+      () =>
+        fixture.board.resumeAgent(
+          fixture.engineer.agentId,
+          {
+            reason: "This caller must not learn that the task is terminal.",
+            taskId: task.taskId,
+          },
+          "cross-project-terminal-resume-0001"
+        ),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_PROJECT_MISMATCH"
     );
   } finally {
     fixture.board.close();
@@ -7294,13 +8703,19 @@ test("retrying a workflow stage reuses its attempt and settles the node normally
     });
     const workflowBeforeInvalidPatch = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.throws(
-      () => fixture.board.updateTask(taskId, {
-        version: failed.version,
-        assignedAgentId: replacement.agentId,
-        assignedRole: replacement.role,
-        status: "in_progress",
-      }, { type: "human", id: "human:alice" }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED",
+      () =>
+        fixture.board.updateTask(
+          taskId,
+          {
+            version: failed.version,
+            assignedAgentId: replacement.agentId,
+            assignedRole: replacement.role,
+            status: "in_progress",
+          },
+          { type: "human", id: "human:alice" }
+        ),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_RECOVERY_REQUIRED"
     );
     assert.deepEqual(fixture.board.requireTask(taskId), failed);
     assert.deepEqual(fixture.board.projectWorkflow(fixture.project.projectId), workflowBeforeInvalidPatch);
@@ -7311,10 +8726,15 @@ test("retrying a workflow stage reuses its attempt and settles the node normally
     const { DatabaseSync } = await import("node:sqlite");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
-        .get(fixture.node.nodeId)?.count, 1);
-      assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM stage_handoffs WHERE task_id=?")
-        .get(taskId)?.count, 0);
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?").get(fixture.node.nodeId)
+          ?.count,
+        1
+      );
+      assert.equal(
+        inspected.prepare("SELECT COUNT(*) AS count FROM stage_handoffs WHERE task_id=?").get(taskId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -7336,8 +8756,11 @@ test("retrying a workflow stage reuses its attempt and settles the node normally
     assert.equal(completed.handoffs[0]?.outcome, "passed");
     const verified = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?")
-        .get(fixture.node.nodeId)?.count, 1);
+      assert.equal(
+        verified.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?").get(fixture.node.nodeId)
+          ?.count,
+        1
+      );
     } finally {
       verified.close();
     }
@@ -7351,10 +8774,14 @@ test("an explicit human resume durably releases an event-driven claim after rest
   const first = await boardFixture(path);
   const projectId = first.project.projectId;
   const agentId = first.engineer.agentId;
-  first.board.resumeAgent(agentId, {
-    reason: "Human approved another research iteration.",
-    taskId: null,
-  }, "resume-persist-0001");
+  first.board.resumeAgent(
+    agentId,
+    {
+      reason: "Human approved another research iteration.",
+      taskId: null,
+    },
+    "resume-persist-0001"
+  );
   first.board.close();
 
   const restarted = await TaskBoard.open(config(path));
@@ -7371,12 +8798,16 @@ test("an explicit human resume durably releases an event-driven claim after rest
       agentId,
       { claimId: "claim-event-driven-resume-0001", messageCursor: null },
       1_000,
-      new AbortController().signal,
+      new AbortController().signal
     );
-    restarted.resumeAgent(agentId, {
-      reason: "Human explicitly resumed the idle agent.",
-      taskId: null,
-    }, "resume-event-driven-0001");
+    restarted.resumeAgent(
+      agentId,
+      {
+        reason: "Human explicitly resumed the idle agent.",
+        taskId: null,
+      },
+      "resume-event-driven-0001"
+    );
     const awakened = await waiting;
     assert.ok(awakened);
     assert.equal(awakened.wakeup.reason, "human_resume");
@@ -7389,11 +8820,15 @@ test("an explicit human resume durably releases an event-driven claim after rest
 test("an assigned agent chat request remains executable without entering the review workflow", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const query = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Request for engineer-one: Explain the retry behavior",
-    acceptanceCriteria: "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
-    requiresReview: false,
-  }));
+  const query = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Request for engineer-one: Explain the retry behavior",
+      acceptanceCriteria:
+        "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
+      requiresReview: false,
+    })
+  );
   assert.equal(query.requiresReview, false);
   fixture.board.close();
 
@@ -7415,10 +8850,13 @@ test("an assigned agent chat request remains executable without entering the rev
 
     const snapshot = restarted.snapshot(fixture.project.projectId);
     assert.equal(snapshot.tasks.filter((task) => task.parentTaskId === query.taskId).length, 0);
-    assert.equal(restarted.claimRun(fixture.manager.agentId, {
-      claimId: "claim-after-agent-chat-no-review-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      restarted.claimRun(fixture.manager.agentId, {
+        claimId: "claim-after-agent-chat-no-review-0001",
+        messageCursor: null,
+      }),
+      null
+    );
   } finally {
     restarted.close();
   }
@@ -7427,11 +8865,15 @@ test("an assigned agent chat request remains executable without entering the rev
 test("a legacy review child for a chat request cannot create a human production check", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const legacyQuery = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Request for engineer-one: Explain legacy retries",
-    acceptanceCriteria: "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
-    requiresReview: true,
-  }));
+  const legacyQuery = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Request for engineer-one: Explain legacy retries",
+      acceptanceCriteria:
+        "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
+      requiresReview: true,
+    })
+  );
   const engineerRun = fixture.board.claimRun(fixture.engineer.agentId, {
     claimId: "claim-legacy-chat-review-engineer-0001",
     messageCursor: null,
@@ -7441,9 +8883,9 @@ test("a legacy review child for a chat request cannot create a human production 
     outcome: "completed",
     result: "The requested retry explanation is complete.",
   });
-  const legacyReview = fixture.board.snapshot(fixture.project.projectId).tasks.find((task) => (
-    task.parentTaskId === legacyQuery.taskId && task.kind === "manager_review"
-  ));
+  const legacyReview = fixture.board
+    .snapshot(fixture.project.projectId)
+    .tasks.find((task) => task.parentTaskId === legacyQuery.taskId && task.kind === "manager_review");
   assert.ok(legacyReview);
   fixture.board.close();
 
@@ -7455,14 +8897,21 @@ test("a legacy review child for a chat request cannot create a human production 
   const restarted = await TaskBoard.open(config(path));
   try {
     assert.equal(restarted.requireTask(legacyQuery.taskId).requiresReview, false);
-    assert.equal(restarted.claimRun(fixture.manager.agentId, {
-      claimId: "claim-retired-legacy-chat-handoff-0001",
-      messageCursor: null,
-    }), null);
-    restarted.resumeAgent(fixture.manager.agentId, {
-      reason: "A human explicitly requested inspection of this historical chat response.",
-      taskId: legacyReview.taskId,
-    }, "resume-legacy-chat-review-0001");
+    assert.equal(
+      restarted.claimRun(fixture.manager.agentId, {
+        claimId: "claim-retired-legacy-chat-handoff-0001",
+        messageCursor: null,
+      }),
+      null
+    );
+    restarted.resumeAgent(
+      fixture.manager.agentId,
+      {
+        reason: "A human explicitly requested inspection of this historical chat response.",
+        taskId: legacyReview.taskId,
+      },
+      "resume-legacy-chat-review-0001"
+    );
     const managerRun = restarted.claimRun(fixture.manager.agentId, {
       claimId: "claim-legacy-chat-review-manager-0001",
       messageCursor: null,
@@ -7476,9 +8925,10 @@ test("a legacy review child for a chat request cannot create a human production 
     });
 
     const snapshot = restarted.snapshot(fixture.project.projectId);
-    assert.equal(snapshot.tasks.filter((task) => (
-      task.parentTaskId === legacyReview.taskId && task.kind === "human_check"
-    )).length, 0);
+    assert.equal(
+      snapshot.tasks.filter((task) => task.parentTaskId === legacyReview.taskId && task.kind === "human_check").length,
+      0
+    );
   } finally {
     restarted.close();
   }
@@ -7508,7 +8958,9 @@ test("completed engineer work hands off once to the sole manager, then creates o
     assert.equal(replaySettlement.duplicate, true);
 
     let snapshot = fixture.board.snapshot(fixture.project.projectId);
-    const reviews = snapshot.tasks.filter((task) => task.parentTaskId === work.taskId && task.kind === "manager_review");
+    const reviews = snapshot.tasks.filter(
+      (task) => task.parentTaskId === work.taskId && task.kind === "manager_review"
+    );
     assert.equal(reviews.length, 1);
     const review = reviews[0]!;
     assert.equal(review.requiredRole, "manager");
@@ -7517,12 +8969,18 @@ test("completed engineer work hands off once to the sole manager, then creates o
     assert.equal(review.assignedAgentId, fixture.manager.agentId);
     assert.deepEqual(review.workspaceRefs, work.workspaceRefs);
     await assert.rejects(
-      Promise.resolve().then(() => fixture.board.updateTask(review.taskId, {
-        version: review.version,
-        assignedAgentId: fixture.engineer.agentId,
-        assignedRole: fixture.engineer.role,
-      }, { type: "human", id: "human:alice" })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_REQUIRED_ROLE_MISMATCH",
+      Promise.resolve().then(() =>
+        fixture.board.updateTask(
+          review.taskId,
+          {
+            version: review.version,
+            assignedAgentId: fixture.engineer.agentId,
+            assignedRole: fixture.engineer.role,
+          },
+          { type: "human", id: "human:alice" }
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_REQUIRED_ROLE_MISMATCH"
     );
 
     const managerRun = fixture.board.claimRun(fixture.manager.agentId, {
@@ -7541,10 +8999,13 @@ test("completed engineer work hands off once to the sole manager, then creates o
       outcome: "completed",
       result: "Evidence is sufficient for the human owner to decide.",
     });
-    assert.equal(fixture.board.settleRun(managerRun.run.runId, fixture.manager.agentId, {
-      outcome: "completed",
-      result: "Evidence is sufficient for the human owner to decide.",
-    }).duplicate, true);
+    assert.equal(
+      fixture.board.settleRun(managerRun.run.runId, fixture.manager.agentId, {
+        outcome: "completed",
+        result: "Evidence is sufficient for the human owner to decide.",
+      }).duplicate,
+      true
+    );
 
     snapshot = fixture.board.snapshot(fixture.project.projectId);
     const checks = snapshot.tasks.filter((task) => task.parentTaskId === review.taskId && task.kind === "human_check");
@@ -7554,51 +9015,100 @@ test("completed engineer work hands off once to the sole manager, then creates o
     assert.equal(humanCheck.requiresReview, false);
     assert.equal(humanCheck.assignedAgentId, null);
     assert.equal(humanCheck.status, "backlog");
-    assert.equal(fixture.board.claimRun(fixture.manager.agentId, {
-      claimId: "claim-after-human-check-created-0001",
-      messageCursor: null,
-    }), null);
-    await assert.rejects(
-      Promise.resolve().then(() => fixture.board.updateTask(humanCheck.taskId, {
-        version: humanCheck.version,
-        assignedAgentId: fixture.manager.agentId,
-        assignedRole: fixture.manager.role,
-      }, { type: "human", id: "human:alice" })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_NOT_ASSIGNABLE",
+    assert.equal(
+      fixture.board.claimRun(fixture.manager.agentId, {
+        claimId: "claim-after-human-check-created-0001",
+        messageCursor: null,
+      }),
+      null
     );
     await assert.rejects(
-      Promise.resolve().then(() => fixture.board.updateTask(humanCheck.taskId, {
+      Promise.resolve().then(() =>
+        fixture.board.updateTask(
+          humanCheck.taskId,
+          {
+            version: humanCheck.version,
+            assignedAgentId: fixture.manager.agentId,
+            assignedRole: fixture.manager.role,
+          },
+          { type: "human", id: "human:alice" }
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_NOT_ASSIGNABLE"
+    );
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        fixture.board.updateTask(
+          humanCheck.taskId,
+          {
+            version: humanCheck.version,
+            status: "completed",
+            result: "An agent tried to approve this check.",
+          },
+          { type: "agent", id: fixture.manager.agentId }
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_HUMAN_ONLY"
+    );
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        fixture.board.resumeAgent(
+          fixture.manager.agentId,
+          {
+            reason: "Do not wake an agent for a human check.",
+            taskId: humanCheck.taskId,
+          },
+          "resume-human-check-0001"
+        )
+      ),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_NOT_ASSIGNABLE"
+    );
+    const decided = fixture.board.updateTask(
+      humanCheck.taskId,
+      {
         version: humanCheck.version,
         status: "completed",
-        result: "An agent tried to approve this check.",
-      }, { type: "agent", id: fixture.manager.agentId })),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_HUMAN_ONLY",
+        result: "Human approved the reviewed change for the next controlled release step.",
+      },
+      { type: "human", id: "human:alice" }
     );
-    await assert.rejects(
-      Promise.resolve().then(() => fixture.board.resumeAgent(fixture.manager.agentId, {
-        reason: "Do not wake an agent for a human check.",
-        taskId: humanCheck.taskId,
-      }, "resume-human-check-0001")),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "HUMAN_CHECK_NOT_ASSIGNABLE",
-    );
-    const decided = fixture.board.updateTask(humanCheck.taskId, {
-      version: humanCheck.version,
-      status: "completed",
-      result: "Human approved the reviewed change for the next controlled release step.",
-    }, { type: "human", id: "human:alice" });
     assert.equal(decided.status, "completed");
     assert.ok(decided.endedAt);
     assert.equal(fixture.board.snapshot(fixture.project.projectId).tasks.length, 3);
 
     const events = fixture.board.snapshot(fixture.project.projectId).recentEvents;
-    assert.ok(events.some((event) => event.taskId === review.taskId && event.eventType === "task_created"
-      && event.data.kind === "manager_review" && event.data.requiredRole === "manager"));
-    assert.ok(events.some((event) => event.taskId === humanCheck.taskId && event.eventType === "task_created"
-      && event.data.kind === "human_check" && event.data.requiredRole === null));
-    assert.ok(events.some((event) => event.taskId === work.taskId && event.eventType === "task_run_settled"
-      && event.data.kind === "work"));
-    assert.ok(events.some((event) => event.taskId === work.taskId && event.eventType === "task_created"
-      && event.data.kind === "work" && event.data.requiredRole === null));
+    assert.ok(
+      events.some(
+        (event) =>
+          event.taskId === review.taskId &&
+          event.eventType === "task_created" &&
+          event.data.kind === "manager_review" &&
+          event.data.requiredRole === "manager"
+      )
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.taskId === humanCheck.taskId &&
+          event.eventType === "task_created" &&
+          event.data.kind === "human_check" &&
+          event.data.requiredRole === null
+      )
+    );
+    assert.ok(
+      events.some(
+        (event) => event.taskId === work.taskId && event.eventType === "task_run_settled" && event.data.kind === "work"
+      )
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.taskId === work.taskId &&
+          event.eventType === "task_created" &&
+          event.data.kind === "work" &&
+          event.data.requiredRole === null
+      )
+    );
   } finally {
     fixture.board.close();
   }
@@ -7615,9 +9125,12 @@ test("an ambiguous manager roster leaves review work in the backlog without a wo
       model: "claude-haiku",
       token: "task-board-manager-two-token-0123456789abcdef",
     });
-    const work = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Require an explicit reviewer choice",
-    }));
+    const work = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Require an explicit reviewer choice",
+      })
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-ambiguous-review-work-0001",
       messageCursor: null,
@@ -7628,20 +9141,26 @@ test("an ambiguous manager roster leaves review work in the backlog without a wo
       result: "Implementation is ready for review, but the reviewer roster is ambiguous.",
     });
 
-    const review = fixture.board.snapshot(fixture.project.projectId).tasks.find((task) => (
-      task.parentTaskId === work.taskId && task.kind === "manager_review"
-    ));
+    const review = fixture.board
+      .snapshot(fixture.project.projectId)
+      .tasks.find((task) => task.parentTaskId === work.taskId && task.kind === "manager_review");
     assert.ok(review);
     assert.equal(review.status, "backlog");
     assert.equal(review.assignedAgentId, null);
-    assert.equal(fixture.board.claimRun(fixture.manager.agentId, {
-      claimId: "claim-ambiguous-manager-one-0001",
-      messageCursor: null,
-    }), null);
-    assert.equal(fixture.board.claimRun(secondManager.agentId, {
-      claimId: "claim-ambiguous-manager-two-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.manager.agentId, {
+        claimId: "claim-ambiguous-manager-one-0001",
+        messageCursor: null,
+      }),
+      null
+    );
+    assert.equal(
+      fixture.board.claimRun(secondManager.agentId, {
+        claimId: "claim-ambiguous-manager-two-0001",
+        messageCursor: null,
+      }),
+      null
+    );
   } finally {
     fixture.board.close();
   }
@@ -7662,11 +9181,14 @@ test("a project without a manager leaves review work in the backlog without a wo
       model: "codex-mini",
       token: "task-board-managerless-engineer-token-0123456789",
     });
-    const work = fixture.board.createTask(project.projectId, taskRequest({
-      title: "Complete work without a configured reviewer",
-      assignedAgentId: engineer.agentId,
-      assignedRole: engineer.role,
-    }));
+    const work = fixture.board.createTask(
+      project.projectId,
+      taskRequest({
+        title: "Complete work without a configured reviewer",
+        assignedAgentId: engineer.agentId,
+        assignedRole: engineer.role,
+      })
+    );
     const claim = fixture.board.claimRun(engineer.agentId, {
       claimId: "claim-managerless-review-work-0001",
       messageCursor: null,
@@ -7677,17 +9199,20 @@ test("a project without a manager leaves review work in the backlog without a wo
       result: "Implementation completed; a human must choose or add a reviewer.",
     });
 
-    const review = fixture.board.snapshot(project.projectId).tasks.find((task) => (
-      task.parentTaskId === work.taskId && task.kind === "manager_review"
-    ));
+    const review = fixture.board
+      .snapshot(project.projectId)
+      .tasks.find((task) => task.parentTaskId === work.taskId && task.kind === "manager_review");
     assert.ok(review);
     assert.equal(review.status, "backlog");
     assert.equal(review.assignedAgentId, null);
     assert.equal(review.assignedRole, null);
-    assert.equal(fixture.board.claimRun(engineer.agentId, {
-      claimId: "claim-managerless-no-handoff-0001",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(engineer.agentId, {
+        claimId: "claim-managerless-no-handoff-0001",
+        messageCursor: null,
+      }),
+      null
+    );
   } finally {
     fixture.board.close();
   }
@@ -7737,17 +9262,20 @@ test("the SQLite database and parent directory must remain owner-only", async ()
   await chmod(shared, 0o755);
   await assert.rejects(
     TaskBoard.open(config(join(shared, "task-board.sqlite"))),
-    (error: unknown) => error instanceof TaskBoardError && error.code === "UNSAFE_DATABASE_PATH",
+    (error: unknown) => error instanceof TaskBoardError && error.code === "UNSAFE_DATABASE_PATH"
   );
 });
 
 test("schema version 9 migration adds dormant automation configuration without changing existing board state", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const existingTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
+  const existingTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
   fixture.board.close();
 
   const { DatabaseSync } = await import("node:sqlite");
@@ -7784,10 +9312,13 @@ test("schema version 9 migration adds dormant automation configuration without c
 test("schema version 8 migration adds every v19 work-item and run dependency", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const existingTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
+  const existingTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
   fixture.board.close();
 
   const { DatabaseSync } = await import("node:sqlite");
@@ -7808,10 +9339,13 @@ test("schema version 8 migration adds every v19 work-item and run dependency", a
   const upgraded = await TaskBoard.open(config(path));
   try {
     assert.equal(upgraded.requireTask(existingTask.taskId).title, existingTask.title);
-    const created = upgraded.createWorkItem({
-      originalRequest: "Refine this request after the v9 migration.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }, "migration-v9-work-item-0001");
+    const created = upgraded.createWorkItem(
+      {
+        originalRequest: "Refine this request after the v9 migration.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      },
+      "migration-v9-work-item-0001"
+    );
     assert.equal(created.workItem.state, "queued");
     assert.equal(created.workItem.priority, "normal");
     const runTask = upgraded.createTask(fixture.project.projectId, taskRequest());
@@ -7830,12 +9364,12 @@ test("schema version 8 migration adds every v19 work-item and run dependency", a
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
-    assert.equal(
-      verified.prepare("SELECT COUNT(*) AS count FROM work_item_transitions").get()?.count,
-      1,
-    );
+    assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_item_transitions").get()?.count, 1);
     const runColumns = new Set(
-      verified.prepare("PRAGMA table_info(runs)").all().map((row) => String(row.name)),
+      verified
+        .prepare("PRAGMA table_info(runs)")
+        .all()
+        .map((row) => String(row.name))
     );
     for (const column of ["heartbeat_at", "runtime", "runtime_version", "model", "prompts_sha"]) {
       assert.ok(runColumns.has(column), `runs.${column}`);
@@ -7849,23 +9383,32 @@ test("schema version 8 migration adds every v19 work-item and run dependency", a
 test("schema version 7 migration backfills durable review scope for work and agent chat requests", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const work = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Implement safer retry handling",
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
-  const query = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Request for engineer-one: Explain retry handling",
-    acceptanceCriteria: "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
-    assignedAgentId: null,
-    assignedRole: null,
-    requiresReview: false,
-  }));
+  const work = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Implement safer retry handling",
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
+  const query = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Request for engineer-one: Explain retry handling",
+      acceptanceCriteria:
+        "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
+      assignedAgentId: null,
+      assignedRole: null,
+      requiresReview: false,
+    })
+  );
   fixture.board.close();
 
   const { DatabaseSync } = await import("node:sqlite");
   const versionSeven = new DatabaseSync(path);
-  versionSeven.exec("DROP TABLE automation_configuration; DROP TABLE work_items; ALTER TABLE tasks DROP COLUMN requires_review; PRAGMA user_version = 7;");
+  versionSeven.exec(
+    "DROP TABLE automation_configuration; DROP TABLE work_items; ALTER TABLE tasks DROP COLUMN requires_review; PRAGMA user_version = 7;"
+  );
   versionSeven.close();
 
   const upgraded = await TaskBoard.open(config(path));
@@ -7888,42 +9431,68 @@ test("schema version 7 migration backfills durable review scope for work and age
 test("schema version 6 migration preserves claimed runs, pending wakes, and semantic phase history", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const activeTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Preserve an active run through migration",
-  }));
+  const activeTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Preserve an active run through migration",
+    })
+  );
   const activeClaim = fixture.board.claimRun(fixture.engineer.agentId, {
     claimId: "claim-v7-migration-active-0001",
     messageCursor: null,
   });
   assert.ok(activeClaim);
-  const phase = fixture.board.createTaskPhase(activeTask.taskId, {
-    title: "Implement migration-safe state",
-    stage: "execution",
-    parallelGroup: null,
-  }, fixture.engineer.agentId);
-  const runningPhase = fixture.board.updateTaskPhase(phase.phaseId, {
-    version: phase.version,
-    status: "in_progress",
-  }, fixture.engineer.agentId);
-  const legacyPhase = fixture.board.createTaskPhase(activeTask.taskId, {
-    title: "Preserve a legacy done row",
-    stage: "review",
-    parallelGroup: null,
-  }, fixture.engineer.agentId);
-  const runningLegacyPhase = fixture.board.updateTaskPhase(legacyPhase.phaseId, {
-    version: legacyPhase.version,
-    status: "in_progress",
-  }, fixture.engineer.agentId);
-  const completedLegacyPhase = fixture.board.updateTaskPhase(legacyPhase.phaseId, {
-    version: runningLegacyPhase.version,
-    stage: "done",
-    status: "completed",
-  }, fixture.engineer.agentId);
-  const pendingManagerTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Preserve an unclaimed wake through migration",
-    assignedAgentId: fixture.manager.agentId,
-    assignedRole: fixture.manager.role,
-  }));
+  const phase = fixture.board.createTaskPhase(
+    activeTask.taskId,
+    {
+      title: "Implement migration-safe state",
+      stage: "execution",
+      parallelGroup: null,
+    },
+    fixture.engineer.agentId
+  );
+  const runningPhase = fixture.board.updateTaskPhase(
+    phase.phaseId,
+    {
+      version: phase.version,
+      status: "in_progress",
+    },
+    fixture.engineer.agentId
+  );
+  const legacyPhase = fixture.board.createTaskPhase(
+    activeTask.taskId,
+    {
+      title: "Preserve a legacy done row",
+      stage: "review",
+      parallelGroup: null,
+    },
+    fixture.engineer.agentId
+  );
+  const runningLegacyPhase = fixture.board.updateTaskPhase(
+    legacyPhase.phaseId,
+    {
+      version: legacyPhase.version,
+      status: "in_progress",
+    },
+    fixture.engineer.agentId
+  );
+  const completedLegacyPhase = fixture.board.updateTaskPhase(
+    legacyPhase.phaseId,
+    {
+      version: runningLegacyPhase.version,
+      stage: "done",
+      status: "completed",
+    },
+    fixture.engineer.agentId
+  );
+  const pendingManagerTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Preserve an unclaimed wake through migration",
+      assignedAgentId: fixture.manager.agentId,
+      assignedRole: fixture.manager.role,
+    })
+  );
   fixture.board.close();
 
   const { DatabaseSync } = await import("node:sqlite");
@@ -7940,10 +9509,14 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
     assert.ok(replay);
     assert.equal(replay.run.runId, activeClaim.run.runId);
     assert.equal(replay.wakeup.wakeupId, activeClaim.wakeup.wakeupId);
-    const completedPhase = upgraded.updateTaskPhase(runningPhase.phaseId, {
-      version: runningPhase.version,
-      status: "completed",
-    }, fixture.engineer.agentId);
+    const completedPhase = upgraded.updateTaskPhase(
+      runningPhase.phaseId,
+      {
+        version: runningPhase.version,
+        status: "completed",
+      },
+      fixture.engineer.agentId
+    );
     assert.equal(completedPhase.stage, "execution");
     assert.equal(completedPhase.status, "completed");
 
@@ -7972,10 +9545,14 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
-    const migratedPhase = verified.prepare("SELECT stage, status FROM task_phases WHERE phase_id = ?").get(runningPhase.phaseId);
+    const migratedPhase = verified
+      .prepare("SELECT stage, status FROM task_phases WHERE phase_id = ?")
+      .get(runningPhase.phaseId);
     assert.equal(migratedPhase?.stage, "execution");
     assert.equal(migratedPhase?.status, "completed");
-    const migratedLegacyPhase = verified.prepare("SELECT stage, status FROM task_phases WHERE phase_id = ?").get(completedLegacyPhase.phaseId);
+    const migratedLegacyPhase = verified
+      .prepare("SELECT stage, status FROM task_phases WHERE phase_id = ?")
+      .get(completedLegacyPhase.phaseId);
     assert.equal(migratedLegacyPhase?.stage, "done");
     assert.equal(migratedLegacyPhase?.status, "completed");
   } finally {
@@ -7986,21 +9563,30 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 test("schema version 5 migrates project-local order keys into the existing global display order", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const firstProjectTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "First project task",
-  }));
+  const firstProjectTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "First project task",
+    })
+  );
   const otherProject = fixture.board.createProject({
     name: "Reporting migration",
     description: "Exercise global task ordering during migration.",
   });
-  const otherProjectTask = fixture.board.createTask(otherProject.projectId, taskRequest({
-    title: "Other project task",
-    assignedAgentId: null,
-    assignedRole: null,
-  }));
-  const laterFirstProjectTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Later first project task",
-  }));
+  const otherProjectTask = fixture.board.createTask(
+    otherProject.projectId,
+    taskRequest({
+      title: "Other project task",
+      assignedAgentId: null,
+      assignedRole: null,
+    })
+  );
+  const laterFirstProjectTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Later first project task",
+    })
+  );
   fixture.board.close();
 
   const legacyGlobalOrder = [
@@ -8011,7 +9597,9 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const { DatabaseSync } = await import("node:sqlite");
   const versionFive = new DatabaseSync(path);
-  versionFive.exec("DROP INDEX tasks_global_order; CREATE INDEX tasks_project_order ON tasks(project_id, order_key, task_id);");
+  versionFive.exec(
+    "DROP INDEX tasks_global_order; CREATE INDEX tasks_project_order ON tasks(project_id, order_key, task_id);"
+  );
   versionFive.prepare("UPDATE tasks SET order_key = ? WHERE task_id = ?").run(0, firstProjectTask.taskId);
   versionFive.prepare("UPDATE tasks SET order_key = ? WHERE task_id = ?").run(0, otherProjectTask.taskId);
   versionFive.prepare("UPDATE tasks SET order_key = ? WHERE task_id = ?").run(1024, laterFirstProjectTask.taskId);
@@ -8024,14 +9612,23 @@ test("schema version 5 migrates project-local order keys into the existing globa
       ...upgraded.snapshot(fixture.project.projectId).tasks,
       ...upgraded.snapshot(otherProject.projectId).tasks,
     ].sort((left, right) => left.orderKey - right.orderKey || left.taskId.localeCompare(right.taskId));
-    assert.deepEqual(visibleAcrossProjects.map((task) => task.taskId), legacyGlobalOrder.map((task) => task.taskId));
-    assert.deepEqual(visibleAcrossProjects.map((task) => task.orderKey), [0, 1024, 2048]);
+    assert.deepEqual(
+      visibleAcrossProjects.map((task) => task.taskId),
+      legacyGlobalOrder.map((task) => task.taskId)
+    );
+    assert.deepEqual(
+      visibleAcrossProjects.map((task) => task.orderKey),
+      [0, 1024, 2048]
+    );
 
-    const appended = upgraded.createTask(otherProject.projectId, taskRequest({
-      title: "Created after global order migration",
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
+    const appended = upgraded.createTask(
+      otherProject.projectId,
+      taskRequest({
+        title: "Created after global order migration",
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
     assert.equal(appended.orderKey, 3072);
   } finally {
     upgraded.close();
@@ -8040,8 +9637,15 @@ test("schema version 5 migrates project-local order keys into the existing globa
   const verified = new DatabaseSync(path);
   try {
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
-    assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()?.name, "tasks_global_order");
-    assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(), undefined);
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()
+        ?.name,
+      "tasks_global_order"
+    );
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_project_order'").get(),
+      undefined
+    );
   } finally {
     verified.close();
   }
@@ -8079,16 +9683,25 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
   const verified = new DatabaseSync(path);
   try {
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
-    assert.equal(verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id, "task-legacy");
-    const task = verified.prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-legacy");
+    assert.equal(
+      verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id,
+      "task-legacy"
+    );
+    const task = verified
+      .prepare("SELECT task_kind, required_role, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?")
+      .get("task-legacy");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
     assert.equal(task?.agent_estimate_minutes, null);
     assert.equal(task?.order_key, 0);
-    assert.equal(verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_phases'").get()?.name, "task_phases");
     assert.equal(
-      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()?.name,
-      "work_item_dependencies",
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_phases'").get()?.name,
+      "task_phases"
+    );
+    assert.equal(
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()
+        ?.name,
+      "work_item_dependencies"
     );
   } finally {
     verified.close();
@@ -8118,17 +9731,24 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
   const verified = new DatabaseSync(path);
   try {
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
-    const task = verified.prepare("SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?").get("task-v2");
+    const task = verified
+      .prepare(
+        "SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?"
+      )
+      .get("task-v2");
     assert.equal(task?.task_kind, "work");
     assert.equal(task?.required_role, null);
     assert.equal(task?.expected_agent_minutes, 45);
     assert.equal(task?.agent_estimate_minutes, null);
     assert.equal(task?.order_key, 0);
-    const index = verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_one_review_stage'").get();
+    const index = verified
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_one_review_stage'")
+      .get();
     assert.equal(index?.name, "tasks_one_review_stage");
     assert.equal(
-      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()?.name,
-      "work_item_dependencies",
+      verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_item_dependencies'").get()
+        ?.name,
+      "work_item_dependencies"
     );
   } finally {
     verified.close();
@@ -8156,7 +9776,7 @@ test("schema version 3 upgrades through v26, preserves existing board data, and 
   try {
     assert.equal(
       upgraded.listProjects().find((project) => project.projectId === "v3-project")?.name,
-      "Version three project",
+      "Version three project"
     );
     assert.equal(Object.hasOwn(upgraded.snapshot("v3-project"), "documents"), false);
   } finally {
@@ -8169,10 +9789,13 @@ test("schema version 3 upgrades through v26, preserves existing board data, and 
     for (const table of ["document_events", "documents"]) {
       assert.equal(
         verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
-        undefined,
+        undefined
       );
     }
-    assert.equal(verified.prepare("SELECT name FROM projects WHERE project_id = 'v3-project'").get()?.name, "Version three project");
+    assert.equal(
+      verified.prepare("SELECT name FROM projects WHERE project_id = 'v3-project'").get()?.name,
+      "Version three project"
+    );
   } finally {
     verified.close();
   }
@@ -8201,7 +9824,7 @@ test("artifacts are immutable, content-validated, and visible in the project eve
         caption: "Spoofed image",
         contentBase64: Buffer.from("not a png").toString("base64"),
       }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "ARTIFACT_MEDIA_MISMATCH",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "ARTIFACT_MEDIA_MISMATCH"
     );
   } finally {
     fixture.board.close();
@@ -8222,8 +9845,9 @@ test("schema version 11 adds durable work-item planning links", async () => {
   try {
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
-      verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()?.name,
-      "work_item_planning_tasks",
+      verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()
+        ?.name,
+      "work_item_planning_tasks"
     );
   } finally {
     verified.close();
@@ -8262,11 +9886,11 @@ test("schema version 12 adds durable claim results while preserving active legac
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
-      "claim_result_json",
+      "claim_result_json"
     );
     assert.equal(
       verified.prepare("SELECT claim_result_json FROM runs WHERE run_id = ?").get(claim.run.runId)?.claim_result_json,
-      null,
+      null
     );
   } finally {
     verified.close();
@@ -8277,10 +9901,13 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: "Preserve task state through the recovery migration",
-    requiresReview: false,
-  }));
+  const task = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: "Preserve task state through the recovery migration",
+      requiresReview: false,
+    })
+  );
   fixture.board.close();
 
   const legacy = new DatabaseSync(path);
@@ -8307,8 +9934,14 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
   try {
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
-    assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql), /'interrupted'/u);
-    assert.match(String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql), /'resumed'/u);
+    assert.match(
+      String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
+      /'interrupted'/u
+    );
+    assert.match(
+      String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql),
+      /'resumed'/u
+    );
     assert.equal(verified.prepare("SELECT status FROM tasks WHERE task_id=?").get(task.taskId)?.status, "queued");
   } finally {
     verified.close();
@@ -8338,11 +9971,11 @@ test("schema version 14 adds nullable agent lane errors without changing existin
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
-      "last_error",
+      "last_error"
     );
     assert.equal(
       verified.prepare("SELECT last_error FROM agents WHERE agent_id=?").get(fixture.engineer.agentId)?.last_error,
-      null,
+      null
     );
   } finally {
     verified.close();
@@ -8353,10 +9986,13 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: "Preserve this visible intake through the archive migration.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "migration-v16-work-item-0001").workItem;
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: "Preserve this visible intake through the archive migration.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    "migration-v16-work-item-0001"
+  ).workItem;
   fixture.board.close();
 
   const legacy = new DatabaseSync(path);
@@ -8381,14 +10017,21 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
-      "archived_at",
+      "archived_at"
     );
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'cancelled_reason'").get()?.name,
-      "cancelled_reason",
+      "cancelled_reason"
     );
-    assert.equal(verified.prepare("SELECT archived_at FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.archived_at, null);
-    assert.equal(verified.prepare("SELECT cancelled_reason FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.cancelled_reason, null);
+    assert.equal(
+      verified.prepare("SELECT archived_at FROM work_items WHERE work_item_id=?").get(workItem.workItemId)?.archived_at,
+      null
+    );
+    assert.equal(
+      verified.prepare("SELECT cancelled_reason FROM work_items WHERE work_item_id=?").get(workItem.workItemId)
+        ?.cancelled_reason,
+      null
+    );
   } finally {
     verified.close();
   }
@@ -8406,9 +10049,11 @@ test("schema version 17 adds agent credential versions without changing existing
 
   const upgraded = await TaskBoard.open(config(path));
   try {
-    assert.equal(upgraded.snapshot(fixture.project.projectId).agents.find((agent) => (
-      agent.agentId === fixture.engineer.agentId
-    ))?.version, 1);
+    assert.equal(
+      upgraded.snapshot(fixture.project.projectId).agents.find((agent) => agent.agentId === fixture.engineer.agentId)
+        ?.version,
+      1
+    );
   } finally {
     upgraded.close();
   }
@@ -8418,9 +10063,12 @@ test("schema version 17 adds agent credential versions without changing existing
     assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 26);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
-      "version",
+      "version"
     );
-    assert.equal(verified.prepare("SELECT version FROM agents WHERE agent_id=?").get(fixture.engineer.agentId)?.version, 1);
+    assert.equal(
+      verified.prepare("SELECT version FROM agents WHERE agent_id=?").get(fixture.engineer.agentId)?.version,
+      1
+    );
   } finally {
     verified.close();
   }

@@ -10,7 +10,9 @@ export function canonicalJson(value: unknown): string {
 }
 
 export function sha256(value: unknown): string {
-  return createHash("sha256").update(typeof value === "string" ? value : canonicalJson(value)).digest("hex");
+  return createHash("sha256")
+    .update(typeof value === "string" ? value : canonicalJson(value))
+    .digest("hex");
 }
 
 export function tokenMatches(expectedHash: string, supplied: string | undefined): boolean {

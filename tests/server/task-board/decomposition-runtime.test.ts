@@ -14,11 +14,7 @@ import type {
   SettleRunRequest,
   WorkItem,
 } from "#shared/task-board-contract";
-import {
-  DESIGN_FAILURE_POINTS,
-  MAX_AGENT_CONTEXT_BYTES,
-  MAX_DESIGN_CONTEXT_BYTES,
-} from "#shared/task-board-contract";
+import { DESIGN_FAILURE_POINTS, MAX_AGENT_CONTEXT_BYTES, MAX_DESIGN_CONTEXT_BYTES } from "#shared/task-board-contract";
 import { TaskBoard, TaskBoardError } from "#server/task-board";
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager } from "#server/agents/task-workspace";
@@ -78,15 +74,17 @@ const REVIEWER = {
 
 function configureChildPipeline(board: TaskBoard): void {
   const current = board.getAutomationConfiguration();
-  board.updateAutomationConfiguration(automationConfigurationRequest({
-    version: current.version,
-    agentTypes: [IMPLEMENTER, REVIEWER],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: IMPLEMENTER.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: REVIEWER.agentTypeId },
-    }),
-  }));
+  board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      version: current.version,
+      agentTypes: [IMPLEMENTER, REVIEWER],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: IMPLEMENTER.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: REVIEWER.agentTypeId },
+      }),
+    })
+  );
 }
 
 function proposeParent(
@@ -96,13 +94,16 @@ function proposeParent(
   suffix: string,
   changeShape: "feature" | "blast_radius" = "feature",
   tier: "standard" | "hazardous" = "standard",
-  skillIds: readonly string[] = [],
+  skillIds: readonly string[] = []
 ) {
   configureChildPipeline(board);
-  const parent = board.createWorkItem(workItemRequest({
-    originalRequest: `Coordinate decomposition runtime ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId },
-  }), `decomposition-runtime-${suffix}`).workItem;
+  const parent = board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Coordinate decomposition runtime ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId },
+    }),
+    `decomposition-runtime-${suffix}`
+  ).workItem;
   const workflow = board.proposeWorkflow({
     workItemId: parent.workItemId,
     projectId,
@@ -114,14 +115,16 @@ function proposeParent(
     declaredScope: ["coordination"],
     children,
     skillIds,
-    nodes: [{
-      nodeId: `parent-${suffix}`,
-      title: `Coordinate ${suffix}`,
-      objective: `Coordinate ${suffix}.`,
-      acceptanceCriteria: ["The parent records child completion."],
-      dependencyNodeIds: [],
-      stageTemplate: ["verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `parent-${suffix}`,
+        title: `Coordinate ${suffix}`,
+        objective: `Coordinate ${suffix}.`,
+        acceptanceCriteria: ["The parent records child completion."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
   });
   const revision = workflow.plans.find((candidate) => candidate.workItemId === parent.workItemId);
   assert.ok(revision);
@@ -133,13 +136,16 @@ function proposeStandalonePipeline(
   board: TaskBoard,
   projectId: string,
   declaredScope: readonly string[],
-  suffix: string,
+  suffix: string
 ): WorkItem {
   configureChildPipeline(board);
-  const workItem = board.createWorkItem(workItemRequest({
-    originalRequest: `Run standalone decomposition regression ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId },
-  }), `decomposition-standalone-${suffix}`).workItem;
+  const workItem = board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Run standalone decomposition regression ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId },
+    }),
+    `decomposition-standalone-${suffix}`
+  ).workItem;
   const workflow = board.proposeWorkflow({
     workItemId: workItem.workItemId,
     projectId,
@@ -150,14 +156,16 @@ function proposeStandalonePipeline(
     tier: "standard",
     declaredScope,
     skillIds: [],
-    nodes: [{
-      nodeId: `standalone-${suffix}`,
-      title: `Standalone ${suffix}`,
-      objective: `Run standalone ${suffix}.`,
-      acceptanceCriteria: ["The pipeline activates after scope release."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `standalone-${suffix}`,
+        title: `Standalone ${suffix}`,
+        objective: `Run standalone ${suffix}.`,
+        acceptanceCriteria: ["The pipeline activates after scope release."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   });
   const revision = workflow.plans.find((candidate) => candidate.workItemId === workItem.workItemId);
   assert.ok(revision);
@@ -168,35 +176,39 @@ function proposeStandalonePipeline(
 function phasedChildren(
   providerProjectId: string,
   consumerProjectId: string,
-  suffix: string,
+  suffix: string
 ): readonly DeclaredChild[] {
-  return [{
-    key: "expand",
-    objective: `Expand the provider interface for ${suffix}.`,
-    projectId: providerProjectId,
-    declaredScope: [`src/${suffix}-expand`, "docs/interface.md"],
-    acceptanceCriteria: ["The expansion is independently mergeable."],
-    phase: "expand",
-    splitBy: "phase",
-  }, {
-    key: "migrate",
-    objective: `Migrate the consumer interface for ${suffix}.`,
-    projectId: consumerProjectId,
-    declaredScope: [`src/${suffix}-migrate`],
-    acceptanceCriteria: ["The migration waits for expansion."],
-    phase: "migrate",
-    splitBy: "consumer",
-    dependsOn: ["expand"],
-  }, {
-    key: "contract",
-    objective: `Contract the provider interface for ${suffix}.`,
-    projectId: providerProjectId,
-    declaredScope: [`src/${suffix}-contract`, "docs/interface.md"],
-    acceptanceCriteria: ["The contraction waits for migration."],
-    phase: "contract",
-    splitBy: "phase",
-    dependsOn: ["migrate"],
-  }];
+  return [
+    {
+      key: "expand",
+      objective: `Expand the provider interface for ${suffix}.`,
+      projectId: providerProjectId,
+      declaredScope: [`src/${suffix}-expand`, "docs/interface.md"],
+      acceptanceCriteria: ["The expansion is independently mergeable."],
+      phase: "expand",
+      splitBy: "phase",
+    },
+    {
+      key: "migrate",
+      objective: `Migrate the consumer interface for ${suffix}.`,
+      projectId: consumerProjectId,
+      declaredScope: [`src/${suffix}-migrate`],
+      acceptanceCriteria: ["The migration waits for expansion."],
+      phase: "migrate",
+      splitBy: "consumer",
+      dependsOn: ["expand"],
+    },
+    {
+      key: "contract",
+      objective: `Contract the provider interface for ${suffix}.`,
+      projectId: providerProjectId,
+      declaredScope: [`src/${suffix}-contract`, "docs/interface.md"],
+      acceptanceCriteria: ["The contraction waits for migration."],
+      phase: "contract",
+      splitBy: "phase",
+      dependsOn: ["migrate"],
+    },
+  ];
 }
 
 function childNode(board: TaskBoard, child: WorkItem) {
@@ -212,25 +224,33 @@ function childNode(board: TaskBoard, child: WorkItem) {
 function forceMergedWithApproval(path: string, workItemId: string, mergeSha: string): void {
   const db = new DatabaseSync(path);
   try {
-    const plan = db.prepare(`
+    const plan = db
+      .prepare(
+        `
       SELECT plan_revision_id
       FROM plan_revisions
       WHERE work_item_id=? AND state='confirmed'
       ORDER BY revision DESC
       LIMIT 1
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(plan);
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE work_items
       SET state='merged',current_stage=NULL,ended_at=?,version=version+1,updated_at=?
       WHERE work_item_id=?
-    `).run(NOW, NOW, workItemId);
-    db.prepare(`
+    `
+    ).run(NOW, NOW, workItemId);
+    db.prepare(
+      `
       INSERT INTO gate_actions(
         gate_action_id,work_item_id,gate,actor_id,plan_revision_id,
         verified_sha,merge_sha,ref_id,note,created_at
       ) VALUES(?,?,'final_approve','human:alice',?,NULL,?,NULL,NULL,?)
-    `).run(`forced-final-${workItemId}`, workItemId, String(plan.plan_revision_id), mergeSha, NOW);
+    `
+    ).run(`forced-final-${workItemId}`, workItemId, String(plan.plan_revision_id), mergeSha, NOW);
   } finally {
     db.close();
   }
@@ -239,13 +259,14 @@ function forceMergedWithApproval(path: string, workItemId: string, mergeSha: str
 function forceParentFinalApproval(path: string, workItemId: string): number {
   const db = new DatabaseSync(path);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE work_items
       SET state='final_approval',current_stage=NULL,version=version+1,updated_at=?
       WHERE work_item_id=?
-    `).run(NOW, workItemId);
-    return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?")
-      .get(workItemId)?.version);
+    `
+    ).run(NOW, workItemId);
+    return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?").get(workItemId)?.version);
   } finally {
     db.close();
   }
@@ -254,45 +275,61 @@ function forceParentFinalApproval(path: string, workItemId: string): number {
 function forceFinalApproval(path: string, workItemId: string, verifiedSha: string): number {
   const db = new DatabaseSync(path);
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT node.node_id
       FROM plan_revisions plan
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
       WHERE plan.work_item_id=? AND plan.state='confirmed'
       LIMIT 1
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(row);
-    const attempt = Number(db.prepare(`
+    const attempt =
+      Number(
+        db
+          .prepare(
+            `
       SELECT COUNT(*) AS count
       FROM verify_attempts
       WHERE node_id=?
-    `).get(String(row.node_id))?.count) + 1;
-    db.prepare(`
+    `
+          )
+          .get(String(row.node_id))?.count
+      ) + 1;
+    db.prepare(
+      `
       INSERT INTO verify_attempts(
         verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
         check_results_json,detail,created_at,ended_at
       ) VALUES(?,?,'testing',?, ?,NULL,'green','[]',?,?,?)
-    `).run(
+    `
+    ).run(
       `verify-${workItemId}-${attempt}`,
       String(row.node_id),
       attempt,
       `verify-run-${workItemId}-${attempt}`,
       `verified-sha:${verifiedSha}`,
       NOW,
-      NOW,
+      NOW
     );
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE work_nodes
       SET state='completed',current_stage=NULL,version=version+1,updated_at=?
       WHERE node_id=?
-    `).run(NOW, String(row.node_id));
-    db.prepare(`
+    `
+    ).run(NOW, String(row.node_id));
+    db.prepare(
+      `
       UPDATE work_items
       SET state='final_approval',current_stage=NULL,ended_at=NULL,version=version+1,updated_at=?
       WHERE work_item_id=?
-    `).run(NOW, workItemId);
-    return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?")
-      .get(workItemId)?.version);
+    `
+    ).run(NOW, workItemId);
+    return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?").get(workItemId)?.version);
   } finally {
     db.close();
   }
@@ -301,41 +338,51 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
 function hazardousDesignRecord(): DesignRecordDraft {
   return {
     states: ["pending", "committed", "unknown"],
-    transitions: [{
-      from: "pending",
-      to: "committed",
-      durablePrecondition: "Persist the child intent before the side effect.",
-      recovery: "Resume from the durable child intent.",
-    }],
+    transitions: [
+      {
+        from: "pending",
+        to: "committed",
+        durablePrecondition: "Persist the child intent before the side effect.",
+        recovery: "Resume from the durable child intent.",
+      },
+    ],
     failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
       point,
       resultingState: `durable child state after ${point}`,
       recovery: `recover the child after ${point}`,
     })),
-    idempotencyKeys: [{
-      name: "child-operation-key",
-      generatedAt: "Before the first side effect.",
-      persistedAt: "With the durable child intent.",
-      reuse: "Reuse for every retry.",
-    }],
-    faultInjectionCases: [{
-      name: "Crash after child commit",
-      scenario: "Terminate after the commit and before acknowledgement.",
-      expectation: "The retry observes the committed child result.",
-    }],
+    idempotencyKeys: [
+      {
+        name: "child-operation-key",
+        generatedAt: "Before the first side effect.",
+        persistedAt: "With the durable child intent.",
+        reuse: "Reuse for every retry.",
+      },
+    ],
+    faultInjectionCases: [
+      {
+        name: "Crash after child commit",
+        scenario: "Terminate after the commit and before acknowledgement.",
+        expectation: "The retry observes the committed child result.",
+      },
+    ],
   };
 }
 
 function latestNodeBlock(path: string, nodeId: string): string | null {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT summary
       FROM project_events
       WHERE node_id=? AND event_type='node_blocked'
       ORDER BY sequence DESC
       LIMIT 1
-    `).get(nodeId);
+    `
+      )
+      .get(nodeId);
     return row === undefined ? null : String(row.summary);
   } finally {
     db.close();
@@ -354,12 +401,20 @@ async function pipelineRepository(suffix: string): Promise<string> {
   await git(root, ["init", "-b", "main", repoPath]);
   await writeFile(join(repoPath, "seed.txt"), `${suffix} seed\n`, "utf8");
   await writeFile(join(repoPath, "verify.mjs"), "process.exit(0);\n", "utf8");
-  await writeFile(join(repoPath, "docs/workflow.md"), `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
-    version: 1,
-    compile: ["node verify.mjs"],
-    rules: [{ match: "**", action: { kind: "none" } }],
-    full: ["node verify.mjs"],
-  }, null, 2)}\n\`\`\`\n`, "utf8");
+  await writeFile(
+    join(repoPath, "docs/workflow.md"),
+    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify(
+      {
+        version: 1,
+        compile: ["node verify.mjs"],
+        rules: [{ match: "**", action: { kind: "none" } }],
+        full: ["node verify.mjs"],
+      },
+      null,
+      2
+    )}\n\`\`\`\n`,
+    "utf8"
+  );
   await git(repoPath, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
   await git(repoPath, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "seed"]);
   return repoPath;
@@ -368,13 +423,14 @@ async function pipelineRepository(suffix: string): Promise<string> {
 async function waitForQueuedRoleTask(
   board: TaskBoard,
   projectId: string,
-  role: "engineer" | "manager" | "verifier",
+  role: "engineer" | "manager" | "verifier"
 ): Promise<NonNullable<ReturnType<TaskBoard["snapshot"]>["tasks"][number]>> {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
     await board.sweepVerifyAttempts();
-    const task = board.snapshot(projectId).tasks.find((candidate) =>
-      candidate.status === "queued" && candidate.assignedRole === role);
+    const task = board
+      .snapshot(projectId)
+      .tasks.find((candidate) => candidate.status === "queued" && candidate.assignedRole === role);
     if (task !== undefined) return task;
     await delay(25);
   }
@@ -383,9 +439,7 @@ async function waitForQueuedRoleTask(
 
 type InterfaceGitOperation = "ls-tree" | "cat-file" | "show";
 
-function crossRepoGit(
-  readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer,
-) {
+function crossRepoGit(readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer) {
   const run = (arguments_: readonly string[]): string | Buffer => {
     const target = arguments_.at(-1) ?? "";
     if (arguments_.includes("ls-tree") && target === "docs/interface.md") {
@@ -421,7 +475,7 @@ function crossRepoGit(
 async function migrateReadinessFixture(
   suffix: string,
   readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer,
-  skillIds: readonly string[] = [],
+  skillIds: readonly string[] = []
 ) {
   const fixture = await boardFixture(undefined, undefined, {
     git: crossRepoGit(readInterface),
@@ -444,7 +498,7 @@ async function migrateReadinessFixture(
     suffix,
     "blast_radius",
     "standard",
-    skillIds,
+    skillIds
   );
   const [expand, migrate] = decomposition.children;
   assert.ok(expand);
@@ -459,7 +513,7 @@ function preparePhaseVerificationClaim(
   projectId: string,
   workItem: WorkItem,
   label: string,
-  attempt = 1,
+  attempt = 1
 ) {
   const { node } = childNode(fixture.board, workItem);
   const verifier = fixture.board.createAgent(projectId, {
@@ -470,40 +524,51 @@ function preparePhaseVerificationClaim(
     model: "test-model",
     token: `${label}-verification-token-0123456789abcdef`,
   });
-  const task = fixture.board.createTask(projectId, taskRequest({
-    title: `verification: ${label}`,
-    objective: `Verify ${label}.`,
-    acceptanceCriteria: `The ${label} result is independently verified.`,
-    workspaceRefs: [],
-    assignedAgentId: verifier.agentId,
-    assignedRole: "verifier",
-    requiresReview: false,
-  }));
+  const task = fixture.board.createTask(
+    projectId,
+    taskRequest({
+      title: `verification: ${label}`,
+      objective: `Verify ${label}.`,
+      acceptanceCriteria: `The ${label} result is independently verified.`,
+      workspaceRefs: [],
+      assignedAgentId: verifier.agentId,
+      assignedRole: "verifier",
+      requiresReview: false,
+    })
+  );
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE work_nodes SET state='active',current_stage='verification',updated_at=? WHERE node_id=?
-    `).run(NOW, node.nodeId);
-    db.prepare(`
+    `
+    ).run(NOW, node.nodeId);
+    db.prepare(
+      `
       UPDATE work_items SET state='reviewing',current_stage='verification',updated_at=? WHERE work_item_id=?
-    `).run(NOW, workItem.workItemId);
-    db.prepare(`
+    `
+    ).run(NOW, workItem.workItemId);
+    db.prepare(
+      `
       INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
       VALUES(?,?,?,'verification',?,'{}')
-    `).run(`${label}-verification-attempt`, node.nodeId, task.taskId, attempt);
-    db.prepare(`
+    `
+    ).run(`${label}-verification-attempt`, node.nodeId, task.taskId, attempt);
+    db.prepare(
+      `
       INSERT INTO verify_attempts(
         verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
         check_results_json,detail,created_at,ended_at
       ) VALUES(?,?,'testing',?, ?,NULL,'green','[]',?,?,?)
-    `).run(
+    `
+    ).run(
       `${label}-green-verification`,
       node.nodeId,
       attempt,
       `${label}-verify-run`,
       `verified-sha:${VERIFIED_SHAS[0]}`,
       NOW,
-      NOW,
+      NOW
     );
   } finally {
     db.close();
@@ -516,23 +581,32 @@ function preparePhaseVerificationClaim(
   return Object.freeze({ claim, task, verifier });
 }
 
-function latestTransitionActor(path: string, workItemId: string): Readonly<{
+function latestTransitionActor(
+  path: string,
+  workItemId: string
+): Readonly<{
   actorType: string;
   actorId: string;
 }> | null {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT actor_type,actor_id
       FROM work_item_transitions
       WHERE work_item_id=?
       ORDER BY sequence DESC
       LIMIT 1
-    `).get(workItemId);
-    return row === undefined ? null : Object.freeze({
-      actorType: String(row.actor_type),
-      actorId: String(row.actor_id),
-    });
+    `
+      )
+      .get(workItemId);
+    return row === undefined
+      ? null
+      : Object.freeze({
+          actorType: String(row.actor_type),
+          actorId: String(row.actor_id),
+        });
   } finally {
     db.close();
   }
@@ -556,28 +630,26 @@ test("unphased dependencies order merges without blocking parallel child activat
       return { kind: "merged", mergeSha: MERGE_SHAS[mergeOrder.length - 1]! };
     },
   });
-  const declared: readonly DeclaredChild[] = [{
-    key: "first",
-    objective: "Merge the first child.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/first"],
-    acceptanceCriteria: ["The first child merges."],
-  }, {
-    key: "second",
-    objective: "Start in parallel but merge after the first child.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/second"],
-    acceptanceCriteria: ["The second child starts immediately and merges second."],
-    dependsOn: ["first"],
-  }];
+  const declared: readonly DeclaredChild[] = [
+    {
+      key: "first",
+      objective: "Merge the first child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/first"],
+      acceptanceCriteria: ["The first child merges."],
+    },
+    {
+      key: "second",
+      objective: "Start in parallel but merge after the first child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/second"],
+      acceptanceCriteria: ["The second child starts immediately and merges second."],
+      dependsOn: ["first"],
+    },
+  ];
 
   try {
-    const decomposition = proposeParent(
-      fixture.board,
-      fixture.project.projectId,
-      declared,
-      "dependency-readiness",
-    );
+    const decomposition = proposeParent(fixture.board, fixture.project.projectId, declared, "dependency-readiness");
     const [first, second] = decomposition.children;
     assert.ok(first);
     assert.ok(second);
@@ -606,7 +678,7 @@ test("confirm activates children in another project through the parent project's
     undefined,
     undefined,
     { git: () => `${BASE_SHA}\n` },
-    { reconcileIntervalSeconds: 0 },
+    { reconcileIntervalSeconds: 0 }
   );
   try {
     const childProject = fixture.board.createProject({
@@ -615,25 +687,36 @@ test("confirm activates children in another project through the parent project's
       repoPath: "/repos/cross-project-child-owner",
     });
 
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "remote-one",
-      objective: "Activate the first remote child during confirmation.",
-      projectId: childProject.projectId,
-      declaredScope: ["src/remote-one"],
-      acceptanceCriteria: ["The first remote child starts without a timer."],
-    }, {
-      key: "remote-two",
-      objective: "Activate the second remote child during confirmation.",
-      projectId: childProject.projectId,
-      declaredScope: ["src/remote-two"],
-      acceptanceCriteria: ["The second remote child starts without a timer."],
-    }], "parent-project-confirm-pass");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "remote-one",
+          objective: "Activate the first remote child during confirmation.",
+          projectId: childProject.projectId,
+          declaredScope: ["src/remote-one"],
+          acceptanceCriteria: ["The first remote child starts without a timer."],
+        },
+        {
+          key: "remote-two",
+          objective: "Activate the second remote child during confirmation.",
+          projectId: childProject.projectId,
+          declaredScope: ["src/remote-two"],
+          acceptanceCriteria: ["The second remote child starts without a timer."],
+        },
+      ],
+      "parent-project-confirm-pass"
+    );
 
-    assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).resolvedProjectId, fixture.project.projectId);
+    assert.equal(
+      fixture.board.requireWorkItem(decomposition.parent.workItemId).resolvedProjectId,
+      fixture.project.projectId
+    );
     assert.ok(decomposition.children.every((child) => child.resolvedProjectId === childProject.projectId));
     assert.deepEqual(
       decomposition.children.map((child) => fixture.board.requireWorkItem(child.workItemId).state),
-      ["implementing", "implementing"],
+      ["implementing", "implementing"]
     );
     assert.ok(decomposition.children.every((child) => childNode(fixture.board, child).node.state === "active"));
   } finally {
@@ -653,13 +736,20 @@ test("unphased child activation keeps its confirmation-time base when the defaul
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "unphased-moving-head",
-      objective: "Keep the confirmation-time base for an unphased child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/unphased-moving-head"],
-      acceptanceCriteria: ["Activation does not refresh an unphased base."],
-    }], "unphased-moving-head");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "unphased-moving-head",
+          objective: "Keep the confirmation-time base for an unphased child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/unphased-moving-head"],
+          acceptanceCriteria: ["Activation does not refresh an unphased base."],
+        },
+      ],
+      "unphased-moving-head"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     assert.equal(headReads, 1);
@@ -672,14 +762,23 @@ test("unphased child activation keeps its confirmation-time base when the defaul
 test("a ready hazardous child enters the ordinary Design stage while implementation stays pending", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "hazardous-child",
-      objective: "Design and implement the hazardous child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/hazardous"],
-      acceptanceCriteria: ["The hazardous child follows Design."],
-      splitBy: "consumer",
-    }], "hazardous-readiness", "blast_radius", "hazardous");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "hazardous-child",
+          objective: "Design and implement the hazardous child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/hazardous"],
+          acceptanceCriteria: ["The hazardous child follows Design."],
+          splitBy: "consumer",
+        },
+      ],
+      "hazardous-readiness",
+      "blast_radius",
+      "hazardous"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     assert.equal(fixture.board.requireWorkItem(child.workItemId).state, "designing");
@@ -688,24 +787,44 @@ test("a ready hazardous child enters the ordinary Design stage while implementat
     assert.equal(node.currentStage, null);
     const db = new DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(db.prepare(`
+      assert.equal(
+        Number(
+          db
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM work_item_design_tasks
         WHERE work_item_id=?
-      `).get(child.workItemId)?.count), 1);
-      assert.equal(Number(db.prepare(`
+      `
+            )
+            .get(child.workItemId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          db
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM stage_attempts
         WHERE node_id=? AND stage='implementation'
-      `).get(node.nodeId)?.count), 0);
-      db.prepare(`
+      `
+            )
+            .get(node.nodeId)?.count
+        ),
+        0
+      );
+      db.prepare(
+        `
         UPDATE tasks
         SET status='cancelled',started_at=COALESCE(started_at,?),ended_at=?,result='Superseded by direct test proposal',
           version=version+1,updated_at=?
         WHERE task_id IN (
           SELECT task_id FROM work_item_planning_tasks WHERE work_item_id=?
         ) AND ended_at IS NULL
-      `).run(NOW, NOW, NOW, decomposition.parent.workItemId);
+      `
+      ).run(NOW, NOW, NOW, decomposition.parent.workItemId);
     } finally {
       db.close();
     }
@@ -749,27 +868,30 @@ test("feature parent approval merges children in dependency order and settles pa
       return { kind: "merged", mergeSha: MERGE_SHAS[index]! };
     },
   });
-  const declared: readonly DeclaredChild[] = [{
-    key: "dependent",
-    objective: "Merge after the provider child.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/dependent"],
-    acceptanceCriteria: ["The dependent merges second."],
-    dependsOn: ["provider"],
-  }, {
-    key: "provider",
-    objective: "Merge before the dependent child.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/provider"],
-    acceptanceCriteria: ["The provider merges first."],
-  }];
+  const declared: readonly DeclaredChild[] = [
+    {
+      key: "dependent",
+      objective: "Merge after the provider child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/dependent"],
+      acceptanceCriteria: ["The dependent merges second."],
+      dependsOn: ["provider"],
+    },
+    {
+      key: "provider",
+      objective: "Merge before the dependent child.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/provider"],
+      acceptanceCriteria: ["The provider merges first."],
+    },
+  ];
 
   try {
     const { parent, revision, children } = proposeParent(
       fixture.board,
       fixture.project.projectId,
       declared,
-      "feature-parent-approval",
+      "feature-parent-approval"
     );
     const [dependent, provider] = children;
     assert.ok(dependent);
@@ -781,9 +903,9 @@ test("feature parent approval merges children in dependency order and settles pa
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     const readyParent = fixture.board.requireWorkItem(parent.workItemId);
     assert.equal(readyParent.state, "final_approval");
-    const readyNotification = fixture.board.listNotifications().unread.find(
-      (notification) => notification.kind === "parent_ready_for_approval",
-    );
+    const readyNotification = fixture.board
+      .listNotifications()
+      .unread.find((notification) => notification.kind === "parent_ready_for_approval");
     assert.ok(readyNotification);
     assert.match(readyNotification.dedupeKey ?? "", new RegExp(`^parent_ready_for_approval:${parent.workItemId}:`));
 
@@ -793,14 +915,21 @@ test("feature parent approval merges children in dependency order and settles pa
     assert.equal(mergedParent.state, "merged");
     assert.deepEqual(mergeOrder, [provider.workItemId, dependent.workItemId]);
     assert.deepEqual(
-      [provider, dependent].map((child) => gateActions(fixture.path, child.workItemId).at(-1)).map((action) => ({
-        gate: action?.gate,
-        actorId: action?.actorId,
-        mergeSha: action?.mergeSha,
-      })),
-      [{ gate: "final_approve", actorId: "human:alice", mergeSha: MERGE_SHAS[0] }, {
-        gate: "final_approve", actorId: "human:alice", mergeSha: MERGE_SHAS[1],
-      }],
+      [provider, dependent]
+        .map((child) => gateActions(fixture.path, child.workItemId).at(-1))
+        .map((action) => ({
+          gate: action?.gate,
+          actorId: action?.actorId,
+          mergeSha: action?.mergeSha,
+        })),
+      [
+        { gate: "final_approve", actorId: "human:alice", mergeSha: MERGE_SHAS[0] },
+        {
+          gate: "final_approve",
+          actorId: "human:alice",
+          mergeSha: MERGE_SHAS[1],
+        },
+      ]
     );
     const parentApproval = gateActions(fixture.path, parent.workItemId).at(-1);
     assert.equal(parentApproval?.gate, "final_approve");
@@ -811,13 +940,16 @@ test("feature parent approval merges children in dependency order and settles pa
       actorType: "human",
       actorId: "human:alice",
     });
-    assert.deepEqual(fixture.board.parentCompletion(parent.workItemId).children, [{
-      workItemId: dependent.workItemId,
-      mergeSha: MERGE_SHAS[1],
-    }, {
-      workItemId: provider.workItemId,
-      mergeSha: MERGE_SHAS[0],
-    }]);
+    assert.deepEqual(fixture.board.parentCompletion(parent.workItemId).children, [
+      {
+        workItemId: dependent.workItemId,
+        mergeSha: MERGE_SHAS[1],
+      },
+      {
+        workItemId: provider.workItemId,
+        mergeSha: MERGE_SHAS[0],
+      },
+    ]);
   } finally {
     fixture.board.close();
   }
@@ -851,20 +983,28 @@ test("same-repository fan-out withdraws a later sibling after the first merge ad
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "same-repo-a",
-      objective: "Merge the first same-repository child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/same-repo-a"],
-      acceptanceCriteria: ["The first child advances the repository base."],
-    }, {
-      key: "same-repo-b",
-      objective: "Re-verify the second child after its base advances.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/same-repo-b"],
-      acceptanceCriteria: ["The stale second verification is never merged."],
-      dependsOn: ["same-repo-a"],
-    }], "same-repository-fan-out");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "same-repo-a",
+          objective: "Merge the first same-repository child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/same-repo-a"],
+          acceptanceCriteria: ["The first child advances the repository base."],
+        },
+        {
+          key: "same-repo-b",
+          objective: "Re-verify the second child after its base advances.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/same-repo-b"],
+          acceptanceCriteria: ["The stale second verification is never merged."],
+          dependsOn: ["same-repo-a"],
+        },
+      ],
+      "same-repository-fan-out"
+    );
     const [first, second] = decomposition.children;
     assert.ok(first);
     assert.ok(second);
@@ -885,11 +1025,16 @@ test("same-repository fan-out withdraws a later sibling after the first merge ad
     assert.equal(withdrawn.state, "implementing");
     assert.equal(withdrawn.baseSha, MERGE_SHAS[0]);
     assert.deepEqual(mergeOrder, [first.workItemId]);
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "final_approval_withdrawn"
-      && notification.workItemId === second.workItemId
-      && notification.dedupeKey === `final_approval_withdrawn:${second.workItemId}:${MERGE_SHAS[0]}`
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "final_approval_withdrawn" &&
+            notification.workItemId === second.workItemId &&
+            notification.dedupeKey === `final_approval_withdrawn:${second.workItemId}:${MERGE_SHAS[0]}`
+        )
+    );
 
     verifiedByBranch.set(second.pipelineBranch!, VERIFIED_SHAS[2]);
     forceFinalApproval(fixture.path, second.workItemId, VERIFIED_SHAS[2]);
@@ -940,19 +1085,27 @@ test("cross-repository fan-out merges every ready sibling under one parent appro
     repoPath: "/repos/cross-repository-sibling",
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "cross-repo-a",
-      objective: "Merge the first repository child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/cross-repo-a"],
-      acceptanceCriteria: ["The first repository merges."],
-    }, {
-      key: "cross-repo-b",
-      objective: "Merge the independent second repository child.",
-      projectId: secondProject.projectId,
-      declaredScope: ["src/cross-repo-b"],
-      acceptanceCriteria: ["The second repository merges under the same approval."],
-    }], "cross-repository-fan-out");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "cross-repo-a",
+          objective: "Merge the first repository child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/cross-repo-a"],
+          acceptanceCriteria: ["The first repository merges."],
+        },
+        {
+          key: "cross-repo-b",
+          objective: "Merge the independent second repository child.",
+          projectId: secondProject.projectId,
+          declaredScope: ["src/cross-repo-b"],
+          acceptanceCriteria: ["The second repository merges under the same approval."],
+        },
+      ],
+      "cross-repository-fan-out"
+    );
     for (const [index, child] of decomposition.children.entries()) {
       verifiedByBranch.set(child.pipelineBranch!, VERIFIED_SHAS[index]!);
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
@@ -963,7 +1116,10 @@ test("cross-repository fan-out merges every ready sibling under one parent appro
     const completed = await fixture.board.approvePipelineMerge(ready.workItemId, { version: ready.version });
 
     assert.equal(completed.state, "merged");
-    assert.deepEqual(mergeOrder, decomposition.children.map((child) => child.workItemId));
+    assert.deepEqual(
+      mergeOrder,
+      decomposition.children.map((child) => child.workItemId)
+    );
   } finally {
     fixture.board.close();
   }
@@ -972,28 +1128,36 @@ test("cross-repository fan-out merges every ready sibling under one parent appro
 test("rejecting a promoted unphased parent fans rejection out and waits for child re-verification", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "reject-parent-one",
-      objective: "Return through implementation when the parent approval is rejected.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/reject-parent-one"],
-      acceptanceCriteria: ["The child is re-verified after parent rejection."],
-    }, {
-      key: "reject-parent-two",
-      objective: "Also return through implementation while coordination resumes.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/reject-parent-two"],
-      acceptanceCriteria: ["The second child is re-verified."],
-    }], "reject-promoted-parent");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "reject-parent-one",
+          objective: "Return through implementation when the parent approval is rejected.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/reject-parent-one"],
+          acceptanceCriteria: ["The child is re-verified after parent rejection."],
+        },
+        {
+          key: "reject-parent-two",
+          objective: "Also return through implementation while coordination resumes.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/reject-parent-two"],
+          acceptanceCriteria: ["The second child is re-verified."],
+        },
+      ],
+      "reject-promoted-parent"
+    );
     for (const [index, child] of decomposition.children.entries()) {
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
     }
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     const parent = fixture.board.requireWorkItem(decomposition.parent.workItemId);
     assert.equal(parent.state, "final_approval");
-    const notificationsBefore = fixture.board.listNotifications().unread.filter(
-      (notification) => notification.kind === "parent_ready_for_approval",
-    ).length;
+    const notificationsBefore = fixture.board
+      .listNotifications()
+      .unread.filter((notification) => notification.kind === "parent_ready_for_approval").length;
     const note = "Coordinate the parent outcome again.";
 
     const rejected = await fixture.board.rejectFinalApproval(parent.workItemId, {
@@ -1004,7 +1168,7 @@ test("rejecting a promoted unphased parent fans rejection out and waits for chil
     assert.equal(rejected.state, "coordinating");
     assert.deepEqual(
       fixture.board.listChildren(parent.workItemId).map((child) => child.state),
-      ["fixing", "fixing"],
+      ["fixing", "fixing"]
     );
     for (const child of decomposition.children) {
       const action = gateActions(fixture.path, child.workItemId).at(-1);
@@ -1020,18 +1184,24 @@ test("rejecting a promoted unphased parent fans rejection out and waits for chil
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "coordinating");
-    assert.equal(fixture.board.listNotifications().unread.filter(
-      (notification) => notification.kind === "parent_ready_for_approval",
-    ).length, notificationsBefore);
+    assert.equal(
+      fixture.board
+        .listNotifications()
+        .unread.filter((notification) => notification.kind === "parent_ready_for_approval").length,
+      notificationsBefore
+    );
 
     for (const [index, child] of decomposition.children.entries()) {
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
     }
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "final_approval");
-    assert.equal(fixture.board.listNotifications().unread.filter(
-      (notification) => notification.kind === "parent_ready_for_approval",
-    ).length, notificationsBefore + 1);
+    assert.equal(
+      fixture.board
+        .listNotifications()
+        .unread.filter((notification) => notification.kind === "parent_ready_for_approval").length,
+      notificationsBefore + 1
+    );
   } finally {
     fixture.board.close();
   }
@@ -1040,29 +1210,39 @@ test("rejecting a promoted unphased parent fans rejection out and waits for chil
 test("rejecting one promoted child withdraws and then re-promotes its parent once", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "direct-reject-one",
-      objective: "Leave final approval through a direct child rejection.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/direct-reject-one"],
-      acceptanceCriteria: ["The parent approval is withdrawn."],
-    }, {
-      key: "direct-reject-two",
-      objective: "Remain ready while the rejected sibling re-verifies.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/direct-reject-two"],
-      acceptanceCriteria: ["The parent is promoted again after both children are ready."],
-    }], "direct-child-rejection");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "direct-reject-one",
+          objective: "Leave final approval through a direct child rejection.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/direct-reject-one"],
+          acceptanceCriteria: ["The parent approval is withdrawn."],
+        },
+        {
+          key: "direct-reject-two",
+          objective: "Remain ready while the rejected sibling re-verifies.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/direct-reject-two"],
+          acceptanceCriteria: ["The parent is promoted again after both children are ready."],
+        },
+      ],
+      "direct-child-rejection"
+    );
     for (const [index, child] of decomposition.children.entries()) {
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
     }
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     const promoted = fixture.board.requireWorkItem(decomposition.parent.workItemId);
     assert.equal(promoted.state, "final_approval");
-    const readyNotificationsBefore = fixture.board.listNotifications().unread.filter((notification) => (
-      notification.kind === "parent_ready_for_approval"
-      && notification.workItemId === promoted.workItemId
-    )).length;
+    const readyNotificationsBefore = fixture.board
+      .listNotifications()
+      .unread.filter(
+        (notification) =>
+          notification.kind === "parent_ready_for_approval" && notification.workItemId === promoted.workItemId
+      ).length;
     const [rejectedChild] = decomposition.children;
     assert.ok(rejectedChild);
 
@@ -1077,10 +1257,15 @@ test("rejecting one promoted child withdraws and then re-promotes its parent onc
     assert.equal(withdrawn.version, promoted.version + 1);
     fixture.board.reconcileWorkflows(fixture.project.projectId);
     assert.equal(fixture.board.requireWorkItem(promoted.workItemId).state, "coordinating");
-    assert.equal(fixture.board.listNotifications().unread.filter((notification) => (
-      notification.kind === "parent_ready_for_approval"
-      && notification.workItemId === promoted.workItemId
-    )).length, readyNotificationsBefore);
+    assert.equal(
+      fixture.board
+        .listNotifications()
+        .unread.filter(
+          (notification) =>
+            notification.kind === "parent_ready_for_approval" && notification.workItemId === promoted.workItemId
+        ).length,
+      readyNotificationsBefore
+    );
 
     forceFinalApproval(fixture.path, rejectedChild.workItemId, VERIFIED_SHAS[2]);
     fixture.board.reconcileWorkflows(fixture.project.projectId);
@@ -1088,10 +1273,15 @@ test("rejecting one promoted child withdraws and then re-promotes its parent onc
     assert.equal(rePromoted.state, "final_approval");
     assert.equal(rePromoted.version, withdrawn.version + 1);
     fixture.board.reconcileWorkflows(fixture.project.projectId);
-    assert.equal(fixture.board.listNotifications().unread.filter((notification) => (
-      notification.kind === "parent_ready_for_approval"
-      && notification.workItemId === promoted.workItemId
-    )).length, readyNotificationsBefore + 1);
+    assert.equal(
+      fixture.board
+        .listNotifications()
+        .unread.filter(
+          (notification) =>
+            notification.kind === "parent_ready_for_approval" && notification.workItemId === promoted.workItemId
+        ).length,
+      readyNotificationsBefore + 1
+    );
   } finally {
     fixture.board.close();
   }
@@ -1100,18 +1290,28 @@ test("rejecting one promoted child withdraws and then re-promotes its parent onc
 test("a branch-bearing item with children uses the leaf path for both approval decisions", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "predicate-child",
-      objective: "Expose the decomposed-parent branch predicate.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/predicate-child"],
-      acceptanceCriteria: ["Approval routing remains symmetric."],
-    }], "decomposed-parent-predicate");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "predicate-child",
+          objective: "Expose the decomposed-parent branch predicate.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/predicate-child"],
+          acceptanceCriteria: ["Approval routing remains symmetric."],
+        },
+      ],
+      "decomposed-parent-predicate"
+    );
     const parentVersion = forceParentFinalApproval(fixture.path, decomposition.parent.workItemId);
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare("UPDATE work_items SET pipeline_branch=?,base_sha=? WHERE work_item_id=?")
-        .run(`task/${decomposition.parent.workItemId}`, BASE_SHA, decomposition.parent.workItemId);
+      db.prepare("UPDATE work_items SET pipeline_branch=?,base_sha=? WHERE work_item_id=?").run(
+        `task/${decomposition.parent.workItemId}`,
+        BASE_SHA,
+        decomposition.parent.workItemId
+      );
     } finally {
       db.close();
     }
@@ -1121,17 +1321,17 @@ test("a branch-bearing item with children uses the leaf path for both approval d
         version: parentVersion,
         note: "Exercise leaf rejection routing.",
       }),
-      /TASK_BOARD_DATABASE_CORRUPT:pipeline_implementation_stage_missing/u,
+      /TASK_BOARD_DATABASE_CORRUPT:pipeline_implementation_stage_missing/u
     );
     assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "final_approval");
-    assert.equal(gateActions(fixture.path, decomposition.parent.workItemId).some(
-      (action) => action.gate === "final_reject",
-    ), false);
+    assert.equal(
+      gateActions(fixture.path, decomposition.parent.workItemId).some((action) => action.gate === "final_reject"),
+      false
+    );
 
     await assert.rejects(
       fixture.board.approvePipelineMerge(decomposition.parent.workItemId, { version: parentVersion }),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.code === "TASK_BOARD_PIPELINE_BRANCH_MOVED",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_BOARD_PIPELINE_BRANCH_MOVED"
     );
     assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "final_approval");
   } finally {
@@ -1141,19 +1341,22 @@ test("a branch-bearing item with children uses the leaf path for both approval d
 
 test("a 64-child parent settles with bounded audit fields and derived child merge detail", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
-  const declared = Array.from({ length: 64 }, (_, ordinal): DeclaredChild => ({
-    key: `child-${ordinal}`,
-    objective: `Complete child ${ordinal}.`,
-    projectId: fixture.project.projectId,
-    declaredScope: [`src/child-${ordinal}`],
-    acceptanceCriteria: [`Child ${ordinal} merges.`],
-  }));
+  const declared = Array.from(
+    { length: 64 },
+    (_, ordinal): DeclaredChild => ({
+      key: `child-${ordinal}`,
+      objective: `Complete child ${ordinal}.`,
+      projectId: fixture.project.projectId,
+      declaredScope: [`src/child-${ordinal}`],
+      acceptanceCriteria: [`Child ${ordinal} merges.`],
+    })
+  );
   try {
     const { parent, revision, children } = proposeParent(
       fixture.board,
       fixture.project.projectId,
       declared,
-      "maximum-parent-completion",
+      "maximum-parent-completion"
     );
     for (const child of children) forceMergedWithApproval(fixture.path, child.workItemId, MERGE_SHAS[0]);
     const parentVersion = forceParentFinalApproval(fixture.path, parent.workItemId);
@@ -1182,8 +1385,12 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
       if (arguments_.includes("ls-tree") && arguments_.at(-1) === "docs/interface.md") {
         return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
       }
-      if (arguments_.includes("cat-file") && arguments_.includes("-s") &&
-        arguments_.at(-1)?.endsWith(":docs/interface.md")) return "22\n";
+      if (
+        arguments_.includes("cat-file") &&
+        arguments_.includes("-s") &&
+        arguments_.at(-1)?.endsWith(":docs/interface.md")
+      )
+        return "22\n";
       if (arguments_.includes("show") && arguments_.at(-1)?.endsWith(":docs/interface.md")) {
         return "# Runtime interface\n";
       }
@@ -1197,9 +1404,7 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
       return `${BASE_SHA}\n`;
     },
     mergePipeline(request) {
-      return request.branch === busyBranch
-        ? { kind: "repo_busy" }
-        : { kind: "merged", mergeSha: MERGE_SHAS[0] };
+      return request.branch === busyBranch ? { kind: "repo_busy" } : { kind: "merged", mergeSha: MERGE_SHAS[0] };
     },
   });
   const consumer = fixture.board.createProject({
@@ -1208,52 +1413,70 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
     repoPath: "/repos/busy-policy-consumer",
   });
   try {
-    const phased = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "expand",
-      objective: "Expand before the busy merge.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/busy-expand", "docs/interface.md"],
-      acceptanceCriteria: ["The expand child remains retryable."],
-      phase: "expand",
-      splitBy: "phase",
-    }, {
-      key: "migrate",
-      objective: "Migrate after expand.",
-      projectId: consumer.projectId,
-      declaredScope: ["src/busy-migrate"],
-      acceptanceCriteria: ["The migrate follows expand."],
-      phase: "migrate",
-      splitBy: "consumer",
-      dependsOn: ["expand"],
-    }, {
-      key: "contract",
-      objective: "Contract after migrate.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/busy-contract", "docs/interface.md"],
-      acceptanceCriteria: ["The contract follows deployment."],
-      phase: "contract",
-      splitBy: "phase",
-      dependsOn: ["migrate"],
-    }], "busy-policy", "blast_radius");
+    const phased = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "expand",
+          objective: "Expand before the busy merge.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/busy-expand", "docs/interface.md"],
+          acceptanceCriteria: ["The expand child remains retryable."],
+          phase: "expand",
+          splitBy: "phase",
+        },
+        {
+          key: "migrate",
+          objective: "Migrate after expand.",
+          projectId: consumer.projectId,
+          declaredScope: ["src/busy-migrate"],
+          acceptanceCriteria: ["The migrate follows expand."],
+          phase: "migrate",
+          splitBy: "consumer",
+          dependsOn: ["expand"],
+        },
+        {
+          key: "contract",
+          objective: "Contract after migrate.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/busy-contract", "docs/interface.md"],
+          acceptanceCriteria: ["The contract follows deployment."],
+          phase: "contract",
+          splitBy: "phase",
+          dependsOn: ["migrate"],
+        },
+      ],
+      "busy-policy",
+      "blast_radius"
+    );
     const expand = phased.children[0];
     assert.ok(expand);
     busyBranch = expand.pipelineBranch!;
     verifiedByBranch.set(busyBranch, VERIFIED_SHAS[0]);
     forceFinalApproval(fixture.path, expand.workItemId, VERIFIED_SHAS[0]);
 
-    const unrelated = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "unrelated-one",
-      objective: "Prepare an unrelated child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/unrelated-one"],
-      acceptanceCriteria: ["The first unrelated child is ready."],
-    }, {
-      key: "unrelated-two",
-      objective: "Prepare another unrelated child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/unrelated-two"],
-      acceptanceCriteria: ["The second unrelated child is ready."],
-    }], "unrelated-promotion");
+    const unrelated = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "unrelated-one",
+          objective: "Prepare an unrelated child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/unrelated-one"],
+          acceptanceCriteria: ["The first unrelated child is ready."],
+        },
+        {
+          key: "unrelated-two",
+          objective: "Prepare another unrelated child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/unrelated-two"],
+          acceptanceCriteria: ["The second unrelated child is ready."],
+        },
+      ],
+      "unrelated-promotion"
+    );
     for (const [index, child] of unrelated.children.entries()) {
       verifiedByBranch.set(child.pipelineBranch!, VERIFIED_SHAS[index]!);
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
@@ -1261,7 +1484,9 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
 
     const originalError = console.error;
     const errors: unknown[][] = [];
-    console.error = (...arguments_: unknown[]) => { errors.push(arguments_); };
+    console.error = (...arguments_: unknown[]) => {
+      errors.push(arguments_);
+    };
     try {
       fixture.board.reconcileWorkflows(fixture.project.projectId);
     } finally {
@@ -1270,10 +1495,14 @@ test("repo_busy in one phased parent does not block an unrelated parent promotio
 
     assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "final_approval");
     assert.equal(fixture.board.requireWorkItem(unrelated.parent.workItemId).state, "final_approval");
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "parent_ready_for_approval"
-      && notification.workItemId === unrelated.parent.workItemId
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "parent_ready_for_approval" && notification.workItemId === unrelated.parent.workItemId
+        )
+    );
     assert.ok(errors.some((arguments_) => JSON.stringify(arguments_).includes(expand.workItemId)));
   } finally {
     fixture.board.close();
@@ -1288,19 +1517,27 @@ test("project-scoped reconciliation leaves an unrelated ready parent untouched",
     repoPath: "/repos/unrelated-reconciliation",
   });
   try {
-    const unrelated = proposeParent(fixture.board, unrelatedProject.projectId, [{
-      key: "one",
-      objective: "Prepare the first unrelated child.",
-      projectId: unrelatedProject.projectId,
-      declaredScope: ["src/unrelated-one"],
-      acceptanceCriteria: ["The first child is ready."],
-    }, {
-      key: "two",
-      objective: "Prepare the second unrelated child.",
-      projectId: unrelatedProject.projectId,
-      declaredScope: ["src/unrelated-two"],
-      acceptanceCriteria: ["The second child is ready."],
-    }], "project-scoped-unrelated");
+    const unrelated = proposeParent(
+      fixture.board,
+      unrelatedProject.projectId,
+      [
+        {
+          key: "one",
+          objective: "Prepare the first unrelated child.",
+          projectId: unrelatedProject.projectId,
+          declaredScope: ["src/unrelated-one"],
+          acceptanceCriteria: ["The first child is ready."],
+        },
+        {
+          key: "two",
+          objective: "Prepare the second unrelated child.",
+          projectId: unrelatedProject.projectId,
+          declaredScope: ["src/unrelated-two"],
+          acceptanceCriteria: ["The second child is ready."],
+        },
+      ],
+      "project-scoped-unrelated"
+    );
     for (const [index, child] of unrelated.children.entries()) {
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
     }
@@ -1353,42 +1590,53 @@ for (const failure of ["repo_busy", "conflict"] as const) {
       repoPath: `/repos/${failure}-second-consumer`,
     });
     try {
-      const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-        key: "expand",
-        objective: "Expand before both migrations.",
-        projectId: fixture.project.projectId,
-        declaredScope: ["src/expand", "docs/interface.md"],
-        acceptanceCriteria: ["The expansion merges."],
-        phase: "expand",
-        splitBy: "phase",
-      }, {
-        key: "migrate-one",
-        objective: "Exercise the first migration failure.",
-        projectId: firstConsumer.projectId,
-        declaredScope: ["src/migrate-one"],
-        acceptanceCriteria: ["The first migration remains retryable."],
-        phase: "migrate",
-        splitBy: "consumer",
-        dependsOn: ["expand"],
-      }, {
-        key: "migrate-two",
-        objective: "Merge independently of the first migration failure.",
-        projectId: secondConsumer.projectId,
-        declaredScope: ["src/migrate-two"],
-        acceptanceCriteria: ["The second migration merges in the same pass."],
-        phase: "migrate",
-        splitBy: "consumer",
-        dependsOn: ["expand"],
-      }, {
-        key: "contract",
-        objective: "Contract after both migrations deploy.",
-        projectId: fixture.project.projectId,
-        declaredScope: ["src/contract", "docs/interface.md"],
-        acceptanceCriteria: ["The contract remains downstream."],
-        phase: "contract",
-        splitBy: "phase",
-        dependsOn: ["migrate-one", "migrate-two"],
-      }], `parallel-migrate-${failure}`, "blast_radius");
+      const decomposition = proposeParent(
+        fixture.board,
+        fixture.project.projectId,
+        [
+          {
+            key: "expand",
+            objective: "Expand before both migrations.",
+            projectId: fixture.project.projectId,
+            declaredScope: ["src/expand", "docs/interface.md"],
+            acceptanceCriteria: ["The expansion merges."],
+            phase: "expand",
+            splitBy: "phase",
+          },
+          {
+            key: "migrate-one",
+            objective: "Exercise the first migration failure.",
+            projectId: firstConsumer.projectId,
+            declaredScope: ["src/migrate-one"],
+            acceptanceCriteria: ["The first migration remains retryable."],
+            phase: "migrate",
+            splitBy: "consumer",
+            dependsOn: ["expand"],
+          },
+          {
+            key: "migrate-two",
+            objective: "Merge independently of the first migration failure.",
+            projectId: secondConsumer.projectId,
+            declaredScope: ["src/migrate-two"],
+            acceptanceCriteria: ["The second migration merges in the same pass."],
+            phase: "migrate",
+            splitBy: "consumer",
+            dependsOn: ["expand"],
+          },
+          {
+            key: "contract",
+            objective: "Contract after both migrations deploy.",
+            projectId: fixture.project.projectId,
+            declaredScope: ["src/contract", "docs/interface.md"],
+            acceptanceCriteria: ["The contract remains downstream."],
+            phase: "contract",
+            splitBy: "phase",
+            dependsOn: ["migrate-one", "migrate-two"],
+          },
+        ],
+        `parallel-migrate-${failure}`,
+        "blast_radius"
+      );
       const [expand, firstMigrate, secondMigrate] = decomposition.children;
       assert.ok(expand);
       assert.ok(firstMigrate);
@@ -1413,7 +1661,7 @@ for (const failure of ["repo_busy", "conflict"] as const) {
 
       assert.equal(
         fixture.board.requireWorkItem(firstMigrate.workItemId).state,
-        failure === "repo_busy" ? "final_approval" : "implementing",
+        failure === "repo_busy" ? "final_approval" : "implementing"
       );
       assert.equal(fixture.board.requireWorkItem(secondMigrate.workItemId).state, "merged");
     } finally {
@@ -1445,33 +1693,43 @@ test("a non-transient automatic merge failure reuses human conflict recovery and
     repoPath: "/repos/conflict-policy-consumer",
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "expand",
-      objective: "Exercise automatic merge conflict recovery.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/conflict-expand", "docs/interface.md"],
-      acceptanceCriteria: ["The child returns to implementation."],
-      phase: "expand",
-      splitBy: "phase",
-    }, {
-      key: "migrate",
-      objective: "Wait for the recovered Expand child.",
-      projectId: consumer.projectId,
-      declaredScope: ["src/conflict-migrate"],
-      acceptanceCriteria: ["The migrate stays downstream."],
-      phase: "migrate",
-      splitBy: "consumer",
-      dependsOn: ["expand"],
-    }, {
-      key: "contract",
-      objective: "Wait for deployment after migration.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/conflict-contract", "docs/interface.md"],
-      acceptanceCriteria: ["The contract stays downstream."],
-      phase: "contract",
-      splitBy: "phase",
-      dependsOn: ["migrate"],
-    }], "automatic-conflict", "blast_radius");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "expand",
+          objective: "Exercise automatic merge conflict recovery.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/conflict-expand", "docs/interface.md"],
+          acceptanceCriteria: ["The child returns to implementation."],
+          phase: "expand",
+          splitBy: "phase",
+        },
+        {
+          key: "migrate",
+          objective: "Wait for the recovered Expand child.",
+          projectId: consumer.projectId,
+          declaredScope: ["src/conflict-migrate"],
+          acceptanceCriteria: ["The migrate stays downstream."],
+          phase: "migrate",
+          splitBy: "consumer",
+          dependsOn: ["expand"],
+        },
+        {
+          key: "contract",
+          objective: "Wait for deployment after migration.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/conflict-contract", "docs/interface.md"],
+          acceptanceCriteria: ["The contract stays downstream."],
+          phase: "contract",
+          splitBy: "phase",
+          dependsOn: ["migrate"],
+        },
+      ],
+      "automatic-conflict",
+      "blast_radius"
+    );
     const expand = decomposition.children[0];
     assert.ok(expand);
     verifiedByBranch.set(expand.pipelineBranch!, VERIFIED_SHAS[0]);
@@ -1488,7 +1746,9 @@ test("a non-transient automatic merge failure reuses human conflict recovery and
     assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "implementing");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const handoff = inspected.prepare(`
+      const handoff = inspected
+        .prepare(
+          `
         SELECT handoff.payload_json
         FROM stage_handoffs handoff
         JOIN work_nodes node ON node.node_id=handoff.node_id
@@ -1496,15 +1756,21 @@ test("a non-transient automatic merge failure reuses human conflict recovery and
         WHERE plan.work_item_id=? AND handoff.stage='implementation'
         ORDER BY handoff.created_at DESC,handoff.rowid DESC
         LIMIT 1
-      `).get(expand.workItemId);
+      `
+        )
+        .get(expand.workItemId);
       assert.match(String(handoff?.payload_json), /Automatic merge conflict in the Expand child/u);
     } finally {
       inspected.close();
     }
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "final_approval_withdrawn"
-      && notification.workItemId === expand.workItemId
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "final_approval_withdrawn" && notification.workItemId === expand.workItemId
+        )
+    );
   } finally {
     fixture.board.close();
   }
@@ -1529,19 +1795,27 @@ test("unphased parents promote with merged siblings and fan out only over unmerg
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "merged-first",
-      objective: "Merge individually before sibling approval.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/merged-first"],
-      acceptanceCriteria: ["The child merges individually."],
-    }, {
-      key: "remaining",
-      objective: "Merge through parent fan-out.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/remaining"],
-      acceptanceCriteria: ["The parent merges only this child."],
-    }], "mixed-child-states");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "merged-first",
+          objective: "Merge individually before sibling approval.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/merged-first"],
+          acceptanceCriteria: ["The child merges individually."],
+        },
+        {
+          key: "remaining",
+          objective: "Merge through parent fan-out.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/remaining"],
+          acceptanceCriteria: ["The parent merges only this child."],
+        },
+      ],
+      "mixed-child-states"
+    );
     const [first, remaining] = decomposition.children;
     assert.ok(first);
     assert.ok(remaining);
@@ -1585,13 +1859,20 @@ test("parent fan-out reconciles an overlapping pipeline in every child project b
       description: "Owns the child scope and a pipeline waiting for its release.",
       repoPath: "/repos/fan-out-child",
     });
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "scope-holder",
-      objective: "Hold the child project's shared scope through parent approval.",
-      projectId: childProject.projectId,
-      declaredScope: ["src/fan-out-shared"],
-      acceptanceCriteria: ["The parent merge releases the remote project scope."],
-    }], "fan-out-child-project-reconcile");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "scope-holder",
+          objective: "Hold the child project's shared scope through parent approval.",
+          projectId: childProject.projectId,
+          declaredScope: ["src/fan-out-shared"],
+          acceptanceCriteria: ["The parent merge releases the remote project scope."],
+        },
+      ],
+      "fan-out-child-project-reconcile"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     now = new Date("2026-08-29T14:00:01.000Z");
@@ -1599,7 +1880,7 @@ test("parent fan-out reconciles an overlapping pipeline in every child project b
       fixture.board,
       childProject.projectId,
       ["src/fan-out-shared"],
-      "fan-out-scope-waiter",
+      "fan-out-scope-waiter"
     );
     assert.equal(childNode(fixture.board, held).node.state, "blocked");
 
@@ -1643,20 +1924,28 @@ test("parent fan-out resumes after a mid-way child merge conflict", async () => 
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "one",
-      objective: "Merge before the failing child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-one"],
-      acceptanceCriteria: ["The first merge remains landed."],
-    }, {
-      key: "two",
-      objective: "Fail once, then merge on retry.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-two"],
-      acceptanceCriteria: ["The retry skips the merged sibling."],
-      dependsOn: ["one"],
-    }], "resumable-fan-out");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "one",
+          objective: "Merge before the failing child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/resume-one"],
+          acceptanceCriteria: ["The first merge remains landed."],
+        },
+        {
+          key: "two",
+          objective: "Fail once, then merge on retry.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/resume-two"],
+          acceptanceCriteria: ["The retry skips the merged sibling."],
+          dependsOn: ["one"],
+        },
+      ],
+      "resumable-fan-out"
+    );
     const [one, two] = decomposition.children;
     assert.ok(one);
     assert.ok(two);
@@ -1670,7 +1959,7 @@ test("parent fan-out resumes after a mid-way child merge conflict", async () => 
 
     await assert.rejects(
       fixture.board.approvePipelineMerge(decomposition.parent.workItemId, { version: readyParent.version }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "PARENT_CHILD_MERGE_CONFLICT",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "PARENT_CHILD_MERGE_CONFLICT"
     );
     assert.equal(fixture.board.requireWorkItem(one.workItemId).state, "merged");
     assert.equal(fixture.board.requireWorkItem(two.workItemId).state, "implementing");
@@ -1711,19 +2000,27 @@ test("the last individually approved unphased child settles its parent directly"
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "one",
-      objective: "Merge first through its own approval.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/individual-one"],
-      acceptanceCriteria: ["The first child merges."],
-    }, {
-      key: "two",
-      objective: "Merge last through its own approval.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/individual-two"],
-      acceptanceCriteria: ["The last child settles the parent."],
-    }], "individual-last-settlement");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "one",
+          objective: "Merge first through its own approval.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/individual-one"],
+          acceptanceCriteria: ["The first child merges."],
+        },
+        {
+          key: "two",
+          objective: "Merge last through its own approval.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/individual-two"],
+          acceptanceCriteria: ["The last child settles the parent."],
+        },
+      ],
+      "individual-last-settlement"
+    );
     const [one, two] = decomposition.children;
     assert.ok(one);
     assert.ok(two);
@@ -1743,7 +2040,7 @@ test("the last individually approved unphased child settles its parent directly"
     assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "merged");
     assert.equal(
       gateActions(fixture.path, decomposition.parent.workItemId).at(-1)?.actorId,
-      "system:parent-completion",
+      "system:parent-completion"
     );
     assert.deepEqual(latestTransitionActor(fixture.path, decomposition.parent.workItemId), {
       actorType: "system",
@@ -1771,14 +2068,22 @@ test("an unphased blast-radius parent uses the one-parent-approval policy", asyn
     },
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "consumer-split",
-      objective: "Ship an unphased blast-radius child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/consumer-split"],
-      acceptanceCriteria: ["The parent provides one approval."],
-      splitBy: "consumer",
-    }], "unphased-blast-radius", "blast_radius");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "consumer-split",
+          objective: "Ship an unphased blast-radius child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/consumer-split"],
+          acceptanceCriteria: ["The parent provides one approval."],
+          splitBy: "consumer",
+        },
+      ],
+      "unphased-blast-radius",
+      "blast_radius"
+    );
     const child = decomposition.children[0];
     assert.ok(child);
     verifiedByBranch.set(child.pipelineBranch!, VERIFIED_SHAS[0]);
@@ -1790,7 +2095,10 @@ test("an unphased blast-radius parent uses the one-parent-approval policy", asyn
       version: readyParent.version,
     });
     assert.equal(settled.state, "merged");
-    assert.equal(gateActions(fixture.path, decomposition.parent.workItemId).at(-1)?.note, "1 children merged, 0 abandoned");
+    assert.equal(
+      gateActions(fixture.path, decomposition.parent.workItemId).at(-1)?.note,
+      "1 children merged, 0 abandoned"
+    );
   } finally {
     fixture.board.close();
   }
@@ -1806,8 +2114,12 @@ test("phased children auto-merge under parent authorization and Contract waits f
       if (arguments_.includes("ls-tree") && arguments_.at(-1) === "docs/interface.md") {
         return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
       }
-      if (arguments_.includes("cat-file") && arguments_.includes("-s") &&
-        arguments_.at(-1)?.endsWith(":docs/interface.md")) return "20\n";
+      if (
+        arguments_.includes("cat-file") &&
+        arguments_.includes("-s") &&
+        arguments_.at(-1)?.endsWith(":docs/interface.md")
+      )
+        return "20\n";
       if (arguments_.includes("show") && arguments_.at(-1)?.endsWith(":docs/interface.md")) {
         return "# Runtime interface\n";
       }
@@ -1838,44 +2150,50 @@ test("phased children auto-merge under parent authorization and Contract waits f
     description: "Consumes the expanded interface.",
     repoPath: "/repos/runtime-consumer",
   });
-  const declared: readonly DeclaredChild[] = [{
-    key: "expand",
-    objective: "Expand the provider interface.",
-    projectId: provider.projectId,
-    declaredScope: ["docs/interface.md"],
-    acceptanceCriteria: ["The additive interface is published."],
-    phase: "expand",
-    splitBy: "phase",
-  }, {
-    key: "migrate",
-    objective: "Migrate the consumer.",
-    projectId: consumer.projectId,
-    declaredScope: ["src/client"],
-    acceptanceCriteria: ["The consumer uses the additive interface."],
-    phase: "migrate",
-    dependsOn: ["expand"],
-    splitBy: "consumer",
-  }, {
-    key: "contract",
-    objective: "Contract the provider interface.",
-    projectId: provider.projectId,
-    declaredScope: ["docs/interface.md"],
-    acceptanceCriteria: ["The legacy interface is removed."],
-    phase: "contract",
-    dependsOn: ["migrate"],
-    splitBy: "phase",
-  }];
+  const declared: readonly DeclaredChild[] = [
+    {
+      key: "expand",
+      objective: "Expand the provider interface.",
+      projectId: provider.projectId,
+      declaredScope: ["docs/interface.md"],
+      acceptanceCriteria: ["The additive interface is published."],
+      phase: "expand",
+      splitBy: "phase",
+    },
+    {
+      key: "migrate",
+      objective: "Migrate the consumer.",
+      projectId: consumer.projectId,
+      declaredScope: ["src/client"],
+      acceptanceCriteria: ["The consumer uses the additive interface."],
+      phase: "migrate",
+      dependsOn: ["expand"],
+      splitBy: "consumer",
+    },
+    {
+      key: "contract",
+      objective: "Contract the provider interface.",
+      projectId: provider.projectId,
+      declaredScope: ["docs/interface.md"],
+      acceptanceCriteria: ["The legacy interface is removed."],
+      phase: "contract",
+      dependsOn: ["migrate"],
+      splitBy: "phase",
+    },
+  ];
 
   const originalInfo = console.info;
   const infoLines: unknown[][] = [];
-  console.info = (...arguments_: unknown[]) => { infoLines.push(arguments_); };
+  console.info = (...arguments_: unknown[]) => {
+    infoLines.push(arguments_);
+  };
   try {
     const { parent, revision, children } = proposeParent(
       fixture.board,
       provider.projectId,
       declared,
       "phased-policy",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate, contract] = children;
     assert.ok(expand);
@@ -1886,7 +2204,7 @@ test("phased children auto-merge under parent authorization and Contract waits f
     assert.equal(fixture.board.requireWorkItem(migrate.workItemId).baseSha, CONSUMER_BASE_SHA);
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).baseSha, BASE_SHA);
     const parentPlanConfirm = gateActions(fixture.path, parent.workItemId).find(
-      (action) => action.gate === "plan_confirm",
+      (action) => action.gate === "plan_confirm"
     );
     assert.ok(parentPlanConfirm);
 
@@ -1912,19 +2230,19 @@ test("phased children auto-merge under parent authorization and Contract waits f
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `waits for ${expand.workItemId} (expand) deploy attestation`,
+      `waits for ${expand.workItemId} (expand) deploy attestation`
     );
 
     assert.throws(
       () => fixture.board.attestDeploy(contract.workItemId, { note: "Not merged yet." }),
-      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_NOT_MERGED",
+      (error: unknown) => error instanceof TaskBoardError && error.code === "WORK_ITEM_NOT_MERGED"
     );
     const migrateAttestation = fixture.board.attestDeploy(migrate.workItemId, { note: "Consumer deployed first." });
     assert.equal(migrateAttestation.duplicate, false);
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `waits for ${expand.workItemId} (expand) deploy attestation`,
+      `waits for ${expand.workItemId} (expand) deploy attestation`
     );
 
     const firstAttestation = fixture.board.attestDeploy(expand.workItemId, { note: "Provider deployed." });
@@ -1934,12 +2252,13 @@ test("phased children auto-merge under parent authorization and Contract waits f
     assert.equal(duplicateAttestation.gateAction.gateActionId, firstAttestation.gateAction.gateActionId);
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "implementing");
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).baseSha, ADVANCED_SHA);
-    const contractBaseRefresh = infoLines.find((arguments_) => (
-      arguments_[0] === "[task-board] phased child base refreshed"
-      && typeof arguments_[1] === "object"
-      && arguments_[1] !== null
-      && (arguments_[1] as { workItemId?: unknown }).workItemId === contract.workItemId
-    ));
+    const contractBaseRefresh = infoLines.find(
+      (arguments_) =>
+        arguments_[0] === "[task-board] phased child base refreshed" &&
+        typeof arguments_[1] === "object" &&
+        arguments_[1] !== null &&
+        (arguments_[1] as { workItemId?: unknown }).workItemId === contract.workItemId
+    );
     assert.deepEqual(contractBaseRefresh?.[1], {
       workItemId: contract.workItemId,
       projectId: provider.projectId,
@@ -1948,15 +2267,16 @@ test("phased children auto-merge under parent authorization and Contract waits f
     });
     assert.deepEqual(
       (fixture.board.listChildren(parent.workItemId) as readonly ChildWorkItem[]).map((child) => child.deployAttested),
-      [true, true, false],
+      [true, true, false]
     );
-    const phaseReady = fixture.board.listNotifications().unread.find(
-      (notification) => notification.kind === "phase_ready",
-    );
+    const phaseReady = fixture.board
+      .listNotifications()
+      .unread.find((notification) => notification.kind === "phase_ready");
     assert.equal(phaseReady?.dedupeKey, `phase_ready:${parent.workItemId}:${contract.workItemId}`);
-    assert.equal(fixture.board.listNotifications().unread.filter(
-      (notification) => notification.kind === "phase_ready",
-    ).length, 1);
+    assert.equal(
+      fixture.board.listNotifications().unread.filter((notification) => notification.kind === "phase_ready").length,
+      1
+    );
 
     verifiedByBranch.set(contract.pipelineBranch!, VERIFIED_SHAS[2]);
     const contractVersion = forceFinalApproval(fixture.path, contract.workItemId, VERIFIED_SHAS[2]);
@@ -2031,7 +2351,7 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "claim-context"),
       "claim-context",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
@@ -2041,9 +2361,9 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
     assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "merged");
     assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "implementing");
 
-    const implementationTask = fixture.board.snapshot(consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "engineer",
-    );
+    const implementationTask = fixture.board
+      .snapshot(consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
     assert.ok(implementationTask?.assignedAgentId);
     const migrateClaim = fixture.board.claimRun(implementationTask.assignedAgentId, {
       claimId: "claim-cross-repo-migrate",
@@ -2062,11 +2382,14 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
     const mappedContext = mapClaimContext(parsedClaim, null);
     assert.ok(mappedContext);
     const workerContext = parseBoundedAgentContext(mappedContext);
-    const prompt = agentPrompt({
-      runId: migrateClaim.run.runId,
-      wakeReason: migrateClaim.wakeup.reason,
-      context: workerContext,
-    }, PROMPTS);
+    const prompt = agentPrompt(
+      {
+        runId: migrateClaim.run.runId,
+        wakeReason: migrateClaim.wakeup.reason,
+        context: workerContext,
+      },
+      PROMPTS
+    );
     assert.ok(prompt.includes(interfaceMarkdown));
     assert.ok(prompt.includes("😀"));
     assert.ok(prompt.includes("𠀀"));
@@ -2076,10 +2399,13 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
       assert.deepEqual(call.slice(-2), ["show", `${MERGE_SHAS[0]}:docs/interface.md`]);
       assert.equal(call[call.indexOf("-C") + 1], provider.repoPath);
     }
-    assert.deepEqual(fixture.board.claimRun(implementationTask.assignedAgentId, {
-      claimId: "claim-cross-repo-migrate",
-      messageCursor: null,
-    }), migrateClaim);
+    assert.deepEqual(
+      fixture.board.claimRun(implementationTask.assignedAgentId, {
+        claimId: "claim-cross-repo-migrate",
+        messageCursor: null,
+      }),
+      migrateClaim
+    );
     assert.equal(showCalls.length, 2);
   } finally {
     fixture.board.close();
@@ -2109,9 +2435,10 @@ test("Expand verification requires the published interface before merge and Migr
       fixture.board,
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "verified-publication").map((child) =>
-        child.phase === "expand" ? { ...child, declaredScope: ["docs"] } : child),
+        child.phase === "expand" ? { ...child, declaredScope: ["docs"] } : child
+      ),
       "verified-publication",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand?.pipelineBranch);
@@ -2128,7 +2455,15 @@ test("Expand verification requires the published interface before merge and Migr
     await git(providerRepo, ["checkout", "-b", expand.pipelineBranch]);
     await writeFile(join(providerRepo, "docs", "interface.md"), Buffer.from([0x23, 0x20, 0xc3, 0x28, 0x0a]));
     await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "docs/interface.md"]);
-    await git(providerRepo, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "expand with malformed interface"]);
+    await git(providerRepo, [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@local",
+      "commit",
+      "-m",
+      "expand with malformed interface",
+    ]);
     fixture.board.settleRun(implementation.run.runId, implementationTask.assignedAgentId, {
       outcome: "completed",
       result: "Initial Expand implementation is ready.",
@@ -2161,11 +2496,13 @@ test("Expand verification requires the published interface before merge and Migr
         summary: originalSummary,
         evidence: ["The reviewer independently exercised the provider branch."],
         artifactIds: [],
-        acceptanceCriteria: [{
-          criterion: "The provider change is independently verified.",
-          passed: true,
-          evidence: "The reviewer observed the expected provider behavior.",
-        }],
+        acceptanceCriteria: [
+          {
+            criterion: "The provider change is independently verified.",
+            passed: true,
+            evidence: "The reviewer observed the expected provider behavior.",
+          },
+        ],
         blockers: originalBlockers,
         recommendedReturnStage: null,
       },
@@ -2179,7 +2516,7 @@ test("Expand verification requires the published interface before merge and Migr
         const settled = fixture.board.settleRun(
           firstReview.run.runId,
           firstReviewTask.assignedAgentId!,
-          JSON.parse(String(init.body)) as SettleRunRequest,
+          JSON.parse(String(init.body)) as SettleRunRequest
         );
         settlementDuplicates.push(settled.duplicate);
         return new Response(JSON.stringify(settled), {
@@ -2207,23 +2544,26 @@ test("Expand verification requires the published interface before merge and Migr
     await client.settleAgentRun(workerSettlement);
     await client.settleAgentRun(workerSettlement);
     assert.deepEqual(settlementDuplicates, [false, true]);
-    const settledRun = fixture.board.snapshot(provider.projectId).recentRuns.find(
-      (run) => run.runId === firstReview.run.runId,
-    );
+    const settledRun = fixture.board
+      .snapshot(provider.projectId)
+      .recentRuns.find((run) => run.runId === firstReview.run.runId);
     assert.equal(settledRun?.status, "completed");
     assert.equal(settledRun.result, settlementRequest.result);
     assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "fixing");
     const findingsAfterFailure = fixture.board.pipelineSummary(expand.workItemId).findings;
-    assert.ok(findingsAfterFailure.some((finding) =>
-      finding.expected === publicationFinding && finding.blocking));
+    assert.ok(findingsAfterFailure.some((finding) => finding.expected === publicationFinding && finding.blocking));
     const failedHandoffDb = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const handoffRows = failedHandoffDb.prepare(`
+      const handoffRows = failedHandoffDb
+        .prepare(
+          `
         SELECT payload_json
         FROM stage_handoffs
         WHERE node_id=? AND stage='verification'
         ORDER BY created_at,rowid
-      `).all(childNode(fixture.board, expand).node.nodeId);
+      `
+        )
+        .all(childNode(fixture.board, expand).node.nodeId);
       assert.equal(handoffRows.length, 2);
       const workerHandoff = JSON.parse(String(handoffRows[0]?.payload_json)) as {
         outcome: string;
@@ -2245,19 +2585,25 @@ test("Expand verification requires the published interface before merge and Migr
       assert.equal(failedHandoff.summary.length, 4_000);
       assert.ok(failedHandoff.summary.endsWith(` — ${publicationFinding}`));
       assert.deepEqual(failedHandoff.evidence, ["The reviewer independently exercised the provider branch."]);
-      assert.deepEqual(failedHandoff.acceptanceCriteria, [{
-        criterion: "The provider change is independently verified.",
-        passed: true,
-        evidence: "The reviewer observed the expected provider behavior.",
-      }]);
+      assert.deepEqual(failedHandoff.acceptanceCriteria, [
+        {
+          criterion: "The provider change is independently verified.",
+          passed: true,
+          evidence: "The reviewer observed the expected provider behavior.",
+        },
+      ]);
       assert.equal(failedHandoff.blockers.length, 32);
       assert.equal(failedHandoff.blockers[0], "original blocker 1");
       assert.equal(failedHandoff.blockers.at(-1), publicationFinding);
-      const publicationActor = failedHandoffDb.prepare(`
+      const publicationActor = failedHandoffDb
+        .prepare(
+          `
         SELECT actor_type,actor_id
         FROM task_events
         WHERE task_id=? AND event_type='task_created'
-      `).get(failedHandoff.taskId);
+      `
+        )
+        .get(failedHandoff.taskId);
       assert.equal(publicationActor?.actor_type, "system");
       assert.equal(publicationActor?.actor_id, "system:interface-publication");
     } finally {
@@ -2338,7 +2684,7 @@ test("Expand verification requires the published interface before merge and Migr
 
 test("an Expand that never publishes dead-letters at the review cap and parks its parent", async () => {
   const fixture = await boardFixture(undefined, undefined, {
-    git: crossRepoGit((operation) => operation === "ls-tree" ? "" : "publication content must stay absent"),
+    git: crossRepoGit((operation) => (operation === "ls-tree" ? "" : "publication content must stay absent")),
     mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
   });
   const provider = fixture.board.createProject({
@@ -2358,7 +2704,7 @@ test("an Expand that never publishes dead-letters at the review cap and parks it
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "publication-cap"),
       "publication-cap",
-      "blast_radius",
+      "blast_radius"
     );
     const expand = decomposition.children[0];
     assert.ok(expand);
@@ -2367,27 +2713,23 @@ test("an Expand that never publishes dead-letters at the review cap and parks it
       provider.projectId,
       expand,
       "expand-publication-cap",
-      4,
+      4
     );
 
-    const settled = fixture.board.settleRun(
-      verification.claim.run.runId,
-      verification.verifier.agentId,
-      {
-        outcome: "completed",
-        result: "The fourth independent review passed.",
-        handoff: {
-          outcome: "passed",
-          summary: "The fourth independent review passed.",
-          evidence: [],
-          artifactIds: [],
-          acceptanceCriteria: [],
-          blockers: [],
-          recommendedReturnStage: null,
-        },
-        reviewFindings: [],
+    const settled = fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
+      outcome: "completed",
+      result: "The fourth independent review passed.",
+      handoff: {
+        outcome: "passed",
+        summary: "The fourth independent review passed.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: [],
+        recommendedReturnStage: null,
       },
-    );
+      reviewFindings: [],
+    });
 
     assert.equal(settled.run.status, "completed");
     assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "dead_letter");
@@ -2397,20 +2739,27 @@ test("an Expand that never publishes dead-letters at the review cap and parks it
       reason: `Child ${expand.workItemId} was dead-lettered`,
     });
     const publicationFinding = "publish docs/interface.md (absent)";
-    assert.ok(fixture.board.pipelineSummary(expand.workItemId).findings.some((finding) =>
-      finding.round === 4 && finding.expected === publicationFinding && finding.blocking));
+    assert.ok(
+      fixture.board
+        .pipelineSummary(expand.workItemId)
+        .findings.some((finding) => finding.round === 4 && finding.expected === publicationFinding && finding.blocking)
+    );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const publicationHandoff = db.prepare(`
+      const publicationHandoff = db
+        .prepare(
+          `
         SELECT payload_json
         FROM stage_handoffs
         WHERE node_id=? AND task_id LIKE 'task_interface_publication_%'
         ORDER BY created_at DESC,rowid DESC
         LIMIT 1
-      `).get(childNode(fixture.board, expand).node.nodeId);
+      `
+        )
+        .get(childNode(fixture.board, expand).node.nodeId);
       assert.equal(
         (JSON.parse(String(publicationHandoff?.payload_json)) as { blockers: string[] }).blockers.at(-1),
-        publicationFinding,
+        publicationFinding
       );
     } finally {
       db.close();
@@ -2423,7 +2772,7 @@ test("an Expand that never publishes dead-letters at the review cap and parks it
 test("a terminal Expand accepts a late publication-failing verification settlement", async () => {
   for (const terminalState of ["abandoned", "merged"] as const) {
     const fixture = await boardFixture(undefined, undefined, {
-      git: crossRepoGit((operation) => operation === "ls-tree" ? "" : "publication content must stay absent"),
+      git: crossRepoGit((operation) => (operation === "ls-tree" ? "" : "publication content must stay absent")),
       mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
     });
     const provider = fixture.board.createProject({
@@ -2443,7 +2792,7 @@ test("a terminal Expand accepts a late publication-failing verification settleme
         provider.projectId,
         phasedChildren(provider.projectId, consumer.projectId, `late-${terminalState}`),
         `late-${terminalState}`,
-        "blast_radius",
+        "blast_radius"
       );
       const expand = decomposition.children[0];
       assert.ok(expand);
@@ -2452,37 +2801,42 @@ test("a terminal Expand accepts a late publication-failing verification settleme
         provider.projectId,
         expand,
         `expand-late-${terminalState}`,
-        1,
+        1
       );
       const db = new DatabaseSync(fixture.path);
       try {
-        assert.equal(Number(db.prepare(`
+        assert.equal(
+          Number(
+            db
+              .prepare(
+                `
           UPDATE work_items
           SET state=?,current_stage=NULL,ended_at=?,version=version+1,updated_at=?
           WHERE work_item_id=?
-        `).run(terminalState, NOW, NOW, expand.workItemId).changes), 1);
+        `
+              )
+              .run(terminalState, NOW, NOW, expand.workItemId).changes
+          ),
+          1
+        );
       } finally {
         db.close();
       }
 
-      const settled = fixture.board.settleRun(
-        verification.claim.run.runId,
-        verification.verifier.agentId,
-        {
-          outcome: "completed",
-          result: `The ${terminalState} Expand review settled late.`,
-          handoff: {
-            outcome: "passed",
-            summary: `The ${terminalState} Expand review settled late.`,
-            evidence: [],
-            artifactIds: [],
-            acceptanceCriteria: [],
-            blockers: [],
-            recommendedReturnStage: null,
-          },
-          reviewFindings: [],
+      const settled = fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
+        outcome: "completed",
+        result: `The ${terminalState} Expand review settled late.`,
+        handoff: {
+          outcome: "passed",
+          summary: `The ${terminalState} Expand review settled late.`,
+          evidence: [],
+          artifactIds: [],
+          acceptanceCriteria: [],
+          blockers: [],
+          recommendedReturnStage: null,
         },
-      );
+        reviewFindings: [],
+      });
 
       assert.equal(settled.run.status, "completed");
       assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, terminalState);
@@ -2491,10 +2845,13 @@ test("a terminal Expand accepts a late publication-failing verification settleme
           state: childNode(fixture.board, expand).node.state,
           currentStage: childNode(fixture.board, expand).node.currentStage,
         },
-        { state: "completed", currentStage: null },
+        { state: "completed", currentStage: null }
       );
-      assert.ok(fixture.board.pipelineSummary(expand.workItemId).findings.some((finding) =>
-        finding.expected === "publish docs/interface.md (absent)" && finding.blocking));
+      assert.ok(
+        fixture.board
+          .pipelineSummary(expand.workItemId)
+          .findings.some((finding) => finding.expected === "publish docs/interface.md (absent)" && finding.blocking)
+      );
     } finally {
       fixture.board.close();
     }
@@ -2525,7 +2882,7 @@ test("Expand publication read errors leave the verification run active for retry
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "publication-read-error"),
       "publication-read-error",
-      "blast_radius",
+      "blast_radius"
     );
     const expand = decomposition.children[0];
     assert.ok(expand);
@@ -2533,33 +2890,37 @@ test("Expand publication read errors leave the verification run active for retry
       fixture,
       provider.projectId,
       expand,
-      "expand-publication-read-error",
+      "expand-publication-read-error"
     );
     assert.throws(
-      () => fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
-        outcome: "completed",
-        result: "The Expand review passed.",
-        handoff: {
-          outcome: "passed",
-          summary: "The Expand review passed.",
-          evidence: ["Reviewer evidence remains available for retry."],
-          artifactIds: [],
-          acceptanceCriteria: [],
-          blockers: [],
-          recommendedReturnStage: null,
-        },
-        reviewFindings: [],
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.status === 409 &&
-        error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE",
+      () =>
+        fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
+          outcome: "completed",
+          result: "The Expand review passed.",
+          handoff: {
+            outcome: "passed",
+            summary: "The Expand review passed.",
+            evidence: ["Reviewer evidence remains available for retry."],
+            artifactIds: [],
+            acceptanceCriteria: [],
+            blockers: [],
+            recommendedReturnStage: null,
+          },
+          reviewFindings: [],
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "TASK_BOARD_PIPELINE_REPO_UNAVAILABLE"
     );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(verification.claim.run.runId)?.status, "active");
-      assert.equal(db.prepare("SELECT status FROM tasks WHERE task_id=?")
-        .get(verification.task.taskId)?.status, "in_progress");
+      assert.equal(
+        db.prepare("SELECT status FROM runs WHERE run_id=?").get(verification.claim.run.runId)?.status,
+        "active"
+      );
+      assert.equal(
+        db.prepare("SELECT status FROM tasks WHERE task_id=?").get(verification.task.taskId)?.status,
+        "in_progress"
+      );
     } finally {
       db.close();
     }
@@ -2597,7 +2958,7 @@ test("Expand publication enforcement is inert for Migrate, Contract, and ordinar
           fixture.board,
           projectId,
           ["src/ordinary-inert"],
-          "ordinary-publication-inert",
+          "ordinary-publication-inert"
         );
       } else {
         const decomposition = proposeParent(
@@ -2605,35 +2966,26 @@ test("Expand publication enforcement is inert for Migrate, Contract, and ordinar
           provider.projectId,
           phasedChildren(provider.projectId, consumer.projectId, `${phase}-publication-inert`),
           `${phase}-publication-inert`,
-          "blast_radius",
+          "blast_radius"
         );
         workItem = decomposition.children.find((child) => child.phase === phase)!;
         projectId = workItem.resolvedProjectId!;
       }
-      const verification = preparePhaseVerificationClaim(
-        fixture,
-        projectId,
-        workItem,
-        `${phase}-publication-inert`,
-      );
-      const settled = fixture.board.settleRun(
-        verification.claim.run.runId,
-        verification.verifier.agentId,
-        {
-          outcome: "completed",
-          result: `${phase} verification passed.`,
-          handoff: {
-            outcome: "passed",
-            summary: `${phase} verification passed.`,
-            evidence: [],
-            artifactIds: [],
-            acceptanceCriteria: [],
-            blockers: [],
-            recommendedReturnStage: null,
-          },
-          reviewFindings: [],
+      const verification = preparePhaseVerificationClaim(fixture, projectId, workItem, `${phase}-publication-inert`);
+      const settled = fixture.board.settleRun(verification.claim.run.runId, verification.verifier.agentId, {
+        outcome: "completed",
+        result: `${phase} verification passed.`,
+        handoff: {
+          outcome: "passed",
+          summary: `${phase} verification passed.`,
+          evidence: [],
+          artifactIds: [],
+          acceptanceCriteria: [],
+          blockers: [],
+          recommendedReturnStage: null,
         },
-      );
+        reviewFindings: [],
+      });
       assert.equal(settled.run.status, "completed", phase);
       assert.equal(interfaceReads, 0, phase);
     } finally {
@@ -2655,15 +3007,16 @@ test("an oversized published interface blocks Migrate readiness before git show"
     const { node } = childNode(fixture.board, fixture.migrate);
     assert.equal(
       latestNodeBlock(fixture.path, node.nodeId),
-      `blocked: provider docs/interface.md exceeds 64 KiB at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+      `blocked: provider docs/interface.md exceeds 64 KiB at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`
     );
     assert.equal(showCalls, 0);
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
-      assert.equal(Number(db.prepare(
-        "SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?",
-      ).get(node.nodeId)?.count), 0);
+      assert.equal(
+        Number(db.prepare("SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?").get(node.nodeId)?.count),
+        0
+      );
     } finally {
       db.close();
     }
@@ -2682,7 +3035,7 @@ test("a non-file published interface blocks Migrate readiness", async () => {
     const { node } = childNode(fixture.board, fixture.migrate);
     assert.equal(
       latestNodeBlock(fixture.path, node.nodeId),
-      `blocked: provider docs/interface.md is not a file at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+      `blocked: provider docs/interface.md is not a file at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`
     );
     assert.equal(fixture.board.requireWorkItem(fixture.migrate.workItemId).state, "queued");
   } finally {
@@ -2716,18 +3069,21 @@ test("Migrate context attaches only to implementation and fix-round engineer cla
           model: "test-model",
           token: `role-scoped-${label}-token-0123456789abcdef`,
         });
-        const task = fixture.board.createTask(fixture.consumer.projectId, taskRequest({
-          title: `${label}: role-scoped Migrate task`,
-          assignedAgentId: agent.agentId,
-          assignedRole: role,
-        }));
+        const task = fixture.board.createTask(
+          fixture.consumer.projectId,
+          taskRequest({
+            title: `${label}: role-scoped Migrate task`,
+            assignedAgentId: agent.agentId,
+            assignedRole: role,
+          })
+        );
         db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
           `role-scoped-${label}-attempt`,
           node.nodeId,
           task.taskId,
           stage,
           attempt,
-          "{}",
+          "{}"
         );
         claims.push(Object.freeze({ label, agentId: agent.agentId }));
       }
@@ -2740,15 +3096,18 @@ test("Migrate context attaches only to implementation and fix-round engineer cla
         model: "test-model",
         token: "role-scoped-designer-token-0123456789abcdef",
       });
-      const designTask = fixture.board.createTask(fixture.consumer.projectId, taskRequest({
-        title: "design: role-scoped Migrate task",
-        assignedAgentId: designer.agentId,
-        assignedRole: "manager",
-      }));
+      const designTask = fixture.board.createTask(
+        fixture.consumer.projectId,
+        taskRequest({
+          title: "design: role-scoped Migrate task",
+          assignedAgentId: designer.agentId,
+          assignedRole: "manager",
+        })
+      );
       db.prepare("INSERT INTO work_item_design_tasks VALUES(?,?,?)").run(
         fixture.migrate.workItemId,
         designTask.taskId,
-        NOW,
+        NOW
       );
       claims.push(Object.freeze({ label: "design", agentId: designer.agentId }));
     } finally {
@@ -2761,11 +3120,7 @@ test("Migrate context attaches only to implementation and fix-round engineer cla
         messageCursor: null,
       });
       assert.ok(claim);
-      assert.equal(
-        Object.hasOwn(claim.context, "crossRepoContext"),
-        label === "fix-round",
-        label,
-      );
+      assert.equal(Object.hasOwn(claim.context, "crossRepoContext"), label === "fix-round", label);
     }
   } finally {
     fixture.board.close();
@@ -2784,56 +3139,71 @@ test("a provider outage after Migrate implementation does not gate verification 
 
   try {
     const { node } = childNode(fixture.board, fixture.migrate);
-    const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "engineer",
-    );
+    const implementationTask = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
     assert.ok(implementationTask);
     const db = new DatabaseSync(fixture.path);
     try {
-      const expandPlan = db.prepare(`
+      const expandPlan = db
+        .prepare(
+          `
         SELECT plan.plan_revision_id
         FROM plan_revisions plan
         WHERE plan.work_item_id=? AND plan.state='confirmed'
-      `).get(fixture.expand.workItemId);
+      `
+        )
+        .get(fixture.expand.workItemId);
       assert.ok(expandPlan);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO gate_actions(
           gate_action_id,work_item_id,gate,actor_id,plan_revision_id,
           verified_sha,merge_sha,ref_id,note,created_at
         ) VALUES(?,?,'final_approve','human:alice',?,NULL,?,NULL,NULL,?)
-      `).run(
+      `
+      ).run(
         "verification-outage-new-provider-approval",
         fixture.expand.workItemId,
         String(expandPlan.plan_revision_id),
         MERGE_SHAS[1],
-        NOW,
+        NOW
       );
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE tasks SET status='completed',started_at=?,ended_at=?,result='Implementation completed',updated_at=?
         WHERE task_id=?
-      `).run(NOW, NOW, NOW, implementationTask.taskId);
-      db.prepare(`
+      `
+      ).run(NOW, NOW, NOW, implementationTask.taskId);
+      db.prepare(
+        `
         UPDATE work_nodes SET state='ready',current_stage='verification',updated_at=? WHERE node_id=?
-      `).run(NOW, node.nodeId);
-      db.prepare(`
+      `
+      ).run(NOW, node.nodeId);
+      db.prepare(
+        `
         UPDATE work_items SET state='reviewing',current_stage='verification',updated_at=? WHERE work_item_id=?
-      `).run(NOW, fixture.migrate.workItemId);
+      `
+      ).run(NOW, fixture.migrate.workItemId);
     } finally {
       db.close();
     }
 
     outage = true;
     fixture.board.reconcileWorkflows(fixture.consumer.projectId);
-    const verificationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "verifier",
-    );
+    const verificationTask = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "verifier");
     assert.ok(verificationTask, latestNodeBlock(fixture.path, node.nodeId) ?? "verification task was not activated");
   } finally {
     fixture.board.close();
   }
 });
 
-for (const [name, invalidMarkdown] of [["NUL", "bad \0 interface"], ["ESC", "bad \u001b interface"]] as const) {
+for (const [name, invalidMarkdown] of [
+  ["NUL", "bad \0 interface"],
+  ["ESC", "bad \u001b interface"],
+] as const) {
   test(`${name} in a residual claim-side interface read blocks without persisting a poisoned run`, async () => {
     const validMarkdown = "# Valid during readiness\n";
     let showCalls = 0;
@@ -2846,39 +3216,59 @@ for (const [name, invalidMarkdown] of [["NUL", "bad \0 interface"], ["ESC", "bad
 
     try {
       const { node } = childNode(fixture.board, fixture.migrate);
-      const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-        (task) => task.status === "queued" && task.assignedRole === "engineer",
-      );
+      const implementationTask = fixture.board
+        .snapshot(fixture.consumer.projectId)
+        .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
       assert.ok(implementationTask);
       const assignedAgentId = implementationTask.assignedAgentId;
       assert.ok(assignedAgentId);
       assert.throws(
-        () => fixture.board.claimRun(assignedAgentId, {
-          claimId: `claim-cross-repo-${name.toLowerCase()}-control`,
-          messageCursor: null,
-        }),
-        (error: unknown) => error instanceof TaskBoardError &&
+        () =>
+          fixture.board.claimRun(assignedAgentId, {
+            claimId: `claim-cross-repo-${name.toLowerCase()}-control`,
+            messageCursor: null,
+          }),
+        (error: unknown) =>
+          error instanceof TaskBoardError &&
           error.status === 409 &&
-          error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+          error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE"
       );
       assert.equal(
         latestNodeBlock(fixture.path, node.nodeId),
-        `blocked: provider docs/interface.md contains prohibited characters at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`,
+        `blocked: provider docs/interface.md contains prohibited characters at ${MERGE_SHAS[0]}; cancel the parent to abandon the decomposition`
       );
       const db = new DatabaseSync(fixture.path, { readOnly: true });
       try {
         assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
-        assert.equal(Number(db.prepare(`
+        assert.equal(
+          Number(
+            db
+              .prepare(
+                `
           SELECT COUNT(*) AS count
           FROM wakeups wakeup
           WHERE wakeup.task_id=? AND wakeup.claimed_at IS NOT NULL
-        `).get(implementationTask.taskId)?.count), 0);
-        assert.equal(Number(db.prepare(`
+        `
+              )
+              .get(implementationTask.taskId)?.count
+          ),
+          0
+        );
+        assert.equal(
+          Number(
+            db
+              .prepare(
+                `
           SELECT COUNT(*) AS count
           FROM task_events event
           JOIN wakeups wakeup ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
           WHERE wakeup.task_id=?
-        `).get(implementationTask.taskId)?.count), 1);
+        `
+              )
+              .get(implementationTask.taskId)?.count
+          ),
+          1
+        );
       } finally {
         db.close();
       }
@@ -2904,39 +3294,58 @@ test("a claim-side provider outage evicts readiness success and retries without 
 
   try {
     const { node } = childNode(fixture.board, fixture.migrate);
-    const firstTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "engineer",
-    );
+    const firstTask = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
     assert.ok(firstTask?.assignedAgentId);
     outage = true;
     assert.throws(
-      () => fixture.board.claimRun(firstTask.assignedAgentId!, {
-        claimId: "claim-provider-read-outage",
-        messageCursor: null,
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
+      () =>
+        fixture.board.claimRun(firstTask.assignedAgentId!, {
+          claimId: "claim-provider-read-outage",
+          messageCursor: null,
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
         error.status === 409 &&
         error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE" &&
-        error.message === `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`,
+        error.message === `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`
     );
 
     for (let pass = 0; pass < 3; pass += 1) fixture.board.reconcileWorkflows(fixture.consumer.projectId);
     const blocked = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(blocked.prepare(`
+      assert.equal(
+        Number(
+          blocked
+            .prepare(
+              `
         SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
-      `).get(node.nodeId)?.count), 1);
-      assert.equal(Number(blocked.prepare(`
+      `
+            )
+            .get(node.nodeId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          blocked
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='node_blocked' AND summary=?
-      `).get(
-        node.nodeId,
-        `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`,
-      )?.count), 1);
-      assert.equal(fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
-        (task) => task.assignedRole === "engineer",
-      ).length, 1);
+      `
+            )
+            .get(node.nodeId, `blocked: provider repository unreadable at ${MERGE_SHAS[0]} — retrying`)?.count
+        ),
+        1
+      );
+      assert.equal(
+        fixture.board.snapshot(fixture.consumer.projectId).tasks.filter((task) => task.assignedRole === "engineer")
+          .length,
+        1
+      );
     } finally {
       blocked.close();
     }
@@ -2944,9 +3353,9 @@ test("a claim-side provider outage evicts readiness success and retries without 
 
     outage = false;
     fixture.board.reconcileWorkflows(fixture.consumer.projectId);
-    const replacement = fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
-      (task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId,
-    );
+    const replacement = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.filter((task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId);
     assert.equal(replacement.length, 1);
     assert.equal(replacement[0]?.status, "queued");
   } finally {
@@ -2987,13 +3396,14 @@ test("Migrate readiness and claim share the bounded worker projection", async ()
     const children = phasedChildren(provider.projectId, consumer.projectId, "bounded-projection").map((child) =>
       child.phase === "migrate"
         ? { ...child, acceptanceCriteria: ["A".repeat(2_000), "B".repeat(2_000), "C".repeat(2_000)] }
-        : child);
+        : child
+    );
     const decomposition = proposeParent(
       fixture.board,
       provider.projectId,
       children,
       "bounded-projection",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
@@ -3057,21 +3467,24 @@ test("a Migrate fix round previews its reusable orphan with the prior non-zero c
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "fix-round-preview"),
       "fix-round-preview",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
     assert.ok(migrate);
     const { node } = childNode(fixture.board, migrate);
 
-    const priorTask = fixture.board.createTask(consumer.projectId, taskRequest({
-      title: "Terminal prior Migrate implementation",
-      objective: "Carry enough terminal history to overflow the wrong readiness projection.",
-      acceptanceCriteria: "The next attempt must not inherit this task's history.",
-      assignedAgentId: engineer.agentId,
-      assignedRole: engineer.role,
-      requiresReview: false,
-    }));
+    const priorTask = fixture.board.createTask(
+      consumer.projectId,
+      taskRequest({
+        title: "Terminal prior Migrate implementation",
+        objective: "Carry enough terminal history to overflow the wrong readiness projection.",
+        acceptanceCriteria: "The next attempt must not inherit this task's history.",
+        assignedAgentId: engineer.agentId,
+        assignedRole: engineer.role,
+        requiresReview: false,
+      })
+    );
     for (let index = 0; index < 12; index += 1) {
       fixture.board.appendHumanMessage(priorTask.taskId, {
         clientEventId: `fix-round-prior-message-${index}`,
@@ -3085,11 +3498,15 @@ test("a Migrate fix round previews its reusable orphan with the prior non-zero c
     });
     assert.ok(priorClaim);
     for (let index = 0; index < 64; index += 1) {
-      fixture.board.createTaskPhase(priorTask.taskId, {
-        title: `${index}:`.padEnd(240, "p"),
-        stage: "execution",
-        parallelGroup: `prior-${index}`,
-      }, engineer.agentId);
+      fixture.board.createTaskPhase(
+        priorTask.taskId,
+        {
+          title: `${index}:`.padEnd(240, "p"),
+          stage: "execution",
+          parallelGroup: `prior-${index}`,
+        },
+        engineer.agentId
+      );
     }
     fixture.board.settleRun(priorClaim.run.runId, engineer.agentId, {
       outcome: "completed",
@@ -3098,15 +3515,18 @@ test("a Migrate fix round previews its reusable orphan with the prior non-zero c
 
     const title = `implementation: ${node.title}`;
     const acceptanceCriteria = node.acceptanceCriteria.join("\n");
-    const orphan = fixture.board.createTask(consumer.projectId, taskRequest({
-      title,
-      objective: node.objective,
-      acceptanceCriteria,
-      workspaceRefs: [],
-      assignedAgentId: engineer.agentId,
-      assignedRole: engineer.role,
-      requiresReview: false,
-    }));
+    const orphan = fixture.board.createTask(
+      consumer.projectId,
+      taskRequest({
+        title,
+        objective: node.objective,
+        acceptanceCriteria,
+        workspaceRefs: [],
+        assignedAgentId: engineer.agentId,
+        assignedRole: engineer.role,
+        requiresReview: false,
+      })
+    );
     let orphanCursor = 0;
     for (let index = 0; index < 12; index += 1) {
       const message = fixture.board.appendHumanMessage(orphan.taskId, {
@@ -3132,25 +3552,33 @@ test("a Migrate fix round previews its reusable orphan with the prior non-zero c
 
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
         VALUES(?,?,?,'implementation',1,'{}')
-      `).run("fix-round-heavy-prior-attempt", node.nodeId, priorTask.taskId);
-      db.prepare(`
+      `
+      ).run("fix-round-heavy-prior-attempt", node.nodeId, priorTask.taskId);
+      db.prepare(
+        `
         UPDATE plan_revisions
         SET assumptions_json=?
         WHERE work_item_id=? AND state='confirmed'
-      `).run(JSON.stringify(Array.from({ length: 46 }, () => "a".repeat(4_000))), migrate.workItemId);
-      db.prepare(`
+      `
+      ).run(JSON.stringify(Array.from({ length: 46 }, () => "a".repeat(4_000))), migrate.workItemId);
+      db.prepare(
+        `
         UPDATE work_nodes
         SET state='ready',current_stage='implementation',version=version+1,updated_at=?
         WHERE node_id=?
-      `).run(NOW, node.nodeId);
-      db.prepare(`
+      `
+      ).run(NOW, node.nodeId);
+      db.prepare(
+        `
         UPDATE work_items
         SET state='fixing',current_stage='implementation',version=version+1,updated_at=?
         WHERE work_item_id=?
-      `).run(NOW, migrate.workItemId);
+      `
+      ).run(NOW, migrate.workItemId);
     } finally {
       db.close();
     }
@@ -3162,11 +3590,20 @@ test("a Migrate fix round previews its reusable orphan with the prior non-zero c
     assert.equal(fixture.board.requireTask(orphan.taskId).status, "queued");
     const linked = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(linked.prepare(`
+      assert.equal(
+        Number(
+          linked
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM stage_attempts
         WHERE node_id=? AND task_id=? AND stage='implementation' AND attempt=2
-      `).get(node.nodeId, orphan.taskId)?.count), 1);
+      `
+            )
+            .get(node.nodeId, orphan.taskId)?.count
+        ),
+        1
+      );
     } finally {
       linked.close();
     }
@@ -3210,7 +3647,7 @@ test("oversized assembled Migrate context blocks readiness once without replacem
       provider.projectId,
       phasedChildren(provider.projectId, consumer.projectId, "aggregate-context-bound"),
       "aggregate-context-bound",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
@@ -3218,11 +3655,13 @@ test("oversized assembled Migrate context blocks readiness once without replacem
     const { node } = childNode(fixture.board, migrate);
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE plan_revisions
         SET assumptions_json=?
         WHERE work_item_id=? AND state='confirmed'
-      `).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
+      `
+      ).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
     } finally {
       db.close();
     }
@@ -3233,20 +3672,38 @@ test("oversized assembled Migrate context blocks readiness once without replacem
     fixture.board.reconcileWorkflows(consumer.projectId);
     assert.match(
       latestNodeBlock(fixture.path, node.nodeId) ?? "",
-      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u,
+      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u
     );
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(Number(inspected.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count), 0);
-      assert.equal(Number(inspected.prepare(`
+      assert.equal(
+        Number(
+          inspected
+            .prepare(
+              `
         SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
-      `).get(node.nodeId)?.count), 0);
-      assert.equal(Number(inspected.prepare(`
+      `
+            )
+            .get(node.nodeId)?.count
+        ),
+        0
+      );
+      assert.equal(
+        Number(
+          inspected
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='node_blocked'
           AND summary GLOB 'blocked: assembled context * KiB exceeds 256 KiB budget'
-      `).get(node.nodeId)?.count), 1);
+      `
+            )
+            .get(node.nodeId)?.count
+        ),
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -3283,18 +3740,20 @@ test("a hazardous Migrate claim carries its interface inside the design-record b
       phasedChildren(provider.projectId, consumer.projectId, "hazardous-context-budget"),
       "hazardous-context-budget",
       "blast_radius",
-      "hazardous",
+      "hazardous"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
     assert.ok(migrate);
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE plan_revisions
         SET assumptions_json=?
         WHERE work_item_id=? AND state='confirmed'
-      `).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
+      `
+      ).run(JSON.stringify(Array.from({ length: 52 }, () => "a".repeat(4_000))), migrate.workItemId);
     } finally {
       db.close();
     }
@@ -3337,17 +3796,21 @@ test("a hazardous Migrate claim carries its interface inside the design-record b
 
 test("a claim-time aggregate block is re-evaluated against the next task shape", async () => {
   const interfaceMarkdown = "# Residual aggregate interface\n";
-  const fixture = await migrateReadinessFixture("residual-aggregate-key", (operation) => {
-    if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
-    if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
-    return interfaceMarkdown;
-  }, ["writing-design-docs"]);
+  const fixture = await migrateReadinessFixture(
+    "residual-aggregate-key",
+    (operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    },
+    ["writing-design-docs"]
+  );
 
   try {
     const { node } = childNode(fixture.board, fixture.migrate);
-    const firstTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "engineer",
-    );
+    const firstTask = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
     assert.ok(firstTask?.assignedAgentId);
     fixture.board.appendHumanMessage(firstTask.taskId, {
       clientEventId: "residual-aggregate-context-message",
@@ -3356,78 +3819,117 @@ test("a claim-time aggregate block is re-evaluated against the next task shape",
     });
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE plan_revisions
         SET assumptions_json=?
         WHERE work_item_id=? AND state='confirmed'
-      `).run(JSON.stringify(Array.from({ length: 54 }, () => "a".repeat(5_000))), fixture.migrate.workItemId);
+      `
+      ).run(JSON.stringify(Array.from({ length: 54 }, () => "a".repeat(5_000))), fixture.migrate.workItemId);
     } finally {
       db.close();
     }
 
     assert.throws(
-      () => fixture.board.claimRun(firstTask.assignedAgentId!, {
-        claimId: "claim-residual-aggregate-key",
-        messageCursor: null,
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
+      () =>
+        fixture.board.claimRun(firstTask.assignedAgentId!, {
+          claimId: "claim-residual-aggregate-key",
+          messageCursor: null,
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
         error.status === 409 &&
-        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE"
     );
     const residualReason = "blocked: persisted claim-side residual digest matched";
     const keyed = new DatabaseSync(fixture.path);
     try {
-      const event = keyed.prepare(`
+      const event = keyed
+        .prepare(
+          `
         SELECT event_id,json_extract(data_json,'$.interfaceContextDigest') AS digest
         FROM task_events
         WHERE task_id=? AND event_type='task_cancelled'
           AND json_extract(data_json,'$.interfaceExpandSha')=?
         ORDER BY created_at DESC,rowid DESC
         LIMIT 1
-      `).get(firstTask.taskId, MERGE_SHAS[0]);
+      `
+        )
+        .get(firstTask.taskId, MERGE_SHAS[0]);
       assert.match(String(event?.digest), /^[0-9a-f]{64}$/u);
-      assert.equal(Number(keyed.prepare(`
+      assert.equal(
+        Number(
+          keyed
+            .prepare(
+              `
         UPDATE task_events
         SET data_json=json_set(data_json,'$.reason',?)
         WHERE event_id=?
-      `).run(residualReason, String(event?.event_id)).changes), 1);
+      `
+            )
+            .run(residualReason, String(event?.event_id)).changes
+        ),
+        1
+      );
     } finally {
       keyed.close();
     }
     for (let pass = 0; pass < 3; pass += 1) fixture.board.reconcileWorkflows(fixture.consumer.projectId);
     assert.match(
       latestNodeBlock(fixture.path, node.nodeId) ?? "",
-      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u,
+      /^blocked: assembled context \d+ KiB exceeds 256 KiB budget$/u
     );
     const blocked = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(Number(blocked.prepare(`
+      assert.equal(
+        Number(
+          blocked
+            .prepare(
+              `
         SELECT COUNT(*) AS count FROM stage_attempts WHERE node_id=?
-      `).get(node.nodeId)?.count), 1);
-      assert.equal(Number(blocked.prepare(`
+      `
+            )
+            .get(node.nodeId)?.count
+        ),
+        1
+      );
+      assert.equal(
+        Number(
+          blocked
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM task_events
         WHERE task_id=? AND event_type='task_cancelled'
           AND json_extract(data_json,'$.interfaceExpandSha')=?
           AND json_extract(data_json,'$.interfaceContextDigest') IS NOT NULL
-      `).get(firstTask.taskId, MERGE_SHAS[0])?.count), 1);
+      `
+            )
+            .get(firstTask.taskId, MERGE_SHAS[0])?.count
+        ),
+        1
+      );
     } finally {
       blocked.close();
     }
 
     const changed = new DatabaseSync(fixture.path);
     try {
-      changed.prepare(`
+      changed
+        .prepare(
+          `
         UPDATE plan_revisions SET assumptions_json='[]'
         WHERE work_item_id=? AND state='confirmed'
-      `).run(fixture.migrate.workItemId);
+      `
+        )
+        .run(fixture.migrate.workItemId);
     } finally {
       changed.close();
     }
     fixture.board.reconcileWorkflows(fixture.consumer.projectId);
-    const replacement = fixture.board.snapshot(fixture.consumer.projectId).tasks.filter(
-      (task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId,
-    );
+    const replacement = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.filter((task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId);
     assert.equal(replacement.length, 1);
     assert.equal(replacement[0]?.status, "queued");
   } finally {
@@ -3446,26 +3948,28 @@ test("legacy Migrate claim replay reports a typed interface failure", async () =
   });
 
   try {
-    const implementationTask = fixture.board.snapshot(fixture.consumer.projectId).tasks.find(
-      (task) => task.status === "queued" && task.assignedRole === "engineer",
-    );
+    const implementationTask = fixture.board
+      .snapshot(fixture.consumer.projectId)
+      .tasks.find((task) => task.status === "queued" && task.assignedRole === "engineer");
     assert.ok(implementationTask?.assignedAgentId);
     const request = { claimId: "claim-migrate-legacy-replay-typed", messageCursor: null } as const;
     const first = fixture.board.claimRun(implementationTask.assignedAgentId, request);
     assert.ok(first);
     const db = new DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(db.prepare(
-        "UPDATE runs SET claim_result_json=NULL WHERE run_id=?",
-      ).run(first.run.runId).changes), 1);
+      assert.equal(
+        Number(db.prepare("UPDATE runs SET claim_result_json=NULL WHERE run_id=?").run(first.run.runId).changes),
+        1
+      );
     } finally {
       db.close();
     }
     assert.throws(
       () => fixture.board.claimRun(implementationTask.assignedAgentId!, request),
-      (error: unknown) => error instanceof TaskBoardError &&
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
         error.status === 409 &&
-        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE",
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE"
     );
   } finally {
     fixture.board.close();
@@ -3494,7 +3998,7 @@ test("a duplicate deploy attestation retries Contract readiness reconciliation",
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "duplicate-attestation"),
       "duplicate-attestation-reconcile",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
@@ -3547,33 +4051,43 @@ test("phased automatic merge withdraws an approval when the provider base advanc
     repoPath: "/repos/base-advance-consumer",
   });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "expand",
-      objective: "Expand the provider before its base advances.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/base-advance-expand", "docs/interface.md"],
-      acceptanceCriteria: ["Stale verification never merges."],
-      phase: "expand",
-      splitBy: "phase",
-    }, {
-      key: "migrate",
-      objective: "Wait for the re-verified expansion.",
-      projectId: consumer.projectId,
-      declaredScope: ["src/base-advance-migrate"],
-      acceptanceCriteria: ["Migration starts only after expansion merges."],
-      phase: "migrate",
-      splitBy: "consumer",
-      dependsOn: ["expand"],
-    }, {
-      key: "contract",
-      objective: "Remain downstream of migration deployment.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/base-advance-contract", "docs/interface.md"],
-      acceptanceCriteria: ["Contraction remains gated."],
-      phase: "contract",
-      splitBy: "phase",
-      dependsOn: ["migrate"],
-    }], "phased-base-advance", "blast_radius");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "expand",
+          objective: "Expand the provider before its base advances.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/base-advance-expand", "docs/interface.md"],
+          acceptanceCriteria: ["Stale verification never merges."],
+          phase: "expand",
+          splitBy: "phase",
+        },
+        {
+          key: "migrate",
+          objective: "Wait for the re-verified expansion.",
+          projectId: consumer.projectId,
+          declaredScope: ["src/base-advance-migrate"],
+          acceptanceCriteria: ["Migration starts only after expansion merges."],
+          phase: "migrate",
+          splitBy: "consumer",
+          dependsOn: ["expand"],
+        },
+        {
+          key: "contract",
+          objective: "Remain downstream of migration deployment.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/base-advance-contract", "docs/interface.md"],
+          acceptanceCriteria: ["Contraction remains gated."],
+          phase: "contract",
+          splitBy: "phase",
+          dependsOn: ["migrate"],
+        },
+      ],
+      "phased-base-advance",
+      "blast_radius"
+    );
     const [expand] = decomposition.children;
     assert.ok(expand);
     verifiedByBranch.set(expand.pipelineBranch!, VERIFIED_SHAS[0]);
@@ -3586,11 +4100,16 @@ test("phased automatic merge withdraws an approval when the provider base advanc
     assert.equal(withdrawn.state, "implementing");
     assert.equal(withdrawn.baseSha, ADVANCED_SHA);
     assert.equal(mergeCalls, 0);
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "final_approval_withdrawn"
-      && notification.workItemId === expand.workItemId
-      && notification.dedupeKey === `final_approval_withdrawn:${expand.workItemId}:${ADVANCED_SHA}`
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "final_approval_withdrawn" &&
+            notification.workItemId === expand.workItemId &&
+            notification.dedupeKey === `final_approval_withdrawn:${expand.workItemId}:${ADVANCED_SHA}`
+        )
+    );
 
     verifiedByBranch.set(expand.pipelineBranch!, VERIFIED_SHAS[1]);
     forceFinalApproval(fixture.path, expand.workItemId, VERIFIED_SHAS[1]);
@@ -3642,7 +4161,7 @@ for (const inspection of ["diverged", "repo_busy"] as const) {
         fixture.project.projectId,
         phasedChildren(fixture.project.projectId, consumer.projectId, `${inspection}-guard`),
         `phased-${inspection}-guard`,
-        "blast_radius",
+        "blast_radius"
       );
       const [expand] = decomposition.children;
       assert.ok(expand);
@@ -3658,33 +4177,48 @@ for (const inspection of ["diverged", "repo_busy"] as const) {
           category: "base_diverged",
           reason: `base branch history rewritten (was ${BASE_SHA}, now ${ADVANCED_SHA})`,
         });
-        assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-          notification.kind === "final_approval_withdrawn"
-          && notification.workItemId === expand.workItemId
-          && notification.dedupeKey === `final_approval_withdrawn:${expand.workItemId}:base-diverged:${ADVANCED_SHA}`
-        )));
+        assert.ok(
+          fixture.board
+            .listNotifications()
+            .unread.some(
+              (notification) =>
+                notification.kind === "final_approval_withdrawn" &&
+                notification.workItemId === expand.workItemId &&
+                notification.dedupeKey === `final_approval_withdrawn:${expand.workItemId}:base-diverged:${ADVANCED_SHA}`
+            )
+        );
         const resumed = fixture.board.resumeWorkItem(expand.workItemId);
         assert.equal(resumed.state, "implementing");
         assert.equal(resumed.currentStage, "implementation");
         assert.equal(resumed.baseSha, ADVANCED_SHA);
         const inspected = new DatabaseSync(fixture.path, { readOnly: true });
         try {
-          assert.equal(inspected.prepare(`
+          assert.equal(
+            inspected
+              .prepare(
+                `
             SELECT COUNT(*) AS count
             FROM park_records
             WHERE work_item_id=? AND resolved_at IS NULL
-          `).get(expand.workItemId)?.count, 0);
+          `
+              )
+              .get(expand.workItemId)?.count,
+            0
+          );
         } finally {
           inspected.close();
         }
       } else {
         assert.equal(fixture.board.requireWorkItem(expand.workItemId).state, "final_approval");
-        assert.ok(logged.mock.calls.some((call) => (
-          call.arguments[0] === "[task-board] phased automatic merge skipped"
-          && typeof call.arguments[1] === "object"
-          && call.arguments[1] !== null
-          && (call.arguments[1] as { childWorkItemId?: unknown }).childWorkItemId === expand.workItemId
-        )));
+        assert.ok(
+          logged.mock.calls.some(
+            (call) =>
+              call.arguments[0] === "[task-board] phased automatic merge skipped" &&
+              typeof call.arguments[1] === "object" &&
+              call.arguments[1] !== null &&
+              (call.arguments[1] as { childWorkItemId?: unknown }).childWorkItemId === expand.workItemId
+          )
+        );
       }
     } finally {
       fixture.board.close();
@@ -3718,7 +4252,7 @@ test("board pause skips the whole decomposition policy pass until work resumes",
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "paused-policy"),
       "paused-policy",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand] = decomposition.children;
     assert.ok(expand);
@@ -3761,13 +4295,20 @@ test("board pause skips the whole decomposition policy pass until work resumes",
 test("decomposition reconciliation fails closed when the board pause row is missing", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "pause-row-guard",
-      objective: "Keep policy work behind the durable pause row.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/pause-row-guard"],
-      acceptanceCriteria: ["A missing pause row fails closed."],
-    }], "missing-pause-row");
+    proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "pause-row-guard",
+          objective: "Keep policy work behind the durable pause row.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/pause-row-guard"],
+          acceptanceCriteria: ["A missing pause row fails closed."],
+        },
+      ],
+      "missing-pause-row"
+    );
     const db = new DatabaseSync(fixture.path);
     try {
       db.prepare("DELETE FROM board_pause WHERE pause_id='board'").run();
@@ -3777,7 +4318,7 @@ test("decomposition reconciliation fails closed when the board pause row is miss
 
     assert.throws(
       () => fixture.board.reconcileWorkflows(fixture.project.projectId),
-      /TASK_BOARD_DATABASE_CORRUPT:board_pause/u,
+      /TASK_BOARD_DATABASE_CORRUPT:board_pause/u
     );
   } finally {
     fixture.board.close();
@@ -3796,19 +4337,27 @@ test("base-branch withdrawal also withdraws a feature parent's pending approval"
     },
   });
   try {
-    const { parent, children } = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "one",
-      objective: "Prepare the first child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/withdraw-one"],
-      acceptanceCriteria: ["The first child is ready."],
-    }, {
-      key: "two",
-      objective: "Prepare the second child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/withdraw-two"],
-      acceptanceCriteria: ["The second child is ready."],
-    }], "withdraw-parent");
+    const { parent, children } = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "one",
+          objective: "Prepare the first child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/withdraw-one"],
+          acceptanceCriteria: ["The first child is ready."],
+        },
+        {
+          key: "two",
+          objective: "Prepare the second child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/withdraw-two"],
+          acceptanceCriteria: ["The second child is ready."],
+        },
+      ],
+      "withdraw-parent"
+    );
     for (const [index, child] of children.entries()) {
       forceFinalApproval(fixture.path, child.workItemId, VERIFIED_SHAS[index]!);
     }
@@ -3818,11 +4367,16 @@ test("base-branch withdrawal also withdraws a feature parent's pending approval"
     const sweep = fixture.board.sweepBaseBranch(NOW);
     assert.equal(sweep.withdrawn, 2);
     assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "coordinating");
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "final_approval_withdrawn"
-      && notification.workItemId === parent.workItemId
-      && notification.dedupeKey?.startsWith(`final_approval_withdrawn:${parent.workItemId}:`) === true
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "final_approval_withdrawn" &&
+            notification.workItemId === parent.workItemId &&
+            notification.dedupeKey?.startsWith(`final_approval_withdrawn:${parent.workItemId}:`) === true
+        )
+    );
   } finally {
     fixture.board.close();
   }
@@ -3830,13 +4384,20 @@ test("base-branch withdrawal also withdraws a feature parent's pending approval"
 
 test("an abandoned or dead-lettered child parks its parent as child_failed", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
-  const first = proposeParent(fixture.board, fixture.project.projectId, [{
-    key: "abandoned",
-    objective: "Exercise abandoned-child propagation.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/abandoned"],
-    acceptanceCriteria: ["The parent is parked."],
-  }], "abandoned-child");
+  const first = proposeParent(
+    fixture.board,
+    fixture.project.projectId,
+    [
+      {
+        key: "abandoned",
+        objective: "Exercise abandoned-child propagation.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/abandoned"],
+        acceptanceCriteria: ["The parent is parked."],
+      },
+    ],
+    "abandoned-child"
+  );
   const [abandonedChild] = first.children;
   assert.ok(abandonedChild);
   try {
@@ -3851,13 +4412,20 @@ test("an abandoned or dead-lettered child parks its parent as child_failed", asy
       reason: `Child ${abandonedChild.workItemId} was abandoned`,
     });
 
-    const second = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "dead-lettered",
-      objective: "Exercise dead-letter propagation.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/dead-lettered"],
-      acceptanceCriteria: ["The second parent is parked."],
-    }], "dead-letter-child");
+    const second = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "dead-lettered",
+          objective: "Exercise dead-letter propagation.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/dead-lettered"],
+          acceptanceCriteria: ["The second parent is parked."],
+        },
+      ],
+      "dead-letter-child"
+    );
     const [deadChild] = second.children;
     assert.ok(deadChild);
     fixture.board.close();
@@ -3875,16 +4443,21 @@ test("an abandoned or dead-lettered child parks its parent as child_failed", asy
           currentStage: null,
         });
       });
-      const parent = store.db.prepare("SELECT state FROM work_items WHERE work_item_id=?")
+      const parent = store.db
+        .prepare("SELECT state FROM work_items WHERE work_item_id=?")
         .get(second.parent.workItemId);
       assert.equal(parent?.state, "parked");
-      const park = store.db.prepare(`
+      const park = store.db
+        .prepare(
+          `
         SELECT category,reason
         FROM park_records
         WHERE work_item_id=?
         ORDER BY rowid DESC
         LIMIT 1
-      `).get(second.parent.workItemId);
+      `
+        )
+        .get(second.parent.workItemId);
       assert.equal(park?.category, "child_failed");
       assert.equal(park?.reason, `Child ${deadChild.workItemId} was dead-lettered`);
     } finally {
@@ -3907,19 +4480,27 @@ test("resuming a child-failure park abandons the dead-lettered child and complet
     },
     mergePipeline: () => ({ kind: "merged", mergeSha: MERGE_SHAS[0] }),
   });
-  const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-    key: "failed",
-    objective: "Dead-letter this child to park the parent.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/unpark-failed"],
-    acceptanceCriteria: ["The failure parks the parent."],
-  }, {
-    key: "remaining",
-    objective: "Continue after the parent is unparked.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/unpark-remaining"],
-    acceptanceCriteria: ["This child can still merge."],
-  }], "child-failure-unpark");
+  const decomposition = proposeParent(
+    fixture.board,
+    fixture.project.projectId,
+    [
+      {
+        key: "failed",
+        objective: "Dead-letter this child to park the parent.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/unpark-failed"],
+        acceptanceCriteria: ["The failure parks the parent."],
+      },
+      {
+        key: "remaining",
+        objective: "Continue after the parent is unparked.",
+        projectId: fixture.project.projectId,
+        declaredScope: ["src/unpark-remaining"],
+        acceptanceCriteria: ["This child can still merge."],
+      },
+    ],
+    "child-failure-unpark"
+  );
   const [failed, remaining] = decomposition.children;
   assert.ok(failed);
   assert.ok(remaining);
@@ -3944,7 +4525,7 @@ test("resuming a child-failure park abandons the dead-lettered child and complet
     assert.equal(fixture.board.requireWorkItem(decomposition.parent.workItemId).state, "parked");
     assert.throws(
       () => fixture.board.resumeWorkItem(remaining.workItemId),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409,
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409
     );
 
     const resumed = fixture.board.resumeWorkItem(decomposition.parent.workItemId);
@@ -3985,7 +4566,7 @@ test("a phased Contract reports an abandoned Migrate after Expand deploy attesta
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "attested-abandoned-migrate"),
       "phased-attested-abandoned-migrate",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
@@ -3995,7 +4576,7 @@ test("a phased Contract reports an abandoned Migrate after Expand deploy attesta
     fixture.board.attestDeploy(expand.workItemId, { note: "The expansion is deployed." });
     assert.equal(
       (fixture.board.listChildren(decomposition.parent.workItemId) as readonly ChildWorkItem[])[0]?.deployAttested,
-      true,
+      true
     );
 
     fixture.board.updateWorkItem(migrate.workItemId, {
@@ -4009,20 +4590,19 @@ test("a phased Contract reports an abandoned Migrate after Expand deploy attesta
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+      `blocked: ${migrate.workItemId} (migrate) abandoned`
     );
 
     assert.throws(
       () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 409
-        && error.code === "PARENT_PHASED_FAILED",
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "PARENT_PHASED_FAILED"
     );
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+      `blocked: ${migrate.workItemId} (migrate) abandoned`
     );
 
     const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
@@ -4053,7 +4633,7 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "abandoned-migrate"),
       "phased-abandoned-migrate",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
@@ -4062,7 +4642,7 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
     forceMergedWithApproval(fixture.path, expand.workItemId, MERGE_SHAS[0]);
     assert.equal(
       (fixture.board.listChildren(decomposition.parent.workItemId) as readonly ChildWorkItem[])[0]?.deployAttested,
-      false,
+      false
     );
 
     fixture.board.updateWorkItem(migrate.workItemId, {
@@ -4076,20 +4656,19 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+      `blocked: ${migrate.workItemId} (migrate) abandoned`
     );
 
     assert.throws(
       () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 409
-        && error.code === "PARENT_PHASED_FAILED",
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "PARENT_PHASED_FAILED"
     );
     assert.equal(fixture.board.requireWorkItem(contract.workItemId).state, "queued");
     assert.equal(childNode(fixture.board, contract).node.state, "blocked");
     assert.equal(
       latestNodeBlock(fixture.path, childNode(fixture.board, contract).node.nodeId),
-      `blocked: ${migrate.workItemId} (migrate) abandoned`,
+      `blocked: ${migrate.workItemId} (migrate) abandoned`
     );
 
     const cancelled = fixture.board.updateWorkItem(decomposition.parent.workItemId, {
@@ -4110,19 +4689,27 @@ test("a phased Contract reports an abandoned Migrate before an unattested Expand
 test("resuming an unphased parent with only abandoned children completes it", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "first",
-      objective: "Abandon the first unphased child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/all-abandoned-first"],
-      acceptanceCriteria: ["The parent records this abandoned child."],
-    }, {
-      key: "second",
-      objective: "Abandon the second unphased child.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/all-abandoned-second"],
-      acceptanceCriteria: ["The parent records this abandoned child."],
-    }], "all-children-abandoned");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "first",
+          objective: "Abandon the first unphased child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/all-abandoned-first"],
+          acceptanceCriteria: ["The parent records this abandoned child."],
+        },
+        {
+          key: "second",
+          objective: "Abandon the second unphased child.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/all-abandoned-second"],
+          acceptanceCriteria: ["The parent records this abandoned child."],
+        },
+      ],
+      "all-children-abandoned"
+    );
     for (const child of decomposition.children) {
       fixture.board.updateWorkItem(child.workItemId, {
         action: "cancel",
@@ -4137,7 +4724,7 @@ test("resuming an unphased parent with only abandoned children completes it", as
     assert.equal(resumed.state, "merged");
     assert.equal(
       gateActions(fixture.path, decomposition.parent.workItemId).at(-1)?.note,
-      "0 children merged, 2 abandoned",
+      "0 children merged, 2 abandoned"
     );
   } finally {
     fixture.board.close();
@@ -4157,7 +4744,7 @@ test("a phased parent with no failed child completes after every child merges", 
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "no-failed-child"),
       "phased-no-failed-child",
-      "blast_radius",
+      "blast_radius"
     );
     for (const [index, child] of decomposition.children.entries()) {
       forceMergedWithApproval(fixture.path, child.workItemId, MERGE_SHAS[index] ?? MERGE_SHAS[0]);
@@ -4185,33 +4772,43 @@ test("a phased failed parent cannot resume after an earlier child later merges",
       description: "Hosts the child that becomes ready while its parent is parked.",
       repoPath: "/repos/resume-reconciliation-consumer",
     });
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "expand",
-      objective: "Merge before the parked family resumes.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-expand", "docs/interface.md"],
-      acceptanceCriteria: ["The expansion satisfies migration readiness."],
-      phase: "expand",
-      splitBy: "phase",
-    }, {
-      key: "migrate",
-      objective: "Activate in the resume call once Expand is merged.",
-      projectId: consumer.projectId,
-      declaredScope: ["src/resume-migrate"],
-      acceptanceCriteria: ["Resume reconciliation activates migration."],
-      phase: "migrate",
-      splitBy: "consumer",
-      dependsOn: ["expand"],
-    }, {
-      key: "contract",
-      objective: "Provide a terminal child that parks the parent before resume.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/resume-contract", "docs/interface.md"],
-      acceptanceCriteria: ["The parent can be resumed after this child fails."],
-      phase: "contract",
-      splitBy: "phase",
-      dependsOn: ["migrate"],
-    }], "resume-reconciles-ready-child", "blast_radius");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "expand",
+          objective: "Merge before the parked family resumes.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/resume-expand", "docs/interface.md"],
+          acceptanceCriteria: ["The expansion satisfies migration readiness."],
+          phase: "expand",
+          splitBy: "phase",
+        },
+        {
+          key: "migrate",
+          objective: "Activate in the resume call once Expand is merged.",
+          projectId: consumer.projectId,
+          declaredScope: ["src/resume-migrate"],
+          acceptanceCriteria: ["Resume reconciliation activates migration."],
+          phase: "migrate",
+          splitBy: "consumer",
+          dependsOn: ["expand"],
+        },
+        {
+          key: "contract",
+          objective: "Provide a terminal child that parks the parent before resume.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/resume-contract", "docs/interface.md"],
+          acceptanceCriteria: ["The parent can be resumed after this child fails."],
+          phase: "contract",
+          splitBy: "phase",
+          dependsOn: ["migrate"],
+        },
+      ],
+      "resume-reconciles-ready-child",
+      "blast_radius"
+    );
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
     assert.ok(migrate);
@@ -4227,9 +4824,8 @@ test("a phased failed parent cannot resume after an earlier child later merges",
 
     assert.throws(
       () => fixture.board.resumeWorkItem(decomposition.parent.workItemId),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 409
-        && error.code === "PARENT_PHASED_FAILED",
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "PARENT_PHASED_FAILED"
     );
     assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "queued");
     assert.equal(childNode(fixture.board, migrate).node.state, "blocked");
@@ -4250,14 +4846,15 @@ test("phased activation reports an invalid child repository as a project-naming 
     git: Object.assign(
       (arguments_: readonly string[]) => {
         if (
-          failConsumerHead
-          && arguments_.includes(consumerPath)
-          && arguments_.includes("rev-parse")
-          && arguments_.at(-1) === "HEAD"
-        ) throw new Error("fatal: invalid activation repository");
+          failConsumerHead &&
+          arguments_.includes(consumerPath) &&
+          arguments_.includes("rev-parse") &&
+          arguments_.at(-1) === "HEAD"
+        )
+          throw new Error("fatal: invalid activation repository");
         return delegate(arguments_);
       },
-      { bytes: delegate.bytes },
+      { bytes: delegate.bytes }
     ),
   });
   const logged = t.mock.method(console, "error", () => undefined);
@@ -4272,7 +4869,7 @@ test("phased activation reports an invalid child repository as a project-naming 
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "invalid-activation-repository"),
       "invalid-activation-repository",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate] = decomposition.children;
     assert.ok(expand);
@@ -4282,15 +4879,12 @@ test("phased activation reports an invalid child repository as a project-naming 
 
     fixture.board.reconcileWorkflows(consumer.projectId);
 
-    const typed = logged.mock.calls.map((call) => call.arguments[1]).find(
-      (error) => error instanceof TaskBoardError && error.code === "PROJECT_REPO_PATH_INVALID",
-    );
+    const typed = logged.mock.calls
+      .map((call) => call.arguments[1])
+      .find((error) => error instanceof TaskBoardError && error.code === "PROJECT_REPO_PATH_INVALID");
     assert.ok(typed instanceof TaskBoardError);
     assert.equal(typed.status, 409);
-    assert.equal(
-      typed.message,
-      "Project Invalid activation consumer does not have a valid Git repository path",
-    );
+    assert.equal(typed.message, "Project Invalid activation consumer does not have a valid Git repository path");
     assert.equal(fixture.board.requireWorkItem(migrate.workItemId).state, "queued");
   } finally {
     fixture.board.close();
@@ -4300,19 +4894,27 @@ test("phased activation reports an invalid child repository as a project-naming 
 test("cancelling a coordinating parent abandons active children and leaves merged siblings untouched", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "active",
-      objective: "Run until the coordinating parent is cancelled.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/cascade-active"],
-      acceptanceCriteria: ["Parent cancellation terminates this run."],
-    }, {
-      key: "merged",
-      objective: "Remain merged when the parent is cancelled.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/cascade-merged"],
-      acceptanceCriteria: ["Merged children are immutable."],
-    }], "cancel-parent-cascade");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "active",
+          objective: "Run until the coordinating parent is cancelled.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/cascade-active"],
+          acceptanceCriteria: ["Parent cancellation terminates this run."],
+        },
+        {
+          key: "merged",
+          objective: "Remain merged when the parent is cancelled.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/cascade-merged"],
+          acceptanceCriteria: ["Merged children are immutable."],
+        },
+      ],
+      "cancel-parent-cascade"
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "cancel-parent-cascade-active-run",
       messageCursor: null,
@@ -4349,11 +4951,14 @@ test("cancelling a coordinating parent abandons active children and leaves merge
     assert.equal(childCancel?.gate, "cancel");
     assert.equal(childCancel?.refId, parent.workItemId);
     assert.equal(childCancel?.note, `parent ${parent.workItemId} abandoned`);
-    const cascadeNotifications = fixture.board.listNotifications().unread.filter((notification) => (
-      notification.kind === "park_auto_abandoned"
-      && notification.workItemId === activeChildId
-      && notification.dedupeKey === `park_auto_abandoned:${activeChildId}:${parent.workItemId}`
-    ));
+    const cascadeNotifications = fixture.board
+      .listNotifications()
+      .unread.filter(
+        (notification) =>
+          notification.kind === "park_auto_abandoned" &&
+          notification.workItemId === activeChildId &&
+          notification.dedupeKey === `park_auto_abandoned:${activeChildId}:${parent.workItemId}`
+      );
     assert.equal(cascadeNotifications.length, 1);
     assert.equal(fixture.board.requireWorkItem(mergedChild.workItemId).state, "merged");
     assert.deepEqual(gateActions(fixture.path, mergedChild.workItemId), mergedActionsBefore);
@@ -4365,13 +4970,20 @@ test("cancelling a coordinating parent abandons active children and leaves merge
 test("cancelling a child directly interrupts its active run", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "direct-child-cancel",
-      objective: "Run until a human cancels this child directly.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/direct-child-cancel"],
-      acceptanceCriteria: ["Direct child cancellation interrupts active work."],
-    }], "direct-child-cancel");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "direct-child-cancel",
+          objective: "Run until a human cancels this child directly.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/direct-child-cancel"],
+          acceptanceCriteria: ["Direct child cancellation interrupts active work."],
+        },
+      ],
+      "direct-child-cancel"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -4406,19 +5018,27 @@ test("a child cleanup failure is recorded without aborting parent termination", 
   const originalError = console.error;
   const logged: unknown[][] = [];
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "cleanup-failure",
-      objective: "Inject a run interruption failure during parent cancellation.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/cleanup-failure"],
-      acceptanceCriteria: ["The parent still reaches a terminal state."],
-    }, {
-      key: "unaffected-sibling",
-      objective: "Prove the cascade continues after a sibling cleanup failure.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/unaffected-sibling"],
-      acceptanceCriteria: ["This child is still abandoned."],
-    }], "cancel-parent-cleanup-failure");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "cleanup-failure",
+          objective: "Inject a run interruption failure during parent cancellation.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/cleanup-failure"],
+          acceptanceCriteria: ["The parent still reaches a terminal state."],
+        },
+        {
+          key: "unaffected-sibling",
+          objective: "Prove the cascade continues after a sibling cleanup failure.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/unaffected-sibling"],
+          acceptanceCriteria: ["This child is still abandoned."],
+        },
+      ],
+      "cancel-parent-cleanup-failure"
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "cancel-parent-cleanup-failure-run",
       messageCursor: null,
@@ -4434,7 +5054,7 @@ test("a child cleanup failure is recorded without aborting parent termination", 
       fixture.engineer.agentId,
       0,
       30_000,
-      interruptAbort.signal,
+      interruptAbort.signal
     );
     const injected = new DatabaseSync(fixture.path);
     try {
@@ -4449,7 +5069,9 @@ test("a child cleanup failure is recorded without aborting parent termination", 
     } finally {
       injected.close();
     }
-    console.error = (...arguments_: unknown[]) => { logged.push(arguments_); };
+    console.error = (...arguments_: unknown[]) => {
+      logged.push(arguments_);
+    };
     const parent = fixture.board.requireWorkItem(decomposition.parent.workItemId);
 
     const cancelled = fixture.board.updateWorkItem(parent.workItemId, {
@@ -4478,26 +5100,31 @@ test("a child cleanup failure is recorded without aborting parent termination", 
     assert.equal(interruptBatch?.items[0]?.runId, claim.run.runId);
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const run = inspected.prepare("SELECT status,ended_at FROM runs WHERE run_id=?")
-        .get(claim.run.runId);
+      const run = inspected.prepare("SELECT status,ended_at FROM runs WHERE run_id=?").get(claim.run.runId);
       assert.equal(run?.status, "interrupted");
       assert.ok(run?.ended_at);
-      assert.equal(Number(inspected.prepare(
-        "SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?",
-      ).get(claim.run.runId)?.count), 1);
-      const events = inspected.prepare(`
+      assert.equal(
+        Number(
+          inspected.prepare("SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?").get(claim.run.runId)?.count
+        ),
+        1
+      );
+      const events = inspected
+        .prepare(
+          `
         SELECT data_json
         FROM task_events
         WHERE event_type='work_item_cancellation_cleanup_failed'
           AND json_extract(data_json,'$.childWorkItemId')=?
-      `).all(failingChildId);
+      `
+        )
+        .all(failingChildId);
       assert.equal(events.length, 1);
       assert.match(String(events[0]?.data_json), /forced child cleanup failure/u);
     } finally {
       inspected.close();
     }
-    const cleanupLogs = logged.filter((record) =>
-      record[0] === "[task-board] child cancellation cleanup failed");
+    const cleanupLogs = logged.filter((record) => record[0] === "[task-board] child cancellation cleanup failed");
     assert.equal(cleanupLogs.length, 1);
     assert.equal((cleanupLogs[0]?.[1] as { phase?: unknown } | undefined)?.phase, "primary");
   } finally {
@@ -4515,13 +5142,20 @@ test("a parent termination cascade reconciles overlapping pipelines in every chi
       description: "Owns a child scope released by parent termination.",
       repoPath: "/repos/cascade-child",
     });
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "cascade-holder",
-      objective: "Hold remote scope until the parent terminates.",
-      projectId: childProject.projectId,
-      declaredScope: ["src/cascade-shared"],
-      acceptanceCriteria: ["Termination releases the remote scope immediately."],
-    }], "cascade-child-project-reconcile");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "cascade-holder",
+          objective: "Hold remote scope until the parent terminates.",
+          projectId: childProject.projectId,
+          declaredScope: ["src/cascade-shared"],
+          acceptanceCriteria: ["Termination releases the remote scope immediately."],
+        },
+      ],
+      "cascade-child-project-reconcile"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     now = new Date("2026-08-29T14:00:01.000Z");
@@ -4529,7 +5163,7 @@ test("a parent termination cascade reconciles overlapping pipelines in every chi
       fixture.board,
       childProject.projectId,
       ["src/cascade-shared"],
-      "cascade-scope-waiter",
+      "cascade-scope-waiter"
     );
     assert.equal(childNode(fixture.board, held).node.state, "blocked");
 
@@ -4552,35 +5186,48 @@ test("a parent termination cascade reconciles overlapping pipelines in every chi
 test("parent cancellation retires a child's running machine verification before late settlement", async () => {
   const fixture = await boardFixture(undefined, undefined, { git: () => `${BASE_SHA}\n` });
   try {
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "machine-verify-child",
-      objective: "Remain in machine verification until the parent is cancelled.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/machine-verify-child"],
-      acceptanceCriteria: ["Late machine settlement cannot write durable output."],
-    }], "cancel-machine-verification");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "machine-verify-child",
+          objective: "Remain in machine verification until the parent is cancelled.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/machine-verify-child"],
+          acceptanceCriteria: ["Late machine settlement cannot write durable output."],
+        },
+      ],
+      "cancel-machine-verification"
+    );
     const [child] = decomposition.children;
     assert.ok(child);
     const node = childNode(fixture.board, child).node;
     const verifyAttemptId = `verify-cancel-${child.workItemId}`;
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE work_items
         SET state='verifying',current_stage='testing',version=version+1,updated_at=?
         WHERE work_item_id=?
-      `).run(NOW, child.workItemId);
-      db.prepare(`
+      `
+      ).run(NOW, child.workItemId);
+      db.prepare(
+        `
         UPDATE work_nodes
         SET state='active',current_stage='testing',version=version+1,updated_at=?
         WHERE node_id=?
-      `).run(NOW, node.nodeId);
-      db.prepare(`
+      `
+      ).run(NOW, node.nodeId);
+      db.prepare(
+        `
         INSERT INTO verify_attempts(
           verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
           check_results_json,detail,created_at,ended_at
         ) VALUES(?,?,'testing',1,'late-verify-run','/tmp/late-verify-workspace','running',NULL,NULL,?,NULL)
-      `).run(verifyAttemptId, node.nodeId, NOW);
+      `
+      ).run(verifyAttemptId, node.nodeId, NOW);
     } finally {
       db.close();
     }
@@ -4594,7 +5241,8 @@ test("parent cancellation retires a child's running machine verification before 
 
     const retired = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const attempt = retired.prepare("SELECT state,ended_at FROM verify_attempts WHERE verify_attempt_id=?")
+      const attempt = retired
+        .prepare("SELECT state,ended_at FROM verify_attempts WHERE verify_attempt_id=?")
         .get(verifyAttemptId);
       assert.equal(attempt?.state, "retired");
       assert.equal(attempt?.ended_at, fixture.board.requireWorkItem(parent.workItemId).endedAt);
@@ -4605,10 +5253,11 @@ test("parent cancellation retires a child's running machine verification before 
     assert.equal(await fixture.board.sweepVerifyAttempts(), 1);
     const settled = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(settled.prepare("SELECT 1 FROM tasks WHERE task_id=?")
-        .get(`task_${verifyAttemptId}`), undefined);
-      assert.equal(settled.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
-        .get(`handoff_${verifyAttemptId}`), undefined);
+      assert.equal(settled.prepare("SELECT 1 FROM tasks WHERE task_id=?").get(`task_${verifyAttemptId}`), undefined);
+      assert.equal(
+        settled.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?").get(`handoff_${verifyAttemptId}`),
+        undefined
+      );
     } finally {
       settled.close();
     }
@@ -4624,17 +5273,24 @@ test("parent cancellation retires persisted Contract work even when the blocked 
   await execFileAsync("git", ["-C", repo, "config", "user.name", "Decomposition Test"]);
   await execFileAsync("git", ["-C", repo, "config", "user.email", "decomposition@test.invalid"]);
   await mkdir(join(repo, "docs"), { recursive: true });
-  await writeFile(join(repo, "docs", "workflow.md"), `# Verify workflow
+  await writeFile(
+    join(repo, "docs", "workflow.md"),
+    `# Verify workflow
 
 \`\`\`json
-${JSON.stringify({
+${JSON.stringify(
+  {
     version: 1,
     compile: ["node verify-full.mjs"],
     rules: [{ match: "**", action: { kind: "none" } }],
     full: ["node verify-full.mjs"],
-  }, null, 2)}
+  },
+  null,
+  2
+)}
 \`\`\`
-`);
+`
+  );
   await writeFile(join(repo, "verify-full.mjs"), "setTimeout(() => process.exit(0), 60_000);\n");
   await execFileAsync("git", ["-C", repo, "add", "."]);
   await execFileAsync("git", ["-C", repo, "commit", "-m", "fixture base"]);
@@ -4646,8 +5302,7 @@ ${JSON.stringify({
   try {
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-        .run(repo, fixture.project.projectId);
+      db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
     } finally {
       db.close();
     }
@@ -4661,7 +5316,7 @@ ${JSON.stringify({
       fixture.project.projectId,
       phasedChildren(fixture.project.projectId, consumer.projectId, "persisted-contract-cancel"),
       "persisted-contract-cancel",
-      "blast_radius",
+      "blast_radius"
     );
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
@@ -4697,13 +5352,16 @@ ${JSON.stringify({
       model: "codex-mini",
       token: "persisted-contract-runner-token-0123456789",
     });
-    const contractTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Hold blocked Contract work open",
-      objective: "Exercise cancellation of a run attached outside workflow activation.",
-      acceptanceCriteria: "Parent cancellation interrupts the persisted run.",
-      workspaceRefs: [],
-      assignedAgentId: contractRunner.agentId,
-    }));
+    const contractTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Hold blocked Contract work open",
+        objective: "Exercise cancellation of a run attached outside workflow activation.",
+        acceptanceCriteria: "Parent cancellation interrupts the persisted run.",
+        workspaceRefs: [],
+        assignedAgentId: contractRunner.agentId,
+      })
+    );
     const contractRun = fixture.board.claimRun(contractRunner.agentId, {
       claimId: "persisted-contract-cancel-run",
       messageCursor: null,
@@ -4713,17 +5371,12 @@ ${JSON.stringify({
 
     const workspaceRoot = join(dirname(fixture.path), "verify-workspaces");
     const workspace = new TaskWorkspaceManager({ workspaceRoot, repositoryPath: repo });
-    const workspacePath = await workspace.create(
-      `${contract.workItemId}-verify`,
-      undefined,
-      contract.workItemId,
-    );
+    const workspacePath = await workspace.create(`${contract.workItemId}-verify`, undefined, contract.workItemId);
     verifyRunner = new VerifyRunner({ repoRoot: workspacePath, supervisorPath: DEFAULT_SUPERVISOR_PATH });
     verifyRunId = await verifyRunner.startFull();
-    const status = JSON.parse(await readFile(
-      join(workspacePath, ".verify-runs", verifyRunId, "status.json"),
-      "utf8",
-    )) as { pid?: unknown; state?: unknown };
+    const status = JSON.parse(
+      await readFile(join(workspacePath, ".verify-runs", verifyRunId, "status.json"), "utf8")
+    ) as { pid?: unknown; state?: unknown };
     assert.equal(status.state, "running");
     assert.equal(typeof status.pid, "number");
     verifyPid = Number(status.pid);
@@ -4733,21 +5386,35 @@ ${JSON.stringify({
     const setup = new DatabaseSync(fixture.path);
     let completionEventsBefore = 0;
     try {
-      setup.prepare(`
+      setup
+        .prepare(
+          `
         INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
         VALUES(?,?,?,'implementation',99,'{}')
-      `).run(`attempt-cancel-${contract.workItemId}`, contractNode.nodeId, contractTask.taskId);
-      setup.prepare(`
+      `
+        )
+        .run(`attempt-cancel-${contract.workItemId}`, contractNode.nodeId, contractTask.taskId);
+      setup
+        .prepare(
+          `
         INSERT INTO verify_attempts(
           verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
           check_results_json,detail,created_at,ended_at
         ) VALUES(?,?,'testing',99,?,?,'running',NULL,NULL,?,NULL)
-      `).run(verifyAttemptId, contractNode.nodeId, verifyRunId, workspacePath, NOW);
-      completionEventsBefore = Number(setup.prepare(`
+      `
+        )
+        .run(verifyAttemptId, contractNode.nodeId, verifyRunId, workspacePath, NOW);
+      completionEventsBefore = Number(
+        setup
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='stage_completed'
-      `).get(contractNode.nodeId)?.count);
+      `
+          )
+          .get(contractNode.nodeId)?.count
+      );
     } finally {
       setup.close();
     }
@@ -4780,15 +5447,28 @@ ${JSON.stringify({
     await assert.rejects(access(workspacePath));
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT state FROM verify_attempts WHERE verify_attempt_id=?")
-        .get(verifyAttemptId)?.state, "retired");
-      assert.equal(inspected.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(contractRun.run.runId)?.status, "interrupted");
-      assert.equal(Number(inspected.prepare(`
+      assert.equal(
+        inspected.prepare("SELECT state FROM verify_attempts WHERE verify_attempt_id=?").get(verifyAttemptId)?.state,
+        "retired"
+      );
+      assert.equal(
+        inspected.prepare("SELECT status FROM runs WHERE run_id=?").get(contractRun.run.runId)?.status,
+        "interrupted"
+      );
+      assert.equal(
+        Number(
+          inspected
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='stage_completed'
-      `).get(contractNode.nodeId)?.count), completionEventsBefore);
+      `
+            )
+            .get(contractNode.nodeId)?.count
+        ),
+        completionEventsBefore
+      );
     } finally {
       inspected.close();
     }
@@ -4815,25 +5495,34 @@ test("park auto-abandon cascades to an active child while preserving a merged si
       description: "Owns a child scope released by parent lifecycle expiry.",
       repoPath: "/repos/auto-abandon-child",
     });
-    const decomposition = proposeParent(fixture.board, fixture.project.projectId, [{
-      key: "active",
-      objective: "Remain active until the parked parent auto-abandons.",
-      projectId: childProject.projectId,
-      declaredScope: ["src/auto-cascade-active"],
-      acceptanceCriteria: ["Auto-abandon terminates this run."],
-    }, {
-      key: "failure",
-      objective: "Fail to park the coordinating parent.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/auto-cascade-failure"],
-      acceptanceCriteria: ["This failure parks the parent."],
-    }, {
-      key: "merged",
-      objective: "Remain merged across parent auto-abandon.",
-      projectId: fixture.project.projectId,
-      declaredScope: ["src/auto-cascade-merged"],
-      acceptanceCriteria: ["Merged siblings are untouched."],
-    }], "auto-abandon-parent-cascade");
+    const decomposition = proposeParent(
+      fixture.board,
+      fixture.project.projectId,
+      [
+        {
+          key: "active",
+          objective: "Remain active until the parked parent auto-abandons.",
+          projectId: childProject.projectId,
+          declaredScope: ["src/auto-cascade-active"],
+          acceptanceCriteria: ["Auto-abandon terminates this run."],
+        },
+        {
+          key: "failure",
+          objective: "Fail to park the coordinating parent.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/auto-cascade-failure"],
+          acceptanceCriteria: ["This failure parks the parent."],
+        },
+        {
+          key: "merged",
+          objective: "Remain merged across parent auto-abandon.",
+          projectId: fixture.project.projectId,
+          declaredScope: ["src/auto-cascade-merged"],
+          acceptanceCriteria: ["Merged siblings are untouched."],
+        },
+      ],
+      "auto-abandon-parent-cascade"
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "auto-abandon-parent-cascade-active-run",
       messageCursor: null,
@@ -4841,9 +5530,7 @@ test("park auto-abandon cascades to an active child while preserving a merged si
     assert.ok(claim?.task);
     const activeChildId = claim.context.workflow?.workspaceKey;
     assert.ok(activeChildId);
-    const [failedChild, mergedChild] = decomposition.children.filter(
-      (child) => child.workItemId !== activeChildId,
-    );
+    const [failedChild, mergedChild] = decomposition.children.filter((child) => child.workItemId !== activeChildId);
     assert.ok(failedChild);
     assert.ok(mergedChild);
     clock = new Date(Date.parse(NOW) + 1_000);
@@ -4851,7 +5538,7 @@ test("park auto-abandon cascades to an active child while preserving a merged si
       fixture.board,
       childProject.projectId,
       ["src/auto-cascade-active"],
-      "auto-cascade-scope-waiter",
+      "auto-cascade-scope-waiter"
     );
     assert.equal(childNode(fixture.board, held).node.state, "blocked");
     forceMergedWithApproval(fixture.path, mergedChild.workItemId, MERGE_SHAS[0]);

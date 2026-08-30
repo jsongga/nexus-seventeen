@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import {
-  type SettleRunRequest,
-  type WorkflowPlanDraft,
-} from "#shared/task-board-contract";
+import { type SettleRunRequest, type WorkflowPlanDraft } from "#shared/task-board-contract";
 import { HttpTaskBoardClient } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { emptyTaskWorkerJournal } from "#server/agents/task-worker/schema";
@@ -53,14 +50,16 @@ function suspendPlan(): WorkflowPlanDraft {
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
-    nodes: [{
-      nodeId: "suspend-implementation-node",
-      title: "Suspend implementation safely",
-      objective: "Resume the same implementation stage after the board pause ends.",
-      acceptanceCriteria: ["The next linked stage attempt is attempt four."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "suspend-implementation-node",
+        title: "Suspend implementation safely",
+        objective: "Resume the same implementation stage after the board pause ends.",
+        acceptanceCriteria: ["The next linked stage attempt is attempt four."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -110,18 +109,23 @@ async function activePipelineFixture() {
     description: "Verifies resumed implementation work.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: "Suspend active implementation work without exhausting its retry budget.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: "Suspend active implementation work without exhausting its retry budget.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "suspend-active-pipeline").workItem;
+    "suspend-active-pipeline"
+  ).workItem;
   const proposed = fixture.board.proposeWorkflow({
     ...suspendPlan(),
     workItemId: workItem.workItemId,
@@ -144,8 +148,7 @@ async function activePipelineFixture() {
 
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE stage_attempts SET attempt=3 WHERE task_id=?")
-      .run(implementation.task!.taskId);
+    db.prepare("UPDATE stage_attempts SET attempt=3 WHERE task_id=?").run(implementation.task!.taskId);
   } finally {
     db.close();
   }
@@ -161,7 +164,7 @@ test("kill-switch suspension blocks an attempt-three node without failure accoun
       fixture.engineer.agentId,
       0,
       30_000,
-      new AbortController().signal,
+      new AbortController().signal
     );
     const paused = fixture.board.setBoardPause({
       paused: true,
@@ -170,44 +173,70 @@ test("kill-switch suspension blocks an attempt-three node without failure accoun
       actor: "human:alice",
     });
     assert.equal(paused.version, 2);
-    assert.deepEqual(fixture.board.suspendAllActiveRuns(
-      "board paused: operator maintenance",
-      { type: "system", id: "system:kill-switch" },
-    ), { suspended: 1, failed: 0 });
+    assert.deepEqual(
+      fixture.board.suspendAllActiveRuns("board paused: operator maintenance", {
+        type: "system",
+        id: "system:kill-switch",
+      }),
+      { suspended: 1, failed: 0 }
+    );
     const interruptBatch = await within(interruptWatch, 2_000);
     assert.equal(interruptBatch?.items[0]?.reason, "board paused: operator maintenance");
     assert.equal(interruptBatch?.items[0]?.requestedBy, "system:kill-switch");
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const run = db.prepare("SELECT status,result FROM runs WHERE run_id=?")
-        .get(fixture.implementation.run.runId);
-      assert.deepEqual({ ...run }, {
-        status: "interrupted",
-        result: "board paused: operator maintenance",
-      });
-      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(fixture.planning.run.runId)?.status, "active");
-      assert.deepEqual({ ...db.prepare(`
+      const run = db.prepare("SELECT status,result FROM runs WHERE run_id=?").get(fixture.implementation.run.runId);
+      assert.deepEqual(
+        { ...run },
+        {
+          status: "interrupted",
+          result: "board paused: operator maintenance",
+        }
+      );
+      assert.equal(
+        db.prepare("SELECT status FROM runs WHERE run_id=?").get(fixture.planning.run.runId)?.status,
+        "active"
+      );
+      assert.deepEqual(
+        {
+          ...db
+            .prepare(
+              `
         SELECT reason,requested_by
         FROM interrupts
         WHERE run_id=?
-      `).get(fixture.implementation.run.runId) }, {
-        reason: "board paused: operator maintenance",
-        requested_by: "system:kill-switch",
-      });
-      const settledEvent = db.prepare(`
+      `
+            )
+            .get(fixture.implementation.run.runId),
+        },
+        {
+          reason: "board paused: operator maintenance",
+          requested_by: "system:kill-switch",
+        }
+      );
+      const settledEvent = db
+        .prepare(
+          `
         SELECT actor_type,actor_id
         FROM task_events
         WHERE task_id=? AND event_type='agent_run_settled'
         ORDER BY sequence DESC LIMIT 1
-      `).get(fixture.implementation.task!.taskId);
-      assert.deepEqual({ ...settledEvent }, {
-        actor_type: "system",
-        actor_id: "system:kill-switch",
-      });
-      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM park_records WHERE work_item_id=?")
-        .get(fixture.workItem.workItemId)?.count, 0);
+      `
+        )
+        .get(fixture.implementation.task!.taskId);
+      assert.deepEqual(
+        { ...settledEvent },
+        {
+          actor_type: "system",
+          actor_id: "system:kill-switch",
+        }
+      );
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS count FROM park_records WHERE work_item_id=?").get(fixture.workItem.workItemId)
+          ?.count,
+        0
+      );
     } finally {
       db.close();
     }
@@ -216,13 +245,21 @@ test("kill-switch suspension blocks an attempt-three node without failure accoun
     const suspendedNode = suspendedWorkflow.nodes[0];
     assert.ok(suspendedNode);
     assert.equal(suspendedNode.state, "blocked");
-    assert.ok(suspendedWorkflow.events.some((event) =>
-      event.nodeId === suspendedNode.nodeId &&
-      event.taskId === fixture.implementation.task!.taskId &&
-      event.eventType === "node_blocked" &&
-      event.summary === "board paused: operator maintenance"));
-    assert.equal(suspendedWorkflow.events.some((event) =>
-      event.taskId === fixture.implementation.task!.taskId && event.eventType === "stage_failed"), false);
+    assert.ok(
+      suspendedWorkflow.events.some(
+        (event) =>
+          event.nodeId === suspendedNode.nodeId &&
+          event.taskId === fixture.implementation.task!.taskId &&
+          event.eventType === "node_blocked" &&
+          event.summary === "board paused: operator maintenance"
+      )
+    );
+    assert.equal(
+      suspendedWorkflow.events.some(
+        (event) => event.taskId === fixture.implementation.task!.taskId && event.eventType === "stage_failed"
+      ),
+      false
+    );
     const suspendedItem = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(suspendedItem.state, before.state);
     assert.equal(suspendedItem.currentStage, before.currentStage);
@@ -242,8 +279,10 @@ test("kill-switch suspension blocks an attempt-three node without failure accoun
     assert.ok(resumed);
     const attempt = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(attempt.prepare("SELECT attempt FROM stage_attempts WHERE task_id=?")
-        .get(resumed.task!.taskId)?.attempt, 4);
+      assert.equal(
+        attempt.prepare("SELECT attempt FROM stage_attempts WHERE task_id=?").get(resumed.task!.taskId)?.attempt,
+        4
+      );
     } finally {
       attempt.close();
     }
@@ -299,10 +338,13 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
     fetchImplementation: (async (input, init = {}) => {
       assert.match(String(input), new RegExp(`/v1/runs/${claim.runId}/settle$`, "u"));
       settleCalls += 1;
-      assert.deepEqual(fixture.board.suspendAllActiveRuns(
-        "board paused: output flush race",
-        { type: "system", id: "system:kill-switch" },
-      ), { suspended: 1, failed: 0 });
+      assert.deepEqual(
+        fixture.board.suspendAllActiveRuns("board paused: output flush race", {
+          type: "system",
+          id: "system:kill-switch",
+        }),
+        { suspended: 1, failed: 0 }
+      );
       const request = JSON.parse(String(init.body)) as SettleRunRequest;
       const acknowledged = fixture.board.settleRun(claim.runId, claim.agentId, request);
       acknowledgments.push(acknowledged);
@@ -318,7 +360,9 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
     board: client,
     launcher: {
       assertRole: () => undefined,
-      launch: async () => { throw new Error("outputs_pending recovery must not launch"); },
+      launch: async () => {
+        throw new Error("outputs_pending recovery must not launch");
+      },
     },
     longPollMs: 1,
   });
@@ -338,34 +382,47 @@ test("an outputs_pending worker accepts a system-interrupt settlement replay and
 test("system suspension closes an in-progress task phase inside the settlement transaction", async () => {
   const fixture = await activePipelineFixture();
   const taskId = fixture.implementation.task!.taskId;
-  const phase = fixture.board.createTaskPhase(taskId, {
-    title: "Flush implementation output",
-    stage: "execution",
-    parallelGroup: null,
-  }, fixture.engineer.agentId);
-  const inProgress = fixture.board.updateTaskPhase(phase.phaseId, {
-    version: phase.version,
-    status: "in_progress",
-  }, fixture.engineer.agentId);
+  const phase = fixture.board.createTaskPhase(
+    taskId,
+    {
+      title: "Flush implementation output",
+      stage: "execution",
+      parallelGroup: null,
+    },
+    fixture.engineer.agentId
+  );
+  const inProgress = fixture.board.updateTaskPhase(
+    phase.phaseId,
+    {
+      version: phase.version,
+      status: "in_progress",
+    },
+    fixture.engineer.agentId
+  );
   fixture.board.close();
 
   const opened = await openRuns(fixture.path);
   try {
     opened.store.transaction(() => {
-      assert.ok(opened.runs.suspendActiveRunInTransaction(
-        fixture.implementation.run.runId,
-        "board paused: close live phases",
-        { type: "system", id: "system:kill-switch" },
-      ));
+      assert.ok(
+        opened.runs.suspendActiveRunInTransaction(fixture.implementation.run.runId, "board paused: close live phases", {
+          type: "system",
+          id: "system:kill-switch",
+        })
+      );
       const closed = opened.runtime.requireTaskPhase(inProgress.phaseId);
       assert.equal(closed.status, "failed");
       assert.ok(closed.endedAt);
-      const event = opened.store.db.prepare(`
+      const event = opened.store.db
+        .prepare(
+          `
         SELECT actor_type,actor_id,data_json
         FROM task_events
         WHERE task_id=? AND event_type='task_phase_updated'
         ORDER BY sequence DESC LIMIT 1
-      `).get(taskId);
+      `
+        )
+        .get(taskId);
       assert.equal(event?.actor_type, "system");
       assert.equal(event?.actor_id, "system:kill-switch");
       assert.equal(JSON.parse(String(event?.data_json)).terminalTaskStatus, "interrupted");
@@ -387,10 +444,13 @@ test("one conflicting run does not stop the pause drain from suspending the rest
       model: "codex-mini",
       token: "suspend-second-engineer-token-0123456789",
     });
-    const secondItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Suspend a second active implementation run after a peer conflicts.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "suspend-second-active-pipeline").workItem;
+    const secondItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Suspend a second active implementation run after a peer conflicts.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "suspend-second-active-pipeline"
+    ).workItem;
     const proposed = fixture.board.proposeWorkflow({
       ...suspendPlan(),
       workItemId: secondItem.workItemId,
@@ -411,32 +471,46 @@ test("one conflicting run does not stop the pause drain from suspending the rest
 
     const opened = await openRuns(fixture.path);
     try {
-      const activeRunIds = opened.store.db.prepare(`
+      const activeRunIds = opened.store.db
+        .prepare(
+          `
         SELECT run_id FROM runs WHERE status='active' AND task_id IS NOT NULL ORDER BY started_at,run_id
-      `).all().map((row) => String(row.run_id)).filter((runId) =>
-        runId !== fixture.planning.run.runId);
+      `
+        )
+        .all()
+        .map((row) => String(row.run_id))
+        .filter((runId) => runId !== fixture.planning.run.runId);
       assert.equal(activeRunIds.length, 2);
       const conflictRunId = activeRunIds[0]!;
       const drainRunId = activeRunIds[1]!;
       const suspend = opened.runs.suspendActiveRunInTransaction.bind(opened.runs);
-      t.mock.method(opened.runs, "suspendActiveRunInTransaction", (
-        ...arguments_: Parameters<typeof opened.runs.suspendActiveRunInTransaction>
-      ) => {
-        const [runId] = arguments_;
-        if (runId === conflictRunId) throw new Error("synthetic run settlement conflict");
-        return suspend(...arguments_);
-      });
+      t.mock.method(
+        opened.runs,
+        "suspendActiveRunInTransaction",
+        (...arguments_: Parameters<typeof opened.runs.suspendActiveRunInTransaction>) => {
+          const [runId] = arguments_;
+          if (runId === conflictRunId) throw new Error("synthetic run settlement conflict");
+          return suspend(...arguments_);
+        }
+      );
       const logged = t.mock.method(console, "error", () => undefined);
 
-      assert.deepEqual(opened.runs.suspendAllActiveRuns(
-        "board paused: drain despite conflict",
-        { type: "system", id: "system:kill-switch" },
-      ), { suspended: 1, failed: 1 });
+      assert.deepEqual(
+        opened.runs.suspendAllActiveRuns("board paused: drain despite conflict", {
+          type: "system",
+          id: "system:kill-switch",
+        }),
+        { suspended: 1, failed: 1 }
+      );
       assert.equal(logged.mock.callCount(), 1);
-      assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(conflictRunId)?.status, "active");
-      assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
-        .get(drainRunId)?.status, "interrupted");
+      assert.equal(
+        opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?").get(conflictRunId)?.status,
+        "active"
+      );
+      assert.equal(
+        opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?").get(drainRunId)?.status,
+        "interrupted"
+      );
     } finally {
       closeRuns(opened);
     }
@@ -447,10 +521,13 @@ test("one conflicting run does not stop the pause drain from suspending the rest
 
 test("suspending an active planning run leaves the work item for the cap caller to park", async () => {
   const fixture = await boardFixture();
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Leave planning state unchanged until the cap sweep parks it.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "suspend-planning-cap-composition").workItem;
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: "Leave planning state unchanged until the cap sweep parks it.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    "suspend-planning-cap-composition"
+  ).workItem;
   const planning = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: "claim-suspend-planning-cap-composition",
     messageCursor: null,
@@ -461,24 +538,40 @@ test("suspending an active planning run leaves the work item for the cap caller 
 
   const opened = await openRuns(fixture.path);
   try {
-    assert.ok(opened.store.transaction(() => opened.runs.suspendActiveRunInTransaction(
-      planning.run.runId,
-      "stage cap exceeded: planning ran 901s (cap 900s)",
-      { type: "system", id: "system:stage-cap" },
-    )));
+    assert.ok(
+      opened.store.transaction(() =>
+        opened.runs.suspendActiveRunInTransaction(
+          planning.run.runId,
+          "stage cap exceeded: planning ran 901s (cap 900s)",
+          { type: "system", id: "system:stage-cap" }
+        )
+      )
+    );
     assert.equal(opened.runtime.requireTask(planning.task!.taskId).status, "interrupted");
-    assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
-      .get(planning.run.runId)?.status, "interrupted");
+    assert.equal(
+      opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?").get(planning.run.runId)?.status,
+      "interrupted"
+    );
     const after = opened.runtime.requireWorkItem(workItem.workItemId);
-    assert.deepEqual({ state: after.state, currentStage: after.currentStage, version: after.version }, {
-      state: before.state,
-      currentStage: before.currentStage,
-      version: before.version,
-    });
-    assert.equal(opened.store.db.prepare(`
+    assert.deepEqual(
+      { state: after.state, currentStage: after.currentStage, version: after.version },
+      {
+        state: before.state,
+        currentStage: before.currentStage,
+        version: before.version,
+      }
+    );
+    assert.equal(
+      opened.store.db
+        .prepare(
+          `
       SELECT COUNT(*) AS count FROM park_records
       WHERE work_item_id=? AND category='planning_run_failed'
-    `).get(workItem.workItemId)?.count, 0);
+    `
+        )
+        .get(workItem.workItemId)?.count,
+      0
+    );
   } finally {
     closeRuns(opened);
   }
@@ -503,18 +596,23 @@ test("suspending an active design run leaves the work item for the cap caller to
     description: "Verifies the hazardous implementation.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: "Leave hazardous design state unchanged until the cap sweep parks it.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Leave hazardous design state unchanged until the cap sweep parks it.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "suspend-design-cap-composition").workItem;
+    "suspend-design-cap-composition"
+  ).workItem;
   const planning = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: "claim-plan-before-suspend-design-cap-composition",
     messageCursor: null,
@@ -525,9 +623,9 @@ test("suspending an active design run leaves the work item for the cap caller to
     result: "The hazardous plan is ready for design.",
     workflowPlan: hazardousSuspendPlan(),
   });
-  const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-    (candidate) => candidate.state === "proposed",
-  );
+  const plan = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.state === "proposed");
   assert.ok(plan);
   fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
   const design = fixture.board.claimRun(fixture.manager.agentId, {
@@ -541,24 +639,40 @@ test("suspending an active design run leaves the work item for the cap caller to
 
   const opened = await openRuns(fixture.path);
   try {
-    assert.ok(opened.store.transaction(() => opened.runs.suspendActiveRunInTransaction(
-      design.run.runId,
-      "stage cap exceeded: planning ran 901s (cap 900s)",
-      { type: "system", id: "system:stage-cap" },
-    )));
+    assert.ok(
+      opened.store.transaction(() =>
+        opened.runs.suspendActiveRunInTransaction(
+          design.run.runId,
+          "stage cap exceeded: planning ran 901s (cap 900s)",
+          { type: "system", id: "system:stage-cap" }
+        )
+      )
+    );
     assert.equal(opened.runtime.requireTask(design.task!.taskId).status, "interrupted");
-    assert.equal(opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?")
-      .get(design.run.runId)?.status, "interrupted");
+    assert.equal(
+      opened.store.db.prepare("SELECT status FROM runs WHERE run_id=?").get(design.run.runId)?.status,
+      "interrupted"
+    );
     const after = opened.runtime.requireWorkItem(workItem.workItemId);
-    assert.deepEqual({ state: after.state, currentStage: after.currentStage, version: after.version }, {
-      state: before.state,
-      currentStage: before.currentStage,
-      version: before.version,
-    });
-    assert.equal(opened.store.db.prepare(`
+    assert.deepEqual(
+      { state: after.state, currentStage: after.currentStage, version: after.version },
+      {
+        state: before.state,
+        currentStage: before.currentStage,
+        version: before.version,
+      }
+    );
+    assert.equal(
+      opened.store.db
+        .prepare(
+          `
       SELECT COUNT(*) AS count FROM park_records
       WHERE work_item_id=? AND category='design_run_failed'
-    `).get(workItem.workItemId)?.count, 0);
+    `
+        )
+        .get(workItem.workItemId)?.count,
+      0
+    );
   } finally {
     closeRuns(opened);
   }
@@ -575,11 +689,12 @@ test("a conflicting settle remains rejected after a human interruption", async (
     assert.ok(claim);
     fixture.board.rotateAgentToken(fixture.engineer.agentId, fixture.engineer.version);
     assert.throws(
-      () => fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
-        outcome: "completed",
-        result: "This conflicts with the human interruption.",
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "RUN_NOT_ACTIVE",
+      () =>
+        fixture.board.settleRun(claim.run.runId, fixture.engineer.agentId, {
+          outcome: "completed",
+          result: "This conflicts with the human interruption.",
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409 && error.code === "RUN_NOT_ACTIVE"
     );
   } finally {
     fixture.board.close();
@@ -606,14 +721,15 @@ test("board pause state is redacted, round-trips, and bumps its CAS version on e
     assert.equal(paused.version, 2);
     assert.equal(fixture.board.isBoardPaused(), true);
     assert.throws(
-      () => fixture.board.setBoardPause({
-        paused: false,
-        reason: null,
-        version: 1,
-        actor: "human:alice",
-      }),
-      (error: unknown) => error instanceof Error &&
-        "code" in error && error.code === "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT",
+      () =>
+        fixture.board.setBoardPause({
+          paused: false,
+          reason: null,
+          version: 1,
+          actor: "human:alice",
+        }),
+      (error: unknown) =>
+        error instanceof Error && "code" in error && error.code === "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT"
     );
     const repeated = fixture.board.setBoardPause({
       paused: true,
@@ -647,15 +763,18 @@ test("resume emits for pending live wakeups and releases a claim parked behind t
       version: 1,
       actor: "human:alice",
     });
-    assert.equal(fixture.board.claimRun(fixture.engineer.agentId, {
-      claimId: "claim-paused-immediate-direct",
-      messageCursor: null,
-    }), null);
+    assert.equal(
+      fixture.board.claimRun(fixture.engineer.agentId, {
+        claimId: "claim-paused-immediate-direct",
+        messageCursor: null,
+      }),
+      null
+    );
     const heldClaim = fixture.board.waitToClaimRun(
       fixture.engineer.agentId,
       { claimId: "claim-paused-until-resume-direct", messageCursor: null },
       30_000,
-      new AbortController().signal,
+      new AbortController().signal
     );
     fixture.board.setBoardPause({
       paused: false,
@@ -699,8 +818,9 @@ test("a persisted claim replay is held while paused and resumes without creating
     assert.ok(replay);
     assert.equal(replay.run.runId, initial.run.runId);
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).recentRuns.filter((run) => run.claimId === request.claimId).length,
-      1,
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.filter((run) => run.claimId === request.claimId)
+        .length,
+      1
     );
   } finally {
     fixture.board.close();
@@ -723,11 +843,15 @@ test("suspending a settled run is a null no-op", async () => {
 
   const opened = await openRuns(fixture.path);
   try {
-    assert.equal(opened.store.transaction(() => opened.runs.suspendActiveRunInTransaction(
-      claim.run.runId,
-      "board paused: no-op",
-      { type: "system", id: "system:kill-switch" },
-    )), null);
+    assert.equal(
+      opened.store.transaction(() =>
+        opened.runs.suspendActiveRunInTransaction(claim.run.runId, "board paused: no-op", {
+          type: "system",
+          id: "system:kill-switch",
+        })
+      ),
+      null
+    );
     assert.equal(opened.runtime.requireTask(task.taskId).status, "completed");
   } finally {
     closeRuns(opened);

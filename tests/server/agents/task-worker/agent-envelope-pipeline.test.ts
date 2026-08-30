@@ -12,7 +12,8 @@ function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
   return agentPrompt(request, PROMPTS);
 }
 
-const DESIGNER_PROMPT = "Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.";
+const DESIGNER_PROMPT =
+  "Produce the design record for the approved plan below — return it as designRecord. Required: states and legal transitions (for each transition crossing a process or network boundary, what is durably recorded before the boundary and the recovery); a failure-point table covering all six points (crash_before_send, crash_after_send_before_response, crash_after_response_before_commit, crash_after_commit_before_ack, duplicate_delivery, concurrent_invocation) with resulting state and recovery for each; idempotency-key lifecycle (where generated, persisted, how reused); fault-injection cases that the implementer will write as tests. Standing prohibitions: locks are an optimization to reduce duplicate work, never the correctness boundary — correctness comes from conditional writes whose affected-row count resolves the race; unknown outcome is a distinct state, never collapsed into failure, resolved by querying the remote, never by assuming; idempotency keys are generated once, persisted with the intent record, reused verbatim on retry; timer, cleanup, and retry paths are participants in the state machine and appear in the transition table. Never write code.";
 
 const DESIGN_RECORD = {
   states: ["pending", "committed"],
@@ -29,7 +30,8 @@ const DESIGN_RECORD = {
   faultInjectionCases: [],
 } as const;
 
-const PIPELINE_BLOCK = "Pipeline task on branch task/work-item-one. Declared scope (only these path prefixes): src/server, tests/server. Non-goals: do not change the schema, do not add dependencies. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
+const PIPELINE_BLOCK =
+  "Pipeline task on branch task/work-item-one. Declared scope (only these path prefixes): src/server, tests/server. Non-goals: do not change the schema, do not add dependencies. Loop: write a failing test where a criterion allows, implement, run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units (schema, core, wiring, tests) — never one blob. Reversible mid-run decisions: record each mid-run assumption as an evidence entry prefixed ASSUMPTION: . STOP and return failed with detail starting `BRIGHT_LINE:` if you would need to: touch a file outside declared scope, change a schema or migration unplanned, add a dependency, change a published interface, violate a non-goal, find the plan infeasible, or delete/skip an existing test.";
 
 const INTERFACE_PHASE_AUTHORIZATION = (phase: "Expand" | "Contract") =>
   `This is the ${phase} phase of a planned interface change. You are AUTHORIZED — and for Expand, REQUIRED — to change the published interface docs/interface.md within your declared scope; the bright-line rule about published interfaces does not apply to that file. Consumers will integrate against the version you publish.`;
@@ -62,7 +64,8 @@ function pipelineWorkflow(stage: "implementation" | "testing" | "verification") 
   } as const;
 }
 
-const REVIEWER_BLOCK = "Pipeline review on branch task/work-item-one. You are reviewing the diff against the approved plan — injected below — never the implementer's reasoning. Review depth follows change shape (feature): spot-check a mechanical sweep; read feature work line by line; review a blast-radius change per consumer. Check in order: (1) files touched vs declared scope — pre-computed as scopeOk=true, files below; (2) each acceptance criterion actually met in the code; (3) docs updated in the same diff where the plan requires; (4) any modified or deleted existing test — emit a test_modification finding for each unless the plan's mechanicalPortions declared it. Emit reviewFindings [{file, line, category, severity, expected, actual}]; categories correctness|security|plan_deviation block, others do not. If any blocking finding exists return handoff outcome failed with recommendedReturnStage implementation; otherwise outcome passed. Do not edit the workspace.";
+const REVIEWER_BLOCK =
+  "Pipeline review on branch task/work-item-one. You are reviewing the diff against the approved plan — injected below — never the implementer's reasoning. Review depth follows change shape (feature): spot-check a mechanical sweep; read feature work line by line; review a blast-radius change per consumer. Check in order: (1) files touched vs declared scope — pre-computed as scopeOk=true, files below; (2) each acceptance criterion actually met in the code; (3) docs updated in the same diff where the plan requires; (4) any modified or deleted existing test — emit a test_modification finding for each unless the plan's mechanicalPortions declared it. Emit reviewFindings [{file, line, category, severity, expected, actual}]; categories correctness|security|plan_deviation block, others do not. If any blocking finding exists return handoff outcome failed with recommendedReturnStage implementation; otherwise outcome passed. Do not edit the workspace.";
 
 const GOLDEN_FIXTURE_ROOT = resolve("tests/server/agents/task-worker/fixtures/agent-prompts");
 
@@ -71,20 +74,22 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
     ...pipelineWorkflow("implementation"),
     fix: {
       round: 2,
-      findings: [{
-        findingId: "finding-two",
-        nodeId: "node-one",
-        stage: "verification",
-        round: 2,
-        file: "src/server/fix.ts",
-        line: 24,
-        category: "correctness",
-        severity: "major",
-        expected: "The retry reaches machine verification.",
-        actual: "The retry skipped machine verification.",
-        blocking: true,
-        createdAt: "2026-08-19T12:00:00.000Z",
-      }],
+      findings: [
+        {
+          findingId: "finding-two",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 2,
+          file: "src/server/fix.ts",
+          line: 24,
+          category: "correctness",
+          severity: "major",
+          expected: "The retry reaches machine verification.",
+          actual: "The retry skipped machine verification.",
+          blocking: true,
+          createdAt: "2026-08-19T12:00:00.000Z",
+        },
+      ],
     },
   } as const;
   const reviewWorkflow = {
@@ -102,20 +107,22 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
       acceptanceCriteria: ["The reviewer receives branch evidence."],
       criterionChecks: [{ criterion: "The reviewer receives branch evidence.", check: "npm run test:runtime" }],
       mechanicalPortions: ["Regenerate the task-board snapshots."],
-      priorFindings: [{
-        findingId: "finding-one",
-        nodeId: "node-one",
-        stage: "verification",
-        round: 1,
-        file: "src/server/review.ts",
-        line: 12,
-        category: "correctness",
-        severity: "major",
-        expected: "The context is isolated.",
-        actual: "The prior attempt reused the engineer workspace.",
-        blocking: true,
-        createdAt: "2026-08-19T12:00:00.000Z",
-      }],
+      priorFindings: [
+        {
+          findingId: "finding-one",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 1,
+          file: "src/server/review.ts",
+          line: 12,
+          category: "correctness",
+          severity: "major",
+          expected: "The context is isolated.",
+          actual: "The prior attempt reused the engineer workspace.",
+          blocking: true,
+          createdAt: "2026-08-19T12:00:00.000Z",
+        },
+      ],
       priorFindingsTruncated: true,
     },
   } as const;
@@ -294,11 +301,7 @@ function goldenPromptCases(): readonly Readonly<{ name: string; prompt: string }
 test("agent prompt context matrix matches byte-identical golden fixtures", () => {
   const cases = goldenPromptCases();
   for (const fixture of cases) {
-    assert.equal(
-      fixture.prompt,
-      readFileSync(join(GOLDEN_FIXTURE_ROOT, `${fixture.name}.txt`), "utf8"),
-      fixture.name,
-    );
+    assert.equal(fixture.prompt, readFileSync(join(GOLDEN_FIXTURE_ROOT, `${fixture.name}.txt`), "utf8"), fixture.name);
   }
 });
 
@@ -349,7 +352,7 @@ test("engineer prompt authorizes published-interface edits only for Expand and C
       assert.match(prompt, /change a published interface other than docs\/interface\.md/u);
       assert.doesNotMatch(
         prompt,
-        /BRIGHT_LINE:[^\n]*change a published interface,(?! other than docs\/interface\.md)/u,
+        /BRIGHT_LINE:[^\n]*change a published interface,(?! other than docs\/interface\.md)/u
       );
     } else {
       assert.doesNotMatch(prompt, /phase of a planned interface change/u);
@@ -393,7 +396,7 @@ test("engineer prompt renders published cross-repo context if and only if it is 
 
   assert.match(
     withContext,
-    /Integrate against the provider's PUBLISHED interface below \(docs\/interface\.md @ c{40}\); never read or modify the provider's source\./u,
+    /Integrate against the provider's PUBLISHED interface below \(docs\/interface\.md @ c{40}\); never read or modify the provider's source\./u
   );
   assert.ok(withContext.includes(CROSS_REPO_CONTEXT.markdown));
   assert.doesNotMatch(withContext, /"crossRepoContext":/u);
@@ -430,7 +433,10 @@ test("hazardous implementation prompt injects the design record and fault-inject
     context: context({ workflow: workflow as never }),
   });
 
-  assert.match(prompt, /This is a hazardous-tier task\. Design record below\. Write each fault-injection case as a test\./u);
+  assert.match(
+    prompt,
+    /This is a hazardous-tier task\. Design record below\. Write each fault-injection case as a test\./u
+  );
   assert.ok(prompt.includes(JSON.stringify(DESIGN_RECORD)));
 });
 
@@ -439,20 +445,22 @@ test("fix-round engineer prompt replaces the plain implementation block and rend
     ...pipelineWorkflow("implementation"),
     fix: {
       round: 2,
-      findings: [{
-        findingId: "finding-two",
-        nodeId: "node-one",
-        stage: "verification",
-        round: 2,
-        file: "src/server/fix.ts",
-        line: 24,
-        category: "correctness",
-        severity: "major",
-        expected: "The retry reaches machine verification.",
-        actual: "The retry skipped machine verification.",
-        blocking: true,
-        createdAt: "2026-08-19T12:00:00.000Z",
-      }],
+      findings: [
+        {
+          findingId: "finding-two",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 2,
+          file: "src/server/fix.ts",
+          line: 24,
+          category: "correctness",
+          severity: "major",
+          expected: "The retry reaches machine verification.",
+          actual: "The retry skipped machine verification.",
+          blocking: true,
+          createdAt: "2026-08-19T12:00:00.000Z",
+        },
+      ],
     },
   } as const;
   const prompt = renderPrompt({
@@ -461,7 +469,8 @@ test("fix-round engineer prompt replaces the plain implementation block and rend
     context: context({ workflow: workflow as never }),
   });
 
-  const fixBlock = "Fix round 2 on branch task/work-item-one. A reviewer found the defects below; the diff is on the branch. Fix each finding, then re-trace the whole flow end to end — not just the patch. Loop: run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units. The declared scope, non-goals, and BRIGHT_LINE rules from the original task still apply verbatim.";
+  const fixBlock =
+    "Fix round 2 on branch task/work-item-one. A reviewer found the defects below; the diff is on the branch. Fix each finding, then re-trace the whole flow end to end — not just the patch. Loop: run `npm run verify:fast`, read the failure, fix; repeat until green. Run `npm run verify:area` once before finishing. Commit in staged logical units. The declared scope, non-goals, and BRIGHT_LINE rules from the original task still apply verbatim.";
   assert.ok(prompt.includes(fixBlock));
   assert.match(prompt, /src\/server\/fix\.ts/u);
   assert.match(prompt, /The retry reaches machine verification\./u);
@@ -477,20 +486,22 @@ test("onboarding fix-round prompt leads with fix findings and retains onboarding
     ...pipelineWorkflow("implementation"),
     fix: {
       round: 2,
-      findings: [{
-        findingId: "finding-two",
-        nodeId: "node-one",
-        stage: "verification",
-        round: 2,
-        file: "src/server/fix.ts",
-        line: 24,
-        category: "correctness",
-        severity: "major",
-        expected: "The retry reaches machine verification.",
-        actual: "The retry skipped machine verification.",
-        blocking: true,
-        createdAt: "2026-08-19T12:00:00.000Z",
-      }],
+      findings: [
+        {
+          findingId: "finding-two",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 2,
+          file: "src/server/fix.ts",
+          line: 24,
+          category: "correctness",
+          severity: "major",
+          expected: "The retry reaches machine verification.",
+          actual: "The retry skipped machine verification.",
+          blocking: true,
+          createdAt: "2026-08-19T12:00:00.000Z",
+        },
+      ],
     },
   } as const;
   const prompt = renderPrompt({
@@ -549,20 +560,22 @@ test("pipeline verification reviewer prompt injects the independent review instr
       acceptanceCriteria: ["The reviewer receives branch evidence."],
       criterionChecks: [{ criterion: "The reviewer receives branch evidence.", check: "npm run test:runtime" }],
       mechanicalPortions: ["Regenerate the task-board snapshots."],
-      priorFindings: [{
-        findingId: "finding-one",
-        nodeId: "node-one",
-        stage: "verification",
-        round: 1,
-        file: "src/server/review.ts",
-        line: 12,
-        category: "correctness",
-        severity: "major",
-        expected: "The context is isolated.",
-        actual: "The prior attempt reused the engineer workspace.",
-        blocking: true,
-        createdAt: "2026-08-19T12:00:00.000Z",
-      }],
+      priorFindings: [
+        {
+          findingId: "finding-one",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 1,
+          file: "src/server/review.ts",
+          line: 12,
+          category: "correctness",
+          severity: "major",
+          expected: "The context is isolated.",
+          actual: "The prior attempt reused the engineer workspace.",
+          blocking: true,
+          createdAt: "2026-08-19T12:00:00.000Z",
+        },
+      ],
       priorFindingsTruncated: true,
     },
   } as const;
@@ -612,7 +625,10 @@ test("hazardous reviewer prompt traces the injected design record to guaranteein
     }),
   });
 
-  assert.match(prompt, /For hazardous tier, trace each failure point in the design record to the line that guarantees it\./u);
+  assert.match(
+    prompt,
+    /For hazardous tier, trace each failure point in the design record to the line that guarantees it\./u
+  );
   assert.ok(prompt.includes(JSON.stringify(DESIGN_RECORD)));
 });
 

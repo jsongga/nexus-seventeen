@@ -11,7 +11,7 @@ export type GateActionInput = Omit<GateAction, "gateActionId" | "createdAt">;
 export class GateActionWriter {
   constructor(
     private readonly store: TaskBoardStore,
-    private readonly now: () => Date,
+    private readonly now: () => Date
   ) {}
 
   insertGateActionInTransaction(input: GateActionInput): GateAction {
@@ -19,32 +19,39 @@ export class GateActionWriter {
       throw new TaskBoardError(
         500,
         "GATE_ACTION_TRANSACTION_REQUIRED",
-        "gate-action inserts require an open store transaction",
+        "gate-action inserts require an open store transaction"
       );
     }
-    const action = parseGateAction({
-      ...input,
-      gateActionId: randomUUID(),
-      note: input.note === null ? null : redactForPersistence(input.note, 2_000),
-      createdAt: exactNow(this.now),
-    }, "gateAction");
-    this.store.db.prepare(`
+    const action = parseGateAction(
+      {
+        ...input,
+        gateActionId: randomUUID(),
+        note: input.note === null ? null : redactForPersistence(input.note, 2_000),
+        createdAt: exactNow(this.now),
+      },
+      "gateAction"
+    );
+    this.store.db
+      .prepare(
+        `
       INSERT INTO gate_actions(
         gate_action_id, work_item_id, gate, actor_id, plan_revision_id,
         verified_sha, merge_sha, ref_id, note, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      action.gateActionId,
-      action.workItemId,
-      action.gate,
-      action.actorId,
-      action.planRevisionId,
-      action.verifiedSha,
-      action.mergeSha,
-      action.refId,
-      action.note,
-      action.createdAt,
-    );
+    `
+      )
+      .run(
+        action.gateActionId,
+        action.workItemId,
+        action.gate,
+        action.actorId,
+        action.planRevisionId,
+        action.verifiedSha,
+        action.mergeSha,
+        action.refId,
+        action.note,
+        action.createdAt
+      );
     return action;
   }
 }

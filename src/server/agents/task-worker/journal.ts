@@ -29,8 +29,11 @@ async function readJournal(path: string): Promise<unknown | null> {
   try {
     const entry = await handle.stat();
     if (
-      !entry.isFile() || entry.size < 1 || entry.size > MAX_JOURNAL_BYTES ||
-      (entry.mode & 0o077) !== 0 || !ownedByProcess(entry.uid)
+      !entry.isFile() ||
+      entry.size < 1 ||
+      entry.size > MAX_JOURNAL_BYTES ||
+      (entry.mode & 0o077) !== 0 ||
+      !ownedByProcess(entry.uid)
     ) {
       throw new Error("Task worker journal must be a private bounded process-owned file");
     }
@@ -64,7 +67,7 @@ export class TaskWorkerJournalStore {
     return new TaskWorkerJournalStore(
       path,
       identity,
-      stored === null ? emptyTaskWorkerJournal(identity) : parseTaskWorkerJournal(stored, identity),
+      stored === null ? emptyTaskWorkerJournal(identity) : parseTaskWorkerJournal(stored, identity)
     );
   }
 
@@ -76,7 +79,9 @@ export class TaskWorkerJournalStore {
     const parsed = parseTaskWorkerJournal(value, this.#identity);
     const previous = this.#tail;
     let release: (() => void) | undefined;
-    this.#tail = new Promise<void>((resolve) => { release = resolve; });
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await previous;
     try {
       await this.#writeAtomically(`${JSON.stringify(parsed)}\n`);
@@ -93,7 +98,7 @@ export class TaskWorkerJournalStore {
       handle = await open(
         temporary,
         constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
-        0o600,
+        0o600
       );
       await handle.writeFile(content, "utf8");
       await handle.sync();

@@ -3,10 +3,7 @@ import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  loadDocsPublishConfig,
-  parseDocsPublishConfig,
-} from "../../../src/server/docs-publish/config.js";
+import { loadDocsPublishConfig, parseDocsPublishConfig } from "../../../src/server/docs-publish/config.js";
 
 function validConfig(): Record<string, unknown> {
   return {
@@ -52,7 +49,7 @@ test("rejects unknown fields, bad versions, insecure URLs, and unsupported exclu
   assert.throws(() => parseDocsPublishConfig(insecure), /HTTPS.*allowInsecureBaseUrl/u);
 
   const badGlob = validConfig();
-  ((badGlob.repos as Array<Record<string, unknown>>)[0]!).exclude = ["docs/*.md"];
+  (badGlob.repos as Array<Record<string, unknown>>)[0]!.exclude = ["docs/*.md"];
   assert.throws(() => parseDocsPublishConfig(badGlob), /exclude.*<prefix>\/\*\*/u);
 
   const allowed = validConfig();
@@ -62,11 +59,11 @@ test("rejects unknown fields, bad versions, insecure URLs, and unsupported exclu
 
 test("rejects repository names that would corrupt source-banner markup", () => {
   const backticked = validConfig();
-  ((backticked.repos as Array<Record<string, unknown>>)[0]!).name = "bad`name";
+  (backticked.repos as Array<Record<string, unknown>>)[0]!.name = "bad`name";
   assert.throws(() => parseDocsPublishConfig(backticked), /repos\[0\]\.name.*backtick/u);
 
   const multiline = validConfig();
-  ((multiline.repos as Array<Record<string, unknown>>)[0]!).name = "bad\nname";
+  (multiline.repos as Array<Record<string, unknown>>)[0]!.name = "bad\nname";
   assert.throws(() => parseDocsPublishConfig(multiline), /repos\[0\]\.name/u);
 });
 

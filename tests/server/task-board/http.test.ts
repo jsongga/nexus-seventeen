@@ -20,7 +20,7 @@ async function request(
   method: "GET" | "POST" | "PATCH",
   token: string,
   body?: unknown,
-  idempotencyKey?: string,
+  idempotencyKey?: string
 ): Promise<Response> {
   return fetch(`${origin}${path}`, {
     method,
@@ -37,13 +37,13 @@ async function waitForWorkerConnection(
   origin: string,
   projectId: string,
   agentId: string,
-  expected: "waiting_for_wake" | "watching_run" | null,
+  expected: "waiting_for_wake" | "watching_run" | null
 ): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     const response = await request(origin, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
     assert.equal(response.status, 200);
-    const board = await response.json() as {
+    const board = (await response.json()) as {
       agents: Array<{ agentId: string; workerConnection: "waiting_for_wake" | "watching_run" | null }>;
     };
     if (board.agents.find((agent) => agent.agentId === agentId)?.workerConnection === expected) return;
@@ -82,11 +82,16 @@ test("project PATCH is human-only, updates supplied fields, and requires an abso
       repoPath: "/var/lib/steward/repos/old-project",
     });
     assert.equal(createdResponse.status, 201);
-    const created = (await createdResponse.json() as { project: { projectId: string; version: number } }).project;
+    const created = ((await createdResponse.json()) as { project: { projectId: string; version: number } }).project;
 
-    assert.equal((await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", AGENT_ONE_TOKEN, {
-      repoPath: "/var/lib/steward/repos/new-project",
-    })).status, 401);
+    assert.equal(
+      (
+        await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", AGENT_ONE_TOKEN, {
+          repoPath: "/var/lib/steward/repos/new-project",
+        })
+      ).status,
+      401
+    );
     const relative = await request(address.url, `/v1/projects/${created.projectId}`, "PATCH", HUMAN_TOKEN, {
       repoPath: "repos/new-project",
     });
@@ -99,20 +104,25 @@ test("project PATCH is human-only, updates supplied fields, and requires an abso
       repoPath: "/var/lib/steward/repos/new-project",
     });
     assert.equal(response.status, 200);
-    const updated = (await response.json() as {
-      project: { name: string; description: string; repoPath: string; version: number };
-    }).project;
-    assert.deepEqual({
-      name: updated.name,
-      description: updated.description,
-      repoPath: updated.repoPath,
-      version: updated.version,
-    }, {
-      name: "Repaired project",
-      description: "New description",
-      repoPath: "/var/lib/steward/repos/new-project",
-      version: created.version + 1,
-    });
+    const updated = (
+      (await response.json()) as {
+        project: { name: string; description: string; repoPath: string; version: number };
+      }
+    ).project;
+    assert.deepEqual(
+      {
+        name: updated.name,
+        description: updated.description,
+        repoPath: updated.repoPath,
+        version: updated.version,
+      },
+      {
+        name: "Repaired project",
+        description: "New description",
+        repoPath: "/var/lib/steward/repos/new-project",
+        version: created.version + 1,
+      }
+    );
   } finally {
     await service.close();
   }
@@ -141,7 +151,9 @@ test("unexpected route failures are logged once with redacted structured context
         SELECT RAISE(ABORT, 'route exploded Bearer ${secret}');
       END;
     `);
-    console.error = (...arguments_: unknown[]) => { records.push(arguments_); };
+    console.error = (...arguments_: unknown[]) => {
+      records.push(arguments_);
+    };
 
     const response = await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
       name: "Injected failure",
@@ -155,15 +167,20 @@ test("unexpected route failures are logged once with redacted structured context
     assert.equal(records.length, 1);
     assert.equal(records[0]?.[0], "[task-board] request failed");
     const record = records[0]?.[1] as Record<string, unknown> | undefined;
-    assert.deepEqual(record === undefined ? undefined : {
-      method: record.method,
-      path: record.path,
-      message: record.message,
-    }, {
-      method: "POST",
-      path: "/v1/projects",
-      message: "route exploded [redacted:bearer]",
-    });
+    assert.deepEqual(
+      record === undefined
+        ? undefined
+        : {
+            method: record.method,
+            path: record.path,
+            message: record.message,
+          },
+      {
+        method: "POST",
+        path: "/v1/projects",
+        message: "route exploded [redacted:bearer]",
+      }
+    );
     assert.equal(typeof record?.stack, "string");
     assert.match(String(record?.stack), /route exploded \[redacted:bearer\]/u);
     assert.doesNotMatch(JSON.stringify(records), new RegExp(secret, "u"));
@@ -188,15 +205,17 @@ test("dormant automation configuration is human-only and CAS controlled", async 
     assert.equal((await request(address.url, "/v1/automation-configuration", "GET", AGENT_ONE_TOKEN)).status, 401);
     const defaultsResponse = await request(address.url, "/v1/automation-configuration", "GET", HUMAN_TOKEN);
     assert.equal(defaultsResponse.status, 200);
-    const defaults = (await defaultsResponse.json() as {
-      configuration: {
-        configurationId: string;
-        version: number;
-        agentTypes: unknown[];
-        stages: unknown[];
-        updatedBy: string;
-      };
-    }).configuration;
+    const defaults = (
+      (await defaultsResponse.json()) as {
+        configuration: {
+          configurationId: string;
+          version: number;
+          agentTypes: unknown[];
+          stages: unknown[];
+          updatedBy: string;
+        };
+      }
+    ).configuration;
     assert.equal(defaults.configurationId, "company-default");
     assert.equal(defaults.version, 1);
     assert.deepEqual(defaults.agentTypes, []);
@@ -231,53 +250,47 @@ test("dormant automation configuration is human-only and CAS controlled", async 
         verification: { kind: "agent_type", agentTypeId: verifierType.agentTypeId },
       }),
     });
-    assert.equal((await request(
-      address.url,
-      "/v1/automation-configuration",
-      "PATCH",
-      AGENT_ONE_TOKEN,
-      update,
-    )).status, 401);
-
-    const updatedResponse = await request(
-      address.url,
-      "/v1/automation-configuration",
-      "PATCH",
-      HUMAN_TOKEN,
-      update,
+    assert.equal(
+      (await request(address.url, "/v1/automation-configuration", "PATCH", AGENT_ONE_TOKEN, update)).status,
+      401
     );
+
+    const updatedResponse = await request(address.url, "/v1/automation-configuration", "PATCH", HUMAN_TOKEN, update);
     assert.equal(updatedResponse.status, 200);
-    const updated = (await updatedResponse.json() as {
-      configuration: {
-        version: number;
-        agentTypes: unknown[];
-        stages: unknown[];
-        updatedBy: string;
-      };
-    }).configuration;
+    const updated = (
+      (await updatedResponse.json()) as {
+        configuration: {
+          version: number;
+          agentTypes: unknown[];
+          stages: unknown[];
+          updatedBy: string;
+        };
+      }
+    ).configuration;
     assert.equal(updated.version, 2);
     assert.deepEqual(updated.agentTypes, [engineerType, verifierType]);
     assert.deepEqual(updated.stages, update.stages);
     assert.equal(updated.updatedBy, "human:alice");
 
-    assert.equal((await request(
-      address.url,
-      "/v1/automation-configuration",
-      "PATCH",
-      HUMAN_TOKEN,
-      update,
-    )).status, 409);
-    assert.equal((await request(
-      address.url,
-      "/v1/automation-configuration",
-      "PATCH",
-      HUMAN_TOKEN,
-      { ...update, version: updated.version, provider: "external" },
-    )).status, 400);
+    assert.equal(
+      (await request(address.url, "/v1/automation-configuration", "PATCH", HUMAN_TOKEN, update)).status,
+      409
+    );
+    assert.equal(
+      (
+        await request(address.url, "/v1/automation-configuration", "PATCH", HUMAN_TOKEN, {
+          ...update,
+          version: updated.version,
+          provider: "external",
+        })
+      ).status,
+      400
+    );
 
     const fetchedResponse = await request(address.url, "/v1/automation-configuration", "GET", HUMAN_TOKEN);
     assert.equal(fetchedResponse.status, 200);
-    const fetched = (await fetchedResponse.json() as { configuration: { version: number; agentTypes: unknown[] } }).configuration;
+    const fetched = ((await fetchedResponse.json()) as { configuration: { version: number; agentTypes: unknown[] } })
+      .configuration;
     assert.equal(fetched.version, 2);
     assert.deepEqual(fetched.agentTypes, [engineerType, verifierType]);
   } finally {
@@ -306,7 +319,7 @@ test("automatic work-item intake is rejected without creating a row", async () =
         originalRequest: "Do not strand this request in automatic project routing.",
         projectTarget: { mode: "auto" },
       },
-      "http-work-item-auto-rejected-0001",
+      "http-work-item-auto-rejected-0001"
     );
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), {
@@ -340,20 +353,17 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       name: "Checkout reliability",
       description: "Customer-facing recovery work.",
     });
-    const project = (await projectResponse.json() as { project: { projectId: string } }).project;
+    const project = ((await projectResponse.json()) as { project: { projectId: string } }).project;
     const body = {
       originalRequest: "Investigate and improve checkout reliability.",
       projectTarget: { mode: "explicit", projectId: project.projectId },
     };
     assert.equal((await request(address.url, "/v1/work-items", "POST", HUMAN_TOKEN, body)).status, 400);
-    assert.equal((await request(
-      address.url,
-      "/v1/work-items",
-      "POST",
-      AGENT_ONE_TOKEN,
-      body,
-      "http-work-item-unauthorized-0001",
-    )).status, 401);
+    assert.equal(
+      (await request(address.url, "/v1/work-items", "POST", AGENT_ONE_TOKEN, body, "http-work-item-unauthorized-0001"))
+        .status,
+      401
+    );
 
     const createdResponse = await request(
       address.url,
@@ -361,24 +371,26 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       "POST",
       HUMAN_TOKEN,
       body,
-      "http-work-item-create-0001",
+      "http-work-item-create-0001"
     );
     assert.equal(createdResponse.status, 201);
-    const created = (await createdResponse.json() as {
-      workItem: {
-        workItemId: string;
-        originalRequest: string;
-        priority: string;
-        projectTarget: unknown;
-        resolvedProjectId: string | null;
-        state: string;
-        currentStage: string | null;
-        planningTaskId: string | null;
-        version: number;
-        endedAt: string | null;
-        archivedAt: string | null;
-      };
-    }).workItem;
+    const created = (
+      (await createdResponse.json()) as {
+        workItem: {
+          workItemId: string;
+          originalRequest: string;
+          priority: string;
+          projectTarget: unknown;
+          resolvedProjectId: string | null;
+          state: string;
+          currentStage: string | null;
+          planningTaskId: string | null;
+          version: number;
+          endedAt: string | null;
+          archivedAt: string | null;
+        };
+      }
+    ).workItem;
     assert.equal(created.originalRequest, body.originalRequest);
     assert.equal(created.priority, "normal");
     assert.deepEqual(created.projectTarget, body.projectTarget);
@@ -396,21 +408,21 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       "POST",
       HUMAN_TOKEN,
       body,
-      "http-work-item-create-0001",
+      "http-work-item-create-0001"
     );
     assert.equal(replayResponse.status, 200);
     assert.equal(
-      (await replayResponse.json() as { workItem: { workItemId: string } }).workItem.workItemId,
-      created.workItemId,
+      ((await replayResponse.json()) as { workItem: { workItemId: string } }).workItem.workItemId,
+      created.workItemId
     );
     const projectBoardResponse = await request(
       address.url,
       `/v1/projects/${project.projectId}/board`,
       "GET",
-      HUMAN_TOKEN,
+      HUMAN_TOKEN
     );
     assert.equal(projectBoardResponse.status, 200);
-    const projectBoard = await projectBoardResponse.json() as {
+    const projectBoard = (await projectBoardResponse.json()) as {
       agents: Array<{ agentId: string; role: string }>;
       tasks: Array<{ taskId: string; assignedAgentId: string | null; assignedRole: string | null }>;
     };
@@ -421,35 +433,52 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
     const planningTask = projectBoard.tasks.find((task) => task.taskId === created.planningTaskId);
     assert.equal(planningTask?.assignedAgentId, managers[0]?.agentId);
     assert.equal(planningTask?.assignedRole, "manager");
-    assert.equal((await request(
-      address.url,
-      "/v1/work-items",
-      "POST",
-      HUMAN_TOKEN,
-      { originalRequest: "A different request.", projectTarget: body.projectTarget },
-      "http-work-item-create-0001",
-    )).status, 409);
+    assert.equal(
+      (
+        await request(
+          address.url,
+          "/v1/work-items",
+          "POST",
+          HUMAN_TOKEN,
+          { originalRequest: "A different request.", projectTarget: body.projectTarget },
+          "http-work-item-create-0001"
+        )
+      ).status,
+      409
+    );
 
     const updateResponse = await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
       version: created.version,
       priority: "high",
     });
     assert.equal(updateResponse.status, 200);
-    const updated = (await updateResponse.json() as {
-      workItem: { version: number; priority: string; projectTarget: unknown; resolvedProjectId: string | null };
-    }).workItem;
+    const updated = (
+      (await updateResponse.json()) as {
+        workItem: { version: number; priority: string; projectTarget: unknown; resolvedProjectId: string | null };
+      }
+    ).workItem;
     assert.equal(updated.version, 3);
     assert.equal(updated.priority, "high");
     assert.deepEqual(updated.projectTarget, { mode: "explicit", projectId: project.projectId });
     assert.equal(updated.resolvedProjectId, project.projectId);
-    assert.equal((await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
-      version: created.version,
-      priority: "low",
-    })).status, 409);
-    assert.equal((await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
-      version: updated.version,
-      originalRequest: "Overwrite the accepted request.",
-    })).status, 400);
+    assert.equal(
+      (
+        await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
+          version: created.version,
+          priority: "low",
+        })
+      ).status,
+      409
+    );
+    assert.equal(
+      (
+        await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
+          version: updated.version,
+          originalRequest: "Overwrite the accepted request.",
+        })
+      ).status,
+      400
+    );
 
     const prematureArchive = await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
       version: updated.version,
@@ -470,69 +499,80 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       `/v1/work-items/${created.workItemId}`,
       "PATCH",
       HUMAN_TOKEN,
-      cancelRequest,
+      cancelRequest
     );
     assert.equal(cancelledResponse.status, 200);
-    const cancelled = (await cancelledResponse.json() as {
-      workItem: {
-        state: string;
-        version: number;
-        endedAt: string | null;
-        cancelledReason: string | null;
-        archivedAt: string | null;
-      };
-    }).workItem;
+    const cancelled = (
+      (await cancelledResponse.json()) as {
+        workItem: {
+          state: string;
+          version: number;
+          endedAt: string | null;
+          cancelledReason: string | null;
+          archivedAt: string | null;
+        };
+      }
+    ).workItem;
     assert.equal(cancelled.state, "abandoned");
     assert.equal(cancelled.version, 4);
     assert.ok(cancelled.endedAt);
     assert.equal(cancelled.cancelledReason, cancelRequest.reason);
     assert.equal(cancelled.archivedAt, null);
-    const cancelAction = gateActions(service.config.dbPath, created.workItemId).find((action) => action.gate === "cancel");
+    const cancelAction = gateActions(service.config.dbPath, created.workItemId).find(
+      (action) => action.gate === "cancel"
+    );
     assert.ok(cancelAction);
     assert.match(cancelAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...cancelAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: created.workItemId,
-      gate: "cancel",
-      actorId: "human:alice",
-      planRevisionId: null,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note: cancelRequest.reason,
-      createdAt: cancelled.endedAt,
-    });
+    assert.deepEqual(
+      { ...cancelAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: created.workItemId,
+        gate: "cancel",
+        actorId: "human:alice",
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: cancelRequest.reason,
+        createdAt: cancelled.endedAt,
+      }
+    );
 
     const cancelReplay = await request(
       address.url,
       `/v1/work-items/${created.workItemId}`,
       "PATCH",
       HUMAN_TOKEN,
-      cancelRequest,
+      cancelRequest
     );
     assert.equal(cancelReplay.status, 200);
-    assert.deepEqual((await cancelReplay.json() as { workItem: unknown }).workItem, cancelled);
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items/${created.workItemId}`,
-      "PATCH",
-      HUMAN_TOKEN,
-      { ...cancelRequest, reason: "A different reason cannot replay the cancellation." },
-    )).status, 409);
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items/${created.workItemId}`,
-      "PATCH",
-      HUMAN_TOKEN,
-      { ...cancelRequest, version: cancelled.version },
-    )).status, 409);
+    assert.deepEqual(((await cancelReplay.json()) as { workItem: unknown }).workItem, cancelled);
+    assert.equal(
+      (
+        await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
+          ...cancelRequest,
+          reason: "A different reason cannot replay the cancellation.",
+        })
+      ).status,
+      409
+    );
+    assert.equal(
+      (
+        await request(address.url, `/v1/work-items/${created.workItemId}`, "PATCH", HUMAN_TOKEN, {
+          ...cancelRequest,
+          version: cancelled.version,
+        })
+      ).status,
+      409
+    );
 
     const listed = await request(address.url, "/v1/work-items", "GET", HUMAN_TOKEN);
     assert.equal(listed.status, 200);
-    const listedBody = await listed.json() as { workItems: Array<{ workItemId: string }>; nextCursor?: string };
+    const listedBody = (await listed.json()) as { workItems: Array<{ workItemId: string }>; nextCursor?: string };
     assert.deepEqual(
       listedBody.workItems.map((item) => item.workItemId),
-      [created.workItemId],
+      [created.workItemId]
     );
     assert.equal(listedBody.nextCursor, undefined);
 
@@ -542,12 +582,14 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       `/v1/work-items/${created.workItemId}`,
       "PATCH",
       HUMAN_TOKEN,
-      archiveRequest,
+      archiveRequest
     );
     assert.equal(archiveResponse.status, 200);
-    const archived = (await archiveResponse.json() as {
-      workItem: { version: number; archivedAt: string | null };
-    }).workItem;
+    const archived = (
+      (await archiveResponse.json()) as {
+        workItem: { version: number; archivedAt: string | null };
+      }
+    ).workItem;
     assert.equal(archived.version, 5);
     assert.ok(archived.archivedAt);
     const archiveReplay = await request(
@@ -555,23 +597,25 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
       `/v1/work-items/${created.workItemId}`,
       "PATCH",
       HUMAN_TOKEN,
-      archiveRequest,
+      archiveRequest
     );
     assert.equal(archiveReplay.status, 200);
-    assert.deepEqual((await archiveReplay.json() as { workItem: unknown }).workItem, archived);
+    assert.deepEqual(((await archiveReplay.json()) as { workItem: unknown }).workItem, archived);
 
     const defaultAfterArchive = await request(address.url, "/v1/work-items", "GET", HUMAN_TOKEN);
-    assert.deepEqual((await defaultAfterArchive.json() as { workItems: unknown[] }).workItems, []);
+    assert.deepEqual(((await defaultAfterArchive.json()) as { workItems: unknown[] }).workItems, []);
     const withArchived = await request(address.url, "/v1/work-items?includeArchived=1", "GET", HUMAN_TOKEN);
-    const archivedItems = (await withArchived.json() as {
-      workItems: Array<{ workItemId: string; archivedAt: string | null }>;
-    }).workItems;
+    const archivedItems = (
+      (await withArchived.json()) as {
+        workItems: Array<{ workItemId: string; archivedAt: string | null }>;
+      }
+    ).workItems;
     assert.equal(archivedItems.length, 1);
     assert.equal(archivedItems[0]?.workItemId, created.workItemId);
     assert.equal(archivedItems[0]?.archivedAt, archived.archivedAt);
     const fetched = await request(address.url, `/v1/work-items/${created.workItemId}`, "GET", HUMAN_TOKEN);
     assert.equal(fetched.status, 200);
-    assert.equal((await fetched.json() as { workItem: { version: number } }).workItem.version, 5);
+    assert.equal(((await fetched.json()) as { workItem: { version: number } }).workItem.version, 5);
     assert.equal((await request(address.url, "/v1/work-items/missing", "GET", HUMAN_TOKEN)).status, 404);
     assert.equal((await request(address.url, "/v1/work-items", "GET", AGENT_ONE_TOKEN)).status, 401);
   } finally {
@@ -582,10 +626,13 @@ test("global work-item intake is human-only, explicitly targeted, idempotent, an
 test("work-item detail exposes ordered creation and state-transition history", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const seeded = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: "Expose work-item transition history through the detail route.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "http-work-item-transition-detail-0001").workItem;
+  const seeded = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: "Expose work-item transition history through the detail route.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    "http-work-item-transition-detail-0001"
+  ).workItem;
   assert.equal(seeded.state, "queued");
   fixture.board.close();
 
@@ -619,43 +666,34 @@ test("work-item detail exposes ordered creation and state-transition history", a
       createdAt: seeded.createdAt,
     };
 
-    const initialResponse = await request(
-      address.url,
-      `/v1/work-items/${seeded.workItemId}`,
-      "GET",
-      HUMAN_TOKEN,
-    );
+    const initialResponse = await request(address.url, `/v1/work-items/${seeded.workItemId}`, "GET", HUMAN_TOKEN);
     assert.equal(initialResponse.status, 200);
-    const initial = (await initialResponse.json() as { workItem: Detail }).workItem;
+    const initial = ((await initialResponse.json()) as { workItem: Detail }).workItem;
     assert.equal(initial.state, "queued");
     assert.deepEqual(initial.transitions, [initialTransition]);
 
     const cancellationReason = "The transition-envelope assertion has completed.";
-    const cancelledResponse = await request(
-      address.url,
-      `/v1/work-items/${seeded.workItemId}`,
-      "PATCH",
-      HUMAN_TOKEN,
-      { version: initial.version, action: "cancel", reason: cancellationReason },
-    );
+    const cancelledResponse = await request(address.url, `/v1/work-items/${seeded.workItemId}`, "PATCH", HUMAN_TOKEN, {
+      version: initial.version,
+      action: "cancel",
+      reason: cancellationReason,
+    });
     assert.equal(cancelledResponse.status, 200);
 
-    const transitionedResponse = await request(
-      address.url,
-      `/v1/work-items/${seeded.workItemId}`,
-      "GET",
-      HUMAN_TOKEN,
-    );
+    const transitionedResponse = await request(address.url, `/v1/work-items/${seeded.workItemId}`, "GET", HUMAN_TOKEN);
     assert.equal(transitionedResponse.status, 200);
-    const transitioned = (await transitionedResponse.json() as { workItem: Detail }).workItem;
+    const transitioned = ((await transitionedResponse.json()) as { workItem: Detail }).workItem;
     assert.equal(transitioned.state, "abandoned");
-    assert.deepEqual(transitioned.transitions, [initialTransition, {
-      fromState: "queued",
-      toState: "abandoned",
-      actorType: "human",
-      actorId: "human:alice",
-      createdAt: "2026-07-20T20:00:00.000Z",
-    }]);
+    assert.deepEqual(transitioned.transitions, [
+      initialTransition,
+      {
+        fromState: "queued",
+        toState: "abandoned",
+        actorType: "human",
+        actorId: "human:alice",
+        createdAt: "2026-07-20T20:00:00.000Z",
+      },
+    ]);
   } finally {
     await service.close();
   }
@@ -664,23 +702,29 @@ test("work-item detail exposes ordered creation and state-transition history", a
 test("plan confirmation rejects null and non-exact request bodies with field-specific errors", async () => {
   const path = await databasePath();
   const fixture = await boardFixture(path);
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), "http-confirm-validation-0001").workItem;
-  const children = [{
-    key: "http-provider",
-    objective: "Keep the provider declaration visible over HTTP.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/provider"],
-    acceptanceCriteria: ["The provider declaration round-trips."],
-  }, {
-    key: "http-consumer",
-    objective: "Keep the consumer declaration visible over HTTP.",
-    projectId: fixture.project.projectId,
-    declaredScope: ["src/consumer"],
-    acceptanceCriteria: ["The consumer declaration round-trips."],
-    dependsOn: ["http-provider"],
-  }];
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    "http-confirm-validation-0001"
+  ).workItem;
+  const children = [
+    {
+      key: "http-provider",
+      objective: "Keep the provider declaration visible over HTTP.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/provider"],
+      acceptanceCriteria: ["The provider declaration round-trips."],
+    },
+    {
+      key: "http-consumer",
+      objective: "Keep the consumer declaration visible over HTTP.",
+      projectId: fixture.project.projectId,
+      declaredScope: ["src/consumer"],
+      acceptanceCriteria: ["The consumer declaration round-trips."],
+      dependsOn: ["http-provider"],
+    },
+  ];
   const proposed = fixture.board.proposeWorkflow({
     workItemId: workItem.workItemId,
     projectId: fixture.project.projectId,
@@ -690,14 +734,16 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
     changeShape: "feature",
     children,
     skillIds: [],
-    nodes: [{
-      nodeId: "http-confirm-validation",
-      title: "Validate confirmation",
-      objective: "Reject malformed confirmation bodies.",
-      acceptanceCriteria: ["The workflow remains proposed."],
-      dependencyNodeIds: [],
-      stageTemplate: ["verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "http-confirm-validation",
+        title: "Validate confirmation",
+        objective: "Reject malformed confirmation bodies.",
+        acceptanceCriteria: ["The workflow remains proposed."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
   });
   const planRevisionId = proposed.plans[0]!.planRevisionId;
   fixture.board.close();
@@ -716,15 +762,15 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
       address.url,
       `/v1/projects/${fixture.project.projectId}/workflow`,
       "GET",
-      HUMAN_TOKEN,
+      HUMAN_TOKEN
     );
     assert.equal(workflowResponse.status, 200);
-    const workflowBody = await workflowResponse.json() as {
+    const workflowBody = (await workflowResponse.json()) as {
       workflow: { plans: Array<{ planRevisionId: string; children?: unknown }> };
     };
     assert.deepEqual(
       workflowBody.workflow.plans.find((plan) => plan.planRevisionId === planRevisionId)?.children,
-      children,
+      children
     );
     const cases = [
       { body: null, field: "Plan confirmation" },
@@ -738,10 +784,10 @@ test("plan confirmation rejects null and non-exact request bodies with field-spe
         `/v1/plans/${planRevisionId}/confirm`,
         "POST",
         HUMAN_TOKEN,
-        item.body,
+        item.body
       );
       assert.equal(response.status, 400);
-      const failure = await response.json() as { error: { code: string; message: string } };
+      const failure = (await response.json()) as { error: { code: string; message: string } };
       assert.equal(failure.error.code, "INVALID_REQUEST");
       assert.match(failure.error.message, new RegExp(item.field, "u"));
     }
@@ -767,42 +813,52 @@ test("encoded agent route identifiers claim runs and malformed encoding is rejec
       description: "Exercise encoded worker route parameters.",
     });
     assert.equal(projectResponse.status, 201);
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
-      agentId,
-      role: "engineer",
-      area: "http-routing",
-      mission: "Claim work through an encoded route identifier.",
-      model: "codex-mini",
-      token: AGENT_ONE_TOKEN,
-    })).status, 201);
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      assignedAgentId: agentId,
-      assignedRole: "engineer",
-    }))).status, 201);
-
-    const malformed = await request(
-      address.url,
-      "/v1/agents/%GZ/runs/claim?waitMs=0",
-      "POST",
-      AGENT_ONE_TOKEN,
-      { claimId: "http-malformed-agent-route-0001", messageCursor: null },
-    );
-    assert.equal(malformed.status, 400);
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
     assert.equal(
-      (await malformed.json() as { error: { code: string } }).error.code,
-      "INVALID_IDENTIFIER",
+      (
+        await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+          agentId,
+          role: "engineer",
+          area: "http-routing",
+          mission: "Claim work through an encoded route identifier.",
+          model: "codex-mini",
+          token: AGENT_ONE_TOKEN,
+        })
+      ).status,
+      201
     );
+    assert.equal(
+      (
+        await request(
+          address.url,
+          `/v1/projects/${projectId}/tasks`,
+          "POST",
+          HUMAN_TOKEN,
+          taskRequest({
+            assignedAgentId: agentId,
+            assignedRole: "engineer",
+          })
+        )
+      ).status,
+      201
+    );
+
+    const malformed = await request(address.url, "/v1/agents/%GZ/runs/claim?waitMs=0", "POST", AGENT_ONE_TOKEN, {
+      claimId: "http-malformed-agent-route-0001",
+      messageCursor: null,
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { error: { code: string } }).error.code, "INVALID_IDENTIFIER");
 
     const claimResponse = await request(
       address.url,
       `/v1/agents/${encodeURIComponent(agentId)}/runs/claim?waitMs=0`,
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "http-encoded-agent-claim-0001", messageCursor: null },
+      { claimId: "http-encoded-agent-claim-0001", messageCursor: null }
     );
     assert.equal(claimResponse.status, 201);
-    const claim = await claimResponse.json() as { run: { agentId: string }; task: { assignedAgentId: string } };
+    const claim = (await claimResponse.json()) as { run: { agentId: string }; task: { assignedAgentId: string } };
     assert.equal(claim.run.agentId, agentId);
     assert.equal(claim.task.assignedAgentId, agentId);
   } finally {
@@ -825,7 +881,7 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
       name: "Rotation tools",
       description: "/workspace/rotation-tools",
     });
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
     const createdResponse = await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
       agentId: "rotation-engineer",
       role: "engineer",
@@ -835,25 +891,32 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
       token: AGENT_ONE_TOKEN,
     });
     assert.equal(createdResponse.status, 201);
-    const created = (await createdResponse.json() as { agent: { version: number } }).agent;
+    const created = ((await createdResponse.json()) as { agent: { version: number } }).agent;
     assert.equal(created.version, 1);
 
     const immediateWorkerRoute = "/v1/agents/rotation-engineer/runs/claim?waitMs=0";
-    assert.equal((await request(address.url, immediateWorkerRoute, "POST", AGENT_ONE_TOKEN, {
-      claimId: "rotation-old-token-before-0001",
-      messageCursor: null,
-    })).status, 204);
-    assert.equal((await request(address.url, "/v1/agents/rotation-engineer/rotate-token", "POST", AGENT_ONE_TOKEN, {
-      version: created.version,
-    })).status, 401);
+    assert.equal(
+      (
+        await request(address.url, immediateWorkerRoute, "POST", AGENT_ONE_TOKEN, {
+          claimId: "rotation-old-token-before-0001",
+          messageCursor: null,
+        })
+      ).status,
+      204
+    );
+    assert.equal(
+      (
+        await request(address.url, "/v1/agents/rotation-engineer/rotate-token", "POST", AGENT_ONE_TOKEN, {
+          version: created.version,
+        })
+      ).status,
+      401
+    );
     for (const invalid of [null, {}, { version: 0 }, { version: 1, extra: true }]) {
-      assert.equal((await request(
-        address.url,
-        "/v1/agents/rotation-engineer/rotate-token",
-        "POST",
-        HUMAN_TOKEN,
-        invalid,
-      )).status, 400);
+      assert.equal(
+        (await request(address.url, "/v1/agents/rotation-engineer/rotate-token", "POST", HUMAN_TOKEN, invalid)).status,
+        400
+      );
     }
 
     const heldClaim = request(
@@ -861,7 +924,7 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
       "/v1/agents/rotation-engineer/runs/claim?waitMs=30000",
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "rotation-held-old-token-0001", messageCursor: null },
+      { claimId: "rotation-held-old-token-0001", messageCursor: null }
     );
     await waitForWorkerConnection(address.url, projectId, "rotation-engineer", "waiting_for_wake");
 
@@ -870,10 +933,10 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
       "/v1/agents/rotation-engineer/rotate-token",
       "POST",
       HUMAN_TOKEN,
-      { version: created.version },
+      { version: created.version }
     );
     assert.equal(rotatedResponse.status, 200);
-    const rotatedEnvelope = await rotatedResponse.json() as {
+    const rotatedEnvelope = (await rotatedResponse.json()) as {
       agent: { agentId: string; version: number; token?: string };
       token: string;
     };
@@ -884,48 +947,55 @@ test("human token rotation is versioned, one-time, and immediately invalidates t
     assert.ok(rotatedEnvelope.token.length >= 32);
     assert.notEqual(rotatedEnvelope.token, AGENT_ONE_TOKEN);
 
-    const taskResponse = await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      title: "Queue work after rotation",
-      assignedAgentId: "rotation-engineer",
-      assignedRole: "engineer",
-    }));
+    const taskResponse = await request(
+      address.url,
+      `/v1/projects/${projectId}/tasks`,
+      "POST",
+      HUMAN_TOKEN,
+      taskRequest({
+        title: "Queue work after rotation",
+        assignedAgentId: "rotation-engineer",
+        assignedRole: "engineer",
+      })
+    );
     assert.equal(taskResponse.status, 201);
-    const taskId = (await taskResponse.json() as { task: { taskId: string } }).task.taskId;
+    const taskId = ((await taskResponse.json()) as { task: { taskId: string } }).task.taskId;
     const oldHeldResponse = await heldClaim;
     assert.equal(oldHeldResponse.status, 401);
     assert.deepEqual(await oldHeldResponse.json(), {
       error: { code: "UNAUTHORIZED", message: "Agent authentication is required" },
     });
     const beforeNewClaim = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const beforeNewClaimBoard = await beforeNewClaim.json() as {
+    const beforeNewClaimBoard = (await beforeNewClaim.json()) as {
       tasks: Array<{ taskId: string; status: string }>;
       recentRuns: unknown[];
     };
     assert.equal(beforeNewClaimBoard.recentRuns.length, 0);
     assert.equal(beforeNewClaimBoard.tasks.find((task) => task.taskId === taskId)?.status, "queued");
 
-    assert.equal((await request(address.url, immediateWorkerRoute, "POST", AGENT_ONE_TOKEN, {
-      claimId: "rotation-old-token-after-0001",
-      messageCursor: null,
-    })).status, 401);
+    assert.equal(
+      (
+        await request(address.url, immediateWorkerRoute, "POST", AGENT_ONE_TOKEN, {
+          claimId: "rotation-old-token-after-0001",
+          messageCursor: null,
+        })
+      ).status,
+      401
+    );
     const newClaimResponse = await request(address.url, immediateWorkerRoute, "POST", rotatedEnvelope.token, {
       claimId: "rotation-new-token-after-0001",
       messageCursor: null,
     });
     assert.equal(newClaimResponse.status, 201);
-    assert.equal((await newClaimResponse.json() as { task: { taskId: string } }).task.taskId, taskId);
-    const stale = await request(
-      address.url,
-      "/v1/agents/rotation-engineer/rotate-token",
-      "POST",
-      HUMAN_TOKEN,
-      { version: created.version },
-    );
+    assert.equal(((await newClaimResponse.json()) as { task: { taskId: string } }).task.taskId, taskId);
+    const stale = await request(address.url, "/v1/agents/rotation-engineer/rotate-token", "POST", HUMAN_TOKEN, {
+      version: created.version,
+    });
     assert.equal(stale.status, 409);
-    assert.equal((await stale.json() as { error: { code: string } }).error.code, "AGENT_VERSION_CONFLICT");
+    assert.equal(((await stale.json()) as { error: { code: string } }).error.code, "AGENT_VERSION_CONFLICT");
 
     const snapshot = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const snapshotAgent = (await snapshot.json() as { agents: Array<Record<string, unknown>> }).agents[0]!;
+    const snapshotAgent = ((await snapshot.json()) as { agents: Array<Record<string, unknown>> }).agents[0]!;
     assert.equal("token" in snapshotAgent, false);
     assert.equal("tokenHash" in snapshotAgent, false);
   } finally {
@@ -949,23 +1019,33 @@ test("lane-error is worker-token authenticated, exact, scrubbed, bounded, and cl
       description: "Surface durable fleet failures to operators.",
     });
     assert.equal(projectResponse.status, 201);
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
-      agentId: "engineer-one",
-      role: "engineer",
-      area: "fleet-runtime",
-      mission: "Keep the task lane recoverable.",
-      model: "codex-mini",
-      token: AGENT_ONE_TOKEN,
-    })).status, 201);
-    assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
-      agentId: "manager-one",
-      role: "manager",
-      area: "fleet-runtime",
-      mission: "Keep the manager lane recoverable.",
-      model: "claude-haiku",
-      token: AGENT_TWO_TOKEN,
-    })).status, 201);
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
+    assert.equal(
+      (
+        await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+          agentId: "engineer-one",
+          role: "engineer",
+          area: "fleet-runtime",
+          mission: "Keep the task lane recoverable.",
+          model: "codex-mini",
+          token: AGENT_ONE_TOKEN,
+        })
+      ).status,
+      201
+    );
+    assert.equal(
+      (
+        await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+          agentId: "manager-one",
+          role: "manager",
+          area: "fleet-runtime",
+          mission: "Keep the manager lane recoverable.",
+          model: "claude-haiku",
+          token: AGENT_TWO_TOKEN,
+        })
+      ).status,
+      201
+    );
 
     const route = "/v1/agents/engineer-one/lane-error";
     assert.equal((await request(address.url, route, "POST", HUMAN_TOKEN, { detail: "not an agent" })).status, 401);
@@ -973,32 +1053,29 @@ test("lane-error is worker-token authenticated, exact, scrubbed, bounded, and cl
     for (const invalid of [null, {}, { detail: 7 }, { detail: "" }, { detail: null, extra: true }]) {
       assert.equal((await request(address.url, route, "POST", AGENT_ONE_TOKEN, invalid)).status, 400);
     }
-    assert.equal((await request(
-      address.url,
-      route,
-      "POST",
-      AGENT_ONE_TOKEN,
-      { detail: "x".repeat(2_001) },
-    )).status, 400);
+    assert.equal(
+      (await request(address.url, route, "POST", AGENT_ONE_TOKEN, { detail: "x".repeat(2_001) })).status,
+      400
+    );
 
     const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
-    assert.equal((await request(
-      address.url,
-      route,
-      "POST",
-      AGENT_ONE_TOKEN,
-      { detail: `Board rejected Bearer ${secret}` },
-    )).status, 204);
+    assert.equal(
+      (await request(address.url, route, "POST", AGENT_ONE_TOKEN, { detail: `Board rejected Bearer ${secret}` }))
+        .status,
+      204
+    );
     const failedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
     assert.equal(failedBoard.status, 200);
-    const failedAgent = (await failedBoard.json() as { agents: Array<{ agentId: string; lastError: string | null }> })
-      .agents.find((agent) => agent.agentId === "engineer-one");
+    const failedAgent = (
+      (await failedBoard.json()) as { agents: Array<{ agentId: string; lastError: string | null }> }
+    ).agents.find((agent) => agent.agentId === "engineer-one");
     assert.equal(failedAgent?.lastError, "Board rejected [redacted:bearer]");
 
     assert.equal((await request(address.url, route, "POST", AGENT_ONE_TOKEN, { detail: null })).status, 204);
     const clearedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const clearedAgent = (await clearedBoard.json() as { agents: Array<{ agentId: string; lastError: string | null }> })
-      .agents.find((agent) => agent.agentId === "engineer-one");
+    const clearedAgent = (
+      (await clearedBoard.json()) as { agents: Array<{ agentId: string; lastError: string | null }> }
+    ).agents.find((agent) => agent.agentId === "engineer-one");
     assert.equal(clearedAgent?.lastError, null);
   } finally {
     await service.close();
@@ -1014,7 +1091,7 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
         originalRequest: `HTTP paginated work item ${index}`,
         projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       },
-      `http-pagination-${index}`,
+      `http-pagination-${index}`
     );
   }
   fixture.board.close();
@@ -1031,7 +1108,7 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
   try {
     const initialResponse = await request(address.url, "/v1/work-items", "GET", HUMAN_TOKEN);
     assert.equal(initialResponse.status, 200);
-    const initial = await initialResponse.json() as {
+    const initial = (await initialResponse.json()) as {
       workItems: Array<{ workItemId: string }>;
       nextCursor?: string;
     };
@@ -1042,10 +1119,10 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
       address.url,
       `/v1/work-items?cursor=${encodeURIComponent(initial.nextCursor)}`,
       "GET",
-      HUMAN_TOKEN,
+      HUMAN_TOKEN
     );
     assert.equal(continuationResponse.status, 200);
-    const continuation = await continuationResponse.json() as {
+    const continuation = (await continuationResponse.json()) as {
       workItems: Array<{ workItemId: string }>;
       nextCursor?: string;
     };
@@ -1057,39 +1134,41 @@ test("work-item HTTP keyset continuation is exhaustive and rejects non-canonical
 
     assert.equal((await request(address.url, "/v1/work-items?unknown=value", "GET", HUMAN_TOKEN)).status, 400);
     assert.equal((await request(address.url, "/v1/work-items?includeArchived=0", "GET", HUMAN_TOKEN)).status, 400);
-    assert.equal((await request(address.url, "/v1/work-items?includeArchived=1&includeArchived=1", "GET", HUMAN_TOKEN)).status, 400);
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items?cursor=${initial.nextCursor}&cursor=${initial.nextCursor}`,
-      "GET",
-      HUMAN_TOKEN,
-    )).status, 400);
+    assert.equal(
+      (await request(address.url, "/v1/work-items?includeArchived=1&includeArchived=1", "GET", HUMAN_TOKEN)).status,
+      400
+    );
+    assert.equal(
+      (
+        await request(
+          address.url,
+          `/v1/work-items?cursor=${initial.nextCursor}&cursor=${initial.nextCursor}`,
+          "GET",
+          HUMAN_TOKEN
+        )
+      ).status,
+      400
+    );
     assert.equal((await request(address.url, "/v1/work-items?cursor=", "GET", HUMAN_TOKEN)).status, 400);
     assert.equal((await request(address.url, "/v1/work-items?cursor=not-a-cursor!", "GET", HUMAN_TOKEN)).status, 400);
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items?cursor=${"a".repeat(513)}`,
-      "GET",
-      HUMAN_TOKEN,
-    )).status, 400);
+    assert.equal(
+      (await request(address.url, `/v1/work-items?cursor=${"a".repeat(513)}`, "GET", HUMAN_TOKEN)).status,
+      400
+    );
 
     const unsupportedPayload = JSON.parse(Buffer.from(initial.nextCursor, "base64url").toString("utf8")) as {
       version: number;
     };
     unsupportedPayload.version = 2;
     const unsupportedCursor = Buffer.from(JSON.stringify(unsupportedPayload), "utf8").toString("base64url");
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items?cursor=${unsupportedCursor}`,
-      "GET",
-      HUMAN_TOKEN,
-    )).status, 400);
-    assert.equal((await request(
-      address.url,
-      `/v1/work-items?cursor=${initial.nextCursor}`,
-      "GET",
-      AGENT_ONE_TOKEN,
-    )).status, 401);
+    assert.equal(
+      (await request(address.url, `/v1/work-items?cursor=${unsupportedCursor}`, "GET", HUMAN_TOKEN)).status,
+      400
+    );
+    assert.equal(
+      (await request(address.url, `/v1/work-items?cursor=${initial.nextCursor}`, "GET", AGENT_ONE_TOKEN)).status,
+      401
+    );
   } finally {
     await service.close();
   }
@@ -1112,7 +1191,7 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       description: "Customer-facing recovery work.",
     });
     assert.equal(projectResponse.status, 201);
-    const project = (await projectResponse.json() as { project: { projectId: string } }).project;
+    const project = ((await projectResponse.json()) as { project: { projectId: string } }).project;
 
     const agentResponse = await request(address.url, `/v1/projects/${project.projectId}/agents`, "POST", HUMAN_TOKEN, {
       agentId: "engineer-one",
@@ -1131,19 +1210,27 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
     });
     assert.equal(invalidTask.status, 400);
 
-    const taskResponse = await request(address.url, `/v1/projects/${project.projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      assignedAgentId: null,
-      assignedRole: null,
-    }));
-    assert.equal(taskResponse.status, 201);
-    const task = (await taskResponse.json() as { task: { taskId: string; version: number } }).task;
-    assert.equal((await request(
+    const taskResponse = await request(
       address.url,
-      "/v1/agents/engineer-one/runs/claim?waitMs=0",
+      `/v1/projects/${project.projectId}/tasks`,
       "POST",
-      AGENT_ONE_TOKEN,
-      { claimId: "http-claim-before-assignment-0001", messageCursor: null },
-    )).status, 204);
+      HUMAN_TOKEN,
+      taskRequest({
+        assignedAgentId: null,
+        assignedRole: null,
+      })
+    );
+    assert.equal(taskResponse.status, 201);
+    const task = ((await taskResponse.json()) as { task: { taskId: string; version: number } }).task;
+    assert.equal(
+      (
+        await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=0", "POST", AGENT_ONE_TOKEN, {
+          claimId: "http-claim-before-assignment-0001",
+          messageCursor: null,
+        })
+      ).status,
+      204
+    );
 
     const assignedResponse = await request(address.url, `/v1/tasks/${task.taskId}`, "PATCH", HUMAN_TOKEN, {
       version: task.version,
@@ -1166,10 +1253,10 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
           model: "gpt-5",
           promptsSha: "http-prompt-bundle-sha",
         },
-      },
+      }
     );
     assert.equal(claimResponse.status, 201);
-    const claim = await claimResponse.json() as {
+    const claim = (await claimResponse.json()) as {
       run: {
         runId: string;
         taskId: string | null;
@@ -1199,7 +1286,7 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
         runtimeVersion: "22.18.0",
         model: "gpt-5",
         promptsSha: "http-prompt-bundle-sha",
-      },
+      }
     );
     assert.equal(claim.task.status, "in_progress");
     assert.ok(claim.task.startedAt);
@@ -1211,9 +1298,15 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       expectedAgentMinutes: 60,
     });
     assert.equal(agentEstimate.status, 200);
-    const estimatedTask = (await agentEstimate.json() as {
-      task: { expectedAgentMinutes: number | null; estimateRecordedAt: string | null; expectedCompletedAt: string | null };
-    }).task;
+    const estimatedTask = (
+      (await agentEstimate.json()) as {
+        task: {
+          expectedAgentMinutes: number | null;
+          estimateRecordedAt: string | null;
+          expectedCompletedAt: string | null;
+        };
+      }
+    ).task;
     assert.equal(estimatedTask.expectedAgentMinutes, 60);
     assert.equal(estimatedTask.estimateRecordedAt, "2026-07-19T20:00:00.000Z");
     assert.equal(estimatedTask.expectedCompletedAt, "2026-07-19T21:00:00.000Z");
@@ -1228,19 +1321,24 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       parallelGroup: null,
     });
     assert.equal(phaseResponse.status, 201);
-    const phase = (await phaseResponse.json() as { phase: { phaseId: string; version: number } }).phase;
+    const phase = ((await phaseResponse.json()) as { phase: { phaseId: string; version: number } }).phase;
     const runningPhase = await request(address.url, `/v1/task-phases/${phase.phaseId}`, "PATCH", AGENT_ONE_TOKEN, {
       version: phase.version,
       stage: "execution",
       status: "in_progress",
     });
     assert.equal(runningPhase.status, 200);
-    assert.equal((await runningPhase.json() as { phase: { status: string } }).phase.status, "in_progress");
-    assert.equal((await request(address.url, `/v1/tasks/${task.taskId}/phases`, "POST", HUMAN_TOKEN, {
-      title: "Humans cannot impersonate agent progress",
-      stage: "planning",
-      parallelGroup: null,
-    })).status, 401);
+    assert.equal(((await runningPhase.json()) as { phase: { status: string } }).phase.status, "in_progress");
+    assert.equal(
+      (
+        await request(address.url, `/v1/tasks/${task.taskId}/phases`, "POST", HUMAN_TOKEN, {
+          title: "Humans cannot impersonate agent progress",
+          stage: "planning",
+          parallelGroup: null,
+        })
+      ).status,
+      401
+    );
 
     const messageBody = {
       clientEventId: "http-progress-0001",
@@ -1248,13 +1346,25 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       body: "The first test iteration is passing.",
       runId: claim.run.runId,
     };
-    const messageOne = await request(address.url, `/v1/tasks/${task.taskId}/messages`, "POST", AGENT_ONE_TOKEN, messageBody);
-    const messageReplay = await request(address.url, `/v1/tasks/${task.taskId}/messages`, "POST", AGENT_ONE_TOKEN, messageBody);
+    const messageOne = await request(
+      address.url,
+      `/v1/tasks/${task.taskId}/messages`,
+      "POST",
+      AGENT_ONE_TOKEN,
+      messageBody
+    );
+    const messageReplay = await request(
+      address.url,
+      `/v1/tasks/${task.taskId}/messages`,
+      "POST",
+      AGENT_ONE_TOKEN,
+      messageBody
+    );
     assert.equal(messageOne.status, 201);
     assert.equal(messageReplay.status, 201);
     assert.equal(
-      (await messageOne.json() as { message: { messageId: string } }).message.messageId,
-      (await messageReplay.json() as { message: { messageId: string } }).message.messageId,
+      ((await messageOne.json()) as { message: { messageId: string } }).message.messageId,
+      ((await messageReplay.json()) as { message: { messageId: string } }).message.messageId
     );
 
     const settle = await request(address.url, `/v1/runs/${claim.run.runId}/settle`, "POST", AGENT_ONE_TOKEN, {
@@ -1266,48 +1376,53 @@ test("strict HTTP API exposes real board state, per-agent auth, CAS, and no hear
       address.url,
       `/v1/projects/${project.projectId}/board`,
       "GET",
-      HUMAN_TOKEN,
+      HUMAN_TOKEN
     );
-    const failedTask = (await failedBoardResponse.json() as {
-      tasks: Array<{ taskId: string; version: number }>;
-    }).tasks.find((candidate) => candidate.taskId === task.taskId)!;
+    const failedTask = (
+      (await failedBoardResponse.json()) as {
+        tasks: Array<{ taskId: string; version: number }>;
+      }
+    ).tasks.find((candidate) => candidate.taskId === task.taskId)!;
 
-    const heldClaim = request(
-      address.url,
-      "/v1/agents/engineer-one/runs/claim?waitMs=1000",
-      "POST",
-      AGENT_ONE_TOKEN,
-      { claimId: "http-held-claim-0001", messageCursor: null },
-    );
-    const resume = await request(
-      address.url,
-      `/v1/tasks/${task.taskId}/retry`,
-      "POST",
-      HUMAN_TOKEN,
-      { version: failedTask.version },
-    );
+    const heldClaim = request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=1000", "POST", AGENT_ONE_TOKEN, {
+      claimId: "http-held-claim-0001",
+      messageCursor: null,
+    });
+    const resume = await request(address.url, `/v1/tasks/${task.taskId}/retry`, "POST", HUMAN_TOKEN, {
+      version: failedTask.version,
+    });
     assert.equal(resume.status, 200);
     const heldClaimResponse = await heldClaim;
     assert.equal(heldClaimResponse.status, 201);
-    const heldClaimBody = await heldClaimResponse.json() as {
+    const heldClaimBody = (await heldClaimResponse.json()) as {
       run: { runId: string; taskId: string | null };
       wakeup: { reason: string };
     };
     assert.equal(heldClaimBody.wakeup.reason, "resumed");
     assert.equal(heldClaimBody.run.taskId, task.taskId);
-    assert.equal((await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=30001", "POST", AGENT_ONE_TOKEN, {
-      claimId: "http-invalid-wait-0001",
-      messageCursor: null,
-    })).status, 400);
-    assert.equal((await request(address.url, `/v1/runs/${heldClaimBody.run.runId}/settle`, "POST", AGENT_ONE_TOKEN, {
-      outcome: "completed",
-      result: "Follow-up verification finished without deployment.",
-    })).status, 200);
+    assert.equal(
+      (
+        await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=30001", "POST", AGENT_ONE_TOKEN, {
+          claimId: "http-invalid-wait-0001",
+          messageCursor: null,
+        })
+      ).status,
+      400
+    );
+    assert.equal(
+      (
+        await request(address.url, `/v1/runs/${heldClaimBody.run.runId}/settle`, "POST", AGENT_ONE_TOKEN, {
+          outcome: "completed",
+          result: "Follow-up verification finished without deployment.",
+        })
+      ).status,
+      200
+    );
     assert.equal((await request(address.url, "/v1/heartbeat", "POST", AGENT_ONE_TOKEN, {})).status, 404);
 
     const boardResponse = await request(address.url, `/v1/projects/${project.projectId}/board`, "GET", HUMAN_TOKEN);
     assert.equal(boardResponse.status, 200);
-    const board = await boardResponse.json() as {
+    const board = (await boardResponse.json()) as {
       tasks: Array<{
         taskId: string;
         parentTaskId: string | null;
@@ -1356,43 +1471,60 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
       name: "HTTP task recovery",
       description: "Exercise human recovery transitions through the service boundary.",
     });
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
     for (const agent of [
       { agentId: "engineer-one", token: AGENT_ONE_TOKEN },
       { agentId: "engineer-two", token: AGENT_TWO_TOKEN },
     ]) {
-      assert.equal((await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
-        agentId: agent.agentId,
-        role: "engineer",
-        area: "http-recovery",
-        mission: "Recover explicitly assigned checkout work.",
-        model: "codex-mini",
-        token: agent.token,
-      })).status, 201);
+      assert.equal(
+        (
+          await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, {
+            agentId: agent.agentId,
+            role: "engineer",
+            area: "http-recovery",
+            mission: "Recover explicitly assigned checkout work.",
+            model: "codex-mini",
+            token: agent.token,
+          })
+        ).status,
+        201
+      );
     }
-    const taskResponse = await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      title: "Recover a task through HTTP",
-      assignedAgentId: "engineer-one",
-      assignedRole: "engineer",
-      requiresReview: false,
-    }));
-    const taskId = (await taskResponse.json() as { task: { taskId: string } }).task.taskId;
+    const taskResponse = await request(
+      address.url,
+      `/v1/projects/${projectId}/tasks`,
+      "POST",
+      HUMAN_TOKEN,
+      taskRequest({
+        title: "Recover a task through HTTP",
+        assignedAgentId: "engineer-one",
+        assignedRole: "engineer",
+        requiresReview: false,
+      })
+    );
+    const taskId = ((await taskResponse.json()) as { task: { taskId: string } }).task.taskId;
     const firstClaimResponse = await request(
       address.url,
       "/v1/agents/engineer-one/runs/claim?waitMs=0",
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "http-recovery-first-claim-0001", messageCursor: null },
+      { claimId: "http-recovery-first-claim-0001", messageCursor: null }
     );
-    const firstRunId = (await firstClaimResponse.json() as { run: { runId: string } }).run.runId;
-    assert.equal((await request(address.url, `/v1/runs/${firstRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
-      outcome: "failed",
-      result: "The first HTTP recovery pass failed.",
-    })).status, 200);
+    const firstRunId = ((await firstClaimResponse.json()) as { run: { runId: string } }).run.runId;
+    assert.equal(
+      (
+        await request(address.url, `/v1/runs/${firstRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
+          outcome: "failed",
+          result: "The first HTTP recovery pass failed.",
+        })
+      ).status,
+      200
+    );
 
     const failedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const failedTask = (await failedBoard.json() as { tasks: Array<{ taskId: string; status: string }> })
-      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    const failedTask = ((await failedBoard.json()) as { tasks: Array<{ taskId: string; status: string }> }).tasks.find(
+      (candidate) => candidate.taskId === taskId
+    )!;
     assert.equal(failedTask.status, "failed");
     const resumeBody = {
       reason: "Retry failed work through the existing Resume affordance.",
@@ -1404,10 +1536,10 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
       "POST",
       HUMAN_TOKEN,
       resumeBody,
-      "http-resume-failed-compat-0001",
+      "http-resume-failed-compat-0001"
     );
     assert.equal(resumeResponse.status, 201);
-    const resumed = await resumeResponse.json() as { wakeup: { wakeupId: string; reason: string } };
+    const resumed = (await resumeResponse.json()) as { wakeup: { wakeupId: string; reason: string } };
     assert.equal(resumed.wakeup.reason, "resumed");
     const resumeReplay = await request(
       address.url,
@@ -1415,13 +1547,17 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
       "POST",
       HUMAN_TOKEN,
       resumeBody,
-      "http-resume-failed-compat-0001",
+      "http-resume-failed-compat-0001"
     );
     assert.equal(resumeReplay.status, 200);
-    assert.equal((await resumeReplay.json() as { wakeup: { wakeupId: string } }).wakeup.wakeupId, resumed.wakeup.wakeupId);
+    assert.equal(
+      ((await resumeReplay.json()) as { wakeup: { wakeupId: string } }).wakeup.wakeupId,
+      resumed.wakeup.wakeupId
+    );
     const resumedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const resumedTask = (await resumedBoard.json() as { tasks: Array<{ taskId: string; status: string }> })
-      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    const resumedTask = (
+      (await resumedBoard.json()) as { tasks: Array<{ taskId: string; status: string }> }
+    ).tasks.find((candidate) => candidate.taskId === taskId)!;
     assert.equal(resumedTask.status, "queued");
 
     const retryClaimResponse = await request(
@@ -1429,17 +1565,23 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
       "/v1/agents/engineer-one/runs/claim?waitMs=0",
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "http-recovery-retry-claim-0001", messageCursor: null },
+      { claimId: "http-recovery-retry-claim-0001", messageCursor: null }
     );
-    const retryRunId = (await retryClaimResponse.json() as { run: { runId: string } }).run.runId;
-    assert.equal((await request(address.url, `/v1/runs/${retryRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
-      outcome: "interrupted",
-      result: "The retried HTTP run was interrupted.",
-    })).status, 200);
+    const retryRunId = ((await retryClaimResponse.json()) as { run: { runId: string } }).run.runId;
+    assert.equal(
+      (
+        await request(address.url, `/v1/runs/${retryRunId}/settle`, "POST", AGENT_ONE_TOKEN, {
+          outcome: "interrupted",
+          result: "The retried HTTP run was interrupted.",
+        })
+      ).status,
+      200
+    );
 
     const interruptedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const interruptedTask = (await interruptedBoard.json() as { tasks: Array<{ taskId: string; status: string; version: number }> })
-      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    const interruptedTask = (
+      (await interruptedBoard.json()) as { tasks: Array<{ taskId: string; status: string; version: number }> }
+    ).tasks.find((candidate) => candidate.taskId === taskId)!;
     assert.equal(interruptedTask.status, "interrupted");
     const reassignResponse = await request(address.url, `/v1/tasks/${taskId}`, "PATCH", HUMAN_TOKEN, {
       version: interruptedTask.version,
@@ -1447,44 +1589,54 @@ test("task recovery routes retry, reassign, and backlog recoverable work", async
       assignedRole: "engineer",
     });
     assert.equal(reassignResponse.status, 200);
-    const reassigned = (await reassignResponse.json() as { task: { status: string; version: number } }).task;
+    const reassigned = ((await reassignResponse.json()) as { task: { status: string; version: number } }).task;
     assert.equal(reassigned.status, "queued");
-    assert.equal((await request(
-      address.url,
-      "/v1/agents/engineer-one/runs/claim?waitMs=0",
-      "POST",
-      AGENT_ONE_TOKEN,
-      { claimId: "http-recovery-old-agent-claim-0001", messageCursor: null },
-    )).status, 204);
+    assert.equal(
+      (
+        await request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=0", "POST", AGENT_ONE_TOKEN, {
+          claimId: "http-recovery-old-agent-claim-0001",
+          messageCursor: null,
+        })
+      ).status,
+      204
+    );
     const replacementClaimResponse = await request(
       address.url,
       "/v1/agents/engineer-two/runs/claim?waitMs=0",
       "POST",
       AGENT_TWO_TOKEN,
-      { claimId: "http-recovery-new-agent-claim-0001", messageCursor: null },
+      { claimId: "http-recovery-new-agent-claim-0001", messageCursor: null }
     );
     assert.equal(replacementClaimResponse.status, 201);
-    const replacementClaim = await replacementClaimResponse.json() as {
+    const replacementClaim = (await replacementClaimResponse.json()) as {
       run: { runId: string };
       wakeup: { reason: string };
       task: { version: number };
     };
     assert.equal(replacementClaim.wakeup.reason, "assigned");
-    assert.equal((await request(address.url, `/v1/runs/${replacementClaim.run.runId}/settle`, "POST", AGENT_TWO_TOKEN, {
-      outcome: "failed",
-      result: "Return the recovered task to the backlog for later triage.",
-    })).status, 200);
+    assert.equal(
+      (
+        await request(address.url, `/v1/runs/${replacementClaim.run.runId}/settle`, "POST", AGENT_TWO_TOKEN, {
+          outcome: "failed",
+          result: "Return the recovered task to the backlog for later triage.",
+        })
+      ).status,
+      200
+    );
 
     const secondFailedBoard = await request(address.url, `/v1/projects/${projectId}/board`, "GET", HUMAN_TOKEN);
-    const secondFailed = (await secondFailedBoard.json() as { tasks: Array<{ taskId: string; version: number }> })
-      .tasks.find((candidate) => candidate.taskId === taskId)!;
+    const secondFailed = (
+      (await secondFailedBoard.json()) as { tasks: Array<{ taskId: string; version: number }> }
+    ).tasks.find((candidate) => candidate.taskId === taskId)!;
     const backlogResponse = await request(address.url, `/v1/tasks/${taskId}/backlog`, "POST", HUMAN_TOKEN, {
       version: secondFailed.version,
     });
     assert.equal(backlogResponse.status, 200);
-    const backlogged = (await backlogResponse.json() as {
-      task: { status: string; assignedAgentId: string | null };
-    }).task;
+    const backlogged = (
+      (await backlogResponse.json()) as {
+        task: { status: string; assignedAgentId: string | null };
+      }
+    ).task;
     assert.equal(backlogged.status, "backlog");
     assert.equal(backlogged.assignedAgentId, null);
   } finally {
@@ -1508,10 +1660,10 @@ test("new task recovery routes reject malformed request bodies", async () => {
           `/v1/tasks/malformed-recovery-task/${route}`,
           "POST",
           HUMAN_TOKEN,
-          body,
+          body
         );
         assert.equal(response.status, 400);
-        assert.equal((await response.json() as { error: { code: string } }).error.code, "INVALID_REQUEST");
+        assert.equal(((await response.json()) as { error: { code: string } }).error.code, "INVALID_REQUEST");
       }
     }
   } finally {
@@ -1533,7 +1685,7 @@ test("held HTTP worker requests expose transient connections and service close r
       description: "Observe existing held worker requests without heartbeats.",
     });
     assert.equal(projectResponse.status, 201);
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
     for (const agent of [
       { agentId: "engineer-one", token: AGENT_ONE_TOKEN },
       { agentId: "engineer-two", token: AGENT_TWO_TOKEN },
@@ -1564,34 +1716,37 @@ test("held HTTP worker requests expose transient connections and service close r
     await assert.rejects(canceledClaim, (error: unknown) => error instanceof Error && error.name === "AbortError");
     await waitForWorkerConnection(address.url, projectId, "engineer-one", null);
 
-    const taskResponse = await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      title: "Watch an active run",
-      assignedAgentId: "engineer-two",
-      assignedRole: "engineer",
-    }));
+    const taskResponse = await request(
+      address.url,
+      `/v1/projects/${projectId}/tasks`,
+      "POST",
+      HUMAN_TOKEN,
+      taskRequest({
+        title: "Watch an active run",
+        assignedAgentId: "engineer-two",
+        assignedRole: "engineer",
+      })
+    );
     assert.equal(taskResponse.status, 201);
     const claimResponse = await request(
       address.url,
       "/v1/agents/engineer-two/runs/claim?waitMs=0",
       "POST",
       AGENT_TWO_TOKEN,
-      { claimId: "http-active-run-for-watch-0001", messageCursor: null },
+      { claimId: "http-active-run-for-watch-0001", messageCursor: null }
     );
     assert.equal(claimResponse.status, 201);
-    const runId = (await claimResponse.json() as { run: { runId: string } }).run.runId;
+    const runId = ((await claimResponse.json()) as { run: { runId: string } }).run.runId;
 
-    const heldClaim = request(
-      address.url,
-      "/v1/agents/engineer-one/runs/claim?waitMs=30000",
-      "POST",
-      AGENT_ONE_TOKEN,
-      { claimId: "http-close-held-claim-0001", messageCursor: null },
-    );
+    const heldClaim = request(address.url, "/v1/agents/engineer-one/runs/claim?waitMs=30000", "POST", AGENT_ONE_TOKEN, {
+      claimId: "http-close-held-claim-0001",
+      messageCursor: null,
+    });
     const heldInterrupt = request(
       address.url,
       `/v1/runs/${runId}/interrupts?after=0&waitMs=30000`,
       "GET",
-      AGENT_TWO_TOKEN,
+      AGENT_TWO_TOKEN
     );
     await waitForWorkerConnection(address.url, projectId, "engineer-one", "waiting_for_wake");
     await waitForWorkerConnection(address.url, projectId, "engineer-two", "watching_run");

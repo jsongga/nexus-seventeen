@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type {
-  PlanRevision,
-  WorkflowPlanDraft,
-} from "#shared/task-board-contract";
+import type { PlanRevision, WorkflowPlanDraft } from "#shared/task-board-contract";
 import { HttpTaskBoardClient } from "#server/agents/task-worker";
 import { createTaskBoardService, TaskBoard } from "#server/task-board";
 import {
@@ -27,14 +24,16 @@ function standardPlan(suffix: string): WorkflowPlanDraft {
     objective: `Revise the checkout workflow (${suffix}).`,
     assumptions: ["The checkout project remains available."],
     acceptanceCriteria: ["The confirmed workflow is internally consistent."],
-    nodes: [{
-      nodeId: `verify-checkout-${suffix}`,
-      title: `Verify checkout ${suffix}`,
-      objective: "Verify the requested checkout behavior.",
-      acceptanceCriteria: ["The verification evidence is recorded."],
-      dependencyNodeIds: [],
-      stageTemplate: ["verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `verify-checkout-${suffix}`,
+        title: `Verify checkout ${suffix}`,
+        objective: "Verify the requested checkout behavior.",
+        acceptanceCriteria: ["The verification evidence is recorded."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
   };
 }
 
@@ -48,29 +47,35 @@ function hazardousPlan(): WorkflowPlanDraft {
     declaredScope: ["src/checkout"],
     nonGoals: ["Do not activate implementation before design."],
     mechanicalPortions: ["Update the bounded checkout configuration."],
-    blockingQuestions: [{
-      question: "Which rollback control should Design select?",
-      recommendedDefault: "Retain the current control until Design completes.",
-    }],
-    criterionChecks: [{
-      criterion: "Hazardous work remains parked.",
-      check: "Inspect the work-item state and workflow node state.",
-    }],
-    nodes: [{
-      nodeId: "hazardous-checkout-control",
-      title: "Change the hazardous checkout control",
-      objective: "Implement the control only after a Design stage exists.",
-      acceptanceCriteria: ["The control is machine verified."],
-      dependencyNodeIds: [],
-      stageTemplate: ["verification"],
-    }],
+    blockingQuestions: [
+      {
+        question: "Which rollback control should Design select?",
+        recommendedDefault: "Retain the current control until Design completes.",
+      },
+    ],
+    criterionChecks: [
+      {
+        criterion: "Hazardous work remains parked.",
+        check: "Inspect the work-item state and workflow node state.",
+      },
+    ],
+    nodes: [
+      {
+        nodeId: "hazardous-checkout-control",
+        title: "Change the hazardous checkout control",
+        objective: "Implement the control only after a Design stage exists.",
+        acceptanceCriteria: ["The control is machine verified."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
   };
 }
 
 function settlePlanning(
   fixture: Awaited<ReturnType<typeof boardFixture>>,
   claimId: string,
-  plan: WorkflowPlanDraft,
+  plan: WorkflowPlanDraft
 ): PlanRevision {
   const claim = fixture.board.claimRun(fixture.manager.agentId, { claimId, messageCursor: null });
   assert.ok(claim);
@@ -80,7 +85,9 @@ function settlePlanning(
     result: `Proposed ${plan.objective}`,
     workflowPlan: plan,
   });
-  const proposed = fixture.board.projectWorkflow(fixture.project.projectId).plans.find((item) => item.state === "proposed");
+  const proposed = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((item) => item.state === "proposed");
   assert.ok(proposed);
   return proposed;
 }
@@ -88,7 +95,7 @@ function settlePlanning(
 function startIntake(
   fixture: Awaited<ReturnType<typeof boardFixture>>,
   idempotencyKey: string,
-  originalRequest = "Make checkout revision handling explicit.",
+  originalRequest = "Make checkout revision handling explicit."
 ) {
   const executor = {
     agentTypeId: "plan-gate-executor",
@@ -107,18 +114,23 @@ function startIntake(
     description: "Makes the verification stage available to plan gate tests.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [executor, verifier],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: executor.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verifier.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [executor, verifier],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: executor.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verifier.agentTypeId },
+      }),
+    })
+  );
+  return fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  return fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), idempotencyKey).workItem;
+    idempotencyKey
+  ).workItem;
 }
 
 test("a rejected plan creates a fresh noted planning task and the second proposal can confirm", async () => {
@@ -130,10 +142,13 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     const firstPlan = settlePlanning(fixture, "plan-revision-success-first-claim-0001", standardPlan("first"));
     const note = "Keep the objective, but make the rollback behavior explicit. Bearer plan-gate-secret";
 
-    assert.deepEqual(fixture.board.rejectWorkflowPlan(firstPlan.planRevisionId, {
-      note,
-      expectedState: "proposed",
-    }), { outcome: "revising" });
+    assert.deepEqual(
+      fixture.board.rejectWorkflowPlan(firstPlan.planRevisionId, {
+        note,
+        expectedState: "proposed",
+      }),
+      { outcome: "revising" }
+    );
 
     const revising = fixture.board.requireWorkItem(workItem.workItemId);
     assert.equal(revising.state, "planning");
@@ -141,56 +156,62 @@ test("a rejected plan creates a fresh noted planning task and the second proposa
     assert.ok(revising.planningTaskId);
     assert.equal(
       fixture.board.requireTask(revising.planningTaskId).objective,
-      `Prior plan rejected: Keep the objective, but make the rollback behavior explicit. [redacted:bearer]\n\n${workItem.originalRequest}`,
+      `Prior plan rejected: Keep the objective, but make the rollback behavior explicit. [redacted:bearer]\n\n${workItem.originalRequest}`
     );
-    const rejected = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-      (plan) => plan.planRevisionId === firstPlan.planRevisionId,
-    );
+    const rejected = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .plans.find((plan) => plan.planRevisionId === firstPlan.planRevisionId);
     assert.equal(rejected?.state, "rejected");
     assert.equal(
       rejected?.rejectedNote,
-      "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]",
+      "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]"
     );
 
     const rejectedAction = gateActions(fixture.path, workItem.workItemId).find(
-      (action) => action.gate === "plan_reject",
+      (action) => action.gate === "plan_reject"
     );
     assert.ok(rejectedAction);
     assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: workItem.workItemId,
-      gate: "plan_reject",
-      actorId: "human:alice",
-      planRevisionId: firstPlan.planRevisionId,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note: "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]",
-      createdAt: "2026-07-19T20:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...rejectedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: workItem.workItemId,
+        gate: "plan_reject",
+        actorId: "human:alice",
+        planRevisionId: firstPlan.planRevisionId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note: "Keep the objective, but make the rollback behavior explicit. [redacted:bearer]",
+        createdAt: "2026-07-19T20:00:00.000Z",
+      }
+    );
 
     const secondPlan = settlePlanning(fixture, "plan-revision-success-second-claim-0001", standardPlan("second"));
     const confirmed = fixture.board.confirmWorkflow(secondPlan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, undefined);
     assert.equal(confirmed.plans.find((plan) => plan.planRevisionId === secondPlan.planRevisionId)?.state, "confirmed");
     const confirmedAction = gateActions(fixture.path, workItem.workItemId).find(
-      (action) => action.gate === "plan_confirm",
+      (action) => action.gate === "plan_confirm"
     );
     assert.ok(confirmedAction);
     assert.match(confirmedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...confirmedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: workItem.workItemId,
-      gate: "plan_confirm",
-      actorId: "human:alice",
-      planRevisionId: secondPlan.planRevisionId,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: String(secondPlan.revision),
-      note: null,
-      createdAt: "2026-07-19T20:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...confirmedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: workItem.workItemId,
+        gate: "plan_confirm",
+        actorId: "human:alice",
+        planRevisionId: secondPlan.planRevisionId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: String(secondPlan.revision),
+        note: null,
+        createdAt: "2026-07-19T20:00:00.000Z",
+      }
+    );
   } finally {
     fixture.board.close();
   }
@@ -203,7 +224,7 @@ test("a prepended rejection note survives bounded worker-context truncation", as
     const firstPlan = settlePlanning(
       fixture,
       "plan-revision-long-request-first-claim-0001",
-      standardPlan("long-request"),
+      standardPlan("long-request")
     );
     const note = "Keep the rollback instruction at the head of the manager context.";
     const prefix = `Prior plan rejected: ${note}`;
@@ -223,10 +244,11 @@ test("a prepended rejection note survives bounded worker-context truncation", as
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1/",
       token: AGENT_TWO_TOKEN,
-      fetchImplementation: async () => new Response(JSON.stringify(rawClaim), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      fetchImplementation: async () =>
+        new Response(JSON.stringify(rawClaim), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     });
     const mappedClaim = await client.claimNextWake({
       agentId: fixture.manager.agentId,
@@ -255,10 +277,13 @@ test("rejecting a second plan parks the work item and records the bounded reason
     const secondPlanningTaskId = fixture.board.requireWorkItem(workItem.workItemId).planningTaskId;
     assert.ok(secondPlanningTaskId);
 
-    assert.deepEqual(fixture.board.rejectWorkflowPlan(secondPlan.planRevisionId, {
-      note: "The revised rollback boundary is still ambiguous.",
-      expectedState: "proposed",
-    }), { outcome: "parked" });
+    assert.deepEqual(
+      fixture.board.rejectWorkflowPlan(secondPlan.planRevisionId, {
+        note: "The revised rollback boundary is still ambiguous.",
+        expectedState: "proposed",
+      }),
+      { outcome: "parked" }
+    );
 
     const parked = fixture.board.requireWorkItem(workItem.workItemId);
     assert.equal(parked.state, "parked");
@@ -268,9 +293,9 @@ test("rejecting a second plan parks the work item and records the bounded reason
       category: "plan_rejected_twice",
       reason: REJECTED_TWICE_RESULT,
     });
-    const rejected = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-      (plan) => plan.planRevisionId === secondPlan.planRevisionId,
-    );
+    const rejected = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .plans.find((plan) => plan.planRevisionId === secondPlan.planRevisionId);
     assert.equal(rejected?.state, "rejected");
     assert.equal(rejected?.rejectedNote, "The revised rollback boundary is still ambiguous.");
   } finally {
@@ -284,11 +309,7 @@ test("confirming a hazardous non-pipeline plan parks without activating its node
     const workItem = startIntake(fixture, "hazardous-plan-confirm-0001");
     const planningTaskId = workItem.planningTaskId;
     assert.ok(planningTaskId);
-    const plan = settlePlanning(
-      fixture,
-      "hazardous-plan-confirm-claim-0001",
-      hazardousPlan(),
-    );
+    const plan = settlePlanning(fixture, "hazardous-plan-confirm-claim-0001", hazardousPlan());
 
     const confirmed = fixture.board.confirmWorkflow(plan.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, "parked_hazardous");
@@ -297,7 +318,7 @@ test("confirming a hazardous non-pipeline plan parks without activating its node
     assert.equal(confirmed.plans.find((item) => item.planRevisionId === plan.planRevisionId)?.state, "confirmed");
     assert.deepEqual(
       confirmed.nodes.map((node) => ({ state: node.state, currentStage: node.currentStage })),
-      [{ state: "pending", currentStage: null }],
+      [{ state: "pending", currentStage: null }]
     );
   } finally {
     fixture.board.close();
@@ -318,11 +339,12 @@ test("the reject endpoint is human-only, validates the exact request, and guards
     now: () => new Date("2026-08-19T12:00:00.000Z"),
   });
   const address = await service.start();
-  const send = (token: string, body: unknown) => fetch(`${address.url}/v1/plans/${plan.planRevisionId}/reject`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const send = (token: string, body: unknown) =>
+    fetch(`${address.url}/v1/plans/${plan.planRevisionId}/reject`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
   try {
     assert.equal((await send(AGENT_ONE_TOKEN, { note: "Revise it.", expectedState: "proposed" })).status, 401);
     for (const body of [
@@ -338,7 +360,7 @@ test("the reject endpoint is human-only, validates the exact request, and guards
     assert.deepEqual(await response.json(), { outcome: "revising" });
     const conflict = await send(HUMAN_TOKEN, { note: "Try again.", expectedState: "proposed" });
     assert.equal(conflict.status, 409);
-    assert.equal((await conflict.json() as { error: { code: string } }).error.code, "PLAN_NOT_PROPOSED");
+    assert.equal(((await conflict.json()) as { error: { code: string } }).error.code, "PLAN_NOT_PROPOSED");
   } finally {
     await service.close();
   }

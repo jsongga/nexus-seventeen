@@ -1,4 +1,4 @@
-import type { BoardWorkItem } from '../types';
+import type { BoardWorkItem } from "../types";
 
 export interface WorkItemTreeRow {
   workItem: BoardWorkItem;
@@ -9,21 +9,19 @@ export interface WorkItemTreeRow {
   dependencyHint: string | null;
 }
 
-function childOrder(
-  positions: ReadonlyMap<string, number>,
-  left: BoardWorkItem,
-  right: BoardWorkItem,
-): number {
+function childOrder(positions: ReadonlyMap<string, number>, left: BoardWorkItem, right: BoardWorkItem): number {
   const leftOrdinal = left.childOrdinal ?? Number.MAX_SAFE_INTEGER;
   const rightOrdinal = right.childOrdinal ?? Number.MAX_SAFE_INTEGER;
-  return leftOrdinal - rightOrdinal
-    || (positions.get(left.id) ?? 0) - (positions.get(right.id) ?? 0)
-    || left.id.localeCompare(right.id);
+  return (
+    leftOrdinal - rightOrdinal ||
+    (positions.get(left.id) ?? 0) - (positions.get(right.id) ?? 0) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 export function workItemDependencyHint(workItem: BoardWorkItem): string | null {
-  if (workItem.phase === 'migrate') return 'after Expand';
-  if (workItem.phase === 'contract') return 'after Migrate';
+  if (workItem.phase === "migrate") return "after Expand";
+  if (workItem.phase === "contract") return "after Migrate";
   return null;
 }
 
@@ -51,12 +49,12 @@ export function groupWorkItems(workItems: readonly BoardWorkItem[]): WorkItemTre
     if (emitted.has(workItem.id)) return;
     emitted.add(workItem.id);
     const children = childrenByParent.get(workItem.id) ?? [];
-    const activeChildren = children.filter((child) => child.state !== 'abandoned' && child.state !== 'dead_letter');
+    const activeChildren = children.filter((child) => child.state !== "abandoned" && child.state !== "dead_letter");
     rows.push({
       workItem,
       depth,
       childCount: activeChildren.length,
-      mergedChildCount: activeChildren.filter((child) => child.state === 'merged').length,
+      mergedChildCount: activeChildren.filter((child) => child.state === "merged").length,
       abandonedChildCount: children.length - activeChildren.length,
       dependencyHint: workItem.parentWorkItemId === null ? null : workItemDependencyHint(workItem),
     });

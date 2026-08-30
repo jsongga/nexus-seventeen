@@ -16,11 +16,17 @@ const DEFAULT_LONG_POLL_MS = 30_000;
 const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 1_000, maximumDelayMs: 60_000 });
 
 function record(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`${label} must be an object`);
   return value as Record<string, unknown>;
 }
 
-function exact(value: unknown, required: readonly string[], optional: readonly string[], label: string): Record<string, unknown> {
+function exact(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[],
+  label: string
+): Record<string, unknown> {
   const item = record(value, label);
   const allowed = new Set([...required, ...optional]);
   const unknown = Object.keys(item).filter((key) => !allowed.has(key));
@@ -32,7 +38,10 @@ function exact(value: unknown, required: readonly string[], optional: readonly s
 
 function text(value: unknown, label: string, maximum: number): string {
   if (
-    typeof value !== "string" || value.length < 1 || value.length > maximum || value.trim() !== value ||
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    value.trim() !== value ||
     /[\u0000-\u001f\u007f]/u.test(value)
   ) {
     throw new Error(`${label} is invalid`);
@@ -80,8 +89,12 @@ function boardUrl(value: unknown): string {
   }
   const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "::1" || parsed.hostname === "[::1]";
   if (
-    (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) || parsed.username || parsed.password ||
-    parsed.pathname !== "/" || parsed.search || parsed.hash
+    (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash
   ) {
     throw new Error("config.boardUrl must be an HTTPS origin or exact loopback HTTP origin");
   }
@@ -103,11 +116,13 @@ function containerConfig(value: unknown, label: string): TaskFleetContainerLaneC
     if (!Array.isArray(item.extraAllowedHosts) || item.extraAllowedHosts.length > 32) {
       throw new Error(`${label}.extraAllowedHosts must be an array of at most 32 hosts`);
     }
-    extraAllowedHosts = Object.freeze(item.extraAllowedHosts.map((value, index) => {
-      const host = text(value, `${label}.extraAllowedHosts[${index}]`, 253);
-      if (!CONTAINER_HOST.test(host)) throw new Error(`${label}.extraAllowedHosts[${index}] is invalid`);
-      return host;
-    }));
+    extraAllowedHosts = Object.freeze(
+      item.extraAllowedHosts.map((value, index) => {
+        const host = text(value, `${label}.extraAllowedHosts[${index}]`, 253);
+        if (!CONTAINER_HOST.test(host)) throw new Error(`${label}.extraAllowedHosts[${index}] is invalid`);
+        return host;
+      })
+    );
   }
   return Object.freeze({
     workspaceRoot: absolutePath(item.workspaceRoot, `${label}.workspaceRoot`),
@@ -123,12 +138,15 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
     value,
     ["workerId", "agentId", "token", "provider", "model", "workingDirectory", "statePath"],
     ["role", "longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container", "workspaceRoot"],
-    label,
+    label
   );
   const runtime = item.runtime === undefined ? "local-process" : item.runtime;
-  if (runtime !== "local-process" && runtime !== "container") throw new Error(`${label}.runtime must be local-process or container`);
-  if (runtime === "container" && item.container === undefined) throw new Error(`${label}.container is required for container lanes`);
-  if (runtime !== "container" && item.container !== undefined) throw new Error(`${label}.container is only valid for container lanes`);
+  if (runtime !== "local-process" && runtime !== "container")
+    throw new Error(`${label}.runtime must be local-process or container`);
+  if (runtime === "container" && item.container === undefined)
+    throw new Error(`${label}.container is required for container lanes`);
+  if (runtime !== "container" && item.container !== undefined)
+    throw new Error(`${label}.container is only valid for container lanes`);
   if (runtime === "container" && item.workspaceRoot !== undefined) {
     throw new Error(`${label}.workspaceRoot is only valid for local-process lanes`);
   }
@@ -147,9 +165,10 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
       ? {}
       : { workspaceRoot: absolutePath(item.workspaceRoot, `${label}.workspaceRoot`) }),
     statePath: absolutePath(item.statePath, `${label}.statePath`),
-    longPollMs: item.longPollMs === undefined
-      ? DEFAULT_LONG_POLL_MS
-      : integer(item.longPollMs, `${label}.longPollMs`, 1_000, 30_000),
+    longPollMs:
+      item.longPollMs === undefined
+        ? DEFAULT_LONG_POLL_MS
+        : integer(item.longPollMs, `${label}.longPollMs`, 1_000, 30_000),
     agentTimeoutMs: optionalInteger(item.agentTimeoutMs, `${label}.agentTimeoutMs`, 1_000, 24 * 60 * 60_000),
     terminationGraceMs: optionalInteger(item.terminationGraceMs, `${label}.terminationGraceMs`, 10, 60_000),
     runtime,
@@ -168,7 +187,12 @@ function unique(values: readonly TaskFleetAgentConfig[], field: "workerId" | "ag
 export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
   const config = record(value, "config");
   if ("promptsRoot" in config) throw new Error("config.promptsRoot is no longer supported; use config.promptsFile");
-  const item = exact(config, ["version", "boardUrl", "agents"], ["retry", "runtimesConfigPath", "promptsFile"], "config");
+  const item = exact(
+    config,
+    ["version", "boardUrl", "agents"],
+    ["retry", "runtimesConfigPath", "promptsFile"],
+    "config"
+  );
   if (item.version !== 1) throw new Error("config.version must be 1");
   if (!Array.isArray(item.agents) || item.agents.length < 1 || item.agents.length > 128) {
     throw new Error("config.agents must contain between 1 and 128 agents");
@@ -180,12 +204,11 @@ export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
   return Object.freeze({
     version: 1,
     boardUrl: boardUrl(item.boardUrl),
-    runtimesConfigPath: item.runtimesConfigPath === undefined
-      ? undefined
-      : text(item.runtimesConfigPath, "config.runtimesConfigPath", 4_096),
-    promptsFile: item.promptsFile === undefined
-      ? undefined
-      : text(item.promptsFile, "config.promptsFile", 4_096),
+    runtimesConfigPath:
+      item.runtimesConfigPath === undefined
+        ? undefined
+        : text(item.runtimesConfigPath, "config.runtimesConfigPath", 4_096),
+    promptsFile: item.promptsFile === undefined ? undefined : text(item.promptsFile, "config.promptsFile", 4_096),
     retry: retryConfig(item.retry),
     agents,
   });

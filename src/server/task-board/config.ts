@@ -59,7 +59,7 @@ function boundedInteger(
   fallback: number,
   minimum: number,
   maximum: number,
-  field: string,
+  field: string
 ): number {
   const resolved = value ?? fallback;
   if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
@@ -69,12 +69,7 @@ function boundedInteger(
 }
 
 function configText(value: string, field: string, maximum: number): string {
-  if (
-    value.length < 1 ||
-    value.length > maximum ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
+  if (value.length < 1 || value.length > maximum || value.trim() !== value || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", `${field} is invalid`);
   }
   return value;
@@ -115,8 +110,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "humanPrincipal is invalid");
   }
   const hostOptions = options.host;
-  const projectRoots = hostOptions?.projectRoots?.map((value) =>
-    configText(value, "host.projectRoots entry", 4_096));
+  const projectRoots = hostOptions?.projectRoots?.map((value) => configText(value, "host.projectRoots entry", 4_096));
   if (projectRoots?.some((value) => !value.startsWith("/"))) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "host.projectRoots entries must be absolute paths");
   }
@@ -135,7 +129,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   const verifyWorkspaceRoot = configText(
     options.verifyWorkspaceRoot ?? join(dirname(dbPath), "verify-workspaces"),
     "verifyWorkspaceRoot",
-    4_096,
+    4_096
   );
   if (!isAbsolute(verifyWorkspaceRoot) || verifyWorkspaceRoot === "/") {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "verifyWorkspaceRoot must be an absolute directory path");
@@ -145,7 +139,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     300,
     0,
     MAX_TIMER_SECONDS,
-    "heartbeatTimeoutSeconds",
+    "heartbeatTimeoutSeconds"
   );
   // The non-zero floor is 2x the worker's fixed 30-second heartbeat cadence.
   if (heartbeatTimeoutSeconds !== 0 && heartbeatTimeoutSeconds < 60) {
@@ -156,7 +150,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     86_400,
     0,
     MAX_TIMER_SECONDS,
-    "parkNotifySeconds",
+    "parkNotifySeconds"
   );
   if (parkNotifySeconds !== 0 && parkNotifySeconds < 60) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "parkNotifySeconds is outside its safe range");
@@ -166,51 +160,31 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
     604_800,
     0,
     MAX_TIMER_SECONDS,
-    "parkAutoAbandonSeconds",
+    "parkAutoAbandonSeconds"
   );
   if (parkAutoAbandonSeconds !== 0 && parkAutoAbandonSeconds < 60) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "parkAutoAbandonSeconds is outside its safe range");
   }
-  if (
-    parkNotifySeconds !== 0
-    && parkAutoAbandonSeconds !== 0
-    && parkAutoAbandonSeconds < parkNotifySeconds
-  ) {
+  if (parkNotifySeconds !== 0 && parkAutoAbandonSeconds !== 0 && parkAutoAbandonSeconds < parkNotifySeconds) {
     throw new TaskBoardError(
       500,
       "INVALID_CONFIGURATION",
-      "parkAutoAbandonSeconds must be at least parkNotifySeconds when both are enabled",
+      "parkAutoAbandonSeconds must be at least parkNotifySeconds when both are enabled"
     );
   }
-  const stageCapSeconds = boundedInteger(
-    options.stageCapSeconds,
-    3_600,
-    0,
-    MAX_TIMER_SECONDS,
-    "stageCapSeconds",
-  );
+  const stageCapSeconds = boundedInteger(options.stageCapSeconds, 3_600, 0, MAX_TIMER_SECONDS, "stageCapSeconds");
   if (stageCapSeconds !== 0 && stageCapSeconds < 60) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "stageCapSeconds is outside its safe range");
   }
-  const taskCapSeconds = boundedInteger(
-    options.taskCapSeconds,
-    10_800,
-    0,
-    MAX_TIMER_SECONDS,
-    "taskCapSeconds",
-  );
+  const taskCapSeconds = boundedInteger(options.taskCapSeconds, 10_800, 0, MAX_TIMER_SECONDS, "taskCapSeconds");
   if (taskCapSeconds !== 0 && taskCapSeconds < 60) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "taskCapSeconds is outside its safe range");
   }
-  if (
-    stageCapSeconds !== 0
-    && taskCapSeconds !== 0
-    && taskCapSeconds < stageCapSeconds
-  ) {
+  if (stageCapSeconds !== 0 && taskCapSeconds !== 0 && taskCapSeconds < stageCapSeconds) {
     throw new TaskBoardError(
       500,
       "INVALID_CONFIGURATION",
-      "taskCapSeconds must be at least stageCapSeconds when both are enabled",
+      "taskCapSeconds must be at least stageCapSeconds when both are enabled"
     );
   }
   return Object.freeze({
@@ -228,7 +202,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
       60,
       0,
       MAX_TIMER_SECONDS,
-      "reconcileIntervalSeconds",
+      "reconcileIntervalSeconds"
     ),
     parkNotifySeconds,
     parkAutoAbandonSeconds,

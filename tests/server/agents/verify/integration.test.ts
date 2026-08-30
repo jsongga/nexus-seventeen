@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  access,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -42,7 +34,7 @@ function execute(
   command: string,
   args: readonly string[],
   cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env
 ): Promise<CommandResult> {
   return new Promise<CommandResult>((resolve, reject) => {
     execFile(command, [...args], { cwd, encoding: "utf8", env }, (error, stdout, stderr) => {
@@ -65,11 +57,7 @@ function execute(
 
 async function executeSuccessfully(command: string, args: readonly string[], cwd: string): Promise<void> {
   const result = await execute(command, args, cwd);
-  assert.equal(
-    result.exitCode,
-    0,
-    `${command} ${args.join(" ")} failed:\n${result.stdout}${result.stderr}`,
-  );
+  assert.equal(result.exitCode, 0, `${command} ${args.join(" ")} failed:\n${result.stdout}${result.stderr}`);
 }
 
 function runCli(repoRoot: string, args: readonly string[]): Promise<CommandResult> {
@@ -95,14 +83,10 @@ async function createFixture(): Promise<string> {
   await writePath(
     repo,
     "docs/workflow.md",
-    `# Fixture workflow\n\n\`\`\`json\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n`,
+    `# Fixture workflow\n\n\`\`\`json\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n`
   );
-  await writePath(
-    repo,
-    ".gitignore",
-    ".test-dist/\n.verify-runs/\nbuild/\ncompile-marker.log\nfull-fail.flag\n",
-  );
-  await writePath(repo, "src/x.ts", "export const state = \"base\";\n");
+  await writePath(repo, ".gitignore", ".test-dist/\n.verify-runs/\nbuild/\ncompile-marker.log\nfull-fail.flag\n");
+  await writePath(repo, "src/x.ts", 'export const state = "base";\n');
   await writePath(
     repo,
     "tests/x.test.ts",
@@ -115,7 +99,7 @@ async function createFixture(): Promise<string> {
       '  assert.match(readFileSync("src/x.ts", "utf8"), /green/);',
       "});",
       "",
-    ].join("\n"),
+    ].join("\n")
   );
   await writePath(
     repo,
@@ -126,7 +110,7 @@ async function createFixture(): Promise<string> {
       'copyFileSync("tests/x.test.ts", ".test-dist/tests/x.test.js");',
       'appendFileSync("compile-marker.log", "compiled\\n");',
       "",
-    ].join("\n"),
+    ].join("\n")
   );
   await writePath(repo, "full-one.mjs", 'process.stdout.write("first-full-command\\n");\n');
   await writePath(
@@ -137,7 +121,7 @@ async function createFixture(): Promise<string> {
       'process.stdout.write("second-full-command-complete\\n");',
       'if (existsSync("full-fail.flag")) process.exitCode = 9;',
       "",
-    ].join("\n"),
+    ].join("\n")
   );
 
   await executeSuccessfully("git", ["add", "."], repo);
@@ -154,7 +138,7 @@ async function createFixture(): Promise<string> {
       "-m",
       "baseline",
     ],
-    repo,
+    repo
   );
 
   await writePath(repo, "build/sentinel.txt", "keep me\n");
@@ -167,7 +151,7 @@ async function createFixture(): Promise<string> {
 async function waitForStatus(
   repoRoot: string,
   id: string,
-  expected: "green" | "failed",
+  expected: "green" | "failed"
 ): Promise<{ readonly result: CommandResult; readonly status: CliStatus }> {
   const deadline = Date.now() + 5_000;
   let result = await runCli(repoRoot, ["status", id]);
@@ -185,19 +169,19 @@ test("real verify CLI dispatches foreground and background runs against a git fi
   const repo = await createFixture();
   t.after(async () => rm(dirname(repo), { recursive: true, force: true }));
 
-  await writePath(repo, "src/x.ts", "export const state = \"escalating\";\n");
+  await writePath(repo, "src/x.ts", 'export const state = "escalating";\n');
   await writePath(repo, "unsafe.yml", "unmapped: true\n");
   const escalating = await runCli(repo, ["fast", "--base", "main"]);
   assert.equal(escalating.exitCode, 2);
   assert.match(escalating.stderr, /unsafe\.yml \(unmapped change, run area\/full\)/u);
 
   await rm(join(repo, "unsafe.yml"));
-  await writePath(repo, "src/x.ts", "export const state = \"failing\";\n");
+  await writePath(repo, "src/x.ts", 'export const state = "failing";\n');
   const failing = await runCli(repo, ["fast", "--base", "main"]);
   assert.equal(failing.exitCode, 1, `${failing.stdout}${failing.stderr}`);
   assert.match(failing.stderr, /node --test \.test-dist\/tests\/x\.test\.js/u);
 
-  await writePath(repo, "src/x.ts", "export const state = \"green\";\n");
+  await writePath(repo, "src/x.ts", 'export const state = "green";\n');
   const green = await runCli(repo, ["fast", "--base", "main"]);
   assert.equal(green.exitCode, 0, green.stderr);
   assert.equal(await readFile(join(repo, "compile-marker.log"), "utf8"), "compiled\ncompiled\n");

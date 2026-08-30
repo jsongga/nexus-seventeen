@@ -23,11 +23,11 @@ const SHIPPED_SKILL_DIGESTS = {
 test("loads bounded repository skills with stable digests", () => {
   const registry = new SkillRegistry(resolve("config/skills.md"));
   const skills = registry.loadSync(Object.keys(SHIPPED_SKILL_DIGESTS));
-  assert.deepEqual(
-    Object.fromEntries(skills.map(({ skillId, digest }) => [skillId, digest])),
-    SHIPPED_SKILL_DIGESTS,
+  assert.deepEqual(Object.fromEntries(skills.map(({ skillId, digest }) => [skillId, digest])), SHIPPED_SKILL_DIGESTS);
+  assert.match(
+    skills.find(({ skillId }) => skillId === "cicada-task-curation")?.content ?? "",
+    /Preserve the original request/u
   );
-  assert.match(skills.find(({ skillId }) => skillId === "cicada-task-curation")?.content ?? "", /Preserve the original request/u);
 });
 
 test("rejects missing, duplicate, and malformed skills", async () => {
@@ -50,7 +50,7 @@ test("rejects missing, duplicate, and malformed skills", async () => {
       assert.equal(error.message, "Skill registry file is unavailable");
       assert.ok(!error.message.includes(root));
       return true;
-    },
+    }
   );
 
   const link = join(root, "skills-link.md");
@@ -71,7 +71,7 @@ test("rejects oversized registries before reading and keeps the per-section cap"
         assert.equal(error.code, "SKILL_NOT_AVAILABLE");
         assert.equal(error.message, "Skill registry file is unavailable");
         return true;
-      },
+      }
     );
   } finally {
     await chmod(oversizedFile, 0o600);
@@ -81,7 +81,7 @@ test("rejects oversized registries before reading and keeps the per-section cap"
   await writeFile(
     oversizedSectionFile,
     `## oversized-skill\n---\nname: oversized-skill\ndescription: valid\n---\n${"x".repeat(64 * 1024)}\n`,
-    "utf8",
+    "utf8"
   );
   assert.throws(
     () => new SkillRegistry(oversizedSectionFile).loadSync(["oversized-skill"]),
@@ -90,7 +90,7 @@ test("rejects oversized registries before reading and keeps the per-section cap"
       assert.equal(error.code, "SKILL_NOT_AVAILABLE");
       assert.match(error.message, /Skill oversized-skill is unavailable/u);
       return true;
-    },
+    }
   );
 });
 
@@ -110,7 +110,7 @@ test("rejects a column-0 section heading inside any skill body", async () => {
   const file = join(root, "skills.md");
   await writeFile(
     file,
-    "## valid-skill\n---\nname: valid-skill\ndescription: valid\n---\nBody before heading\n## examples\nBody after heading\n",
+    "## valid-skill\n---\nname: valid-skill\ndescription: valid\n---\nBody before heading\n## examples\nBody after heading\n"
   );
 
   assert.throws(
@@ -120,6 +120,6 @@ test("rejects a column-0 section heading inside any skill body", async () => {
       assert.equal(error.code, "SKILL_INVALID");
       assert.match(error.message, /## examples is missing YAML frontmatter/u);
       return true;
-    },
+    }
   );
 });

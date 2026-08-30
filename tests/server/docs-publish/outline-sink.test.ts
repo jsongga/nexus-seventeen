@@ -21,7 +21,7 @@ function sinkFor(
   steps: readonly WireStep[],
   sleeper: (delayMs: number) => Promise<void> = async () => {
     throw new Error("successful requests must not sleep");
-  },
+  }
 ): OutlineSink {
   let index = 0;
   const fetchImplementation = (async (input, init = {}) => {
@@ -45,7 +45,9 @@ function sinkFor(
     sleeper,
   });
   return Object.assign(sink, {
-    assertComplete(): void { assert.equal(index, steps.length); },
+    assertComplete(): void {
+      assert.equal(index, steps.length);
+    },
   });
 }
 
@@ -211,7 +213,9 @@ test("lost collection-create responses reconcile through a fresh list without du
     baseUrl: "https://outline.example.test",
     token: "outline-token",
     fetchImplementation,
-    sleeper: async (delay) => { delays.push(delay); },
+    sleeper: async (delay) => {
+      delays.push(delay);
+    },
   });
 
   assert.deepEqual(await sink.ensureCollection("sample"), {
@@ -251,7 +255,9 @@ test("collection-create conflicts on a retry reconcile through another exact-nam
     baseUrl: "https://outline.example.test",
     token: "outline-token",
     fetchImplementation,
-    sleeper: async (delay) => { delays.push(delay); },
+    sleeper: async (delay) => {
+      delays.push(delay);
+    },
   });
 
   assert.deepEqual(await sink.ensureCollection("sample"), {
@@ -288,7 +294,9 @@ test("lost document-create responses reconcile by exact title without duplicatin
     baseUrl: "https://outline.example.test",
     token: "outline-token",
     fetchImplementation,
-    sleeper: async (delay) => { delays.push(delay); },
+    sleeper: async (delay) => {
+      delays.push(delay);
+    },
   });
 
   await sink.createDocument(collection, "docs/new.md", "# New\n");
@@ -300,22 +308,27 @@ test("lost document-create responses reconcile by exact title without duplicatin
 
 test("collection and document sink paths compose the shared retry policy", async () => {
   const collectionDelays: number[] = [];
-  const collectionSink = sinkFor([
-    {
-      path: "/api/collections.list",
-      body: { limit: 100 },
-      response: { error: "rate_limit" },
-      status: 429,
-    },
-    {
-      path: "/api/collections.list",
-      body: { limit: 100 },
-      response: {
-        data: [{ id: "target", name: "sample docs", permission: "read" }],
-        pagination: { limit: 100, offset: 0, total: 1 },
+  const collectionSink = sinkFor(
+    [
+      {
+        path: "/api/collections.list",
+        body: { limit: 100 },
+        response: { error: "rate_limit" },
+        status: 429,
       },
-    },
-  ], async (delay) => { collectionDelays.push(delay); });
+      {
+        path: "/api/collections.list",
+        body: { limit: 100 },
+        response: {
+          data: [{ id: "target", name: "sample docs", permission: "read" }],
+          pagination: { limit: 100, offset: 0, total: 1 },
+        },
+      },
+    ],
+    async (delay) => {
+      collectionDelays.push(delay);
+    }
+  );
 
   assert.deepEqual(await collectionSink.ensureCollection("sample"), {
     id: "target",
@@ -325,19 +338,24 @@ test("collection and document sink paths compose the shared retry policy", async
   assertComplete(collectionSink);
 
   const documentDelays: number[] = [];
-  const documentSink = sinkFor([
-    {
-      path: "/api/documents.update",
-      body: { id: "existing", title: "README.md", text: "# Updated\n" },
-      response: { error: "rate_limit" },
-      status: 429,
-    },
-    {
-      path: "/api/documents.update",
-      body: { id: "existing", title: "README.md", text: "# Updated\n" },
-      response: { data: { id: "existing", title: "README.md", text: "# Updated\n" } },
-    },
-  ], async (delay) => { documentDelays.push(delay); });
+  const documentSink = sinkFor(
+    [
+      {
+        path: "/api/documents.update",
+        body: { id: "existing", title: "README.md", text: "# Updated\n" },
+        response: { error: "rate_limit" },
+        status: 429,
+      },
+      {
+        path: "/api/documents.update",
+        body: { id: "existing", title: "README.md", text: "# Updated\n" },
+        response: { data: { id: "existing", title: "README.md", text: "# Updated\n" } },
+      },
+    ],
+    async (delay) => {
+      documentDelays.push(delay);
+    }
+  );
 
   await documentSink.updateDocument("existing", "README.md", "# Updated\n");
   assert.deepEqual(documentDelays, [1_000]);
@@ -345,11 +363,13 @@ test("collection and document sink paths compose the shared retry policy", async
 });
 
 test("rejects a successful response without Outline's data envelope", async () => {
-  const sink = sinkFor([{
-    path: "/api/collections.list",
-    body: { limit: 100 },
-    response: { ok: true },
-  }]);
+  const sink = sinkFor([
+    {
+      path: "/api/collections.list",
+      body: { limit: 100 },
+      response: { ok: true },
+    },
+  ]);
 
   await assert.rejects(sink.ensureCollection("sample"), /data/u);
   assertComplete(sink);

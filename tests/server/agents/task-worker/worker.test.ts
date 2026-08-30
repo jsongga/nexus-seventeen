@@ -36,13 +36,15 @@ import {
 type WorkerDiagnostic = TaskWorkerDiagnosticEvent;
 const PROMPTS = PromptRegistry.loadSync(resolve("config/prompts.md"));
 
-function phaseEvent(signal: Readonly<{
-  key: string;
-  title: string;
-  stage: string;
-  status: string;
-  parallelGroup: string | null;
-}>): RuntimeEvent {
+function phaseEvent(
+  signal: Readonly<{
+    key: string;
+    title: string;
+    stage: string;
+    status: string;
+    parallelGroup: string | null;
+  }>
+): RuntimeEvent {
   return { type: "tool_result", name: "command", output: `STEWARD_PHASE_JSON=${JSON.stringify(signal)}\n` };
 }
 
@@ -52,7 +54,7 @@ async function worker(
   launcher: FakeLauncher,
   logger?: (event: WorkerDiagnostic) => void,
   pinned?: ClaimRunPinning,
-  longPollMs = 30_000,
+  longPollMs = 30_000
 ): Promise<TaskWorker> {
   return TaskWorker.create({
     identity: { workerId: "worker-one", agentId: AGENT },
@@ -67,14 +69,18 @@ async function worker(
 }
 
 function outputIdempotency(claim: TaskWakeClaim, index: number, output: AgentRunOutput): string {
-  const digest = createHash("sha256").update(JSON.stringify({
-    action: "append_task_worker_output",
-    runId: claim.runId,
-    wakeupId: claim.wakeupId,
-    taskId: claim.taskId,
-    localSequence: index + 1,
-    output,
-  })).digest("hex");
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        action: "append_task_worker_output",
+        runId: claim.runId,
+        wakeupId: claim.wakeupId,
+        taskId: claim.taskId,
+        localSequence: index + 1,
+        output,
+      })
+    )
+    .digest("hex");
   return `twe_${digest}`;
 }
 
@@ -172,7 +178,7 @@ test("a heartbeat 401 is logged without changing the active lane", async (contex
   board.heartbeatFailure = new TaskBoardHttpError(
     "Task-board request failed with HTTP 401",
     401,
-    "AUTHENTICATION_REQUIRED",
+    "AUTHENTICATION_REQUIRED"
   );
   board.queued.push((request) => claimed(request));
   const launcher = new FakeLauncher();
@@ -188,13 +194,15 @@ test("a heartbeat 401 is logged without changing the active lane", async (contex
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(board.heartbeatAttempts.length, 1);
     assert.deepEqual(taskWorker.snapshot, laneBeforeHeartbeat);
-    assert.deepEqual(diagnostics, [{
-      type: "run_heartbeat_failed",
-      agentId: AGENT,
-      workerId: "worker-one",
-      runId: RUN,
-      error: "Task-board request failed with HTTP 401",
-    }]);
+    assert.deepEqual(diagnostics, [
+      {
+        type: "run_heartbeat_failed",
+        agentId: AGENT,
+        workerId: "worker-one",
+        runId: RUN,
+        error: "Task-board request failed with HTTP 401",
+      },
+    ]);
 
     context_.mock.timers.tick(30_000);
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -311,7 +319,7 @@ test("a non-active pending-claim replay is discarded without launch and the next
   const board = new FakeBoard();
   board.queued.push(
     (request) => claimed(request),
-    (request) => claimed(request, { runId: "run-after-inactive-replay", wakeupId: "wake-after-inactive-replay" }),
+    (request) => claimed(request, { runId: "run-after-inactive-replay", wakeupId: "wake-after-inactive-replay" })
   );
   board.claimFailures = 1;
   const launcher = new FakeLauncher();
@@ -326,13 +334,15 @@ test("a non-active pending-claim replay is discarded without launch and the next
     assert.equal(launcher.requests.length, 0);
     assert.equal(taskWorker.hasActiveClaim(), false);
     assert.equal(taskWorker.snapshot.completedRuns, 1);
-    assert.deepEqual(diagnostics, [{
-      type: "run_heartbeat_failed",
-      agentId: AGENT,
-      workerId: "worker-one",
-      runId: RUN,
-      error: "Skipped replay for a run already settled as interrupted",
-    }]);
+    assert.deepEqual(diagnostics, [
+      {
+        type: "run_heartbeat_failed",
+        agentId: AGENT,
+        workerId: "worker-one",
+        runId: RUN,
+        error: "Skipped replay for a run already settled as interrupted",
+      },
+    ]);
 
     assert.equal(await taskWorker.dispatchOnce(), true);
     assert.equal(launcher.requests.length, 1);
@@ -361,15 +371,17 @@ test("a paused pending-claim replay preserves its claim id and completes after r
     assert.equal(taskWorker.hasActiveClaim(), false);
     assert.equal(launcher.requests.length, 0);
     assert.equal(board.settlementAttempts.length, 0);
-    assert.deepEqual(board.claimRequests.map((request) => request.claimId), [durableClaimId, durableClaimId]);
+    assert.deepEqual(
+      board.claimRequests.map((request) => request.claimId),
+      [durableClaimId, durableClaimId]
+    );
 
     board.pauseClaimReplays = false;
     assert.equal(await taskWorker.dispatchOnce(), true);
-    assert.deepEqual(board.claimRequests.map((request) => request.claimId), [
-      durableClaimId,
-      durableClaimId,
-      durableClaimId,
-    ]);
+    assert.deepEqual(
+      board.claimRequests.map((request) => request.claimId),
+      [durableClaimId, durableClaimId, durableClaimId]
+    );
     assert.equal(launcher.requests.length, 1);
     assert.equal(board.settlements[0]?.claim.claimId, durableClaimId);
     assert.equal(board.settlements[0]?.outcome, "completed");
@@ -396,33 +408,34 @@ test("area memory accepts only compact ordered prior-task results", () => {
 
   assert.throws(
     () => parseBoundedAgentContext(context({ areaMemory: [{ ...recent, taskId: TASK }] })),
-    /current task/u,
+    /current task/u
   );
+  assert.throws(() => parseBoundedAgentContext(context({ areaMemory: [older, recent] })), /ordering/u);
   assert.throws(
-    () => parseBoundedAgentContext(context({ areaMemory: [older, recent] })),
-    /ordering/u,
-  );
-  assert.throws(
-    () => parseBoundedAgentContext(context({
-      areaMemory: Array.from({ length: 9 }, (_, index) => ({
-        taskId: "task-memory-" + index,
-        title: "Prior task " + index,
-        result: "Prior result " + index,
-        endedAt: new Date(Date.parse("2026-07-19T19:45:00.000Z") - index * 60_000).toISOString(),
-      })),
-    })),
-    /area memory/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          areaMemory: Array.from({ length: 9 }, (_, index) => ({
+            taskId: "task-memory-" + index,
+            title: "Prior task " + index,
+            result: "Prior result " + index,
+            endedAt: new Date(Date.parse("2026-07-19T19:45:00.000Z") - index * 60_000).toISOString(),
+          })),
+        })
+      ),
+    /area memory/u
   );
   assert.throws(
     () => parseBoundedAgentContext(context({ areaMemory: [{ ...recent, result: "x".repeat(1_001) }] })),
-    /result/u,
+    /result/u
   );
   assert.throws(
-    () => parseBoundedAgentContext({
-      ...context({ areaMemory: [] }),
-      areaMemory: [{ ...recent, transcript: "Raw provider content must not enter memory." }],
-    }),
-    /unexpected or missing fields/u,
+    () =>
+      parseBoundedAgentContext({
+        ...context({ areaMemory: [] }),
+        areaMemory: [{ ...recent, transcript: "Raw provider content must not enter memory." }],
+      }),
+    /unexpected or missing fields/u
   );
 });
 
@@ -439,7 +452,10 @@ for (const reason of WAKEUP_REASONS.filter((candidate) => candidate !== "workflo
       assert.equal(launcher.requests.length, 1);
       assert.equal(launcher.requests[0]?.wakeReason, reason);
       assert.equal(board.outputs.length, 3);
-      assert.deepEqual(board.outputs.map((item) => item.output.type), ["progress", "proposed_child_task", "result"]);
+      assert.deepEqual(
+        board.outputs.map((item) => item.output.type),
+        ["progress", "proposed_child_task", "result"]
+      );
       assert.equal(board.settlements.length, 1);
       assert.equal(board.settlements[0]?.outcome, "completed");
       assert.equal(board.settlements[0]?.result, "Customers can retry checkout safely.");
@@ -454,21 +470,23 @@ for (const reason of WAKEUP_REASONS.filter((candidate) => candidate !== "workflo
 test("launches a workflow handoff only for a manager review with completed parent evidence", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
-  board.queued.push((request) => claimed(request, {
-    reason: "workflow_handoff",
-    context: context({
-      mission: {
-        role: "manager",
-        area: "Checkout review",
-        mission: "Review completed engineer work before the human production check.",
-      },
-      task: {
-        ...context().task,
-        kind: "manager_review",
-        requiredRole: "manager",
-      },
-    }),
-  }));
+  board.queued.push((request) =>
+    claimed(request, {
+      reason: "workflow_handoff",
+      context: context({
+        mission: {
+          role: "manager",
+          area: "Checkout review",
+          mission: "Review completed engineer work before the human production check.",
+        },
+        task: {
+          ...context().task,
+          kind: "manager_review",
+          requiredRole: "manager",
+        },
+      }),
+    })
+  );
   const launcher = new FakeLauncher();
   launcher.outcomes.push(completedOutcome("The engineer evidence is ready for a human decision."));
   const taskWorker = await worker(root, board, launcher);
@@ -515,10 +533,12 @@ for (const malformed of [
         requiredRole: "manager",
       },
     });
-    board.queued.push((request) => claimed(request, {
-      reason: "workflow_handoff",
-      context: context({ ...base, ...malformed.overrides }),
-    }));
+    board.queued.push((request) =>
+      claimed(request, {
+        reason: "workflow_handoff",
+        context: context({ ...base, ...malformed.overrides }),
+      })
+    );
     const launcher = new FakeLauncher();
     const taskWorker = await worker(root, board, launcher);
     try {
@@ -560,7 +580,7 @@ test("records idempotent live activity before terminal output and settlement", a
 
     assert.deepEqual(
       board.outputs.map((item) => item.output.type),
-      ["progress", "progress", "proposed_child_task", "result"],
+      ["progress", "progress", "proposed_child_task", "result"]
     );
     assert.equal(board.settlements[0]?.outcome, "completed");
   } finally {
@@ -603,19 +623,30 @@ test("redacts raw runtime payloads at the worker persistence boundary", async ()
     handle.resolve({ ...completedOutcome("Safe result."), outputs: [] });
     await dispatch;
 
-    assert.deepEqual(board.appendAttempts.map((entry) => entry.output), [
-      { type: "progress", body: "Running a development check." },
-      { type: "progress", body: "Agent estimated 45 minutes of work remaining." },
-      { type: "progress", body: "A development check completed." },
-    ]);
-    assert.deepEqual(board.estimateUpdates.map((entry) => entry.expectedAgentMinutes), [45]);
-    assert.deepEqual([...new Set([
-      ...board.phaseCreates.map((entry) => entry.title),
-      ...board.phaseUpdates.flatMap((entry) => [
-        entry.phase.title,
-        ...(entry.title === undefined ? [] : [entry.title]),
-      ]),
-    ])], ["Review task", "Test work"]);
+    assert.deepEqual(
+      board.appendAttempts.map((entry) => entry.output),
+      [
+        { type: "progress", body: "Running a development check." },
+        { type: "progress", body: "Agent estimated 45 minutes of work remaining." },
+        { type: "progress", body: "A development check completed." },
+      ]
+    );
+    assert.deepEqual(
+      board.estimateUpdates.map((entry) => entry.expectedAgentMinutes),
+      [45]
+    );
+    assert.deepEqual(
+      [
+        ...new Set([
+          ...board.phaseCreates.map((entry) => entry.title),
+          ...board.phaseUpdates.flatMap((entry) => [
+            entry.phase.title,
+            ...(entry.title === undefined ? [] : [entry.title]),
+          ]),
+        ]),
+      ],
+      ["Review task", "Test work"]
+    );
 
     const persistencePayload = JSON.stringify({
       appendRunOutput: board.appendAttempts,
@@ -679,11 +710,14 @@ test("preserves unbuffered container lifecycle activity labels", async () => {
     handle.resolve(completedOutcome());
     await dispatch;
 
-    assert.deepEqual(board.outputs.slice(0, 3).map((entry) => entry.output), [
-      { type: "progress", body: "Task container starting" },
-      { type: "progress", body: "Task container attached" },
-      { type: "progress", body: "Task container teardown" },
-    ]);
+    assert.deepEqual(
+      board.outputs.slice(0, 3).map((entry) => entry.output),
+      [
+        { type: "progress", body: "Task container starting" },
+        { type: "progress", body: "Task container attached" },
+        { type: "progress", body: "Task container teardown" },
+      ]
+    );
   } finally {
     await taskWorker.close();
   }
@@ -704,23 +738,28 @@ test("structured phase markers replace inference without creating an interleaved
     await until(() => board.phaseCreates.length === 1 && board.phaseUpdates.length === 1, "initial live phase");
     assert.deepEqual(
       { title: board.phaseCreates[0]?.title, stage: board.phaseCreates[0]?.stage },
-      { title: "Review task", stage: "research" },
+      { title: "Review task", stage: "research" }
     );
     assert.equal(board.phaseUpdates[0]?.status, "in_progress");
 
     handle.emitActivity({ type: "tool_call", name: "plan", detail: "" });
     await until(() => board.phaseCreates.length === 2, "planning phase");
     assert.equal(board.phaseCreates[1]?.stage, "planning");
-    assert.ok(board.phaseUpdates.some((update) => (
-      update.phase.stage === "research" && update.stage === undefined && update.status === "completed"
-    )));
+    assert.ok(
+      board.phaseUpdates.some(
+        (update) => update.phase.stage === "research" && update.stage === undefined && update.status === "completed"
+      )
+    );
 
     handle.emitActivity({ type: "tool_result", name: "command", output: "STEWARD_ESTIMATE_MINUTES=60\n" });
     await until(() => board.estimateUpdates.length === 1, "live estimate");
     assert.equal(board.estimateUpdates[0]?.expectedAgentMinutes, 60);
-    assert.ok(board.outputs.some((entry) => (
-      entry.output.type === "progress" && entry.output.body === "Agent estimated 60 minutes of work remaining."
-    )));
+    assert.ok(
+      board.outputs.some(
+        (entry) =>
+          entry.output.type === "progress" && entry.output.body === "Agent estimated 60 minutes of work remaining."
+      )
+    );
     assert.equal(board.settlements.length, 0, "live state is visible before terminal settlement");
 
     await delay(1_525);
@@ -728,28 +767,40 @@ test("structured phase markers replace inference without creating an interleaved
     await until(() => board.phaseCreates.length === 3, "inferred testing phase");
     assert.equal(board.phaseCreates[2]?.stage, "testing");
 
-    handle.emitActivity(phaseEvent({
-      key: "api",
-      title: "Implement retry API",
-      stage: "execution",
-      status: "in_progress",
-      parallelGroup: "delivery",
-    }));
-    handle.emitActivity(phaseEvent({
-      key: "tests",
-      title: "Verify retry API",
-      stage: "testing",
-      status: "in_progress",
-      parallelGroup: "delivery",
-    }));
+    handle.emitActivity(
+      phaseEvent({
+        key: "api",
+        title: "Implement retry API",
+        stage: "execution",
+        status: "in_progress",
+        parallelGroup: "delivery",
+      })
+    );
+    handle.emitActivity(
+      phaseEvent({
+        key: "tests",
+        title: "Verify retry API",
+        stage: "testing",
+        status: "in_progress",
+        parallelGroup: "delivery",
+      })
+    );
     await until(() => board.phaseCreates.length === 4, "parallel live phases");
-    assert.ok(board.outputs.some((entry) => (
-      entry.output.type === "progress" && entry.output.body === "Agent updated a task phase."
-    )));
-    assert.ok(board.phaseUpdates.some((update) => (
-      update.phase.phaseId === "phase-3" && update.title === "Implement retry API" &&
-      update.stage === "execution" && update.parallelGroup === "delivery"
-    )), "the marker replaces the transport-inferred testing phase");
+    assert.ok(
+      board.outputs.some(
+        (entry) => entry.output.type === "progress" && entry.output.body === "Agent updated a task phase."
+      )
+    );
+    assert.ok(
+      board.phaseUpdates.some(
+        (update) =>
+          update.phase.phaseId === "phase-3" &&
+          update.title === "Implement retry API" &&
+          update.stage === "execution" &&
+          update.parallelGroup === "delivery"
+      ),
+      "the marker replaces the transport-inferred testing phase"
+    );
     assert.equal(board.phaseCreates[3]?.parallelGroup, "delivery");
     assert.equal(board.settlements.length, 0, "parallel phases are visible before terminal settlement");
 
@@ -784,7 +835,10 @@ test("structured phase markers replace inference without creating an interleaved
     await dispatch;
 
     assert.equal(board.estimateUpdates.length, 1, "terminal output does not repeat the live estimate");
-    assert.deepEqual(board.phaseCreates.slice(-2).map((phase) => phase.parallelGroup), ["terminal-delivery", "terminal-delivery"]);
+    assert.deepEqual(
+      board.phaseCreates.slice(-2).map((phase) => phase.parallelGroup),
+      ["terminal-delivery", "terminal-delivery"]
+    );
     assert.ok(board.phaseUpdates.some((update) => update.orderKey === 100 && update.status === "completed"));
     assert.ok(board.phaseUpdates.some((update) => update.orderKey === 200 && update.status === "completed"));
     assert.equal(board.settlements[0]?.outcome, "completed");
@@ -805,68 +859,80 @@ test("repeated and parallel live phases append history without rewriting a compl
     const handle = launcher.handles[0];
     assert.ok(handle);
 
-    handle.emitActivity(phaseEvent({
-      key: "cycle-1-execution",
-      title: "First implementation cycle",
-      stage: "execution",
-      status: "in_progress",
-      parallelGroup: null,
-    }));
-    await until(() => board.phaseUpdates.some((update) => (
-      update.phase.phaseId === "phase-1" && update.stage === "execution"
-    )), "first cycle phase");
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-1-execution",
+        title: "First implementation cycle",
+        stage: "execution",
+        status: "in_progress",
+        parallelGroup: null,
+      })
+    );
+    await until(
+      () => board.phaseUpdates.some((update) => update.phase.phaseId === "phase-1" && update.stage === "execution"),
+      "first cycle phase"
+    );
     assert.equal(board.phaseCreates.length, 1, "the first marker adopts the inferred phase");
     const firstCycleId = "phase-1";
-    handle.emitActivity(phaseEvent({
-      key: "cycle-1-execution",
-      title: "First implementation cycle",
-      stage: "execution",
-      status: "completed",
-      parallelGroup: null,
-    }));
-    await until(() => board.phaseUpdates.some((update) => (
-      update.phase.phaseId === firstCycleId && update.status === "completed"
-    )), "first cycle completion");
-    const firstCycleMutationCount = board.phaseUpdates.filter((update) => (
-      update.phase.phaseId === firstCycleId
-    )).length;
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-1-execution",
+        title: "First implementation cycle",
+        stage: "execution",
+        status: "completed",
+        parallelGroup: null,
+      })
+    );
+    await until(
+      () => board.phaseUpdates.some((update) => update.phase.phaseId === firstCycleId && update.status === "completed"),
+      "first cycle completion"
+    );
+    const firstCycleMutationCount = board.phaseUpdates.filter((update) => update.phase.phaseId === firstCycleId).length;
 
-    handle.emitActivity(phaseEvent({
-      key: "cycle-1-execution",
-      title: "An invalid attempt to reuse completed history",
-      stage: "planning",
-      status: "in_progress",
-      parallelGroup: null,
-    }));
-    handle.emitActivity(phaseEvent({
-      key: "cycle-2-planning",
-      title: "Second planning cycle",
-      stage: "planning",
-      status: "in_progress",
-      parallelGroup: null,
-    }));
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-1-execution",
+        title: "An invalid attempt to reuse completed history",
+        stage: "planning",
+        status: "in_progress",
+        parallelGroup: null,
+      })
+    );
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-2-planning",
+        title: "Second planning cycle",
+        stage: "planning",
+        status: "in_progress",
+        parallelGroup: null,
+      })
+    );
     await until(() => board.phaseCreates.length === 2, "second cycle phase");
     assert.equal(board.phaseCreates[1]?.title, "Second planning cycle");
     assert.equal(board.phaseCreates[1]?.stage, "planning");
 
-    handle.emitActivity(phaseEvent({
-      key: "cycle-2-api",
-      title: "Parallel API pass",
-      stage: "execution",
-      status: "in_progress",
-      parallelGroup: "cycle-2-delivery",
-    }));
-    handle.emitActivity(phaseEvent({
-      key: "cycle-2-tests",
-      title: "Parallel test pass",
-      stage: "testing",
-      status: "in_progress",
-      parallelGroup: "cycle-2-delivery",
-    }));
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-2-api",
+        title: "Parallel API pass",
+        stage: "execution",
+        status: "in_progress",
+        parallelGroup: "cycle-2-delivery",
+      })
+    );
+    handle.emitActivity(
+      phaseEvent({
+        key: "cycle-2-tests",
+        title: "Parallel test pass",
+        stage: "testing",
+        status: "in_progress",
+        parallelGroup: "cycle-2-delivery",
+      })
+    );
     await until(() => board.phaseCreates.length === 4, "parallel cycle phases");
     assert.deepEqual(
       board.phaseCreates.slice(-2).map((phase) => phase.parallelGroup),
-      ["cycle-2-delivery", "cycle-2-delivery"],
+      ["cycle-2-delivery", "cycle-2-delivery"]
     );
 
     handle.resolve(completedOutcome("The second loop passed its parallel implementation and test work."));
@@ -932,7 +998,10 @@ test("a human question is the last output and atomically ends the run without ge
   const taskWorker = await worker(root, board, launcher);
   try {
     await taskWorker.dispatchOnce();
-    assert.deepEqual(board.outputs.map((item) => item.output.type), ["progress", "human_question"]);
+    assert.deepEqual(
+      board.outputs.map((item) => item.output.type),
+      ["progress", "human_question"]
+    );
     assert.equal(board.settlements.length, 0);
     assert.equal(taskWorker.snapshot.activeRunId, null);
   } finally {
@@ -958,25 +1027,29 @@ test("normalizes every provider-authored carriage return before board writes", a
       { type: "result", body: "Checkout is safe.\r\nFocused tests pass.\rReady for review." },
     ],
     expectedAgentMinutes: null,
-    phases: [{
-      phaseId: null,
-      title: "Verify retries\r\nunder load",
-      stage: "testing",
-      status: "completed",
-      parallelGroup: null,
-      orderKey: 100,
-    }],
+    phases: [
+      {
+        phaseId: null,
+        title: "Verify retries\r\nunder load",
+        stage: "testing",
+        status: "completed",
+        parallelGroup: null,
+        orderKey: 100,
+      },
+    ],
     detail: "Checkout is safe.\r\nFocused tests pass.",
     handoff: {
       outcome: "passed",
       summary: "Implementation passed.\r\nEvidence follows.",
       evidence: ["Unit tests pass.\rRuntime tests pass."],
       artifactIds: [],
-      acceptanceCriteria: [{
-        criterion: "Retries are safe.\r\nCustomers are protected.",
-        passed: true,
-        evidence: "The focused tests pass.\rNo duplicate charge was observed.",
-      }],
+      acceptanceCriteria: [
+        {
+          criterion: "Retries are safe.\r\nCustomers are protected.",
+          passed: true,
+          evidence: "The focused tests pass.\rNo duplicate charge was observed.",
+        },
+      ],
       blockers: ["Release still requires\r\nhuman approval."],
       recommendedReturnStage: null,
     },
@@ -984,14 +1057,16 @@ test("normalizes every provider-authored carriage return before board writes", a
       objective: "Keep checkout safe.\r\nWatch retries.",
       assumptions: ["Operators can view metrics.\rAlerts are enabled."],
       acceptanceCriteria: ["No duplicate charges.\r\nRetries remain observable."],
-      nodes: [{
-        nodeId: "observe-retries",
-        title: "Observe retries\r\nafter release",
-        objective: "Watch customer impact.\rEscalate regressions.",
-        acceptanceCriteria: ["Retry health stays visible.\r\nNo regression is found."],
-        dependencyNodeIds: [],
-        stageTemplate: ["verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "observe-retries",
+          title: "Observe retries\r\nafter release",
+          objective: "Watch customer impact.\rEscalate regressions.",
+          acceptanceCriteria: ["Retry health stays visible.\r\nNo regression is found."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        },
+      ],
     },
   });
   const taskWorker = await worker(root, board, launcher);
@@ -1004,10 +1079,7 @@ test("normalizes every provider-authored carriage return before board writes", a
       settlements: board.settlements,
     });
     assert.doesNotMatch(outbound, /\\r/u);
-    assert.equal(
-      board.settlements[0]?.result,
-      "Checkout is safe.\nFocused tests pass.\nReady for review.",
-    );
+    assert.equal(board.settlements[0]?.result, "Checkout is safe.\nFocused tests pass.\nReady for review.");
   } finally {
     await taskWorker.close();
   }
@@ -1020,26 +1092,30 @@ test("forwards non-empty structured review findings with the run settlement", as
   const launcher = new FakeLauncher();
   launcher.outcomes.push({
     ...completedOutcome("Independent review found a defect."),
-    reviewFindings: [{
-      file: "src/server/review.ts",
-      line: 42,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry settles once.",
-      actual: "The retry settles twice.",
-    }],
+    reviewFindings: [
+      {
+        file: "src/server/review.ts",
+        line: 42,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry settles once.",
+        actual: "The retry settles twice.",
+      },
+    ],
   });
   const taskWorker = await worker(root, board, launcher);
   try {
     await taskWorker.dispatchOnce();
-    assert.deepEqual(board.settlements[0]?.reviewFindings, [{
-      file: "src/server/review.ts",
-      line: 42,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry settles once.",
-      actual: "The retry settles twice.",
-    }]);
+    assert.deepEqual(board.settlements[0]?.reviewFindings, [
+      {
+        file: "src/server/review.ts",
+        line: 42,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry settles once.",
+        actual: "The retry settles twice.",
+      },
+    ]);
   } finally {
     await taskWorker.close();
   }
@@ -1074,7 +1150,7 @@ test("three correctable settlement rejections durably take the failed path witho
   launcher.outcomes.push(
     completedOutcome("First rejected onboarding result."),
     completedOutcome("Second rejected onboarding result."),
-    completedOutcome("Third rejected onboarding result."),
+    completedOutcome("Third rejected onboarding result.")
   );
   const taskWorker = await worker(root, board, launcher);
   try {
@@ -1083,7 +1159,7 @@ test("three correctable settlement rejections durably take the failed path witho
     assert.equal(afterFirst.active.correctableSettlementRejections, 1);
     assert.equal(
       afterFirst.active.previousPlanRejectionDetail,
-      "Onboarding deliverables are missing: gap report is missing or empty",
+      "Onboarding deliverables are missing: gap report is missing or empty"
     );
     assert.doesNotMatch(agentPrompt(launcher.requests[0]!, PROMPTS), /Previous plan was rejected:/u);
     assert.equal(await taskWorker.dispatchOnce(), true);
@@ -1091,20 +1167,18 @@ test("three correctable settlement rejections durably take the failed path witho
     assert.equal(afterSecond.active.correctableSettlementRejections, 2);
     assert.match(
       agentPrompt(launcher.requests[1]!, PROMPTS),
-      /Previous plan was rejected: Onboarding deliverables are missing: gap report is missing or empty/u,
+      /Previous plan was rejected: Onboarding deliverables are missing: gap report is missing or empty/u
     );
     assert.equal(await taskWorker.dispatchOnce(), true);
 
     assert.equal(launcher.requests.length, 3);
-    assert.deepEqual(board.settlementAttempts.map((attempt) => attempt.outcome), [
-      "completed", "completed", "completed", "failed",
-    ]);
+    assert.deepEqual(
+      board.settlementAttempts.map((attempt) => attempt.outcome),
+      ["completed", "completed", "completed", "failed"]
+    );
     assert.equal(board.settlements.length, 1);
     assert.equal(board.settlements[0]?.outcome, "failed");
-    assert.equal(
-      board.settlements[0]?.result,
-      "Onboarding deliverables are missing: gap report is missing or empty",
-    );
+    assert.equal(board.settlements[0]?.result, "Onboarding deliverables are missing: gap report is missing or empty");
     assert.equal(taskWorker.hasActiveClaim(), false);
 
     assert.equal(await taskWorker.dispatchOnce(), false);
@@ -1119,38 +1193,45 @@ test("forwards a provider-authored failed review handoff and findings with the r
   const board = new FakeBoard();
   board.queued.push((request) => claimed(request));
   const launcher = new FakeLauncher();
-  launcher.outcomes.push(structuredOutcome({
-    status: "failed",
-    progress: ["Independent review found a blocking defect."],
-    result: "Independent review found a blocking defect.",
-    proposedChildTasks: [],
-    expectedAgentMinutes: null,
-    phases: [],
-    humanQuestion: null,
-    handoff: {
-      outcome: "failed",
-      summary: "Independent review found a blocking defect.",
-      evidence: [],
-      artifactIds: [],
-      acceptanceCriteria: [],
-      blockers: ["The blocking review finding must be fixed."],
-      recommendedReturnStage: "verification",
-    },
-    workflowPlan: null,
-    reviewFindings: [{
-      file: "src/server/review.ts",
-      line: 42,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry settles once.",
-      actual: "The retry settles twice.",
-    }],
-    detail: "Independent review found a blocking defect.",
-  }));
+  launcher.outcomes.push(
+    structuredOutcome({
+      status: "failed",
+      progress: ["Independent review found a blocking defect."],
+      result: "Independent review found a blocking defect.",
+      proposedChildTasks: [],
+      expectedAgentMinutes: null,
+      phases: [],
+      humanQuestion: null,
+      handoff: {
+        outcome: "failed",
+        summary: "Independent review found a blocking defect.",
+        evidence: [],
+        artifactIds: [],
+        acceptanceCriteria: [],
+        blockers: ["The blocking review finding must be fixed."],
+        recommendedReturnStage: "verification",
+      },
+      workflowPlan: null,
+      reviewFindings: [
+        {
+          file: "src/server/review.ts",
+          line: 42,
+          category: "correctness",
+          severity: "major",
+          expected: "The retry settles once.",
+          actual: "The retry settles twice.",
+        },
+      ],
+      detail: "Independent review found a blocking defect.",
+    })
+  );
   const taskWorker = await worker(root, board, launcher);
   try {
     await taskWorker.dispatchOnce();
-    assert.deepEqual(board.outputs.map((entry) => entry.output.type), ["progress"]);
+    assert.deepEqual(
+      board.outputs.map((entry) => entry.output.type),
+      ["progress"]
+    );
     assert.equal(board.settlements.length, 1);
     assert.equal(board.settlements[0]?.outcome, "failed");
     assert.deepEqual(board.settlements[0]?.handoff, {
@@ -1162,14 +1243,16 @@ test("forwards a provider-authored failed review handoff and findings with the r
       blockers: ["The blocking review finding must be fixed."],
       recommendedReturnStage: "verification",
     });
-    assert.deepEqual(board.settlements[0]?.reviewFindings, [{
-      file: "src/server/review.ts",
-      line: 42,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry settles once.",
-      actual: "The retry settles twice.",
-    }]);
+    assert.deepEqual(board.settlements[0]?.reviewFindings, [
+      {
+        file: "src/server/review.ts",
+        line: 42,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry settles once.",
+        actual: "The retry settles twice.",
+      },
+    ]);
   } finally {
     await taskWorker.close();
   }
@@ -1189,14 +1272,16 @@ test("a provider result summary does not break a waiting outcome or discard its 
     blockers: ["A human must choose the retry policy."],
     recommendedReturnStage: "verification" as const,
   };
-  const reviewFindings = [{
-    file: "src/server/review.ts",
-    line: 51,
-    category: "correctness" as const,
-    severity: "major" as const,
-    expected: "The retry policy is explicit.",
-    actual: "The retry policy is ambiguous.",
-  }];
+  const reviewFindings = [
+    {
+      file: "src/server/review.ts",
+      line: 51,
+      category: "correctness" as const,
+      severity: "major" as const,
+      expected: "The retry policy is explicit.",
+      actual: "The retry policy is ambiguous.",
+    },
+  ];
   const outcome = structuredOutcome({
     status: "waiting_for_human",
     progress: ["Independent review reached a policy boundary."],
@@ -1210,14 +1295,20 @@ test("a provider result summary does not break a waiting outcome or discard its 
     reviewFindings,
     detail: "Waiting for the product owner to choose retry policy.",
   });
-  assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "human_question"]);
+  assert.deepEqual(
+    outcome.outputs.map((output) => output.type),
+    ["progress", "human_question"]
+  );
   assert.deepEqual(outcome.handoff, handoff);
   assert.deepEqual(outcome.reviewFindings, reviewFindings);
   launcher.outcomes.push(outcome);
   const taskWorker = await worker(root, board, launcher);
   try {
     await taskWorker.dispatchOnce();
-    assert.deepEqual(board.outputs.map((entry) => entry.output.type), ["progress", "human_question"]);
+    assert.deepEqual(
+      board.outputs.map((entry) => entry.output.type),
+      ["progress", "human_question"]
+    );
     assert.equal(board.settlements.length, 0);
     assert.equal(taskWorker.snapshot.activeRunId, null);
   } finally {
@@ -1321,17 +1412,19 @@ test("drops an echoed design record from a non-design run before settlement", as
 test("a human answer is included in the next bounded one-shot context", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();
-  board.queued.push((request) => claimed(request, {
-    reason: "human_answer",
-    context: context({
-      messagesSinceCursor: request.messageCursors[TASK] ?? null,
-      triggerQuestion: {
-        questionId: "question-one",
-        question: "Should retries remain enabled after a fraud rejection?",
-        answer: "No. Stop after a fraud rejection and explain the next step.",
-      },
-    }),
-  }));
+  board.queued.push((request) =>
+    claimed(request, {
+      reason: "human_answer",
+      context: context({
+        messagesSinceCursor: request.messageCursors[TASK] ?? null,
+        triggerQuestion: {
+          questionId: "question-one",
+          question: "Should retries remain enabled after a fraud rejection?",
+          answer: "No. Stop after a fraud rejection and explain the next step.",
+        },
+      }),
+    })
+  );
   const launcher = new FakeLauncher();
   launcher.outcomes.push(completedOutcome());
   const taskWorker = await worker(root, board, launcher);
@@ -1339,7 +1432,7 @@ test("a human answer is included in the next bounded one-shot context", async ()
     await taskWorker.dispatchOnce();
     assert.equal(
       launcher.requests[0]?.context.triggerQuestion?.answer,
-      "No. Stop after a fraud rejection and explain the next step.",
+      "No. Stop after a fraud rejection and explain the next step."
     );
   } finally {
     await taskWorker.close();
@@ -1380,10 +1473,7 @@ test("redacts credentials from a durable interrupt reason while still terminatin
     assert.ok(claim);
     board.requestInterrupt(claimed(claim).claim, "Stop after exposing sk-proj-0123456789abcdef in diagnostics");
     await dispatch;
-    assert.deepEqual(
-      launcher.handles[0]?.interruptReasons,
-      ["Stop after exposing [redacted:token] in diagnostics"],
-    );
+    assert.deepEqual(launcher.handles[0]?.interruptReasons, ["Stop after exposing [redacted:token] in diagnostics"]);
     assert.equal(board.settlements[0]?.result, "Stop after exposing [redacted:token] in diagnostics");
     const journal = await readFile(join(root, "state", "journal.json"), "utf8");
     assert.doesNotMatch(journal, /sk-proj-0123456789abcdef/u);
@@ -1411,13 +1501,15 @@ test("starts process-group termination before an interrupt journal write can rej
     assert.ok(handle);
     handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity forwarding");
-    handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+    handle.interruptBarrier = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve;
+    });
 
     await rename(stateDirectory, movedStateDirectory);
     await writeFile(stateDirectory, "This file makes journal child paths fail with ENOTDIR.");
     const interruption = taskWorker.interrupt("Human stopped the run").then(
       () => ({ status: "fulfilled" as const, error: null }),
-      (error: unknown) => ({ status: "rejected" as const, error }),
+      (error: unknown) => ({ status: "rejected" as const, error })
     );
     await until(() => handle.interruptReasons.length === 1, "termination independent of journal persistence");
     await unlink(stateDirectory);
@@ -1455,7 +1547,9 @@ test("shares concurrent interrupt settlement and retries only after the in-fligh
     handle.emitActivity({ type: "stage_started" });
     await until(() => board.outputs.length === 1, "live activity forwarding");
     let releaseInterrupt!: () => void;
-    handle.interruptBarrier = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+    handle.interruptBarrier = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve;
+    });
     handle.interruptFailures = 1;
 
     const first = taskWorker.interrupt("Human stopped the run");
@@ -1518,7 +1612,9 @@ test("an interrupt during prelaunch phase persistence prevents the model from st
   const board = new FakeBoard();
   board.queued.push((request) => claimed(request));
   let releasePhase!: () => void;
-  board.phaseCreateBarrier = new Promise<void>((resolve) => { releasePhase = resolve; });
+  board.phaseCreateBarrier = new Promise<void>((resolve) => {
+    releasePhase = resolve;
+  });
   const launcher = new FakeLauncher();
   const taskWorker = await worker(root, board, launcher);
   try {
@@ -1543,7 +1639,7 @@ test("one worker never claims or launches a second run while its agent is active
   const board = new FakeBoard();
   board.queued.push(
     (request) => claimed(request, { runId: "run-one", wakeupId: "wake-one" }),
-    (request) => claimed(request, { runId: "run-two", wakeupId: "wake-two" }),
+    (request) => claimed(request, { runId: "run-two", wakeupId: "wake-two" })
   );
   const launcher = new FakeLauncher();
   const taskWorker = await worker(root, board, launcher);
@@ -1626,7 +1722,10 @@ test("recovery clears last_error only after the durable claim replay validates",
     assert.equal(launcher.requests.length, 0);
 
     assert.equal(await restarted.dispatchOnce(), true);
-    assert.deepEqual(board.laneErrors.map((entry) => entry.detail), [null]);
+    assert.deepEqual(
+      board.laneErrors.map((entry) => entry.detail),
+      [null]
+    );
     assert.equal(launcher.requests.length, 1);
   } finally {
     await restarted.close();
@@ -1720,7 +1819,8 @@ test("a genuinely missing active durable claim still fails loudly", async () => 
   try {
     await assert.rejects(
       restarted.dispatchOnce(),
-      (error: unknown) => error instanceof Error && error.message === "Task board did not replay the active durable claim",
+      (error: unknown) =>
+        error instanceof Error && error.message === "Task board did not replay the active durable claim"
     );
     assert.equal(restarted.hasActiveClaim(), true);
     assert.equal(board.settlementAttempts.length, 0);
@@ -1769,13 +1869,15 @@ test("recovery discards a claimed-phase replay settled during restart without po
     assert.equal(launcher.requests.length, 0);
     assert.equal(restarted.hasActiveClaim(), false);
     assert.equal(restarted.snapshot.completedRuns, 1);
-    assert.deepEqual(diagnostics, [{
-      type: "run_heartbeat_failed",
-      agentId: AGENT,
-      workerId: "worker-one",
-      runId: RUN,
-      error: "Skipped replay for a run already settled as interrupted",
-    }]);
+    assert.deepEqual(diagnostics, [
+      {
+        type: "run_heartbeat_failed",
+        agentId: AGENT,
+        workerId: "worker-one",
+        runId: RUN,
+        error: "Skipped replay for a run already settled as interrupted",
+      },
+    ]);
     assert.equal(board.laneErrors.length, 0);
     assert.equal(board.settlementAttempts.length, 0);
 
@@ -1836,24 +1938,26 @@ test("recovery logs scrubbed pinning divergence and proceeds with the immutable 
   try {
     assert.equal(await restarted.dispatchOnce(), true);
     assert.equal(launcher.requests.length, 1);
-    assert.deepEqual(diagnostics, [{
-      type: "run_pinning_diverged",
-      agentId: AGENT,
-      workerId: "worker-one",
-      runId: RUN,
-      replayedPinned: {
-        runtime: "codex",
-        runtimeVersion: "codex 1.2 [redacted:bearer]",
-        model: "gpt-5.6-old",
-        promptsSha: "sha256:historical-prompts",
+    assert.deepEqual(diagnostics, [
+      {
+        type: "run_pinning_diverged",
+        agentId: AGENT,
+        workerId: "worker-one",
+        runId: RUN,
+        replayedPinned: {
+          runtime: "codex",
+          runtimeVersion: "codex 1.2 [redacted:bearer]",
+          model: "gpt-5.6-old",
+          promptsSha: "sha256:historical-prompts",
+        },
+        workerPinned: {
+          runtime: "codex",
+          runtimeVersion: "codex 1.2 [redacted:bearer]",
+          model: "gpt-5.6-old",
+          promptsSha: "sha256:current-prompts",
+        },
       },
-      workerPinned: {
-        runtime: "codex",
-        runtimeVersion: "codex 1.2 [redacted:bearer]",
-        model: "gpt-5.6-old",
-        promptsSha: "sha256:current-prompts",
-      },
-    }]);
+    ]);
     assert.equal(board.settlements[0]?.outcome, "completed");
   } finally {
     await restarted.close();
@@ -1984,18 +2088,25 @@ test("message cursor advances once and bounds the next human-triggered context",
   const board = new FakeBoard();
   board.queued.push(
     (request) => claimed(request, { context: context({ messagesSinceCursor: null, nextMessageCursor: 2 }) }),
-    (request) => claimed(request, {
-      reason: "human_resume",
-      runId: "run-two",
-      wakeupId: "wake-two",
-      context: context({ messagesSinceCursor: 2, nextMessageCursor: 3, messages: [{
-        messageId: "message-three",
-        cursor: 3,
-        author: "human",
-        body: "Please also cover the timeout edge case.",
-        createdAt: NOW,
-      }] }),
-    }),
+    (request) =>
+      claimed(request, {
+        reason: "human_resume",
+        runId: "run-two",
+        wakeupId: "wake-two",
+        context: context({
+          messagesSinceCursor: 2,
+          nextMessageCursor: 3,
+          messages: [
+            {
+              messageId: "message-three",
+              cursor: 3,
+              author: "human",
+              body: "Please also cover the timeout edge case.",
+              createdAt: NOW,
+            },
+          ],
+        }),
+      })
   );
   const launcher = new FakeLauncher();
   launcher.outcomes.push(completedOutcome(), completedOutcome());
@@ -2005,7 +2116,10 @@ test("message cursor advances once and bounds the next human-triggered context",
     await taskWorker.dispatchOnce();
     assert.equal(board.claimRequests[1]?.messageCursors["task-one"], 2);
     assert.equal(launcher.requests[1]?.context.messagesSinceCursor, 2);
-    assert.deepEqual(launcher.requests[1]?.context.messages.map((message) => message.cursor), [3]);
+    assert.deepEqual(
+      launcher.requests[1]?.context.messages.map((message) => message.cursor),
+      [3]
+    );
   } finally {
     await taskWorker.close();
   }
@@ -2016,26 +2130,30 @@ test("message cursors are isolated per task so earlier messages on another task 
   const board = new FakeBoard();
   const secondTaskId = "task-two";
   board.queued.push(
-    (request) => claimed(request, {
-      context: context({ messagesSinceCursor: null, nextMessageCursor: 20 }),
-    }),
-    (request) => claimed(request, {
-      runId: "run-two",
-      wakeupId: "wake-two",
-      taskId: secondTaskId,
-      context: context({
-        taskId: secondTaskId,
-        messagesSinceCursor: null,
-        nextMessageCursor: 5,
-        messages: [{
-          messageId: "task-two-message-five",
-          cursor: 5,
-          author: "human",
-          body: "This note existed before the first task completed.",
-          createdAt: NOW,
-        }],
+    (request) =>
+      claimed(request, {
+        context: context({ messagesSinceCursor: null, nextMessageCursor: 20 }),
       }),
-    }),
+    (request) =>
+      claimed(request, {
+        runId: "run-two",
+        wakeupId: "wake-two",
+        taskId: secondTaskId,
+        context: context({
+          taskId: secondTaskId,
+          messagesSinceCursor: null,
+          nextMessageCursor: 5,
+          messages: [
+            {
+              messageId: "task-two-message-five",
+              cursor: 5,
+              author: "human",
+              body: "This note existed before the first task completed.",
+              createdAt: NOW,
+            },
+          ],
+        }),
+      })
   );
   const launcher = new FakeLauncher();
   launcher.outcomes.push(completedOutcome(), completedOutcome());
@@ -2046,7 +2164,10 @@ test("message cursors are isolated per task so earlier messages on another task 
     assert.equal(board.claimRequests[1]?.messageCursors[TASK], 20);
     assert.equal(board.claimRequests[1]?.messageCursors[secondTaskId], undefined);
     assert.equal(launcher.requests[1]?.context.messagesSinceCursor, null);
-    assert.deepEqual(launcher.requests[1]?.context.messages.map((message) => message.cursor), [5]);
+    assert.deepEqual(
+      launcher.requests[1]?.context.messages.map((message) => message.cursor),
+      [5]
+    );
     assert.deepEqual(taskWorker.snapshot.messageCursors, { [TASK]: 20, [secondTaskId]: 5 });
   } finally {
     await taskWorker.close();
@@ -2090,14 +2211,18 @@ test("legacy global cursor journals migrate without applying one task's cursor t
   const path = join(stateDirectory, "journal.json");
   const identity = { workerId: "worker-one", agentId: AGENT };
   await mkdir(stateDirectory, { mode: 0o700 });
-  await writeFile(path, `${JSON.stringify({
-    version: 1,
-    identity,
-    messageCursor: 91,
-    pendingClaim: null,
-    active: null,
-    completed: [],
-  })}\n`, { mode: 0o600 });
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      version: 1,
+      identity,
+      messageCursor: 91,
+      pendingClaim: null,
+      active: null,
+      completed: [],
+    })}\n`,
+    { mode: 0o600 }
+  );
 
   const store = await TaskWorkerJournalStore.open(path, identity);
   try {
@@ -2140,9 +2265,25 @@ test("launcher receives only the bounded contract fields", async () => {
   try {
     await taskWorker.dispatchOnce();
     assert.deepEqual(Object.keys(launcher.requests[0]?.context ?? {}).sort(), [
-      "agentId", "apiVersion", "areaMemory", "design", "intake", "messages", "messagesSinceCursor", "mission", "nextMessageCursor",
-      "openQuestions", "parentEvidence", "phase", "projectId", "projectMemory", "task", "taskId", "triggerQuestion",
-      "workflow", "workspaceRefs",
+      "agentId",
+      "apiVersion",
+      "areaMemory",
+      "design",
+      "intake",
+      "messages",
+      "messagesSinceCursor",
+      "mission",
+      "nextMessageCursor",
+      "openQuestions",
+      "parentEvidence",
+      "phase",
+      "projectId",
+      "projectMemory",
+      "task",
+      "taskId",
+      "triggerQuestion",
+      "workflow",
+      "workspaceRefs",
     ]);
     assert.equal("token" in (launcher.requests[0]?.context ?? {}), false);
     assert.equal("boardUrl" in (launcher.requests[0]?.context ?? {}), false);
@@ -2223,15 +2364,18 @@ test("dropActiveClaim only updates the journal and makes zero board calls", asyn
 
     await taskWorker.dropActiveClaim("Quarantine settlement retries were exhausted");
 
-    assert.deepEqual({
-      claims: board.claimRequests.length,
-      appendAttempts: board.appendAttempts.length,
-      settlementAttempts: board.settlementAttempts.length,
-      estimateUpdates: board.estimateUpdates.length,
-      phaseCreates: board.phaseCreates.length,
-      phaseUpdates: board.phaseUpdates.length,
-      laneErrors: board.laneErrors.length,
-    }, boardCallsBefore);
+    assert.deepEqual(
+      {
+        claims: board.claimRequests.length,
+        appendAttempts: board.appendAttempts.length,
+        settlementAttempts: board.settlementAttempts.length,
+        estimateUpdates: board.estimateUpdates.length,
+        phaseCreates: board.phaseCreates.length,
+        phaseUpdates: board.phaseUpdates.length,
+        laneErrors: board.laneErrors.length,
+      },
+      boardCallsBefore
+    );
     assert.equal(taskWorker.hasActiveClaim(), false);
   } finally {
     await taskWorker.close();

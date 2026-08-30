@@ -8,74 +8,85 @@ const SETTLEMENT_RESULT_LIMIT = 2_000;
 
 export type GitTextRunner = (arguments_: readonly string[]) => string;
 
-export type GitRunner = GitTextRunner & Readonly<{
-  bytes: (arguments_: readonly string[]) => Buffer;
-}>;
+export type GitRunner = GitTextRunner &
+  Readonly<{
+    bytes: (arguments_: readonly string[]) => Buffer;
+  }>;
 
 export function withGitBytes(runner: GitTextRunner): GitRunner {
   if ("bytes" in runner && typeof runner.bytes === "function") return runner as GitRunner;
-  return Object.assign(
-    (arguments_: readonly string[]) => runner(arguments_),
-    { bytes: (arguments_: readonly string[]) => Buffer.from(runner(arguments_), "utf8") },
-  );
+  return Object.assign((arguments_: readonly string[]) => runner(arguments_), {
+    bytes: (arguments_: readonly string[]) => Buffer.from(runner(arguments_), "utf8"),
+  });
 }
 
-export type DeclaredScopeCheckResult =
-  | Readonly<{ ok: true }>
-  | Readonly<{ ok: false; files: readonly string[] }>;
+export type DeclaredScopeCheckResult = Readonly<{ ok: true }> | Readonly<{ ok: false; files: readonly string[] }>;
 
 export const runDeclaredScopeGit: GitRunner = Object.assign(
-  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-    encoding: "utf8",
-    timeout: GIT_TIMEOUT_MS,
-    maxBuffer: GIT_MAX_BYTES,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  }),
-  {
-    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-      encoding: "buffer",
+  (arguments_: readonly string[]) =>
+    execFileSync("git", [...arguments_], {
+      encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BYTES,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     }),
-  },
+  {
+    bytes: (arguments_: readonly string[]) =>
+      execFileSync("git", [...arguments_], {
+        encoding: "buffer",
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: GIT_MAX_BYTES,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }),
+  }
 );
 
 export function scopeViolationResult(files: readonly string[]): string {
   return `scope violation: ${files.join(", ")}`.slice(0, SETTLEMENT_RESULT_LIMIT);
 }
 
-export function checkDeclaredScope(request: Readonly<{
-  repoPath: string;
-  baseSha: string;
-  branch: string;
-  declaredScope: readonly string[];
-  git: GitTextRunner;
-}>): DeclaredScopeCheckResult {
+export function checkDeclaredScope(
+  request: Readonly<{
+    repoPath: string;
+    baseSha: string;
+    branch: string;
+    declaredScope: readonly string[];
+    git: GitTextRunner;
+  }>
+): DeclaredScopeCheckResult {
   const normalizedScope = normalizeDeclaredScope(request.declaredScope);
   const output = request.git([
-    "-c", "core.fsmonitor=",
-    "-c", "core.hooksPath=",
-    "-C", request.repoPath,
-    "diff", "--no-renames", "--name-only", "-z", `${request.baseSha}..${request.branch}`, "--",
+    "-c",
+    "core.fsmonitor=",
+    "-c",
+    "core.hooksPath=",
+    "-C",
+    request.repoPath,
+    "diff",
+    "--no-renames",
+    "--name-only",
+    "-z",
+    `${request.baseSha}..${request.branch}`,
+    "--",
   ]);
   return checkDeclaredScopePaths(
     output.split("\0").filter((file) => file.length > 0),
-    normalizedScope,
+    normalizedScope
   );
 }
 
 export function checkDeclaredScopePaths(
   files: readonly string[],
-  declaredScope: readonly string[],
+  declaredScope: readonly string[]
 ): DeclaredScopeCheckResult {
   const normalizedScope = normalizeDeclaredScope(declaredScope);
-  const outsideScope = files
-    .filter((file) => !normalizedScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)));
+  const outsideScope = files.filter(
+    (file) => !normalizedScope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`))
+  );
   return outsideScope.length === 0
     ? Object.freeze({ ok: true })
     : Object.freeze({ ok: false, files: Object.freeze(outsideScope) });

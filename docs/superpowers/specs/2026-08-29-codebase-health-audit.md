@@ -9,8 +9,8 @@ Five independent reviews of the same tree. They converge on four things and disa
 
 **Converged (act on these):**
 
-1. **Layering is inverted where it matters.** `persistence/` and `collaborators/` are mutually dependent — `persistence/workflow.ts` imports values from three collaborators while 18 of 24 collaborators import back. 15,328 lines across 32 files are *named* as layers that do not exist, so no import-direction rule can be enforced. Both reviewers rank this the top structural risk.
-2. **Plumbing is copied, not shared.** Four byte-identical `git()` factories (same MD5), the `-c core.fsmonitor=…` prelude at 12 sites, two rival `ls-tree` parsers, two bounded-JSON HTTP clients (~120 duplicated lines), `runtime/claude.ts` ≡ `codex.ts` (35 lines including a `FAILURE_STATES` *policy*), and seven browser date formatters.
+1. **Layering is inverted where it matters.** `persistence/` and `collaborators/` are mutually dependent — `persistence/workflow.ts` imports values from three collaborators while 18 of 24 collaborators import back. 15,328 lines across 32 files are _named_ as layers that do not exist, so no import-direction rule can be enforced. Both reviewers rank this the top structural risk.
+2. **Plumbing is copied, not shared.** Four byte-identical `git()` factories (same MD5), the `-c core.fsmonitor=…` prelude at 12 sites, two rival `ls-tree` parsers, two bounded-JSON HTTP clients (~120 duplicated lines), `runtime/claude.ts` ≡ `codex.ts` (35 lines including a `FAILURE_STATES` _policy_), and seven browser date formatters.
 3. **Comments are the real gap, not nesting.** 0.9% comment density against the reference repo's 14.8%; 51% of source files have zero comments; only 4 of 138 production modules open with a header; 38 of the 53 files over 200 lines are under 1%.
 4. **Two policies exist twice, and one of the copies is weaker.** `derive.ts`'s sanitize chain is a second redaction that misses PEM blocks and AWS keys that `shared/redact.ts` catches; the automation stage→role table is implemented privately in both `validate.ts` and the web's `types.ts`. One is a security boundary, the other an authorization rule.
 
@@ -20,11 +20,11 @@ Five independent reviews of the same tree. They converge on four things and disa
 
 ## What the user asked for, answered directly
 
-| Complaint | Finding | Action |
-|---|---|---|
-| "File tree is too nested" | Real depth is 3–4 almost everywhere. The pain is *redundant* levels, not depth: `src/web/task-board/` (one app), `web/task-board/project/` (4 components, one consumer), plus two dead barrels (`task-fleet/index.ts` has zero importers in `src/`). | Campaign 11 — five moves, ~30 import lines total |
-| "Not enough comments" | Confirmed and quantified above. | Campaign 11 — convention + the nine highest-value files, then incremental |
-| "Look at how I did styling in DotBackendLuo-refactor" | Convention extracted and translated to TS. | Adopted below |
+| Complaint                                             | Finding                                                                                                                                                                                                                                              | Action                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| "File tree is too nested"                             | Real depth is 3–4 almost everywhere. The pain is _redundant_ levels, not depth: `src/web/task-board/` (one app), `web/task-board/project/` (4 components, one consumer), plus two dead barrels (`task-fleet/index.ts` has zero importers in `src/`). | Campaign 11 — five moves, ~30 import lines total                          |
+| "Not enough comments"                                 | Confirmed and quantified above.                                                                                                                                                                                                                      | Campaign 11 — convention + the nine highest-value files, then incremental |
+| "Look at how I did styling in DotBackendLuo-refactor" | Convention extracted and translated to TS.                                                                                                                                                                                                           | Adopted below                                                             |
 
 ## The comment convention (adopted)
 
@@ -45,17 +45,17 @@ Five independent reviews of the same tree. They converge on four things and disa
 
 **Enforcement:** not eslint (the repo has none; a header rule would cost ~4 deps + CI). A ~60-line `tests/tooling/code-style.test.mjs` in the existing `node --test` tier checks banner format and ratchets module headers against an allowlist of the 134 files currently lacking one.
 
-**Prerequisite:** adopt **prettier** first as a standalone whitespace-only commit — 117 lines exceed 200 characters (one is 1,546), and comment work should land on formatted code.
+**Prerequisite:** adopt **prettier** first as a standalone whitespace-only commit — 117 lines exceed 200 characters (one is 1,546), and comment work should land on formatted code. _(Width ruled at 120 after measurement: 120 leaves 297 lines over 120 chars, 200 leaves 3,580, for 4.6% more churn. Equivalence is proved by reproduce-from-HEAD identity, not `git diff -w`.)_
 
 ## Campaigns
 
-**11. Codebase health — formatting, comments, shared plumbing.** Prettier commit → comment convention + the nine files below → `server/shared/git.ts` → single-source credential recognition and the automation stage→role table → the five cheap moves → delete the two genuinely dead exports (`validate.ts:501 versionedRecord`, `task-worker/schema.ts:40 parseAgentRunOutput`) → one date formatter. *Exit: `code-style.test.mjs` green with an allowlist that only shrinks; zero duplicate git factories.*
+**11. Codebase health — formatting, comments, shared plumbing.** Prettier commit → comment convention + the nine files below → `server/shared/git.ts` → single-source credential recognition and the automation stage→role table → the five cheap moves → delete the two genuinely dead exports (`versionedRecord` in `validate.ts`, `parseAgentRunOutput` in `task-worker/schema.ts` — locate by symbol; the formatter moved every line number in this document) → one date formatter. _Exit: `code-style.test.mjs` green with an allowlist that only shrinks; zero duplicate git factories._
 
 Files to comment first: `contract/index.ts` (1,392 loc, fan-in 109) · `validate.ts` (3,984 / 18 comment lines) · `persistence/workflow.ts` (2,567 / 11) · `store.ts` (migration ladder) · `collaborators/runtime.ts` (774 / **0**, fan-in 17) · `verify-attempts.ts` (935 / **0**) · `projects.ts` (2,243 / 5) · `web/data/client.ts` (1,000 / 1) · `web/components/ui.tsx` (the 9.6 anchored-Modal rules).
 
-**12. Layering — workflow orchestration out of persistence.** Break the `persistence/` ↔ `collaborators/` cycle; split `ProjectsCollaborator` (catalog+artifacts / merge+final approval / decomposition reconciliation) and `validate.ts` (scalars / entities / plan graph / worker boundary / board boundary) behind unchanged façades — zero caller edits despite 26 and 102 importers. Define and then *enforce* the allowed import direction. *Exit: a dependency-direction test that fails on a back-import.*
+**12. Layering — workflow orchestration out of persistence.** Break the `persistence/` ↔ `collaborators/` cycle; split `ProjectsCollaborator` (catalog+artifacts / merge+final approval / decomposition reconciliation) and `validate.ts` (scalars / entities / plan graph / worker boundary / board boundary) behind unchanged façades — zero caller edits despite 26 and 102 importers. Define and then _enforce_ the allowed import direction. _Exit: a dependency-direction test that fails on a back-import._
 
-**13. Web feature seams.** Flatten `web/task-board/*` → `web/*`; move `BoardPage` to routing ownership; split `WorkItemDetail.tsx` (1,986 lines, 29 `useState`) — **five test files already split it along disjoint component sets**, so the seam is pre-designed; then slice `model/`+`views/` into feature folders. *Exit: no file over ~600 lines in `src/web`; model→data direction one-way.*
+**13. Web feature seams.** Flatten `web/task-board/*` → `web/*`; move `BoardPage` to routing ownership; split `WorkItemDetail.tsx` (1,986 lines, 29 `useState`) — **five test files already split it along disjoint component sets**, so the seam is pre-designed; then slice `model/`+`views/` into feature folders. _Exit: no file over ~600 lines in `src/web`; model→data direction one-way._
 
 **Into 9.7 (naming, already queued):** the four-way `runtime` collision, `steward` vs `nexus-seventeen`, `provider` vs `runtime`, `collaborators`, and the nine basename hand-offs the structure review listed.
 
@@ -63,17 +63,17 @@ Files to comment first: `contract/index.ts` (1,392 loc, fan-in 109) · `validate
 
 ## Fix now, outside a campaign
 
-| Defect | Where | Why now |
-|---|---|---|
-| Weaker second redaction | `runtime/derive.ts` sanitize chain vs `shared/redact.ts` | Security boundary: misses PEM blocks and AWS keys |
-| `Invalid Date` rendered | `AutomationPage.tsx:91` | The one date formatter without a NaN guard; already drifted |
-| Stale doc claim | `docs/AGENT_SYSTEM.md:11` says the automation registry is dormant | Contradicted by `runs.ts:1189`; misleads the next reader |
+| Defect                  | Where                                                             | Why now                                                     |
+| ----------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| Weaker second redaction | `runtime/derive.ts` sanitize chain vs `shared/redact.ts`          | Security boundary: misses PEM blocks and AWS keys           |
+| `Invalid Date` rendered | `AutomationPage.tsx:91`                                           | The one date formatter without a NaN guard; already drifted |
+| Stale doc claim         | `docs/AGENT_SYSTEM.md:11` says the automation registry is dormant | Contradicted by `runs.ts:1189`; misleads the next reader    |
 
 ## Alternatives considered
 
 - **Flatten `src/server/agents/`** — refused by both reviewers: ~100 sites, 11 `package.json` keys, 8 tsconfig paths, and it would merge ten distinct process/security boundaries into one undifferentiated package.
 - **Collapse `src/shared/task-board-contract/`** — refused: 116 sites, no benefit; browser-safe contracts and Node-only utilities have different dependency constraints, so `src/shared` and `src/server/shared` stay separate.
-- **Subdivide `model/` (30 files) or `views/` (19) on count alone** — refused: 24 of those are colocated tests, and `views/` being flat is a *symptom* of `WorkItemDetail.tsx`, not a folder problem. Split by dependency and feature ownership instead.
+- **Subdivide `model/` (30 files) or `views/` (19) on count alone** — refused: 24 of those are colocated tests, and `views/` being flat is a _symptom_ of `WorkItemDetail.tsx`, not a folder problem. Split by dependency and feature ownership instead.
 - **Split `runs.ts` (1,835) and `worker.ts` (1,463)** — refused for now: each is one transactional state machine with real invariant commentary. Header + banners first; revisit if they grow.
 - **Enforce comment density** — refused: headers, section maps and why-comments help; percentage targets produce narrated code.
 - **eslint for the header rule** — refused: cost out of proportion; the existing `node --test` tier does it.

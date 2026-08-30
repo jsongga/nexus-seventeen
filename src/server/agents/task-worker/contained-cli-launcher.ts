@@ -81,7 +81,8 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
   #active = false;
 
   constructor(options: ContainedCliAgentLauncherOptions) {
-    if (process.platform === "win32") throw new AgentProcessError("Contained task agents require POSIX process groups; Windows is fail-closed");
+    if (process.platform === "win32")
+      throw new AgentProcessError("Contained task agents require POSIX process groups; Windows is fail-closed");
     this.#options = {
       ...options,
       model: configText(options.model, "model", 256),
@@ -99,7 +100,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       throw new RuntimeCapabilityError(
         this.#options.profile.runtime,
         role,
-        `claim role does not match configured lane role ${this.#options.role}`,
+        `claim role does not match configured lane role ${this.#options.role}`
       );
     }
     this.#options.adapter.assertRole(this.#options.profile, role);
@@ -188,14 +189,20 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     child.stdout?.on("data", (chunkValue: Buffer | string) => {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
       stdoutBytes += chunk.length;
-      if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
+      if (stdoutBytes > MAX_STDOUT_BYTES) {
+        failBound("stdout");
+        return;
+      }
       stdout.push(Buffer.from(chunk));
       observeChunk(chunk);
     });
     child.stderr?.on("data", (chunkValue: Buffer | string) => {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
       stderrBytes += chunk.length;
-      if (stderrBytes > MAX_STDERR_BYTES) { failBound("stderr"); return; }
+      if (stderrBytes > MAX_STDERR_BYTES) {
+        failBound("stderr");
+        return;
+      }
       stderr.push(Buffer.from(chunk));
     });
     child.stdin?.once("error", (error) => {
@@ -213,13 +220,24 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
           clearTimeout(timeout);
           finishActivity();
           if (termination !== null) {
-            try { await termination; } catch (error) { failure ??= error as Error; }
+            try {
+              await termination;
+            } catch (error) {
+              failure ??= error as Error;
+            }
           } else if (groupPresent(groupId)) {
             failure ??= new AgentProcessError("Agent CLI left a descendant process after exit");
-            try { await terminate(); } catch (error) { failure = error as Error; }
+            try {
+              await terminate();
+            } catch (error) {
+              failure = error as Error;
+            }
           }
           this.#active = false;
-          if (failure !== null) { reject(failure); return; }
+          if (failure !== null) {
+            reject(failure);
+            return;
+          }
           if (code !== 0) {
             reject(new AgentProcessError(`Agent CLI exited unsuccessfully (${code ?? signal ?? "unknown"})`));
             return;

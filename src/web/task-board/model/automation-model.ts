@@ -1,4 +1,4 @@
-import type { AutomationConfiguration } from '../types';
+import type { AutomationConfiguration } from "../types";
 
 interface ClientOperationToken<T extends object> {
   readonly client: T;
@@ -79,9 +79,11 @@ function automationEditablePayload(configuration: AutomationConfiguration): stri
 }
 
 export function automationEditorIsDirty(state: AutomationEditorState): boolean {
-  return state.saved !== null
-    && state.draft !== null
-    && automationEditablePayload(state.saved) !== automationEditablePayload(state.draft);
+  return (
+    state.saved !== null &&
+    state.draft !== null &&
+    automationEditablePayload(state.saved) !== automationEditablePayload(state.draft)
+  );
 }
 
 export function automationEditorFromConfiguration(configuration: AutomationConfiguration): AutomationEditorState {
@@ -98,7 +100,7 @@ export function automationEditorFromConfiguration(configuration: AutomationConfi
  */
 export function reconcileAutomationConfiguration(
   current: AutomationEditorState,
-  remote: AutomationConfiguration,
+  remote: AutomationConfiguration
 ): AutomationEditorState {
   if (current.saved !== null && remote.version < current.saved.version) return current;
   if (current.saved === null || current.draft === null || !automationEditorIsDirty(current)) {

@@ -23,7 +23,7 @@ import type {
   BoardWorkItemDetail,
   RunStatus,
   TaskStatus,
-} from '../types';
+} from "../types";
 import type {
   RawBoard,
   RawChildWorkItem,
@@ -32,48 +32,48 @@ import type {
   RawProject,
   RawWorkItem,
   RawWorkItemDetail,
-} from '../data/parse';
+} from "../data/parse";
 import {
   wakeReasons,
   type WakeReason as WireWakeReason,
   type WireAgentStatus,
   type WireRunStatus,
   type WireTaskStatus,
-} from '../data/wire';
+} from "../data/wire";
 
-function taskStatus(status: WireTaskStatus | 'unrecognized', hasOpenQuestion: boolean): TaskStatus {
-  if (status === 'unrecognized') return status;
-  if (hasOpenQuestion) return 'waiting_for_human';
+function taskStatus(status: WireTaskStatus | "unrecognized", hasOpenQuestion: boolean): TaskStatus {
+  if (status === "unrecognized") return status;
+  if (hasOpenQuestion) return "waiting_for_human";
   const statuses: Record<WireTaskStatus, TaskStatus> = {
-    backlog: 'backlog',
-    queued: 'queued',
-    in_progress: 'running',
-    blocked: 'blocked',
-    completed: 'completed',
-    failed: 'failed',
-    interrupted: 'interrupted',
-    cancelled: 'cancelled',
+    backlog: "backlog",
+    queued: "queued",
+    in_progress: "running",
+    blocked: "blocked",
+    completed: "completed",
+    failed: "failed",
+    interrupted: "interrupted",
+    cancelled: "cancelled",
   };
   return statuses[status];
 }
 
 function agentStatus(status: WireAgentStatus): AgentStatus {
   const statuses: Record<WireAgentStatus, AgentStatus> = {
-    idle: 'sleeping',
-    ready: 'queued',
-    running: 'running',
-    interrupting: 'interrupting',
-    waiting_for_human: 'waiting_for_human',
+    idle: "sleeping",
+    ready: "queued",
+    running: "running",
+    interrupting: "interrupting",
+    waiting_for_human: "waiting_for_human",
   };
   return statuses[status];
 }
 
 function runStatus(status: WireRunStatus): RunStatus {
-  return status === 'active' ? 'running' : status;
+  return status === "active" ? "running" : status;
 }
 
 function eventRunId(event: RawEvent): string | null {
-  return typeof event.data.runId === 'string' ? event.data.runId : null;
+  return typeof event.data.runId === "string" ? event.data.runId : null;
 }
 
 // Returns the WIRE wake reason, not the view one. `wakeReasons` is derived from
@@ -84,7 +84,7 @@ function eventRunId(event: RawEvent): string | null {
 // exactly where someone should be forced to decide how the UI displays it.
 function eventWakeReason(event: RawEvent): WireWakeReason | null {
   const value = event.data.wakeReason;
-  return typeof value === 'string' && wakeReasons.has(value as WireWakeReason) ? value as WireWakeReason : null;
+  return typeof value === "string" && wakeReasons.has(value as WireWakeReason) ? (value as WireWakeReason) : null;
 }
 
 interface TimestampValue {
@@ -95,11 +95,12 @@ interface TimestampValue {
 export function newest(values: Array<TimestampValue | null | undefined>, fallback: TimestampValue): TimestampValue {
   let latest: TimestampValue | null = null;
   for (const value of values) {
-    if (value !== null && value !== undefined && (
-      latest === null
-      || value.ms > latest.ms
-      || (value.ms === latest.ms && value.iso.localeCompare(latest.iso) > 0)
-    )) latest = value;
+    if (
+      value !== null &&
+      value !== undefined &&
+      (latest === null || value.ms > latest.ms || (value.ms === latest.ms && value.iso.localeCompare(latest.iso) > 0))
+    )
+      latest = value;
   }
   return latest ?? fallback;
 }
@@ -132,15 +133,19 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     planningTaskId: raw.planningTaskId,
     state: raw.state,
     currentStage: raw.currentStage,
-    ...(raw.stateSince === undefined ? {} : {
-      stateSince: raw.stateSince,
-      stateSinceMs: raw.stateSinceMs,
-    }),
+    ...(raw.stateSince === undefined
+      ? {}
+      : {
+          stateSince: raw.stateSince,
+          stateSinceMs: raw.stateSinceMs,
+        }),
     ...(raw.reviewRound === undefined ? {} : { reviewRound: raw.reviewRound }),
-    ...(raw.heartbeatAt === undefined ? {} : {
-      heartbeatAt: raw.heartbeatAt,
-      heartbeatAtMs: raw.heartbeatAtMs,
-    }),
+    ...(raw.heartbeatAt === undefined
+      ? {}
+      : {
+          heartbeatAt: raw.heartbeatAt,
+          heartbeatAtMs: raw.heartbeatAtMs,
+        }),
     createdBy: raw.createdBy,
     version: raw.version,
     createdAt: raw.createdAt,
@@ -172,24 +177,33 @@ export function workItemDetailProjection(raw: RawWorkItemDetail): BoardWorkItemD
   };
 }
 
-export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawMessages: RawMessage[], rawWorkItems: RawWorkItem[]): BoardSnapshot {
+export function normalize(
+  boards: RawBoard[],
+  listedProjects: RawProject[],
+  rawMessages: RawMessage[],
+  rawWorkItems: RawWorkItem[]
+): BoardSnapshot {
   const tasksById = new Map<string, BoardTask>();
   const allRawTasks = boards.flatMap((board) => board.tasks);
-  const questions: BoardQuestion[] = boards.flatMap((board) => board.questions.map((question) => ({
-    id: question.questionId,
-    projectId: question.projectId,
-    taskId: question.taskId,
-    agentId: question.agentId,
-    prompt: question.question,
-    status: question.status,
-    answer: question.answer,
-    askedAt: question.askedAt,
-    askedAtMs: question.askedAtMs,
-    answeredAt: question.answeredAt,
-    answeredAtMs: question.answeredAtMs,
-    version: question.version,
-  })));
-  const openQuestionTasks = new Set(questions.filter((question) => question.status === 'open').map((question) => question.taskId));
+  const questions: BoardQuestion[] = boards.flatMap((board) =>
+    board.questions.map((question) => ({
+      id: question.questionId,
+      projectId: question.projectId,
+      taskId: question.taskId,
+      agentId: question.agentId,
+      prompt: question.question,
+      status: question.status,
+      answer: question.answer,
+      askedAt: question.askedAt,
+      askedAtMs: question.askedAtMs,
+      answeredAt: question.answeredAt,
+      answeredAtMs: question.answeredAtMs,
+      version: question.version,
+    }))
+  );
+  const openQuestionTasks = new Set(
+    questions.filter((question) => question.status === "open").map((question) => question.taskId)
+  );
   for (const raw of allRawTasks) {
     const phases: BoardTaskPhase[] = raw.phases.map((phase) => ({
       id: phase.phaseId,
@@ -250,17 +264,16 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
       if (runId === null) continue;
       const current = runEvents.get(runId);
       const information = Number(event.taskId !== null) + Number(eventWakeReason(event) !== null);
-      const currentInformation = current === undefined
-        ? -1
-        : Number(current.taskId !== null) + Number(eventWakeReason(current) !== null);
+      const currentInformation =
+        current === undefined ? -1 : Number(current.taskId !== null) + Number(eventWakeReason(current) !== null);
       if (
-        current === undefined
-        || information > currentInformation
-        || information === currentInformation && (
-          event.createdAtMs > current.createdAtMs
-          || event.createdAtMs === current.createdAtMs && event.eventId.localeCompare(current.eventId) > 0
-        )
-      ) runEvents.set(runId, event);
+        current === undefined ||
+        information > currentInformation ||
+        (information === currentInformation &&
+          (event.createdAtMs > current.createdAtMs ||
+            (event.createdAtMs === current.createdAtMs && event.eventId.localeCompare(current.eventId) > 0)))
+      )
+        runEvents.set(runId, event);
     }
     for (const raw of board.runs) {
       const event = runEvents.get(raw.runId);
@@ -287,36 +300,39 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     }
   }
 
-  const agents: BoardAgent[] = boards.flatMap((board) => board.agents.map((raw) => {
-    const owned = allRawTasks.filter((task) => task.assignedAgentId === raw.agentId);
-    const current = owned.find((task) => task.status === 'in_progress' || task.status === 'blocked')
-      ?? owned.find((task) => task.status === 'queued')
-      ?? null;
-    const activity = board.events
-      .filter((event) => event.actorId === raw.agentId)
-      .map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }));
-    const latestActivity = newest(activity, { iso: raw.createdAt, ms: raw.createdAtMs });
-    return {
-      id: raw.agentId,
-      projectId: raw.projectId,
-      name: raw.agentId,
-      role: raw.role,
-      area: raw.area,
-      mission: raw.mission,
-      model: raw.model,
-      status: agentStatus(raw.status),
-      workerConnection: raw.workerConnection,
-      lastError: raw.lastError,
-      currentTaskId: current?.taskId ?? null,
-      lastEventAt: latestActivity.iso,
-      lastEventAtMs: latestActivity.ms,
-      version: raw.version,
-      createdAt: raw.createdAt,
-      createdAtMs: raw.createdAtMs,
-      updatedAt: latestActivity.iso,
-      updatedAtMs: latestActivity.ms,
-    };
-  }));
+  const agents: BoardAgent[] = boards.flatMap((board) =>
+    board.agents.map((raw) => {
+      const owned = allRawTasks.filter((task) => task.assignedAgentId === raw.agentId);
+      const current =
+        owned.find((task) => task.status === "in_progress" || task.status === "blocked") ??
+        owned.find((task) => task.status === "queued") ??
+        null;
+      const activity = board.events
+        .filter((event) => event.actorId === raw.agentId)
+        .map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }));
+      const latestActivity = newest(activity, { iso: raw.createdAt, ms: raw.createdAtMs });
+      return {
+        id: raw.agentId,
+        projectId: raw.projectId,
+        name: raw.agentId,
+        role: raw.role,
+        area: raw.area,
+        mission: raw.mission,
+        model: raw.model,
+        status: agentStatus(raw.status),
+        workerConnection: raw.workerConnection,
+        lastError: raw.lastError,
+        currentTaskId: current?.taskId ?? null,
+        lastEventAt: latestActivity.iso,
+        lastEventAtMs: latestActivity.ms,
+        version: raw.version,
+        createdAt: raw.createdAt,
+        createdAtMs: raw.createdAtMs,
+        updatedAt: latestActivity.iso,
+        updatedAtMs: latestActivity.ms,
+      };
+    })
+  );
 
   const projects = listedProjects.map(projectProjection);
   const workItems = rawWorkItems.map(workItemProjection);
@@ -332,17 +348,24 @@ export function normalize(boards: RawBoard[], listedProjects: RawProject[], rawM
     createdAt: message.createdAt,
     createdAtMs: message.createdAtMs,
   }));
-  const generatedAt = newest([
-    ...workItems.map((workItem) => ({ iso: workItem.updatedAt, ms: workItem.updatedAtMs })),
-    ...projects.map((project) => ({ iso: project.updatedAt, ms: project.updatedAtMs })),
-    ...boards.flatMap((board) => board.events.map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }))),
-    ...messages.map((message) => ({ iso: message.createdAt, ms: message.createdAtMs })),
-  ], { iso: new Date(0).toISOString(), ms: 0 });
+  const generatedAt = newest(
+    [
+      ...workItems.map((workItem) => ({ iso: workItem.updatedAt, ms: workItem.updatedAtMs })),
+      ...projects.map((project) => ({ iso: project.updatedAt, ms: project.updatedAtMs })),
+      ...boards.flatMap((board) => board.events.map((event) => ({ iso: event.createdAt, ms: event.createdAtMs }))),
+      ...messages.map((message) => ({ iso: message.createdAt, ms: message.createdAtMs })),
+    ],
+    { iso: new Date(0).toISOString(), ms: 0 }
+  );
   return {
-    revision: workItems.reduce((sum, workItem) => sum + workItem.version, 0)
-      + projects.reduce((sum, project) => sum + (listedProjects.find((raw) => raw.projectId === project.id)?.version ?? 0), 0)
-      + tasks.reduce((sum, task) => sum + task.version, 0)
-      + tasks.reduce((sum, task) => sum + task.phases.reduce((phaseSum, phase) => phaseSum + phase.version, 0), 0),
+    revision:
+      workItems.reduce((sum, workItem) => sum + workItem.version, 0) +
+      projects.reduce(
+        (sum, project) => sum + (listedProjects.find((raw) => raw.projectId === project.id)?.version ?? 0),
+        0
+      ) +
+      tasks.reduce((sum, task) => sum + task.version, 0) +
+      tasks.reduce((sum, task) => sum + task.phases.reduce((phaseSum, phase) => phaseSum + phase.version, 0), 0),
     generatedAt: generatedAt.iso,
     generatedAtMs: generatedAt.ms,
     workItems,

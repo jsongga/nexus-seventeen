@@ -193,7 +193,7 @@ export function exact(
   value: unknown,
   fields: readonly string[],
   label: string,
-  options: FieldSetOptions = {},
+  options: FieldSetOptions = {}
 ): JsonRecord {
   const item = record(value, label);
   const messages = options.messages ?? GENERIC_EXACT_MESSAGES;
@@ -236,19 +236,18 @@ interface TextOptions {
 function text(value: unknown, label: string, options: TextOptions = {}): string {
   const maximum = options.maximum ?? 8_000;
   if (typeof value !== "string") {
-    throw new ContractValidationError(options.scalarMessages?.stringType(label) ?? options.message ?? `${label} is invalid`);
+    throw new ContractValidationError(
+      options.scalarMessages?.stringType(label) ?? options.message ?? `${label} is invalid`
+    );
   }
   const carriageReturns = options.carriageReturns ?? "reject";
   const normalized = carriageReturns === "normalize" ? value.replace(/\r\n?/gu, "\n") : value;
   const parsed = options.trim === false ? normalized : normalized.trim();
-  const controlPattern = carriageReturns !== "reject"
-    ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u
-    : /[\u0000-\u0008\u000b-\u001f\u007f]/u;
-  if (
-    (!options.allowEmpty && parsed.length === 0) ||
-    normalized.length > maximum ||
-    controlPattern.test(normalized)
-  ) {
+  const controlPattern =
+    carriageReturns !== "reject"
+      ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u
+      : /[\u0000-\u0008\u000b-\u001f\u007f]/u;
+  if ((!options.allowEmpty && parsed.length === 0) || normalized.length > maximum || controlPattern.test(normalized)) {
     throw new ContractValidationError(options.message ?? `${label} is invalid`);
   }
   return parsed;
@@ -283,7 +282,7 @@ export function identifier(
   value: unknown,
   label: string,
   message = `${label} is invalid`,
-  scalarMessages?: ScalarMessageProfile,
+  scalarMessages?: ScalarMessageProfile
 ): string {
   if (typeof value !== "string") throw new ContractValidationError(scalarMessages?.stringType(label) ?? message);
   if (!IDENTIFIER.test(value)) throw new ContractValidationError(message);
@@ -295,7 +294,7 @@ export function timestamp(
   label: string,
   message = `${label} must be a timestamp`,
   canonical = false,
-  scalarMessages?: ScalarMessageProfile,
+  scalarMessages?: ScalarMessageProfile
 ): string {
   if (typeof value !== "string") throw new ContractValidationError(scalarMessages?.stringType(label) ?? message);
   if (Number.isNaN(Date.parse(value))) throw new ContractValidationError(message);
@@ -308,7 +307,7 @@ function contractMember<const Values extends readonly string[]>(
   values: Values,
   label: string,
   message = `${label} is invalid`,
-  scalarMessages?: ScalarMessageProfile,
+  scalarMessages?: ScalarMessageProfile
 ): Values[number] {
   if (typeof value !== "string") throw new ContractValidationError(scalarMessages?.stringType(label) ?? message);
   if (!(values as readonly string[]).includes(value)) throw new ContractValidationError(message);
@@ -319,7 +318,7 @@ export function contractSetMember<T extends string>(
   value: unknown,
   values: ReadonlySet<T>,
   label: string,
-  message = `${label} has an unsupported value`,
+  message = `${label} has an unsupported value`
 ): T {
   const parsed = stringValue(value, label);
   if (!values.has(parsed as T)) throw new ContractValidationError(message);
@@ -335,7 +334,7 @@ export function integer(
   value: unknown,
   label: string,
   minimum = 0,
-  message = `${label} must be a safe integer of at least ${minimum}`,
+  message = `${label} must be a safe integer of at least ${minimum}`
 ): number {
   if (!Number.isSafeInteger(value) || Number(value) < minimum) throw new ContractValidationError(message);
   return Number(value);
@@ -378,11 +377,7 @@ export function projectAgentTaskPhase(value: unknown, projectId: string, taskId:
   });
 }
 
-export function arrayOf<T>(
-  value: unknown,
-  label: string,
-  parser: (item: unknown, label: string) => T,
-): T[] {
+export function arrayOf<T>(value: unknown, label: string, parser: (item: unknown, label: string) => T): T[] {
   if (!Array.isArray(value)) throw new ContractValidationError(`${label} must be an array`);
   return value.map((item, index) => parser(item, `${label}[${index}]`));
 }
@@ -400,42 +395,50 @@ interface ShapeParserOptions {
   readonly tolerantEnums?: boolean;
 }
 
-export type TolerantTaskEntity = Omit<BoardTask, "status"> & Readonly<{
-  status: TaskStatus | "unrecognized";
-}>;
+export type TolerantTaskEntity = Omit<BoardTask, "status"> &
+  Readonly<{
+    status: TaskStatus | "unrecognized";
+  }>;
 
-export type TolerantWorkItemEntity = Omit<WorkItem, "state" | "taskType" | "phase"> & Readonly<{
-  state: WorkItemState | "unrecognized";
-  taskType: string;
-  phase: WorkItemPhase | "unrecognized" | null;
-}>;
+export type TolerantWorkItemEntity = Omit<WorkItem, "state" | "taskType" | "phase"> &
+  Readonly<{
+    state: WorkItemState | "unrecognized";
+    taskType: string;
+    phase: WorkItemPhase | "unrecognized" | null;
+  }>;
 
-export type TolerantDeclaredChild = Omit<DeclaredChild, "phase"> & Readonly<{
-  phase?: WorkItemPhase | "unrecognized";
-}>;
+export type TolerantDeclaredChild = Omit<DeclaredChild, "phase"> &
+  Readonly<{
+    phase?: WorkItemPhase | "unrecognized";
+  }>;
 
-export type TolerantPlanRevision = Omit<PlanRevision, "children"> & Readonly<{
-  children: readonly TolerantDeclaredChild[] | null;
-}>;
+export type TolerantPlanRevision = Omit<PlanRevision, "children"> &
+  Readonly<{
+    children: readonly TolerantDeclaredChild[] | null;
+  }>;
 
-export type TolerantParkRecord = Omit<ParkRecord, "category" | "resolution"> & Readonly<{
-  category: ParkCategory | "unrecognized";
-  resolution: typeof PARK_RESOLUTIONS[number] | "unrecognized" | null;
-}>;
+export type TolerantParkRecord = Omit<ParkRecord, "category" | "resolution"> &
+  Readonly<{
+    category: ParkCategory | "unrecognized";
+    resolution: (typeof PARK_RESOLUTIONS)[number] | "unrecognized" | null;
+  }>;
 
-export type TolerantBoardNotification = Omit<BoardNotification, "kind"> & Readonly<{
-  kind: typeof NOTIFICATION_KINDS[number] | "unrecognized";
-}>;
+export type TolerantBoardNotification = Omit<BoardNotification, "kind"> &
+  Readonly<{
+    kind: (typeof NOTIFICATION_KINDS)[number] | "unrecognized";
+  }>;
 
-export type TolerantGateAction = Omit<GateAction, "gate"> & Readonly<{
-  gate: typeof GATE_KINDS[number] | "unrecognized";
-}>;
+export type TolerantGateAction = Omit<GateAction, "gate"> &
+  Readonly<{
+    gate: (typeof GATE_KINDS)[number] | "unrecognized";
+  }>;
 
-export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "severity" | "stage"> & Readonly<{
-  category: ReviewFindingCategory | "unrecognized";
-  severity: ReviewFindingSeverity | "unrecognized";
-  stage: WorkflowStage | "unrecognized";
-}>;
+export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "severity" | "stage"> &
+  Readonly<{
+    category: ReviewFindingCategory | "unrecognized";
+    severity: ReviewFindingSeverity | "unrecognized";
+    stage: WorkflowStage | "unrecognized";
+  }>;
 
 export interface TolerantFindingsLedger {
   readonly categories: readonly {
@@ -458,26 +461,29 @@ export interface TolerantParksLedger {
   readonly recordsSince: string;
 }
 
-type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> & Readonly<{
-  point: DesignFailurePointKind | "unrecognized";
-}>;
+type TolerantDesignFailurePoint = Omit<DesignFailurePoint, "point"> &
+  Readonly<{
+    point: DesignFailurePointKind | "unrecognized";
+  }>;
 
-export type TolerantDesignRecordEntity = Omit<DesignRecord, "failurePoints"> & Readonly<{
-  failurePoints: readonly TolerantDesignFailurePoint[];
-}>;
+export type TolerantDesignRecordEntity = Omit<DesignRecord, "failurePoints"> &
+  Readonly<{
+    failurePoints: readonly TolerantDesignFailurePoint[];
+  }>;
 
 export type ParsedWorkItemTransition = WorkItemTransition;
 
-export type TolerantWorkItemAudit = Omit<WorkItemAudit, "gateActions"> & Readonly<{
-  gateActions: readonly TolerantGateAction[];
-}>;
+export type TolerantWorkItemAudit = Omit<WorkItemAudit, "gateActions"> &
+  Readonly<{
+    gateActions: readonly TolerantGateAction[];
+  }>;
 
 function shape(
   value: unknown,
   label: string,
   fields: readonly string[],
   required: readonly string[],
-  options: ShapeParserOptions,
+  options: ShapeParserOptions
 ): JsonRecord {
   return options.exact === false
     ? record(value, label)
@@ -489,7 +495,7 @@ function entity(
   label: string,
   fields: readonly string[],
   required: readonly string[],
-  options: ShapeParserOptions,
+  options: ShapeParserOptions
 ): JsonRecord {
   const item = shape(value, label, fields, required, options);
   if (item.apiVersion !== TASK_BOARD_API_VERSION) {
@@ -509,9 +515,14 @@ export function versionedRecord(value: unknown, label: string): JsonRecord {
 function shapeIdentifier(value: unknown, label: string, options: ShapeParserOptions): string {
   return options.identifiers === "string"
     ? stringValue(value, label)
-    : identifier(value, label, options.identifierMessages === "valid-identifier"
-        ? `${label} must be a valid identifier`
-        : `${label} is invalid`, options.scalarMessages);
+    : identifier(
+        value,
+        label,
+        options.identifierMessages === "valid-identifier"
+          ? `${label} must be a valid identifier`
+          : `${label} is invalid`,
+        options.scalarMessages
+      );
 }
 
 function nullableIdentifier(value: unknown, label: string, options: ShapeParserOptions): string | null {
@@ -532,7 +543,7 @@ function entityMember<const Values extends readonly string[]>(
   label: string,
   options: ShapeParserOptions,
   message: string | undefined,
-  tolerateUnknown: true,
+  tolerateUnknown: true
 ): Values[number] | "unrecognized";
 function entityMember<const Values extends readonly string[]>(
   value: unknown,
@@ -540,7 +551,7 @@ function entityMember<const Values extends readonly string[]>(
   label: string,
   options: ShapeParserOptions,
   message?: string,
-  tolerateUnknown?: false,
+  tolerateUnknown?: false
 ): Values[number];
 function entityMember<const Values extends readonly string[]>(
   value: unknown,
@@ -548,12 +559,16 @@ function entityMember<const Values extends readonly string[]>(
   label: string,
   options: ShapeParserOptions,
   message = `${label} has an unsupported value`,
-  tolerateUnknown = false,
+  tolerateUnknown = false
 ): Values[number] | "unrecognized" {
   if (
-    tolerateUnknown && options.tolerantEnums === true && options.projection === "browser" && typeof value === "string" &&
+    tolerateUnknown &&
+    options.tolerantEnums === true &&
+    options.projection === "browser" &&
+    typeof value === "string" &&
     !(values as readonly string[]).includes(value)
-  ) return "unrecognized";
+  )
+    return "unrecognized";
   return contractMember(value, values, label, message, options.scalarMessages);
 }
 
@@ -576,7 +591,9 @@ function expectedMinutes(value: unknown, label: string, options: ExpectedMinutes
     throw new ContractValidationError(options.scalarMessages.integerAtLeast(label, 15), options.code);
   }
   if (
-    !Number.isSafeInteger(value) || Number(value) < 15 || Number(value) % 15 !== 0 ||
+    !Number.isSafeInteger(value) ||
+    Number(value) < 15 ||
+    Number(value) % 15 !== 0 ||
     (options.maximum !== undefined && Number(value) > options.maximum)
   ) {
     throw new ContractValidationError(options.message(label), options.code);
@@ -604,23 +621,30 @@ export function parseProjectEntity(value: unknown, label: string, options: Shape
 function parseWorkItemProjectTargetEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): WorkItemProjectTarget {
   const item = record(value, label);
   const mode = stringValue(item.mode, `${label}.mode`);
   if (mode === "auto") {
-    exact(item, ["mode"], label, { messages: {
-      unexpected: () => `${label} has unsupported fields for automatic project selection`,
-      missing: PATH_EXACT_MESSAGES.missing,
-    } });
+    exact(item, ["mode"], label, {
+      messages: {
+        unexpected: () => `${label} has unsupported fields for automatic project selection`,
+        missing: PATH_EXACT_MESSAGES.missing,
+      },
+    });
     return Object.freeze({ mode: "auto" });
   }
   if (mode === "explicit") {
-    exact(item, ["mode", "projectId"], label, { messages: {
-      unexpected: () => `${label} has unsupported fields for explicit project selection`,
-      missing: PATH_EXACT_MESSAGES.missing,
-    } });
-    return Object.freeze({ mode: "explicit", projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options) });
+    exact(item, ["mode", "projectId"], label, {
+      messages: {
+        unexpected: () => `${label} has unsupported fields for explicit project selection`,
+        missing: PATH_EXACT_MESSAGES.missing,
+      },
+    });
+    return Object.freeze({
+      mode: "explicit",
+      projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
+    });
   }
   throw new ContractValidationError(`${label}.mode has an unsupported value`);
 }
@@ -628,14 +652,13 @@ function parseWorkItemProjectTargetEntity(
 export function parseWorkItemTransitionEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): ParsedWorkItemTransition {
   const fields = ["fromState", "toState", "actorType", "actorId", "createdAt"];
   const item = shape(value, label, fields, fields, options);
   return Object.freeze({
-    fromState: item.fromState === null
-      ? null
-      : entityMember(item.fromState, WORK_ITEM_STATES, `${label}.fromState`, options),
+    fromState:
+      item.fromState === null ? null : entityMember(item.fromState, WORK_ITEM_STATES, `${label}.fromState`, options),
     toState: entityMember(item.toState, WORK_ITEM_STATES, `${label}.toState`, options),
     actorType: entityMember(item.actorType, ACTOR_TYPES, `${label}.actorType`, options),
     actorId: stringValue(item.actorId, `${label}.actorId`),
@@ -646,45 +669,78 @@ export function parseWorkItemTransitionEntity(
 export function parseWorkItemEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantWorkItemEntity;
 export function parseWorkItemEntity(value: unknown, label: string, options?: ShapeParserOptions): WorkItem;
 export function parseWorkItemEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): WorkItem | TolerantWorkItemEntity {
   const fields = [
-    "apiVersion", "workItemId", "originalRequest", "refinedObjective", "priority", "taskType", "projectTarget", "resolvedProjectId",
-    "parentWorkItemId", "phase", "childOrdinal", "planningTaskId", "pipelineBranch", "baseSha", "state", "currentStage", "stateSince", "reviewRound", "heartbeatAt",
-    "createdBy", "version", "createdAt", "updatedAt", "endedAt", "cancelledReason", "archivedAt", "transitions",
+    "apiVersion",
+    "workItemId",
+    "originalRequest",
+    "refinedObjective",
+    "priority",
+    "taskType",
+    "projectTarget",
+    "resolvedProjectId",
+    "parentWorkItemId",
+    "phase",
+    "childOrdinal",
+    "planningTaskId",
+    "pipelineBranch",
+    "baseSha",
+    "state",
+    "currentStage",
+    "stateSince",
+    "reviewRound",
+    "heartbeatAt",
+    "createdBy",
+    "version",
+    "createdAt",
+    "updatedAt",
+    "endedAt",
+    "cancelledReason",
+    "archivedAt",
+    "transitions",
   ];
   const optional = new Set([
-    "transitions", "pipelineBranch", "baseSha", "stateSince", "reviewRound", "heartbeatAt",
+    "transitions",
+    "pipelineBranch",
+    "baseSha",
+    "stateSince",
+    "reviewRound",
+    "heartbeatAt",
     ...(options.projection === "browser" ? ["parentWorkItemId", "phase", "childOrdinal"] : []),
   ]);
   const required = fields.filter((field) => !optional.has(field));
   const item = entity(value, label, fields, required, options);
   const projectTarget = parseWorkItemProjectTargetEntity(item.projectTarget, `${label}.projectTarget`, options);
-  const taskType = options.projection === "browser" && options.tolerantEnums === true
-    ? stringValue(item.taskType, `${label}.taskType`)
-    : entityMember(item.taskType, WORK_ITEM_TASK_TYPES, `${label}.taskType`, options);
+  const taskType =
+    options.projection === "browser" && options.tolerantEnums === true
+      ? stringValue(item.taskType, `${label}.taskType`)
+      : entityMember(item.taskType, WORK_ITEM_TASK_TYPES, `${label}.taskType`, options);
   const resolvedProjectId = nullableIdentifier(item.resolvedProjectId, `${label}.resolvedProjectId`, options);
   const state = entityMember(item.state, WORK_ITEM_STATES, `${label}.state`, options, undefined, true);
-  const phase = item.phase === undefined || item.phase === null
-    ? null
-    : entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true);
+  const phase =
+    item.phase === undefined || item.phase === null
+      ? null
+      : entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true);
   const endedAt = nullableTimestamp(item.endedAt, `${label}.endedAt`, options);
   const archivedAt = nullableTimestamp(item.archivedAt, `${label}.archivedAt`, options);
   const cancelledReason = nullableString(item.cancelledReason, `${label}.cancelledReason`);
   if (item.transitions !== undefined) {
     arrayOf(item.transitions, `${label}.transitions`, (entry, entryLabel) =>
-      parseWorkItemTransitionEntity(entry, entryLabel, options));
+      parseWorkItemTransitionEntity(entry, entryLabel, options)
+    );
   }
   if (state !== "unrecognized") {
     const terminal = isTerminalWorkItemState(state);
     if (terminal !== (endedAt !== null)) throw new ContractValidationError(`${label}.endedAt does not match its state`);
-    if (archivedAt !== null && !terminal) throw new ContractValidationError(`${label}.archivedAt requires a terminal state`);
+    if (archivedAt !== null && !terminal)
+      throw new ContractValidationError(`${label}.archivedAt requires a terminal state`);
     if (cancelledReason !== null && state !== "abandoned") {
       throw new ContractValidationError(`${label}.cancelledReason requires an abandoned state`);
     }
@@ -701,31 +757,32 @@ export function parseWorkItemEntity(
     taskType,
     projectTarget,
     resolvedProjectId,
-    parentWorkItemId: item.parentWorkItemId === undefined
-      ? null
-      : nullableIdentifier(item.parentWorkItemId, `${label}.parentWorkItemId`, options),
+    parentWorkItemId:
+      item.parentWorkItemId === undefined
+        ? null
+        : nullableIdentifier(item.parentWorkItemId, `${label}.parentWorkItemId`, options),
     phase,
-    childOrdinal: item.childOrdinal === undefined || item.childOrdinal === null
-      ? null
-      : integer(item.childOrdinal, `${label}.childOrdinal`),
+    childOrdinal:
+      item.childOrdinal === undefined || item.childOrdinal === null
+        ? null
+        : integer(item.childOrdinal, `${label}.childOrdinal`),
     planningTaskId: nullableIdentifier(item.planningTaskId, `${label}.planningTaskId`, options),
     ...(item.pipelineBranch === undefined
       ? {}
       : { pipelineBranch: nullableString(item.pipelineBranch, `${label}.pipelineBranch`) }),
     ...(item.baseSha === undefined ? {} : { baseSha: nullableString(item.baseSha, `${label}.baseSha`) }),
     state,
-    currentStage: item.currentStage === null
-      ? null
-      : entityMember(item.currentStage, WORK_ITEM_STAGES, `${label}.currentStage`, options),
+    currentStage:
+      item.currentStage === null
+        ? null
+        : entityMember(item.currentStage, WORK_ITEM_STAGES, `${label}.currentStage`, options),
     ...(item.stateSince === undefined
       ? {}
       : { stateSince: nullableTimestamp(item.stateSince, `${label}.stateSince`, options) }),
     ...(item.reviewRound === undefined
       ? {}
       : {
-          reviewRound: item.reviewRound === null
-            ? null
-            : integer(item.reviewRound, `${label}.reviewRound`, 1),
+          reviewRound: item.reviewRound === null ? null : integer(item.reviewRound, `${label}.reviewRound`, 1),
         }),
     ...(item.heartbeatAt === undefined
       ? {}
@@ -742,8 +799,20 @@ export function parseWorkItemEntity(
 
 export function parseTaskPhaseEntity(value: unknown, label: string, options: ShapeParserOptions = {}): TaskPhase {
   const fields = [
-    "apiVersion", "phaseId", "projectId", "taskId", "title", "stage", "status", "parallelGroup", "orderKey",
-    "startedAt", "endedAt", "version", "createdAt", "updatedAt",
+    "apiVersion",
+    "phaseId",
+    "projectId",
+    "taskId",
+    "title",
+    "stage",
+    "status",
+    "parallelGroup",
+    "orderKey",
+    "startedAt",
+    "endedAt",
+    "version",
+    "createdAt",
+    "updatedAt",
   ];
   const item = entity(value, label, fields, fields, options);
   const stage = entityMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`, options);
@@ -774,12 +843,28 @@ export function parseAgentTaskPhaseResponse(
   value: unknown,
   projectId: string,
   taskId: string,
-  label: string,
+  label: string
 ): TaskPhase {
-  const item = exact(value, [
-    "apiVersion", "phaseId", "projectId", "taskId", "title", "stage", "status", "parallelGroup", "orderKey",
-    "startedAt", "endedAt", "version", "createdAt", "updatedAt",
-  ], label);
+  const item = exact(
+    value,
+    [
+      "apiVersion",
+      "phaseId",
+      "projectId",
+      "taskId",
+      "title",
+      "stage",
+      "status",
+      "parallelGroup",
+      "orderKey",
+      "startedAt",
+      "endedAt",
+      "version",
+      "createdAt",
+      "updatedAt",
+    ],
+    label
+  );
   if (item.apiVersion !== TASK_BOARD_API_VERSION || item.projectId !== projectId || item.taskId !== taskId) {
     throw new ContractValidationError(`${label} binding is invalid`);
   }
@@ -798,12 +883,12 @@ export function parseAgentTaskPhaseResponse(
     status,
     parallelGroup: item.parallelGroup === null ? null : identifier(item.parallelGroup, `${label}.parallelGroup`),
     orderKey: integer(item.orderKey, `${label}.orderKey`, 0, `${label}.orderKey is invalid`),
-    startedAt: item.startedAt === null
-      ? null
-      : timestamp(item.startedAt, `${label}.startedAt`, `${label}.startedAt is invalid`, true),
-    endedAt: item.endedAt === null
-      ? null
-      : timestamp(item.endedAt, `${label}.endedAt`, `${label}.endedAt is invalid`, true),
+    startedAt:
+      item.startedAt === null
+        ? null
+        : timestamp(item.startedAt, `${label}.startedAt`, `${label}.startedAt is invalid`, true),
+    endedAt:
+      item.endedAt === null ? null : timestamp(item.endedAt, `${label}.endedAt`, `${label}.endedAt is invalid`, true),
     version: integer(item.version, `${label}.version`, 1, `${label}.version is invalid`),
     createdAt: timestamp(item.createdAt, `${label}.createdAt`, `${label}.createdAt is invalid`, true),
     updatedAt: timestamp(item.updatedAt, `${label}.updatedAt`, `${label}.updatedAt is invalid`, true),
@@ -813,51 +898,82 @@ export function parseAgentTaskPhaseResponse(
 export function parseTaskEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantTaskEntity;
 export function parseTaskEntity(value: unknown, label: string, options?: ShapeParserOptions): BoardTask;
 export function parseTaskEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): BoardTask | TolerantTaskEntity {
   const fields = [
-    "apiVersion", "taskId", "projectId", "parentTaskId", "kind", "requiredRole", "requiresReview", "title", "objective",
-    "acceptanceCriteria", "workspaceRefs", "status", "assignedAgentId", "assignedRole", "expectedAgentMinutes",
-    "estimateRecordedAt", "orderKey", "phases", "startedAt", "expectedCompletedAt", "endedAt", "result", "version",
-    "createdAt", "updatedAt",
+    "apiVersion",
+    "taskId",
+    "projectId",
+    "parentTaskId",
+    "kind",
+    "requiredRole",
+    "requiresReview",
+    "title",
+    "objective",
+    "acceptanceCriteria",
+    "workspaceRefs",
+    "status",
+    "assignedAgentId",
+    "assignedRole",
+    "expectedAgentMinutes",
+    "estimateRecordedAt",
+    "orderKey",
+    "phases",
+    "startedAt",
+    "expectedCompletedAt",
+    "endedAt",
+    "result",
+    "version",
+    "createdAt",
+    "updatedAt",
   ];
-  const required = fields.filter((field) => field !== "estimateRecordedAt" && field !== "phases" && field !== "expectedAgentMinutes");
+  const required = fields.filter(
+    (field) => field !== "estimateRecordedAt" && field !== "phases" && field !== "expectedAgentMinutes"
+  );
   const item = entity(value, label, fields, required, options);
   const taskId = shapeIdentifier(item.taskId, `${label}.taskId`, options);
   const projectId = shapeIdentifier(item.projectId, `${label}.projectId`, options);
   const kind = entityMember(item.kind, TASK_KINDS, `${label}.kind`, options);
-  const requiredRole = item.requiredRole === null
-    ? null
-    : entityMember(item.requiredRole, AGENT_ROLES, `${label}.requiredRole`, options);
+  const requiredRole =
+    item.requiredRole === null ? null : entityMember(item.requiredRole, AGENT_ROLES, `${label}.requiredRole`, options);
   const assignedAgentId = nullableIdentifier(item.assignedAgentId, `${label}.assignedAgentId`, options);
-  const assignedRole = item.assignedRole === null
-    ? null
-    : entityMember(item.assignedRole, AGENT_ROLES, `${label}.assignedRole`, options);
+  const assignedRole =
+    item.assignedRole === null ? null : entityMember(item.assignedRole, AGENT_ROLES, `${label}.assignedRole`, options);
   if (kind === "manager_review" ? requiredRole !== "manager" : requiredRole !== null) {
     throw new ContractValidationError(`${label}.requiredRole does not match its task kind`);
   }
-  if ((assignedAgentId === null) !== (assignedRole === null)) throw new ContractValidationError(`${label} has an incomplete assignment`);
+  if ((assignedAgentId === null) !== (assignedRole === null))
+    throw new ContractValidationError(`${label} has an incomplete assignment`);
   if (requiredRole !== null && assignedRole !== null && assignedRole !== requiredRole) {
     throw new ContractValidationError(`${label}.assignedRole does not satisfy requiredRole`);
   }
-  if (kind === "human_check" && assignedAgentId !== null) throw new ContractValidationError(`${label} human check cannot be assigned`);
-  const phases = item.phases === undefined
-    ? []
-    : arrayOf(item.phases, `${label}.phases`, (phase, phaseLabel) => parseTaskPhaseEntity(phase, phaseLabel, options));
+  if (kind === "human_check" && assignedAgentId !== null)
+    throw new ContractValidationError(`${label} human check cannot be assigned`);
+  const phases =
+    item.phases === undefined
+      ? []
+      : arrayOf(item.phases, `${label}.phases`, (phase, phaseLabel) =>
+          parseTaskPhaseEntity(phase, phaseLabel, options)
+        );
   if (phases.some((phase) => phase.taskId !== taskId || phase.projectId !== projectId)) {
     throw new ContractValidationError(`${label}.phases must belong to their containing task`);
   }
   const status = entityMember(item.status, TASK_STATUSES, `${label}.status`, options, undefined, true);
-  const validatedExpectedCompletedAt = nullableTimestamp(item.expectedCompletedAt, `${label}.expectedCompletedAt`, options);
-  const expectedCompletedAt = status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled"
-    ? null
-    : validatedExpectedCompletedAt;
+  const validatedExpectedCompletedAt = nullableTimestamp(
+    item.expectedCompletedAt,
+    `${label}.expectedCompletedAt`,
+    options
+  );
+  const expectedCompletedAt =
+    status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled"
+      ? null
+      : validatedExpectedCompletedAt;
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     taskId,
@@ -869,7 +985,9 @@ export function parseTaskEntity(
     title: stringValue(item.title, `${label}.title`),
     objective: stringValue(item.objective, `${label}.objective`),
     acceptanceCriteria: stringValue(item.acceptanceCriteria, `${label}.acceptanceCriteria`),
-    workspaceRefs: arrayOf(item.workspaceRefs, `${label}.workspaceRefs`, (entry, entryLabel) => stringValue(entry, entryLabel)),
+    workspaceRefs: arrayOf(item.workspaceRefs, `${label}.workspaceRefs`, (entry, entryLabel) =>
+      stringValue(entry, entryLabel)
+    ),
     status,
     assignedAgentId,
     assignedRole,
@@ -877,9 +995,10 @@ export function parseTaskEntity(
       nullable: true,
       undefinedIsNull: options.projection === "browser",
       maximum: options.projection === "browser" ? undefined : 10_080,
-      message: (field) => options.projection === "browser"
-        ? `${field} must use a 15-minute interval`
-        : `${field} must be a 15-minute interval between 15 and 10080`,
+      message: (field) =>
+        options.projection === "browser"
+          ? `${field} must use a 15-minute interval`
+          : `${field} must be a 15-minute interval between 15 and 10080`,
       scalarMessages: options.scalarMessages,
     }),
     estimateRecordedAt: nullableTimestamp(item.estimateRecordedAt ?? null, `${label}.estimateRecordedAt`, options),
@@ -897,8 +1016,18 @@ export function parseTaskEntity(
 
 export function parseAgentEntity(value: unknown, label: string, options: ShapeParserOptions = {}): AgentProfile {
   const fields = [
-    "apiVersion", "agentId", "projectId", "role", "area", "mission", "model", "status", "workerConnection",
-    "lastError", "version", "createdAt",
+    "apiVersion",
+    "agentId",
+    "projectId",
+    "role",
+    "area",
+    "mission",
+    "model",
+    "status",
+    "workerConnection",
+    "lastError",
+    "version",
+    "createdAt",
   ];
   const required = fields.filter((field) => field !== "workerConnection" && field !== "lastError");
   const item = entity(value, label, fields, required, options);
@@ -911,16 +1040,18 @@ export function parseAgentEntity(value: unknown, label: string, options: ShapePa
     mission: stringValue(item.mission, `${label}.mission`),
     model: shapeIdentifier(item.model, `${label}.model`, options),
     status: entityMember(item.status, AGENT_STATUSES, `${label}.status`, options),
-    workerConnection: item.workerConnection === undefined || item.workerConnection === null
-      ? null
-      : entityMember(item.workerConnection, WORKER_CONNECTIONS, `${label}.workerConnection`, options),
-    lastError: item.lastError === undefined || item.lastError === null
-      ? null
-      : prose(item.lastError, `${label}.lastError`, {
-          maximum: 2_000,
-          message: `${label}.lastError must not be empty and contain at most 2,000 characters`,
-          scalarMessages: options.scalarMessages,
-        }),
+    workerConnection:
+      item.workerConnection === undefined || item.workerConnection === null
+        ? null
+        : entityMember(item.workerConnection, WORKER_CONNECTIONS, `${label}.workerConnection`, options),
+    lastError:
+      item.lastError === undefined || item.lastError === null
+        ? null
+        : prose(item.lastError, `${label}.lastError`, {
+            maximum: 2_000,
+            message: `${label}.lastError must not be empty and contain at most 2,000 characters`,
+            scalarMessages: options.scalarMessages,
+          }),
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
   });
@@ -928,8 +1059,19 @@ export function parseAgentEntity(value: unknown, label: string, options: ShapePa
 
 export function parseQuestionEntity(value: unknown, label: string, options: ShapeParserOptions = {}): HumanQuestion {
   const fields = [
-    "apiVersion", "questionId", "projectId", "taskId", "agentId", "runId", "question", "status", "answer", "askedAt",
-    "answeredAt", "answeredBy", "version",
+    "apiVersion",
+    "questionId",
+    "projectId",
+    "taskId",
+    "agentId",
+    "runId",
+    "question",
+    "status",
+    "answer",
+    "askedAt",
+    "answeredAt",
+    "answeredBy",
+    "version",
   ];
   const item = entity(value, label, fields, fields, options);
   const browserProjection = options.projection === "browser";
@@ -952,8 +1094,22 @@ export function parseQuestionEntity(value: unknown, label: string, options: Shap
 
 export function parseRunEntity(value: unknown, label: string, options: ShapeParserOptions = {}): AgentRun {
   const fields = [
-    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "heartbeatAt",
-    "endedAt", "result", "runtime", "runtimeVersion", "model", "promptsSha",
+    "apiVersion",
+    "runId",
+    "claimId",
+    "projectId",
+    "agentId",
+    "wakeupId",
+    "taskId",
+    "status",
+    "startedAt",
+    "heartbeatAt",
+    "endedAt",
+    "result",
+    "runtime",
+    "runtimeVersion",
+    "model",
+    "promptsSha",
   ];
   const item = entity(value, label, fields, fields, options);
   const browserProjection = options.projection === "browser";
@@ -979,7 +1135,17 @@ export function parseRunEntity(value: unknown, label: string, options: ShapePars
 
 export function parseMessageEntity(value: unknown, label: string, options: ShapeParserOptions = {}): TaskMessage {
   const fields = [
-    "apiVersion", "messageId", "sequence", "projectId", "taskId", "runId", "actorType", "actorId", "kind", "body", "createdAt",
+    "apiVersion",
+    "messageId",
+    "sequence",
+    "projectId",
+    "taskId",
+    "runId",
+    "actorType",
+    "actorId",
+    "kind",
+    "body",
+    "createdAt",
   ];
   const item = entity(value, label, fields, fields, options);
   const browserProjection = options.projection === "browser";
@@ -999,7 +1165,17 @@ export function parseMessageEntity(value: unknown, label: string, options: Shape
 }
 
 export function parseEventEntity(value: unknown, label: string, options: ShapeParserOptions = {}): TaskEvent {
-  const fields = ["apiVersion", "eventId", "projectId", "taskId", "actorType", "actorId", "eventType", "data", "createdAt"];
+  const fields = [
+    "apiVersion",
+    "eventId",
+    "projectId",
+    "taskId",
+    "actorType",
+    "actorId",
+    "eventType",
+    "data",
+    "createdAt",
+  ];
   const item = entity(value, label, fields, fields, options);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
@@ -1016,7 +1192,15 @@ export function parseEventEntity(value: unknown, label: string, options: ShapePa
 
 export function parseInterruptEntity(value: unknown, label: string, options: ShapeParserOptions = {}): AgentInterrupt {
   const fields = [
-    "apiVersion", "sequence", "interruptId", "projectId", "agentId", "runId", "reason", "requestedBy", "requestedAt",
+    "apiVersion",
+    "sequence",
+    "interruptId",
+    "projectId",
+    "agentId",
+    "runId",
+    "reason",
+    "requestedBy",
+    "requestedAt",
   ];
   const item = entity(value, label, fields, fields, options);
   const browserProjection = options.projection === "browser";
@@ -1043,7 +1227,13 @@ function parseCriterionResult(value: unknown, label: string, options: ShapeParse
 }
 
 const PLAN_RECORD_FIELD_NAMES = [
-  "changeShape", "tier", "declaredScope", "nonGoals", "mechanicalPortions", "blockingQuestions", "criterionChecks",
+  "changeShape",
+  "tier",
+  "declaredScope",
+  "nonGoals",
+  "mechanicalPortions",
+  "blockingQuestions",
+  "criterionChecks",
 ] as const;
 
 function boundedPlanArray<T>(
@@ -1051,7 +1241,7 @@ function boundedPlanArray<T>(
   label: string,
   minimum: number,
   maximum: number,
-  parse: (entry: unknown, entryLabel: string) => T,
+  parse: (entry: unknown, entryLabel: string) => T
 ): readonly T[] {
   if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
     throw new ContractValidationError(`${label} is invalid`);
@@ -1063,13 +1253,21 @@ function planRecordText(value: unknown, label: string, maximum: number): string 
   return prose(value, label, { maximum, message: `${label} is invalid` });
 }
 
-function planScopeEntry(value: unknown, label: string, parseText: (value: unknown, label: string, maximum: number) => string): string {
+function planScopeEntry(
+  value: unknown,
+  label: string,
+  parseText: (value: unknown, label: string, maximum: number) => string
+): string {
   const entry = parseText(value, label, 256);
   if (entry.startsWith("/") || entry.includes("..")) throw new ContractValidationError(`${label} is invalid`);
   return entry;
 }
 
-function planCheck(value: unknown, label: string, parseText: (value: unknown, label: string, maximum: number) => string): string {
+function planCheck(
+  value: unknown,
+  label: string,
+  parseText: (value: unknown, label: string, maximum: number) => string
+): string {
   const check = parseText(value, label, 512);
   if (/[\u0000-\u001f\u007f]/u.test(check)) throw new ContractValidationError(`${label} is invalid`);
   return check;
@@ -1095,7 +1293,7 @@ function ledgerText(
   label: string,
   maximum: number,
   options: ShapeParserOptions,
-  allowEmpty = false,
+  allowEmpty = false
 ): string {
   return prose(value, label, {
     maximum,
@@ -1117,31 +1315,26 @@ function nullableGitSha(value: unknown, label: string): string | null {
 export function parseParkRecord(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantParkRecord;
+export function parseParkRecord(value: unknown, label: string, options?: ShapeParserOptions): ParkRecord;
 export function parseParkRecord(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): ParkRecord;
-export function parseParkRecord(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): ParkRecord | TolerantParkRecord {
-  const fields = [
-    "parkRecordId", "workItemId", "category", "reason", "parkedAt", "resolvedAt", "resolution",
-  ];
+  const fields = ["parkRecordId", "workItemId", "category", "reason", "parkedAt", "resolvedAt", "resolution"];
   const item = shape(value, label, fields, fields, options);
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
   const category = tolerateUnknown
     ? entityMember(item.category, PARK_CATEGORIES, `${label}.category`, options, undefined, true)
     : entityMember(item.category, PARK_CATEGORIES, `${label}.category`, options);
-  const resolution = item.resolution === null
-    ? null
-    : tolerateUnknown
-      ? entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options, undefined, true)
-      : entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options);
+  const resolution =
+    item.resolution === null
+      ? null
+      : tolerateUnknown
+        ? entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options, undefined, true)
+        : entityMember(item.resolution, PARK_RESOLUTIONS, `${label}.resolution`, options);
   return Object.freeze({
     parkRecordId: shapeIdentifier(item.parkRecordId, `${label}.parkRecordId`, options),
     workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
@@ -1153,11 +1346,7 @@ export function parseParkRecord(
   });
 }
 
-export function parseBoardPause(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
-): BoardPause {
+export function parseBoardPause(value: unknown, label: string, options: ShapeParserOptions = {}): BoardPause {
   const fields = ["paused", "reason", "version", "updatedAt", "updatedBy"] as const;
   const item = shape(value, label, fields, fields, options);
   return Object.freeze({
@@ -1172,21 +1361,25 @@ export function parseBoardPause(
 export function parseBoardNotification(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantBoardNotification;
+export function parseBoardNotification(value: unknown, label: string, options?: ShapeParserOptions): BoardNotification;
 export function parseBoardNotification(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): BoardNotification;
-export function parseBoardNotification(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): BoardNotification | TolerantBoardNotification {
   const fields = [
-    "notificationId", "sequence", "kind", "dedupeKey", "projectId", "workItemId",
-    "summary", "createdAt", "readAt", "version",
+    "notificationId",
+    "sequence",
+    "kind",
+    "dedupeKey",
+    "projectId",
+    "workItemId",
+    "summary",
+    "createdAt",
+    "readAt",
+    "version",
   ];
   const item = shape(value, label, fields, fields, options);
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
@@ -1210,21 +1403,25 @@ export function parseBoardNotification(
 export function parseGateAction(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantGateAction;
+export function parseGateAction(value: unknown, label: string, options?: ShapeParserOptions): GateAction;
 export function parseGateAction(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): GateAction;
-export function parseGateAction(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): GateAction | TolerantGateAction {
   const fields = [
-    "gateActionId", "workItemId", "gate", "actorId", "planRevisionId", "verifiedSha",
-    "mergeSha", "refId", "note", "createdAt",
+    "gateActionId",
+    "workItemId",
+    "gate",
+    "actorId",
+    "planRevisionId",
+    "verifiedSha",
+    "mergeSha",
+    "refId",
+    "note",
+    "createdAt",
   ];
   const item = shape(value, label, fields, fields, options);
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
@@ -1248,24 +1445,22 @@ export function parseGateAction(
 export function parseWorkItemAudit(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantWorkItemAudit;
+export function parseWorkItemAudit(value: unknown, label: string, options?: ShapeParserOptions): WorkItemAudit;
 export function parseWorkItemAudit(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): WorkItemAudit;
-export function parseWorkItemAudit(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): WorkItemAudit | TolerantWorkItemAudit {
   const fields = ["gateActions", "transitions"];
   const item = shape(value, label, fields, fields, options);
   const gateActions = arrayOf(item.gateActions, `${label}.gateActions`, (entry, entryLabel) =>
-    parseGateAction(entry, entryLabel, options));
+    parseGateAction(entry, entryLabel, options)
+  );
   const transitions = arrayOf(item.transitions, `${label}.transitions`, (entry, entryLabel) =>
-    parseWorkItemTransitionEntity(entry, entryLabel, options));
+    parseWorkItemTransitionEntity(entry, entryLabel, options)
+  );
   return Object.freeze({
     gateActions: Object.freeze(gateActions),
     transitions: Object.freeze(transitions),
@@ -1277,8 +1472,10 @@ function reviewFindingDraftFields(
   label: string,
   options: ShapeParserOptions,
   tolerateUnknown: boolean,
-  textMaximum = 2_000,
-): ReviewFindingDraft | Omit<TolerantReviewFindingEntity, "findingId" | "nodeId" | "stage" | "round" | "blocking" | "createdAt"> {
+  textMaximum = 2_000
+):
+  | ReviewFindingDraft
+  | Omit<TolerantReviewFindingEntity, "findingId" | "nodeId" | "stage" | "round" | "blocking" | "createdAt"> {
   const category = tolerateUnknown
     ? entityMember(item.category, REVIEW_FINDING_CATEGORIES, `${label}.category`, options, undefined, true)
     : entityMember(item.category, REVIEW_FINDING_CATEGORIES, `${label}.category`, options);
@@ -1286,12 +1483,16 @@ function reviewFindingDraftFields(
     ? entityMember(item.severity, REVIEW_FINDING_SEVERITIES, `${label}.severity`, options, undefined, true)
     : entityMember(item.severity, REVIEW_FINDING_SEVERITIES, `${label}.severity`, options);
   return Object.freeze({
-    ...(item.file === undefined ? {} : {
-      file: item.file === null ? null : reviewFindingFile(item.file, `${label}.file`),
-    }),
-    ...(item.line === undefined ? {} : {
-      line: item.line === null ? null : integer(item.line, `${label}.line`, 1),
-    }),
+    ...(item.file === undefined
+      ? {}
+      : {
+          file: item.file === null ? null : reviewFindingFile(item.file, `${label}.file`),
+        }),
+    ...(item.line === undefined
+      ? {}
+      : {
+          line: item.line === null ? null : integer(item.line, `${label}.line`, 1),
+        }),
     category,
     severity,
     expected: boundedRecordText(item.expected, `${label}.expected`, textMaximum),
@@ -1308,14 +1509,14 @@ export function parseReviewFindingDraft(value: unknown): ReviewFindingDraft {
     "review finding",
     {},
     false,
-    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH
   ) as ReviewFindingDraft;
 }
 
 function parseReviewFindingDraftList(value: unknown, label: string): readonly ReviewFindingDraft[] {
   if (!Array.isArray(value) || value.length > REVIEW_FINDING_DRAFT_MAX_ITEMS) {
     throw new ContractValidationError(
-      `${label} must be an array with at most ${REVIEW_FINDING_DRAFT_MAX_ITEMS} entries`,
+      `${label} must be an array with at most ${REVIEW_FINDING_DRAFT_MAX_ITEMS} entries`
     );
   }
   return Object.freeze(value.map((entry) => parseReviewFindingDraft(entry)));
@@ -1324,24 +1525,30 @@ function parseReviewFindingDraftList(value: unknown, label: string): readonly Re
 export function parseReviewFindingEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantReviewFindingEntity;
+export function parseReviewFindingEntity(value: unknown, label: string, options?: ShapeParserOptions): ReviewFinding;
 export function parseReviewFindingEntity(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): ReviewFinding;
-export function parseReviewFindingEntity(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): ReviewFinding | TolerantReviewFindingEntity {
   const required = [
-    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS, "blocking", "createdAt",
+    "findingId",
+    "nodeId",
+    "stage",
+    "round",
+    ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
+    "blocking",
+    "createdAt",
   ];
-  const item = shape(value, label, [
-    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_FIELDS, "blocking", "createdAt",
-  ], required, options);
+  const item = shape(
+    value,
+    label,
+    ["findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_FIELDS, "blocking", "createdAt"],
+    required,
+    options
+  );
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
   const stage = tolerateUnknown
     ? entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options, undefined, true)
@@ -1364,7 +1571,7 @@ function boundedLedgerArray<T>(
   value: unknown,
   label: string,
   maximum: number | null,
-  parser: (entry: unknown, entryLabel: string) => T,
+  parser: (entry: unknown, entryLabel: string) => T
 ): readonly T[] {
   if (!Array.isArray(value) || (maximum !== null && value.length > maximum)) {
     const bound = maximum === null ? "an array" : `an array with at most ${maximum} entries`;
@@ -1373,34 +1580,46 @@ function boundedLedgerArray<T>(
   return Object.freeze(value.map((entry, index) => parser(entry, `${label}[${index}]`)));
 }
 
-function parseLedgerFinding(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions,
-): ParsedLedgerFinding {
+function parseLedgerFinding(value: unknown, label: string, options: ShapeParserOptions): ParsedLedgerFinding {
   const fields = [
-    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_FIELDS,
-    "blocking", "createdAt", "workItemId",
+    "findingId",
+    "nodeId",
+    "stage",
+    "round",
+    ...REVIEW_FINDING_DRAFT_FIELDS,
+    "blocking",
+    "createdAt",
+    "workItemId",
   ];
   const required = [
-    "findingId", "nodeId", "stage", "round", ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
-    "blocking", "createdAt", "workItemId",
+    "findingId",
+    "nodeId",
+    "stage",
+    "round",
+    ...REVIEW_FINDING_DRAFT_REQUIRED_FIELDS,
+    "blocking",
+    "createdAt",
+    "workItemId",
   ];
   const item = shape(value, label, fields, required, options);
-  const finding = parseReviewFindingEntity({
-    findingId: item.findingId,
-    nodeId: item.nodeId,
-    stage: item.stage,
-    round: item.round,
-    ...(item.file === undefined ? {} : { file: item.file }),
-    ...(item.line === undefined ? {} : { line: item.line }),
-    category: item.category,
-    severity: item.severity,
-    expected: item.expected,
-    actual: item.actual,
-    blocking: item.blocking,
-    createdAt: item.createdAt,
-  }, label, options) as ReviewFinding | TolerantReviewFindingEntity;
+  const finding = parseReviewFindingEntity(
+    {
+      findingId: item.findingId,
+      nodeId: item.nodeId,
+      stage: item.stage,
+      round: item.round,
+      ...(item.file === undefined ? {} : { file: item.file }),
+      ...(item.line === undefined ? {} : { line: item.line }),
+      category: item.category,
+      severity: item.severity,
+      expected: item.expected,
+      actual: item.actual,
+      blocking: item.blocking,
+      createdAt: item.createdAt,
+    },
+    label,
+    options
+  ) as ReviewFinding | TolerantReviewFindingEntity;
   return Object.freeze({
     ...finding,
     workItemId: shapeIdentifier(item.workItemId, `${label}.workItemId`, options),
@@ -1411,21 +1630,32 @@ function parseLedgerPark(
   value: unknown,
   label: string,
   options: ShapeParserOptions,
-  expectedState: "open" | "resolved",
+  expectedState: "open" | "resolved"
 ): ParsedLedgerPark {
   const fields = [
-    "parkRecordId", "workItemId", "category", "reason", "parkedAt", "resolvedAt", "resolution", "workItemTitle",
+    "parkRecordId",
+    "workItemId",
+    "category",
+    "reason",
+    "parkedAt",
+    "resolvedAt",
+    "resolution",
+    "workItemTitle",
   ];
   const item = shape(value, label, fields, fields, options);
-  const park = parseParkRecord({
-    parkRecordId: item.parkRecordId,
-    workItemId: item.workItemId,
-    category: item.category,
-    reason: item.reason,
-    parkedAt: item.parkedAt,
-    resolvedAt: item.resolvedAt,
-    resolution: item.resolution,
-  }, label, options) as ParkRecord | TolerantParkRecord;
+  const park = parseParkRecord(
+    {
+      parkRecordId: item.parkRecordId,
+      workItemId: item.workItemId,
+      category: item.category,
+      reason: item.reason,
+      parkedAt: item.parkedAt,
+      resolvedAt: item.resolvedAt,
+      resolution: item.resolution,
+    },
+    label,
+    options
+  ) as ParkRecord | TolerantParkRecord;
   if (expectedState === "open" && (park.resolvedAt !== null || park.resolution !== null)) {
     throw new ContractValidationError(`${label} must be an open park record`);
   }
@@ -1449,74 +1679,98 @@ function ledgerRecordsSince(value: unknown, label: string): string {
 export function parseFindingsLedger(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantFindingsLedger;
+export function parseFindingsLedger(value: unknown, label: string, options?: ShapeParserOptions): FindingsLedger;
 export function parseFindingsLedger(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): FindingsLedger;
-export function parseFindingsLedger(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): FindingsLedger | TolerantFindingsLedger {
   const fields = ["categories", "perProject", "recent"];
   const item = shape(value, label, fields, fields, options);
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
   const categories = boundedLedgerArray(item.categories, `${label}.categories`, null, (entry, entryLabel) => {
-    const aggregate = shape(entry, entryLabel, ["category", "severity", "blocking", "count"], [
-      "category", "severity", "blocking", "count",
-    ], options);
+    const aggregate = shape(
+      entry,
+      entryLabel,
+      ["category", "severity", "blocking", "count"],
+      ["category", "severity", "blocking", "count"],
+      options
+    );
     return Object.freeze({
       category: tolerateUnknown
-        ? entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options, undefined, true)
+        ? entityMember(
+            aggregate.category,
+            REVIEW_FINDING_CATEGORIES,
+            `${entryLabel}.category`,
+            options,
+            undefined,
+            true
+          )
         : entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options),
       severity: tolerateUnknown
-        ? entityMember(aggregate.severity, REVIEW_FINDING_SEVERITIES, `${entryLabel}.severity`, options, undefined, true)
+        ? entityMember(
+            aggregate.severity,
+            REVIEW_FINDING_SEVERITIES,
+            `${entryLabel}.severity`,
+            options,
+            undefined,
+            true
+          )
         : entityMember(aggregate.severity, REVIEW_FINDING_SEVERITIES, `${entryLabel}.severity`, options),
       blocking: booleanValue(aggregate.blocking, `${entryLabel}.blocking`),
       count: integer(aggregate.count, `${entryLabel}.count`, 1),
     });
   });
   const perProject = boundedLedgerArray(item.perProject, `${label}.perProject`, null, (entry, entryLabel) => {
-    const aggregate = shape(entry, entryLabel, ["projectId", "category", "count"], [
-      "projectId", "category", "count",
-    ], options);
+    const aggregate = shape(
+      entry,
+      entryLabel,
+      ["projectId", "category", "count"],
+      ["projectId", "category", "count"],
+      options
+    );
     return Object.freeze({
       projectId: shapeIdentifier(aggregate.projectId, `${entryLabel}.projectId`, options),
       category: tolerateUnknown
-        ? entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options, undefined, true)
+        ? entityMember(
+            aggregate.category,
+            REVIEW_FINDING_CATEGORIES,
+            `${entryLabel}.category`,
+            options,
+            undefined,
+            true
+          )
         : entityMember(aggregate.category, REVIEW_FINDING_CATEGORIES, `${entryLabel}.category`, options),
       count: integer(aggregate.count, `${entryLabel}.count`, 1),
     });
   });
   const recent = boundedLedgerArray(item.recent, `${label}.recent`, 50, (entry, entryLabel) =>
-    parseLedgerFinding(entry, entryLabel, options));
+    parseLedgerFinding(entry, entryLabel, options)
+  );
   return Object.freeze({ categories, perProject, recent }) as FindingsLedger | TolerantFindingsLedger;
 }
 
 export function parseParksLedger(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantParksLedger;
+export function parseParksLedger(value: unknown, label: string, options?: ShapeParserOptions): ParksLedger;
 export function parseParksLedger(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): ParksLedger;
-export function parseParksLedger(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): ParksLedger | TolerantParksLedger {
   const fields = ["open", "resolved", "recordsSince"];
   const item = shape(value, label, fields, fields, options);
   const open = boundedLedgerArray(item.open, `${label}.open`, null, (entry, entryLabel) =>
-    parseLedgerPark(entry, entryLabel, options, "open"));
+    parseLedgerPark(entry, entryLabel, options, "open")
+  );
   const resolved = boundedLedgerArray(item.resolved, `${label}.resolved`, 100, (entry, entryLabel) =>
-    parseLedgerPark(entry, entryLabel, options, "resolved"));
+    parseLedgerPark(entry, entryLabel, options, "resolved")
+  );
   return Object.freeze({
     open,
     resolved,
@@ -1525,40 +1779,59 @@ export function parseParksLedger(
 }
 
 const DESIGN_RECORD_FIELDS = [
-  "states", "transitions", "failurePoints", "idempotencyKeys", "faultInjectionCases",
+  "states",
+  "transitions",
+  "failurePoints",
+  "idempotencyKeys",
+  "faultInjectionCases",
 ] as const;
 
 function parseDesignRecordFields(
   item: JsonRecord,
   label: string,
   options: ShapeParserOptions,
-  tolerateUnknown: boolean,
+  tolerateUnknown: boolean
 ): Omit<TolerantDesignRecordEntity, "designRecordId" | "workItemId" | "planRevisionId" | "createdAt"> {
-  const states = boundedPlanArray(item.states, `${label}.states`, 1, DESIGN_RECORD_MAX_STATES,
-    (entry, entryLabel) => boundedRecordText(entry, entryLabel, DESIGN_RECORD_LABEL_MAX_LENGTH));
-  const transitions = boundedPlanArray(item.transitions, `${label}.transitions`, 1, DESIGN_RECORD_MAX_TRANSITIONS, (entry, entryLabel) => {
-    const transition = shape(
-      entry,
-      entryLabel,
-      ["from", "to", "durablePrecondition", "recovery"],
-      ["from", "to"],
-      options,
-    );
-    return Object.freeze({
-      from: boundedRecordText(transition.from, `${entryLabel}.from`, DESIGN_RECORD_LABEL_MAX_LENGTH),
-      to: boundedRecordText(transition.to, `${entryLabel}.to`, DESIGN_RECORD_LABEL_MAX_LENGTH),
-      ...(transition.durablePrecondition === undefined ? {} : {
-        durablePrecondition: boundedRecordText(
-          transition.durablePrecondition,
-          `${entryLabel}.durablePrecondition`,
-          DESIGN_RECORD_DETAIL_MAX_LENGTH,
-        ),
-      }),
-      ...(transition.recovery === undefined ? {} : {
-        recovery: boundedRecordText(transition.recovery, `${entryLabel}.recovery`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
-      }),
-    });
-  });
+  const states = boundedPlanArray(item.states, `${label}.states`, 1, DESIGN_RECORD_MAX_STATES, (entry, entryLabel) =>
+    boundedRecordText(entry, entryLabel, DESIGN_RECORD_LABEL_MAX_LENGTH)
+  );
+  const transitions = boundedPlanArray(
+    item.transitions,
+    `${label}.transitions`,
+    1,
+    DESIGN_RECORD_MAX_TRANSITIONS,
+    (entry, entryLabel) => {
+      const transition = shape(
+        entry,
+        entryLabel,
+        ["from", "to", "durablePrecondition", "recovery"],
+        ["from", "to"],
+        options
+      );
+      return Object.freeze({
+        from: boundedRecordText(transition.from, `${entryLabel}.from`, DESIGN_RECORD_LABEL_MAX_LENGTH),
+        to: boundedRecordText(transition.to, `${entryLabel}.to`, DESIGN_RECORD_LABEL_MAX_LENGTH),
+        ...(transition.durablePrecondition === undefined
+          ? {}
+          : {
+              durablePrecondition: boundedRecordText(
+                transition.durablePrecondition,
+                `${entryLabel}.durablePrecondition`,
+                DESIGN_RECORD_DETAIL_MAX_LENGTH
+              ),
+            }),
+        ...(transition.recovery === undefined
+          ? {}
+          : {
+              recovery: boundedRecordText(
+                transition.recovery,
+                `${entryLabel}.recovery`,
+                DESIGN_RECORD_DETAIL_MAX_LENGTH
+              ),
+            }),
+      });
+    }
+  );
   const failurePoints = boundedPlanArray(
     item.failurePoints,
     `${label}.failurePoints`,
@@ -1570,7 +1843,7 @@ function parseDesignRecordFields(
         entryLabel,
         ["point", "resultingState", "recovery"],
         ["point", "resultingState", "recovery"],
-        options,
+        options
       );
       const point = tolerateUnknown
         ? entityMember(failurePoint.point, DESIGN_FAILURE_POINTS, `${entryLabel}.point`, options, undefined, true)
@@ -1580,11 +1853,11 @@ function parseDesignRecordFields(
         resultingState: boundedRecordText(
           failurePoint.resultingState,
           `${entryLabel}.resultingState`,
-          DESIGN_RECORD_DETAIL_MAX_LENGTH,
+          DESIGN_RECORD_DETAIL_MAX_LENGTH
         ),
         recovery: boundedRecordText(failurePoint.recovery, `${entryLabel}.recovery`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       });
-    },
+    }
   );
   if (!tolerateUnknown) {
     for (const point of DESIGN_FAILURE_POINTS) {
@@ -1604,7 +1877,7 @@ function parseDesignRecordFields(
         entryLabel,
         ["name", "generatedAt", "persistedAt", "reuse"],
         ["name", "generatedAt", "persistedAt", "reuse"],
-        options,
+        options
       );
       return Object.freeze({
         name: boundedRecordText(key.name, `${entryLabel}.name`, DESIGN_RECORD_LABEL_MAX_LENGTH),
@@ -1612,7 +1885,7 @@ function parseDesignRecordFields(
         persistedAt: boundedRecordText(key.persistedAt, `${entryLabel}.persistedAt`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
         reuse: boundedRecordText(key.reuse, `${entryLabel}.reuse`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
       });
-    },
+    }
   );
   const faultInjectionCases = boundedPlanArray(
     item.faultInjectionCases,
@@ -1625,14 +1898,18 @@ function parseDesignRecordFields(
         entryLabel,
         ["name", "scenario", "expectation"],
         ["name", "scenario", "expectation"],
-        options,
+        options
       );
       return Object.freeze({
         name: boundedRecordText(faultCase.name, `${entryLabel}.name`, DESIGN_RECORD_LABEL_MAX_LENGTH),
         scenario: boundedRecordText(faultCase.scenario, `${entryLabel}.scenario`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
-        expectation: boundedRecordText(faultCase.expectation, `${entryLabel}.expectation`, DESIGN_RECORD_DETAIL_MAX_LENGTH),
+        expectation: boundedRecordText(
+          faultCase.expectation,
+          `${entryLabel}.expectation`,
+          DESIGN_RECORD_DETAIL_MAX_LENGTH
+        ),
       });
-    },
+    }
   );
   return Object.freeze({ states, transitions, failurePoints, idempotencyKeys, faultInjectionCases });
 }
@@ -1645,17 +1922,13 @@ export function parseDesignRecordDraft(value: unknown): DesignRecordDraft {
 export function parseDesignRecordEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantDesignRecordEntity;
+export function parseDesignRecordEntity(value: unknown, label: string, options?: ShapeParserOptions): DesignRecord;
 export function parseDesignRecordEntity(
   value: unknown,
   label: string,
-  options?: ShapeParserOptions,
-): DesignRecord;
-export function parseDesignRecordEntity(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): DesignRecord | TolerantDesignRecordEntity {
   const fields = ["designRecordId", "workItemId", "planRevisionId", "createdAt", ...DESIGN_RECORD_FIELDS];
   const item = shape(value, label, fields, fields, options);
@@ -1669,108 +1942,161 @@ export function parseDesignRecordEntity(
   });
 }
 
-function parsePlanRecordEntity(
-  item: JsonRecord,
-  label: string,
-  options: ShapeParserOptions,
-): PlanRecordFields {
+function parsePlanRecordEntity(item: JsonRecord, label: string, options: ShapeParserOptions): PlanRecordFields {
   return Object.freeze({
-    ...(item.changeShape === undefined ? {} : {
-      changeShape: entityMember(item.changeShape, PLAN_CHANGE_SHAPES, `${label}.changeShape`, options),
-    }),
-    ...(item.tier === undefined ? {} : {
-      tier: entityMember(item.tier, PLAN_TIERS, `${label}.tier`, options),
-    }),
-    ...(item.declaredScope === undefined ? {} : {
-      declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
-        (entry, entryLabel) => planScopeEntry(entry, entryLabel, planRecordText)),
-    }),
-    ...(item.nonGoals === undefined ? {} : {
-      nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32,
-        (entry, entryLabel) => planRecordText(entry, entryLabel, 1_000)),
-    }),
-    ...(item.mechanicalPortions === undefined ? {} : {
-      mechanicalPortions: boundedPlanArray(item.mechanicalPortions, `${label}.mechanicalPortions`, 0, 32,
-        (entry, entryLabel) => planRecordText(entry, entryLabel, 1_000)),
-    }),
-    ...(item.blockingQuestions === undefined ? {} : {
-      blockingQuestions: boundedPlanArray(item.blockingQuestions, `${label}.blockingQuestions`, 0, 16,
-        (entry, entryLabel) => {
-          const question = shape(entry, entryLabel, ["question", "recommendedDefault"], ["question", "recommendedDefault"], options);
-          return Object.freeze({
-            question: planRecordText(question.question, `${entryLabel}.question`, 1_000),
-            recommendedDefault: planRecordText(question.recommendedDefault, `${entryLabel}.recommendedDefault`, 1_000),
-          });
+    ...(item.changeShape === undefined
+      ? {}
+      : {
+          changeShape: entityMember(item.changeShape, PLAN_CHANGE_SHAPES, `${label}.changeShape`, options),
         }),
-    }),
-    ...(item.criterionChecks === undefined ? {} : {
-      criterionChecks: boundedPlanArray(item.criterionChecks, `${label}.criterionChecks`, 0, 32,
-        (entry, entryLabel) => {
-          const criterion = shape(entry, entryLabel, ["criterion", "check"], ["criterion", "check"], options);
-          return Object.freeze({
-            criterion: planRecordText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
-            check: planCheck(criterion.check, `${entryLabel}.check`, planRecordText),
-          });
+    ...(item.tier === undefined
+      ? {}
+      : {
+          tier: entityMember(item.tier, PLAN_TIERS, `${label}.tier`, options),
         }),
-    }),
+    ...(item.declaredScope === undefined
+      ? {}
+      : {
+          declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
+            planScopeEntry(entry, entryLabel, planRecordText)
+          ),
+        }),
+    ...(item.nonGoals === undefined
+      ? {}
+      : {
+          nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32, (entry, entryLabel) =>
+            planRecordText(entry, entryLabel, 1_000)
+          ),
+        }),
+    ...(item.mechanicalPortions === undefined
+      ? {}
+      : {
+          mechanicalPortions: boundedPlanArray(
+            item.mechanicalPortions,
+            `${label}.mechanicalPortions`,
+            0,
+            32,
+            (entry, entryLabel) => planRecordText(entry, entryLabel, 1_000)
+          ),
+        }),
+    ...(item.blockingQuestions === undefined
+      ? {}
+      : {
+          blockingQuestions: boundedPlanArray(
+            item.blockingQuestions,
+            `${label}.blockingQuestions`,
+            0,
+            16,
+            (entry, entryLabel) => {
+              const question = shape(
+                entry,
+                entryLabel,
+                ["question", "recommendedDefault"],
+                ["question", "recommendedDefault"],
+                options
+              );
+              return Object.freeze({
+                question: planRecordText(question.question, `${entryLabel}.question`, 1_000),
+                recommendedDefault: planRecordText(
+                  question.recommendedDefault,
+                  `${entryLabel}.recommendedDefault`,
+                  1_000
+                ),
+              });
+            }
+          ),
+        }),
+    ...(item.criterionChecks === undefined
+      ? {}
+      : {
+          criterionChecks: boundedPlanArray(
+            item.criterionChecks,
+            `${label}.criterionChecks`,
+            0,
+            32,
+            (entry, entryLabel) => {
+              const criterion = shape(entry, entryLabel, ["criterion", "check"], ["criterion", "check"], options);
+              return Object.freeze({
+                criterion: planRecordText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
+                check: planCheck(criterion.check, `${entryLabel}.check`, planRecordText),
+              });
+            }
+          ),
+        }),
   });
 }
 
-function parseDeclaredChildEntity(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions,
-): TolerantDeclaredChild {
+function parseDeclaredChildEntity(value: unknown, label: string, options: ShapeParserOptions): TolerantDeclaredChild {
   const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
-  const item = shape(
-    value,
-    label,
-    [...required, "phase", "dependsOn", "splitBy"],
-    required,
-    options,
-  );
+  const item = shape(value, label, [...required, "phase", "dependsOn", "splitBy"], required, options);
   return Object.freeze({
     key: shapeIdentifier(item.key, `${label}.key`, options),
     objective: planRecordText(item.objective, `${label}.objective`, 4_000),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
-    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
-      (entry, entryLabel) => planScopeEntry(entry, entryLabel, planRecordText)),
-    acceptanceCriteria: boundedPlanArray(item.acceptanceCriteria, `${label}.acceptanceCriteria`, 1, 64,
-      (entry, entryLabel) => planRecordText(entry, entryLabel, 2_000)),
-    ...(item.phase === undefined ? {} : {
-      phase: entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true),
-    }),
-    ...(item.dependsOn === undefined ? {} : {
-      dependsOn: boundedPlanArray(item.dependsOn, `${label}.dependsOn`, 0, 64,
-        (entry, entryLabel) => shapeIdentifier(entry, entryLabel, options)),
-    }),
-    ...(item.splitBy === undefined ? {} : {
-      splitBy: entityMember(item.splitBy, ["consumer", "phase"] as const, `${label}.splitBy`, options),
-    }),
+    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
+      planScopeEntry(entry, entryLabel, planRecordText)
+    ),
+    acceptanceCriteria: boundedPlanArray(
+      item.acceptanceCriteria,
+      `${label}.acceptanceCriteria`,
+      1,
+      64,
+      (entry, entryLabel) => planRecordText(entry, entryLabel, 2_000)
+    ),
+    ...(item.phase === undefined
+      ? {}
+      : {
+          phase: entityMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, options, undefined, true),
+        }),
+    ...(item.dependsOn === undefined
+      ? {}
+      : {
+          dependsOn: boundedPlanArray(item.dependsOn, `${label}.dependsOn`, 0, 64, (entry, entryLabel) =>
+            shapeIdentifier(entry, entryLabel, options)
+          ),
+        }),
+    ...(item.splitBy === undefined
+      ? {}
+      : {
+          splitBy: entityMember(item.splitBy, ["consumer", "phase"] as const, `${label}.splitBy`, options),
+        }),
   });
 }
 
 export function parsePlanEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>,
+  options: ShapeParserOptions & Readonly<{ projection: "browser"; tolerantEnums: true }>
 ): TolerantPlanRevision;
 export function parsePlanEntity(value: unknown, label: string, options?: ShapeParserOptions): PlanRevision;
 export function parsePlanEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): PlanRevision | TolerantPlanRevision {
   const coreRequired = [
-    "apiVersion", "planRevisionId", "workItemId", "revision", "objective", "assumptions", "acceptanceCriteria", "projectId",
-    "skillDigests", "state", "createdBy", "confirmedBy", "createdAt", "confirmedAt",
+    "apiVersion",
+    "planRevisionId",
+    "workItemId",
+    "revision",
+    "objective",
+    "assumptions",
+    "acceptanceCriteria",
+    "projectId",
+    "skillDigests",
+    "state",
+    "createdBy",
+    "confirmedBy",
+    "createdAt",
+    "confirmedAt",
   ];
   const required = [...coreRequired, ...(options.projection === "browser" ? [] : ["children"])];
   const fields = [...coreRequired, ...PLAN_RECORD_FIELD_NAMES, "children", "rejectedNote"];
   const item = entity(value, label, fields, required, options);
   const digests = record(item.skillDigests, `${label}.skillDigests`);
   const skillDigests: Record<string, string> = Object.create(null) as Record<string, string>;
-  for (const [key, digest] of Object.entries(digests)) skillDigests[key] = stringValue(digest, `${label}.skillDigests.${key}`);
+  for (const [key, digest] of Object.entries(digests))
+    skillDigests[key] = stringValue(digest, `${label}.skillDigests.${key}`);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     planRevisionId: shapeIdentifier(item.planRevisionId, `${label}.planRevisionId`, options),
@@ -1780,10 +2106,12 @@ export function parsePlanEntity(
     assumptions: Object.freeze(arrayOf(item.assumptions, `${label}.assumptions`, stringValue)),
     acceptanceCriteria: Object.freeze(arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`, stringValue)),
     ...parsePlanRecordEntity(item, label, options),
-    children: item.children === undefined || item.children === null
-      ? null
-      : boundedPlanArray(item.children, `${label}.children`, 0, 64,
-        (entry, entryLabel) => parseDeclaredChildEntity(entry, entryLabel, options)),
+    children:
+      item.children === undefined || item.children === null
+        ? null
+        : boundedPlanArray(item.children, `${label}.children`, 0, 64, (entry, entryLabel) =>
+            parseDeclaredChildEntity(entry, entryLabel, options)
+          ),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     skillDigests: Object.freeze(skillDigests),
     state: entityMember(item.state, PLAN_REVISION_STATES, `${label}.state`, options),
@@ -1791,19 +2119,26 @@ export function parsePlanEntity(
     confirmedBy: nullableIdentifier(item.confirmedBy, `${label}.confirmedBy`, options),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     confirmedAt: nullableTimestamp(item.confirmedAt, `${label}.confirmedAt`, options),
-    ...(item.rejectedNote === undefined ? {} : { rejectedNote: stringValue(item.rejectedNote, `${label}.rejectedNote`) }),
+    ...(item.rejectedNote === undefined
+      ? {}
+      : { rejectedNote: stringValue(item.rejectedNote, `${label}.rejectedNote`) }),
   });
 }
 
 const VERIFY_ATTEMPT_STATES = ["starting", "running", "green", "failed", "died", "failed_to_start", "retired"] as const;
-function parseVerifyAttemptEntity(
-  value: unknown,
-  label: string,
-  options: ShapeParserOptions = {},
-): VerifyAttempt {
+function parseVerifyAttemptEntity(value: unknown, label: string, options: ShapeParserOptions = {}): VerifyAttempt {
   const fields = [
-    "verifyAttemptId", "nodeId", "stage", "attempt", "verifyRunId", "workspacePath", "state",
-    "checkResults", "detail", "createdAt", "endedAt",
+    "verifyAttemptId",
+    "nodeId",
+    "stage",
+    "attempt",
+    "verifyRunId",
+    "workspacePath",
+    "state",
+    "checkResults",
+    "detail",
+    "createdAt",
+    "endedAt",
   ];
   const item = shape(value, label, fields, fields, options);
   let checkResults: VerifyAttempt["checkResults"] = null;
@@ -1811,15 +2146,23 @@ function parseVerifyAttemptEntity(
     if (!Array.isArray(item.checkResults) || item.checkResults.length > 32) {
       throw new ContractValidationError(`${label}.checkResults is invalid`);
     }
-    checkResults = Object.freeze(item.checkResults.map((entry, index) => {
-      const resultLabel = `${label}.checkResults[${index}]`;
-      const result = shape(entry, resultLabel, ["criterion", "check", "passed"], ["criterion", "check", "passed"], options);
-      return Object.freeze({
-        criterion: stringValue(result.criterion, `${resultLabel}.criterion`),
-        check: stringValue(result.check, `${resultLabel}.check`),
-        passed: booleanValue(result.passed, `${resultLabel}.passed`),
-      });
-    }));
+    checkResults = Object.freeze(
+      item.checkResults.map((entry, index) => {
+        const resultLabel = `${label}.checkResults[${index}]`;
+        const result = shape(
+          entry,
+          resultLabel,
+          ["criterion", "check", "passed"],
+          ["criterion", "check", "passed"],
+          options
+        );
+        return Object.freeze({
+          criterion: stringValue(result.criterion, `${resultLabel}.criterion`),
+          check: stringValue(result.check, `${resultLabel}.check`),
+          passed: booleanValue(result.passed, `${resultLabel}.passed`),
+        });
+      })
+    );
   }
   return Object.freeze({
     verifyAttemptId: shapeIdentifier(item.verifyAttemptId, `${label}.verifyAttemptId`, options),
@@ -1839,11 +2182,21 @@ function parseVerifyAttemptEntity(
 export function parsePipelineSummaryEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): PipelineSummary {
   const fields = [
-    "commits", "diffstat", "filesTouched", "declaredScope", "scopeOk", "assumptions",
-    "midRunAssumptions", "verify", "criteria", "criterionChecks", "findings", "designRecord",
+    "commits",
+    "diffstat",
+    "filesTouched",
+    "declaredScope",
+    "scopeOk",
+    "assumptions",
+    "midRunAssumptions",
+    "verify",
+    "criteria",
+    "criterionChecks",
+    "findings",
+    "designRecord",
   ];
   const item = shape(value, label, fields, fields, options);
   const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
@@ -1865,16 +2218,18 @@ export function parsePipelineSummaryEntity(
         criterion: stringValue(check.criterion, `${entryLabel}.criterion`),
         check: stringValue(check.check, `${entryLabel}.check`),
       });
-    },
+    }
   );
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
-  const findings = Object.freeze(boundedPlanArray(
-    item.findings,
-    `${label}.findings`,
-    0,
-    10_000,
-    (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel, options) as ReviewFinding,
-  ));
+  const findings = Object.freeze(
+    boundedPlanArray(
+      item.findings,
+      `${label}.findings`,
+      0,
+      10_000,
+      (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel, options) as ReviewFinding
+    )
+  );
   let designRecord: DesignRecordDraft | null = null;
   if (item.designRecord !== null) {
     const designItem = shape(
@@ -1882,13 +2237,13 @@ export function parsePipelineSummaryEntity(
       `${label}.designRecord`,
       DESIGN_RECORD_FIELDS,
       DESIGN_RECORD_FIELDS,
-      options,
+      options
     );
     designRecord = parseDesignRecordFields(
       designItem,
       `${label}.designRecord`,
       options,
-      tolerateUnknown,
+      tolerateUnknown
     ) as DesignRecordDraft;
   }
   return Object.freeze({
@@ -1899,8 +2254,9 @@ export function parsePipelineSummaryEntity(
     scopeOk: booleanValue(item.scopeOk, `${label}.scopeOk`),
     assumptions: stringList(item.assumptions, `${label}.assumptions`, 64),
     midRunAssumptions: stringList(item.midRunAssumptions, `${label}.midRunAssumptions`, 256),
-    verify: boundedPlanArray(item.verify, `${label}.verify`, 0, 256,
-      (entry, entryLabel) => parseVerifyAttemptEntity(entry, entryLabel, options)),
+    verify: boundedPlanArray(item.verify, `${label}.verify`, 0, 256, (entry, entryLabel) =>
+      parseVerifyAttemptEntity(entry, entryLabel, options)
+    ),
     criteria: stringList(item.criteria, `${label}.criteria`, 64),
     criterionChecks,
     findings,
@@ -1910,8 +2266,20 @@ export function parsePipelineSummaryEntity(
 
 export function parseNodeEntity(value: unknown, label: string, options: ShapeParserOptions = {}): WorkNode {
   const fields = [
-    "apiVersion", "nodeId", "planRevisionId", "projectId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds",
-    "stageTemplate", "currentStage", "state", "version", "createdAt", "updatedAt",
+    "apiVersion",
+    "nodeId",
+    "planRevisionId",
+    "projectId",
+    "title",
+    "objective",
+    "acceptanceCriteria",
+    "dependencyNodeIds",
+    "stageTemplate",
+    "currentStage",
+    "state",
+    "version",
+    "createdAt",
+    "updatedAt",
   ];
   const item = entity(value, label, fields, fields, options);
   return Object.freeze({
@@ -1922,13 +2290,20 @@ export function parseNodeEntity(value: unknown, label: string, options: ShapePar
     title: stringValue(item.title, `${label}.title`),
     objective: stringValue(item.objective, `${label}.objective`),
     acceptanceCriteria: Object.freeze(arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`, stringValue)),
-    dependencyNodeIds: Object.freeze(arrayOf(item.dependencyNodeIds, `${label}.dependencyNodeIds`,
-      (entry, entryLabel) => shapeIdentifier(entry, entryLabel, options))),
-    stageTemplate: Object.freeze(arrayOf(item.stageTemplate, `${label}.stageTemplate`, (stage, stageLabel) =>
-      entityMember(stage, WORKFLOW_STAGES, stageLabel, options))),
-    currentStage: item.currentStage === null
-      ? null
-      : entityMember(item.currentStage, WORKFLOW_STAGES, `${label}.currentStage`, options),
+    dependencyNodeIds: Object.freeze(
+      arrayOf(item.dependencyNodeIds, `${label}.dependencyNodeIds`, (entry, entryLabel) =>
+        shapeIdentifier(entry, entryLabel, options)
+      )
+    ),
+    stageTemplate: Object.freeze(
+      arrayOf(item.stageTemplate, `${label}.stageTemplate`, (stage, stageLabel) =>
+        entityMember(stage, WORKFLOW_STAGES, stageLabel, options)
+      )
+    ),
+    currentStage:
+      item.currentStage === null
+        ? null
+        : entityMember(item.currentStage, WORKFLOW_STAGES, `${label}.currentStage`, options),
     state: entityMember(item.state, WORK_NODE_STATES, `${label}.state`, options),
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
@@ -1938,8 +2313,19 @@ export function parseNodeEntity(value: unknown, label: string, options: ShapePar
 
 export function parseHandoffEntity(value: unknown, label: string, options: ShapeParserOptions = {}): StageHandoff {
   const fields = [
-    "apiVersion", "handoffId", "nodeId", "taskId", "stage", "outcome", "summary", "evidence", "artifactIds",
-    "acceptanceCriteria", "blockers", "recommendedReturnStage", "createdAt",
+    "apiVersion",
+    "handoffId",
+    "nodeId",
+    "taskId",
+    "stage",
+    "outcome",
+    "summary",
+    "evidence",
+    "artifactIds",
+    "acceptanceCriteria",
+    "blockers",
+    "recommendedReturnStage",
+    "createdAt",
   ];
   const item = entity(value, label, fields, fields, options);
   return Object.freeze({
@@ -1951,20 +2337,37 @@ export function parseHandoffEntity(value: unknown, label: string, options: Shape
     outcome: entityMember(item.outcome, STAGE_HANDOFF_OUTCOMES, `${label}.outcome`, options),
     summary: stringValue(item.summary, `${label}.summary`),
     evidence: Object.freeze(arrayOf(item.evidence, `${label}.evidence`, stringValue)),
-    artifactIds: Object.freeze(arrayOf(item.artifactIds, `${label}.artifactIds`,
-      (entry, entryLabel) => shapeIdentifier(entry, entryLabel, options))),
-    acceptanceCriteria: Object.freeze(arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`,
-      (criterion, criterionLabel) => parseCriterionResult(criterion, criterionLabel, options))),
+    artifactIds: Object.freeze(
+      arrayOf(item.artifactIds, `${label}.artifactIds`, (entry, entryLabel) =>
+        shapeIdentifier(entry, entryLabel, options)
+      )
+    ),
+    acceptanceCriteria: Object.freeze(
+      arrayOf(item.acceptanceCriteria, `${label}.acceptanceCriteria`, (criterion, criterionLabel) =>
+        parseCriterionResult(criterion, criterionLabel, options)
+      )
+    ),
     blockers: Object.freeze(arrayOf(item.blockers, `${label}.blockers`, stringValue)),
-    recommendedReturnStage: item.recommendedReturnStage === null
-      ? null
-      : entityMember(item.recommendedReturnStage, WORKFLOW_STAGES, `${label}.recommendedReturnStage`, options),
+    recommendedReturnStage:
+      item.recommendedReturnStage === null
+        ? null
+        : entityMember(item.recommendedReturnStage, WORKFLOW_STAGES, `${label}.recommendedReturnStage`, options),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
   });
 }
 
 export function parseProjectEventEntity(value: unknown, label: string, options: ShapeParserOptions = {}): ProjectEvent {
-  const fields = ["apiVersion", "sequence", "eventId", "projectId", "nodeId", "taskId", "eventType", "summary", "createdAt"];
+  const fields = [
+    "apiVersion",
+    "sequence",
+    "eventId",
+    "projectId",
+    "nodeId",
+    "taskId",
+    "eventType",
+    "summary",
+    "createdAt",
+  ];
   const item = entity(value, label, fields, fields, options);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
@@ -1979,14 +2382,28 @@ export function parseProjectEventEntity(value: unknown, label: string, options: 
   });
 }
 
-export function parseProjectArtifactEntity(value: unknown, label: string, options: ShapeParserOptions = {}): ProjectArtifact {
+export function parseProjectArtifactEntity(
+  value: unknown,
+  label: string,
+  options: ShapeParserOptions = {}
+): ProjectArtifact {
   const fields = [
-    "apiVersion", "artifactId", "projectId", "nodeId", "taskId", "mediaType", "byteSize", "digest", "caption",
-    "createdBy", "createdAt",
+    "apiVersion",
+    "artifactId",
+    "projectId",
+    "nodeId",
+    "taskId",
+    "mediaType",
+    "byteSize",
+    "digest",
+    "caption",
+    "createdBy",
+    "createdAt",
   ];
   const item = entity(value, label, fields, fields, options);
   const digest = stringValue(item.digest, `${label}.digest`);
-  if (!/^sha256:[0-9a-f]{64}$/u.test(digest)) throw new ContractValidationError(`${label}.digest must be a SHA-256 digest`);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(digest))
+    throw new ContractValidationError(`${label}.digest must be a SHA-256 digest`);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     artifactId: shapeIdentifier(item.artifactId, `${label}.artifactId`, options),
@@ -2014,8 +2431,9 @@ const AUTOMATION_STAGE_ROLES = Object.freeze({
 
 export function skillIdentifier(value: unknown, label: string, scalarMessages?: ScalarMessageProfile): string {
   if (typeof value !== "string") {
-    throw new ContractValidationError(scalarMessages?.stringType(label) ??
-      `${label} must be a lowercase skill identifier, not a URL or path`);
+    throw new ContractValidationError(
+      scalarMessages?.stringType(label) ?? `${label} must be a lowercase skill identifier, not a URL or path`
+    );
   }
   if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)) {
     throw new ContractValidationError(`${label} must be a lowercase skill identifier, not a URL or path`);
@@ -2026,14 +2444,25 @@ export function skillIdentifier(value: unknown, label: string, scalarMessages?: 
 export function parseAutomationAgentTypeEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): AutomationAgentType {
-  const fields = ["agentTypeId", "name", "description", "role", "supplementalInstructions", "skillIds", "evaluatorProfile", "enabled"];
+  const fields = [
+    "agentTypeId",
+    "name",
+    "description",
+    "role",
+    "supplementalInstructions",
+    "skillIds",
+    "evaluatorProfile",
+    "enabled",
+  ];
   const item = shape(value, label, fields, fields, options);
   const skillIds = arrayOf(item.skillIds, `${label}.skillIds`, (entry, entryLabel) =>
-    skillIdentifier(entry, entryLabel, options.scalarMessages));
+    skillIdentifier(entry, entryLabel, options.scalarMessages)
+  );
   if (skillIds.length > 32) throw new ContractValidationError(`${label}.skillIds cannot contain more than 32 entries`);
-  if (new Set(skillIds).size !== skillIds.length) throw new ContractValidationError(`${label}.skillIds cannot contain duplicates`);
+  if (new Set(skillIds).size !== skillIds.length)
+    throw new ContractValidationError(`${label}.skillIds cannot contain duplicates`);
   const supplementalInstructions = prose(item.supplementalInstructions, `${label}.supplementalInstructions`, {
     maximum: 8_000,
     allowEmpty: true,
@@ -2042,7 +2471,9 @@ export function parseAutomationAgentTypeEntity(
   });
   const enabled = booleanValue(item.enabled, `${label}.enabled`);
   if (enabled && supplementalInstructions.trim().length === 0) {
-    throw new ContractValidationError(`${label}.supplementalInstructions cannot be empty while the agent type is enabled`);
+    throw new ContractValidationError(
+      `${label}.supplementalInstructions cannot be empty while the agent type is enabled`
+    );
   }
   return Object.freeze({
     agentTypeId: shapeIdentifier(item.agentTypeId, `${label}.agentTypeId`, options),
@@ -2067,13 +2498,16 @@ export function parseAutomationAgentTypeEntity(
 export function parseAutomationExecutorEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): AutomationStageExecutor {
   const item = record(value, label);
   const kind = stringValue(item.kind, `${label}.kind`);
   if (kind === "agent_type") {
     const parsed = shape(item, label, ["kind", "agentTypeId"], ["kind", "agentTypeId"], options);
-    return Object.freeze({ kind: "agent_type", agentTypeId: shapeIdentifier(parsed.agentTypeId, `${label}.agentTypeId`, options) });
+    return Object.freeze({
+      kind: "agent_type",
+      agentTypeId: shapeIdentifier(parsed.agentTypeId, `${label}.agentTypeId`, options),
+    });
   }
   if (kind === "machine_verify" || kind === "human" || kind === "disabled") {
     shape(item, label, ["kind"], ["kind"], options);
@@ -2085,7 +2519,7 @@ export function parseAutomationExecutorEntity(
 export function parseAutomationStageEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): AutomationPipelineStage {
   const item = shape(value, label, ["stage", "executor"], ["stage", "executor"], options);
   return Object.freeze({
@@ -2097,12 +2531,14 @@ export function parseAutomationStageEntity(
 export function validateAutomationConfigurationParts(
   agentTypes: readonly AutomationAgentType[],
   stages: readonly AutomationPipelineStage[],
-  label: string,
+  label: string
 ): void {
-  if (agentTypes.length > 32) throw new ContractValidationError(`${label}.agentTypes cannot contain more than 32 entries`);
+  if (agentTypes.length > 32)
+    throw new ContractValidationError(`${label}.agentTypes cannot contain more than 32 entries`);
   const typesById = new Map<string, AutomationAgentType>();
   for (const agentType of agentTypes) {
-    if (typesById.has(agentType.agentTypeId)) throw new ContractValidationError(`${label}.agentTypes cannot contain duplicate IDs`);
+    if (typesById.has(agentType.agentTypeId))
+      throw new ContractValidationError(`${label}.agentTypes cannot contain duplicate IDs`);
     typesById.set(agentType.agentTypeId, agentType);
   }
   if (stages.length !== WORK_ITEM_STAGES.length) {
@@ -2110,34 +2546,42 @@ export function validateAutomationConfigurationParts(
   }
   stages.forEach((entry, index) => {
     const expectedStage = WORK_ITEM_STAGES[index];
-    if (entry.stage !== expectedStage) throw new ContractValidationError(`${label}.stages must use the canonical automation stage order`);
+    if (entry.stage !== expectedStage)
+      throw new ContractValidationError(`${label}.stages must use the canonical automation stage order`);
     if (entry.executor.kind === "machine_verify" && entry.stage !== "testing") {
       throw new ContractValidationError(`${label}.stages ${entry.stage} cannot use the machine_verify executor`);
     }
     if (entry.stage === "human_review") {
-      if (entry.executor.kind !== "human") throw new ContractValidationError(`${label}.stages human_review must be owned by a human`);
+      if (entry.executor.kind !== "human")
+        throw new ContractValidationError(`${label}.stages human_review must be owned by a human`);
       return;
     }
     if (entry.stage === "deployment") {
-      if (entry.executor.kind !== "disabled") throw new ContractValidationError(`${label}.stages deployment must remain disabled`);
+      if (entry.executor.kind !== "disabled")
+        throw new ContractValidationError(`${label}.stages deployment must remain disabled`);
       return;
     }
-    if (entry.executor.kind === "human") throw new ContractValidationError(`${label}.stages ${entry.stage} cannot use a human executor`);
+    if (entry.executor.kind === "human")
+      throw new ContractValidationError(`${label}.stages ${entry.stage} cannot use a human executor`);
     if (entry.executor.kind !== "agent_type") return;
     const agentType = typesById.get(entry.executor.agentTypeId);
-    if (agentType === undefined) throw new ContractValidationError(`${label}.stages ${entry.stage} references an unknown agent type`);
-    if (!agentType.enabled) throw new ContractValidationError(`${label}.stages ${entry.stage} references a disabled agent type`);
+    if (agentType === undefined)
+      throw new ContractValidationError(`${label}.stages ${entry.stage} references an unknown agent type`);
+    if (!agentType.enabled)
+      throw new ContractValidationError(`${label}.stages ${entry.stage} references a disabled agent type`);
     const roles: readonly (typeof AGENT_ROLES)[number][] = AUTOMATION_STAGE_ROLES[entry.stage];
     if (!roles.includes(agentType.role)) {
       const rolesLabel = roles.join(" or ");
-      throw new ContractValidationError(`${label}.stages ${entry.stage} requires ${rolesLabel.startsWith("engineer") ? "an" : "a"} ${rolesLabel} agent type`);
+      throw new ContractValidationError(
+        `${label}.stages ${entry.stage} requires ${rolesLabel.startsWith("engineer") ? "an" : "a"} ${rolesLabel} agent type`
+      );
     }
   });
 }
 
 export function automationConfigurationPartsBytes(
   agentTypes: readonly AutomationAgentType[],
-  stages: readonly AutomationPipelineStage[],
+  stages: readonly AutomationPipelineStage[]
 ): number {
   return new TextEncoder().encode(JSON.stringify({ agentTypes, stages })).byteLength;
 }
@@ -2145,15 +2589,27 @@ export function automationConfigurationPartsBytes(
 export function parseAutomationConfigurationEntity(
   value: unknown,
   label: string,
-  options: ShapeParserOptions = {},
+  options: ShapeParserOptions = {}
 ): AutomationConfiguration {
-  const fields = ["apiVersion", "configurationId", "agentTypes", "stages", "version", "createdAt", "updatedAt", "updatedBy"];
+  const fields = [
+    "apiVersion",
+    "configurationId",
+    "agentTypes",
+    "stages",
+    "version",
+    "createdAt",
+    "updatedAt",
+    "updatedBy",
+  ];
   const item = entity(value, label, fields, fields, options);
-  if (item.configurationId !== "company-default") throw new ContractValidationError(`${label}.configurationId is unsupported`);
+  if (item.configurationId !== "company-default")
+    throw new ContractValidationError(`${label}.configurationId is unsupported`);
   const agentTypes = arrayOf(item.agentTypes, `${label}.agentTypes`, (entry, entryLabel) =>
-    parseAutomationAgentTypeEntity(entry, entryLabel, options));
+    parseAutomationAgentTypeEntity(entry, entryLabel, options)
+  );
   const stages = arrayOf(item.stages, `${label}.stages`, (entry, entryLabel) =>
-    parseAutomationStageEntity(entry, entryLabel, options));
+    parseAutomationStageEntity(entry, entryLabel, options)
+  );
   validateAutomationConfigurationParts(agentTypes, stages, label);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
@@ -2163,22 +2619,27 @@ export function parseAutomationConfigurationEntity(
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
-    updatedBy: options.projection === "browser"
-      ? prose(item.updatedBy, `${label}.updatedBy`, {
-          maximum: 256,
-          message: `${label}.updatedBy must not be empty and contain at most 256 characters`,
-          scalarMessages: options.scalarMessages,
-        })
-      : identifier(item.updatedBy, `${label}.updatedBy`, `${label}.updatedBy is invalid`, options.scalarMessages),
+    updatedBy:
+      options.projection === "browser"
+        ? prose(item.updatedBy, `${label}.updatedBy`, {
+            maximum: 256,
+            message: `${label}.updatedBy must not be empty and contain at most 256 characters`,
+            scalarMessages: options.scalarMessages,
+          })
+        : identifier(item.updatedBy, `${label}.updatedBy`, `${label}.updatedBy is invalid`, options.scalarMessages),
   });
 }
 
-export function parseBoardSnapshotEntity(
-  value: unknown,
-  options: ShapeParserOptions = {},
-): BoardSnapshot {
+export function parseBoardSnapshotEntity(value: unknown, options: ShapeParserOptions = {}): BoardSnapshot {
   const fields = [
-    "apiVersion", "project", "agents", "tasks", "openQuestions", "recentQuestions", "recentRuns", "recentInterrupts",
+    "apiVersion",
+    "project",
+    "agents",
+    "tasks",
+    "openQuestions",
+    "recentQuestions",
+    "recentRuns",
+    "recentInterrupts",
     "recentEvents",
   ];
   const required = fields.filter((field) => field !== "recentQuestions");
@@ -2186,42 +2647,128 @@ export function parseBoardSnapshotEntity(
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     project: parseProjectEntity(item.project, "board.project", options),
-    agents: Object.freeze(arrayOf(item.agents, "board.agents", (entry, label) => parseAgentEntity(entry, label, options))),
+    agents: Object.freeze(
+      arrayOf(item.agents, "board.agents", (entry, label) => parseAgentEntity(entry, label, options))
+    ),
     tasks: Object.freeze(arrayOf(item.tasks, "board.tasks", (entry, label) => parseTaskEntity(entry, label, options))),
-    openQuestions: Object.freeze(arrayOf(item.openQuestions, "board.openQuestions", (entry, label) => parseQuestionEntity(entry, label, options))),
-    recentQuestions: Object.freeze(item.recentQuestions === undefined ? [] : arrayOf(item.recentQuestions, "board.recentQuestions",
-      (entry, label) => parseQuestionEntity(entry, label, options))),
-    recentRuns: Object.freeze(arrayOf(item.recentRuns, "board.recentRuns", (entry, label) => parseRunEntity(entry, label, options))),
-    recentInterrupts: Object.freeze(arrayOf(item.recentInterrupts, "board.recentInterrupts",
-      (entry, label) => parseInterruptEntity(entry, label, options))),
-    recentEvents: Object.freeze(arrayOf(item.recentEvents, "board.recentEvents", (entry, label) => parseEventEntity(entry, label, options))),
+    openQuestions: Object.freeze(
+      arrayOf(item.openQuestions, "board.openQuestions", (entry, label) => parseQuestionEntity(entry, label, options))
+    ),
+    recentQuestions: Object.freeze(
+      item.recentQuestions === undefined
+        ? []
+        : arrayOf(item.recentQuestions, "board.recentQuestions", (entry, label) =>
+            parseQuestionEntity(entry, label, options)
+          )
+    ),
+    recentRuns: Object.freeze(
+      arrayOf(item.recentRuns, "board.recentRuns", (entry, label) => parseRunEntity(entry, label, options))
+    ),
+    recentInterrupts: Object.freeze(
+      arrayOf(item.recentInterrupts, "board.recentInterrupts", (entry, label) =>
+        parseInterruptEntity(entry, label, options)
+      )
+    ),
+    recentEvents: Object.freeze(
+      arrayOf(item.recentEvents, "board.recentEvents", (entry, label) => parseEventEntity(entry, label, options))
+    ),
   });
 }
 
 export function parseClaimRunResult(value: unknown): ClaimRunResult {
   const envelope = exact(value, ["apiVersion", "run", "wakeup", "task", "context"], "Claim result");
-  if (envelope.apiVersion !== TASK_BOARD_API_VERSION) throw new ContractValidationError("Claim result API version is invalid");
-  const run = exact(envelope.run, [
-    "apiVersion", "runId", "claimId", "projectId", "agentId", "wakeupId", "taskId", "status", "startedAt", "heartbeatAt",
-    "endedAt", "result", "runtime", "runtimeVersion", "model", "promptsSha",
-  ], "Claim run");
-  const wakeup = exact(envelope.wakeup, [
-    "apiVersion", "wakeupId", "projectId", "agentId", "reason", "taskId", "questionId", "detail", "createdBy",
-    "createdAt", "claimedAt", "runId",
-  ], "Claim wakeup");
-  const context = exact(envelope.context, [
-    "intake", "boardProjects", "onboarding", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
-    "phase", "crossRepoContext", "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
-  ], "Claim context", {
-    required: [
-      "intake", "design", "agent", "projectMemory", "areaMemory", "parentTask", "parentMessages", "acceptanceCriteria", "workspaceRefs",
-      "messageCursor", "messages", "triggerQuestion", "openQuestions", "workflow",
+  if (envelope.apiVersion !== TASK_BOARD_API_VERSION)
+    throw new ContractValidationError("Claim result API version is invalid");
+  const run = exact(
+    envelope.run,
+    [
+      "apiVersion",
+      "runId",
+      "claimId",
+      "projectId",
+      "agentId",
+      "wakeupId",
+      "taskId",
+      "status",
+      "startedAt",
+      "heartbeatAt",
+      "endedAt",
+      "result",
+      "runtime",
+      "runtimeVersion",
+      "model",
+      "promptsSha",
     ],
-  });
+    "Claim run"
+  );
+  const wakeup = exact(
+    envelope.wakeup,
+    [
+      "apiVersion",
+      "wakeupId",
+      "projectId",
+      "agentId",
+      "reason",
+      "taskId",
+      "questionId",
+      "detail",
+      "createdBy",
+      "createdAt",
+      "claimedAt",
+      "runId",
+    ],
+    "Claim wakeup"
+  );
+  const context = exact(
+    envelope.context,
+    [
+      "intake",
+      "boardProjects",
+      "onboarding",
+      "design",
+      "agent",
+      "projectMemory",
+      "areaMemory",
+      "parentTask",
+      "parentMessages",
+      "acceptanceCriteria",
+      "workspaceRefs",
+      "phase",
+      "crossRepoContext",
+      "messageCursor",
+      "messages",
+      "triggerQuestion",
+      "openQuestions",
+      "workflow",
+    ],
+    "Claim context",
+    {
+      required: [
+        "intake",
+        "design",
+        "agent",
+        "projectMemory",
+        "areaMemory",
+        "parentTask",
+        "parentMessages",
+        "acceptanceCriteria",
+        "workspaceRefs",
+        "messageCursor",
+        "messages",
+        "triggerQuestion",
+        "openQuestions",
+        "workflow",
+      ],
+    }
+  );
   if (
-    run.apiVersion !== TASK_BOARD_API_VERSION || wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
-    run.status !== "active" || run.endedAt !== null || run.result !== null ||
-    typeof wakeup.reason !== "string" || !(WAKEUP_REASONS as readonly string[]).includes(wakeup.reason)
+    run.apiVersion !== TASK_BOARD_API_VERSION ||
+    wakeup.apiVersion !== TASK_BOARD_API_VERSION ||
+    run.status !== "active" ||
+    run.endedAt !== null ||
+    run.result !== null ||
+    typeof wakeup.reason !== "string" ||
+    !(WAKEUP_REASONS as readonly string[]).includes(wakeup.reason)
   ) {
     throw new ContractValidationError("Claim run or wakeup state is invalid");
   }
@@ -2244,23 +2791,40 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   timestamp(wakeup.createdAt, "wakeup.createdAt", "wakeup.createdAt is invalid", true);
   timestamp(wakeup.claimedAt, "wakeup.claimedAt", "wakeup.claimedAt is invalid", true);
   if (
-    run.wakeupId !== wakeup.wakeupId || run.projectId !== wakeup.projectId || run.agentId !== wakeup.agentId ||
-    run.taskId !== wakeup.taskId || wakeup.runId !== run.runId || wakeup.claimedAt === null
+    run.wakeupId !== wakeup.wakeupId ||
+    run.projectId !== wakeup.projectId ||
+    run.agentId !== wakeup.agentId ||
+    run.taskId !== wakeup.taskId ||
+    wakeup.runId !== run.runId ||
+    wakeup.claimedAt === null
   ) {
     throw new ContractValidationError("Claim run and wakeup binding is invalid");
   }
   if (
-    !Array.isArray(context.workspaceRefs) || !Array.isArray(context.areaMemory) || !Array.isArray(context.messages) ||
-    !Array.isArray(context.parentMessages) || !Array.isArray(context.openQuestions)
+    !Array.isArray(context.workspaceRefs) ||
+    !Array.isArray(context.areaMemory) ||
+    !Array.isArray(context.messages) ||
+    !Array.isArray(context.parentMessages) ||
+    !Array.isArray(context.openQuestions)
   ) {
     throw new ContractValidationError("Claim context collections are invalid");
   }
   if (context.workflow !== null) {
     const workflow = exact(
       context.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review", "fix"],
+      [
+        "planRevisionId",
+        "nodeId",
+        "stage",
+        "skills",
+        "dependencyHandoffs",
+        "workspaceKey",
+        "pipeline",
+        "review",
+        "fix",
+      ],
       "Workflow context",
-      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
+      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] }
     );
     const pipelineFields = parseWorkflowPipelineFields(workflow, "Workflow context");
     if (pipelineFields.fix !== null && workflow.stage !== "implementation") {
@@ -2275,9 +2839,10 @@ export function parseClaimRunResult(value: unknown): ClaimRunResult {
   }
   integer(context.messageCursor, "context.messageCursor", 0, "context.messageCursor is invalid");
   const intake = booleanValue(context.intake, "context.intake");
-  const boardProjects = context.boardProjects === undefined
-    ? undefined
-    : parseBoardProjectContexts(context.boardProjects, "context.boardProjects");
+  const boardProjects =
+    context.boardProjects === undefined
+      ? undefined
+      : parseBoardProjectContexts(context.boardProjects, "context.boardProjects");
   if (intake && boardProjects === undefined) {
     throw new ContractValidationError("Intake claim context is missing board projects");
   }
@@ -2437,25 +3002,31 @@ export interface WorkerAgentContextUsage {
 }
 
 export class WorkerAgentContextBudgetError extends ContractValidationError {
-  constructor(readonly usage: WorkerAgentContextUsage, publishedInterface: boolean) {
+  constructor(
+    readonly usage: WorkerAgentContextUsage,
+    publishedInterface: boolean
+  ) {
     super(
       "Agent context exceeds its byte bound",
-      publishedInterface ? "PUBLISHED_INTERFACE_OVER_BUDGET" : "INVALID_REQUEST",
+      publishedInterface ? "PUBLISHED_INTERFACE_OVER_BUDGET" : "INVALID_REQUEST"
     );
     this.name = "WorkerAgentContextBudgetError";
   }
 }
 
 export function workerAgentContextUsage(value: unknown): WorkerAgentContextUsage {
-  const rawContext = value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as JsonRecord
-    : {};
+  const rawContext = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
   const rawWorkflow = rawContext.workflow;
-  const rawPipeline = rawWorkflow !== null && typeof rawWorkflow === "object" && !Array.isArray(rawWorkflow)
-    ? (rawWorkflow as JsonRecord).pipeline
-    : null;
-  const carriesDesignRecord = rawPipeline !== null && typeof rawPipeline === "object" && !Array.isArray(rawPipeline) &&
-    (rawPipeline as JsonRecord).designRecord !== null && (rawPipeline as JsonRecord).designRecord !== undefined;
+  const rawPipeline =
+    rawWorkflow !== null && typeof rawWorkflow === "object" && !Array.isArray(rawWorkflow)
+      ? (rawWorkflow as JsonRecord).pipeline
+      : null;
+  const carriesDesignRecord =
+    rawPipeline !== null &&
+    typeof rawPipeline === "object" &&
+    !Array.isArray(rawPipeline) &&
+    (rawPipeline as JsonRecord).designRecord !== null &&
+    (rawPipeline as JsonRecord).designRecord !== undefined;
   return Object.freeze({
     bytes: byteLength(value),
     budget: rawContext.design === true || carriesDesignRecord ? MAX_DESIGN_CONTEXT_BYTES : MAX_AGENT_CONTEXT_BYTES,
@@ -2465,11 +3036,16 @@ export function workerAgentContextUsage(value: unknown): WorkerAgentContextUsage
 export function publishedInterfaceValidationReason(error: unknown): PublishedInterfaceFailureReason | null {
   if (!(error instanceof ContractValidationError)) return null;
   switch (error.code) {
-    case "PUBLISHED_INTERFACE_TOO_LARGE": return "too_large";
-    case "PUBLISHED_INTERFACE_INVALID_MARKDOWN": return "invalid_markdown";
-    case "PUBLISHED_INTERFACE_EMPTY": return "empty";
-    case "PUBLISHED_INTERFACE_OVER_BUDGET": return "over_budget";
-    default: return null;
+    case "PUBLISHED_INTERFACE_TOO_LARGE":
+      return "too_large";
+    case "PUBLISHED_INTERFACE_INVALID_MARKDOWN":
+      return "invalid_markdown";
+    case "PUBLISHED_INTERFACE_EMPTY":
+      return "empty";
+    case "PUBLISHED_INTERFACE_OVER_BUDGET":
+      return "over_budget";
+    default:
+      return null;
   }
 }
 
@@ -2478,9 +3054,7 @@ function boundedJsonValue(value: unknown, maximum: number, label: string): void 
 }
 
 function parseCrossRepoContext(value: unknown, label: string): CrossRepoContext {
-  const item = exact(value, [
-    "providerProjectId", "providerRepoName", "interfacePath", "sha", "markdown",
-  ], label);
+  const item = exact(value, ["providerProjectId", "providerRepoName", "interfacePath", "sha", "markdown"], label);
   if (item.interfacePath !== "docs/interface.md") {
     throw new ContractValidationError(`${label}.interfacePath is invalid`);
   }
@@ -2562,10 +3136,25 @@ function assertWorkerPhaseCompletion(stage: TaskPhaseStage, status: TaskPhaseSta
 }
 
 function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
-  const handoff = exact(value, [
-    "apiVersion", "handoffId", "nodeId", "taskId", "stage", "outcome", "summary", "evidence",
-    "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage", "createdAt",
-  ], `Workflow handoff ${index}`);
+  const handoff = exact(
+    value,
+    [
+      "apiVersion",
+      "handoffId",
+      "nodeId",
+      "taskId",
+      "stage",
+      "outcome",
+      "summary",
+      "evidence",
+      "artifactIds",
+      "acceptanceCriteria",
+      "blockers",
+      "recommendedReturnStage",
+      "createdAt",
+    ],
+    `Workflow handoff ${index}`
+  );
   if (handoff.apiVersion !== TASK_BOARD_API_VERSION) {
     throw new ContractValidationError(`Workflow handoff ${index} version is invalid`);
   }
@@ -2589,9 +3178,10 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
       evidence: workerProse(criterion.evidence, `workflow.criterion[${criterionIndex}].evidence`, 2_000),
     });
   });
-  const recommendedReturnStage = handoff.recommendedReturnStage === null
-    ? null
-    : contractMember(handoff.recommendedReturnStage, WORKFLOW_STAGES, `Workflow handoff ${index} return stage`);
+  const recommendedReturnStage =
+    handoff.recommendedReturnStage === null
+      ? null
+      : contractMember(handoff.recommendedReturnStage, WORKFLOW_STAGES, `Workflow handoff ${index} return stage`);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     handoffId: identifier(handoff.handoffId, `workflow.handoffs[${index}].handoffId`),
@@ -2599,19 +3189,11 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
     taskId: identifier(handoff.taskId, `workflow.handoffs[${index}].taskId`),
     stage,
     outcome,
-    summary: workerProse(
-      handoff.summary,
-      `workflow.handoffs[${index}].summary`,
-      STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS,
-    ),
+    summary: workerProse(handoff.summary, `workflow.handoffs[${index}].summary`, STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS),
     evidence: stringList(handoff.evidence, `workflow.handoffs[${index}].evidence`, 32),
     artifactIds: stringList(handoff.artifactIds, `workflow.handoffs[${index}].artifactIds`, 32),
     acceptanceCriteria: Object.freeze(acceptanceCriteria),
-    blockers: stringList(
-      handoff.blockers,
-      `workflow.handoffs[${index}].blockers`,
-      STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
-    ),
+    blockers: stringList(handoff.blockers, `workflow.handoffs[${index}].blockers`, STAGE_HANDOFF_BLOCKERS_MAX_ITEMS),
     recommendedReturnStage,
     createdAt: workerTimestamp(handoff.createdAt, `workflow.handoffs[${index}].createdAt`),
   });
@@ -2652,23 +3234,34 @@ function parseWorkerPhaseUpdate(value: unknown, index: number): ValidatedAgentTa
 
 function parseWorkflowPipelineFields(
   item: JsonRecord,
-  label: string,
+  label: string
 ): Readonly<{
   workspaceKey: string | null;
   pipeline: WorkflowPipelineContext | null;
   review: WorkflowReviewContext | null;
   fix: WorkflowFixContext | null;
 }> {
-  const workspaceKey = item.workspaceKey === undefined || item.workspaceKey === null
-    ? null
-    : identifier(item.workspaceKey, `${label}.workspaceKey`);
+  const workspaceKey =
+    item.workspaceKey === undefined || item.workspaceKey === null
+      ? null
+      : identifier(item.workspaceKey, `${label}.workspaceKey`);
   let pipeline: WorkflowPipelineContext | null = null;
   if (item.pipeline !== undefined && item.pipeline !== null) {
     const rawPipeline = record(item.pipeline, `${label}.pipeline`);
-    const value = exact(item.pipeline, [
-      "branch", "baseSha", "changeShape", "tier", "declaredScope", "nonGoals", "assumptions",
-      ...("designRecord" in rawPipeline ? ["designRecord"] : []),
-    ], `${label}.pipeline`);
+    const value = exact(
+      item.pipeline,
+      [
+        "branch",
+        "baseSha",
+        "changeShape",
+        "tier",
+        "declaredScope",
+        "nonGoals",
+        "assumptions",
+        ...("designRecord" in rawPipeline ? ["designRecord"] : []),
+      ],
+      `${label}.pipeline`
+    );
     if (workspaceKey === null) {
       throw new ContractValidationError(`${label}.pipeline requires workspaceKey`);
     }
@@ -2678,11 +3271,9 @@ function parseWorkflowPipelineFields(
     const branchWorkspaceKey = branchMatch?.[1];
     if (
       branchWorkspaceKey === undefined ||
-      (
-        workspaceKey !== branchWorkspaceKey &&
+      (workspaceKey !== branchWorkspaceKey &&
         workspaceKey !== `${branchWorkspaceKey}${VERIFY_WORKSPACE_SUFFIX}` &&
-        workspaceKey !== `${branchWorkspaceKey}${REVIEW_WORKSPACE_SUFFIX}`
-      ) ||
+        workspaceKey !== `${branchWorkspaceKey}${REVIEW_WORKSPACE_SUFFIX}`) ||
       !GIT_OBJECT_ID_PATTERN.test(baseSha)
     ) {
       throw new ContractValidationError(`${label}.pipeline identity is invalid`);
@@ -2692,41 +3283,49 @@ function parseWorkflowPipelineFields(
       baseSha,
       changeShape: contractMember(value.changeShape, PLAN_CHANGE_SHAPES, `${label}.pipeline.changeShape`),
       tier: contractMember(value.tier, PLAN_TIERS, `${label}.pipeline.tier`),
-      declaredScope: boundedPlanArray(value.declaredScope, `${label}.pipeline.declaredScope`, 1, 64,
-        (entry, entryLabel) => planScopeEntry(entry, entryLabel, workerProse)),
-      nonGoals: boundedPlanArray(value.nonGoals, `${label}.pipeline.nonGoals`, 0, 32,
-        (entry, entryLabel) => workerProse(entry, entryLabel, 1_000)),
-      assumptions: boundedPlanArray(value.assumptions, `${label}.pipeline.assumptions`, 0, 64,
-        (entry, entryLabel) => workerProse(entry, entryLabel, 4_000)),
-      designRecord: value.designRecord === undefined || value.designRecord === null
-        ? null
-        : parseDesignRecordDraft(value.designRecord),
+      declaredScope: boundedPlanArray(
+        value.declaredScope,
+        `${label}.pipeline.declaredScope`,
+        1,
+        64,
+        (entry, entryLabel) => planScopeEntry(entry, entryLabel, workerProse)
+      ),
+      nonGoals: boundedPlanArray(value.nonGoals, `${label}.pipeline.nonGoals`, 0, 32, (entry, entryLabel) =>
+        workerProse(entry, entryLabel, 1_000)
+      ),
+      assumptions: boundedPlanArray(value.assumptions, `${label}.pipeline.assumptions`, 0, 64, (entry, entryLabel) =>
+        workerProse(entry, entryLabel, 4_000)
+      ),
+      designRecord:
+        value.designRecord === undefined || value.designRecord === null
+          ? null
+          : parseDesignRecordDraft(value.designRecord),
     });
   }
   if ((workspaceKey === null) !== (pipeline === null)) {
     throw new ContractValidationError(`${label}.workspaceKey and pipeline must both be null or both be present`);
   }
-  const review = item.review === undefined || item.review === null
-    ? null
-    : parseWorkflowReviewContext(item.review, `${label}.review`);
+  const review =
+    item.review === undefined || item.review === null
+      ? null
+      : parseWorkflowReviewContext(item.review, `${label}.review`);
   if (review !== null && (pipeline === null || !workspaceKey?.endsWith(REVIEW_WORKSPACE_SUFFIX))) {
     throw new ContractValidationError(`${label}.review identity is invalid`);
   }
-  const fix = item.fix === undefined || item.fix === null
-    ? null
-    : (() => {
-        const value = exact(item.fix, ["round", "findings"], `${label}.fix`);
-        return Object.freeze({
-          round: integer(value.round, `${label}.fix.round`, 1),
-          findings: Object.freeze(boundedPlanArray(
-            value.findings,
-            `${label}.fix.findings`,
-            1,
-            64,
-            (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel),
-          )),
-        });
-      })();
+  const fix =
+    item.fix === undefined || item.fix === null
+      ? null
+      : (() => {
+          const value = exact(item.fix, ["round", "findings"], `${label}.fix`);
+          return Object.freeze({
+            round: integer(value.round, `${label}.fix.round`, 1),
+            findings: Object.freeze(
+              boundedPlanArray(value.findings, `${label}.fix.findings`, 1, 64, (entry, entryLabel) =>
+                parseReviewFindingEntity(entry, entryLabel)
+              )
+            ),
+          });
+        })();
   if (fix !== null && (pipeline === null || workspaceKey?.endsWith(REVIEW_WORKSPACE_SUFFIX) === true)) {
     throw new ContractValidationError(`${label}.fix identity is invalid`);
   }
@@ -2735,14 +3334,20 @@ function parseWorkflowPipelineFields(
 
 function parseWorkflowReviewContext(value: unknown, label: string): WorkflowReviewContext {
   const fields = [
-    "commits", "diffstat", "filesTouched", "scopeOk", "midRunAssumptions",
-    "acceptanceCriteria", "criterionChecks", "mechanicalPortions", "priorFindings",
+    "commits",
+    "diffstat",
+    "filesTouched",
+    "scopeOk",
+    "midRunAssumptions",
+    "acceptanceCriteria",
+    "criterionChecks",
+    "mechanicalPortions",
+    "priorFindings",
     "priorFindingsTruncated",
   ];
   const item = exact(value, fields, label, {
     // Claims persisted before these additive review fields joined the block remain replayable.
-    required: fields.filter((field) =>
-      field !== "mechanicalPortions" && field !== "priorFindingsTruncated"),
+    required: fields.filter((field) => field !== "mechanicalPortions" && field !== "priorFindingsTruncated"),
   });
   const commits = boundedPlanArray(item.commits, `${label}.commits`, 0, 1_000, (entry, entryLabel) => {
     const commit = exact(entry, ["sha", "subject"], entryLabel);
@@ -2758,8 +3363,7 @@ function parseWorkflowReviewContext(value: unknown, label: string): WorkflowRevi
     });
   });
   const stringList = (input: unknown, field: string, maximum: number, itemMaximum: number): readonly string[] =>
-    boundedPlanArray(input, field, 0, maximum,
-      (entry, entryLabel) => workerProse(entry, entryLabel, itemMaximum));
+    boundedPlanArray(input, field, 0, maximum, (entry, entryLabel) => workerProse(entry, entryLabel, itemMaximum));
   const criterionChecks = boundedPlanArray(
     item.criterionChecks,
     `${label}.criterionChecks`,
@@ -2771,10 +3375,11 @@ function parseWorkflowReviewContext(value: unknown, label: string): WorkflowRevi
         criterion: workerProse(criterionCheck.criterion, `${entryLabel}.criterion`, 4_000),
         check: planCheck(criterionCheck.check, `${entryLabel}.check`, workerProse),
       });
-    },
+    }
   );
-  const priorFindings = boundedPlanArray(item.priorFindings, `${label}.priorFindings`, 0, 1_000,
-    (entry, entryLabel) => parseReviewFindingEntity(entry, entryLabel));
+  const priorFindings = boundedPlanArray(item.priorFindings, `${label}.priorFindings`, 0, 1_000, (entry, entryLabel) =>
+    parseReviewFindingEntity(entry, entryLabel)
+  );
   if (typeof item.scopeOk !== "boolean") throw new ContractValidationError(`${label}.scopeOk is invalid`);
   if (item.priorFindingsTruncated !== undefined && typeof item.priorFindingsTruncated !== "boolean") {
     throw new ContractValidationError(`${label}.priorFindingsTruncated is invalid`);
@@ -2792,19 +3397,32 @@ function parseWorkflowReviewContext(value: unknown, label: string): WorkflowRevi
     midRunAssumptions: stringList(item.midRunAssumptions, `${label}.midRunAssumptions`, 256, 4_000),
     acceptanceCriteria: stringList(item.acceptanceCriteria, `${label}.acceptanceCriteria`, 64, 4_000),
     criterionChecks,
-    mechanicalPortions: item.mechanicalPortions === undefined
-      ? Object.freeze([])
-      : stringList(item.mechanicalPortions, `${label}.mechanicalPortions`, 32, 1_000),
+    mechanicalPortions:
+      item.mechanicalPortions === undefined
+        ? Object.freeze([])
+        : stringList(item.mechanicalPortions, `${label}.mechanicalPortions`, 32, 1_000),
     priorFindings,
     priorFindingsTruncated: item.priorFindingsTruncated ?? false,
   });
 }
 
 export function parseWorkerTaskWakeClaim(value: unknown): ValidatedTaskWakeClaim {
-  const item = exact(value, [
-    "apiVersion", "claimId", "runId", "wakeupId", "projectId", "agentId", "taskId", "reason",
-    "requestedMessageCursor", "claimedAt",
-  ], "Task wake claim");
+  const item = exact(
+    value,
+    [
+      "apiVersion",
+      "claimId",
+      "runId",
+      "wakeupId",
+      "projectId",
+      "agentId",
+      "taskId",
+      "reason",
+      "requestedMessageCursor",
+      "claimedAt",
+    ],
+    "Task wake claim"
+  );
   if (item.apiVersion !== 1 || typeof item.reason !== "string" || item.reason.length > 64) {
     throw new ContractValidationError("Task wake claim version or reason is invalid");
   }
@@ -2828,20 +3446,62 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   if (usage.bytes > usage.budget) {
     throw new WorkerAgentContextBudgetError(usage, rawContext.crossRepoContext !== undefined);
   }
-  const item = exact(value, [
-    "apiVersion", "projectId", "agentId", "taskId", "intake", "boardProjects", "onboarding", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
-    "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "phase", "crossRepoContext", "workflow",
-  ], "Agent context", {
-    required: [
-      "apiVersion", "projectId", "agentId", "taskId", "intake", "design", "mission", "projectMemory", "task", "areaMemory", "parentEvidence",
-      "messagesSinceCursor", "nextMessageCursor", "messages", "triggerQuestion", "openQuestions", "workspaceRefs", "workflow",
+  const item = exact(
+    value,
+    [
+      "apiVersion",
+      "projectId",
+      "agentId",
+      "taskId",
+      "intake",
+      "boardProjects",
+      "onboarding",
+      "design",
+      "mission",
+      "projectMemory",
+      "task",
+      "areaMemory",
+      "parentEvidence",
+      "messagesSinceCursor",
+      "nextMessageCursor",
+      "messages",
+      "triggerQuestion",
+      "openQuestions",
+      "workspaceRefs",
+      "phase",
+      "crossRepoContext",
+      "workflow",
     ],
-  });
+    "Agent context",
+    {
+      required: [
+        "apiVersion",
+        "projectId",
+        "agentId",
+        "taskId",
+        "intake",
+        "design",
+        "mission",
+        "projectMemory",
+        "task",
+        "areaMemory",
+        "parentEvidence",
+        "messagesSinceCursor",
+        "nextMessageCursor",
+        "messages",
+        "triggerQuestion",
+        "openQuestions",
+        "workspaceRefs",
+        "workflow",
+      ],
+    }
+  );
   if (item.apiVersion !== 1) throw new ContractValidationError("Agent context version is invalid");
   const intake = booleanValue(item.intake, "context.intake");
-  const boardProjects = item.boardProjects === undefined
-    ? undefined
-    : parseBoardProjectContexts(item.boardProjects, "context.boardProjects");
+  const boardProjects =
+    item.boardProjects === undefined
+      ? undefined
+      : parseBoardProjectContexts(item.boardProjects, "context.boardProjects");
   if (boardProjects !== undefined && !intake) {
     throw new ContractValidationError("Board projects are only valid for intake agent context");
   }
@@ -2852,9 +3512,11 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     throw new ContractValidationError("context.onboarding must be true when present");
   }
   const mission = exact(item.mission, ["role", "area", "mission"], "Agent mission");
-  const task = exact(item.task,
+  const task = exact(
+    item.task,
     ["kind", "requiredRole", "title", "objective", "acceptanceCriteria", "version", "expectedAgentMinutes", "phases"],
-    "Agent task context");
+    "Agent task context"
+  );
   const currentTaskId = identifier(item.taskId, "context.taskId");
   if (!Array.isArray(item.areaMemory) || item.areaMemory.length > MAX_AREA_MEMORY_ITEMS) {
     throw new ContractValidationError("Agent area memory is invalid");
@@ -2867,18 +3529,26 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       result: workerProse(memory.result, `areaMemory[${index}].result`, MAX_AREA_MEMORY_RESULT_CHARACTERS),
       endedAt: workerTimestamp(memory.endedAt, `areaMemory[${index}].endedAt`),
     });
-    if (parsed.taskId === currentTaskId) throw new ContractValidationError("Agent area memory includes the current task");
+    if (parsed.taskId === currentTaskId)
+      throw new ContractValidationError("Agent area memory includes the current task");
     return parsed;
   });
   if (new Set(areaMemory.map((entry) => entry.taskId)).size !== areaMemory.length) {
     throw new ContractValidationError("Agent area memory contains duplicate tasks");
   }
-  if (areaMemory.some((entry, index) => {
-    const previous = areaMemory[index - 1];
-    return previous !== undefined && (entry.endedAt > previous.endedAt || entry.endedAt === previous.endedAt && entry.taskId >= previous.taskId);
-  })) throw new ContractValidationError("Agent area memory ordering is invalid");
+  if (
+    areaMemory.some((entry, index) => {
+      const previous = areaMemory[index - 1];
+      return (
+        previous !== undefined &&
+        (entry.endedAt > previous.endedAt || (entry.endedAt === previous.endedAt && entry.taskId >= previous.taskId))
+      );
+    })
+  )
+    throw new ContractValidationError("Agent area memory ordering is invalid");
 
-  if (!Array.isArray(item.messages) || item.messages.length > 50) throw new ContractValidationError("Agent context messages are invalid");
+  if (!Array.isArray(item.messages) || item.messages.length > 50)
+    throw new ContractValidationError("Agent context messages are invalid");
   const messages = item.messages.map((entry, index) => {
     const message = exact(entry, ["messageId", "cursor", "author", "body", "createdAt"], `Message ${index}`);
     if (message.author !== "human" && message.author !== "agent" && message.author !== "system") {
@@ -2897,7 +3567,10 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   }
   const since = workerNullableCursor(item.messagesSinceCursor, "messagesSinceCursor");
   const next = workerNonNegative(item.nextMessageCursor, "nextMessageCursor");
-  if ((since !== null && next < since) || messages.some((message) => message.cursor <= (since ?? -1) || message.cursor > next)) {
+  if (
+    (since !== null && next < since) ||
+    messages.some((message) => message.cursor <= (since ?? -1) || message.cursor > next)
+  ) {
     throw new ContractValidationError("Agent context message cursor binding is invalid");
   }
 
@@ -2907,8 +3580,10 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   const openQuestions = item.openQuestions.map((entry, index) => {
     const question = exact(entry, ["questionId", "question", "answer", "status"], `Question ${index}`);
     const status = contractMember(question.status, QUESTION_STATUSES, `Question ${index} status`);
-    if (status === "open" && question.answer !== null) throw new ContractValidationError(`Question ${index} open answer is invalid`);
-    if (status === "answered" && question.answer === null) throw new ContractValidationError(`Question ${index} answered value is missing`);
+    if (status === "open" && question.answer !== null)
+      throw new ContractValidationError(`Question ${index} open answer is invalid`);
+    if (status === "answered" && question.answer === null)
+      throw new ContractValidationError(`Question ${index} answered value is missing`);
     return Object.freeze({
       questionId: identifier(question.questionId, `openQuestions[${index}].questionId`),
       question: workerProse(question.question, `openQuestions[${index}].question`, 2_000),
@@ -2916,14 +3591,17 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
       status,
     });
   });
-  const triggerQuestion = item.triggerQuestion === null ? null : (() => {
-    const trigger = exact(item.triggerQuestion, ["questionId", "question", "answer"], "Trigger question");
-    return Object.freeze({
-      questionId: identifier(trigger.questionId, "triggerQuestion.questionId"),
-      question: workerProse(trigger.question, "triggerQuestion.question", 2_000),
-      answer: workerProse(trigger.answer, "triggerQuestion.answer", 4_000),
-    });
-  })();
+  const triggerQuestion =
+    item.triggerQuestion === null
+      ? null
+      : (() => {
+          const trigger = exact(item.triggerQuestion, ["questionId", "question", "answer"], "Trigger question");
+          return Object.freeze({
+            questionId: identifier(trigger.questionId, "triggerQuestion.questionId"),
+            question: workerProse(trigger.question, "triggerQuestion.question", 2_000),
+            answer: workerProse(trigger.answer, "triggerQuestion.answer", 4_000),
+          });
+        })();
   if (!Array.isArray(item.workspaceRefs) || item.workspaceRefs.length > 32) {
     throw new ContractValidationError("Agent context workspace references are invalid");
   }
@@ -2932,16 +3610,27 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
   if (item.workflow !== null) {
     const workflowItem = exact(
       item.workflow,
-      ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs", "workspaceKey", "pipeline", "review", "fix"],
+      [
+        "planRevisionId",
+        "nodeId",
+        "stage",
+        "skills",
+        "dependencyHandoffs",
+        "workspaceKey",
+        "pipeline",
+        "review",
+        "fix",
+      ],
       "Workflow context",
-      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] },
+      { required: ["planRevisionId", "nodeId", "stage", "skills", "dependencyHandoffs"] }
     );
     const workflowStage = contractMember(workflowItem.stage, WORKFLOW_STAGES, "Workflow stage");
     const pipelineFields = parseWorkflowPipelineFields(workflowItem, "Workflow context");
     if (pipelineFields.fix !== null && workflowStage !== "implementation") {
       throw new ContractValidationError("Workflow context.fix is only valid during implementation");
     }
-    if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16) throw new ContractValidationError("Workflow skills are invalid");
+    if (!Array.isArray(workflowItem.skills) || workflowItem.skills.length > 16)
+      throw new ContractValidationError("Workflow skills are invalid");
     const skills = workflowItem.skills.map((entry, index) => {
       const skill = exact(entry, ["skillId", "name", "description", "digest", "content"], `Workflow skill ${index}`);
       if (typeof skill.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(skill.digest)) {
@@ -2972,83 +3661,139 @@ export function parseWorkerAgentContext(value: unknown): ValidatedAgentContext {
     });
   }
 
-  const crossRepoContext = item.crossRepoContext === undefined
-    ? undefined
-    : parseCrossRepoContext(item.crossRepoContext, "crossRepoContext");
-  const phase = item.phase === undefined || item.phase === null
-    ? null
-    : contractMember(item.phase, WORK_ITEM_PHASES, "context.phase");
+  const crossRepoContext =
+    item.crossRepoContext === undefined ? undefined : parseCrossRepoContext(item.crossRepoContext, "crossRepoContext");
+  const phase =
+    item.phase === undefined || item.phase === null
+      ? null
+      : contractMember(item.phase, WORK_ITEM_PHASES, "context.phase");
 
-  if (!Array.isArray(task.phases) || task.phases.length > 64) throw new ContractValidationError("Agent task phases are invalid");
+  if (!Array.isArray(task.phases) || task.phases.length > 64)
+    throw new ContractValidationError("Agent task phases are invalid");
   const phases = task.phases.map(parseWorkerContextPhase);
   if (new Set(phases.map((phase) => phase.phaseId)).size !== phases.length) {
     throw new ContractValidationError("Agent task phases contain duplicate phase IDs");
   }
-  if (phases.some((phase, index) => {
-    const previous = phases[index - 1];
-    return previous !== undefined && (phase.orderKey < previous.orderKey || phase.orderKey === previous.orderKey && phase.phaseId <= previous.phaseId);
-  })) throw new ContractValidationError("Agent task phase ordering is invalid");
+  if (
+    phases.some((phase, index) => {
+      const previous = phases[index - 1];
+      return (
+        previous !== undefined &&
+        (phase.orderKey < previous.orderKey ||
+          (phase.orderKey === previous.orderKey && phase.phaseId <= previous.phaseId))
+      );
+    })
+  )
+    throw new ContractValidationError("Agent task phase ordering is invalid");
 
   let parentEvidence: ValidatedAgentContext["parentEvidence"] = null;
   if (item.parentEvidence !== null) {
-    const parent = exact(item.parentEvidence, [
-      "taskId", "title", "objective", "acceptanceCriteria", "status", "assignedAgentId", "workspaceRefs", "startedAt", "endedAt", "result", "messages",
-    ], "Parent evidence");
+    const parent = exact(
+      item.parentEvidence,
+      [
+        "taskId",
+        "title",
+        "objective",
+        "acceptanceCriteria",
+        "status",
+        "assignedAgentId",
+        "workspaceRefs",
+        "startedAt",
+        "endedAt",
+        "result",
+        "messages",
+      ],
+      "Parent evidence"
+    );
     if (!Array.isArray(parent.workspaceRefs) || parent.workspaceRefs.length > 32) {
       throw new ContractValidationError("Parent evidence workspace references are invalid");
     }
-    if (!Array.isArray(parent.messages) || parent.messages.length > 12) throw new ContractValidationError("Parent evidence messages are invalid");
+    if (!Array.isArray(parent.messages) || parent.messages.length > 12)
+      throw new ContractValidationError("Parent evidence messages are invalid");
     const parentMessages = parent.messages.map((entry, index) => {
       const message = exact(entry, ["messageId", "author", "kind", "body", "createdAt"], `Parent message ${index}`);
-      if (message.author !== "human" && message.author !== "agent") throw new ContractValidationError(`Parent message ${index} author is invalid`);
-      if (message.kind !== "note" && message.kind !== "progress" && message.kind !== "proposal" && message.kind !== "result") {
+      if (message.author !== "human" && message.author !== "agent")
+        throw new ContractValidationError(`Parent message ${index} author is invalid`);
+      if (
+        message.kind !== "note" &&
+        message.kind !== "progress" &&
+        message.kind !== "proposal" &&
+        message.kind !== "result"
+      ) {
         throw new ContractValidationError(`Parent message ${index} kind is invalid`);
       }
       return Object.freeze({
-        messageId: identifier(message.messageId, `parent.messages[${index}].messageId`), author: message.author, kind: message.kind,
+        messageId: identifier(message.messageId, `parent.messages[${index}].messageId`),
+        author: message.author,
+        kind: message.kind,
         body: workerProse(message.body, `parent.messages[${index}].body`, 2_000),
         createdAt: workerTimestamp(message.createdAt, `parent.messages[${index}].createdAt`),
       });
     });
     parentEvidence = Object.freeze({
-      taskId: identifier(parent.taskId, "parent.taskId"), title: workerProse(parent.title, "parent.title", 512),
+      taskId: identifier(parent.taskId, "parent.taskId"),
+      title: workerProse(parent.title, "parent.title", 512),
       objective: workerProse(parent.objective, "parent.objective", 8_000),
       acceptanceCriteria: workerProse(parent.acceptanceCriteria, "parent.acceptanceCriteria", 4_000),
       status: workerProse(parent.status, "parent.status", 64),
-      assignedAgentId: parent.assignedAgentId === null ? null : identifier(parent.assignedAgentId, "parent.assignedAgentId"),
-      workspaceRefs: Object.freeze(parent.workspaceRefs.map((entry, index) => workerProse(entry, `parent.workspaceRefs[${index}]`, 512))),
-      startedAt: workerNullableTimestamp(parent.startedAt, "parent.startedAt"), endedAt: workerNullableTimestamp(parent.endedAt, "parent.endedAt"),
-      result: workerNullableProse(parent.result, "parent.result", 4_000), messages: Object.freeze(parentMessages),
+      assignedAgentId:
+        parent.assignedAgentId === null ? null : identifier(parent.assignedAgentId, "parent.assignedAgentId"),
+      workspaceRefs: Object.freeze(
+        parent.workspaceRefs.map((entry, index) => workerProse(entry, `parent.workspaceRefs[${index}]`, 512))
+      ),
+      startedAt: workerNullableTimestamp(parent.startedAt, "parent.startedAt"),
+      endedAt: workerNullableTimestamp(parent.endedAt, "parent.endedAt"),
+      result: workerNullableProse(parent.result, "parent.result", 4_000),
+      messages: Object.freeze(parentMessages),
     });
   }
 
   return Object.freeze({
     apiVersion: 1,
-    projectId: identifier(item.projectId, "context.projectId"), agentId: identifier(item.agentId, "context.agentId"), taskId: currentTaskId,
+    projectId: identifier(item.projectId, "context.projectId"),
+    agentId: identifier(item.agentId, "context.agentId"),
+    taskId: currentTaskId,
     intake,
     ...(boardProjects === undefined ? {} : { boardProjects }),
     ...(item.onboarding === true ? { onboarding: true as const } : {}),
     design: booleanValue(item.design, "context.design"),
-    mission: Object.freeze({ role: workerProse(mission.role, "mission.role", 64), area: workerProse(mission.area, "mission.area", 256), mission: workerProse(mission.mission, "mission.mission", 2_000) }),
+    mission: Object.freeze({
+      role: workerProse(mission.role, "mission.role", 64),
+      area: workerProse(mission.area, "mission.area", 256),
+      mission: workerProse(mission.mission, "mission.mission", 2_000),
+    }),
     projectMemory: workerProse(item.projectMemory, "projectMemory", 8_000),
     task: Object.freeze({
       kind: contractMember(task.kind, TASK_KINDS, "task.kind") as TaskKind,
-      requiredRole: task.requiredRole === null ? null : contractMember(task.requiredRole, AGENT_ROLES, "task.requiredRole") as AgentRole,
+      requiredRole:
+        task.requiredRole === null
+          ? null
+          : (contractMember(task.requiredRole, AGENT_ROLES, "task.requiredRole") as AgentRole),
       title: workerProse(task.title, "task.title", 512),
       objective: workerProse(
         task.objective,
         "task.objective",
-        item.design === true ? MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS : 8_000,
+        item.design === true ? MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS : 8_000
       ),
-      acceptanceCriteria: workerProse(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000), version: workerPositive(task.version, "task.version"),
+      acceptanceCriteria: workerProse(task.acceptanceCriteria, "task.acceptanceCriteria", 4_000),
+      version: workerPositive(task.version, "task.version"),
       expectedAgentMinutes: expectedMinutes(task.expectedAgentMinutes, "task.expectedAgentMinutes", {
-        nullable: true, maximum: 10_080,
+        nullable: true,
+        maximum: 10_080,
         message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
-      }), phases: Object.freeze(phases),
+      }),
+      phases: Object.freeze(phases),
     }),
-    areaMemory: Object.freeze(areaMemory), parentEvidence, messagesSinceCursor: since, nextMessageCursor: next,
-    messages: Object.freeze(messages), triggerQuestion, openQuestions: Object.freeze(openQuestions),
-    workspaceRefs: Object.freeze(item.workspaceRefs.map((entry, index) => workerProse(entry, `workspaceRefs[${index}]`, 512))),
+    areaMemory: Object.freeze(areaMemory),
+    parentEvidence,
+    messagesSinceCursor: since,
+    nextMessageCursor: next,
+    messages: Object.freeze(messages),
+    triggerQuestion,
+    openQuestions: Object.freeze(openQuestions),
+    workspaceRefs: Object.freeze(
+      item.workspaceRefs.map((entry, index) => workerProse(entry, `workspaceRefs[${index}]`, 512))
+    ),
     phase,
     ...(crossRepoContext === undefined ? {} : { crossRepoContext }),
     workflow,
@@ -3059,7 +3804,10 @@ export function parseWorkerAgentRunOutput(value: unknown): ValidatedAgentRunOutp
   const discriminator = record(value, "Agent output").type;
   if (discriminator === "progress" || discriminator === "result") {
     const item = exact(value, ["type", "body"], discriminator === "progress" ? "Progress output" : "Result output");
-    return Object.freeze({ type: discriminator, body: workerProse(item.body, `${discriminator}.body`, discriminator === "progress" ? 2_000 : 4_000) });
+    return Object.freeze({
+      type: discriminator,
+      body: workerProse(item.body, `${discriminator}.body`, discriminator === "progress" ? 2_000 : 4_000),
+    });
   }
   if (discriminator === "human_question") {
     const item = exact(value, ["type", "question"], "Human question output");
@@ -3067,14 +3815,22 @@ export function parseWorkerAgentRunOutput(value: unknown): ValidatedAgentRunOutp
   }
   if (discriminator === "proposed_child_task") {
     const item = exact(value, ["type", "title", "objective", "acceptanceCriteria"], "Child-task proposal");
-    if (!Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.length < 1 || item.acceptanceCriteria.length > 16) {
+    if (
+      !Array.isArray(item.acceptanceCriteria) ||
+      item.acceptanceCriteria.length < 1 ||
+      item.acceptanceCriteria.length > 16
+    ) {
       throw new ContractValidationError("Child-task acceptance criteria are invalid");
     }
     return Object.freeze({
-      type: "proposed_child_task", title: workerProse(item.title, "proposal.title", 512),
+      type: "proposed_child_task",
+      title: workerProse(item.title, "proposal.title", 512),
       objective: workerProse(item.objective, "proposal.objective", 4_000),
-      acceptanceCriteria: Object.freeze(item.acceptanceCriteria.map((criterion, index) =>
-        workerProse(criterion, `proposal.acceptanceCriteria[${index}]`, 1_000))),
+      acceptanceCriteria: Object.freeze(
+        item.acceptanceCriteria.map((criterion, index) =>
+          workerProse(criterion, `proposal.acceptanceCriteria[${index}]`, 1_000)
+        )
+      ),
     });
   }
   throw new ContractValidationError("Agent output type is invalid");
@@ -3145,7 +3901,8 @@ const BOARD_DRAFT_POLICY: DraftParserPolicy = Object.freeze({
     workflowNodesInvalid: "workflowPlan.nodes is invalid",
     workflowNodeLabel: (index: number) => `workflowPlan.nodes[${index}]`,
     workflowNodeStagesInvalid: (index: number) => `workflowPlan.nodes[${index}].stageTemplate is invalid`,
-    workflowNodeStageLabel: (index: number, stageIndex: number) => `workflowPlan.nodes[${index}].stageTemplate[${stageIndex}]`,
+    workflowNodeStageLabel: (index: number, stageIndex: number) =>
+      `workflowPlan.nodes[${index}].stageTemplate[${stageIndex}]`,
     workflowNodeStageOrderInvalid: (index: number) => `workflowPlan.nodes[${index}].stageTemplate is invalid`,
   }),
 });
@@ -3165,7 +3922,7 @@ function draftStringList(
   label: string,
   policy: DraftParserPolicy,
   maximum = 32,
-  minimum = 0,
+  minimum = 0
 ): readonly string[] {
   if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
     throw new ContractValidationError(`${label} is invalid`);
@@ -3175,16 +3932,30 @@ function draftStringList(
 
 function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHandoffDraft {
   const messages = policy.messages;
-  if (messages.handoffObjectInvalid !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) {
+  if (
+    messages.handoffObjectInvalid !== undefined &&
+    (value === null || typeof value !== "object" || Array.isArray(value))
+  ) {
     throw new ContractValidationError(messages.handoffObjectInvalid);
   }
-  const item = draftExact(value, ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"], messages.handoffLabel, policy);
+  const item = draftExact(
+    value,
+    ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"],
+    messages.handoffLabel,
+    policy
+  );
   if (!Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.length > 32) {
     throw new ContractValidationError(messages.handoffCriteriaInvalid);
   }
   const criteria = item.acceptanceCriteria.map((entry, index) => {
-    const criterion = draftExact(entry, ["criterion", "passed", "evidence"], messages.handoffCriterionLabel(index), policy);
-    if (typeof criterion.passed !== "boolean") throw new ContractValidationError(messages.handoffCriterionResultInvalid(index));
+    const criterion = draftExact(
+      entry,
+      ["criterion", "passed", "evidence"],
+      messages.handoffCriterionLabel(index),
+      policy
+    );
+    if (typeof criterion.passed !== "boolean")
+      throw new ContractValidationError(messages.handoffCriterionResultInvalid(index));
     return Object.freeze({
       criterion: draftText(criterion.criterion, messages.criterionLabel, 1_000, policy),
       passed: criterion.passed,
@@ -3197,58 +3968,61 @@ function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): StageHand
     evidence: draftStringList(item.evidence, "handoff.evidence", policy),
     artifactIds: draftStringList(item.artifactIds, "handoff.artifactIds", policy),
     acceptanceCriteria: Object.freeze(criteria),
-    blockers: draftStringList(
-      item.blockers,
-      "handoff.blockers",
-      policy,
-      STAGE_HANDOFF_BLOCKERS_MAX_ITEMS,
-    ),
-    recommendedReturnStage: item.recommendedReturnStage === null
-      ? null
-      : contractMember(item.recommendedReturnStage, WORKFLOW_STAGES, messages.handoffReturnStageLabel),
+    blockers: draftStringList(item.blockers, "handoff.blockers", policy, STAGE_HANDOFF_BLOCKERS_MAX_ITEMS),
+    recommendedReturnStage:
+      item.recommendedReturnStage === null
+        ? null
+        : contractMember(item.recommendedReturnStage, WORKFLOW_STAGES, messages.handoffReturnStageLabel),
   });
 }
 
 function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPolicy): DeclaredChild {
   const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
-  const item = exact(
-    value,
-    [...required, "phase", "dependsOn", "splitBy"],
-    label,
-    { messages: policy.exactMessages, required },
-  );
+  const item = exact(value, [...required, "phase", "dependsOn", "splitBy"], label, {
+    messages: policy.exactMessages,
+    required,
+  });
   const parseText = (entry: unknown, entryLabel: string, maximum: number): string =>
     draftText(entry, entryLabel, maximum, policy);
   return Object.freeze({
     key: identifier(item.key, `${label}.key`),
     objective: draftText(item.objective, `${label}.objective`, 4_000, policy),
     projectId: identifier(item.projectId, `${label}.projectId`),
-    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
-      (entry, entryLabel) => planScopeEntry(entry, entryLabel, parseText)),
-    acceptanceCriteria: draftStringList(
-      item.acceptanceCriteria,
-      `${label}.acceptanceCriteria`,
-      policy,
-      64,
-      1,
+    declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
+      planScopeEntry(entry, entryLabel, parseText)
     ),
-    ...(item.phase === undefined ? {} : {
-      phase: contractMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, `${label}.phase is invalid`),
-    }),
-    ...(item.dependsOn === undefined ? {} : {
-      dependsOn: Object.freeze(draftStringList(item.dependsOn, `${label}.dependsOn`, policy, 64)
-        .map((dependency, dependencyIndex) => identifier(dependency, `${label}.dependsOn[${dependencyIndex}]`))),
-    }),
-    ...(item.splitBy === undefined ? {} : {
-      splitBy: contractMember(item.splitBy, ["consumer", "phase"] as const, `${label}.splitBy`, `${label}.splitBy is invalid`),
-    }),
+    acceptanceCriteria: draftStringList(item.acceptanceCriteria, `${label}.acceptanceCriteria`, policy, 64, 1),
+    ...(item.phase === undefined
+      ? {}
+      : {
+          phase: contractMember(item.phase, WORK_ITEM_PHASES, `${label}.phase`, `${label}.phase is invalid`),
+        }),
+    ...(item.dependsOn === undefined
+      ? {}
+      : {
+          dependsOn: Object.freeze(
+            draftStringList(item.dependsOn, `${label}.dependsOn`, policy, 64).map((dependency, dependencyIndex) =>
+              identifier(dependency, `${label}.dependsOn[${dependencyIndex}]`)
+            )
+          ),
+        }),
+    ...(item.splitBy === undefined
+      ? {}
+      : {
+          splitBy: contractMember(
+            item.splitBy,
+            ["consumer", "phase"] as const,
+            `${label}.splitBy`,
+            `${label}.splitBy is invalid`
+          ),
+        }),
   });
 }
 
 export function validateWorkflowPlanChildren(
   plan: Pick<WorkflowPlanDraft, "changeShape" | "children">,
   parentProjectId?: string,
-  parentWorkItemId?: string | null,
+  parentWorkItemId?: string | null
 ): void {
   const children = plan.children;
   const hasChildren = children !== undefined && children.length > 0;
@@ -3309,10 +4083,10 @@ export function validateWorkflowPlanChildren(
       const a = children[left]!;
       const b = children[right]!;
       const requiresDisjointScopes =
-        (a.phase === undefined && b.phase === undefined) ||
-        (a.phase === "migrate" && b.phase === "migrate");
+        (a.phase === undefined && b.phase === undefined) || (a.phase === "migrate" && b.phase === "migrate");
       if (
-        requiresDisjointScopes && a.projectId === b.projectId &&
+        requiresDisjointScopes &&
+        a.projectId === b.projectId &&
         declaredScopesOverlap(a.declaredScope, b.declaredScope)
       ) {
         throw new ContractValidationError(`workflowPlan child scopes overlap in project ${a.projectId}`);
@@ -3330,8 +4104,10 @@ export function validateWorkflowPlanChildren(
   const expand = expands[0]!;
   const contract = contracts[0]!;
   const publishedInterfacePath = "docs/interface.md";
-  const coversPublishedInterface = (child: DeclaredChild): boolean => normalizeDeclaredScope(child.declaredScope)
-    .some((prefix) => publishedInterfacePath === prefix || publishedInterfacePath.startsWith(`${prefix}/`));
+  const coversPublishedInterface = (child: DeclaredChild): boolean =>
+    normalizeDeclaredScope(child.declaredScope).some(
+      (prefix) => publishedInterfacePath === prefix || publishedInterfacePath.startsWith(`${prefix}/`)
+    );
   if (!coversPublishedInterface(expand)) {
     throw new ContractValidationError(`expand child declaredScope must cover ${publishedInterfacePath}`);
   }
@@ -3358,44 +4134,80 @@ function parseDraftPlanRecord(item: JsonRecord, label: string, policy: DraftPars
   const parseText = (value: unknown, field: string, maximum: number): string =>
     draftText(value, field, maximum, policy);
   return Object.freeze({
-    ...(item.changeShape === undefined ? {} : {
-      changeShape: contractMember(item.changeShape, PLAN_CHANGE_SHAPES, `${label}.changeShape`, `${label}.changeShape is invalid`),
-    }),
-    ...(item.tier === undefined ? {} : {
-      tier: contractMember(item.tier, PLAN_TIERS, `${label}.tier`, `${label}.tier is invalid`),
-    }),
-    ...(item.declaredScope === undefined ? {} : {
-      declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64,
-        (entry, entryLabel) => planScopeEntry(entry, entryLabel, parseText)),
-    }),
-    ...(item.nonGoals === undefined ? {} : {
-      nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32,
-        (entry, entryLabel) => parseText(entry, entryLabel, 1_000)),
-    }),
-    ...(item.mechanicalPortions === undefined ? {} : {
-      mechanicalPortions: boundedPlanArray(item.mechanicalPortions, `${label}.mechanicalPortions`, 0, 32,
-        (entry, entryLabel) => parseText(entry, entryLabel, 1_000)),
-    }),
-    ...(item.blockingQuestions === undefined ? {} : {
-      blockingQuestions: boundedPlanArray(item.blockingQuestions, `${label}.blockingQuestions`, 0, 16,
-        (entry, entryLabel) => {
-          const question = draftExact(entry, ["question", "recommendedDefault"], entryLabel, policy);
-          return Object.freeze({
-            question: parseText(question.question, `${entryLabel}.question`, 1_000),
-            recommendedDefault: parseText(question.recommendedDefault, `${entryLabel}.recommendedDefault`, 1_000),
-          });
+    ...(item.changeShape === undefined
+      ? {}
+      : {
+          changeShape: contractMember(
+            item.changeShape,
+            PLAN_CHANGE_SHAPES,
+            `${label}.changeShape`,
+            `${label}.changeShape is invalid`
+          ),
         }),
-    }),
-    ...(item.criterionChecks === undefined ? {} : {
-      criterionChecks: boundedPlanArray(item.criterionChecks, `${label}.criterionChecks`, 0, 32,
-        (entry, entryLabel) => {
-          const criterion = draftExact(entry, ["criterion", "check"], entryLabel, policy);
-          return Object.freeze({
-            criterion: parseText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
-            check: planCheck(criterion.check, `${entryLabel}.check`, parseText),
-          });
+    ...(item.tier === undefined
+      ? {}
+      : {
+          tier: contractMember(item.tier, PLAN_TIERS, `${label}.tier`, `${label}.tier is invalid`),
         }),
-    }),
+    ...(item.declaredScope === undefined
+      ? {}
+      : {
+          declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
+            planScopeEntry(entry, entryLabel, parseText)
+          ),
+        }),
+    ...(item.nonGoals === undefined
+      ? {}
+      : {
+          nonGoals: boundedPlanArray(item.nonGoals, `${label}.nonGoals`, 0, 32, (entry, entryLabel) =>
+            parseText(entry, entryLabel, 1_000)
+          ),
+        }),
+    ...(item.mechanicalPortions === undefined
+      ? {}
+      : {
+          mechanicalPortions: boundedPlanArray(
+            item.mechanicalPortions,
+            `${label}.mechanicalPortions`,
+            0,
+            32,
+            (entry, entryLabel) => parseText(entry, entryLabel, 1_000)
+          ),
+        }),
+    ...(item.blockingQuestions === undefined
+      ? {}
+      : {
+          blockingQuestions: boundedPlanArray(
+            item.blockingQuestions,
+            `${label}.blockingQuestions`,
+            0,
+            16,
+            (entry, entryLabel) => {
+              const question = draftExact(entry, ["question", "recommendedDefault"], entryLabel, policy);
+              return Object.freeze({
+                question: parseText(question.question, `${entryLabel}.question`, 1_000),
+                recommendedDefault: parseText(question.recommendedDefault, `${entryLabel}.recommendedDefault`, 1_000),
+              });
+            }
+          ),
+        }),
+    ...(item.criterionChecks === undefined
+      ? {}
+      : {
+          criterionChecks: boundedPlanArray(
+            item.criterionChecks,
+            `${label}.criterionChecks`,
+            0,
+            32,
+            (entry, entryLabel) => {
+              const criterion = draftExact(entry, ["criterion", "check"], entryLabel, policy);
+              return Object.freeze({
+                criterion: parseText(criterion.criterion, `${entryLabel}.criterion`, 1_000),
+                check: planCheck(criterion.check, `${entryLabel}.check`, parseText),
+              });
+            }
+          ),
+        }),
   });
 }
 
@@ -3410,23 +4222,34 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
     throw new ContractValidationError(messages.workflowNodesInvalid);
   }
   const nodes = item.nodes.map((entry, index) => {
-    const node = draftExact(entry, ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"], messages.workflowNodeLabel(index), policy);
+    const node = draftExact(
+      entry,
+      ["nodeId", "title", "objective", "acceptanceCriteria", "dependencyNodeIds", "stageTemplate"],
+      messages.workflowNodeLabel(index),
+      policy
+    );
     let stageTemplate: readonly WorkflowStage[];
     if (policy.stageListKind === "members") {
       if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) {
         throw new ContractValidationError(messages.workflowNodeStagesInvalid(index));
       }
       stageTemplate = node.stageTemplate.map((stage, stageIndex) =>
-        contractMember(stage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex)));
-      if (new Set(stageTemplate).size !== stageTemplate.length ||
-        (stageTemplate.at(-1) !== "verification" && stageTemplate.at(-1) !== "testing")) {
+        contractMember(stage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex))
+      );
+      if (
+        new Set(stageTemplate).size !== stageTemplate.length ||
+        (stageTemplate.at(-1) !== "verification" && stageTemplate.at(-1) !== "testing")
+      ) {
         throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
       }
     } else {
       const stages = draftStringList(node.stageTemplate, `workflowPlan.nodes[${index}].stageTemplate`, policy, 64, 1);
-      if (stages.length > 5 || new Set(stages).size !== stages.length ||
+      if (
+        stages.length > 5 ||
+        new Set(stages).size !== stages.length ||
         (stages.at(-1) !== "verification" && stages.at(-1) !== "testing") ||
-        stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))) {
+        stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))
+      ) {
         throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
       }
       stageTemplate = stages as readonly WorkflowStage[];
@@ -3435,8 +4258,19 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
       nodeId: identifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),
       title: draftText(node.title, `workflowPlan.nodes[${index}].title`, 512, policy),
       objective: draftText(node.objective, `workflowPlan.nodes[${index}].objective`, 4_000, policy),
-      acceptanceCriteria: draftStringList(node.acceptanceCriteria, `workflowPlan.nodes[${index}].acceptanceCriteria`, policy, 64, 1),
-      dependencyNodeIds: draftStringList(node.dependencyNodeIds, `workflowPlan.nodes[${index}].dependencyNodeIds`, policy, 64),
+      acceptanceCriteria: draftStringList(
+        node.acceptanceCriteria,
+        `workflowPlan.nodes[${index}].acceptanceCriteria`,
+        policy,
+        64,
+        1
+      ),
+      dependencyNodeIds: draftStringList(
+        node.dependencyNodeIds,
+        `workflowPlan.nodes[${index}].dependencyNodeIds`,
+        policy,
+        64
+      ),
       stageTemplate: Object.freeze(stageTemplate),
     });
   });
@@ -3446,10 +4280,13 @@ function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): WorkflowP
     acceptanceCriteria: draftStringList(item.acceptanceCriteria, "workflowPlan.acceptanceCriteria", policy, 64, 1),
     ...parseDraftPlanRecord(item, messages.workflowPlanLabel, policy),
     nodes: Object.freeze(nodes),
-    ...(item.children === undefined ? {} : {
-      children: boundedPlanArray(item.children, "workflowPlan.children", 0, 64,
-        (entry, entryLabel) => parseDeclaredChild(entry, entryLabel, policy)),
-    }),
+    ...(item.children === undefined
+      ? {}
+      : {
+          children: boundedPlanArray(item.children, "workflowPlan.children", 0, 64, (entry, entryLabel) =>
+            parseDeclaredChild(entry, entryLabel, policy)
+          ),
+        }),
   });
   validateWorkflowPlanChildren(parsed);
   return parsed;
@@ -3462,22 +4299,39 @@ export function parseWorkflowPlanDraft(value: unknown): WorkflowPlanDraft {
 export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOutcome {
   boundedJsonValue(value, MAX_OUTCOME_BYTES, "Agent outcome");
   const raw = record(value, "Agent outcome");
-  const item = exact(value, [
-    "status", "outputs", "expectedAgentMinutes", "phases", "detail",
-    ...("gapReport" in raw ? ["gapReport"] : []),
-    ...("handoff" in raw ? ["handoff"] : []), ...("workflowPlan" in raw ? ["workflowPlan"] : []),
-    ...("reviewFindings" in raw ? ["reviewFindings"] : []),
-    ...("designRecord" in raw ? ["designRecord"] : []),
-  ], "Agent outcome");
-  if (item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted" && item.status !== "waiting_for_human") {
+  const item = exact(
+    value,
+    [
+      "status",
+      "outputs",
+      "expectedAgentMinutes",
+      "phases",
+      "detail",
+      ...("gapReport" in raw ? ["gapReport"] : []),
+      ...("handoff" in raw ? ["handoff"] : []),
+      ...("workflowPlan" in raw ? ["workflowPlan"] : []),
+      ...("reviewFindings" in raw ? ["reviewFindings"] : []),
+      ...("designRecord" in raw ? ["designRecord"] : []),
+    ],
+    "Agent outcome"
+  );
+  if (
+    item.status !== "completed" &&
+    item.status !== "failed" &&
+    item.status !== "interrupted" &&
+    item.status !== "waiting_for_human"
+  ) {
     throw new ContractValidationError("Agent outcome status is invalid");
   }
-  if (!Array.isArray(item.outputs) || item.outputs.length > 64) throw new ContractValidationError("Agent outcome outputs are invalid");
-  if (!Array.isArray(item.phases) || item.phases.length > 32) throw new ContractValidationError("Agent outcome phases are invalid");
+  if (!Array.isArray(item.outputs) || item.outputs.length > 64)
+    throw new ContractValidationError("Agent outcome outputs are invalid");
+  if (!Array.isArray(item.phases) || item.phases.length > 32)
+    throw new ContractValidationError("Agent outcome phases are invalid");
   const outputs = item.outputs.map(parseWorkerAgentRunOutput);
   const phases = item.phases.map(parseWorkerPhaseUpdate);
-  const ids = phases.flatMap((phase) => phase.phaseId === null ? [] : [phase.phaseId]);
-  if (new Set(ids).size !== ids.length) throw new ContractValidationError("Agent outcome phases contain duplicate phase IDs");
+  const ids = phases.flatMap((phase) => (phase.phaseId === null ? [] : [phase.phaseId]));
+  if (new Set(ids).size !== ids.length)
+    throw new ContractValidationError("Agent outcome phases contain duplicate phase IDs");
   const results = outputs.filter((output) => output.type === "result").length;
   const questions = outputs.filter((output) => output.type === "human_question").length;
   if (item.status === "completed" ? results !== 1 || questions !== 0 : results !== 0) {
@@ -3490,22 +4344,36 @@ export function parseWorkerAgentRunOutcome(value: unknown): ValidatedAgentRunOut
     throw new ContractValidationError("A human question must be the final output because it ends the run");
   }
   return Object.freeze({
-    status: item.status, outputs: Object.freeze(outputs), expectedAgentMinutes: expectedMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes", {
-      nullable: true, maximum: 10_080,
+    status: item.status,
+    outputs: Object.freeze(outputs),
+    expectedAgentMinutes: expectedMinutes(item.expectedAgentMinutes, "outcome.expectedAgentMinutes", {
+      nullable: true,
+      maximum: 10_080,
       message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
     }),
-    phases: Object.freeze(phases), detail: workerProse(item.detail, "outcome.detail", 2_000),
-    ...(item.gapReport === undefined ? {} : {
-      gapReport: workerProse(item.gapReport, "outcome.gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
-    }),
-    handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, WORKER_DRAFT_POLICY),
-    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
-    ...(item.reviewFindings === undefined ? {} : {
-      reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "outcome.reviewFindings"),
-    }),
-    ...(item.designRecord === undefined || item.designRecord === null ? {} : {
-      designRecord: parseDesignRecordDraft(item.designRecord),
-    }),
+    phases: Object.freeze(phases),
+    detail: workerProse(item.detail, "outcome.detail", 2_000),
+    ...(item.gapReport === undefined
+      ? {}
+      : {
+          gapReport: workerProse(item.gapReport, "outcome.gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
+        }),
+    handoff:
+      item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, WORKER_DRAFT_POLICY),
+    workflowPlan:
+      item.workflowPlan === undefined || item.workflowPlan === null
+        ? null
+        : parseWorkflowPlan(item.workflowPlan, WORKER_DRAFT_POLICY),
+    ...(item.reviewFindings === undefined
+      ? {}
+      : {
+          reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "outcome.reviewFindings"),
+        }),
+    ...(item.designRecord === undefined || item.designRecord === null
+      ? {}
+      : {
+          designRecord: parseDesignRecordDraft(item.designRecord),
+        }),
   });
 }
 
@@ -3517,7 +4385,12 @@ function boardExact(value: unknown, fields: readonly string[], label: string, na
   return exact(value, fields, label, { messages: named ? NAMED_EXACT_MESSAGES : GENERIC_EXACT_MESSAGES });
 }
 
-function boardAllowed(value: unknown, fields: readonly string[], required: readonly string[], label: string): JsonRecord {
+function boardAllowed(
+  value: unknown,
+  fields: readonly string[],
+  required: readonly string[],
+  label: string
+): JsonRecord {
   return exact(value, fields, label, { messages: GENERIC_EXACT_MESSAGES, required });
 }
 
@@ -3550,7 +4423,8 @@ function boardNullableRole(value: unknown, field: string): AgentRole | null {
 }
 
 function boardRefs(value: unknown): readonly string[] {
-  if (!Array.isArray(value) || value.length > 32) boardFailure("workspaceRefs must be an array with at most 32 entries");
+  if (!Array.isArray(value) || value.length > 32)
+    boardFailure("workspaceRefs must be an array with at most 32 entries");
   const parsed = value.map((item, index) => boardText(item, `workspaceRefs[${index}]`, 512));
   if (new Set(parsed).size !== parsed.length) boardFailure("workspaceRefs contains a duplicate");
   return Object.freeze(parsed);
@@ -3634,26 +4508,42 @@ export function parseBoardRejectFinalApproval(value: unknown): RejectFinalApprov
 }
 
 export function parseBoardCreateWorkItem(value: unknown): CreateWorkItemRequest {
-  const item = boardAllowed(value, ["originalRequest", "priority", "taskType", "projectTarget"], ["originalRequest"], "Work item");
-  const taskType = item.taskType === undefined
-    ? "standard"
-    : contractMember(item.taskType, WORK_ITEM_TASK_TYPES, "taskType", "taskType is invalid");
+  const item = boardAllowed(
+    value,
+    ["originalRequest", "priority", "taskType", "projectTarget"],
+    ["originalRequest"],
+    "Work item"
+  );
+  const taskType =
+    item.taskType === undefined
+      ? "standard"
+      : contractMember(item.taskType, WORK_ITEM_TASK_TYPES, "taskType", "taskType is invalid");
   if (item.projectTarget === undefined) {
     boardFailure(
       "Choose a project",
-      taskType === "onboarding" ? TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED : TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED,
+      taskType === "onboarding"
+        ? TASK_BOARD_ERROR_CODES.ONBOARDING_PROJECT_REQUIRED
+        : TASK_BOARD_ERROR_CODES.PROJECT_REQUIRED
     );
   }
   return Object.freeze({
     originalRequest: boardText(item.originalRequest, "originalRequest", 16_000),
-    priority: item.priority === undefined ? "normal" : contractMember(item.priority, WORK_ITEM_PRIORITIES, "priority", "priority is invalid"),
+    priority:
+      item.priority === undefined
+        ? "normal"
+        : contractMember(item.priority, WORK_ITEM_PRIORITIES, "priority", "priority is invalid"),
     taskType,
     projectTarget: boardProjectTarget(item.projectTarget),
   });
 }
 
 export function parseBoardUpdateWorkItem(value: unknown): UpdateWorkItemRequest {
-  const item = boardAllowed(value, ["version", "priority", "projectTarget", "action", "reason"], ["version"], "Work item update");
+  const item = boardAllowed(
+    value,
+    ["version", "priority", "projectTarget", "action", "reason"],
+    ["version"],
+    "Work item update"
+  );
   if (Object.keys(item).length === 1) boardFailure("Work item update contains no changes");
   const version = boardPositiveVersion(item.version);
   if ("action" in item) {
@@ -3670,8 +4560,13 @@ export function parseBoardUpdateWorkItem(value: unknown): UpdateWorkItemRequest 
     boardFailure("Work item action is invalid");
   }
   if ("reason" in item) boardFailure("reason is only valid for cancellation");
-  const result: { version: number; priority?: (typeof WORK_ITEM_PRIORITIES)[number]; projectTarget?: Extract<WorkItemProjectTarget, { mode: "explicit" }> } = { version };
-  if ("priority" in item) result.priority = contractMember(item.priority, WORK_ITEM_PRIORITIES, "priority", "priority is invalid");
+  const result: {
+    version: number;
+    priority?: (typeof WORK_ITEM_PRIORITIES)[number];
+    projectTarget?: Extract<WorkItemProjectTarget, { mode: "explicit" }>;
+  } = { version };
+  if ("priority" in item)
+    result.priority = contractMember(item.priority, WORK_ITEM_PRIORITIES, "priority", "priority is invalid");
   if ("projectTarget" in item) result.projectTarget = boardProjectTarget(item.projectTarget);
   return Object.freeze(result);
 }
@@ -3685,22 +4580,49 @@ function boardSkillIdentifier(value: unknown, field: string): string {
 
 function parseBoardAutomationAgentType(value: unknown, index: number): AutomationAgentType {
   const label = `agentTypes[${index}]`;
-  const item = boardExact(value, ["agentTypeId", "name", "description", "role", "supplementalInstructions", "skillIds", "evaluatorProfile", "enabled"], label);
-  if (!Array.isArray(item.skillIds) || item.skillIds.length > 32) boardFailure(`${label}.skillIds must be an array with at most 32 entries`);
-  const skillIds = item.skillIds.map((entry, skillIndex) => boardSkillIdentifier(entry, `${label}.skillIds[${skillIndex}]`));
+  const item = boardExact(
+    value,
+    [
+      "agentTypeId",
+      "name",
+      "description",
+      "role",
+      "supplementalInstructions",
+      "skillIds",
+      "evaluatorProfile",
+      "enabled",
+    ],
+    label
+  );
+  if (!Array.isArray(item.skillIds) || item.skillIds.length > 32)
+    boardFailure(`${label}.skillIds must be an array with at most 32 entries`);
+  const skillIds = item.skillIds.map((entry, skillIndex) =>
+    boardSkillIdentifier(entry, `${label}.skillIds[${skillIndex}]`)
+  );
   if (new Set(skillIds).size !== skillIds.length) boardFailure(`${label}.skillIds contains a duplicate`);
   if (typeof item.enabled !== "boolean") boardFailure(`${label}.enabled must be a boolean`);
   const supplementalInstructions = text(item.supplementalInstructions, `${label}.supplementalInstructions`, {
-    maximum: 8_000, allowEmpty: true, message: `${label}.supplementalInstructions is invalid`,
+    maximum: 8_000,
+    allowEmpty: true,
+    message: `${label}.supplementalInstructions is invalid`,
   });
   if (item.enabled && supplementalInstructions.length === 0) {
     boardFailure(`${label}.supplementalInstructions is required for an enabled agent type`);
   }
   return Object.freeze({
-    agentTypeId: parseBoardIdentifier(item.agentTypeId, `${label}.agentTypeId`), name: boardText(item.name, `${label}.name`, 160),
-    description: boardText(item.description, `${label}.description`, 4_000), role: boardRole(item.role, `${label}.role`),
-    supplementalInstructions, skillIds: Object.freeze(skillIds),
-    evaluatorProfile: contractMember(item.evaluatorProfile, EVALUATOR_PROFILES, "evaluatorProfile", "evaluatorProfile is invalid"), enabled: item.enabled,
+    agentTypeId: parseBoardIdentifier(item.agentTypeId, `${label}.agentTypeId`),
+    name: boardText(item.name, `${label}.name`, 160),
+    description: boardText(item.description, `${label}.description`, 4_000),
+    role: boardRole(item.role, `${label}.role`),
+    supplementalInstructions,
+    skillIds: Object.freeze(skillIds),
+    evaluatorProfile: contractMember(
+      item.evaluatorProfile,
+      EVALUATOR_PROFILES,
+      "evaluatorProfile",
+      "evaluatorProfile is invalid"
+    ),
+    enabled: item.enabled,
   });
 }
 
@@ -3708,21 +4630,31 @@ function parseBoardAutomationExecutor(value: unknown, label: string): Automation
   const item = record(value, label);
   if (item.kind === "agent_type") {
     const parsed = boardExact(item, ["kind", "agentTypeId"], label);
-    return Object.freeze({ kind: "agent_type", agentTypeId: parseBoardIdentifier(parsed.agentTypeId, `${label}.agentTypeId`) });
+    return Object.freeze({
+      kind: "agent_type",
+      agentTypeId: parseBoardIdentifier(parsed.agentTypeId, `${label}.agentTypeId`),
+    });
   }
   if (item.kind === "machine_verify" || item.kind === "human" || item.kind === "disabled") {
-    boardExact(item, ["kind"], label); return Object.freeze({ kind: item.kind });
+    boardExact(item, ["kind"], label);
+    return Object.freeze({ kind: item.kind });
   }
   boardFailure(`${label}.kind is invalid`);
 }
 
-function parseBoardAutomationStages(value: unknown, agentTypes: readonly AutomationAgentType[]): readonly AutomationPipelineStage[] {
+function parseBoardAutomationStages(
+  value: unknown,
+  agentTypes: readonly AutomationAgentType[]
+): readonly AutomationPipelineStage[] {
   if (!Array.isArray(value) || value.length !== WORK_ITEM_STAGES.length) {
     boardFailure(`stages must contain exactly ${WORK_ITEM_STAGES.length} entries`);
   }
   const stages = value.map((candidate, index): AutomationPipelineStage => {
-    const label = `stages[${index}]`; const item = boardExact(candidate, ["stage", "executor"], label); const stage = WORK_ITEM_STAGES[index];
-    if (stage === undefined || item.stage !== stage) boardFailure("stages must use the canonical order without duplicates");
+    const label = `stages[${index}]`;
+    const item = boardExact(candidate, ["stage", "executor"], label);
+    const stage = WORK_ITEM_STAGES[index];
+    if (stage === undefined || item.stage !== stage)
+      boardFailure("stages must use the canonical order without duplicates");
     return Object.freeze({ stage, executor: parseBoardAutomationExecutor(item.executor, `${label}.executor`) });
   });
   const types = new Map(agentTypes.map((entry) => [entry.agentTypeId, entry] as const));
@@ -3730,26 +4662,37 @@ function parseBoardAutomationStages(value: unknown, agentTypes: readonly Automat
     if (entry.executor.kind === "machine_verify" && entry.stage !== "testing") {
       boardFailure(`${entry.stage} cannot use the machine_verify executor`);
     }
-    if (entry.stage === "human_review") { if (entry.executor.kind !== "human") boardFailure("human_review must use the human executor"); continue; }
-    if (entry.stage === "deployment") { if (entry.executor.kind !== "disabled") boardFailure("deployment must remain disabled"); continue; }
+    if (entry.stage === "human_review") {
+      if (entry.executor.kind !== "human") boardFailure("human_review must use the human executor");
+      continue;
+    }
+    if (entry.stage === "deployment") {
+      if (entry.executor.kind !== "disabled") boardFailure("deployment must remain disabled");
+      continue;
+    }
     if (entry.executor.kind === "human") boardFailure(`${entry.stage} cannot use the human executor`);
     if (entry.executor.kind === "disabled" || entry.executor.kind === "machine_verify") continue;
     const agentType = types.get(entry.executor.agentTypeId);
     if (agentType === undefined) boardFailure(`${entry.stage} references an unknown agent type`);
     if (!agentType.enabled) boardFailure(`${entry.stage} references a disabled agent type`);
     const roles: readonly AgentRole[] = AUTOMATION_STAGE_ROLES[entry.stage];
-    if (!roles.includes(agentType.role)) boardFailure(`${entry.stage} cannot use an agent type with the ${agentType.role} role`);
+    if (!roles.includes(agentType.role))
+      boardFailure(`${entry.stage} cannot use an agent type with the ${agentType.role} role`);
   }
   return Object.freeze(stages);
 }
 
 export function parseBoardAutomationUpdate(value: unknown): UpdateAutomationConfigurationRequest {
   const item = boardExact(value, ["version", "agentTypes", "stages"], "Automation configuration update");
-  if (!Array.isArray(item.agentTypes) || item.agentTypes.length > 32) boardFailure("agentTypes must be an array with at most 32 entries");
+  if (!Array.isArray(item.agentTypes) || item.agentTypes.length > 32)
+    boardFailure("agentTypes must be an array with at most 32 entries");
   const agentTypes = item.agentTypes.map(parseBoardAutomationAgentType);
-  if (new Set(agentTypes.map((entry) => entry.agentTypeId)).size !== agentTypes.length) boardFailure("agentTypes contains a duplicate agentTypeId");
+  if (new Set(agentTypes.map((entry) => entry.agentTypeId)).size !== agentTypes.length)
+    boardFailure("agentTypes contains a duplicate agentTypeId");
   const stages = parseBoardAutomationStages(item.stages, agentTypes);
-  if (new TextEncoder().encode(JSON.stringify({ agentTypes, stages })).byteLength > AUTOMATION_CONFIGURATION_MAX_BYTES) {
+  if (
+    new TextEncoder().encode(JSON.stringify({ agentTypes, stages })).byteLength > AUTOMATION_CONFIGURATION_MAX_BYTES
+  ) {
     boardFailure(`Automation configuration exceeds ${AUTOMATION_CONFIGURATION_MAX_BYTES} UTF-8 JSON bytes`);
   }
   return Object.freeze({ version: boardPositiveVersion(item.version), agentTypes: Object.freeze(agentTypes), stages });
@@ -3757,79 +4700,160 @@ export function parseBoardAutomationUpdate(value: unknown): UpdateAutomationConf
 
 export function parseBoardCreateAgent(value: unknown): CreateAgentRequest {
   const item = boardExact(value, ["agentId", "role", "area", "mission", "model", "token"], "Agent profile");
-  if (typeof item.token !== "string" || item.token.length < 32 || item.token.length > 512 || item.token.trim() !== item.token || /[\u0000-\u001f\u007f]/u.test(item.token)) {
+  if (
+    typeof item.token !== "string" ||
+    item.token.length < 32 ||
+    item.token.length > 512 ||
+    item.token.trim() !== item.token ||
+    /[\u0000-\u001f\u007f]/u.test(item.token)
+  ) {
     boardFailure("token is invalid");
   }
-  return Object.freeze({ agentId: parseBoardIdentifier(item.agentId, "agentId"), role: boardRole(item.role),
-    area: boardText(item.area, "area", 256), mission: boardText(item.mission, "mission", 4_000),
-    model: parseBoardIdentifier(item.model, "model"), token: item.token });
+  return Object.freeze({
+    agentId: parseBoardIdentifier(item.agentId, "agentId"),
+    role: boardRole(item.role),
+    area: boardText(item.area, "area", 256),
+    mission: boardText(item.mission, "mission", 4_000),
+    model: parseBoardIdentifier(item.model, "model"),
+    token: item.token,
+  });
 }
 
 export function parseBoardRotateAgentToken(value: unknown): RotateAgentTokenRequest {
-  const item = boardExact(value, ["version"], "Agent token rotation"); return Object.freeze({ version: boardPositiveVersion(item.version) });
+  const item = boardExact(value, ["version"], "Agent token rotation");
+  return Object.freeze({ version: boardPositiveVersion(item.version) });
 }
 
 export function parseBoardCreateTask(value: unknown): CreateTaskRequest {
-  const item = boardAllowed(value, ["parentTaskId", "title", "objective", "acceptanceCriteria", "workspaceRefs", "assignedAgentId", "assignedRole", "requiresReview", "expectedAgentMinutes"],
-    ["parentTaskId", "title", "objective", "acceptanceCriteria", "workspaceRefs", "assignedAgentId", "assignedRole"], "Task");
+  const item = boardAllowed(
+    value,
+    [
+      "parentTaskId",
+      "title",
+      "objective",
+      "acceptanceCriteria",
+      "workspaceRefs",
+      "assignedAgentId",
+      "assignedRole",
+      "requiresReview",
+      "expectedAgentMinutes",
+    ],
+    ["parentTaskId", "title", "objective", "acceptanceCriteria", "workspaceRefs", "assignedAgentId", "assignedRole"],
+    "Task"
+  );
   const assignedAgentId = boardNullableIdentifier(item.assignedAgentId, "assignedAgentId");
   const assignedRole = boardNullableRole(item.assignedRole, "assignedRole");
   if ((assignedAgentId === null) !== (assignedRole === null)) {
     boardFailure("assignedAgentId and assignedRole must both be set or both be null", "INVALID_ASSIGNMENT");
   }
-  if ("expectedAgentMinutes" in item) expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
-    maximum: 10_080,
-    message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
-    code: "INVALID_EXPECTED_AGENT_MINUTES",
+  if ("expectedAgentMinutes" in item)
+    expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
+      maximum: 10_080,
+      message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+      code: "INVALID_EXPECTED_AGENT_MINUTES",
+    });
+  if ("requiresReview" in item && typeof item.requiresReview !== "boolean")
+    boardFailure("requiresReview must be a boolean");
+  return Object.freeze({
+    parentTaskId: boardNullableIdentifier(item.parentTaskId, "parentTaskId"),
+    title: boardText(item.title, "title", 240),
+    objective: boardText(item.objective, "objective", 8_000),
+    acceptanceCriteria: boardText(item.acceptanceCriteria, "acceptanceCriteria", 8_000),
+    workspaceRefs: boardRefs(item.workspaceRefs),
+    assignedAgentId,
+    assignedRole,
+    requiresReview: item.requiresReview === undefined ? true : (item.requiresReview as boolean),
   });
-  if ("requiresReview" in item && typeof item.requiresReview !== "boolean") boardFailure("requiresReview must be a boolean");
-  return Object.freeze({ parentTaskId: boardNullableIdentifier(item.parentTaskId, "parentTaskId"), title: boardText(item.title, "title", 240),
-    objective: boardText(item.objective, "objective", 8_000), acceptanceCriteria: boardText(item.acceptanceCriteria, "acceptanceCriteria", 8_000),
-    workspaceRefs: boardRefs(item.workspaceRefs), assignedAgentId, assignedRole,
-    requiresReview: item.requiresReview === undefined ? true : item.requiresReview as boolean });
 }
 
 export function parseBoardCreateTaskPhase(value: unknown): CreateTaskPhaseRequest {
   const item = boardExact(value, ["title", "stage", "parallelGroup"], "Task phase");
-  return Object.freeze({ title: boardText(item.title, "title", 240), stage: contractMember(item.stage, TASK_PHASE_STAGES, "stage", "stage is invalid"),
-    parallelGroup: boardNullableIdentifier(item.parallelGroup, "parallelGroup") });
+  return Object.freeze({
+    title: boardText(item.title, "title", 240),
+    stage: contractMember(item.stage, TASK_PHASE_STAGES, "stage", "stage is invalid"),
+    parallelGroup: boardNullableIdentifier(item.parallelGroup, "parallelGroup"),
+  });
 }
 
 export function parseBoardUpdateTaskPhase(value: unknown): UpdateTaskPhaseRequest {
-  const item = boardAllowed(value, ["version", "title", "stage", "status", "parallelGroup", "orderKey"], ["version"], "Task phase update");
+  const item = boardAllowed(
+    value,
+    ["version", "title", "stage", "status", "parallelGroup", "orderKey"],
+    ["version"],
+    "Task phase update"
+  );
   if (Object.keys(item).length === 1) boardFailure("Task phase update contains no changes");
-  const result: { version: number; title?: string; stage?: TaskPhaseStage; status?: TaskPhaseStatus; parallelGroup?: string | null; orderKey?: number } = { version: boardPositiveVersion(item.version) };
+  const result: {
+    version: number;
+    title?: string;
+    stage?: TaskPhaseStage;
+    status?: TaskPhaseStatus;
+    parallelGroup?: string | null;
+    orderKey?: number;
+  } = { version: boardPositiveVersion(item.version) };
   if ("title" in item) result.title = boardText(item.title, "title", 240);
   if ("stage" in item) result.stage = contractMember(item.stage, TASK_PHASE_STAGES, "stage", "stage is invalid");
-  if ("status" in item) result.status = contractMember(item.status, TASK_PHASE_STATUSES, "phase status", "phase status is invalid");
+  if ("status" in item)
+    result.status = contractMember(item.status, TASK_PHASE_STATUSES, "phase status", "phase status is invalid");
   if ("parallelGroup" in item) result.parallelGroup = boardNullableIdentifier(item.parallelGroup, "parallelGroup");
   if ("orderKey" in item) result.orderKey = boardNonNegative(item.orderKey, "orderKey");
   return Object.freeze(result);
 }
 
 export function parseBoardUpdateTask(value: unknown): UpdateTaskRequest {
-  const item = boardAllowed(value, ["version", "title", "objective", "acceptanceCriteria", "workspaceRefs", "assignedAgentId", "assignedRole",
-    "expectedAgentMinutes", "orderKey", "status", "result"], ["version"], "Task update");
+  const item = boardAllowed(
+    value,
+    [
+      "version",
+      "title",
+      "objective",
+      "acceptanceCriteria",
+      "workspaceRefs",
+      "assignedAgentId",
+      "assignedRole",
+      "expectedAgentMinutes",
+      "orderKey",
+      "status",
+      "result",
+    ],
+    ["version"],
+    "Task update"
+  );
   if (Object.keys(item).length === 1) boardFailure("Task update contains no changes");
-  if (("assignedAgentId" in item) !== ("assignedRole" in item)) boardFailure("Assignment fields must be updated together", "INVALID_ASSIGNMENT");
-  const result: { version: number; title?: string; objective?: string; acceptanceCriteria?: string; workspaceRefs?: readonly string[];
-    assignedAgentId?: string | null; assignedRole?: AgentRole | null; expectedAgentMinutes?: number | null; orderKey?: number;
-    status?: TaskStatus; result?: string | null } = { version: boardPositiveVersion(item.version) };
+  if ("assignedAgentId" in item !== "assignedRole" in item)
+    boardFailure("Assignment fields must be updated together", "INVALID_ASSIGNMENT");
+  const result: {
+    version: number;
+    title?: string;
+    objective?: string;
+    acceptanceCriteria?: string;
+    workspaceRefs?: readonly string[];
+    assignedAgentId?: string | null;
+    assignedRole?: AgentRole | null;
+    expectedAgentMinutes?: number | null;
+    orderKey?: number;
+    status?: TaskStatus;
+    result?: string | null;
+  } = { version: boardPositiveVersion(item.version) };
   if ("title" in item) result.title = boardText(item.title, "title", 240);
   if ("objective" in item) result.objective = boardText(item.objective, "objective", 8_000);
-  if ("acceptanceCriteria" in item) result.acceptanceCriteria = boardText(item.acceptanceCriteria, "acceptanceCriteria", 8_000);
+  if ("acceptanceCriteria" in item)
+    result.acceptanceCriteria = boardText(item.acceptanceCriteria, "acceptanceCriteria", 8_000);
   if ("workspaceRefs" in item) result.workspaceRefs = boardRefs(item.workspaceRefs);
   if ("assignedAgentId" in item) {
-    result.assignedAgentId = boardNullableIdentifier(item.assignedAgentId, "assignedAgentId"); result.assignedRole = boardNullableRole(item.assignedRole, "assignedRole");
+    result.assignedAgentId = boardNullableIdentifier(item.assignedAgentId, "assignedAgentId");
+    result.assignedRole = boardNullableRole(item.assignedRole, "assignedRole");
     if ((result.assignedAgentId === null) !== (result.assignedRole === null)) {
       boardFailure("Assignment fields must both be set or both be null", "INVALID_ASSIGNMENT");
     }
   }
-  if ("expectedAgentMinutes" in item) result.expectedAgentMinutes = expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
-    nullable: true, maximum: 10_080,
-    message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
-    code: "INVALID_EXPECTED_AGENT_MINUTES",
-  });
+  if ("expectedAgentMinutes" in item)
+    result.expectedAgentMinutes = expectedMinutes(item.expectedAgentMinutes, "expectedAgentMinutes", {
+      nullable: true,
+      maximum: 10_080,
+      message: (field) => `${field} must be a 15-minute interval between 15 and 10080`,
+      code: "INVALID_EXPECTED_AGENT_MINUTES",
+    });
   if ("orderKey" in item) result.orderKey = boardNonNegative(item.orderKey, "orderKey");
   if ("status" in item) result.status = contractMember(item.status, TASK_STATUSES, "status", "status is invalid");
   if ("result" in item) result.result = item.result === null ? null : boardText(item.result, "result", 16_000);
@@ -3837,44 +4861,65 @@ export function parseBoardUpdateTask(value: unknown): UpdateTaskRequest {
 }
 
 export function parseBoardRetryTask(value: unknown): RetryTaskRequest {
-  const item = boardExact(value, ["version"], "Task retry"); return Object.freeze({ version: boardPositiveVersion(item.version) });
+  const item = boardExact(value, ["version"], "Task retry");
+  return Object.freeze({ version: boardPositiveVersion(item.version) });
 }
 
 export function parseBoardBacklogTask(value: unknown): BacklogTaskRequest {
-  const item = boardExact(value, ["version"], "Task backlog transition"); return Object.freeze({ version: boardPositiveVersion(item.version) });
+  const item = boardExact(value, ["version"], "Task backlog transition");
+  return Object.freeze({ version: boardPositiveVersion(item.version) });
 }
 
 export function parseBoardAgentMessage(value: unknown): CreateTaskMessageRequest {
   const item = boardExact(value, ["clientEventId", "kind", "body", "runId"], "Agent task message");
-  if (item.kind !== "progress" && item.kind !== "proposal" && item.kind !== "result") boardFailure("Agent message kind is invalid");
-  return Object.freeze({ clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"), kind: item.kind,
-    body: boardText(item.body, "body", 16_000), runId: parseBoardIdentifier(item.runId, "runId") });
+  if (item.kind !== "progress" && item.kind !== "proposal" && item.kind !== "result")
+    boardFailure("Agent message kind is invalid");
+  return Object.freeze({
+    clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"),
+    kind: item.kind,
+    body: boardText(item.body, "body", 16_000),
+    runId: parseBoardIdentifier(item.runId, "runId"),
+  });
 }
 
 export function parseBoardHumanMessage(value: unknown): CreateHumanTaskMessageRequest {
   const item = boardExact(value, ["clientEventId", "kind", "body"], "Human task message");
   if (item.kind !== "note") boardFailure("Human messages must use note kind");
-  return Object.freeze({ clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"), kind: "note", body: boardText(item.body, "body", 16_000) });
+  return Object.freeze({
+    clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"),
+    kind: "note",
+    body: boardText(item.body, "body", 16_000),
+  });
 }
 
 export function parseBoardQuestion(value: unknown): CreateHumanQuestionRequest {
   const item = boardExact(value, ["clientEventId", "question", "runId"], "Human question");
-  return Object.freeze({ clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"), question: boardText(item.question, "question", 8_000),
-    runId: parseBoardIdentifier(item.runId, "runId") });
+  return Object.freeze({
+    clientEventId: parseBoardIdentifier(item.clientEventId, "clientEventId"),
+    question: boardText(item.question, "question", 8_000),
+    runId: parseBoardIdentifier(item.runId, "runId"),
+  });
 }
 
 export function parseBoardAnswer(value: unknown): AnswerHumanQuestionRequest {
   const item = boardExact(value, ["answer", "version"], "Question answer");
-  return Object.freeze({ answer: boardText(item.answer, "answer", 16_000), version: boardPositiveVersion(item.version) });
+  return Object.freeze({
+    answer: boardText(item.answer, "answer", 16_000),
+    version: boardPositiveVersion(item.version),
+  });
 }
 
 export function parseBoardResume(value: unknown): ResumeAgentRequest {
   const item = boardExact(value, ["reason", "taskId"], "Agent resume");
-  return Object.freeze({ reason: boardText(item.reason, "reason", 2_000), taskId: boardNullableIdentifier(item.taskId, "taskId") });
+  return Object.freeze({
+    reason: boardText(item.reason, "reason", 2_000),
+    taskId: boardNullableIdentifier(item.taskId, "taskId"),
+  });
 }
 
 export function parseBoardInterrupt(value: unknown): InterruptAgentRequest {
-  const item = boardExact(value, ["reason"], "Agent interrupt"); return Object.freeze({ reason: boardText(item.reason, "reason", 2_000) });
+  const item = boardExact(value, ["reason"], "Agent interrupt");
+  return Object.freeze({ reason: boardText(item.reason, "reason", 2_000) });
 }
 
 export function parseBoardLaneErrorDetail(value: unknown, maximum: number): string | null {
@@ -3883,7 +4928,8 @@ export function parseBoardLaneErrorDetail(value: unknown, maximum: number): stri
 }
 
 export function parseBoardClaim(value: unknown): ClaimRunRequest {
-  const item = record(value, "Run claim"); const keys = Object.keys(item).sort();
+  const item = record(value, "Run claim");
+  const keys = Object.keys(item).sort();
   const requestKeys = keys.filter((key) => key !== "pinned");
   const legacy = requestKeys.length === 2 && requestKeys[0] === "claimId" && requestKeys[1] === "messageCursor";
   const perTask = requestKeys.length === 2 && requestKeys[0] === "claimId" && requestKeys[1] === "messageCursors";
@@ -3896,13 +4942,18 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
       item.pinned,
       ["runtime", "runtimeVersion", "model", "promptsSha"],
       [],
-      "Run claim pinned",
+      "Run claim pinned"
     );
     const parsed: { runtime?: string; runtimeVersion?: string; model?: string; promptsSha?: string } = {};
     for (const field of ["runtime", "runtimeVersion", "model", "promptsSha"] as const) {
       if (!(field in rawPinned)) continue;
       const candidate = rawPinned[field];
-      if (typeof candidate !== "string" || candidate.length < 1 || candidate.length > 128 || /[\u0000-\u001f\u007f]/u.test(candidate)) {
+      if (
+        typeof candidate !== "string" ||
+        candidate.length < 1 ||
+        candidate.length > 128 ||
+        /[\u0000-\u001f\u007f]/u.test(candidate)
+      ) {
         boardFailure(`${field} is invalid`);
       }
       parsed[field] = candidate;
@@ -3924,11 +4975,13 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
     boardFailure("messageCursors must be an object with at most 256 task entries");
   }
   const rawCursors = record(item.messageCursors, "messageCursors");
-  if (Object.keys(rawCursors).length > 256) boardFailure("messageCursors must be an object with at most 256 task entries");
+  if (Object.keys(rawCursors).length > 256)
+    boardFailure("messageCursors must be an object with at most 256 task entries");
   const messageCursors: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const [taskId, cursor] of Object.entries(rawCursors)) {
     parseBoardIdentifier(taskId, "messageCursors taskId");
-    if (!Number.isSafeInteger(cursor) || Number(cursor) < 0) boardFailure("messageCursors values must be non-negative safe integers");
+    if (!Number.isSafeInteger(cursor) || Number(cursor) < 0)
+      boardFailure("messageCursors values must be non-negative safe integers");
     messageCursors[taskId] = Number(cursor);
   }
   return Object.freeze({
@@ -3940,39 +4993,58 @@ export function parseBoardClaim(value: unknown): ClaimRunRequest {
 
 export function parseBoardSettle(value: unknown): SettleRunRequest {
   const raw = record(value, "Run settlement");
-  const item = boardExact(value, [
-    "outcome", "result",
-    ...("gapReport" in raw ? ["gapReport"] : []),
-    ...("handoff" in raw ? ["handoff"] : []),
-    ...("workflowPlan" in raw ? ["workflowPlan"] : []),
-    ...("reviewFindings" in raw ? ["reviewFindings"] : []),
-    ...("designRecord" in raw ? ["designRecord"] : []),
-  ], "Run settlement");
-  if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted") boardFailure("Run outcome is invalid");
-  return Object.freeze({ outcome: item.outcome, result: boardText(item.result, "result", 16_000),
-    ...(item.gapReport === undefined ? {} : {
-      gapReport: boardText(item.gapReport, "gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
-    }),
-    handoff: item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, BOARD_DRAFT_POLICY),
-    workflowPlan: item.workflowPlan === undefined || item.workflowPlan === null ? null : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY),
-    ...(item.reviewFindings === undefined ? {} : {
-      reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "reviewFindings"),
-    }),
-    ...(item.designRecord === undefined || item.designRecord === null ? {} : {
-      designRecord: (() => {
-        try {
-          return parseDesignRecordDraft(item.designRecord);
-        } catch (error) {
-          if (error instanceof ContractValidationError) {
-            throw new ContractValidationError(
-              error.message,
-              TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
-            );
-          }
-          throw error;
-        }
-      })(),
-    }) });
+  const item = boardExact(
+    value,
+    [
+      "outcome",
+      "result",
+      ...("gapReport" in raw ? ["gapReport"] : []),
+      ...("handoff" in raw ? ["handoff"] : []),
+      ...("workflowPlan" in raw ? ["workflowPlan"] : []),
+      ...("reviewFindings" in raw ? ["reviewFindings"] : []),
+      ...("designRecord" in raw ? ["designRecord"] : []),
+    ],
+    "Run settlement"
+  );
+  if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted")
+    boardFailure("Run outcome is invalid");
+  return Object.freeze({
+    outcome: item.outcome,
+    result: boardText(item.result, "result", 16_000),
+    ...(item.gapReport === undefined
+      ? {}
+      : {
+          gapReport: boardText(item.gapReport, "gapReport", AGENT_GAP_REPORT_MAX_CHARACTERS),
+        }),
+    handoff:
+      item.handoff === undefined || item.handoff === null ? null : parseHandoffDraft(item.handoff, BOARD_DRAFT_POLICY),
+    workflowPlan:
+      item.workflowPlan === undefined || item.workflowPlan === null
+        ? null
+        : parseWorkflowPlan(item.workflowPlan, BOARD_DRAFT_POLICY),
+    ...(item.reviewFindings === undefined
+      ? {}
+      : {
+          reviewFindings: parseReviewFindingDraftList(item.reviewFindings, "reviewFindings"),
+        }),
+    ...(item.designRecord === undefined || item.designRecord === null
+      ? {}
+      : {
+          designRecord: (() => {
+            try {
+              return parseDesignRecordDraft(item.designRecord);
+            } catch (error) {
+              if (error instanceof ContractValidationError) {
+                throw new ContractValidationError(
+                  error.message,
+                  TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED
+                );
+              }
+              throw error;
+            }
+          })(),
+        }),
+  });
 }
 
 export function parseBoardIdempotencyKey(value: string | string[] | undefined): string {

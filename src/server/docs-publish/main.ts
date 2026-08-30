@@ -12,10 +12,7 @@ interface CliOptions {
   readonly dryRun: boolean;
 }
 
-type DocsSinkFactory = (
-  outline: DocsPublishConfig["outline"],
-  token: string,
-) => DocsSink;
+type DocsSinkFactory = (outline: DocsPublishConfig["outline"], token: string) => DocsSink;
 
 function required(name: string): string {
   const value = process.env[name];
@@ -99,10 +96,7 @@ function resolvedRepo(entry: DocsPublishRepo): DocsPublishRepo {
   return Object.freeze({ ...entry, path: resolve(entry.path) });
 }
 
-export async function runDocsPublishCli(
-  arguments_: readonly string[],
-  sinkFactory?: DocsSinkFactory,
-): Promise<number> {
+export async function runDocsPublishCli(arguments_: readonly string[], sinkFactory?: DocsSinkFactory): Promise<number> {
   const options = cliOptions(arguments_);
   const config = await loadDocsPublishConfig(options.configPath);
   const repos = selectedRepos(config, options.repoName);

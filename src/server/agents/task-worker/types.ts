@@ -28,7 +28,7 @@ import type { RuntimeEvent } from "../runtime/adapter.js";
 export const TASK_WAKE_REASONS = WAKEUP_REASONS;
 export const POISONED_CLAIM_REASON = "poisoned_claim";
 
-export type TaskWakeReason = typeof WAKEUP_REASONS[number];
+export type TaskWakeReason = (typeof WAKEUP_REASONS)[number];
 export type AgentRunTerminalStatus = "completed" | "failed" | "interrupted" | "waiting_for_human";
 
 /** A durable board claim. `reason` stays a string so the worker can reject new/unsafe reasons without launching. */
@@ -197,7 +197,9 @@ export interface AgentRunOutcome {
   readonly designRecord?: DesignRecordDraft;
 }
 
-interface AgentWorkspace { readonly path: string }
+interface AgentWorkspace {
+  readonly path: string;
+}
 
 export interface AgentLaunchRequest {
   readonly runId: string;
@@ -264,7 +266,11 @@ export function isTaskBoardPausedClaim(value: TaskBoardClaimResult): value is Ta
 
 /** A successful board claim whose full response could not be accepted safely. */
 export class TaskBoardClaimResponseError extends Error {
-  constructor(message: string, readonly claim: TaskWakeClaim | null, cause?: unknown) {
+  constructor(
+    message: string,
+    readonly claim: TaskWakeClaim | null,
+    cause?: unknown
+  ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "TaskBoardClaimResponseError";
   }

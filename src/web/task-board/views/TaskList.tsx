@@ -1,9 +1,9 @@
-import { Activity, Check, ChevronRight, CircleAlert, HelpCircle } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
-import { Button, Card, Pill, Toast, cn } from '../../components/ui';
-import type { ActionError } from '../model/action-errors';
-import { elapsedMilliseconds, formatElapsedDuration } from '../model/observability';
-import type { WorkItemTreeRow } from '../model/work-item-tree';
+import { Activity, Check, ChevronRight, CircleAlert, HelpCircle } from "lucide-react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Button, Card, Pill, Toast, cn } from "../../components/ui";
+import type { ActionError } from "../model/action-errors";
+import { elapsedMilliseconds, formatElapsedDuration } from "../model/observability";
+import type { WorkItemTreeRow } from "../model/work-item-tree";
 import {
   prettyStatus,
   taskStatusTone,
@@ -11,68 +11,65 @@ import {
   workItemStateTone,
   workItemStageLabel,
   workItemStatusLabel,
-} from '../model/work-item-labels';
-import type {
-  BoardAgent,
-  BoardSnapshot,
-  BoardTask,
-  BoardWorkItem,
-  TaskKind,
-  WorkItemPriority,
-} from '../types';
+} from "../model/work-item-labels";
+import type { BoardAgent, BoardSnapshot, BoardTask, BoardWorkItem, TaskKind, WorkItemPriority } from "../types";
 
 const dateTime = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
 });
 
-const workItemPriorityTone: Record<WorkItemPriority, 'neutral' | 'amber' | 'red' | 'blue' | 'purple'> = {
-  urgent: 'red',
-  high: 'amber',
-  normal: 'blue',
-  low: 'neutral',
-  opportunistic: 'purple',
+const workItemPriorityTone: Record<WorkItemPriority, "neutral" | "amber" | "red" | "blue" | "purple"> = {
+  urgent: "red",
+  high: "amber",
+  normal: "blue",
+  low: "neutral",
+  opportunistic: "purple",
 };
 
-
 const taskKindLabel: Record<TaskKind, string> = {
-  work: 'work',
-  manager_review: 'manager review',
-  human_check: 'human check',
+  work: "work",
+  manager_review: "manager review",
+  human_check: "human check",
 };
 
 function formatTime(value: string | null): string {
-  if (value === null) return 'Not recorded';
+  if (value === null) return "Not recorded";
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed);
 }
 
 function taskStatusLabel(task: BoardTask): string {
-  if (task.status === 'unrecognized') return unknownStateLabel;
-  if (task.kind !== 'human_check') return prettyStatus(task.status);
-  if (task.status === 'completed') return 'approved';
-  if (task.status === 'failed') return 'changes requested';
-  if (task.endedAt === null) return 'awaiting human';
+  if (task.status === "unrecognized") return unknownStateLabel;
+  if (task.kind !== "human_check") return prettyStatus(task.status);
+  if (task.status === "completed") return "approved";
+  if (task.status === "failed") return "changes requested";
+  if (task.endedAt === null) return "awaiting human";
   return prettyStatus(task.status);
 }
 
 function taskIsTerminal(task: BoardTask): boolean {
-  return task.endedAt !== null
-    || task.status === 'completed'
-    || task.status === 'failed'
-    || task.status === 'interrupted'
-    || task.status === 'cancelled';
+  return (
+    task.endedAt !== null ||
+    task.status === "completed" ||
+    task.status === "failed" ||
+    task.status === "interrupted" ||
+    task.status === "cancelled"
+  );
 }
 
-
 export function StatusPill({ task }: { task: BoardTask }) {
-  return <Pill tone={taskStatusTone[task.status]} dot>{taskStatusLabel(task)}</Pill>;
+  return (
+    <Pill tone={taskStatusTone[task.status]} dot>
+      {taskStatusLabel(task)}
+    </Pill>
+  );
 }
 
 function TaskKindPill({ kind }: { kind: TaskKind }) {
-  const tone = kind === 'human_check' ? 'purple' : kind === 'manager_review' ? 'amber' : 'neutral';
+  const tone = kind === "human_check" ? "purple" : kind === "manager_review" ? "amber" : "neutral";
   return <Pill tone={tone}>{taskKindLabel[kind]}</Pill>;
 }
 
@@ -90,39 +87,45 @@ export function WorkItemRow({
   nowMs = Date.now(),
 }: {
   workItem: BoardWorkItem;
-  projects: BoardSnapshot['projects'];
+  projects: BoardSnapshot["projects"];
   selected: boolean;
   onSelect: () => void;
   buttonRef: (element: HTMLButtonElement | null) => void;
-  depth?: WorkItemTreeRow['depth'];
+  depth?: WorkItemTreeRow["depth"];
   childCount?: number;
   mergedChildCount?: number;
   abandonedChildCount?: number;
   dependencyHint?: string | null;
   nowMs?: number;
 }) {
-  const projectId = workItem.resolvedProjectId
-    ?? (workItem.projectTarget.mode === 'explicit' ? workItem.projectTarget.projectId : null);
-  const projectName = projectId === null
-    ? 'Project: Auto'
-    : projects.find((project) => project.id === projectId)?.name ?? projectId;
+  const projectId =
+    workItem.resolvedProjectId ??
+    (workItem.projectTarget.mode === "explicit" ? workItem.projectTarget.projectId : null);
+  const projectName =
+    projectId === null ? "Project: Auto" : (projects.find((project) => project.id === projectId)?.name ?? projectId);
   const displayRequest = workItem.refinedObjective?.trim() || workItem.originalRequest;
   const rowTitle = taskTitleFromPrompt(displayRequest);
-  const stateAge = workItem.stateSinceMs === undefined || workItem.stateSinceMs === null
-    ? null
-    : formatElapsedDuration(elapsedMilliseconds(workItem.stateSinceMs, nowMs));
-  const heartbeatAge = workItem.heartbeatAtMs === undefined || workItem.heartbeatAtMs === null
-    ? null
-    : elapsedMilliseconds(workItem.heartbeatAtMs, nowMs);
-  const phaseLabel = workItem.phase === null
-    ? null
-    : workItem.phase === 'unrecognized'
-      ? unknownStateLabel
-      : `${workItem.phase.charAt(0).toUpperCase()}${workItem.phase.slice(1)}`;
+  const stateAge =
+    workItem.stateSinceMs === undefined || workItem.stateSinceMs === null
+      ? null
+      : formatElapsedDuration(elapsedMilliseconds(workItem.stateSinceMs, nowMs));
+  const heartbeatAge =
+    workItem.heartbeatAtMs === undefined || workItem.heartbeatAtMs === null
+      ? null
+      : elapsedMilliseconds(workItem.heartbeatAtMs, nowMs);
+  const phaseLabel =
+    workItem.phase === null
+      ? null
+      : workItem.phase === "unrecognized"
+        ? unknownStateLabel
+        : `${workItem.phase.charAt(0).toUpperCase()}${workItem.phase.slice(1)}`;
   return (
     <article
       aria-label={`Work item: ${rowTitle}`}
-      className={cn('last:[&>button]:border-b-0', depth === 1 && 'relative before:absolute before:bottom-2 before:left-5 before:top-2 before:w-px before:bg-line')}
+      className={cn(
+        "last:[&>button]:border-b-0",
+        depth === 1 && "relative before:absolute before:bottom-2 before:left-5 before:top-2 before:w-px before:bg-line"
+      )}
     >
       <button
         ref={buttonRef}
@@ -130,50 +133,66 @@ export function WorkItemRow({
         aria-label={`${rowTitle} ${workItemStatusLabel(workItem)}`}
         onClick={onSelect}
         className={cn(
-          'group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-paper/75 motion-safe:active:scale-[0.995]',
-          depth === 1 && 'ml-8 w-[calc(100%-2.5rem)] bg-muted-surface/35 pl-4',
-          selected && 'bg-paper hover:bg-paper',
+          "group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-paper/75 motion-safe:active:scale-[0.995]",
+          depth === 1 && "ml-8 w-[calc(100%-2.5rem)] bg-muted-surface/35 pl-4",
+          selected && "bg-paper hover:bg-paper"
         )}
       >
         <div className="flex items-start gap-4">
-        <span className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-taupe" aria-hidden="true">
-          <Activity size={12} strokeWidth={2} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{rowTitle}</h3>
-            <Pill>{workItem.taskType}</Pill>
-            {phaseLabel === null ? null : <Pill tone="purple">{phaseLabel}</Pill>}
-            <Pill tone={workItemPriorityTone[workItem.priority]}>{workItem.priority} priority</Pill>
+          <span
+            className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-taupe"
+            aria-hidden="true"
+          >
+            <Activity size={12} strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h3 className="font-display text-[15px] font-normal leading-5 text-ink">{rowTitle}</h3>
+              <Pill>{workItem.taskType}</Pill>
+              {phaseLabel === null ? null : <Pill tone="purple">{phaseLabel}</Pill>}
+              <Pill tone={workItemPriorityTone[workItem.priority]}>{workItem.priority} priority</Pill>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
+              <Pill tone={workItemStateTone[workItem.state]} dot>
+                {workItemStatusLabel(workItem)}
+              </Pill>
+              {workItem.currentStage === null ? null : <Pill>{workItemStageLabel[workItem.currentStage]}</Pill>}
+              {stateAge === null ? null : (
+                <span>
+                  in {prettyStatus(workItem.state)} for {stateAge}
+                </span>
+              )}
+              {workItem.reviewRound === undefined || workItem.reviewRound === null ? null : (
+                <Pill tone="purple">round {workItem.reviewRound}</Pill>
+              )}
+              {heartbeatAge === null ? null : (
+                <span
+                  className="inline-flex items-center gap-1.5"
+                  aria-label={heartbeatAge < 90_000 ? "Heartbeat current" : "Heartbeat stale"}
+                  title={
+                    heartbeatAge < 90_000 ? "Heartbeat less than 90 seconds old" : "Heartbeat at least 90 seconds old"
+                  }
+                >
+                  <span
+                    className={cn("size-2 rounded-full", heartbeatAge < 90_000 ? "bg-success-fill" : "bg-caution")}
+                    aria-hidden="true"
+                  />
+                  <span className="sr-only">{heartbeatAge < 90_000 ? "Current heartbeat" : "Stale heartbeat"}</span>
+                </span>
+              )}
+              <span>{projectName}</span>
+              {dependencyHint === null ? null : <span className="font-medium text-ink">{dependencyHint}</span>}
+              {childCount === 0 && abandonedChildCount === 0 ? null : (
+                <span className="font-medium text-ink">
+                  {mergedChildCount} of {childCount} children merged
+                  {abandonedChildCount > 0 ? ` · ${abandonedChildCount} abandoned` : null}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
-            <Pill tone={workItemStateTone[workItem.state]} dot>{workItemStatusLabel(workItem)}</Pill>
-            {workItem.currentStage === null ? null : <Pill>{workItemStageLabel[workItem.currentStage]}</Pill>}
-            {stateAge === null ? null : <span>in {prettyStatus(workItem.state)} for {stateAge}</span>}
-            {workItem.reviewRound === undefined || workItem.reviewRound === null ? null : <Pill tone="purple">round {workItem.reviewRound}</Pill>}
-            {heartbeatAge === null ? null : (
-              <span
-                className="inline-flex items-center gap-1.5"
-                aria-label={heartbeatAge < 90_000 ? 'Heartbeat current' : 'Heartbeat stale'}
-                title={heartbeatAge < 90_000 ? 'Heartbeat less than 90 seconds old' : 'Heartbeat at least 90 seconds old'}
-              >
-                <span className={cn('size-2 rounded-full', heartbeatAge < 90_000 ? 'bg-success-fill' : 'bg-caution')} aria-hidden="true" />
-                <span className="sr-only">{heartbeatAge < 90_000 ? 'Current heartbeat' : 'Stale heartbeat'}</span>
-              </span>
-            )}
-            <span>{projectName}</span>
-            {dependencyHint === null ? null : <span className="font-medium text-ink">{dependencyHint}</span>}
-            {childCount === 0 && abandonedChildCount === 0 ? null : (
-              <span className="font-medium text-ink">
-                {mergedChildCount} of {childCount} children merged
-                {abandonedChildCount > 0 ? ` · ${abandonedChildCount} abandoned` : null}
-              </span>
-            )}
-          </div>
-        </div>
-        <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
-          <ChevronRight size={12} strokeWidth={2} />
-        </span>
+          <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
+            <ChevronRight size={12} strokeWidth={2} />
+          </span>
         </div>
       </button>
     </article>
@@ -207,8 +226,8 @@ export function RemovedTaskDetail({ taskId, onClose }: { taskId: string; onClose
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return;
-    if (window.matchMedia('(max-width: 1279px)').matches) headingRef.current?.focus();
+    if (typeof window.matchMedia !== "function") return;
+    if (window.matchMedia("(max-width: 1279px)").matches) headingRef.current?.focus();
   }, [taskId]);
 
   return (
@@ -217,11 +236,18 @@ export function RemovedTaskDetail({ taskId, onClose }: { taskId: string; onClose
         <div className="mb-4 flex size-11 items-center justify-center rounded-[99px] bg-caution-soft text-caution">
           <CircleAlert size={19} />
         </div>
-        <h2 ref={headingRef} tabIndex={-1} className="font-display text-lg font-light tracking-[0.01em] text-ink">Task removed</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-lg font-light tracking-[0.01em] text-ink">
+          Task removed
+        </h2>
         <p className="mt-1 max-w-md text-sm leading-6 text-muted">
-          Task <span className="break-all font-mono text-xs text-ink">{taskId}</span> is no longer in the board snapshot. Your view has not switched to another task.
+          Task <span className="break-all font-mono text-xs text-ink">{taskId}</span> is no longer in the board
+          snapshot. Your view has not switched to another task.
         </p>
-        <div className="mt-5"><Button size="sm" onClick={onClose}>Close</Button></div>
+        <div className="mt-5">
+          <Button size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
       </div>
     </Card>
   );
@@ -252,12 +278,13 @@ export function TaskRow({
   onSelect: () => void;
   buttonRef: (element: HTMLButtonElement | null) => void;
 }) {
-  const completed = task.status === 'completed';
-  const statusDot = task.status === 'running'
-    ? 'bg-success-fill'
-    : task.status === 'waiting_for_human' || task.status === 'blocked'
-      ? 'bg-taupe'
-      : 'bg-muted/55';
+  const completed = task.status === "completed";
+  const statusDot =
+    task.status === "running"
+      ? "bg-success-fill"
+      : task.status === "waiting_for_human" || task.status === "blocked"
+        ? "bg-taupe"
+        : "bg-muted/55";
   return (
     <button
       ref={buttonRef}
@@ -265,15 +292,15 @@ export function TaskRow({
       aria-label={`${task.title} ${task.status}`}
       onClick={onSelect}
       className={cn(
-        'group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out last:border-b-0 hover:bg-paper/75 motion-safe:active:scale-[0.995]',
-        selected && 'bg-paper hover:bg-paper',
+        "group mx-2 w-[calc(100%-1rem)] rounded-md border-b border-line px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-out last:border-b-0 hover:bg-paper/75 motion-safe:active:scale-[0.995]",
+        selected && "bg-paper hover:bg-paper"
       )}
     >
       <div className="flex items-center gap-4">
         <span
           className={cn(
-            'flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-white',
-            completed && 'bg-taupe',
+            "flex size-[22px] shrink-0 items-center justify-center rounded-[99px] border border-taupe text-white",
+            completed && "bg-taupe"
           )}
           aria-hidden="true"
         >
@@ -281,24 +308,56 @@ export function TaskRow({
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-1.5">
-            <span className={cn('font-display text-[15px] font-normal leading-5 text-ink', completed && 'text-muted line-through decoration-line')}>{task.title}</span>
-            {task.kind !== 'work' ? <TaskKindPill kind={task.kind} /> : null}
+            <span
+              className={cn(
+                "font-display text-[15px] font-normal leading-5 text-ink",
+                completed && "text-muted line-through decoration-line"
+              )}
+            >
+              {task.title}
+            </span>
+            {task.kind !== "work" ? <TaskKindPill kind={task.kind} /> : null}
             {openQuestion ? <HelpCircle size={14} className="text-caution" aria-label="answer needed" /> : null}
           </span>
           <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
-            {task.kind === 'human_check' ? (
-              <><span className="inline-flex items-center rounded-[99px] bg-paper px-2 py-0.5 text-[11px]">Human</span><span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{taskStatusLabel(task)}</span></>
+            {task.kind === "human_check" ? (
+              <>
+                <span className="inline-flex items-center rounded-[99px] bg-paper px-2 py-0.5 text-[11px]">Human</span>
+                <span className="inline-flex items-center gap-2">
+                  <span aria-hidden="true">•</span>
+                  {taskStatusLabel(task)}
+                </span>
+              </>
             ) : (
               <>
                 <span className="inline-flex items-center gap-1.5 rounded-[99px] bg-paper px-2 py-0.5 text-[11px]">
-                  {agent ? <span className={cn('size-1.5 rounded-[99px]', statusDot)} /> : null}
-                  {agent?.name ?? (task.requiredRole ? `Needs ${task.requiredRole}` : 'Unassigned')}
+                  {agent ? <span className={cn("size-1.5 rounded-[99px]", statusDot)} /> : null}
+                  {agent?.name ?? (task.requiredRole ? `Needs ${task.requiredRole}` : "Unassigned")}
                 </span>
-                <span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{taskStatusLabel(task)}</span>
-                {!taskIsTerminal(task) && task.expectedCompletedAt ? <span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>Due {formatTime(task.expectedCompletedAt)}</span> : task.expectedAgentMinutes !== null ? <span className="inline-flex items-center gap-2"><span aria-hidden="true">•</span>{task.expectedAgentMinutes} agent min</span> : null}
+                <span className="inline-flex items-center gap-2">
+                  <span aria-hidden="true">•</span>
+                  {taskStatusLabel(task)}
+                </span>
+                {!taskIsTerminal(task) && task.expectedCompletedAt ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span aria-hidden="true">•</span>Due {formatTime(task.expectedCompletedAt)}
+                  </span>
+                ) : task.expectedAgentMinutes !== null ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span aria-hidden="true">•</span>
+                    {task.expectedAgentMinutes} agent min
+                  </span>
+                ) : null}
               </>
             )}
-            {projectName ? <span className="inline-flex items-center gap-2"><span className="hidden sm:inline" aria-hidden="true">•</span>{projectName}</span> : null}
+            {projectName ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="hidden sm:inline" aria-hidden="true">
+                  •
+                </span>
+                {projectName}
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="flex size-[22px] shrink-0 items-center justify-center rounded-[99px] bg-taupe text-white opacity-60 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0.5 group-hover:opacity-100">
@@ -309,10 +368,12 @@ export function TaskRow({
   );
 }
 
-
 function taskTitleFromPrompt(prompt: string): string {
-  const normalized = prompt.replace(/\s+/gu, ' ').trim();
-  const firstLine = prompt.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
+  const normalized = prompt.replace(/\s+/gu, " ").trim();
+  const firstLine = prompt
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean);
   const summary = firstLine ?? normalized;
   if (summary.length <= 120) return summary;
   return `${summary.slice(0, 119).trimEnd()}…`;
@@ -326,12 +387,13 @@ export function ActionErrorToasts({
   onDismiss: (context: string) => void;
 }) {
   return errors.length > 0 ? (
-    <div className="fixed bottom-4 left-4 right-4 z-[70] mx-auto flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col gap-2 overflow-y-auto overscroll-contain" role="region" aria-label="Action errors">
+    <div
+      className="fixed bottom-4 left-4 right-4 z-[70] mx-auto flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col gap-2 overflow-y-auto overscroll-contain"
+      role="region"
+      aria-label="Action errors"
+    >
       {errors.map((entry) => (
-        <Toast
-          key={entry.context}
-          onDismiss={() => onDismiss(entry.context)}
-        >
+        <Toast key={entry.context} onDismiss={() => onDismiss(entry.context)}>
           {entry.error}
         </Toast>
       ))}

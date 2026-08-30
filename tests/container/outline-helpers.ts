@@ -56,26 +56,18 @@ async function logTail(container: string): Promise<string> {
   }
 }
 
-async function diagnosticError(
-  step: string,
-  containers: ContainerNames,
-  error: unknown,
-): Promise<Error> {
+async function diagnosticError(step: string, containers: ContainerNames, error: unknown): Promise<Error> {
   const names = [containers.postgres, containers.redis, containers.outline];
-  const tails = await Promise.all(names.map(async (name) =>
-    `--- ${name} (last ${LOG_TAIL_LINES} log lines) ---\n${await logTail(name)}`));
+  const tails = await Promise.all(
+    names.map(async (name) => `--- ${name} (last ${LOG_TAIL_LINES} log lines) ---\n${await logTail(name)}`)
+  );
   return new Error(
-    `[outline-e2e:${step}] failed; containers=${names.join(", ")}\n`
-      + `${errorDetail(error)}\n${tails.join("\n")}`,
-    { cause: error },
+    `[outline-e2e:${step}] failed; containers=${names.join(", ")}\n` + `${errorDetail(error)}\n${tails.join("\n")}`,
+    { cause: error }
   );
 }
 
-async function runStep<T>(
-  step: string,
-  containers: ContainerNames,
-  operation: () => Promise<T>,
-): Promise<T> {
+async function runStep<T>(step: string, containers: ContainerNames, operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (error) {
@@ -96,7 +88,10 @@ async function removeContainersBestEffort(containers: ContainerNames): Promise<v
 
 async function sweepStrays(): Promise<void> {
   const output = await docker(["ps", "-aq", "--filter", `label=${LABEL}`]);
-  const ids = output.split(/\r?\n/u).map((id) => id.trim()).filter((id) => id.length > 0);
+  const ids = output
+    .split(/\r?\n/u)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
   if (ids.length > 0) await docker(["rm", "-f", ...ids]);
 }
 
@@ -104,7 +99,7 @@ async function waitForCommand(
   container: string,
   args: readonly string[],
   timeoutMs: number,
-  label: string,
+  label: string
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError = "command not attempted";
@@ -139,19 +134,16 @@ async function waitForOutlineHealth(baseUrl: string, outlineContainer: string): 
       lastResult = errorDetail(error);
     }
 
-    const state = await docker([
-      "inspect",
-      "-f",
-      "{{.State.Running}}|{{.State.ExitCode}}",
-      outlineContainer,
-    ]);
+    const state = await docker(["inspect", "-f", "{{.State.Running}}|{{.State.ExitCode}}", outlineContainer]);
     if (!state.trim().startsWith("true|")) {
-      throw new Error(`${outlineContainer} exited before /_health was ready; state=${state.trim()}; last=${lastResult}`);
+      throw new Error(
+        `${outlineContainer} exited before /_health was ready; state=${state.trim()}; last=${lastResult}`
+      );
     }
     await delay(Math.min(READY_POLL_MS, Math.max(1, deadline - Date.now())));
   }
   throw new Error(
-    `${outlineContainer} GET /_health did not become ready within ${OUTLINE_READY_TIMEOUT_MS}ms; last=${lastResult}`,
+    `${outlineContainer} GET /_health did not become ready within ${OUTLINE_READY_TIMEOUT_MS}ms; last=${lastResult}`
   );
 }
 
@@ -185,7 +177,7 @@ async function inspectSeedTables(containers: ContainerNames): Promise<void> {
 
   await inspect("seed:inspect-schema-teams", "teams");
   await inspect("seed:inspect-schema-users", "users");
-  await inspect("seed:inspect-schema-apiKeys", "\"apiKeys\"");
+  await inspect("seed:inspect-schema-apiKeys", '"apiKeys"');
 }
 
 async function seedApiToken(postgresContainer: string): Promise<void> {
@@ -235,14 +227,13 @@ async function verifyApiToken(baseUrl: string): Promise<void> {
   const body = await response.text();
   if (response.status === 401) {
     throw new Error(
-      `seeded API token was rejected with HTTP 401 by pinned ${OUTLINE_IMAGE}; `
-        + `the v1.9.2 api-key schema/hash seed must be revisited. Response: ${body.slice(0, 2_000)}`,
+      `seeded API token was rejected with HTTP 401 by pinned ${OUTLINE_IMAGE}; ` +
+        `the v1.9.2 api-key schema/hash seed must be revisited. Response: ${body.slice(0, 2_000)}`
     );
   }
   if (response.status !== 200) {
     throw new Error(
-      `seeded API token verification against ${OUTLINE_IMAGE} returned HTTP ${response.status}: `
-        + body.slice(0, 2_000),
+      `seeded API token verification against ${OUTLINE_IMAGE} returned HTTP ${response.status}: ` + body.slice(0, 2_000)
     );
   }
 }
@@ -264,74 +255,111 @@ export async function bootOutline(): Promise<OutlineFixture> {
     await runStep("boot:docker-daemon", containers, requireDocker);
     await runStep("boot:sweep-stray-containers", containers, sweepStrays);
     await runStep("boot:ensure-network", containers, () => ensureNetwork("docker", NETWORK, false));
-    await runStep("boot:start-postgres", containers, () => docker([
-      "run", "-d",
-      "--name", containers.postgres,
-      "--label", `${LABEL}=${runId}`,
-      "--network", NETWORK,
-      "--network-alias", "postgres",
-      "-e", `POSTGRES_USER=${POSTGRES_USER}`,
-      "-e", `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
-      "-e", `POSTGRES_DB=${POSTGRES_DATABASE}`,
-      POSTGRES_IMAGE,
-    ]));
-    await runStep("boot:start-redis", containers, () => docker([
-      "run", "-d",
-      "--name", containers.redis,
-      "--label", `${LABEL}=${runId}`,
-      "--network", NETWORK,
-      "--network-alias", "redis",
-      REDIS_IMAGE,
-    ]));
-    await runStep("boot:postgres-readiness", containers, () => waitForCommand(
-      containers.postgres,
-      ["pg_isready", "-U", POSTGRES_USER, "-d", POSTGRES_DATABASE],
-      DEPENDENCY_READY_TIMEOUT_MS,
-      "pg_isready",
-    ));
-    await runStep("boot:redis-readiness", containers, () => waitForCommand(
-      containers.redis,
-      ["redis-cli", "ping"],
-      DEPENDENCY_READY_TIMEOUT_MS,
-      "redis-cli ping",
-    ));
-    await runStep("boot:start-outline", containers, () => docker([
-      "run", "-d",
-      "--name", containers.outline,
-      "--label", `${LABEL}=${runId}`,
-      "--network", NETWORK,
-      "--network-alias", "outline",
-      "-p", "127.0.0.1::3000",
-      "-e", "NODE_ENV=production",
-      "-e", "URL=http://outline:3000",
-      "-e", "PORT=3000",
-      "-e", "FORCE_HTTPS=false",
-      "-e", `SECRET_KEY=${SECRET_KEY}`,
-      "-e", `UTILS_SECRET=${UTILS_SECRET}`,
-      "-e", `DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}`,
-      "-e", "PGSSLMODE=disable",
-      "-e", "REDIS_URL=redis://redis:6379",
-      "-e", "FILE_STORAGE=local",
-      "-e", "FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data",
-      "-e", "FILE_STORAGE_UPLOAD_MAX_SIZE=26214400",
-      "-e", "WEB_CONCURRENCY=1",
-      OUTLINE_IMAGE,
-    ]));
+    await runStep("boot:start-postgres", containers, () =>
+      docker([
+        "run",
+        "-d",
+        "--name",
+        containers.postgres,
+        "--label",
+        `${LABEL}=${runId}`,
+        "--network",
+        NETWORK,
+        "--network-alias",
+        "postgres",
+        "-e",
+        `POSTGRES_USER=${POSTGRES_USER}`,
+        "-e",
+        `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
+        "-e",
+        `POSTGRES_DB=${POSTGRES_DATABASE}`,
+        POSTGRES_IMAGE,
+      ])
+    );
+    await runStep("boot:start-redis", containers, () =>
+      docker([
+        "run",
+        "-d",
+        "--name",
+        containers.redis,
+        "--label",
+        `${LABEL}=${runId}`,
+        "--network",
+        NETWORK,
+        "--network-alias",
+        "redis",
+        REDIS_IMAGE,
+      ])
+    );
+    await runStep("boot:postgres-readiness", containers, () =>
+      waitForCommand(
+        containers.postgres,
+        ["pg_isready", "-U", POSTGRES_USER, "-d", POSTGRES_DATABASE],
+        DEPENDENCY_READY_TIMEOUT_MS,
+        "pg_isready"
+      )
+    );
+    await runStep("boot:redis-readiness", containers, () =>
+      waitForCommand(containers.redis, ["redis-cli", "ping"], DEPENDENCY_READY_TIMEOUT_MS, "redis-cli ping")
+    );
+    await runStep("boot:start-outline", containers, () =>
+      docker([
+        "run",
+        "-d",
+        "--name",
+        containers.outline,
+        "--label",
+        `${LABEL}=${runId}`,
+        "--network",
+        NETWORK,
+        "--network-alias",
+        "outline",
+        "-p",
+        "127.0.0.1::3000",
+        "-e",
+        "NODE_ENV=production",
+        "-e",
+        "URL=http://outline:3000",
+        "-e",
+        "PORT=3000",
+        "-e",
+        "FORCE_HTTPS=false",
+        "-e",
+        `SECRET_KEY=${SECRET_KEY}`,
+        "-e",
+        `UTILS_SECRET=${UTILS_SECRET}`,
+        "-e",
+        `DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}`,
+        "-e",
+        "PGSSLMODE=disable",
+        "-e",
+        "REDIS_URL=redis://redis:6379",
+        "-e",
+        "FILE_STORAGE=local",
+        "-e",
+        "FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data",
+        "-e",
+        "FILE_STORAGE_UPLOAD_MAX_SIZE=26214400",
+        "-e",
+        "WEB_CONCURRENCY=1",
+        OUTLINE_IMAGE,
+      ])
+    );
     const portOutput = await runStep("boot:resolve-ephemeral-port", containers, () =>
-      docker(["port", containers.outline, "3000/tcp"]));
+      docker(["port", containers.outline, "3000/tcp"])
+    );
     const port = /127\.0\.0\.1:(\d+)/u.exec(portOutput)?.[1];
     if (port === undefined) {
       throw await diagnosticError(
         "boot:resolve-ephemeral-port",
         containers,
-        new Error(`unexpected docker port output: ${portOutput.trim()}`),
+        new Error(`unexpected docker port output: ${portOutput.trim()}`)
       );
     }
     baseUrl = `http://127.0.0.1:${port}`;
     await runStep("boot:outline-health", containers, () => waitForOutlineHealth(baseUrl, containers.outline));
     await inspectSeedTables(containers);
-    await runStep("seed:insert-team-user-api-key", containers, () =>
-      seedApiToken(containers.postgres));
+    await runStep("seed:insert-team-user-api-key", containers, () => seedApiToken(containers.postgres));
     await runStep("seed:verify-collections-list", containers, () => verifyApiToken(baseUrl));
 
     return Object.freeze({

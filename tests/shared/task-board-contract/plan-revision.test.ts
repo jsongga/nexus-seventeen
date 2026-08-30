@@ -8,13 +8,16 @@ import {
 import { ContractValidationError, parseBoardRejectPlan } from "#shared/task-board-contract/validate";
 
 test("plan rejection requests are exact, trimmed, and bounded", () => {
-  assert.deepEqual(parseBoardRejectPlan({
-    note: "  Explain the missing rollback behavior.  ",
-    expectedState: "proposed",
-  }), {
-    note: "Explain the missing rollback behavior.",
-    expectedState: "proposed",
-  });
+  assert.deepEqual(
+    parseBoardRejectPlan({
+      note: "  Explain the missing rollback behavior.  ",
+      expectedState: "proposed",
+    }),
+    {
+      note: "Explain the missing rollback behavior.",
+      expectedState: "proposed",
+    }
+  );
   for (const value of [
     null,
     { note: "", expectedState: "proposed" },

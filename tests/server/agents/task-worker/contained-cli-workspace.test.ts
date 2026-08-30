@@ -18,7 +18,9 @@ test("a contained launch uses the per-run workspace for cwd and sandbox roots", 
   const scratch = join(root, "scratch");
   await Promise.all([mkdir(bin), mkdir(fallback), mkdir(workspace), mkdir(scratch)]);
   const executable = join(bin, "claude");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("end", () => {
   const fs = require("node:fs");
@@ -28,7 +30,9 @@ process.stdin.on("end", () => {
   const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
   console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result}));
 });
-`, { mode: 0o700 });
+`,
+    { mode: 0o700 }
+  );
   await chmod(executable, 0o700);
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
@@ -70,6 +74,6 @@ process.stdin.on("end", () => {
       context: context(),
       workspace: { path: "relative-workspace" },
     }),
-    /workingDirectory must be absolute/u,
+    /workingDirectory must be absolute/u
   );
 });

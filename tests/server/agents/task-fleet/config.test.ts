@@ -94,56 +94,190 @@ test("parses a container lane and applies container defaults", () => {
 
 test("rejects ambiguous, duplicated, unsafe, and unbounded fleet configuration", () => {
   const cases: Array<readonly [string, (value: Record<string, unknown>) => void, RegExp]> = [
-    ["top-level unknown", (value) => { value.extra = true; }, /unknown field extra/u],
-    ["unsupported version", (value) => { value.version = 2; }, /version must be 1/u],
-    ["no agents", (value) => { value.agents = []; }, /between 1 and 128/u],
-    ["non-origin board URL", (value) => { value.boardUrl = "http://127.0.0.1:4318/api"; }, /HTTPS origin/u],
-    ["plaintext remote board", (value) => { value.boardUrl = "http://example.com"; }, /HTTPS origin/u],
-    ["retry inversion", (value) => { value.retry = { initialDelayMs: 500, maximumDelayMs: 100 }; }, /between 500 and 300000/u],
-    ["agent unknown", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.extra = true; }, /unknown field extra/u],
-    ["short token", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.token = "short"; }, /at least 32/u],
-    ["bad provider", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.provider = " invalid "; }, /provider is invalid/u],
-    ["bad role", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.role = "administrator"; }, /role must be one of/u],
-    ["empty runtime profile path", (value) => { value.runtimesConfigPath = ""; }, /runtimesConfigPath is invalid/u],
-    ["empty prompts file", (value) => { value.promptsFile = ""; }, /promptsFile is invalid/u],
-    ["obsolete prompts root", (value) => { value.promptsRoot = "prompts"; }, /promptsRoot.*promptsFile/u],
-    ["container lane without config", (value) => {
-      (value.agents as Array<Record<string, unknown>>)[0]!.runtime = "container";
-    }, /container is required for container lanes/u],
-    ["container config on local lane", (value) => {
-      (value.agents as Array<Record<string, unknown>>)[0]!.container = { workspaceRoot: "/task-workspaces" };
-    }, /container is only valid for container lanes/u],
-    ["bad container host", (value) => {
-      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
-      agent.runtime = "container";
-      agent.container = { workspaceRoot: "/task-workspaces", extraAllowedHosts: ["Bad Host!"] };
-    }, /extraAllowedHosts\[0\] is invalid/u],
-    ["relative container workspace root", (value) => {
-      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
-      agent.runtime = "container";
-      agent.container = { workspaceRoot: "task-workspaces" };
-    }, /workspaceRoot must be absolute/u],
-    ["container unknown", (value) => {
-      const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
-      agent.runtime = "container";
-      agent.container = { workspaceRoot: "/task-workspaces", extra: true };
-    }, /container has unknown field extra/u],
-    ["unbounded model", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.model = "m".repeat(129); }, /model is invalid/u],
-    ["relative workdir", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.workingDirectory = "work"; }, /must be absolute/u],
-    ["tight long poll", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.longPollMs = 0; }, /between 1000 and 30000/u],
-    ["long poll overflow", (value) => { (value.agents as Array<Record<string, unknown>>)[0]!.longPollMs = 30_001; }, /between 1000 and 30000/u],
-    ["duplicate agent", (value) => {
-      const agents = value.agents as Array<Record<string, unknown>>;
-      agents[1]!.agentId = agents[0]!.agentId;
-    }, /duplicate agentId/u],
-    ["duplicate worker", (value) => {
-      const agents = value.agents as Array<Record<string, unknown>>;
-      agents[1]!.workerId = agents[0]!.workerId;
-    }, /duplicate workerId/u],
-    ["duplicate journal", (value) => {
-      const agents = value.agents as Array<Record<string, unknown>>;
-      agents[1]!.statePath = agents[0]!.statePath;
-    }, /duplicate statePath/u],
+    [
+      "top-level unknown",
+      (value) => {
+        value.extra = true;
+      },
+      /unknown field extra/u,
+    ],
+    [
+      "unsupported version",
+      (value) => {
+        value.version = 2;
+      },
+      /version must be 1/u,
+    ],
+    [
+      "no agents",
+      (value) => {
+        value.agents = [];
+      },
+      /between 1 and 128/u,
+    ],
+    [
+      "non-origin board URL",
+      (value) => {
+        value.boardUrl = "http://127.0.0.1:4318/api";
+      },
+      /HTTPS origin/u,
+    ],
+    [
+      "plaintext remote board",
+      (value) => {
+        value.boardUrl = "http://example.com";
+      },
+      /HTTPS origin/u,
+    ],
+    [
+      "retry inversion",
+      (value) => {
+        value.retry = { initialDelayMs: 500, maximumDelayMs: 100 };
+      },
+      /between 500 and 300000/u,
+    ],
+    [
+      "agent unknown",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.extra = true;
+      },
+      /unknown field extra/u,
+    ],
+    [
+      "short token",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.token = "short";
+      },
+      /at least 32/u,
+    ],
+    [
+      "bad provider",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.provider = " invalid ";
+      },
+      /provider is invalid/u,
+    ],
+    [
+      "bad role",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.role = "administrator";
+      },
+      /role must be one of/u,
+    ],
+    [
+      "empty runtime profile path",
+      (value) => {
+        value.runtimesConfigPath = "";
+      },
+      /runtimesConfigPath is invalid/u,
+    ],
+    [
+      "empty prompts file",
+      (value) => {
+        value.promptsFile = "";
+      },
+      /promptsFile is invalid/u,
+    ],
+    [
+      "obsolete prompts root",
+      (value) => {
+        value.promptsRoot = "prompts";
+      },
+      /promptsRoot.*promptsFile/u,
+    ],
+    [
+      "container lane without config",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.runtime = "container";
+      },
+      /container is required for container lanes/u,
+    ],
+    [
+      "container config on local lane",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.container = { workspaceRoot: "/task-workspaces" };
+      },
+      /container is only valid for container lanes/u,
+    ],
+    [
+      "bad container host",
+      (value) => {
+        const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+        agent.runtime = "container";
+        agent.container = { workspaceRoot: "/task-workspaces", extraAllowedHosts: ["Bad Host!"] };
+      },
+      /extraAllowedHosts\[0\] is invalid/u,
+    ],
+    [
+      "relative container workspace root",
+      (value) => {
+        const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+        agent.runtime = "container";
+        agent.container = { workspaceRoot: "task-workspaces" };
+      },
+      /workspaceRoot must be absolute/u,
+    ],
+    [
+      "container unknown",
+      (value) => {
+        const agent = (value.agents as Array<Record<string, unknown>>)[0]!;
+        agent.runtime = "container";
+        agent.container = { workspaceRoot: "/task-workspaces", extra: true };
+      },
+      /container has unknown field extra/u,
+    ],
+    [
+      "unbounded model",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.model = "m".repeat(129);
+      },
+      /model is invalid/u,
+    ],
+    [
+      "relative workdir",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.workingDirectory = "work";
+      },
+      /must be absolute/u,
+    ],
+    [
+      "tight long poll",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.longPollMs = 0;
+      },
+      /between 1000 and 30000/u,
+    ],
+    [
+      "long poll overflow",
+      (value) => {
+        (value.agents as Array<Record<string, unknown>>)[0]!.longPollMs = 30_001;
+      },
+      /between 1000 and 30000/u,
+    ],
+    [
+      "duplicate agent",
+      (value) => {
+        const agents = value.agents as Array<Record<string, unknown>>;
+        agents[1]!.agentId = agents[0]!.agentId;
+      },
+      /duplicate agentId/u,
+    ],
+    [
+      "duplicate worker",
+      (value) => {
+        const agents = value.agents as Array<Record<string, unknown>>;
+        agents[1]!.workerId = agents[0]!.workerId;
+      },
+      /duplicate workerId/u,
+    ],
+    [
+      "duplicate journal",
+      (value) => {
+        const agents = value.agents as Array<Record<string, unknown>>;
+        agents[1]!.statePath = agents[0]!.statePath;
+      },
+      /duplicate statePath/u,
+    ],
   ];
 
   for (const [label, mutate, expected] of cases) {

@@ -1,4 +1,4 @@
-import type { BoardPage } from '../views/WorkspaceSidebar';
+import type { BoardPage } from "../views/WorkspaceSidebar";
 
 interface RouteSnapshotIds {
   tasks: readonly { id: string }[];
@@ -18,25 +18,25 @@ interface RouteSnapshotIds {
  * from extra path segments.
  */
 
-const tasksPage: BoardPage = { kind: 'tasks' };
+const tasksPage: BoardPage = { kind: "tasks" };
 
 /** Strips the leading '#' and/or '/' so both '#/agent/x' and '/agent/x' parse. */
 function hashSegments(hash: string): string[] {
-  const withoutMarker = hash.startsWith('#') ? hash.slice(1) : hash;
-  const withoutLeadingSlash = withoutMarker.startsWith('/') ? withoutMarker.slice(1) : withoutMarker;
-  return withoutLeadingSlash.split('/');
+  const withoutMarker = hash.startsWith("#") ? hash.slice(1) : hash;
+  const withoutLeadingSlash = withoutMarker.startsWith("/") ? withoutMarker.slice(1) : withoutMarker;
+  return withoutLeadingSlash.split("/");
 }
 
 function acceptsSegmentCount(kind: string, segmentCount: number): boolean {
   switch (kind) {
-    case 'tasks':
+    case "tasks":
       return segmentCount === 1 || segmentCount === 2;
-    case 'automation':
-    case 'ledgers':
+    case "automation":
+    case "ledgers":
       return segmentCount === 1;
-    case 'project':
-    case 'agent':
-    case 'intake':
+    case "project":
+    case "agent":
+    case "intake":
       return segmentCount === 2;
     default:
       return false;
@@ -55,7 +55,7 @@ function decodeId(value: string | undefined): string | null | undefined {
   }
 }
 
-function pageHashWithId(kind: 'tasks' | 'project' | 'agent' | 'intake', id: string): string {
+function pageHashWithId(kind: "tasks" | "project" | "agent" | "intake", id: string): string {
   try {
     return `#/${kind}/${encodeURIComponent(id)}`;
   } catch {
@@ -67,18 +67,18 @@ function pageHashWithId(kind: 'tasks' | 'project' | 'agent' | 'intake', id: stri
 
 export function pageToHash(page: BoardPage): string {
   switch (page.kind) {
-    case 'tasks':
-      return page.taskId ? pageHashWithId('tasks', page.taskId) : '#/tasks';
-    case 'intake':
-      return pageHashWithId('intake', page.workItemId);
-    case 'automation':
-      return '#/automation';
-    case 'ledgers':
-      return '#/ledgers';
-    case 'project':
-      return pageHashWithId('project', page.projectId);
-    case 'agent':
-      return pageHashWithId('agent', page.agentId);
+    case "tasks":
+      return page.taskId ? pageHashWithId("tasks", page.taskId) : "#/tasks";
+    case "intake":
+      return pageHashWithId("intake", page.workItemId);
+    case "automation":
+      return "#/automation";
+    case "ledgers":
+      return "#/ledgers";
+    case "project":
+      return pageHashWithId("project", page.projectId);
+    case "agent":
+      return pageHashWithId("agent", page.agentId);
   }
 }
 
@@ -89,21 +89,21 @@ export function hashToPage(hash: string): BoardPage {
 
   const id = decodeId(rawId);
   switch (kind) {
-    case 'tasks':
+    case "tasks":
       if (id === null) return tasksPage;
-      return id === undefined ? tasksPage : { kind: 'tasks', taskId: id };
-    case 'automation':
-      return { kind: 'automation' };
-    case 'ledgers':
-      return { kind: 'ledgers' };
-    case 'project':
+      return id === undefined ? tasksPage : { kind: "tasks", taskId: id };
+    case "automation":
+      return { kind: "automation" };
+    case "ledgers":
+      return { kind: "ledgers" };
+    case "project":
       // A project or agent page without an id cannot render, so fall back
       // rather than producing a page that would immediately blank out.
-      return typeof id === 'string' ? { kind: 'project', projectId: id } : tasksPage;
-    case 'agent':
-      return typeof id === 'string' ? { kind: 'agent', agentId: id } : tasksPage;
-    case 'intake':
-      return typeof id === 'string' ? { kind: 'intake', workItemId: id } : tasksPage;
+      return typeof id === "string" ? { kind: "project", projectId: id } : tasksPage;
+    case "agent":
+      return typeof id === "string" ? { kind: "agent", agentId: id } : tasksPage;
+    case "intake":
+      return typeof id === "string" ? { kind: "intake", workItemId: id } : tasksPage;
     default:
       return tasksPage;
   }
@@ -113,16 +113,19 @@ export function hashToPage(hash: string): BoardPage {
 export function missingRouteFallback(
   page: BoardPage,
   snapshot: RouteSnapshotIds,
-  observedTaskIds: ReadonlySet<string>,
+  observedTaskIds: ReadonlySet<string>
 ): BoardPage | null {
   if (
-    page.kind === 'tasks'
-    && page.taskId
-    && !snapshot.tasks.some((task) => task.id === page.taskId)
-    && !observedTaskIds.has(page.taskId)
-  ) return { kind: 'tasks' };
-  if (page.kind === 'intake' && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId)) return { kind: 'tasks' };
-  if (page.kind === 'project' && !snapshot.projects.some((project) => project.id === page.projectId)) return { kind: 'tasks' };
-  if (page.kind === 'agent' && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: 'tasks' };
+    page.kind === "tasks" &&
+    page.taskId &&
+    !snapshot.tasks.some((task) => task.id === page.taskId) &&
+    !observedTaskIds.has(page.taskId)
+  )
+    return { kind: "tasks" };
+  if (page.kind === "intake" && !snapshot.workItems.some((workItem) => workItem.id === page.workItemId))
+    return { kind: "tasks" };
+  if (page.kind === "project" && !snapshot.projects.some((project) => project.id === page.projectId))
+    return { kind: "tasks" };
+  if (page.kind === "agent" && !snapshot.agents.some((agent) => agent.id === page.agentId)) return { kind: "tasks" };
   return null;
 }

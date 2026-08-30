@@ -103,63 +103,63 @@
 :root {
   color-scheme: light;
 
-  --canvas: #FFFFFF;
-  --card: #FFFFFF;
-  --popover: #FFFFFF;
-  --secondary: #F3F3F5;
-  --ink-panel: #F3F3F5;
-  --foreground: #2A2A28;
+  --canvas: #ffffff;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --secondary: #f3f3f5;
+  --ink-panel: #f3f3f5;
+  --foreground: #2a2a28;
   /*
    * Contrast constraint: muted foreground is 5.0354:1 on the white canvas but
    * only 4.5437:1 on --sidebar, just above the 4.5:1 AA floor. It is not
    * sufficient on composited --caution-soft (4.1865:1), so Automation's
    * caution callouts use --caution-text directly rather than text-muted.
    */
-  --muted-foreground: #6F6F6D;
-  --primary-foreground: #FFFFFF;
-  --border: #EAEAEA;
-  --border-soft: #F1F1F1;
-  --input: #EAEAEA;
-  --ring: #5F4B51;
-  --active: #5F4B51;
-  --active-hover: #4C3C41;
-  --header: #D6D8CC;
+  --muted-foreground: #6f6f6d;
+  --primary-foreground: #ffffff;
+  --border: #eaeaea;
+  --border-soft: #f1f1f1;
+  --input: #eaeaea;
+  --ring: #5f4b51;
+  --active: #5f4b51;
+  --active-hover: #4c3c41;
+  --header: #d6d8cc;
   --elevation-shadow-color: rgba(74, 69, 65, 0.16);
-  --success-text: #1E3314;
-  --success-fill: #8B9883;
+  --success-text: #1e3314;
+  --success-fill: #8b9883;
   --success-soft: rgba(139, 152, 131, 0.22);
 
-  --teal-300: #8B9883;
-  --teal-500: #5F4B51;
-  --teal-600: #4C3C41;
-  --teal-700: #2A2A28;
+  --teal-300: #8b9883;
+  --teal-500: #5f4b51;
+  --teal-600: #4c3c41;
+  --teal-700: #2a2a28;
   --teal-soft: rgba(139, 152, 131, 0.22);
   --accent: rgba(139, 152, 131, 0.22);
-  --caution-text: #5A2A0D;
-  --caution-fill: #F28D50;
+  --caution-text: #5a2a0d;
+  --caution-fill: #f28d50;
   --caution-soft: rgba(242, 141, 80, 0.22);
-  --urgent-text: #8A3A20;
-  --urgent-fill: #BE5531;
-  --urgent-soft: rgba(190, 85, 49, 0.20);
-  --teal-border: #EAEAEA;
-  --border-strong: #D8D8D8;
-  --muted-surface: #F3F3F5;
-  --caution-border: #F28D50;
-  --urgent-border: #BE5531;
-  --info-text: #2B4570;
-  --info-soft: rgba(162, 187, 224, 0.30);
-  --info-border: #A2BBE0;
-  --alt-text: #4A4A4A;
-  --alt-soft: rgba(209, 209, 209, 0.40);
-  --alt-border: #D1D1D1;
-  --sidebar: #F3F3F5;
-  --sidebar-foreground: #2A2A28;
-  --sidebar-primary: #5F4B51;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #EAEAEA;
-  --sidebar-accent-foreground: #2A2A28;
-  --sidebar-border: #EAEAEA;
-  --sidebar-ring: #5F4B51;
+  --urgent-text: #8a3a20;
+  --urgent-fill: #be5531;
+  --urgent-soft: rgba(190, 85, 49, 0.2);
+  --teal-border: #eaeaea;
+  --border-strong: #d8d8d8;
+  --muted-surface: #f3f3f5;
+  --caution-border: #f28d50;
+  --urgent-border: #be5531;
+  --info-text: #2b4570;
+  --info-soft: rgba(162, 187, 224, 0.3);
+  --info-border: #a2bbe0;
+  --alt-text: #4a4a4a;
+  --alt-soft: rgba(209, 209, 209, 0.4);
+  --alt-border: #d1d1d1;
+  --sidebar: #f3f3f5;
+  --sidebar-foreground: #2a2a28;
+  --sidebar-primary: #5f4b51;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eaeaea;
+  --sidebar-accent-foreground: #2a2a28;
+  --sidebar-border: #eaeaea;
+  --sidebar-ring: #5f4b51;
 }
 
 :root {
@@ -217,7 +217,7 @@ select:focus-visible,
 }
 
 ::selection {
-  color: #2A2A28;
+  color: #2a2a28;
   background: rgba(95, 75, 81, 0.22);
 }
 

@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import {
-  DESIGN_FAILURE_POINTS,
-  type DesignRecordDraft,
-  type WorkflowPlanDraft,
-} from "#shared/task-board-contract";
+import { DESIGN_FAILURE_POINTS, type DesignRecordDraft, type WorkflowPlanDraft } from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board";
 import {
   automationConfigurationRequest,
@@ -21,37 +17,39 @@ const RAW_REQUEST = "Make hazardous checkout delivery crash-safe.";
 function designRecord(): DesignRecordDraft {
   return {
     states: ["pending", "sent", "committed", "unknown"],
-    transitions: [{
-      from: "pending",
-      to: "sent",
-      durablePrecondition: "Persist the intent and idempotency key before sending.",
-      recovery: "Resume from the durable intent with the same key.",
-    }],
+    transitions: [
+      {
+        from: "pending",
+        to: "sent",
+        durablePrecondition: "Persist the intent and idempotency key before sending.",
+        recovery: "Resume from the durable intent with the same key.",
+      },
+    ],
     failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
       point,
       resultingState: `durable state after ${point}`,
       recovery: `recover ${point} from durable state`,
     })),
-    idempotencyKeys: [{
-      name: "delivery-key",
-      generatedAt: "When the durable intent is created.",
-      persistedAt: "In the same transaction as the intent.",
-      reuse: "Reuse verbatim for every retry.",
-    }],
-    faultInjectionCases: [{
-      name: "Crash after commit",
-      scenario: "Terminate after commit and before acknowledgement.",
-      expectation: "Retry observes the committed result without duplicating delivery.",
-    }],
+    idempotencyKeys: [
+      {
+        name: "delivery-key",
+        generatedAt: "When the durable intent is created.",
+        persistedAt: "In the same transaction as the intent.",
+        reuse: "Reuse verbatim for every retry.",
+      },
+    ],
+    faultInjectionCases: [
+      {
+        name: "Crash after commit",
+        scenario: "Terminate after commit and before acknowledgement.",
+        expectation: "Retry observes the committed result without duplicating delivery.",
+      },
+    ],
   };
 }
 
 function hazardousPlan(
-  stageTemplate: WorkflowPlanDraft["nodes"][number]["stageTemplate"] = [
-    "implementation",
-    "testing",
-    "verification",
-  ],
+  stageTemplate: WorkflowPlanDraft["nodes"][number]["stageTemplate"] = ["implementation", "testing", "verification"]
 ): WorkflowPlanDraft {
   return {
     objective: "Make hazardous delivery recoverable across every process boundary.",
@@ -63,18 +61,22 @@ function hazardousPlan(
     nonGoals: ["Do not change the database schema."],
     mechanicalPortions: ["Thread the design record through claim context."],
     blockingQuestions: [],
-    criterionChecks: [{
-      criterion: "The runtime suite passes.",
-      check: "npm run test:runtime",
-    }],
-    nodes: [{
-      nodeId: "hazardous-delivery",
-      title: "Implement hazardous delivery",
-      objective: "Implement the confirmed crash-safe delivery plan.",
-      acceptanceCriteria: ["Fault-injection coverage passes."],
-      dependencyNodeIds: [],
-      stageTemplate,
-    }],
+    criterionChecks: [
+      {
+        criterion: "The runtime suite passes.",
+        check: "npm run test:runtime",
+      },
+    ],
+    nodes: [
+      {
+        nodeId: "hazardous-delivery",
+        title: "Implement hazardous delivery",
+        objective: "Implement the confirmed crash-safe delivery plan.",
+        acceptanceCriteria: ["Fault-injection coverage passes."],
+        dependencyNodeIds: [],
+        stageTemplate,
+      },
+    ],
   };
 }
 
@@ -107,18 +109,23 @@ async function prepareHazardousPipeline(suffix: string, duplicateManagers = fals
     description: "Reviews a hazardous pipeline independently.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementer, reviewer],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementer.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: reviewer.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementer, reviewer],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementer.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: reviewer.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: RAW_REQUEST,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: RAW_REQUEST,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `hazardous-design-${suffix}`).workItem;
+    `hazardous-design-${suffix}`
+  ).workItem;
   const planning = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `claim-hazardous-planning-${suffix}`,
     messageCursor: null,
@@ -129,9 +136,9 @@ async function prepareHazardousPipeline(suffix: string, duplicateManagers = fals
     result: "The hazardous pipeline plan is ready.",
     workflowPlan: hazardousPlan(),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-    (candidate) => candidate.state === "proposed",
-  );
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.state === "proposed");
   assert.ok(revision);
   const confirmation = fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
   return { ...fixture, workItem, revision, confirmation };
@@ -148,7 +155,7 @@ test("hazardous pipeline confirmation enters designing with identity and a claim
     assert.equal(current.baseSha, BASE_SHA);
     assert.deepEqual(
       fixture.confirmation.nodes.map((node) => ({ state: node.state, currentStage: node.currentStage })),
-      [{ state: "pending", currentStage: null }],
+      [{ state: "pending", currentStage: null }]
     );
 
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
@@ -158,10 +165,7 @@ test("hazardous pipeline confirmation enters designing with identity and a claim
     assert.ok(claim?.task);
     assert.equal(claim.context.intake, false);
     assert.equal((claim.context as { design?: boolean }).design, true);
-    assert.equal(
-      claim.task.title,
-      `Design workflow: ${hazardousPlan().objective}`,
-    );
+    assert.equal(claim.task.title, `Design workflow: ${hazardousPlan().objective}`);
     assert.match(claim.task.objective, /"tier":"hazardous"/u);
     assert.match(claim.task.objective, /"nodes":\[/u);
     assert.match(claim.task.objective, new RegExp(RAW_REQUEST, "u"));
@@ -204,9 +208,9 @@ test("a complete design settlement persists the record, activates implementation
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const persisted = db.prepare(
-        "SELECT work_item_id,plan_revision_id,payload_json FROM design_records WHERE work_item_id=?",
-      ).get(fixture.workItem.workItemId);
+      const persisted = db
+        .prepare("SELECT work_item_id,plan_revision_id,payload_json FROM design_records WHERE work_item_id=?")
+        .get(fixture.workItem.workItemId);
       assert.equal(persisted?.work_item_id, fixture.workItem.workItemId);
       assert.equal(persisted?.plan_revision_id, fixture.revision.planRevisionId);
       assert.deepEqual(JSON.parse(String(persisted?.payload_json)), draft);
@@ -228,7 +232,7 @@ test("a complete design settlement persists the record, activates implementation
     assert.equal((implementationClaim.context as { design?: boolean }).design, false);
     assert.deepEqual(
       (implementationClaim.context.workflow.pipeline as { designRecord?: DesignRecordDraft | null }).designRecord,
-      draft,
+      draft
     );
   } finally {
     fixture.board.close();
@@ -250,9 +254,11 @@ test("a completed design is discarded when cancellation wins the settlement race
       reason: "The operator cancelled while the design run was active.",
     });
     assert.equal(cancelled.state, "abandoned");
-    assert.equal(fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (run) => run.runId === designClaim.run.runId,
-    )?.status, "interrupted");
+    assert.equal(
+      fixture.board.snapshot(fixture.project.projectId).recentRuns.find((run) => run.runId === designClaim.run.runId)
+        ?.status,
+      "interrupted"
+    );
     const cancelledTask = fixture.board.requireTask(designClaim.task.taskId);
     assert.equal(cancelledTask.status, "cancelled");
 
@@ -277,35 +283,53 @@ test("a completed design is discarded when cancellation wins the settlement race
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(db.prepare(
-        "SELECT COUNT(*) AS count FROM design_records WHERE work_item_id=?",
-      ).get(fixture.workItem.workItemId)?.count, 0);
-      assert.equal(db.prepare(
-        "SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?",
-      ).get(designClaim.run.runId)?.count, 1);
-      const node = db.prepare(`
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS count FROM design_records WHERE work_item_id=?").get(fixture.workItem.workItemId)
+          ?.count,
+        0
+      );
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS count FROM interrupts WHERE run_id=?").get(designClaim.run.runId)?.count,
+        1
+      );
+      const node = db
+        .prepare(
+          `
         SELECT state,current_stage
         FROM work_nodes
         WHERE plan_revision_id=?
-      `).get(fixture.revision.planRevisionId);
+      `
+        )
+        .get(fixture.revision.planRevisionId);
       assert.equal(node?.state, "pending");
       assert.equal(node?.current_stage, null);
-      const discarded = db.prepare(`
+      const discarded = db
+        .prepare(
+          `
         SELECT data_json
         FROM task_events
         WHERE task_id=? AND event_type='work_item_design_discarded'
-      `).get(designClaim.task.taskId);
+      `
+        )
+        .get(designClaim.task.taskId);
       assert.ok(discarded);
       assert.deepEqual(JSON.parse(String(discarded.data_json)), {
         workItemId: fixture.workItem.workItemId,
         runId: designClaim.run.runId,
         reason: "work_item_ended",
       });
-      assert.equal(db.prepare(`
+      assert.equal(
+        db
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM task_events
         WHERE task_id=? AND event_type='work_item_design_discarded'
-      `).get(designClaim.task.taskId)?.count, 1);
+      `
+          )
+          .get(designClaim.task.taskId)?.count,
+        1
+      );
     } finally {
       db.close();
     }
@@ -329,9 +353,7 @@ test("cancelling mid-implementing cancels the stage task and retires its pending
     });
     const implementing = fixture.board.requireWorkItem(fixture.workItem.workItemId);
     assert.equal(implementing.state, "implementing");
-    const stageTask = fixture.board.snapshot(fixture.project.projectId).tasks.find(
-      (task) => task.status === "queued",
-    );
+    const stageTask = fixture.board.snapshot(fixture.project.projectId).tasks.find((task) => task.status === "queued");
     assert.ok(stageTask);
     assert.equal(stageTask.status, "queued");
 
@@ -344,14 +366,21 @@ test("cancelling mid-implementing cancels the stage task and retires its pending
     assert.equal(fixture.board.requireTask(stageTask.taskId).status, "cancelled");
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(db.prepare(`
+      assert.equal(
+        db
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM wakeups wakeup
         JOIN task_events event ON event.event_id='retired-wakeup:' || wakeup.wakeup_id
         WHERE wakeup.task_id=? AND wakeup.claimed_at IS NULL
           AND event.event_type='agent_wakeup_retired'
           AND json_extract(event.data_json, '$.retirementReason')='task_cancelled'
-      `).get(stageTask.taskId)?.count, 1);
+      `
+          )
+          .get(stageTask.taskId)?.count,
+        1
+      );
     } finally {
       db.close();
     }
@@ -373,15 +402,17 @@ test("completed design settlement requires a record and names the first missing 
       failurePoints: designRecord().failurePoints.slice(0, -1),
     };
     assert.throws(
-      () => fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The design is incomplete.",
-        designRecord: incomplete,
-      } as never),
-      (error: unknown) => error instanceof TaskBoardError &&
+      () =>
+        fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The design is incomplete.",
+          designRecord: incomplete,
+        } as never),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
         error.status === 400 &&
         error.code === "TASK_BOARD_DESIGN_RECORD_REQUIRED" &&
-        error.message === "design record missing failure point: concurrent_invocation",
+        error.message === "design record missing failure point: concurrent_invocation"
     );
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "designing");
   } finally {
@@ -398,13 +429,13 @@ test("completed design settlement without a record is rejected and remains activ
     });
     assert.ok(designClaim);
     assert.throws(
-      () => fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The design record was omitted.",
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "TASK_BOARD_DESIGN_RECORD_REQUIRED",
+      () =>
+        fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The design record was omitted.",
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "TASK_BOARD_DESIGN_RECORD_REQUIRED"
     );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -426,14 +457,14 @@ test("non-completed design settlements reject a design record", async () => {
     });
     assert.ok(designClaim);
     assert.throws(
-      () => fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
-        outcome: "failed",
-        result: "The design failed but echoed a partial record.",
-        designRecord: designRecord(),
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
+      () =>
+        fixture.board.settleRun(designClaim.run.runId, fixture.manager.agentId, {
+          outcome: "failed",
+          result: "The design failed but echoed a partial record.",
+          designRecord: designRecord(),
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED"
     );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -465,14 +496,14 @@ test("design records are rejected on non-design tasks", async () => {
     });
     assert.ok(engineerClaim);
     assert.throws(
-      () => fixture.board.settleRun(engineerClaim.run.runId, fixture.engineer.agentId, {
-        outcome: "failed",
-        result: "The engineer must not replace the design.",
-        designRecord: designRecord(),
-      } as never),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.status === 400 &&
-        error.code === "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
+      () =>
+        fixture.board.settleRun(engineerClaim.run.runId, fixture.engineer.agentId, {
+          outcome: "failed",
+          result: "The engineer must not replace the design.",
+          designRecord: designRecord(),
+        } as never),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 400 && error.code === "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED"
     );
   } finally {
     fixture.board.close();
@@ -492,7 +523,10 @@ test("a failed design run parks the hazardous work item", async () => {
       result: "The design could not establish a safe recovery path.",
     });
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
-    assert.equal(fixture.board.requireTask(designClaim.task!.taskId).result, "The design could not establish a safe recovery path.");
+    assert.equal(
+      fixture.board.requireTask(designClaim.task!.taskId).result,
+      "The design could not establish a safe recovery path."
+    );
     assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
       category: "design_run_failed",
       reason: "The design could not establish a safe recovery path.",
@@ -515,14 +549,19 @@ test("hazardous non-pipeline confirmation remains parked with the pipeline-plan 
       evaluatorProfile: "tests" as const,
       enabled: true,
     };
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [verifier],
-      stages: automationStages({ verification: { kind: "agent_type", agentTypeId: verifier.agentTypeId } }),
-    }));
-    const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Confirm hazardous work without a pipeline plan.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "hazardous-non-pipeline-design").workItem;
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [verifier],
+        stages: automationStages({ verification: { kind: "agent_type", agentTypeId: verifier.agentTypeId } }),
+      })
+    );
+    const workItem = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Confirm hazardous work without a pipeline plan.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "hazardous-non-pipeline-design"
+    ).workItem;
     const planning = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-hazardous-non-pipeline-planning",
       messageCursor: null,
@@ -533,17 +572,14 @@ test("hazardous non-pipeline confirmation remains parked with the pipeline-plan 
       result: "The non-pipeline plan is ready.",
       workflowPlan: hazardousPlan(["verification"]),
     });
-    const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-      (candidate) => candidate.state === "proposed",
-    );
+    const revision = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .plans.find((candidate) => candidate.state === "proposed");
     assert.ok(revision);
     const confirmed = fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
     assert.equal(confirmed.outcome, "parked_hazardous");
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "parked");
-    assert.equal(
-      fixture.board.requireTask(workItem.planningTaskId!).result,
-      "hazardous tier requires a pipeline plan",
-    );
+    assert.equal(fixture.board.requireTask(workItem.planningTaskId!).result, "hazardous tier requires a pipeline plan");
     assert.deepEqual(latestParkRecord(fixture.path, workItem.workItemId), {
       category: "hazardous_without_pipeline",
       reason: "hazardous tier requires a pipeline plan",

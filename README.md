@@ -32,12 +32,12 @@ One board Project has one `repoPath`, and decomposition assigns each child to on
 
 The proposed plan declares each child’s objective, project, scope, acceptance criteria, dependencies, and optional phase before the human confirms it.
 
-| Change shape | Allowed declaration |
-|---|---|
-| `mechanical_sweep` | No children. |
-| `feature` | Optional unphased children with non-overlapping same-project scopes. |
-| `blast_radius` | Children required; every child declares `splitBy: consumer` or `splitBy: phase`. Unphased same-project scopes must not overlap; only the sequenced Expand/Contract pair is exempt. |
-| Any phased declaration | Exactly one Expand, one or more Migrates, and one Contract. Every child has a phase; each Migrate depends on Expand, and Contract depends on every Migrate. |
+| Change shape           | Allowed declaration                                                                                                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mechanical_sweep`     | No children.                                                                                                                                                                       |
+| `feature`              | Optional unphased children with non-overlapping same-project scopes.                                                                                                               |
+| `blast_radius`         | Children required; every child declares `splitBy: consumer` or `splitBy: phase`. Unphased same-project scopes must not overlap; only the sequenced Expand/Contract pair is exempt. |
+| Any phased declaration | Exactly one Expand, one or more Migrates, and one Contract. Every child has a phase; each Migrate depends on Expand, and Contract depends on every Migrate.                        |
 
 Expand and Contract stay in the provider project and both cover `docs/interface.md`; Migrate children target consumer projects. Expand publishes that interface, consumers read the published interface at the Expand merge SHA—never the provider’s source—and Contract removes the compatibility surface only after migration.
 
@@ -155,36 +155,36 @@ Edit prompt templates in `config/prompts.md`: each `## <name>` section contains 
 
 The task fleet takes worker values from `fleet.json`; an operator sets the equivalent variables only when starting the standalone task-worker entrypoint. `STEWARD_SAFE_PHASE` is included because it matched the source sweep, but it is an internal activity marker rather than an environment variable.
 
-| Name | Who sets it | Default | Required |
-|---|---|---|---|
-| `STEWARD_TASK_BOARD_CORS_ORIGINS` | Board operator | Empty list | No |
-| `STEWARD_TASK_BOARD_VERIFY_WORKSPACE_ROOT` | Board operator | `verify-workspaces` beside the board database | No |
-| `STEWARD_TASK_BOARD_HOST` | Board operator | `127.0.0.1` (or `::1`) | No |
-| `STEWARD_TASK_BOARD_PORT` | Board operator | `4318` | No |
-| `STEWARD_TASK_BOARD_HEARTBEAT_TIMEOUT_SECONDS` | Board operator | `300` | No |
-| `STEWARD_TASK_BOARD_RECONCILE_INTERVAL_SECONDS` | Board operator | `60` | No |
-| `STEWARD_TASK_BOARD_PARK_NOTIFY_SECONDS` | Board operator | `86400` (1 day) | No |
-| `STEWARD_TASK_BOARD_PARK_AUTO_ABANDON_SECONDS` | Board operator | `604800` (7 days) | No |
-| `STEWARD_TASK_BOARD_STAGE_CAP_SECONDS` | Board operator | `3600` | No |
-| `STEWARD_TASK_BOARD_TASK_CAP_SECONDS` | Board operator | `10800` | No |
-| `STEWARD_PROJECT_ROOTS` | Board operator | Unset (host project picker disabled) — colon-separated directories | No |
-| `STEWARD_BOARD_URL` | Bootstrap operator | `https://steward.cicadasystem.com/board-api` | No |
-| `STEWARD_AGENT_KEYCHAIN_SERVICE` | Bootstrap operator | `cicada-steward-agent-token` | No |
-| `STEWARD_OPERATOR_TOKEN` | Bootstrap operator | None | For `bootstrap:apply` |
-| `STEWARD_TASK_BOARD_URL` | Fleet from `boardUrl`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_PROVIDER` | Fleet from `provider`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_MODEL` | Fleet from `model`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_ID` | Fleet from `workerId`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_AGENT_ID` | Fleet from `agentId`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_AGENT_TOKEN` | Fleet from `token`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_STATE_PATH` | Fleet from `statePath`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_WORKING_DIRECTORY` | Fleet from `workingDirectory`; standalone operator | None | For a standalone worker |
-| `STEWARD_TASK_WORKER_RUNTIMES_CONFIG` | Fleet from `runtimesConfigPath`; standalone operator | `config/runtimes.json` from cwd | No |
-| `STEWARD_TASK_WORKER_PROMPTS_FILE` | Fleet from `promptsFile`; standalone operator | `config/prompts.md` from cwd | No |
-| `STEWARD_TASK_WORKER_LONG_POLL_MS` | Fleet from `longPollMs`; standalone operator | `30000` | No |
-| `STEWARD_TASK_WORKER_AGENT_TIMEOUT_MS` | Fleet from `agentTimeoutMs`; standalone operator | `3600000` | No |
-| `STEWARD_TASK_WORKER_TERMINATION_GRACE_MS` | Fleet from `terminationGraceMs`; standalone operator | `2000` | No |
-| `STEWARD_SAFE_PHASE` | Worker internals; operators must not set it | Internal marker | No |
+| Name                                            | Who sets it                                          | Default                                                            | Required                |
+| ----------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ | ----------------------- |
+| `STEWARD_TASK_BOARD_CORS_ORIGINS`               | Board operator                                       | Empty list                                                         | No                      |
+| `STEWARD_TASK_BOARD_VERIFY_WORKSPACE_ROOT`      | Board operator                                       | `verify-workspaces` beside the board database                      | No                      |
+| `STEWARD_TASK_BOARD_HOST`                       | Board operator                                       | `127.0.0.1` (or `::1`)                                             | No                      |
+| `STEWARD_TASK_BOARD_PORT`                       | Board operator                                       | `4318`                                                             | No                      |
+| `STEWARD_TASK_BOARD_HEARTBEAT_TIMEOUT_SECONDS`  | Board operator                                       | `300`                                                              | No                      |
+| `STEWARD_TASK_BOARD_RECONCILE_INTERVAL_SECONDS` | Board operator                                       | `60`                                                               | No                      |
+| `STEWARD_TASK_BOARD_PARK_NOTIFY_SECONDS`        | Board operator                                       | `86400` (1 day)                                                    | No                      |
+| `STEWARD_TASK_BOARD_PARK_AUTO_ABANDON_SECONDS`  | Board operator                                       | `604800` (7 days)                                                  | No                      |
+| `STEWARD_TASK_BOARD_STAGE_CAP_SECONDS`          | Board operator                                       | `3600`                                                             | No                      |
+| `STEWARD_TASK_BOARD_TASK_CAP_SECONDS`           | Board operator                                       | `10800`                                                            | No                      |
+| `STEWARD_PROJECT_ROOTS`                         | Board operator                                       | Unset (host project picker disabled) — colon-separated directories | No                      |
+| `STEWARD_BOARD_URL`                             | Bootstrap operator                                   | `https://steward.cicadasystem.com/board-api`                       | No                      |
+| `STEWARD_AGENT_KEYCHAIN_SERVICE`                | Bootstrap operator                                   | `cicada-steward-agent-token`                                       | No                      |
+| `STEWARD_OPERATOR_TOKEN`                        | Bootstrap operator                                   | None                                                               | For `bootstrap:apply`   |
+| `STEWARD_TASK_BOARD_URL`                        | Fleet from `boardUrl`; standalone operator           | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_PROVIDER`                  | Fleet from `provider`; standalone operator           | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_MODEL`                     | Fleet from `model`; standalone operator              | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_ID`                        | Fleet from `workerId`; standalone operator           | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_AGENT_ID`                  | Fleet from `agentId`; standalone operator            | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_AGENT_TOKEN`               | Fleet from `token`; standalone operator              | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_STATE_PATH`                | Fleet from `statePath`; standalone operator          | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_WORKING_DIRECTORY`         | Fleet from `workingDirectory`; standalone operator   | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_RUNTIMES_CONFIG`           | Fleet from `runtimesConfigPath`; standalone operator | `config/runtimes.json` from cwd                                    | No                      |
+| `STEWARD_TASK_WORKER_PROMPTS_FILE`              | Fleet from `promptsFile`; standalone operator        | `config/prompts.md` from cwd                                       | No                      |
+| `STEWARD_TASK_WORKER_LONG_POLL_MS`              | Fleet from `longPollMs`; standalone operator         | `30000`                                                            | No                      |
+| `STEWARD_TASK_WORKER_AGENT_TIMEOUT_MS`          | Fleet from `agentTimeoutMs`; standalone operator     | `3600000`                                                          | No                      |
+| `STEWARD_TASK_WORKER_TERMINATION_GRACE_MS`      | Fleet from `terminationGraceMs`; standalone operator | `2000`                                                             | No                      |
+| `STEWARD_SAFE_PHASE`                            | Worker internals; operators must not set it          | Internal marker                                                    | No                      |
 
 ## Commands
 

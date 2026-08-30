@@ -35,19 +35,19 @@ import { TaskBoardError } from "../errors.js";
 const SCHEMA_VERSION = 26;
 
 export function workItemPriorityCases(indentation: string): string {
-  return WORK_ITEM_PRIORITIES
-    .map((priority, rank) => `WHEN '${priority}' THEN ${rank}`)
-    .join(`\n${indentation}`);
+  return WORK_ITEM_PRIORITIES.map((priority, rank) => `WHEN '${priority}' THEN ${rank}`).join(`\n${indentation}`);
 }
 
 function sqlStringList(values: readonly string[], separator = ", "): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(separator);
 }
 
-const DEFAULT_AUTOMATION_STAGES_JSON = JSON.stringify(WORK_ITEM_STAGES.map((stage) => ({
-  executor: { kind: stage === "human_review" ? "human" : "disabled" },
-  stage,
-})));
+const DEFAULT_AUTOMATION_STAGES_JSON = JSON.stringify(
+  WORK_ITEM_STAGES.map((stage) => ({
+    executor: { kind: stage === "human_review" ? "human" : "disabled" },
+    stage,
+  }))
+);
 
 const VERIFY_ATTEMPTS_SCHEMA = `
 CREATE TABLE verify_attempts (
@@ -333,19 +333,33 @@ CREATE INDEX task_phases_parallel ON task_phases(task_id, parallel_group, order_
 `;
 
 function migrationVersion4To5(db: DatabaseSync): string {
-  const taskColumns = new Set(db.prepare("PRAGMA table_info(tasks)").all().map((row) => String(row.name)));
-  const hasTaskPhases = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_phases'").get() !== undefined;
+  const taskColumns = new Set(
+    db
+      .prepare("PRAGMA table_info(tasks)")
+      .all()
+      .map((row) => String(row.name))
+  );
+  const hasTaskPhases =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_phases'").get() !== undefined;
   return `
-    ${taskColumns.has("agent_estimate_minutes") ? "" : `
+    ${
+      taskColumns.has("agent_estimate_minutes")
+        ? ""
+        : `
       ALTER TABLE tasks ADD COLUMN agent_estimate_minutes INTEGER
         CHECK (agent_estimate_minutes IS NULL OR
                (agent_estimate_minutes >= 15 AND agent_estimate_minutes <= 10080 AND agent_estimate_minutes % 15 = 0));
-    `}
+    `
+    }
     ${taskColumns.has("estimate_recorded_at") ? "" : "ALTER TABLE tasks ADD COLUMN estimate_recorded_at TEXT;"}
-    ${taskColumns.has("order_key") ? "" : `
+    ${
+      taskColumns.has("order_key")
+        ? ""
+        : `
       ALTER TABLE tasks ADD COLUMN order_key INTEGER NOT NULL DEFAULT 0 CHECK (order_key >= 0);
       UPDATE tasks SET order_key = 1024 * (rowid - 1);
-    `}
+    `
+    }
     CREATE INDEX IF NOT EXISTS tasks_global_order ON tasks(order_key, task_id);
     ${hasTaskPhases ? "" : TASK_PHASE_SCHEMA}
     PRAGMA user_version = 5;
@@ -689,15 +703,21 @@ CREATE INDEX interrupts_project ON interrupts(project_id, requested_at DESC);
 `;
 
 function hasColumns(db: DatabaseSync, table: string, expected: readonly string[]): boolean {
-  const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
+  const columns = new Set(
+    db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((row) => String(row.name))
+  );
   return expected.every((column) => columns.has(column));
 }
 
 function migrateVersion12To13(db: DatabaseSync): void {
   const hasRuns = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get() !== undefined;
-  const addClaimResult = !hasRuns || hasColumns(db, "runs", ["claim_result_json"])
-    ? ""
-    : `ALTER TABLE runs ADD COLUMN claim_result_json TEXT
+  const addClaimResult =
+    !hasRuns || hasColumns(db, "runs", ["claim_result_json"])
+      ? ""
+      : `ALTER TABLE runs ADD COLUMN claim_result_json TEXT
          CHECK (claim_result_json IS NULL OR
                 (json_valid(claim_result_json) AND json_type(claim_result_json) = 'object'));`;
   db.exec(`BEGIN IMMEDIATE; ${addClaimResult} PRAGMA user_version = 13; COMMIT;`);
@@ -705,16 +725,48 @@ function migrateVersion12To13(db: DatabaseSync): void {
 
 export function migrateVersion13To14(db: DatabaseSync): void {
   const hasModernTasks = hasColumns(db, "tasks", [
-    "task_id", "project_id", "parent_task_id", "task_kind", "required_role", "requires_review",
-    "title", "objective", "acceptance_criteria", "workspace_refs_json", "status",
-    "assigned_agent_id", "assigned_role", "expected_agent_minutes", "agent_estimate_minutes",
-    "estimate_recorded_at", "order_key", "started_at", "ended_at", "result", "version", "created_at", "updated_at",
+    "task_id",
+    "project_id",
+    "parent_task_id",
+    "task_kind",
+    "required_role",
+    "requires_review",
+    "title",
+    "objective",
+    "acceptance_criteria",
+    "workspace_refs_json",
+    "status",
+    "assigned_agent_id",
+    "assigned_role",
+    "expected_agent_minutes",
+    "agent_estimate_minutes",
+    "estimate_recorded_at",
+    "order_key",
+    "started_at",
+    "ended_at",
+    "result",
+    "version",
+    "created_at",
+    "updated_at",
   ]);
-  const hasWakeups = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wakeups'").get() !== undefined;
-  const hasModernWakeups = !hasWakeups || hasColumns(db, "wakeups", [
-    "wakeup_id", "project_id", "agent_id", "reason", "source_key", "task_id", "question_id",
-    "detail", "created_by", "created_at", "claimed_at", "run_id",
-  ]);
+  const hasWakeups =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wakeups'").get() !== undefined;
+  const hasModernWakeups =
+    !hasWakeups ||
+    hasColumns(db, "wakeups", [
+      "wakeup_id",
+      "project_id",
+      "agent_id",
+      "reason",
+      "source_key",
+      "task_id",
+      "question_id",
+      "detail",
+      "created_by",
+      "created_at",
+      "claimed_at",
+      "run_id",
+    ]);
   // The v1/v2 migration regression fixtures intentionally contain only skeletal tables.
   // Earlier migrations preserve those shapes to prove column additions; there is no status
   // or wakeup-reason constraint to rebuild in those fixtures.
@@ -812,7 +864,11 @@ export function migrateVersion13To14(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("COMMIT;");
   } catch (error) {
@@ -828,21 +884,21 @@ export function migrateVersion13To14(db: DatabaseSync): void {
 }
 
 function migrateVersion14To15(db: DatabaseSync): void {
-  const hasAgents = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
+  const hasAgents =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
   // The v1/v2 regression fixtures intentionally contain only the tables needed
   // to prove their historical column additions.
   if (!hasAgents) {
     db.exec("PRAGMA user_version = 15;");
     return;
   }
-  const addLastError = hasColumns(db, "agents", ["last_error"])
-    ? ""
-    : "ALTER TABLE agents ADD COLUMN last_error TEXT;";
+  const addLastError = hasColumns(db, "agents", ["last_error"]) ? "" : "ALTER TABLE agents ADD COLUMN last_error TEXT;";
   db.exec(`BEGIN IMMEDIATE; ${addLastError} PRAGMA user_version = 15; COMMIT;`);
 }
 
 function migrateVersion15To16(db: DatabaseSync): void {
-  const hasWorkItems = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'").get() !== undefined;
+  const hasWorkItems =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'").get() !== undefined;
   if (!hasWorkItems) {
     db.exec("PRAGMA user_version = 16;");
     return;
@@ -870,7 +926,8 @@ function migrateVersion15To16(db: DatabaseSync): void {
 }
 
 function migrateVersion16To17(db: DatabaseSync): void {
-  const hasAgents = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
+  const hasAgents =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get() !== undefined;
   if (!hasAgents) {
     db.exec("PRAGMA user_version = 17;");
     return;
@@ -882,9 +939,8 @@ function migrateVersion16To17(db: DatabaseSync): void {
 }
 
 function migrateVersion17To18(db: DatabaseSync): void {
-  const hasProjectEvents = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_events'",
-  ).get() !== undefined;
+  const hasProjectEvents =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_events'").get() !== undefined;
   if (!hasProjectEvents) {
     db.exec("PRAGMA user_version = 18;");
     return;
@@ -897,31 +953,23 @@ function migrateVersion17To18(db: DatabaseSync): void {
 }
 
 function migrateVersion18To19(db: DatabaseSync): void {
-  const workItemsSchema = db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
-  ).get() as Readonly<{ sql: string }> | undefined;
+  const workItemsSchema = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'work_items'")
+    .get() as Readonly<{ sql: string }> | undefined;
   const rebuildLegacyWorkItems = workItemsSchema?.sql.includes("'submitted'") ?? false;
-  const hasRuns = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'",
-  ).get() !== undefined;
-  const addHeartbeatAt = !hasRuns || hasColumns(db, "runs", ["heartbeat_at"])
-    ? ""
-    : "ALTER TABLE runs ADD COLUMN heartbeat_at TEXT;";
-  const addRuntime = !hasRuns || hasColumns(db, "runs", ["runtime"])
-    ? ""
-    : "ALTER TABLE runs ADD COLUMN runtime TEXT;";
-  const addRuntimeVersion = !hasRuns || hasColumns(db, "runs", ["runtime_version"])
-    ? ""
-    : "ALTER TABLE runs ADD COLUMN runtime_version TEXT;";
-  const addModel = !hasRuns || hasColumns(db, "runs", ["model"])
-    ? ""
-    : "ALTER TABLE runs ADD COLUMN model TEXT;";
-  const addPromptsSha = !hasRuns || hasColumns(db, "runs", ["prompts_sha"])
-    ? ""
-    : "ALTER TABLE runs ADD COLUMN prompts_sha TEXT;";
-  const seedMissingTransitions = workItemsSchema === undefined
-    ? ""
-    : `
+  const hasRuns = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get() !== undefined;
+  const addHeartbeatAt =
+    !hasRuns || hasColumns(db, "runs", ["heartbeat_at"]) ? "" : "ALTER TABLE runs ADD COLUMN heartbeat_at TEXT;";
+  const addRuntime = !hasRuns || hasColumns(db, "runs", ["runtime"]) ? "" : "ALTER TABLE runs ADD COLUMN runtime TEXT;";
+  const addRuntimeVersion =
+    !hasRuns || hasColumns(db, "runs", ["runtime_version"]) ? "" : "ALTER TABLE runs ADD COLUMN runtime_version TEXT;";
+  const addModel = !hasRuns || hasColumns(db, "runs", ["model"]) ? "" : "ALTER TABLE runs ADD COLUMN model TEXT;";
+  const addPromptsSha =
+    !hasRuns || hasColumns(db, "runs", ["prompts_sha"]) ? "" : "ALTER TABLE runs ADD COLUMN prompts_sha TEXT;";
+  const seedMissingTransitions =
+    workItemsSchema === undefined
+      ? ""
+      : `
       INSERT INTO work_item_transitions(
         work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
       )
@@ -1033,7 +1081,11 @@ function migrateVersion18To19(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 19; COMMIT;");
   } catch (error) {
@@ -1049,15 +1101,12 @@ function migrateVersion18To19(db: DatabaseSync): void {
 }
 
 function migrateVersion19To20(db: DatabaseSync): void {
-  const hasWorkItems = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
-  ).get() !== undefined;
-  const hasPlanRevisions = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'plan_revisions'",
-  ).get() !== undefined;
-  const hasVerifyAttempts = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
-  ).get() !== undefined;
+  const hasWorkItems =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'work_items'").get() !== undefined;
+  const hasPlanRevisions =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'plan_revisions'").get() !== undefined;
+  const hasVerifyAttempts =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'").get() !== undefined;
   const migrations = [
     !hasWorkItems || hasColumns(db, "work_items", ["pipeline_branch"])
       ? ""
@@ -1096,7 +1145,11 @@ function migrateVersion19To20(db: DatabaseSync): void {
     db.exec(migrations);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 20; COMMIT;");
   } catch (error) {
@@ -1115,7 +1168,11 @@ function migrateVersion20To21(db: DatabaseSync): void {
     db.exec(REVIEW_DESIGN_SCHEMA);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 21; COMMIT;");
   } catch (error) {
@@ -1134,7 +1191,11 @@ function migrateVersion21To22(db: DatabaseSync): void {
     db.exec(LEDGER_OBSERVABILITY_SCHEMA);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 22; COMMIT;");
   } catch (error) {
@@ -1148,9 +1209,8 @@ function migrateVersion21To22(db: DatabaseSync): void {
 }
 
 function migrateVersion22To23(db: DatabaseSync): void {
-  const hasBoardPause = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'board_pause'",
-  ).get() !== undefined;
+  const hasBoardPause =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'board_pause'").get() !== undefined;
   db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
   try {
     db.exec(`
@@ -1199,7 +1259,11 @@ function migrateVersion22To23(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 23; COMMIT;");
   } catch (error) {
@@ -1220,7 +1284,11 @@ function migrateVersion23To24(db: DatabaseSync): void {
     db.exec(WORK_ITEM_ONBOARDING_SCHEMA);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 24; COMMIT;");
   } catch (error) {
@@ -1242,7 +1310,11 @@ function migrateVersion24To25(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("PRAGMA user_version = 25; COMMIT;");
   } catch (error) {
@@ -1256,12 +1328,10 @@ function migrateVersion24To25(db: DatabaseSync): void {
 }
 
 export function migrateVersion25To26(db: DatabaseSync): void {
-  const hasProjects = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'",
-  ).get() !== undefined;
-  const hasWorkItems = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_items'",
-  ).get() !== undefined;
+  const hasProjects =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get() !== undefined;
+  const hasWorkItems =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_items'").get() !== undefined;
   // The v1/v2 regression fixtures intentionally contain only skeletal tables.
   if (!hasProjects || !hasWorkItems) {
     db.exec("BEGIN IMMEDIATE;");
@@ -1269,11 +1339,19 @@ export function migrateVersion25To26(db: DatabaseSync): void {
       db.exec(WORK_ITEM_DEPENDENCIES_SCHEMA.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "));
       const violations = db.prepare("PRAGMA foreign_key_check").all();
       if (violations.length !== 0) {
-        throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+        throw new TaskBoardError(
+          500,
+          "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+          "Task board migration failed its foreign-key check"
+        );
       }
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
-        throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+        throw new TaskBoardError(
+          500,
+          "DATABASE_MIGRATION_INTEGRITY_FAILED",
+          "Task board migration failed its integrity check"
+        );
       }
       db.exec("PRAGMA user_version = 26; COMMIT;");
       return;
@@ -1312,16 +1390,16 @@ export function migrateVersion25To26(db: DatabaseSync): void {
   const backfillParentWorkItemId = !hasColumns(db, "work_items", ["parent_work_item_id"]);
   const backfillWorkItemPhase = !hasColumns(db, "work_items", ["phase"]);
   const backfillChildOrdinal = !hasColumns(db, "work_items", ["child_ordinal"]);
-  const hasWorkItemDependencies = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_dependencies'",
-  ).get() !== undefined;
+  const hasWorkItemDependencies =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_dependencies'").get() !== undefined;
   const createWorkItemDependencies = hasWorkItemDependencies ? "" : WORK_ITEM_DEPENDENCIES_SCHEMA;
-  const hasVerifyAttempts = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='verify_attempts'",
-  ).get() !== undefined;
-  const verifyAttemptsAcceptRetired = hasVerifyAttempts && String(db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='verify_attempts'",
-  ).get()?.sql).includes("'retired'");
+  const hasVerifyAttempts =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verify_attempts'").get() !== undefined;
+  const verifyAttemptsAcceptRetired =
+    hasVerifyAttempts &&
+    String(
+      db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='verify_attempts'").get()?.sql
+    ).includes("'retired'");
   const migrateVerifyAttempts = !hasVerifyAttempts
     ? VERIFY_ATTEMPTS_SCHEMA
     : verifyAttemptsAcceptRetired
@@ -1340,12 +1418,12 @@ export function migrateVersion25To26(db: DatabaseSync): void {
         ORDER BY rowid;
         DROP TABLE verify_attempts_v25;
       `;
-  const hasLegacyQuotedTasks = String(db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
-  ).get()?.sql).startsWith('CREATE TABLE "tasks"');
-  const hasLegacyQuotedWakeups = String(db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'",
-  ).get()?.sql).startsWith('CREATE TABLE "wakeups"');
+  const hasLegacyQuotedTasks = String(
+    db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql
+  ).startsWith('CREATE TABLE "tasks"');
+  const hasLegacyQuotedWakeups = String(
+    db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql
+  ).startsWith('CREATE TABLE "wakeups"');
   const canonicalizeLegacyTasks = hasLegacyQuotedTasks
     ? `
       CREATE TEMP TABLE tasks_v25_rows AS SELECT * FROM tasks ORDER BY rowid;
@@ -1384,29 +1462,42 @@ export function migrateVersion25To26(db: DatabaseSync): void {
       DROP TABLE wakeups_v25_rows;
     `
     : "";
-  const alreadyVersion26 = hasColumns(db, "projects", ["repo_path"])
-    && hasColumns(db, "work_items", ["parent_work_item_id", "phase", "child_ordinal"])
-    && hasColumns(db, "plan_revisions", ["children"])
-    && hasWorkItemDependencies
-    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_items'").get()?.sql)
-      .includes("'coordinating'")
-    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'").get()?.sql)
-      .includes("'phase_ready'")
-    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gate_actions'").get()?.sql)
-      .includes("'deploy_attest'")
-    && String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='park_records'").get()?.sql)
-      .includes("'child_failed'")
-    && verifyAttemptsAcceptRetired;
+  const alreadyVersion26 =
+    hasColumns(db, "projects", ["repo_path"]) &&
+    hasColumns(db, "work_items", ["parent_work_item_id", "phase", "child_ordinal"]) &&
+    hasColumns(db, "plan_revisions", ["children"]) &&
+    hasWorkItemDependencies &&
+    String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_items'").get()?.sql).includes(
+      "'coordinating'"
+    ) &&
+    String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'").get()?.sql).includes(
+      "'phase_ready'"
+    ) &&
+    String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gate_actions'").get()?.sql).includes(
+      "'deploy_attest'"
+    ) &&
+    String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='park_records'").get()?.sql).includes(
+      "'child_failed'"
+    ) &&
+    verifyAttemptsAcceptRetired;
   if (alreadyVersion26) {
     db.exec("BEGIN IMMEDIATE;");
     try {
       const violations = db.prepare("PRAGMA foreign_key_check").all();
       if (violations.length !== 0) {
-        throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+        throw new TaskBoardError(
+          500,
+          "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+          "Task board migration failed its foreign-key check"
+        );
       }
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
-        throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+        throw new TaskBoardError(
+          500,
+          "DATABASE_MIGRATION_INTEGRITY_FAILED",
+          "Task board migration failed its integrity check"
+        );
       }
       db.exec("PRAGMA user_version = 26; COMMIT;");
       return;
@@ -1510,11 +1601,19 @@ export function migrateVersion25To26(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     const integrity = db.prepare("PRAGMA quick_check").get();
     if (integrity?.quick_check !== "ok") {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_INTEGRITY_FAILED", "Task board migration failed its integrity check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_INTEGRITY_FAILED",
+        "Task board migration failed its integrity check"
+      );
     }
     db.exec("PRAGMA user_version = 26; COMMIT;");
   } catch (error) {
@@ -1535,7 +1634,11 @@ function migrateVersion9To10(db: DatabaseSync): void {
     db.exec(`${AUTOMATION_CONFIGURATION_SCHEMA} PRAGMA user_version = 10;`);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("COMMIT;");
   } catch (error) {
@@ -1549,9 +1652,8 @@ function migrateVersion9To10(db: DatabaseSync): void {
 }
 
 function migrateVersion10To11(db: DatabaseSync): void {
-  const hasVerifyAttempts = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
-  ).get() !== undefined;
+  const hasVerifyAttempts =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'").get() !== undefined;
   const schema = hasVerifyAttempts ? WORKFLOW_SCHEMA.replace(VERIFY_ATTEMPTS_SCHEMA, "") : WORKFLOW_SCHEMA;
   db.exec(`BEGIN IMMEDIATE; ${schema} PRAGMA user_version = 11; COMMIT;`);
 }
@@ -1566,7 +1668,11 @@ function migrateVersion8To9(db: DatabaseSync): void {
     db.exec(`${WORK_ITEM_SCHEMA} PRAGMA user_version = 9;`);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("COMMIT;");
   } catch (error) {
@@ -1599,7 +1705,11 @@ function migrateVersion7To8(db: DatabaseSync): void {
     `);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("COMMIT;");
   } catch (error) {
@@ -1614,12 +1724,33 @@ function migrateVersion7To8(db: DatabaseSync): void {
 
 function migrateVersion6To7(db: DatabaseSync): void {
   const rebuildWakeups = hasColumns(db, "wakeups", [
-    "wakeup_id", "project_id", "agent_id", "reason", "source_key", "task_id", "question_id",
-    "detail", "created_by", "created_at", "claimed_at", "run_id",
+    "wakeup_id",
+    "project_id",
+    "agent_id",
+    "reason",
+    "source_key",
+    "task_id",
+    "question_id",
+    "detail",
+    "created_by",
+    "created_at",
+    "claimed_at",
+    "run_id",
   ]);
   const rebuildPhases = hasColumns(db, "task_phases", [
-    "phase_id", "project_id", "task_id", "title", "stage", "status", "parallel_group",
-    "order_key", "started_at", "ended_at", "version", "created_at", "updated_at",
+    "phase_id",
+    "project_id",
+    "task_id",
+    "title",
+    "stage",
+    "status",
+    "parallel_group",
+    "order_key",
+    "started_at",
+    "ended_at",
+    "version",
+    "created_at",
+    "updated_at",
   ]);
   db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
   try {
@@ -1695,7 +1826,11 @@ function migrateVersion6To7(db: DatabaseSync): void {
     db.exec("PRAGMA user_version = 7;");
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
-      throw new TaskBoardError(500, "DATABASE_MIGRATION_FOREIGN_KEY_FAILED", "Task board migration failed its foreign-key check");
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
     }
     db.exec("COMMIT;");
   } catch (error) {
@@ -1750,7 +1885,11 @@ export class TaskBoardStore {
 
   static async open(path: string): Promise<TaskBoardStore> {
     if (!isAbsolute(path) || path === "/" || path === ":memory:") {
-      throw new TaskBoardError(500, "INVALID_CONFIGURATION", "Task board requires an absolute file-backed database path");
+      throw new TaskBoardError(
+        500,
+        "INVALID_CONFIGURATION",
+        "Task board requires an absolute file-backed database path"
+      );
     }
     const directory = dirname(path);
     await assertOwnerOnlyDirectory(directory);
@@ -1769,28 +1908,36 @@ export class TaskBoardStore {
         500,
         "SQLITE_UNAVAILABLE",
         "This Node runtime does not provide the required built-in node:sqlite module (Node 22.5 or newer is required)",
-        { cause: error },
+        { cause: error }
       );
     }
     let db: DatabaseSync;
     try {
       db = new sqlite.DatabaseSync(path);
     } catch (error) {
-      throw new TaskBoardError(500, "DATABASE_OPEN_FAILED", "Task board database could not be opened", { cause: error });
+      throw new TaskBoardError(500, "DATABASE_OPEN_FAILED", "Task board database could not be opened", {
+        cause: error,
+      });
     }
     try {
       if (!existed) await chmod(path, 0o600);
       await assertOwnerOnlyFile(path);
-      db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;");
+      db.exec(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;"
+      );
       const row = db.prepare("PRAGMA user_version").get();
       const version = Number(row?.user_version ?? -1);
       const migration4to5 = version > 0 && version < 5 ? migrationVersion4To5(db) : "";
       if (version === 0) {
         db.exec(`BEGIN IMMEDIATE; ${SCHEMA} PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
       } else if (version === 1) {
-        db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_1_TO_2} ${MIGRATE_VERSION_2_TO_3} ${MIGRATE_VERSION_3_TO_4} ${migration4to5} ${MIGRATE_VERSION_5_TO_6} COMMIT;`);
+        db.exec(
+          `BEGIN IMMEDIATE; ${MIGRATE_VERSION_1_TO_2} ${MIGRATE_VERSION_2_TO_3} ${MIGRATE_VERSION_3_TO_4} ${migration4to5} ${MIGRATE_VERSION_5_TO_6} COMMIT;`
+        );
       } else if (version === 2) {
-        db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_2_TO_3} ${MIGRATE_VERSION_3_TO_4} ${migration4to5} ${MIGRATE_VERSION_5_TO_6} COMMIT;`);
+        db.exec(
+          `BEGIN IMMEDIATE; ${MIGRATE_VERSION_2_TO_3} ${MIGRATE_VERSION_3_TO_4} ${migration4to5} ${MIGRATE_VERSION_5_TO_6} COMMIT;`
+        );
       } else if (version === 3) {
         db.exec(`BEGIN IMMEDIATE; ${MIGRATE_VERSION_3_TO_4} ${migration4to5} ${MIGRATE_VERSION_5_TO_6} COMMIT;`);
       } else if (version === 4) {
@@ -1841,7 +1988,7 @@ export class TaskBoardStore {
         throw new TaskBoardError(
           500,
           "UNSUPPORTED_DATABASE_VERSION",
-          `Task board database version ${version} requires an explicit migration`,
+          `Task board database version ${version} requires an explicit migration`
         );
       }
       if (version >= 1 && version <= 6) migrateVersion6To7(db);

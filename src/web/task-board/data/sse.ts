@@ -11,23 +11,23 @@ interface SseFrameParserOptions {
 }
 
 const frameBoundary = /\r?\n\r?\n/u;
-const incompleteBoundaryPrefixes = ['\r\n\r', '\r\n', '\n\r', '\r', '\n'] as const;
+const incompleteBoundaryPrefixes = ["\r\n\r", "\r\n", "\n\r", "\r", "\n"] as const;
 
 function parseEvent(frame: string): SseEvent {
-  let event = 'message';
+  let event = "message";
   let id: string | null = null;
   const data: string[] = [];
   for (const line of frame.split(/\r?\n/u)) {
-    if (line === '' || line.startsWith(':')) continue;
-    const separator = line.indexOf(':');
+    if (line === "" || line.startsWith(":")) continue;
+    const separator = line.indexOf(":");
     const field = separator === -1 ? line : line.slice(0, separator);
-    let value = separator === -1 ? '' : line.slice(separator + 1);
-    if (value.startsWith(' ')) value = value.slice(1);
-    if (field === 'event') event = value;
-    else if (field === 'id') id = value;
-    else if (field === 'data') data.push(value);
+    let value = separator === -1 ? "" : line.slice(separator + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "event") event = value;
+    else if (field === "id") id = value;
+    else if (field === "data") data.push(value);
   }
-  return { event, id, data: data.join('\n') };
+  return { event, id, data: data.join("\n") };
 }
 
 function possibleBoundarySuffixLength(value: string): number {
@@ -39,20 +39,20 @@ export class SseFrameParser {
   readonly #maximumFrameLength: number;
   readonly #onEvent: (event: SseEvent) => void;
   readonly #sizeLimitError: () => Error;
-  #pending = '';
+  #pending = "";
   #finished = false;
 
   constructor(options: SseFrameParserOptions) {
     if (!Number.isSafeInteger(options.maximumFrameLength) || options.maximumFrameLength < 1) {
-      throw new Error('The SSE frame size limit must be a positive safe integer');
+      throw new Error("The SSE frame size limit must be a positive safe integer");
     }
     this.#maximumFrameLength = options.maximumFrameLength;
     this.#onEvent = options.onEvent;
-    this.#sizeLimitError = options.sizeLimitError ?? (() => new Error('An SSE event exceeded the size limit'));
+    this.#sizeLimitError = options.sizeLimitError ?? (() => new Error("An SSE event exceeded the size limit"));
   }
 
   push(chunk: string): void {
-    if (this.#finished) throw new Error('The SSE parser has already finished');
+    if (this.#finished) throw new Error("The SSE parser has already finished");
     this.#pending += chunk;
     let boundary = frameBoundary.exec(this.#pending);
     while (boundary) {
@@ -72,7 +72,7 @@ export class SseFrameParser {
     this.#finished = true;
     if (this.#pending.length > this.#maximumFrameLength) throw this.#sizeLimitError();
     this.#dispatch(this.#pending);
-    this.#pending = '';
+    this.#pending = "";
   }
 
   #dispatch(frame: string): void {

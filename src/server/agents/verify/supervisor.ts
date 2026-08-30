@@ -39,9 +39,13 @@ function parseStatus(value: unknown, path: string): SupervisorStatus {
   const candidate = value as Record<string, unknown>;
   const validPid = typeof candidate.pid === "number" && Number.isInteger(candidate.pid) && candidate.pid > 0;
   if (
-    typeof candidate.id !== "string" || candidate.state !== "running" ||
-    typeof candidate.startedAt !== "string" || candidate.endedAt !== null ||
-    candidate.exitCode !== null || typeof candidate.command !== "string" || !validPid
+    typeof candidate.id !== "string" ||
+    candidate.state !== "running" ||
+    typeof candidate.startedAt !== "string" ||
+    candidate.endedAt !== null ||
+    candidate.exitCode !== null ||
+    typeof candidate.command !== "string" ||
+    !validPid
   ) {
     throw new Error(`invalid verify status at ${path}`);
   }
@@ -99,10 +103,7 @@ function runStep(argv: readonly string[], logDescriptor: number): Promise<StepRe
   });
 }
 
-export async function runSupervisor(
-  runDirectory: string,
-  commands: readonly (readonly string[])[],
-): Promise<number> {
+export async function runSupervisor(runDirectory: string, commands: readonly (readonly string[])[]): Promise<number> {
   const statusPath = resolve(runDirectory, "status.json");
   const logPath = resolve(runDirectory, "log");
   const initial = await readInitialStatus(statusPath);
@@ -157,10 +158,7 @@ async function main(args: readonly string[]): Promise<void> {
 }
 
 const entrypoint = process.argv[1];
-if (
-  entrypoint !== undefined &&
-  realpathSync(resolve(entrypoint)) === realpathSync(fileURLToPath(import.meta.url))
-) {
+if (entrypoint !== undefined && realpathSync(resolve(entrypoint)) === realpathSync(fileURLToPath(import.meta.url))) {
   void main(process.argv.slice(2)).catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

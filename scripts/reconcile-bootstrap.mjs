@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import {
   expandedAgentProfiles,
   loadCatalog,
@@ -10,15 +10,15 @@ import {
   projectCatalogPatch,
   projectDescription,
   sameEditableAutomation,
-} from './bootstrap-lib.mjs';
+} from "./bootstrap-lib.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const catalogPath = resolve(directory, '../config/company-bootstrap.json');
-const apply = process.argv.includes('--apply');
-const validateOnly = process.argv.includes('--validate') || !apply;
-const baseUrl = (process.env.STEWARD_BOARD_URL ?? 'https://steward.cicadasystem.com/board-api').replace(/\/$/u, '');
+const catalogPath = resolve(directory, "../config/company-bootstrap.json");
+const apply = process.argv.includes("--apply");
+const validateOnly = process.argv.includes("--validate") || !apply;
+const baseUrl = (process.env.STEWARD_BOARD_URL ?? "https://steward.cicadasystem.com/board-api").replace(/\/$/u, "");
 const operatorToken = process.env.STEWARD_OPERATOR_TOKEN;
-const keychainService = process.env.STEWARD_AGENT_KEYCHAIN_SERVICE ?? 'cicada-steward-agent-token';
+const keychainService = process.env.STEWARD_AGENT_KEYCHAIN_SERVICE ?? "cicada-steward-agent-token";
 
 function log(message) {
   process.stdout.write(`${message}\n`);
@@ -26,9 +26,9 @@ function log(message) {
 
 function credential(account) {
   try {
-    return execFileSync('security', ['find-generic-password', '-a', account, '-s', keychainService, '-w'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+    return execFileSync("security", ["find-generic-password", "-a", account, "-s", keychainService, "-w"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
     return null;
@@ -36,12 +36,12 @@ function credential(account) {
 }
 
 function createCredential(account) {
-  if (process.platform !== 'darwin') {
-    throw new Error('Agent creation currently requires macOS Keychain; no plaintext fallback is allowed');
+  if (process.platform !== "darwin") {
+    throw new Error("Agent creation currently requires macOS Keychain; no plaintext fallback is allowed");
   }
-  const token = randomBytes(48).toString('base64url');
-  execFileSync('security', ['add-generic-password', '-U', '-a', account, '-s', keychainService, '-w', token], {
-    stdio: 'ignore',
+  const token = randomBytes(48).toString("base64url");
+  execFileSync("security", ["add-generic-password", "-U", "-a", account, "-s", keychainService, "-w", token], {
+    stdio: "ignore",
   });
   return token;
 }
@@ -51,14 +51,14 @@ async function request(path, options = {}) {
     ...options,
     headers: {
       Authorization: `Bearer ${operatorToken}`,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const code = body?.error?.code ?? body?.code ?? `HTTP_${response.status}`;
-    const error = new Error(`${options.method ?? 'GET'} ${path} failed: ${code}`);
+    const error = new Error(`${options.method ?? "GET"} ${path} failed: ${code}`);
     error.status = response.status;
     error.code = code;
     throw error;
@@ -67,16 +67,18 @@ async function request(path, options = {}) {
 }
 
 function exactAgentMatch(actual, expected, projectId) {
-  return actual.projectId === projectId
-    && actual.agentId === expected.agentId
-    && actual.role === expected.role
-    && actual.area === expected.area
-    && actual.mission === expected.mission
-    && actual.model === expected.model;
+  return (
+    actual.projectId === projectId &&
+    actual.agentId === expected.agentId &&
+    actual.role === expected.role &&
+    actual.area === expected.area &&
+    actual.mission === expected.mission &&
+    actual.model === expected.model
+  );
 }
 
 async function reconcileProjects(catalog) {
-  const listed = await request('/v1/projects');
+  const listed = await request("/v1/projects");
   const byKey = new Map();
   for (const project of catalog.projects) {
     const matches = listed.projects.filter((candidate) => candidate.name === project.name);
@@ -84,8 +86,8 @@ async function reconcileProjects(catalog) {
     const description = projectDescription(project);
     let actual = matches[0];
     if (!actual) {
-      const created = await request('/v1/projects', {
-        method: 'POST',
+      const created = await request("/v1/projects", {
+        method: "POST",
         body: JSON.stringify({ name: project.name, description, repoPath: project.repoPath }),
       });
       actual = created.project;
@@ -96,7 +98,7 @@ async function reconcileProjects(catalog) {
         log(`reused project: ${project.name}`);
       } else {
         const updated = await request(`/v1/projects/${encodeURIComponent(actual.projectId)}`, {
-          method: 'PATCH',
+          method: "PATCH",
           body: JSON.stringify(patch),
         });
         actual = updated.project;
@@ -119,7 +121,8 @@ async function reconcileAgents(catalog, projectsByKey) {
     let actual = agents.find((candidate) => candidate.agentId === expected.agentId);
     if (actual) {
       if (!exactAgentMatch(actual, expected, project.projectId)) throw new Error(`Agent drift: ${expected.agentId}`);
-      if (!credential(expected.agentId)) throw new Error(`Agent ${expected.agentId} exists but its Keychain credential is missing`);
+      if (!credential(expected.agentId))
+        throw new Error(`Agent ${expected.agentId} exists but its Keychain credential is missing`);
       log(`reused agent: ${expected.agentId}`);
       continue;
     }
@@ -127,7 +130,7 @@ async function reconcileAgents(catalog, projectsByKey) {
     if (!token) token = createCredential(expected.agentId);
     try {
       const created = await request(`/v1/projects/${encodeURIComponent(project.projectId)}/agents`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify({
           agentId: expected.agentId,
           role: expected.role,
@@ -143,7 +146,8 @@ async function reconcileAgents(catalog, projectsByKey) {
       const refreshed = await request(`/v1/projects/${encodeURIComponent(project.projectId)}/board`);
       actual = refreshed.agents.find((candidate) => candidate.agentId === expected.agentId);
     }
-    if (!actual || !exactAgentMatch(actual, expected, project.projectId)) throw new Error(`Agent reconciliation failed: ${expected.agentId}`);
+    if (!actual || !exactAgentMatch(actual, expected, project.projectId))
+      throw new Error(`Agent reconciliation failed: ${expected.agentId}`);
     agents.push(actual);
     log(`created agent: ${expected.agentId}`);
   }
@@ -151,7 +155,7 @@ async function reconcileAgents(catalog, projectsByKey) {
 
 async function reconcileAutomation(catalog) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const response = await request('/v1/automation-configuration');
+    const response = await request("/v1/automation-configuration");
     const remote = response.configuration;
     const desired = mergeAutomationConfiguration(remote, catalog.agentTypes, catalog.stages);
     if (sameEditableAutomation(remote, desired)) {
@@ -159,24 +163,26 @@ async function reconcileAutomation(catalog) {
       return;
     }
     try {
-      const updated = await request('/v1/automation-configuration', {
-        method: 'PATCH',
+      const updated = await request("/v1/automation-configuration", {
+        method: "PATCH",
         body: JSON.stringify({ version: remote.version, ...desired }),
       });
       log(`updated automation configuration: version ${updated.configuration.version}`);
       return;
     } catch (error) {
-      if (error.code !== 'AUTOMATION_CONFIGURATION_VERSION_CONFLICT' || attempt === 3) throw error;
+      if (error.code !== "AUTOMATION_CONFIGURATION_VERSION_CONFLICT" || attempt === 3) throw error;
     }
   }
 }
 
 const catalog = await loadCatalog(catalogPath);
-log(`catalog valid: ${catalog.projects.length} projects, ${expandedAgentProfiles(catalog).length} project agents, ${catalog.agentTypes.length} agent types`);
+log(
+  `catalog valid: ${catalog.projects.length} projects, ${expandedAgentProfiles(catalog).length} project agents, ${catalog.agentTypes.length} agent types`
+);
 if (validateOnly && !apply) process.exit(0);
-if (!operatorToken || operatorToken.length < 32) throw new Error('Set STEWARD_OPERATOR_TOKEN to apply the catalog');
+if (!operatorToken || operatorToken.length < 32) throw new Error("Set STEWARD_OPERATOR_TOKEN to apply the catalog");
 
 const projectsByKey = await reconcileProjects(catalog);
 await reconcileAgents(catalog, projectsByKey);
 await reconcileAutomation(catalog);
-log('company bootstrap reconciled');
+log("company bootstrap reconciled");

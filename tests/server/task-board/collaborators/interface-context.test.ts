@@ -16,9 +16,7 @@ const execFileAsync = promisify(execFile);
 const FIRST_INTERFACE = "# Provider interface\n\n- `GET /v1/first`\n";
 const SECOND_INTERFACE = "# Provider interface\n\n- `GET /v2/second`\n";
 
-function interfaceGit(
-  run: (arguments_: readonly string[]) => string | Buffer,
-): GitRunner {
+function interfaceGit(run: (arguments_: readonly string[]) => string | Buffer): GitRunner {
   const text = (arguments_: readonly string[]): string => {
     const result = run(arguments_);
     return typeof result === "string" ? result : result.toString("utf8");
@@ -39,16 +37,18 @@ async function git(repoPath: string, arguments_: readonly string[]): Promise<str
   return result.stdout;
 }
 
-async function interfaceRepository(): Promise<Readonly<{
-  repoPath: string;
-  absentSha: string;
-  firstSha: string;
-  secondSha: string;
-  invalidUtf8Sha: string;
-  oversizedSha: string;
-  nonFileSha: string;
-  symlinkSha: string;
-}>> {
+async function interfaceRepository(): Promise<
+  Readonly<{
+    repoPath: string;
+    absentSha: string;
+    firstSha: string;
+    secondSha: string;
+    invalidUtf8Sha: string;
+    oversizedSha: string;
+    nonFileSha: string;
+    symlinkSha: string;
+  }>
+> {
   const root = await mkdtemp(join(tmpdir(), "steward-interface-context-"));
   const repoPath = join(root, "provider");
   await mkdir(join(repoPath, "docs"), { recursive: true });
@@ -95,7 +95,16 @@ async function interfaceRepository(): Promise<Readonly<{
   await git(repoPath, ["commit", "-m", "Replace interface with a symlink"]);
   const symlinkSha = (await git(repoPath, ["rev-parse", "HEAD"])).trim();
 
-  return Object.freeze({ repoPath, absentSha, firstSha, secondSha, invalidUtf8Sha, oversizedSha, nonFileSha, symlinkSha });
+  return Object.freeze({
+    repoPath,
+    absentSha,
+    firstSha,
+    secondSha,
+    invalidUtf8Sha,
+    oversizedSha,
+    nonFileSha,
+    symlinkSha,
+  });
 }
 
 test("reads the published interface from a committed provider revision", async () => {
@@ -171,42 +180,68 @@ test("bounds the blob with cat-file before reading it with show", () => {
   const markdown = "# Published interface 😀 𠀀\n";
   const sha = "a".repeat(40);
 
-  assert.deepEqual(readPublishedInterface("/repos/provider", sha, undefined, interfaceGit((arguments_) => {
-    calls.push([...arguments_]);
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
-    if (arguments_.includes("show")) return markdown;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  })), { kind: "present", markdown });
-  assert.deepEqual(calls.map((arguments_) => arguments_.find((argument) =>
-    argument === "ls-tree" || argument === "cat-file" || argument === "show")), [
-    "ls-tree",
-    "cat-file",
-    "show",
-  ]);
+  assert.deepEqual(
+    readPublishedInterface(
+      "/repos/provider",
+      sha,
+      undefined,
+      interfaceGit((arguments_) => {
+        calls.push([...arguments_]);
+        if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+        if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
+        if (arguments_.includes("show")) return markdown;
+        throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+      })
+    ),
+    { kind: "present", markdown }
+  );
+  assert.deepEqual(
+    calls.map((arguments_) =>
+      arguments_.find((argument) => argument === "ls-tree" || argument === "cat-file" || argument === "show")
+    ),
+    ["ls-tree", "cat-file", "show"]
+  );
 });
 
 test("does not invoke git show after cat-file reports an oversized blob", () => {
   const calls: string[][] = [];
   const sha = "a".repeat(40);
 
-  assert.deepEqual(readPublishedInterface("/repos/provider", sha, undefined, interfaceGit((arguments_) => {
-    calls.push([...arguments_]);
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return `${64 * 1_024 + 1}\n`;
-    throw new Error("show must not be called");
-  })), { kind: "blocked", reason: "too_large" });
-  assert.equal(calls.some((arguments_) => arguments_.includes("show")), false);
+  assert.deepEqual(
+    readPublishedInterface(
+      "/repos/provider",
+      sha,
+      undefined,
+      interfaceGit((arguments_) => {
+        calls.push([...arguments_]);
+        if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+        if (arguments_.includes("cat-file")) return `${64 * 1_024 + 1}\n`;
+        throw new Error("show must not be called");
+      })
+    ),
+    { kind: "blocked", reason: "too_large" }
+  );
+  assert.equal(
+    calls.some((arguments_) => arguments_.includes("show")),
+    false
+  );
 });
 
 test("rejects controls and malformed surrogate bytes while preserving supplementary scalars", () => {
   const sha = "a".repeat(40);
-  const read = (markdown: string | Buffer) => readPublishedInterface("/repos/provider", sha, undefined, interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return `${typeof markdown === "string" ? Buffer.byteLength(markdown, "utf8") : markdown.byteLength}\n`;
-    if (arguments_.includes("show")) return markdown;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  }));
+  const read = (markdown: string | Buffer) =>
+    readPublishedInterface(
+      "/repos/provider",
+      sha,
+      undefined,
+      interfaceGit((arguments_) => {
+        if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+        if (arguments_.includes("cat-file"))
+          return `${typeof markdown === "string" ? Buffer.byteLength(markdown, "utf8") : markdown.byteLength}\n`;
+        if (arguments_.includes("show")) return markdown;
+        throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+      })
+    );
 
   assert.deepEqual(read("emoji 😀 and CJK Ext-B 𠀀\n"), {
     kind: "present",
@@ -228,39 +263,57 @@ test("maps an ENOBUFS read failure to an availability result", () => {
   const sha = "a".repeat(40);
   const error = Object.assign(new Error("stdout maxBuffer exceeded"), { code: "ENOBUFS" });
 
-  assert.deepEqual(readPublishedInterface("/repos/provider", sha, undefined, interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return "12\n";
-    if (arguments_.includes("show")) throw error;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  })), { kind: "blocked", reason: "too_large" });
+  assert.deepEqual(
+    readPublishedInterface(
+      "/repos/provider",
+      sha,
+      undefined,
+      interfaceGit((arguments_) => {
+        if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+        if (arguments_.includes("cat-file")) return "12\n";
+        if (arguments_.includes("show")) throw error;
+        throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+      })
+    ),
+    { kind: "blocked", reason: "too_large" }
+  );
 });
 
 test("classifies an empty published interface as empty", () => {
   const sha = "a".repeat(40);
 
-  assert.deepEqual(readPublishedInterface("/repos/provider", sha, undefined, interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return "0\n";
-    if (arguments_.includes("show")) return "";
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  })), { kind: "blocked", reason: "empty", detail: "empty" });
+  assert.deepEqual(
+    readPublishedInterface(
+      "/repos/provider",
+      sha,
+      undefined,
+      interfaceGit((arguments_) => {
+        if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+        if (arguments_.includes("cat-file")) return "0\n";
+        if (arguments_.includes("show")) return "";
+        throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+      })
+    ),
+    { kind: "blocked", reason: "empty", detail: "empty" }
+  );
 });
 
 test("does not cache a transient read error", () => {
   const sha = "a".repeat(40);
   const markdown = "# Recovered interface\n";
   let treeReads = 0;
-  const cache = new PublishedInterfaceCache(interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) {
-      treeReads += 1;
-      if (treeReads === 1) throw new Error("repository timeout");
-      return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    }
-    if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
-    if (arguments_.includes("show")) return markdown;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  }));
+  const cache = new PublishedInterfaceCache(
+    interfaceGit((arguments_) => {
+      if (arguments_.includes("ls-tree")) {
+        treeReads += 1;
+        if (treeReads === 1) throw new Error("repository timeout");
+        return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
+      if (arguments_.includes("show")) return markdown;
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    })
+  );
 
   assert.deepEqual(cache.read("/repos/provider", sha), { kind: "blocked", reason: "read_error" });
   assert.deepEqual(cache.read("/repos/provider", sha), { kind: "present", markdown });
@@ -269,16 +322,17 @@ test("does not cache a transient read error", () => {
 
 test("keys definitive cache entries by repository path as well as SHA and interface path", () => {
   const sha = "a".repeat(40);
-  const cache = new PublishedInterfaceCache(interfaceGit((arguments_) => {
-    const repoPath = arguments_[arguments_.indexOf("-C") + 1];
-    const markdown = repoPath === "/repos/corrected-provider"
-      ? "# Corrected provider interface\n"
-      : "# Stale provider interface\n";
-    if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
-    if (arguments_.includes("show")) return markdown;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  }));
+  const cache = new PublishedInterfaceCache(
+    interfaceGit((arguments_) => {
+      const repoPath = arguments_[arguments_.indexOf("-C") + 1];
+      const markdown =
+        repoPath === "/repos/corrected-provider" ? "# Corrected provider interface\n" : "# Stale provider interface\n";
+      if (arguments_.includes("ls-tree")) return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+      if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
+      if (arguments_.includes("show")) return markdown;
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    })
+  );
 
   assert.deepEqual(cache.read("/repos/stale-provider", sha), {
     kind: "present",
@@ -294,15 +348,17 @@ test("evicts one immutable interface entry after a claim-side repository read er
   const sha = "a".repeat(40);
   let markdown = "# Cached provider interface\n";
   let treeReads = 0;
-  const cache = new PublishedInterfaceCache(interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) {
-      treeReads += 1;
-      return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    }
-    if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
-    if (arguments_.includes("show")) return markdown;
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  }));
+  const cache = new PublishedInterfaceCache(
+    interfaceGit((arguments_) => {
+      if (arguments_.includes("ls-tree")) {
+        treeReads += 1;
+        return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file")) return `${Buffer.byteLength(markdown, "utf8")}\n`;
+      if (arguments_.includes("show")) return markdown;
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    })
+  );
 
   assert.equal(cache.read("/repos/provider", sha).kind, "present");
   markdown = "# Recovered provider interface\n";
@@ -313,15 +369,17 @@ test("evicts one immutable interface entry after a claim-side repository read er
 
 test("bounds immutable published-interface entries with least-recently-used eviction", () => {
   let treeReads = 0;
-  const cache = new PublishedInterfaceCache(interfaceGit((arguments_) => {
-    if (arguments_.includes("ls-tree")) {
-      treeReads += 1;
-      return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
-    }
-    if (arguments_.includes("cat-file")) return "12\n";
-    if (arguments_.includes("show")) return "# Interface\n";
-    throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-  }));
+  const cache = new PublishedInterfaceCache(
+    interfaceGit((arguments_) => {
+      if (arguments_.includes("ls-tree")) {
+        treeReads += 1;
+        return `100644 blob ${"b".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (arguments_.includes("cat-file")) return "12\n";
+      if (arguments_.includes("show")) return "# Interface\n";
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    })
+  );
   for (let index = 0; index < PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES; index += 1) {
     assert.equal(cache.read(`/repos/provider-${index}`, "a".repeat(40)).kind, "present");
   }

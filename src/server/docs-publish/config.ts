@@ -5,8 +5,17 @@ import { validateExcludePattern } from "./exclude.js";
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
-export interface DocsPublishRepo { readonly name: string; readonly path: string; readonly ref: string; readonly exclude?: readonly string[] }
-export interface DocsPublishConfig { readonly version: 1; readonly outline: { readonly baseUrl: string; readonly allowInsecureBaseUrl?: boolean }; readonly repos: readonly DocsPublishRepo[] }
+export interface DocsPublishRepo {
+  readonly name: string;
+  readonly path: string;
+  readonly ref: string;
+  readonly exclude?: readonly string[];
+}
+export interface DocsPublishConfig {
+  readonly version: 1;
+  readonly outline: { readonly baseUrl: string; readonly allowInsecureBaseUrl?: boolean };
+  readonly repos: readonly DocsPublishRepo[];
+}
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -19,7 +28,7 @@ function exact(
   value: unknown,
   required: readonly string[],
   optional: readonly string[],
-  label: string,
+  label: string
 ): Record<string, unknown> {
   const item = record(value, label);
   const allowed = new Set([...required, ...optional]);
@@ -32,7 +41,10 @@ function exact(
 
 function text(value: unknown, label: string, maximum: number): string {
   if (
-    typeof value !== "string" || value.length < 1 || value.length > maximum || value.trim() !== value ||
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    value.trim() !== value ||
     CONTROL_CHARACTER.test(value)
   ) {
     throw new Error(`${label} is invalid`);
@@ -67,8 +79,12 @@ function outlineConfig(value: unknown): DocsPublishConfig["outline"] {
     throw new Error("config.outline.baseUrl is invalid");
   }
   if (
-    (parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.username || parsed.password ||
-    parsed.pathname !== "/" || parsed.search || parsed.hash
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash
   ) {
     throw new Error("config.outline.baseUrl must be an HTTP(S) origin without credentials, path, query, or fragment");
   }

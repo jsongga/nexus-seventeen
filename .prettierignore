@@ -1,0 +1,3 @@
+tests/**/fixtures/**
+config/prompts.md
+config/skills.md

@@ -4,10 +4,7 @@ import test from "node:test";
 import type { RuntimeAdapter } from "../../../../src/server/agents/runtime/adapter.js";
 import { claudeAdapter } from "../../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../../src/server/agents/runtime/codex.js";
-import {
-  buildContainerRunPlan,
-  ContainerAgentLauncher,
-} from "#server/agents/task-container";
+import { buildContainerRunPlan, ContainerAgentLauncher } from "#server/agents/task-container";
 import { AgentProcessError, PromptRegistry } from "#server/agents/task-worker";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context } from "../task-worker/helpers.js";
@@ -43,9 +40,9 @@ function assertPair(args: readonly string[], name: string, value: string): void 
 }
 
 function bareEnvironmentKeys(args: readonly string[]): readonly string[] {
-  return args.flatMap((argument, index) => (
+  return args.flatMap((argument, index) =>
     argument === "-e" && args[index + 1]?.includes("=") === false ? [args[index + 1]] : []
-  ));
+  );
 }
 
 test("builds a hardened Codex docker run plan without credential values in argv", () => {
@@ -64,9 +61,7 @@ test("builds a hardened Codex docker run plan without credential values in argv"
   });
 
   assert.equal(plan.containerName, "steward-task-run-one");
-  assert.deepEqual(plan.args.slice(0, 6), [
-    "run", "--rm", "-i", "--name", "steward-task-run-one", "--label",
-  ]);
+  assert.deepEqual(plan.args.slice(0, 6), ["run", "--rm", "-i", "--name", "steward-task-run-one", "--label"]);
   assertPair(plan.args, "--label", "steward.task=task-one");
   assertPair(plan.args, "--network", "steward-agents");
   assertPair(plan.args, "--user", "node");
@@ -86,13 +81,7 @@ test("builds a hardened Codex docker run plan without credential values in argv"
   ]) {
     assert.ok(plan.args.includes(proxy), `${proxy} is present`);
   }
-  for (const key of [
-    "CODEX_HOME",
-    "CODEX_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENAI_ORGANIZATION",
-    "OPENAI_PROJECT",
-  ]) {
+  for (const key of ["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ORGANIZATION", "OPENAI_PROJECT"]) {
     assertPair(plan.args, "-e", key);
     assert.ok(plan.args.includes(key), `${key} is passed by bare name`);
   }
@@ -112,7 +101,9 @@ test("builds a hardened Codex docker run plan without credential values in argv"
   assertPair(plan.args, "--cd", "/workspace");
   assertPair(plan.args, "--output-schema", "/opt/steward/agent-result.schema.json");
   assert.ok(plan.args.includes("sandbox_workspace_write.network_access=true"));
-  const includedEnvironment = plan.args.find((argument) => argument.startsWith("shell_environment_policy.include_only="));
+  const includedEnvironment = plan.args.find((argument) =>
+    argument.startsWith("shell_environment_policy.include_only=")
+  );
   assert.match(includedEnvironment ?? "", /HTTP_PROXY/u);
 });
 
@@ -142,10 +133,7 @@ test("builds Claude plans with the default command and bare mode selected by inp
   assert.ok(!barePlan.args.includes("/opt/steward/agent-result.schema.json"));
   assertPair(barePlan.args, "-e", "ANTHROPIC_API_KEY");
   assertPair(barePlan.args, "-e", "CLAUDE_CONFIG_DIR");
-  assert.deepEqual(bareEnvironmentKeys(barePlan.args), [
-    "ANTHROPIC_API_KEY",
-    "CLAUDE_CONFIG_DIR",
-  ]);
+  assert.deepEqual(bareEnvironmentKeys(barePlan.args), ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"]);
 });
 
 test("forwards fixed literal entries from a runtime adapter environment", () => {
@@ -178,45 +166,64 @@ test("forwards fixed literal entries from a runtime adapter environment", () => 
     runtimeEnvironment: adapter.environment(sourceEnvironment),
   });
 
-  assert.deepEqual(bareEnvironmentKeys(plan.args), [
-    "THIRD_RUNTIME_TOKEN",
-    "THIRD_RUNTIME_MODE",
-  ]);
+  assert.deepEqual(bareEnvironmentKeys(plan.args), ["THIRD_RUNTIME_TOKEN", "THIRD_RUNTIME_MODE"]);
   assert.ok(!plan.args.includes("THIRD_RUNTIME_MODE=container"));
   assert.equal(plan.args[plan.args.indexOf("steward-agent:test") + 1], "third-runtime");
 });
 
 test("validates container launcher configuration", () => {
-  assert.throws(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    model: "x".repeat(257),
-    dockerBinary: "/nonexistent",
-  }), /model is invalid/u);
-  assert.throws(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    timeoutMs: 999,
-    dockerBinary: "/nonexistent",
-  }), /timeoutMs is invalid/u);
-  assert.throws(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    image: "--network=host",
-    dockerBinary: "/nonexistent",
-  }), /image is invalid/u);
-  assert.throws(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    agentCommand: "--evil",
-    dockerBinary: "/nonexistent",
-  }), /agentCommand is invalid/u);
-  assert.doesNotThrow(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    image: "steward-agent:abc123",
-    dockerBinary: "/nonexistent",
-  }));
-  assert.doesNotThrow(() => new ContainerAgentLauncher({
-    ...baseOptions,
-    image: "node:24-alpine",
-    dockerBinary: "/nonexistent",
-  }));
+  assert.throws(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        model: "x".repeat(257),
+        dockerBinary: "/nonexistent",
+      }),
+    /model is invalid/u
+  );
+  assert.throws(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        timeoutMs: 999,
+        dockerBinary: "/nonexistent",
+      }),
+    /timeoutMs is invalid/u
+  );
+  assert.throws(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        image: "--network=host",
+        dockerBinary: "/nonexistent",
+      }),
+    /image is invalid/u
+  );
+  assert.throws(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        agentCommand: "--evil",
+        dockerBinary: "/nonexistent",
+      }),
+    /agentCommand is invalid/u
+  );
+  assert.doesNotThrow(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        image: "steward-agent:abc123",
+        dockerBinary: "/nonexistent",
+      })
+  );
+  assert.doesNotThrow(
+    () =>
+      new ContainerAgentLauncher({
+        ...baseOptions,
+        image: "node:24-alpine",
+        dockerBinary: "/nonexistent",
+      })
+  );
 });
 
 test("rejects a launch without a per-launch workspace before spawning docker", async () => {
@@ -231,6 +238,7 @@ test("rejects a launch without a per-launch workspace before spawning docker", a
       wakeReason: "human_assignment",
       context: context(),
     }),
-    (error: unknown) => error instanceof AgentProcessError && error.message === "Container launches require a per-launch workspace",
+    (error: unknown) =>
+      error instanceof AgentProcessError && error.message === "Container launches require a per-launch workspace"
   );
 });

@@ -1,4 +1,9 @@
-import type { AgentLauncher, AgentLaunchRequest, AgentRunHandle, AgentRunOutcome } from "#server/agents/task-worker/types";
+import type {
+  AgentLauncher,
+  AgentLaunchRequest,
+  AgentRunHandle,
+  AgentRunOutcome,
+} from "#server/agents/task-worker/types";
 import { REVIEW_WORKSPACE_SUFFIX, type AgentRole } from "#shared/task-board-contract";
 import { TaskWorkspaceError } from "./manager.js";
 import type { TaskWorkspaceManager } from "./manager.js";
@@ -38,7 +43,9 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
               await this.#manager.remove(key);
             } catch (error) {
               await this.#manager.retain(key);
-              throw new TaskWorkspaceError("Run completed but its review workspace could not be removed", { cause: error });
+              throw new TaskWorkspaceError("Run completed but its review workspace could not be removed", {
+                cause: error,
+              });
             }
             return outcome;
           }
@@ -53,10 +60,9 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
             hasUncommittedChanges = await this.#manager.hasUncommittedChanges(key);
           } catch (error) {
             await this.#manager.retain(key);
-            throw new TaskWorkspaceError(
-              "Run completed but its workspace cleanliness could not be verified",
-              { cause: error },
-            );
+            throw new TaskWorkspaceError("Run completed but its workspace cleanliness could not be verified", {
+              cause: error,
+            });
           }
           if (hasUncommittedChanges) await this.#manager.retain(key);
           else await this.#manager.remove(key);
@@ -68,8 +74,12 @@ export class WorkspaceScopedLauncher implements AgentLauncher {
       async (error: unknown) => {
         await this.#manager.retain(key);
         throw error;
-      },
+      }
     );
-    return Object.freeze({ completion, activity: handle.activity, interrupt: (reason: string) => handle.interrupt(reason) });
+    return Object.freeze({
+      completion,
+      activity: handle.activity,
+      interrupt: (reason: string) => handle.interrupt(reason),
+    });
   }
 }

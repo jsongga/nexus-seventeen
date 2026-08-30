@@ -19,8 +19,14 @@
         { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicadasense-desktop" },
         { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicada-fleet" },
         { "label": "GitHub", "value": "https://github.com/wsonguga/DotAI" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/h_16IEnG0lPZ6BDnSNdZK/environment/0xZN8m_qMRRCJb_F3tpFa" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/IEVBWhiBVVV4DLldD3nuF/environment/8eLFxHH7VFLA1ph95bJdD/services/compose/wwyJup7Wn-YJZxWtqNxs6" },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/h_16IEnG0lPZ6BDnSNdZK/environment/0xZN8m_qMRRCJb_F3tpFa"
+        },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/IEVBWhiBVVV4DLldD3nuF/environment/8eLFxHH7VFLA1ph95bJdD/services/compose/wwyJup7Wn-YJZxWtqNxs6"
+        },
         { "label": "Live", "value": "https://sense.cicadasystem.com" },
         { "label": "Live", "value": "https://fleet.cicadasystem.com" },
         { "label": "API", "value": "https://api.homedots.us" },
@@ -36,8 +42,14 @@
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-ethos" },
         { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/cicada-ethos" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/fYFHuK_Xr1bYL6YNc0DKY/services/compose/xexU2lVTuUnZ0ofs6uwe3" },
-        { "label": "Dokploy nightly", "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/XDr_9z1qOfW2Dd_Ng2ml2/services/compose/kkCJxCvGPFje5euNP6A3D" },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/fYFHuK_Xr1bYL6YNc0DKY/services/compose/xexU2lVTuUnZ0ofs6uwe3"
+        },
+        {
+          "label": "Dokploy nightly",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/n16Sai7zJ-13GLXhtex3V/environment/XDr_9z1qOfW2Dd_Ng2ml2/services/compose/kkCJxCvGPFje5euNP6A3D"
+        },
         { "label": "Live", "value": "https://ethos.cicadasystem.com" },
         { "label": "Nightly", "value": "https://nightly.cicadasystem.com" },
         { "label": "Alternate", "value": "https://cicada.homedots.us" }
@@ -51,8 +63,14 @@
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/PycharmProjects/DotBackendLuo-steward" },
         { "label": "GitHub", "value": "https://github.com/BedDot/DotBackEnd" },
-        { "label": "Release source", "value": "https://github.com/BedDot/DotBackEnd/tree/release/cicada-steward-alpha/steward" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/JAbEmV1-64O5C670-frjR/environment/z1IknVJdMF4oeAlG1Flhz/services/compose/Er4lY-lJYbQ_POGENl-fb" },
+        {
+          "label": "Release source",
+          "value": "https://github.com/BedDot/DotBackEnd/tree/release/cicada-steward-alpha/steward"
+        },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/JAbEmV1-64O5C670-frjR/environment/z1IknVJdMF4oeAlG1Flhz/services/compose/Er4lY-lJYbQ_POGENl-fb"
+        },
         { "label": "Live", "value": "https://steward.cicadasystem.com" }
       ]
     },
@@ -64,7 +82,10 @@
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/cicada-website" },
         { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/landing-website" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/pOt9AbjSWBugYwi4Ykwbu/environment/gLQ0OwgDyK-FPcSA1Zdot/services/compose/rU7L8I5rc_hYwKPn9ajBP" },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/pOt9AbjSWBugYwi4Ykwbu/environment/gLQ0OwgDyK-FPcSA1Zdot/services/compose/rU7L8I5rc_hYwKPn9ajBP"
+        },
         { "label": "Live", "value": "https://cicadasystem.com" },
         { "label": "Live", "value": "https://www.cicadasystem.com" }
       ]
@@ -77,7 +98,10 @@
       "resources": [
         { "label": "Workspace", "value": "/Users/johnsong/WebstormProjects/prism" },
         { "label": "GitHub", "value": "https://github.com/Cicada-Tech-Systems/prism" },
-        { "label": "Dokploy", "value": "https://cloud.cicadasystem.com/dashboard/project/uzRD9leaqxgC544TIgYvi/environment/Qmt8hNwFLZqcZgKqIsVXf/services/compose/lh25EJ34EXZjA0-TrbBL_" },
+        {
+          "label": "Dokploy",
+          "value": "https://cloud.cicadasystem.com/dashboard/project/uzRD9leaqxgC544TIgYvi/environment/Qmt8hNwFLZqcZgKqIsVXf/services/compose/lh25EJ34EXZjA0-TrbBL_"
+        },
         { "label": "Live", "value": "https://prism.cicadasystem.com" }
       ]
     },

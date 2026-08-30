@@ -3,10 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  ContainerInfrastructureError,
-  prepareContainerInfrastructure,
-} from "#server/agents/task-container";
+import { ContainerInfrastructureError, prepareContainerInfrastructure } from "#server/agents/task-container";
 
 interface FakeDockerOptions {
   readonly internal?: boolean;
@@ -40,7 +37,9 @@ async function fakeDocker(options: FakeDockerOptions = {}): Promise<FakeDocker> 
     slowProxyInspect: options.slowProxyInspect ?? false,
   };
 
-  await writeFile(binary, `#!/usr/bin/env node
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const configuration = ${JSON.stringify(configuration)};
@@ -72,19 +71,25 @@ if (args[0] === "version") {
   process.stderr.write("unsupported fake docker invocation: " + JSON.stringify(args) + "\\n");
   process.exit(2);
 }
-`, { mode: 0o700 });
+`,
+    { mode: 0o700 }
+  );
   await chmod(binary, 0o700);
   return { binary, log, root };
 }
 
 async function invocations(fixture: FakeDocker): Promise<readonly (readonly string[])[]> {
   const content = await readFile(fixture.log, "utf8");
-  return content.trim().split("\n").filter((line) => line.length > 0).map((line) => {
-    const parsed: unknown = JSON.parse(line);
-    assert.ok(Array.isArray(parsed));
-    assert.ok(parsed.every((entry) => typeof entry === "string"));
-    return parsed;
-  });
+  return content
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const parsed: unknown = JSON.parse(line);
+      assert.ok(Array.isArray(parsed));
+      assert.ok(parsed.every((entry) => typeof entry === "string"));
+      return parsed;
+    });
 }
 
 function isFormatInvocation(args: readonly string[], format: string): boolean {
@@ -109,12 +114,12 @@ test("proxy reconciliations with the same container name do not interleave", asy
   ]);
 
   const calls = await invocations(fixture);
-  const proxyInspects = calls.flatMap((args, index) => (
+  const proxyInspects = calls.flatMap((args, index) =>
     isFormatInvocation(args, "{{.State.Running}}|{{range .Config.Env}}{{.}} {{end}}") ? [index] : []
-  ));
-  const readinessInspects = calls.flatMap((args, index) => (
+  );
+  const readinessInspects = calls.flatMap((args, index) =>
     isFormatInvocation(args, "{{.State.Running}}") ? [index] : []
-  ));
+  );
   assert.equal(proxyInspects.length, 2);
   assert.equal(readinessInspects.length, 2);
   assert.ok(proxyInspects[1] > readinessInspects[0]);
@@ -134,9 +139,10 @@ test("proxy readiness failure includes recent logs", async (t) => {
       allowedHosts: ["api.openai.com"],
       dockerBinary: fixture.binary,
     }),
-    (error: unknown) => error instanceof ContainerInfrastructureError
-      && /exited before becoming ready/u.test(error.message)
-      && /sentinel-detail/u.test(error.message),
+    (error: unknown) =>
+      error instanceof ContainerInfrastructureError &&
+      /exited before becoming ready/u.test(error.message) &&
+      /sentinel-detail/u.test(error.message)
   );
 });
 
@@ -150,10 +156,13 @@ test("a pre-existing non-internal agent network is rejected without removal", as
       allowedHosts: ["api.openai.com"],
       dockerBinary: fixture.binary,
     }),
-    (error: unknown) => error instanceof ContainerInfrastructureError
-      && error.message.includes("docker network rm steward-agents"),
+    (error: unknown) =>
+      error instanceof ContainerInfrastructureError && error.message.includes("docker network rm steward-agents")
   );
-  assert.equal((await invocations(fixture)).some((args) => args[0] === "rm"), false);
+  assert.equal(
+    (await invocations(fixture)).some((args) => args[0] === "rm"),
+    false
+  );
 });
 
 test("proxy image, port, and network mismatches each force recreation", async (t) => {

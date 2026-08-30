@@ -1,4 +1,4 @@
-export type BoardRefreshKind = 'foreground' | 'poll' | 'mutation';
+export type BoardRefreshKind = "foreground" | "poll" | "mutation";
 
 type RefreshOperation = (kind: BoardRefreshKind, signal: AbortSignal) => Promise<boolean>;
 
@@ -10,13 +10,13 @@ interface BoardRefreshCoordinatorOptions {
 
 function abortReasonName(signal: AbortSignal): string | null {
   const reason = signal.reason as unknown;
-  if (typeof reason !== 'object' || reason === null || !('name' in reason)) return null;
-  return typeof reason.name === 'string' ? reason.name : null;
+  if (typeof reason !== "object" || reason === null || !("name" in reason)) return null;
+  return typeof reason.name === "string" ? reason.name : null;
 }
 
 /** Distinguishes a bounded connectivity deadline from an owner-disposal abort. */
 export function refreshTimedOut(signal: AbortSignal): boolean {
-  return signal.aborted && abortReasonName(signal) === 'TimeoutError';
+  return signal.aborted && abortReasonName(signal) === "TimeoutError";
 }
 
 interface PendingSnapshotCommit<T> {
@@ -41,7 +41,7 @@ export class SnapshotCommitCoordinator<T> {
         resolve,
       };
       this.#pending = pending;
-      signal.addEventListener('abort', pending.onAbort, { once: true });
+      signal.addEventListener("abort", pending.onAbort, { once: true });
       render(snapshot);
     });
   }
@@ -58,7 +58,7 @@ export class SnapshotCommitCoordinator<T> {
   #settle(pending: PendingSnapshotCommit<T> | null, committed: boolean): void {
     if (pending === null) return;
     if (this.#pending === pending) this.#pending = null;
-    pending.signal.removeEventListener('abort', pending.onAbort);
+    pending.signal.removeEventListener("abort", pending.onAbort);
     pending.resolve(committed);
   }
 }
@@ -95,21 +95,24 @@ export class BoardRefreshCoordinator {
     if (!this.#active) return Promise.resolve(false);
     const generation = this.#generation;
 
-    if (kind === 'poll') {
+    if (kind === "poll") {
       if (this.#inFlight !== null) return Promise.resolve(false);
       return this.#start(kind, generation);
     }
 
-    if (kind === 'foreground') {
+    if (kind === "foreground") {
       return this.#trackForeground(this.#inFlight ?? this.#start(kind, generation));
     }
 
     const result = this.#mutationTail.then(async () => {
       while (this.#inFlight !== null) await this.#inFlight;
       if (!this.#active || generation !== this.#generation) return false;
-      return this.#start('mutation', generation);
+      return this.#start("mutation", generation);
     });
-    this.#mutationTail = result.then(() => undefined, () => undefined);
+    this.#mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    );
     return result;
   }
 
@@ -129,10 +132,7 @@ export class BoardRefreshCoordinator {
   #start(kind: BoardRefreshKind, generation: number): Promise<boolean> {
     const controller = new AbortController();
     this.#controller = controller;
-    const signal = AbortSignal.any([
-      controller.signal,
-      AbortSignal.timeout(BOARD_REFRESH_DEADLINE_MS),
-    ]);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(BOARD_REFRESH_DEADLINE_MS)]);
     const operation = this.#operation(kind, signal);
     const inFlight = operation.finally(() => {
       if (this.#inFlight === inFlight) this.#inFlight = null;
@@ -143,7 +143,7 @@ export class BoardRefreshCoordinator {
   }
 
   #trackForeground(result: Promise<boolean>): Promise<boolean> {
-    const waiter = Symbol('foreground refresh');
+    const waiter = Symbol("foreground refresh");
     if (this.#foregroundWaiters.size === 0) this.#onForegroundLoadingChange(true);
     this.#foregroundWaiters.add(waiter);
     return result.finally(() => {

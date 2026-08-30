@@ -70,26 +70,32 @@ function runtimeProfiles(options: CreateTaskFleetWorkerOptions): Promise<Runtime
   return loading;
 }
 
-const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) => new Promise((resolve, reject) => {
-  execFile(command, [...arguments_], {
-    encoding: "utf8",
-    timeout: VERSION_COMMAND_TIMEOUT_MS,
-    maxBuffer: VERSION_COMMAND_MAX_BYTES,
-    windowsHide: true,
-  }, (error, stdout) => {
-    if (error !== null) {
-      reject(error);
-      return;
-    }
-    resolve(stdout);
+const runVersionCommand: TaskFleetVersionRunner = (command, arguments_) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      command,
+      [...arguments_],
+      {
+        encoding: "utf8",
+        timeout: VERSION_COMMAND_TIMEOUT_MS,
+        maxBuffer: VERSION_COMMAND_MAX_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout) => {
+        if (error !== null) {
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      }
+    );
   });
-});
 
 const runDockerInspect: TaskFleetVersionRunner = runVersionCommand;
 
 export async function captureTaskFleetRuntimeVersion(
   runtime: string,
-  runner: TaskFleetVersionRunner = runVersionCommand,
+  runner: TaskFleetVersionRunner = runVersionCommand
 ): Promise<string | null> {
   try {
     const output = await runner(runtime, ["--version"]);
@@ -105,7 +111,7 @@ export async function captureTaskFleetRuntimeVersion(
 export async function captureContainerRuntimeVersion(
   runtimeId: TaskFleetProvider,
   image: string,
-  runner: TaskFleetVersionRunner = runDockerInspect,
+  runner: TaskFleetVersionRunner = runDockerInspect
 ): Promise<ContainerRuntimeIdentity | null> {
   try {
     const format = `{{index .Config.Labels "steward.cli.${runtimeId}"}}|{{.Id}}`;
@@ -129,7 +135,7 @@ async function createLocalProcessTaskFleetWorker(
   boardUrl: string,
   adapter: RuntimeAdapter,
   profile: RuntimeProfile,
-  prompts: PromptRegistry,
+  prompts: PromptRegistry
 ): Promise<ManagedTaskWorker> {
   const runtimeVersion = await captureTaskFleetRuntimeVersion(profile.binary);
   let launcher: AgentLauncher = new ContainedCliAgentLauncher({
@@ -170,9 +176,8 @@ async function createLocalProcessTaskFleetWorker(
     dropActiveClaim: (detail: string) => worker.dropActiveClaim(detail),
     // TaskWorker clears immediately after persisting a successful claim. The
     // fleet's post-operation clear remains useful for test/custom adapters.
-    reportLaneError: (detail: string | null, signal?: AbortSignal) => detail === null
-      ? Promise.resolve()
-      : worker.reportLaneError(detail, signal),
+    reportLaneError: (detail: string | null, signal?: AbortSignal) =>
+      detail === null ? Promise.resolve() : worker.reportLaneError(detail, signal),
     close: () => worker.close(),
   });
 }
@@ -182,7 +187,7 @@ async function createContainerTaskFleetWorker(
   boardUrl: string,
   adapter: RuntimeAdapter,
   profile: RuntimeProfile,
-  prompts: PromptRegistry,
+  prompts: PromptRegistry
 ): Promise<ManagedTaskWorker> {
   const lane = config.container;
   if (lane === undefined) throw new Error("container lane config missing");
@@ -195,7 +200,10 @@ async function createContainerTaskFleetWorker(
   if (runtimeIdentity === null) {
     throw new Error(`container image identity could not be inspected: ${image}`);
   }
-  const manager = new TaskWorkspaceManager({ workspaceRoot: lane.workspaceRoot, repositoryPath: config.workingDirectory });
+  const manager = new TaskWorkspaceManager({
+    workspaceRoot: lane.workspaceRoot,
+    repositoryPath: config.workingDirectory,
+  });
   await manager.retainStrays([]);
   const launcher = new WorkspaceScopedLauncher(
     new ContainerAgentLauncher({
@@ -211,7 +219,7 @@ async function createContainerTaskFleetWorker(
       ...(config.agentTimeoutMs === undefined ? {} : { timeoutMs: config.agentTimeoutMs }),
       ...(config.terminationGraceMs === undefined ? {} : { terminationGraceMs: config.terminationGraceMs }),
     }),
-    manager,
+    manager
   );
   const worker = await TaskWorker.create({
     identity: { workerId: config.workerId, agentId: config.agentId },
@@ -233,9 +241,8 @@ async function createContainerTaskFleetWorker(
     dropActiveClaim: (detail: string) => worker.dropActiveClaim(detail),
     // TaskWorker clears immediately after persisting a successful claim. The
     // fleet's post-operation clear remains useful for test/custom adapters.
-    reportLaneError: (detail: string | null, signal?: AbortSignal) => detail === null
-      ? Promise.resolve()
-      : worker.reportLaneError(detail, signal),
+    reportLaneError: (detail: string | null, signal?: AbortSignal) =>
+      detail === null ? Promise.resolve() : worker.reportLaneError(detail, signal),
     close: () => worker.close(),
   });
 }
@@ -243,7 +250,7 @@ async function createContainerTaskFleetWorker(
 export async function createTaskFleetWorker(
   config: TaskFleetAgentConfig,
   boardUrl: string,
-  options: CreateTaskFleetWorkerOptions = {},
+  options: CreateTaskFleetWorkerOptions = {}
 ): Promise<ManagedTaskWorker> {
   const adapter = (options.registry ?? defaultRuntimeRegistry()).get(config.provider);
   if (adapter === null) throw new Error(`Unknown runtime adapter: ${config.provider}`);
@@ -252,10 +259,10 @@ export async function createTaskFleetWorker(
   if (config.role !== undefined) adapter.assertRole(profile, config.role);
   (options.logRuntimeProfile ?? ((line: string) => process.stderr.write(`${line}\n`)))(
     `[task-fleet] runtime_profile runtime=${JSON.stringify(config.provider)}` +
-    ` permissionModel=${JSON.stringify(profile.permissionModel)}` +
-    ` mcp=${String(profile.mcp)}` +
-    ` toolCallGranularity=${JSON.stringify(profile.toolCallGranularity)}` +
-    ` contextNotes=${JSON.stringify(profile.contextNotes)}`,
+      ` permissionModel=${JSON.stringify(profile.permissionModel)}` +
+      ` mcp=${String(profile.mcp)}` +
+      ` toolCallGranularity=${JSON.stringify(profile.toolCallGranularity)}` +
+      ` contextNotes=${JSON.stringify(profile.contextNotes)}`
   );
   const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsFile ?? "config/prompts.md"));
   return config.runtime === "container"
@@ -267,7 +274,11 @@ export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
   if (error instanceof RuntimeCapabilityError) return "POISONED";
   if (error instanceof TaskBoardHttpError) {
     if (error.status === 401) return "CREDENTIAL_REVOKED";
-    return error.status === null || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500
+    return error.status === null ||
+      error.status === 408 ||
+      error.status === 425 ||
+      error.status === 429 ||
+      error.status >= 500
       ? "TRANSIENT"
       : "POISONED";
   }
@@ -277,6 +288,5 @@ export const classifyTaskFleetError: TaskFleetErrorClassifier = (error) => {
     : "POISONED";
 };
 
-export const isTransientTaskFleetError: TaskFleetTransientClassifier = (error) => (
-  classifyTaskFleetError(error) === "TRANSIENT"
-);
+export const isTransientTaskFleetError: TaskFleetTransientClassifier = (error) =>
+  classifyTaskFleetError(error) === "TRANSIENT";

@@ -3,7 +3,7 @@ import { sha256 } from "../canonical.js";
 
 export function claimMessageCursor(request: ClaimRunRequest, taskId: string | null): number | null {
   if (request.messageCursors !== undefined) {
-    return taskId === null ? null : request.messageCursors[taskId] ?? null;
+    return taskId === null ? null : (request.messageCursors[taskId] ?? null);
   }
   return request.messageCursor ?? null;
 }

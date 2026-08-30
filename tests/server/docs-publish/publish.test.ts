@@ -5,11 +5,7 @@ import { withSourceBanner } from "../../../src/server/docs-publish/banner.js";
 import { OutlineHttpError } from "../../../src/server/docs-publish/client.js";
 import type { DocsPublishRepo } from "../../../src/server/docs-publish/config.js";
 import { publishRepo } from "../../../src/server/docs-publish/publish.js";
-import type {
-  DocsSink,
-  SinkCollection,
-  SinkDocument,
-} from "../../../src/server/docs-publish/sink.js";
+import type { DocsSink, SinkCollection, SinkDocument } from "../../../src/server/docs-publish/sink.js";
 import type { GitTextRunner } from "../../../src/server/task-board/collaborators/scope-check.js";
 
 const ENTRY: DocsPublishRepo = Object.freeze({ name: "sample", path: "/repo", ref: "main" });
@@ -26,8 +22,7 @@ function gitWithDocs(files: Readonly<Record<string, string>>, resolvedSha = RESO
   return (arguments_) => {
     if (arguments_.includes("ls-tree")) {
       const separator = arguments_.includes("-z") ? "\0" : "\n";
-      const entries = Object.entries(files).map(([path, markdown]) =>
-        `100644 blob ${gitBlobSha(markdown)}\t${path}`);
+      const entries = Object.entries(files).map(([path, markdown]) => `100644 blob ${gitBlobSha(markdown)}\t${path}`);
       return `${entries.join(separator)}${separator}`;
     }
     const showIndex = arguments_.indexOf("show");
@@ -68,14 +63,13 @@ test("resolves a moving ref once and uses that SHA for every content read", asyn
   assert.ok(contentCalls.every((call) => call.some((argument) => argument.includes(RESOLVED_SHA))));
   assert.ok(contentCalls.every((call) => call.every((argument) => !argument.includes(ENTRY.ref))));
 
-  assert.deepEqual(await sink.listDocuments(COLLECTION), [{
-    id: "created-1",
-    title: "README.md",
-    text: withSourceBanner(
-      { path: "README.md", title: "README.md", markdown, blobSha },
-      ENTRY.name,
-    ),
-  }]);
+  assert.deepEqual(await sink.listDocuments(COLLECTION), [
+    {
+      id: "created-1",
+      title: "README.md",
+      text: withSourceBanner({ path: "README.md", title: "README.md", markdown, blobSha }, ENTRY.name),
+    },
+  ]);
 });
 
 class MemorySink implements DocsSink {
@@ -131,9 +125,7 @@ test("diffs by banner blob SHA, updates unparseable banners, and stays idempoten
     markdown: files["README.md"],
     blobSha: gitBlobSha(files["README.md"]),
   };
-  const outlineSerializedReadme = withSourceBanner(readmeSource, "sample")
-    .replace("- item1", "* item1")
-    .trimEnd();
+  const outlineSerializedReadme = withSourceBanner(readmeSource, "sample").replace("- item1", "* item1").trimEnd();
   const sink = new MemorySink([
     {
       id: "readme",
@@ -143,12 +135,15 @@ test("diffs by banner blob SHA, updates unparseable banners, and stays idempoten
     {
       id: "guide",
       title: "docs/guide.md",
-      text: withSourceBanner({
-        path: "docs/guide.md",
-        title: "docs/guide.md",
-        markdown: files["docs/guide.md"],
-        blobSha: "0000000000000000000000000000000000000000",
-      }, "sample"),
+      text: withSourceBanner(
+        {
+          path: "docs/guide.md",
+          title: "docs/guide.md",
+          markdown: files["docs/guide.md"],
+          blobSha: "0000000000000000000000000000000000000000",
+        },
+        "sample"
+      ),
     },
     { id: "malformed", title: "docs/malformed.md", text: "not a publisher banner\n\n# Malformed" },
     { id: "old", title: "docs/old.md", text: "old text" },
@@ -175,21 +170,27 @@ test("diffs by banner blob SHA, updates unparseable banners, and stays idempoten
   assert.equal(documents.find((document) => document.title === "README.md")?.text, outlineSerializedReadme);
   assert.equal(
     documents.find((document) => document.title === "docs/guide.md")?.text,
-    withSourceBanner({
-      path: "docs/guide.md",
-      title: "docs/guide.md",
-      markdown: files["docs/guide.md"],
-      blobSha: gitBlobSha(files["docs/guide.md"]),
-    }, "sample"),
+    withSourceBanner(
+      {
+        path: "docs/guide.md",
+        title: "docs/guide.md",
+        markdown: files["docs/guide.md"],
+        blobSha: gitBlobSha(files["docs/guide.md"]),
+      },
+      "sample"
+    )
   );
   assert.equal(
     documents.find((document) => document.title === "docs/malformed.md")?.text,
-    withSourceBanner({
-      path: "docs/malformed.md",
-      title: "docs/malformed.md",
-      markdown: files["docs/malformed.md"],
-      blobSha: gitBlobSha(files["docs/malformed.md"]),
-    }, "sample"),
+    withSourceBanner(
+      {
+        path: "docs/malformed.md",
+        title: "docs/malformed.md",
+        markdown: files["docs/malformed.md"],
+        blobSha: gitBlobSha(files["docs/malformed.md"]),
+      },
+      "sample"
+    )
   );
 });
 
@@ -215,18 +216,22 @@ test("records a per-document sink failure and continues publishing later documen
   const sink = new MemorySink();
   sink.failCreateTitle = "docs/b.md";
 
-  const report = await publishRepo(ENTRY, sink, gitWithDocs({
-    "docs/a.md": "# A\n",
-    "docs/b.md": "# B\n",
-    "docs/c.md": "# C\n",
-  }));
+  const report = await publishRepo(
+    ENTRY,
+    sink,
+    gitWithDocs({
+      "docs/a.md": "# A\n",
+      "docs/b.md": "# B\n",
+      "docs/c.md": "# C\n",
+    })
+  );
 
   assert.equal(report.created, 2);
   assert.equal(report.failures.length, 1);
   assert.match(report.failures[0] ?? "", /create docs\/b\.md.*injected create failure/u);
   assert.deepEqual(
     (await sink.listDocuments(COLLECTION)).map((document) => document.title),
-    ["docs/a.md", "docs/c.md"],
+    ["docs/a.md", "docs/c.md"]
   );
 });
 
@@ -253,15 +258,15 @@ test("reports enumeration failures without preparing the collection", async () =
 test("includes Outline's HTTP status and error code in sink failure details", async () => {
   const sink = new MemorySink();
   sink.failCreateTitle = "README.md";
-  sink.failCreateError = new OutlineHttpError(
-    "Outline request failed with HTTP 400",
-    400,
-    "validation_error",
-  );
+  sink.failCreateError = new OutlineHttpError("Outline request failed with HTTP 400", 400, "validation_error");
 
-  const report = await publishRepo(ENTRY, sink, gitWithDocs({
-    "README.md": "# Readme\n",
-  }));
+  const report = await publishRepo(
+    ENTRY,
+    sink,
+    gitWithDocs({
+      "README.md": "# Readme\n",
+    })
+  );
 
   assert.deepEqual(report.failures, [
     "create README.md: HTTP 400 validation_error: Outline request failed with HTTP 400",

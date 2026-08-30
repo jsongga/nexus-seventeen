@@ -19,13 +19,14 @@ import {
 } from "./helpers.js";
 
 type Fixture = Awaited<ReturnType<typeof boardFixture>>;
-type OnboardingFixture = Fixture & Readonly<{
-  repository: string;
-  workItemId: string;
-  implementationTaskId: string;
-  implementationRunId: string;
-  branch: string;
-}>;
+type OnboardingFixture = Fixture &
+  Readonly<{
+    repository: string;
+    workItemId: string;
+    implementationTaskId: string;
+    implementationRunId: string;
+    branch: string;
+  }>;
 type GapReportSettlement = SettleRunRequest & Readonly<{ gapReport?: string }>;
 
 const VALID_WORKFLOW = `# Workflow
@@ -66,14 +67,16 @@ function onboardingPlan(): WorkflowPlanDraft {
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
-    nodes: [{
-      nodeId: "onboarding-deliverables",
-      title: "Create onboarding deliverables",
-      objective: "Create the documentation and verification contract.",
-      acceptanceCriteria: ["Required documentation and the gap report are present."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "onboarding-deliverables",
+        title: "Create onboarding deliverables",
+        objective: "Create the documentation and verification contract.",
+        acceptanceCriteria: ["Required documentation and the gap report are present."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -83,11 +86,13 @@ function handoff(): StageHandoffDraft {
     summary: "Onboarding implementation is complete.",
     evidence: ["The deliverables were inspected."],
     artifactIds: [],
-    acceptanceCriteria: [{
-      criterion: "Required onboarding deliverables are present.",
-      passed: true,
-      evidence: "The branch contains the deliverables.",
-    }],
+    acceptanceCriteria: [
+      {
+        criterion: "Required onboarding deliverables are present.",
+        passed: true,
+        evidence: "The branch contains the deliverables.",
+      },
+    ],
     blockers: [],
     recommendedReturnStage: null,
   };
@@ -98,8 +103,7 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
   const repository = await fixtureRepo();
   const writable = new DatabaseSync(fixture.path);
   try {
-    writable.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-      .run(repository, fixture.project.projectId);
+    writable.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repository, fixture.project.projectId);
   } finally {
     writable.close();
   }
@@ -119,19 +123,24 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
     name: "Onboarding verification",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      taskType: "onboarding",
+      originalRequest: "Onboard this repository.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    taskType: "onboarding",
-    originalRequest: "Onboard this repository.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `onboarding-settle-${suffix}`).workItem;
+    `onboarding-settle-${suffix}`
+  ).workItem;
   const planning = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `claim-onboarding-planning-${suffix}`,
     messageCursor: null,
@@ -142,8 +151,9 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
     result: "The onboarding plan is ready.",
     workflowPlan: onboardingPlan(),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans
-    .find((candidate) => candidate.state === "proposed");
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.state === "proposed");
   assert.ok(revision);
   fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
   const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -153,7 +163,8 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
   assert.ok(implementation?.task);
   const inspected = new DatabaseSync(fixture.path, { readOnly: true });
   try {
-    const branch = inspected.prepare("SELECT pipeline_branch FROM work_items WHERE work_item_id=?")
+    const branch = inspected
+      .prepare("SELECT pipeline_branch FROM work_items WHERE work_item_id=?")
       .get(workItem.workItemId)?.pipeline_branch;
     assert.equal(typeof branch, "string");
     return {
@@ -174,7 +185,7 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
 
 async function commitDeliverables(
   fixture: OnboardingFixture,
-  overrides: Readonly<{ omit?: string; workflow?: string }> = {},
+  overrides: Readonly<{ omit?: string; workflow?: string }> = {}
 ): Promise<void> {
   await git(fixture.repository, ["checkout", "-b", fixture.branch]);
   const files: Readonly<Record<string, string>> = {
@@ -192,7 +203,15 @@ async function commitDeliverables(
     await writeFile(absolutePath, content, "utf8");
   }
   await git(fixture.repository, ["-c", "user.name=t", "-c", "user.email=t@local", "add", "."]);
-  await git(fixture.repository, ["-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "add onboarding deliverables"]);
+  await git(fixture.repository, [
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@local",
+    "commit",
+    "-m",
+    "add onboarding deliverables",
+  ]);
 }
 
 function settleImplementation(fixture: OnboardingFixture, gapReport?: string) {
@@ -202,18 +221,18 @@ function settleImplementation(fixture: OnboardingFixture, gapReport?: string) {
     handoff: handoff(),
     ...(gapReport === undefined ? {} : { gapReport }),
   };
-  return fixture.board.settleRun(
-    fixture.implementationRunId,
-    fixture.engineer.agentId,
-    request,
-  );
+  return fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, request);
 }
 
 function assertDeliverablesError(operation: () => unknown, pattern: RegExp): void {
-  assert.throws(operation, (error: unknown) => error instanceof TaskBoardError
-    && error.status === 400
-    && error.code === "ONBOARDING_DELIVERABLES_MISSING"
-    && pattern.test(error.message));
+  assert.throws(
+    operation,
+    (error: unknown) =>
+      error instanceof TaskBoardError &&
+      error.status === 400 &&
+      error.code === "ONBOARDING_DELIVERABLES_MISSING" &&
+      pattern.test(error.message)
+  );
 }
 
 async function driveFailedMachineVerifyToImplementation(fixture: OnboardingFixture): Promise<void> {
@@ -223,7 +242,9 @@ async function driveFailedMachineVerifyToImplementation(fixture: OnboardingFixtu
     if (fixture.board.requireWorkItem(fixture.workItemId).state === "implementing") return;
     await delay(25);
   }
-  assert.fail(`machine testing did not return to implementation; current=${fixture.board.requireWorkItem(fixture.workItemId).state}`);
+  assert.fail(
+    `machine testing did not return to implementation; current=${fixture.board.requireWorkItem(fixture.workItemId).state}`
+  );
 }
 
 test("onboarding implementation settlement rejects every missing deliverable without mutating the active attempt", async () => {
@@ -231,13 +252,25 @@ test("onboarding implementation settlement rejects every missing deliverable wit
   try {
     await commitDeliverables(fixture, { omit: "docs/interface.md" });
 
-    assertDeliverablesError(() => settleImplementation(fixture, "# Gaps\n\n- Branch protection is deferred."), /docs\/interface\.md/u);
+    assertDeliverablesError(
+      () => settleImplementation(fixture, "# Gaps\n\n- Branch protection is deferred."),
+      /docs\/interface\.md/u
+    );
 
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare("SELECT status FROM runs WHERE run_id=?").get(fixture.implementationRunId)?.status, "active");
-      assert.equal(inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(fixture.implementationTaskId)?.status, "in_progress");
-      assert.equal(inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(fixture.workItemId)?.state, "implementing");
+      assert.equal(
+        inspected.prepare("SELECT status FROM runs WHERE run_id=?").get(fixture.implementationRunId)?.status,
+        "active"
+      );
+      assert.equal(
+        inspected.prepare("SELECT status FROM tasks WHERE task_id=?").get(fixture.implementationTaskId)?.status,
+        "in_progress"
+      );
+      assert.equal(
+        inspected.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(fixture.workItemId)?.state,
+        "implementing"
+      );
       assert.equal(inspected.prepare("SELECT COUNT(*) AS count FROM artifacts").get()?.count, 0);
     } finally {
       inspected.close();
@@ -256,7 +289,7 @@ test("onboarding implementation settlement names an invalid workflow contract", 
 
     assertDeliverablesError(
       () => settleImplementation(fixture, "# Gaps\n\n- Branch protection is deferred."),
-      /docs\/workflow\.md VerifyContract: invalid JSON in fenced json block/u,
+      /docs\/workflow\.md VerifyContract: invalid JSON in fenced json block/u
     );
   } finally {
     fixture.board.close();
@@ -270,7 +303,7 @@ test("onboarding implementation settlement names an empty decisions directory", 
 
     assertDeliverablesError(
       () => settleImplementation(fixture, "# Gaps\n\n- Branch protection is deferred."),
-      /docs\/decisions\/ is missing or empty/u,
+      /docs\/decisions\/ is missing or empty/u
     );
   } finally {
     fixture.board.close();
@@ -302,12 +335,16 @@ test("onboarding settlement detail retains later missing items after a long cont
       workflow: `# Workflow\n\n\`\`\`json\n{"version":1,"compile":["npm run build"],"rules":[{"match":"**","action":{"kind":"self"}}],"full":["npm test"],"${oversizedUnknownField}":true}\n\`\`\`\n`,
     });
 
-    assert.throws(() => settleImplementation(fixture), (error: unknown) => error instanceof TaskBoardError
-      && error.status === 400
-      && error.code === "ONBOARDING_DELIVERABLES_MISSING"
-      && error.message.length <= 2_000
-      && /docs\/workflow\.md VerifyContract: contract has unknown field/u.test(error.message)
-      && /gap report is missing or empty/u.test(error.message));
+    assert.throws(
+      () => settleImplementation(fixture),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "ONBOARDING_DELIVERABLES_MISSING" &&
+        error.message.length <= 2_000 &&
+        /docs\/workflow\.md VerifyContract: contract has unknown field/u.test(error.message) &&
+        /gap report is missing or empty/u.test(error.message)
+    );
   } finally {
     fixture.board.close();
   }
@@ -322,12 +359,16 @@ test("onboarding implementation settlement requires a non-empty gap report", asy
     assertDeliverablesError(() => settleImplementation(fixture, " \n\t"), /gap report/u);
     const persisted = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const rejections = persisted.prepare(`
+      const rejections = persisted
+        .prepare(
+          `
         SELECT data_json
         FROM task_events
         WHERE task_id=? AND event_type='settlement_rejected'
         ORDER BY sequence
-      `).all(fixture.implementationTaskId);
+      `
+        )
+        .all(fixture.implementationTaskId);
       assert.equal(rejections.length, 2);
       assert.deepEqual(JSON.parse(String(rejections[0]?.data_json)), {
         code: "ONBOARDING_DELIVERABLES_MISSING",
@@ -362,7 +403,9 @@ test("a rejection-trace write failure preserves the original typed settlement er
     } finally {
       writable.close();
     }
-    console.error = (...data: unknown[]): void => { logged.push(data); };
+    console.error = (...data: unknown[]): void => {
+      logged.push(data);
+    };
 
     assertDeliverablesError(() => settleImplementation(fixture), /gap report/u);
     assert.match(String(logged[0]?.[0]), /settlement rejection recording failed/u);
@@ -391,7 +434,9 @@ test("successful onboarding implementation stores and surfaces the durable redac
     const settled = settleImplementation(fixture, report);
 
     assert.equal(settled.run.status, "completed");
-    const detail = fixture.board.requireWorkItem(fixture.workItemId) as ReturnType<Fixture["board"]["requireWorkItem"]> & {
+    const detail = fixture.board.requireWorkItem(fixture.workItemId) as ReturnType<
+      Fixture["board"]["requireWorkItem"]
+    > & {
       readonly gapReportArtifactId: string | null;
     };
     assert.match(detail.gapReportArtifactId ?? "", /^artifact_/u);
@@ -402,22 +447,35 @@ test("successful onboarding implementation stores and surfaces the durable redac
     assert.equal(stored.artifact.taskId, fixture.implementationTaskId);
     assert.equal(stored.artifact.mediaType, "text/markdown");
     assert.equal(stored.bytes.toString("utf8"), redactMultilineForPersistence(report));
-    assert.equal(stored.bytes.toString("utf8"), "# Gaps\n\n- Branch protection is deferred.\n- Credential sample: [redacted:bearer]\n");
+    assert.equal(
+      stored.bytes.toString("utf8"),
+      "# Gaps\n\n- Branch protection is deferred.\n- Credential sample: [redacted:bearer]\n"
+    );
     assert.doesNotMatch(stored.bytes.toString("utf8"), /abcdefghijklmnopqrstuvwxyz/u);
-    assert.ok(fixture.board.listProjectEvents(fixture.project.projectId).some((event) =>
-      event.eventType === "artifact_created" &&
-      event.nodeId === nodeId &&
-      event.taskId === fixture.implementationTaskId &&
-      event.summary === "Onboarding gap report"));
+    assert.ok(
+      fixture.board
+        .listProjectEvents(fixture.project.projectId)
+        .some(
+          (event) =>
+            event.eventType === "artifact_created" &&
+            event.nodeId === nodeId &&
+            event.taskId === fixture.implementationTaskId &&
+            event.summary === "Onboarding gap report"
+        )
+    );
     const persisted = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(
-        persisted.prepare(`
+        persisted
+          .prepare(
+            `
           SELECT gap_report_artifact_id
           FROM work_item_onboarding_tasks
           WHERE work_item_id=?
-        `).get(fixture.workItemId)?.gap_report_artifact_id,
-        detail.gapReportArtifactId,
+        `
+          )
+          .get(fixture.workItemId)?.gap_report_artifact_id,
+        detail.gapReportArtifactId
       );
     } finally {
       persisted.close();
@@ -438,19 +496,13 @@ test("a later implementation attempt replaces the gap-report artifact while a du
       handoff: handoff(),
       gapReport: firstReport,
     };
-    const firstSettle = fixture.board.settleRun(
-      fixture.implementationRunId,
-      fixture.engineer.agentId,
-      firstRequest,
-    );
+    const firstSettle = fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, firstRequest);
     assert.equal(firstSettle.duplicate, false);
-    const duplicate = fixture.board.settleRun(
-      fixture.implementationRunId,
-      fixture.engineer.agentId,
-      firstRequest,
-    );
+    const duplicate = fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, firstRequest);
     assert.equal(duplicate.duplicate, true);
-    const firstDetail = fixture.board.requireWorkItem(fixture.workItemId) as ReturnType<Fixture["board"]["requireWorkItem"]> & {
+    const firstDetail = fixture.board.requireWorkItem(fixture.workItemId) as ReturnType<
+      Fixture["board"]["requireWorkItem"]
+    > & {
       readonly gapReportArtifactId: string | null;
     };
     const firstArtifactId = firstDetail.gapReportArtifactId;
@@ -480,9 +532,10 @@ test("a later implementation attempt replaces the gap-report artifact while a du
     assert.equal(secondArtifact.bytes.toString("utf8"), secondReport);
     assert.equal(secondArtifact.artifact.taskId, secondImplementation.task.taskId);
     assert.equal(
-      fixture.board.listProjectEvents(fixture.project.projectId).filter((event) =>
-        event.eventType === "artifact_created" && event.summary === "Onboarding gap report").length,
-      2,
+      fixture.board
+        .listProjectEvents(fixture.project.projectId)
+        .filter((event) => event.eventType === "artifact_created" && event.summary === "Onboarding gap report").length,
+      2
     );
   } finally {
     fixture.board.close();
@@ -505,45 +558,58 @@ test("a repair-time onboarding rejection leaves a completed run's outputs and ev
       kind: "result",
       body: request.result,
     });
-    const initial = fixture.board.settleRun(
-      fixture.implementationRunId,
-      fixture.engineer.agentId,
-      request,
-    );
+    const initial = fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, request);
     assert.equal(initial.run.status, "completed");
 
     await git(fixture.repository, ["rm", "docs/interface.md"]);
     await git(fixture.repository, [
-      "-c", "user.name=t", "-c", "user.email=t@local", "commit", "-m", "remove onboarding interface doc",
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@local",
+      "commit",
+      "-m",
+      "remove onboarding interface doc",
     ]);
     const partial = new DatabaseSync(fixture.path);
     try {
       partial.exec("PRAGMA foreign_keys = ON");
       partial.prepare("DELETE FROM stage_handoffs WHERE task_id=?").run(fixture.implementationTaskId);
-      partial.prepare(`
+      partial
+        .prepare(
+          `
         UPDATE work_nodes
         SET state='active',current_stage='implementation'
         WHERE node_id=(SELECT node_id FROM stage_attempts WHERE task_id=? AND stage='implementation')
-      `).run(fixture.implementationTaskId);
+      `
+        )
+        .run(fixture.implementationTaskId);
     } finally {
       partial.close();
     }
 
     assertDeliverablesError(
       () => fixture.board.settleRun(fixture.implementationRunId, fixture.engineer.agentId, request),
-      /docs\/interface\.md/u,
+      /docs\/interface\.md/u
     );
     assert.deepEqual(
       fixture.board.listMessages(fixture.implementationTaskId).map((message) => message.body),
-      [request.result],
+      [request.result]
     );
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(inspected.prepare(`
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM task_events
         WHERE event_type='settlement_rejected' AND json_extract(data_json,'$.runId')=?
-      `).get(fixture.implementationRunId)?.count, 0);
+      `
+          )
+          .get(fixture.implementationRunId)?.count,
+        0
+      );
     } finally {
       inspected.close();
     }
@@ -555,10 +621,13 @@ test("a repair-time onboarding rejection leaves a completed run's outputs and ev
 test("standard work items settle without onboarding deliverable validation or a gap report", async () => {
   const fixture = await boardFixture();
   try {
-    const task = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Settle a standard task",
-      workspaceRefs: [],
-    }));
+    const task = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Settle a standard task",
+        workspaceRefs: [],
+      })
+    );
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-standard-settlement-bypass",
       messageCursor: null,

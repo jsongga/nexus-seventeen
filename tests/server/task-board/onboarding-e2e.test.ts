@@ -10,11 +10,7 @@ import { claudeAdapter } from "../../../src/server/agents/runtime/claude.js";
 import { codexAdapter } from "../../../src/server/agents/runtime/codex.js";
 import { runtimeRegistry } from "../../../src/server/agents/runtime/registry.js";
 import { parseTaskFleetConfig } from "#server/agents/task-fleet/config";
-import {
-  createTaskFleetWorker,
-  type ManagedTaskWorker,
-  type TaskFleetAgentConfig,
-} from "#server/agents/task-fleet";
+import { createTaskFleetWorker, type ManagedTaskWorker, type TaskFleetAgentConfig } from "#server/agents/task-fleet";
 import { structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { mapChangedFiles, parseVerifyContract } from "#server/agents/verify";
 import {
@@ -24,19 +20,9 @@ import {
   type WorkItem,
   type WorkNode,
 } from "#shared/task-board-contract";
-import {
-  createTaskBoardService,
-  normalizeTaskBoardConfig,
-  TaskBoard,
-  type TaskBoardService,
-} from "#server/task-board";
+import { createTaskBoardService, normalizeTaskBoardConfig, TaskBoard, type TaskBoardService } from "#server/task-board";
 import { SHIPPED_RUNTIME_PROFILES } from "../agents/runtime/profile-fixtures.js";
-import {
-  automationConfigurationRequest,
-  automationStages,
-  fakeCli,
-  type FakeCliFixture,
-} from "./helpers.js";
+import { automationConfigurationRequest, automationStages, fakeCli, type FakeCliFixture } from "./helpers.js";
 
 const HUMAN_TOKEN = "onboarding-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "onboarding-e2e-manager-token-0123456789abcdef";
@@ -50,17 +36,21 @@ const WORKFLOW_MARKDOWN = `# Workflow
 The fast tier maps a changed source to its focused test, the area tier expands that mapping, and the full tier runs the repository command below.
 
 \`\`\`json
-${JSON.stringify({
-  version: 1,
-  compile: ["node --version"],
-  rules: [
-    { match: "README.md", action: { kind: "none" } },
-    { match: "docs/**", action: { kind: "none" } },
-    { match: "Dockerfile", action: { kind: "none" } },
-    { match: "src/**", action: { kind: "self" } },
-  ],
-  full: ["node --version"],
-}, null, 2)}
+${JSON.stringify(
+  {
+    version: 1,
+    compile: ["node --version"],
+    rules: [
+      { match: "README.md", action: { kind: "none" } },
+      { match: "docs/**", action: { kind: "none" } },
+      { match: "Dockerfile", action: { kind: "none" } },
+      { match: "src/**", action: { kind: "self" } },
+    ],
+    full: ["node --version"],
+  },
+  null,
+  2
+)}
 \`\`\`
 `;
 
@@ -111,7 +101,7 @@ async function jsonRequest<T>(
   path: string,
   method: "GET" | "POST" | "PATCH",
   expectedStatus: number,
-  options: Readonly<{ token?: string; body?: unknown; idempotencyKey?: string }> = {},
+  options: Readonly<{ token?: string; body?: unknown; idempotencyKey?: string }> = {}
 ): Promise<T> {
   const response = await fetch(`${origin}${path}`, {
     method,
@@ -313,52 +303,67 @@ async function fixtureRepository(root: string): Promise<string> {
   const repo = join(root, "external-repository");
   await git(root, ["init", "-b", "main", repo]);
   await mkdir(join(repo, "src"), { recursive: true });
-  await writeFile(join(repo, "package.json"), `${JSON.stringify({ name: "external-onboarding-fixture", private: true, type: "module" }, null, 2)}\n`);
+  await writeFile(
+    join(repo, "package.json"),
+    `${JSON.stringify({ name: "external-onboarding-fixture", private: true, type: "module" }, null, 2)}\n`
+  );
   await writeFile(join(repo, "src", "index.js"), 'process.stdout.write("external fixture\\n");\n');
   await writeFile(
     join(repo, "Dockerfile"),
-    'FROM node:24-bookworm-slim AS runtime\nWORKDIR /app\nCOPY . .\nCMD ["node", "src/index.js"]\n',
+    'FROM node:24-bookworm-slim AS runtime\nWORKDIR /app\nCOPY . .\nCMD ["node", "src/index.js"]\n'
   );
   await git(repo, ["add", "."]);
-  await git(repo, ["-c", "user.name=Onboarding Test", "-c", "user.email=onboarding@test.invalid", "commit", "-m", "fixture base"]);
+  await git(repo, [
+    "-c",
+    "user.name=Onboarding Test",
+    "-c",
+    "user.email=onboarding@test.invalid",
+    "commit",
+    "-m",
+    "fixture base",
+  ]);
   return repo;
 }
 
-function laneConfig(options: Readonly<{
-  origin: string;
-  workerId: string;
-  agentId: string;
-  token: string;
-  role: "manager" | "engineer" | "verifier";
-  model: string;
-  workingDirectory: string;
-  statePath: string;
-  workspaceRoot?: string;
-}>): TaskFleetAgentConfig {
+function laneConfig(
+  options: Readonly<{
+    origin: string;
+    workerId: string;
+    agentId: string;
+    token: string;
+    role: "manager" | "engineer" | "verifier";
+    model: string;
+    workingDirectory: string;
+    statePath: string;
+    workspaceRoot?: string;
+  }>
+): TaskFleetAgentConfig {
   return parseTaskFleetConfig({
     version: 1,
     boardUrl: options.origin,
-    agents: [{
-      workerId: options.workerId,
-      agentId: options.agentId,
-      token: options.token,
-      provider: "claude",
-      role: options.role,
-      model: options.model,
-      workingDirectory: options.workingDirectory,
-      statePath: options.statePath,
-      longPollMs: 1_000,
-      agentTimeoutMs: 5_000,
-      terminationGraceMs: 10,
-      ...(options.workspaceRoot === undefined ? {} : { workspaceRoot: options.workspaceRoot }),
-    }],
+    agents: [
+      {
+        workerId: options.workerId,
+        agentId: options.agentId,
+        token: options.token,
+        provider: "claude",
+        role: options.role,
+        model: options.model,
+        workingDirectory: options.workingDirectory,
+        statePath: options.statePath,
+        longPollMs: 1_000,
+        agentTimeoutMs: 5_000,
+        terminationGraceMs: 10,
+        ...(options.workspaceRoot === undefined ? {} : { workspaceRoot: options.workspaceRoot }),
+      },
+    ],
   }).agents[0]!;
 }
 
 async function createFleetWorker(
   config: TaskFleetAgentConfig,
   origin: string,
-  cli: FakeCliFixture,
+  cli: FakeCliFixture
 ): Promise<ManagedTaskWorker> {
   const priorPath = process.env.PATH;
   const priorTmpdir = process.env.TMPDIR;
@@ -402,9 +407,30 @@ async function createFixture(): Promise<OnboardingFixture> {
     const engineerId = "onboarding-claude-engineer";
     const verifierId = "onboarding-claude-verifier";
     for (const agent of [
-      { agentId: managerId, role: "manager", area: "onboarding planning", mission: "Plan repository onboarding.", model: "claude-manager", token: MANAGER_TOKEN },
-      { agentId: engineerId, role: "engineer", area: "onboarding implementation", mission: "Create repository onboarding deliverables.", model: "claude-engineer", token: ENGINEER_TOKEN },
-      { agentId: verifierId, role: "verifier", area: "onboarding verification", mission: "Review onboarding evidence independently.", model: "claude-verifier", token: VERIFIER_TOKEN },
+      {
+        agentId: managerId,
+        role: "manager",
+        area: "onboarding planning",
+        mission: "Plan repository onboarding.",
+        model: "claude-manager",
+        token: MANAGER_TOKEN,
+      },
+      {
+        agentId: engineerId,
+        role: "engineer",
+        area: "onboarding implementation",
+        mission: "Create repository onboarding deliverables.",
+        model: "claude-engineer",
+        token: ENGINEER_TOKEN,
+      },
+      {
+        agentId: verifierId,
+        role: "verifier",
+        area: "onboarding verification",
+        mission: "Review onboarding evidence independently.",
+        model: "claude-verifier",
+        token: VERIFIER_TOKEN,
+      },
     ] as const) {
       await jsonRequest(address.url, `/v1/projects/${project.projectId}/agents`, "POST", 201, { body: agent });
     }
@@ -444,12 +470,13 @@ async function createFixture(): Promise<OnboardingFixture> {
     const nativeFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const settlementMatch = /\/v1\/runs\/([^/]+)\/settle$/u.exec(String(input));
-      const settlementRequest = settlementMatch === null || init?.body === undefined
-        ? null
-        : JSON.parse(String(init.body)) as Record<string, unknown>;
+      const settlementRequest =
+        settlementMatch === null || init?.body === undefined
+          ? null
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
       const response = await nativeFetch(input, init);
       if (settlementMatch !== null) {
-        const payload = await response.clone().json() as { error?: { code?: unknown; message?: unknown } };
+        const payload = (await response.clone().json()) as { error?: { code?: unknown; message?: unknown } };
         settlementAttempts.push({
           runId: settlementMatch[1]!,
           status: response.status,
@@ -462,37 +489,55 @@ async function createFixture(): Promise<OnboardingFixture> {
       return response;
     }) as typeof fetch;
     try {
-      workers.push(await createFleetWorker(laneConfig({
-        origin: address.url,
-        workerId: "onboarding-manager-worker",
-        agentId: managerId,
-        token: MANAGER_TOKEN,
-        role: "manager",
-        model: "claude-manager",
-        workingDirectory: managerCli.working,
-        statePath: join(root, "manager-worker", "journal.json"),
-      }), address.url, managerCli));
-      workers.push(await createFleetWorker(laneConfig({
-        origin: address.url,
-        workerId: "onboarding-engineer-worker",
-        agentId: engineerId,
-        token: ENGINEER_TOKEN,
-        role: "engineer",
-        model: "claude-engineer",
-        workingDirectory: repo,
-        workspaceRoot: join(root, "implementation-workspaces"),
-        statePath: join(root, "engineer-worker", "journal.json"),
-      }), address.url, engineerCli));
-      workers.push(await createFleetWorker(laneConfig({
-        origin: address.url,
-        workerId: "onboarding-verifier-worker",
-        agentId: verifierId,
-        token: VERIFIER_TOKEN,
-        role: "verifier",
-        model: "claude-verifier",
-        workingDirectory: verifierCli.working,
-        statePath: join(root, "verifier-worker", "journal.json"),
-      }), address.url, verifierCli));
+      workers.push(
+        await createFleetWorker(
+          laneConfig({
+            origin: address.url,
+            workerId: "onboarding-manager-worker",
+            agentId: managerId,
+            token: MANAGER_TOKEN,
+            role: "manager",
+            model: "claude-manager",
+            workingDirectory: managerCli.working,
+            statePath: join(root, "manager-worker", "journal.json"),
+          }),
+          address.url,
+          managerCli
+        )
+      );
+      workers.push(
+        await createFleetWorker(
+          laneConfig({
+            origin: address.url,
+            workerId: "onboarding-engineer-worker",
+            agentId: engineerId,
+            token: ENGINEER_TOKEN,
+            role: "engineer",
+            model: "claude-engineer",
+            workingDirectory: repo,
+            workspaceRoot: join(root, "implementation-workspaces"),
+            statePath: join(root, "engineer-worker", "journal.json"),
+          }),
+          address.url,
+          engineerCli
+        )
+      );
+      workers.push(
+        await createFleetWorker(
+          laneConfig({
+            origin: address.url,
+            workerId: "onboarding-verifier-worker",
+            agentId: verifierId,
+            token: VERIFIER_TOKEN,
+            role: "verifier",
+            model: "claude-verifier",
+            workingDirectory: verifierCli.working,
+            statePath: join(root, "verifier-worker", "journal.json"),
+          }),
+          address.url,
+          verifierCli
+        )
+      );
     } finally {
       globalThis.fetch = nativeFetch;
     }
@@ -545,21 +590,25 @@ async function closeFixture(fixture: OnboardingFixture): Promise<void> {
 }
 
 async function currentWorkItem(fixture: OnboardingFixture): Promise<WorkItem> {
-  return (await jsonRequest<{ workItem: WorkItem }>(
-    fixture.origin,
-    `/v1/work-items/${fixture.workItem.workItemId}`,
-    "GET",
-    200,
-  )).workItem;
+  return (
+    await jsonRequest<{ workItem: WorkItem }>(
+      fixture.origin,
+      `/v1/work-items/${fixture.workItem.workItemId}`,
+      "GET",
+      200
+    )
+  ).workItem;
 }
 
 async function workflow(fixture: OnboardingFixture): Promise<WorkflowSnapshot> {
-  return (await jsonRequest<{ workflow: WorkflowSnapshot }>(
-    fixture.origin,
-    `/v1/projects/${fixture.project.projectId}/workflow`,
-    "GET",
-    200,
-  )).workflow;
+  return (
+    await jsonRequest<{ workflow: WorkflowSnapshot }>(
+      fixture.origin,
+      `/v1/projects/${fixture.project.projectId}/workflow`,
+      "GET",
+      200
+    )
+  ).workflow;
 }
 
 async function driveVerify(fixture: OnboardingFixture): Promise<void> {
@@ -568,7 +617,9 @@ async function driveVerify(fixture: OnboardingFixture): Promise<void> {
   while (Date.now() < launchDeadline) {
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      verifyState = String(db.prepare("SELECT state FROM verify_attempts ORDER BY created_at DESC LIMIT 1").get()?.state ?? "");
+      verifyState = String(
+        db.prepare("SELECT state FROM verify_attempts ORDER BY created_at DESC LIMIT 1").get()?.state ?? ""
+      );
     } finally {
       db.close();
     }
@@ -585,42 +636,39 @@ async function driveVerify(fixture: OnboardingFixture): Promise<void> {
     if (item.state === "reviewing") return;
     await delay(25);
   }
-  assert.fail(`machine verify did not reach review; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`);
+  assert.fail(
+    `machine verify did not reach review; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`
+  );
 }
 
 test("the Claude e2e shims use parser-accepted stream-json shapes", () => {
-  for (const source of [
-    claudeManagerCliSource(),
-    claudeOnboardingEngineerCliSource(),
-    claudeVerifierCliSource(),
-  ]) {
+  for (const source of [claudeManagerCliSource(), claudeOnboardingEngineerCliSource(), claudeVerifierCliSource()]) {
     assert.doesNotThrow(() => new Function(source));
   }
-  assert.deepEqual(
-    claudeAdapter.events('{"type":"system","subtype":"init"}'),
-    [{ type: "stage_started" }],
-  );
+  assert.deepEqual(claudeAdapter.events('{"type":"system","subtype":"init"}'), [{ type: "stage_started" }]);
   assert.deepEqual(
     claudeAdapter.events('{"type":"user","message":{"content":[{"type":"tool_result","content":"progress"}]}}'),
-    [{ type: "tool_result", name: "tool", output: "progress", failed: false }],
+    [{ type: "tool_result", name: "tool", output: "progress", failed: false }]
   );
-  assert.deepEqual(
-    claudeAdapter.result('{"type":"result","structured_output":{"status":"completed"}}\n'),
-    { status: "completed" },
-  );
-  assert.equal(structuredOutcome({
+  assert.deepEqual(claudeAdapter.result('{"type":"result","structured_output":{"status":"completed"}}\n'), {
     status: "completed",
-    progress: [],
-    result: "The corrected onboarding pass is complete.",
-    proposedChildTasks: [],
-    expectedAgentMinutes: null,
-    phases: [],
-    humanQuestion: null,
-    handoff: null,
-    workflowPlan: null,
-    gapReport: GAP_REPORT,
-    detail: "The corrected onboarding pass is complete.",
-  }).gapReport, GAP_REPORT);
+  });
+  assert.equal(
+    structuredOutcome({
+      status: "completed",
+      progress: [],
+      result: "The corrected onboarding pass is complete.",
+      proposedChildTasks: [],
+      expectedAgentMinutes: null,
+      phases: [],
+      humanQuestion: null,
+      handoff: null,
+      workflowPlan: null,
+      gapReport: GAP_REPORT,
+      detail: "The corrected onboarding pass is complete.",
+    }).gapReport,
+    GAP_REPORT
+  );
 });
 
 test("onboarding completes on claude lanes after a correctable deliverables rejection", async () => {
@@ -634,7 +682,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     assert.deepEqual(plan.declaredScope, DECLARED_SCOPE);
     assert.deepEqual(
       planningWorkflow.nodes.find((node) => node.planRevisionId === plan.planRevisionId)?.stageTemplate,
-      ["implementation", "testing", "verification"],
+      ["implementation", "testing", "verification"]
     );
 
     await jsonRequest<ConfirmPlanRevisionResponse>(
@@ -642,7 +690,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
       `/v1/plans/${plan.planRevisionId}/confirm`,
       "POST",
       200,
-      { body: { expectedState: "proposed" } },
+      { body: { expectedState: "proposed" } }
     );
     const confirmed = await currentWorkItem(fixture);
     assert.equal(confirmed.state, "implementing");
@@ -652,7 +700,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     assert.equal(
       await readFile(join(fixture.engineerScratch, "engineer-runs.txt"), "utf8"),
       "1",
-      "the first engineer dispatch did not take the incomplete-deliverables branch",
+      "the first engineer dispatch did not take the incomplete-deliverables branch"
     );
     assert.equal(fixture.engineerWorker.hasActiveClaim(), true);
     assert.equal((await currentWorkItem(fixture)).state, "implementing");
@@ -661,20 +709,27 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     const firstClaim = new DatabaseSync(fixture.dbPath, { readOnly: true });
     let implementationIdentity: { run_id: string; claim_id: string };
     try {
-      const rows = firstClaim.prepare(
-        "SELECT run_id,claim_id,status FROM runs WHERE agent_id=? ORDER BY started_at,run_id",
-      ).all(fixture.engineerId) as unknown as ReadonlyArray<{ run_id: string; claim_id: string; status: string }>;
+      const rows = firstClaim
+        .prepare("SELECT run_id,claim_id,status FROM runs WHERE agent_id=? ORDER BY started_at,run_id")
+        .all(fixture.engineerId) as unknown as ReadonlyArray<{ run_id: string; claim_id: string; status: string }>;
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.status, "active");
       implementationIdentity = { run_id: rows[0]!.run_id, claim_id: rows[0]!.claim_id };
-      assert.deepEqual(fixture.settlementAttempts.filter((attempt) => attempt.runId === implementationIdentity.run_id), [{
-        runId: implementationIdentity.run_id,
-        status: 400,
-        outcome: "completed",
-        gapReport: null,
-        code: "ONBOARDING_DELIVERABLES_MISSING",
-        message: "Onboarding deliverables are missing: gap report is missing or empty; docs/interface.md is missing or empty",
-      }], "the first implementation settlement was not rejected for exactly the correctable omissions");
+      assert.deepEqual(
+        fixture.settlementAttempts.filter((attempt) => attempt.runId === implementationIdentity.run_id),
+        [
+          {
+            runId: implementationIdentity.run_id,
+            status: 400,
+            outcome: "completed",
+            gapReport: null,
+            code: "ONBOARDING_DELIVERABLES_MISSING",
+            message:
+              "Onboarding deliverables are missing: gap report is missing or empty; docs/interface.md is missing or empty",
+          },
+        ],
+        "the first implementation settlement was not rejected for exactly the correctable omissions"
+      );
       assert.equal(firstClaim.prepare("SELECT COUNT(*) AS count FROM artifacts").get()?.count, 0);
     } finally {
       firstClaim.close();
@@ -684,22 +739,22 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     assert.equal(
       await readFile(join(fixture.engineerScratch, "engineer-runs.txt"), "utf8"),
       "2",
-      "the claim-reset dispatch did not relaunch the engineer shim for its corrected turn",
+      "the claim-reset dispatch did not relaunch the engineer shim for its corrected turn"
     );
     assert.match(
       await git(fixture.repo, ["show", `${confirmed.pipelineBranch}:docs/interface.md`]),
       /^# Interface$/mu,
-      "the corrected engineer commit was not harvested onto the pipeline branch",
+      "the corrected engineer commit was not harvested onto the pipeline branch"
     );
     const correctedClaim = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const rows = correctedClaim.prepare(
-        "SELECT run_id,claim_id,status FROM runs WHERE agent_id=? ORDER BY started_at,run_id",
-      ).all(fixture.engineerId) as unknown as ReadonlyArray<{ run_id: string; claim_id: string; status: string }>;
+      const rows = correctedClaim
+        .prepare("SELECT run_id,claim_id,status FROM runs WHERE agent_id=? ORDER BY started_at,run_id")
+        .all(fixture.engineerId) as unknown as ReadonlyArray<{ run_id: string; claim_id: string; status: string }>;
       assert.deepEqual(
         rows.map((row) => ({ ...row })),
         [{ ...implementationIdentity, status: "completed" }],
-        `the corrected same-claim settlement did not complete: ${JSON.stringify(rows)}`,
+        `the corrected same-claim settlement did not complete: ${JSON.stringify(rows)}`
       );
       assert.deepEqual(
         fixture.settlementAttempts.filter((attempt) => attempt.runId === implementationIdentity.run_id),
@@ -710,7 +765,8 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
             outcome: "completed",
             gapReport: null,
             code: "ONBOARDING_DELIVERABLES_MISSING",
-            message: "Onboarding deliverables are missing: gap report is missing or empty; docs/interface.md is missing or empty",
+            message:
+              "Onboarding deliverables are missing: gap report is missing or empty; docs/interface.md is missing or empty",
           },
           {
             runId: implementationIdentity.run_id,
@@ -721,14 +777,14 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
             message: null,
           },
         ],
-        "the corrected turn did not submit and receive the successful second settlement",
+        "the corrected turn did not submit and receive the successful second settlement"
       );
-      const verifyAttempt = correctedClaim.prepare(
-        "SELECT state FROM verify_attempts ORDER BY created_at DESC,verify_attempt_id DESC LIMIT 1",
-      ).get() as { state?: unknown } | undefined;
+      const verifyAttempt = correctedClaim
+        .prepare("SELECT state FROM verify_attempts ORDER BY created_at DESC,verify_attempt_id DESC LIMIT 1")
+        .get() as { state?: unknown } | undefined;
       assert.ok(
         verifyAttempt !== undefined,
-        "the successful implementation settlement did not activate the testing-stage machine verify",
+        "the successful implementation settlement did not activate the testing-stage machine verify"
       );
     } finally {
       correctedClaim.close();
@@ -737,7 +793,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     assert.equal(
       (await currentWorkItem(fixture)).state,
       "verifying",
-      "the successful corrected settlement and testing activation did not advance the work item",
+      "the successful corrected settlement and testing activation did not advance the work item"
     );
 
     const branchWorkflow = await git(fixture.repo, ["show", `${confirmed.pipelineBranch}:docs/workflow.md`]);
@@ -745,9 +801,9 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     await driveVerify(fixture);
     const verifyDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const attempt = verifyDb.prepare(
-        "SELECT state,detail FROM verify_attempts ORDER BY created_at DESC,verify_attempt_id DESC LIMIT 1",
-      ).get() as { state?: unknown; detail?: unknown } | undefined;
+      const attempt = verifyDb
+        .prepare("SELECT state,detail FROM verify_attempts ORDER BY created_at DESC,verify_attempt_id DESC LIMIT 1")
+        .get() as { state?: unknown; detail?: unknown } | undefined;
       assert.equal(attempt?.state, "green");
       assert.match(String(attempt?.detail), /^verified-sha:[0-9a-f]{40}$/u);
     } finally {
@@ -762,7 +818,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(approved.workItem.state, "merged");
 
@@ -780,10 +836,18 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
     const mergedWorkflow = await readFile(join(fixture.repo, "docs", "workflow.md"), "utf8");
     const contract = parseVerifyContract(mergedWorkflow);
     const selection = mapChangedFiles(
-      ["README.md", "docs/architecture.md", "docs/interface.md", "docs/dependencies.md", "docs/workflow.md", "docs/decisions/2026-08-25-onboarding.md", "Dockerfile"],
+      [
+        "README.md",
+        "docs/architecture.md",
+        "docs/interface.md",
+        "docs/dependencies.md",
+        "docs/workflow.md",
+        "docs/decisions/2026-08-25-onboarding.md",
+        "Dockerfile",
+      ],
       contract.rules,
       "fast",
-      { fileExists: () => false, directoryExists: () => false },
+      { fileExists: () => false, directoryExists: () => false }
     );
     assert.deepEqual(selection, {
       nodeTestFiles: [],
@@ -793,7 +857,7 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
       unmatched: [],
     });
 
-    const detail = await currentWorkItem(fixture) as WorkItem & { readonly gapReportArtifactId: string | null };
+    const detail = (await currentWorkItem(fixture)) as WorkItem & { readonly gapReportArtifactId: string | null };
     assert.match(detail.gapReportArtifactId ?? "", /^artifact_/u);
     const gapArtifact = await fixture.sweepBoard.artifactContent(detail.gapReportArtifactId!);
     assert.equal(gapArtifact.artifact.mediaType, "text/markdown");
@@ -801,15 +865,19 @@ test("onboarding completes on claude lanes after a correctable deliverables reje
 
     const runsDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const runs = runsDb.prepare(
-        "SELECT agent_id,runtime,prompts_sha,status FROM runs ORDER BY started_at,run_id",
-      ).all() as unknown as ReadonlyArray<{ agent_id: string; runtime: string | null; prompts_sha: string | null; status: string }>;
+      const runs = runsDb
+        .prepare("SELECT agent_id,runtime,prompts_sha,status FROM runs ORDER BY started_at,run_id")
+        .all() as unknown as ReadonlyArray<{
+        agent_id: string;
+        runtime: string | null;
+        prompts_sha: string | null;
+        status: string;
+      }>;
       assert.equal(runs.length, 3);
-      assert.deepEqual(new Set(runs.map((run) => run.agent_id)), new Set([
-        fixture.managerId,
-        fixture.engineerId,
-        fixture.verifierId,
-      ]));
+      assert.deepEqual(
+        new Set(runs.map((run) => run.agent_id)),
+        new Set([fixture.managerId, fixture.engineerId, fixture.verifierId])
+      );
       assert.ok(runs.every((run) => run.runtime === "claude"));
       assert.ok(runs.every((run) => typeof run.prompts_sha === "string" && run.prompts_sha.length > 0));
       assert.ok(runs.every((run) => run.status === "completed"));

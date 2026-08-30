@@ -13,12 +13,7 @@ import {
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board";
-import {
-  automationConfigurationRequest,
-  automationStages,
-  boardFixture,
-  workItemRequest,
-} from "./helpers.js";
+import { automationConfigurationRequest, automationStages, boardFixture, workItemRequest } from "./helpers.js";
 
 type Fixture = Awaited<ReturnType<typeof boardFixture>>;
 
@@ -39,18 +34,22 @@ async function fixtureRepo(verifyPasses: boolean): Promise<string> {
   await writeFile(join(repo, "readme.md"), "machine verify integration\n");
   await writeFile(
     join(repo, "docs", "workflow.md"),
-    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
-      version: 1,
-      compile: ["node verify-compile.mjs"],
-      rules: [{ match: "**", action: { kind: "none" } }],
-      full: ["node verify-full.mjs"],
-    }, null, 2)}\n\`\`\`\n`,
+    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify(
+      {
+        version: 1,
+        compile: ["node verify-compile.mjs"],
+        rules: [{ match: "**", action: { kind: "none" } }],
+        full: ["node verify-full.mjs"],
+      },
+      null,
+      2
+    )}\n\`\`\`\n`
   );
   await writeFile(
     join(repo, "verify-full.mjs"),
     verifyPasses
       ? 'process.stdout.write("full verify passed\\n");\n'
-      : 'process.stderr.write("intentional machine verify failure\\n"); process.exit(9);\n',
+      : 'process.stderr.write("intentional machine verify failure\\n"); process.exit(9);\n'
   );
   await writeFile(join(repo, "verify-compile.mjs"), "process.exit(0);\n");
   await writeFile(join(repo, "criterion-check.mjs"), "process.exit(0);\n");
@@ -62,8 +61,7 @@ async function fixtureRepo(verifyPasses: boolean): Promise<string> {
 function updateProjectPath(fixture: Fixture, repositoryPath: string): void {
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-      .run(repositoryPath, fixture.project.projectId);
+    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repositoryPath, fixture.project.projectId);
   } finally {
     db.close();
   }
@@ -81,14 +79,16 @@ function pipelinePlan(): WorkflowPlanDraft {
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [{ criterion: "The criterion check passes.", check: "node criterion-check.mjs" }],
-    nodes: [{
-      nodeId: "machine-verify-node",
-      title: "Exercise machine verify",
-      objective: "Implement a scoped change and verify it without an agent executor.",
-      acceptanceCriteria: ["The machine verify result is durably settled."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "machine-verify-node",
+        title: "Exercise machine verify",
+        objective: "Implement a scoped change and verify it without an agent executor.",
+        acceptanceCriteria: ["The machine verify result is durably settled."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -98,20 +98,19 @@ function implementationHandoff(): StageHandoffDraft {
     summary: "The scoped implementation is ready for machine verification.",
     evidence: ["The task branch contains the scoped commit."],
     artifactIds: [],
-    acceptanceCriteria: [{
-      criterion: "The implementation is committed.",
-      passed: true,
-      evidence: "The task branch contains the implementation commit.",
-    }],
+    acceptanceCriteria: [
+      {
+        criterion: "The implementation is committed.",
+        passed: true,
+        evidence: "The task branch contains the implementation commit.",
+      },
+    ],
     blockers: [],
     recommendedReturnStage: null,
   };
 }
 
-function reviewFinding(
-  round: number,
-  category: ReviewFindingDraft["category"] = "correctness",
-): ReviewFindingDraft {
+function reviewFinding(round: number, category: ReviewFindingDraft["category"] = "correctness"): ReviewFindingDraft {
   return {
     file: `src/review-round-${round}.ts`,
     line: round,
@@ -124,7 +123,7 @@ function reviewFinding(
 
 function reviewHandoff(
   outcome: "passed" | "failed",
-  recommendedReturnStage: StageHandoffDraft["recommendedReturnStage"] = outcome === "passed" ? null : "implementation",
+  recommendedReturnStage: StageHandoffDraft["recommendedReturnStage"] = outcome === "passed" ? null : "implementation"
 ): StageHandoffDraft {
   return {
     outcome,
@@ -166,18 +165,23 @@ async function pipelineFixture(suffix: string, verifyPasses: boolean) {
     model: "codex-mini",
     token: "machine-verify-verifier-token-0123456789abcdef",
   });
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: "Exercise machine verification.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Exercise machine verification.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `machine-verify-integration-${suffix}`).workItem;
+    `machine-verify-integration-${suffix}`
+  ).workItem;
   const planning = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `claim-machine-verify-planning-${suffix}`,
     messageCursor: null,
@@ -188,9 +192,9 @@ async function pipelineFixture(suffix: string, verifyPasses: boolean) {
     result: "The machine verify plan is ready.",
     workflowPlan: pipelinePlan(),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-    (candidate) => candidate.state === "proposed",
-  );
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.state === "proposed");
   assert.ok(revision);
   fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
   const implementation = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -210,11 +214,17 @@ async function pipelineFixture(suffix: string, verifyPasses: boolean) {
 function terminalAttemptCount(path: string): number {
   const db = new DatabaseSync(path);
   try {
-    return Number(db.prepare(`
+    return Number(
+      db
+        .prepare(
+          `
       SELECT COUNT(*) AS count
       FROM verify_attempts
       WHERE state IN ('green','failed','died')
-    `).get()?.count);
+    `
+        )
+        .get()?.count
+    );
   } finally {
     db.close();
   }
@@ -223,7 +233,7 @@ function terminalAttemptCount(path: string): number {
 async function driveVerify(
   fixture: Awaited<ReturnType<typeof pipelineFixture>>,
   expectedState: "implementing" | "reviewing" | "dead_letter",
-  expectedTerminalAttempts: number,
+  expectedTerminalAttempts: number
 ): Promise<void> {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
@@ -231,11 +241,12 @@ async function driveVerify(
     if (
       fixture.board.requireWorkItem(fixture.workItem.workItemId).state === expectedState &&
       terminalAttemptCount(fixture.path) === expectedTerminalAttempts
-    ) return;
+    )
+      return;
     await delay(25);
   }
   assert.fail(
-    `verify sweep did not reach ${expectedState}; current=${fixture.board.requireWorkItem(fixture.workItem.workItemId).state}`,
+    `verify sweep did not reach ${expectedState}; current=${fixture.board.requireWorkItem(fixture.workItem.workItemId).state}`
   );
 }
 
@@ -254,7 +265,9 @@ async function reachReview(fixture: Awaited<ReturnType<typeof pipelineFixture>>,
 function persistedFindings(path: string): Array<Record<string, unknown>> {
   const db = new DatabaseSync(path);
   try {
-    return db.prepare("SELECT * FROM review_findings ORDER BY round, created_at, finding_id").all() as Array<Record<string, unknown>>;
+    return db.prepare("SELECT * FROM review_findings ORDER BY round, created_at, finding_id").all() as Array<
+      Record<string, unknown>
+    >;
   } finally {
     db.close();
   }
@@ -278,26 +291,34 @@ test("pipeline activation, machine verify, and independent review settle into fi
     const machineHandoff = workflow.handoffs.find((handoff) => handoff.stage === "testing");
     assert.ok(machineHandoff);
     assert.equal(machineHandoff.outcome, "passed");
-    assert.deepEqual(machineHandoff.acceptanceCriteria, [{
-      criterion: "The criterion check passes.",
-      passed: true,
-      evidence: "Passed: node criterion-check.mjs",
-    }]);
+    assert.deepEqual(machineHandoff.acceptanceCriteria, [
+      {
+        criterion: "The criterion check passes.",
+        passed: true,
+        evidence: "Passed: node criterion-check.mjs",
+      },
+    ]);
     const db = new DatabaseSync(fixture.path);
     try {
       const attempt = db.prepare("SELECT state,check_results_json FROM verify_attempts").get();
       assert.equal(attempt?.state, "green");
-      assert.deepEqual(JSON.parse(String(attempt?.check_results_json)), [{
-        criterion: "The criterion check passes.",
-        check: "node criterion-check.mjs",
-        passed: true,
-      }]);
-      const author = db.prepare(`
+      assert.deepEqual(JSON.parse(String(attempt?.check_results_json)), [
+        {
+          criterion: "The criterion check passes.",
+          check: "node criterion-check.mjs",
+          passed: true,
+        },
+      ]);
+      const author = db
+        .prepare(
+          `
         SELECT event.actor_id
         FROM stage_handoffs handoff
         JOIN task_events event ON event.task_id=handoff.task_id
         WHERE handoff.stage='testing' AND event.event_type='task_created'
-      `).get();
+      `
+        )
+        .get();
       assert.equal(author?.actor_id, "system:machine-verify");
     } finally {
       db.close();
@@ -324,7 +345,9 @@ test("pipeline activation, machine verify, and independent review settle into fi
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
     workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.nodes[0]?.state, "completed");
-    await assert.rejects(access(join(dirname(fixture.path), "verify-workspaces", `${fixture.workItem.workItemId}-verify`)));
+    await assert.rejects(
+      access(join(dirname(fixture.path), "verify-workspaces", `${fixture.workItem.workItemId}-verify`))
+    );
   } finally {
     fixture.board.close();
   }
@@ -362,11 +385,13 @@ test("review finding expected and actual text are redacted at settlement persist
       outcome: "completed",
       result: "Independent review passed with a redacted observation.",
       handoff: reviewHandoff("passed"),
-      reviewFindings: [{
-        ...reviewFinding(1, "docs"),
-        expected: `Authorization: Bearer ${expectedSecret}`,
-        actual: `Observed ${actualSecret}`,
-      }],
+      reviewFindings: [
+        {
+          ...reviewFinding(1, "docs"),
+          expected: `Authorization: Bearer ${expectedSecret}`,
+          actual: `Observed ${actualSecret}`,
+        },
+      ],
     });
 
     const [finding] = persistedFindings(fixture.path);
@@ -384,13 +409,16 @@ test("completed pipeline review rejects blocking findings when the handoff is om
   try {
     const verification = await reachReview(fixture, "claim-blocking-review-without-handoff");
     assert.throws(
-      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
-        outcome: "completed",
-        result: "Review completed with a blocking correctness finding.",
-        reviewFindings: [reviewFinding(1)],
-      }),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 400 &&
-        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+      () =>
+        fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+          outcome: "completed",
+          result: "Review completed with a blocking correctness finding.",
+          reviewFindings: [reviewFinding(1)],
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH
     );
 
     assert.deepEqual(persistedFindings(fixture.path), []);
@@ -400,9 +428,9 @@ test("completed pipeline review rejects blocking findings when the handoff is om
     const workflow = fixture.board.projectWorkflow(fixture.project.projectId);
     assert.equal(workflow.nodes[0]?.state, "active");
     assert.equal(workflow.nodes[0]?.currentStage, "verification");
-    const run = fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (candidate) => candidate.runId === verification.run.runId,
-    );
+    const run = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentRuns.find((candidate) => candidate.runId === verification.run.runId);
     assert.equal(run?.status, "active");
   } finally {
     fixture.board.close();
@@ -415,25 +443,27 @@ test("review consistency gates roll back findings before a valid failed review e
     const verification = await reachReview(fixture, "claim-review-consistency");
     const blocking = reviewFinding(1);
     assert.throws(
-      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
-        outcome: "completed",
-        result: "Review passed incorrectly.",
-        handoff: reviewHandoff("passed"),
-        reviewFindings: [blocking],
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+      () =>
+        fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+          outcome: "completed",
+          result: "Review passed incorrectly.",
+          handoff: reviewHandoff("passed"),
+          reviewFindings: [blocking],
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH
     );
     assert.deepEqual(persistedFindings(fixture.path), []);
     assert.throws(
-      () => fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
-        outcome: "failed",
-        result: "Review failed without a blocking finding.",
-        handoff: reviewHandoff("failed"),
-        reviewFindings: [reviewFinding(1, "docs")],
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED,
+      () =>
+        fixture.board.settleRun(verification.run.runId, fixture.verifier.agentId, {
+          outcome: "failed",
+          result: "Review failed without a blocking finding.",
+          handoff: reviewHandoff("failed"),
+          reviewFindings: [reviewFinding(1, "docs")],
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED
     );
     assert.deepEqual(persistedFindings(fixture.path), []);
 
@@ -452,10 +482,13 @@ test("review consistency gates roll back findings before a valid failed review e
     assert.equal(workflow.nodes[0]?.currentStage, "implementation");
     assert.equal(workflow.handoffs.at(-1)?.recommendedReturnStage, "implementation");
     const findings = persistedFindings(fixture.path);
-    assert.deepEqual(findings.map((finding) => [finding.round, finding.category, finding.blocking]), [
-      [1, "correctness", 1],
-      [1, "docs", 0],
-    ]);
+    assert.deepEqual(
+      findings.map((finding) => [finding.round, finding.category, finding.blocking]),
+      [
+        [1, "correctness", 1],
+        [1, "docs", 0],
+      ]
+    );
 
     const fixClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-review-consistency-fix",
@@ -464,10 +497,13 @@ test("review consistency gates roll back findings before a valid failed review e
     assert.ok(fixClaim);
     assert.equal(fixClaim.context.workflow?.dependencyHandoffs.at(-1)?.stage, "verification");
     assert.equal(fixClaim.context.workflow?.fix?.round, 1);
-    assert.deepEqual(fixClaim.context.workflow?.fix?.findings.map((finding) => [finding.category, finding.blocking]), [
-      ["correctness", true],
-      ["docs", false],
-    ]);
+    assert.deepEqual(
+      fixClaim.context.workflow?.fix?.findings.map((finding) => [finding.category, finding.blocking]),
+      [
+        ["correctness", true],
+        ["docs", false],
+      ]
+    );
     fixture.board.settleRun(fixClaim.run.runId, fixture.engineer.agentId, {
       outcome: "failed",
       result: "The first fix attempt needs another pass.",
@@ -566,7 +602,10 @@ test("final-approval rejection fixes the latest blocking round, not a newer non-
     assert.equal(rejectedFix.context.workflow?.fix?.round, 1);
     assert.deepEqual(
       rejectedFix.context.workflow?.fix?.findings.map((finding) => [finding.round, finding.category]),
-      [[1, "correctness"], [1, "docs"]],
+      [
+        [1, "correctness"],
+        [1, "docs"],
+      ]
     );
   } finally {
     fixture.board.close();
@@ -623,11 +662,15 @@ test("retry, reassign, and human-answer recovery preserve a fix-round work item"
       model: "codex-mini",
       token: "fix-recovery-replacement-engineer-token-0123456789",
     });
-    fixture.board.updateTask(failedAgain.taskId, {
-      version: failedAgain.version,
-      assignedAgentId: replacement.agentId,
-      assignedRole: replacement.role,
-    }, { type: "human", id: "human:alice" });
+    fixture.board.updateTask(
+      failedAgain.taskId,
+      {
+        version: failedAgain.version,
+        assignedAgentId: replacement.agentId,
+        assignedRole: replacement.role,
+      },
+      { type: "human", id: "human:alice" }
+    );
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "fixing");
 
     const reassignedFix = fixture.board.claimRun(replacement.agentId, {
@@ -657,14 +700,15 @@ test("review findings are rejected outside a pipeline verification settle", asyn
   const fixture = await pipelineFixture("findings-not-allowed", true);
   try {
     assert.throws(
-      () => fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
-        outcome: "completed",
-        result: "Implementation attempted to submit review findings.",
-        handoff: implementationHandoff(),
-        reviewFindings: [reviewFinding(1)],
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
+      () =>
+        fixture.board.settleRun(fixture.implementation.run.runId, fixture.engineer.agentId, {
+          outcome: "completed",
+          result: "Implementation attempted to submit review findings.",
+          handoff: implementationHandoff(),
+          reviewFindings: [reviewFinding(1)],
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED
     );
     assert.deepEqual(persistedFindings(fixture.path), []);
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
@@ -706,7 +750,10 @@ test("a fix round re-runs machine verify before review and then reaches final ap
       messageCursor: null,
     });
     assert.ok(reviewTwo);
-    assert.deepEqual(reviewTwo.context.workflow?.review?.priorFindings.map((finding) => finding.round), [1]);
+    assert.deepEqual(
+      reviewTwo.context.workflow?.review?.priorFindings.map((finding) => finding.round),
+      [1]
+    );
     fixture.board.settleRun(reviewTwo.run.runId, fixture.verifier.agentId, {
       outcome: "completed",
       result: "Review round two passed.",
@@ -717,12 +764,23 @@ test("a fix round re-runs machine verify before review and then reaches final ap
 
     const db = new DatabaseSync(fixture.path);
     try {
-      const states = (db.prepare(`
+      const states = (
+        db
+          .prepare(
+            `
         SELECT to_state FROM work_item_transitions
         WHERE work_item_id=? ORDER BY sequence
-      `).all(fixture.workItem.workItemId) as Array<{ to_state: string }>).map((row) => row.to_state);
+      `
+          )
+          .all(fixture.workItem.workItemId) as Array<{ to_state: string }>
+      ).map((row) => row.to_state);
       const fixingIndex = states.lastIndexOf("fixing");
-      assert.deepEqual(states.slice(fixingIndex, fixingIndex + 4), ["fixing", "verifying", "reviewing", "final_approval"]);
+      assert.deepEqual(states.slice(fixingIndex, fixingIndex + 4), [
+        "fixing",
+        "verifying",
+        "reviewing",
+        "final_approval",
+      ]);
     } finally {
       db.close();
     }
@@ -769,7 +827,10 @@ test("pipeline review failures re-arm three fix rounds and dead-letter round fou
       assert.ok(nextReview);
       review = nextReview;
     }
-    assert.deepEqual(persistedFindings(fixture.path).map((finding) => finding.round), [1, 2, 3, 4]);
+    assert.deepEqual(
+      persistedFindings(fixture.path).map((finding) => finding.round),
+      [1, 2, 3, 4]
+    );
     assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).nodes[0]?.state, "blocked");
   } finally {
     fixture.board.close();
@@ -815,9 +876,9 @@ test("machine verify failures return to implementation with tail evidence and de
         handoff: implementationHandoff(),
       });
       await driveVerify(fixture, round < 3 ? "implementing" : "dead_letter", round);
-      const testingHandoffs = fixture.board.projectWorkflow(fixture.project.projectId).handoffs.filter(
-        (handoff) => handoff.stage === "testing",
-      );
+      const testingHandoffs = fixture.board
+        .projectWorkflow(fixture.project.projectId)
+        .handoffs.filter((handoff) => handoff.stage === "testing");
       assert.equal(testingHandoffs.length, round);
       assert.match(testingHandoffs.at(-1)?.summary ?? "", /intentional machine verify failure/u);
       if (round < 3) {

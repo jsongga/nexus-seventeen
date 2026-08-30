@@ -21,9 +21,10 @@ import {
 } from "#server/task-board";
 import type { GitRunner, GitTextRunner } from "#server/task-board/collaborators/scope-check";
 
-type FixtureTaskBoardDependencies = Omit<TaskBoardDependencies, "git"> & Readonly<{
-  git?: GitRunner | GitTextRunner;
-}>;
+type FixtureTaskBoardDependencies = Omit<TaskBoardDependencies, "git"> &
+  Readonly<{
+    git?: GitRunner | GitTextRunner;
+  }>;
 
 export const HUMAN_TOKEN = "task-board-human-token-0123456789abcdef";
 export const AGENT_ONE_TOKEN = "task-board-agent-one-token-0123456789";
@@ -53,19 +54,28 @@ export async function databasePath(): Promise<string> {
   return join(root, "private", "task-board.sqlite");
 }
 
-export function latestParkRecord(path: string, workItemId: string): Readonly<{
+export function latestParkRecord(
+  path: string,
+  workItemId: string
+): Readonly<{
   category: string;
   reason: string;
 }> {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    return { ...db.prepare(`
+    return {
+      ...db
+        .prepare(
+          `
       SELECT category, reason
       FROM park_records
       WHERE work_item_id=?
       ORDER BY parked_at DESC, rowid DESC
       LIMIT 1
-    `).get(workItemId) } as { category: string; reason: string };
+    `
+        )
+        .get(workItemId),
+    } as { category: string; reason: string };
   } finally {
     db.close();
   }
@@ -74,23 +84,35 @@ export function latestParkRecord(path: string, workItemId: string): Readonly<{
 export function gateActions(path: string, workItemId: string): readonly GateAction[] {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    return Object.freeze(db.prepare(`
+    return Object.freeze(
+      db
+        .prepare(
+          `
       SELECT *
       FROM gate_actions
       WHERE work_item_id=?
       ORDER BY created_at, rowid
-    `).all(workItemId).map((row) => parseGateAction({
-      gateActionId: row.gate_action_id,
-      workItemId: row.work_item_id,
-      gate: row.gate,
-      actorId: row.actor_id,
-      planRevisionId: row.plan_revision_id,
-      verifiedSha: row.verified_sha,
-      mergeSha: row.merge_sha,
-      refId: row.ref_id,
-      note: row.note,
-      createdAt: row.created_at,
-    }, "gateAction")));
+    `
+        )
+        .all(workItemId)
+        .map((row) =>
+          parseGateAction(
+            {
+              gateActionId: row.gate_action_id,
+              workItemId: row.work_item_id,
+              gate: row.gate,
+              actorId: row.actor_id,
+              planRevisionId: row.plan_revision_id,
+              verifiedSha: row.verified_sha,
+              mergeSha: row.merge_sha,
+              refId: row.ref_id,
+              note: row.note,
+              createdAt: row.created_at,
+            },
+            "gateAction"
+          )
+        )
+    );
   } finally {
     db.close();
   }
@@ -99,7 +121,7 @@ export function gateActions(path: string, workItemId: string): readonly GateActi
 export function config(
   path: string,
   now: () => Date = () => new Date("2026-07-19T20:00:00.000Z"),
-  overrides: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">> | undefined = undefined,
+  overrides: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">> | undefined = undefined
 ): TaskBoardConfig {
   return normalizeTaskBoardConfig({
     dbPath: path,
@@ -116,24 +138,27 @@ export async function boardFixture(
   path?: string,
   now?: () => Date,
   dependencies: FixtureTaskBoardDependencies = {},
-  configOverrides?: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">>,
+  configOverrides?: Readonly<Pick<TaskBoardConfig, "reconcileIntervalSeconds">>
 ) {
-  const resolvedPath = path ?? await databasePath();
+  const resolvedPath = path ?? (await databasePath());
   const { git, ...otherDependencies } = dependencies;
-  const resolvedGit: GitRunner | undefined = git === undefined
-    ? undefined
-    : "bytes" in git
-      ? git as GitRunner
-      : Object.assign(
-          (arguments_: readonly string[]) => git(arguments_),
-          { bytes: (arguments_: readonly string[]) => Buffer.from(git(arguments_), "utf8") },
-        );
+  const resolvedGit: GitRunner | undefined =
+    git === undefined
+      ? undefined
+      : "bytes" in git
+        ? (git as GitRunner)
+        : Object.assign((arguments_: readonly string[]) => git(arguments_), {
+            bytes: (arguments_: readonly string[]) => Buffer.from(git(arguments_), "utf8"),
+          });
   const resolvedDependencies: TaskBoardDependencies = Object.freeze({
     ...otherDependencies,
     ...(resolvedGit === undefined ? {} : { git: resolvedGit }),
   });
   const board = await TaskBoard.open(config(resolvedPath, now, configOverrides), resolvedDependencies);
-  const project = board.createProject({ name: "Checkout reliability", description: "Keep customer checkout dependable." });
+  const project = board.createProject({
+    name: "Checkout reliability",
+    description: "Keep customer checkout dependable.",
+  });
   const engineer = board.createAgent(project.projectId, {
     agentId: "engineer-one",
     role: "engineer",
@@ -167,7 +192,7 @@ export function taskRequest(overrides: Partial<CreateTaskRequest> = {}): CreateT
 }
 
 export function workItemRequest(
-  overrides: Partial<CreateWorkItemRequest> & Pick<CreateWorkItemRequest, "projectTarget">,
+  overrides: Partial<CreateWorkItemRequest> & Pick<CreateWorkItemRequest, "projectTarget">
 ): CreateWorkItemRequest {
   return {
     originalRequest: "Make checkout retries safe and observable.",
@@ -179,17 +204,17 @@ export function workItemRequest(
 const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = WORK_ITEM_STAGES;
 
 export function automationStages(
-  overrides: Readonly<Partial<Record<WorkItemStage, AutomationStageExecutor>>> = {},
+  overrides: Readonly<Partial<Record<WorkItemStage, AutomationStageExecutor>>> = {}
 ): readonly AutomationPipelineStage[] {
   return AUTOMATION_STAGE_ORDER.map((stage) => ({
     stage,
-    executor: overrides[stage]
-      ?? (stage === "human_review" ? { kind: "human" as const } : { kind: "disabled" as const }),
+    executor:
+      overrides[stage] ?? (stage === "human_review" ? { kind: "human" as const } : { kind: "disabled" as const }),
   }));
 }
 
 export function automationConfigurationRequest(
-  overrides: Partial<UpdateAutomationConfigurationRequest> = {},
+  overrides: Partial<UpdateAutomationConfigurationRequest> = {}
 ): UpdateAutomationConfigurationRequest {
   return {
     version: 1,

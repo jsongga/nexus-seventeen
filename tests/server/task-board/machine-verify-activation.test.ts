@@ -7,13 +7,7 @@ import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
-import {
-  automationConfigurationRequest,
-  automationStages,
-  boardFixture,
-  config,
-  workItemRequest,
-} from "./helpers.js";
+import { automationConfigurationRequest, automationStages, boardFixture, config, workItemRequest } from "./helpers.js";
 
 test("a non-pipeline machine_verify testing stage blocks before creating or starting an attempt", async () => {
   const fixture = await boardFixture();
@@ -22,10 +16,13 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
   let runtime: TaskBoardRuntime | undefined;
   let projects: ProjectsCollaborator | undefined;
   try {
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Run testing before terminal verification without a pipeline workspace.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "non-pipeline-machine-verify-activation").workItem;
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Run testing before terminal verification without a pipeline workspace.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "non-pipeline-machine-verify-activation"
+    ).workItem;
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
       projectId: fixture.project.projectId,
@@ -33,14 +30,16 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
       assumptions: [],
       acceptanceCriteria: ["Testing never verifies an unrelated branch."],
       skillIds: [],
-      nodes: [{
-        nodeId: "non-pipeline-machine-verify-node",
-        title: "Test before verification",
-        objective: "Block machine verification without pipeline identity.",
-        acceptanceCriteria: ["No verify attempt or subprocess starts."],
-        dependencyNodeIds: [],
-        stageTemplate: ["testing", "verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "non-pipeline-machine-verify-node",
+          title: "Test before verification",
+          objective: "Block machine verification without pipeline identity.",
+          acceptanceCriteria: ["No verify attempt or subprocess starts."],
+          dependencyNodeIds: [],
+          stageTemplate: ["testing", "verification"],
+        },
+      ],
     });
     const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, {
       expectedState: "proposed",
@@ -57,63 +56,79 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
     registerParentTerminationCascade(store, () => undefined);
     const automation = new AutomationCollaborator(runtime);
     const current = automation.getConfiguration();
-    automation.updateConfiguration(automationConfigurationRequest({
-      version: current.version,
-      agentTypes: current.agentTypes,
-      stages: automationStages({ testing: { kind: "machine_verify" } }),
-    }));
+    automation.updateConfiguration(
+      automationConfigurationRequest({
+        version: current.version,
+        agentTypes: current.agentTypes,
+        stages: automationStages({ testing: { kind: "machine_verify" } }),
+      })
+    );
     store.transaction(() => {
-      store?.db.prepare(`
+      store?.db
+        .prepare(
+          `
         UPDATE work_nodes
         SET state='ready',version=version+1,updated_at=?
         WHERE node_id=?
-      `).run(boardConfig.now().toISOString(), node.nodeId);
+      `
+        )
+        .run(boardConfig.now().toISOString(), node.nodeId);
     });
 
     let workspaceFactoryCalls = 0;
     let runnerFactoryCalls = 0;
     let startCalls = 0;
-    projects = new ProjectsCollaborator(
-      runtime,
-      automation,
-      new TasksCollaborator(runtime),
-      () => "a".repeat(40),
-      {
-        workspaceManagerFactory: () => {
-          workspaceFactoryCalls += 1;
-          return {
-            async create() { throw new Error("workspace creation must not run"); },
-            async remove() { throw new Error("workspace removal must not run"); },
-            async retain() { throw new Error("workspace retention must not run"); },
-          };
-        },
-        runnerFactory: () => {
-          runnerFactoryCalls += 1;
-          return {
-            async startFull() {
-              startCalls += 1;
-              throw new Error("machine verify subprocess must not run");
-            },
-            async terminate() { throw new Error("terminate must not run"); },
-            async status() { throw new Error("status must not run"); },
-            async tail() { throw new Error("tail must not run"); },
-          };
-        },
+    projects = new ProjectsCollaborator(runtime, automation, new TasksCollaborator(runtime), () => "a".repeat(40), {
+      workspaceManagerFactory: () => {
+        workspaceFactoryCalls += 1;
+        return {
+          async create() {
+            throw new Error("workspace creation must not run");
+          },
+          async remove() {
+            throw new Error("workspace removal must not run");
+          },
+          async retain() {
+            throw new Error("workspace retention must not run");
+          },
+        };
       },
-    );
+      runnerFactory: () => {
+        runnerFactoryCalls += 1;
+        return {
+          async startFull() {
+            startCalls += 1;
+            throw new Error("machine verify subprocess must not run");
+          },
+          async terminate() {
+            throw new Error("terminate must not run");
+          },
+          async status() {
+            throw new Error("status must not run");
+          },
+          async tail() {
+            throw new Error("tail must not run");
+          },
+        };
+      },
+    });
 
     projects.reconcileWorkflows(fixture.project.projectId);
 
     const blocked = projects.projectWorkflow(fixture.project.projectId).nodes[0];
     assert.ok(blocked);
     assert.equal(blocked.state, "blocked");
-    const latestBlock = store.db.prepare(`
+    const latestBlock = store.db
+      .prepare(
+        `
       SELECT summary
       FROM project_events
       WHERE node_id=? AND event_type='node_blocked'
       ORDER BY sequence DESC
       LIMIT 1
-    `).get(node.nodeId);
+    `
+      )
+      .get(node.nodeId);
     assert.equal(latestBlock?.summary, "machine_verify requires a pipeline plan");
     assert.equal(Number(store.db.prepare("SELECT COUNT(*) AS count FROM verify_attempts").get()?.count), 0);
     assert.equal(workspaceFactoryCalls, 0);
@@ -130,10 +145,13 @@ test("a non-pipeline machine_verify testing stage blocks before creating or star
 test("a pipeline testing node blocks when its executor is flipped to an agent after confirmation", async () => {
   const fixture = await boardFixture();
   try {
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Do not dispatch pipeline testing to an agent after executor drift.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "pipeline-testing-agent-drift").workItem;
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Do not dispatch pipeline testing to an agent after executor drift.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "pipeline-testing-agent-drift"
+    ).workItem;
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
       projectId: fixture.project.projectId,
@@ -141,14 +159,16 @@ test("a pipeline testing node blocks when its executor is flipped to an agent af
       assumptions: [],
       acceptanceCriteria: ["No testing agent is awakened."],
       skillIds: [],
-      nodes: [{
-        nodeId: "pipeline-testing-agent-drift-node",
-        title: "Guard pipeline testing",
-        objective: "Block the testing stage when its executor drifts to an agent.",
-        acceptanceCriteria: ["The node blocks without a task or wakeup."],
-        dependencyNodeIds: [],
-        stageTemplate: ["testing", "verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "pipeline-testing-agent-drift-node",
+          title: "Guard pipeline testing",
+          objective: "Block the testing stage when its executor drifts to an agent.",
+          acceptanceCriteria: ["The node blocks without a task or wakeup."],
+          dependencyNodeIds: [],
+          stageTemplate: ["testing", "verification"],
+        },
+      ],
     });
     const confirmed = fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, {
       expectedState: "proposed",
@@ -156,19 +176,25 @@ test("a pipeline testing node blocks when its executor is flipped to an agent af
     const node = confirmed.nodes[0];
     assert.ok(node);
 
-    const machineConfiguration = fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      stages: automationStages({ testing: { kind: "machine_verify" } }),
-    }));
+    const machineConfiguration = fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        stages: automationStages({ testing: { kind: "machine_verify" } }),
+      })
+    );
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE work_items
         SET pipeline_branch=?,base_sha=?,state='verifying',current_stage='testing',version=version+1
         WHERE work_item_id=?
-      `).run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
-      db.prepare(`
+      `
+      ).run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
+      db.prepare(
+        `
         UPDATE work_nodes SET state='ready',current_stage='testing',version=version+1 WHERE node_id=?
-      `).run(node.nodeId);
+      `
+      ).run(node.nodeId);
     } finally {
       db.close();
     }
@@ -193,22 +219,31 @@ test("a pipeline testing node blocks when its executor is flipped to an agent af
       before.close();
     }
 
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      version: machineConfiguration.version,
-      agentTypes: [testingAgentType],
-      stages: automationStages({
-        testing: { kind: "agent_type", agentTypeId: testingAgentType.agentTypeId },
-      }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        version: machineConfiguration.version,
+        agentTypes: [testingAgentType],
+        stages: automationStages({
+          testing: { kind: "agent_type", agentTypeId: testingAgentType.agentTypeId },
+        }),
+      })
+    );
 
     const after = new DatabaseSync(fixture.path, { readOnly: true });
     try {
       assert.equal(after.prepare("SELECT state FROM work_nodes WHERE node_id=?").get(node.nodeId)?.state, "blocked");
-      assert.equal(after.prepare(`
+      assert.equal(
+        after
+          .prepare(
+            `
         SELECT summary FROM project_events
         WHERE node_id=? AND event_type='node_blocked'
         ORDER BY sequence DESC LIMIT 1
-      `).get(node.nodeId)?.summary, "pipeline testing stage requires machine_verify");
+      `
+          )
+          .get(node.nodeId)?.summary,
+        "pipeline testing stage requires machine_verify"
+      );
       assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count), taskCount);
       assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count), wakeupCount);
       assert.equal(Number(after.prepare("SELECT COUNT(*) AS count FROM verify_attempts").get()?.count), 0);

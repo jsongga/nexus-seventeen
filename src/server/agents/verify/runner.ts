@@ -1,15 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import {
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 
 import { loadVerifyContract } from "./contract.js";
@@ -88,8 +80,12 @@ function capture(command: string, args: readonly string[], cwd: string): Promise
     let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
     child.once("error", reject);
     child.once("close", (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
   });
@@ -154,8 +150,10 @@ async function compiledTestDirectoryHasMatches(repoRoot: string, source: string)
 
 function formatRunTimestamp(date: Date): string {
   const digits = (value: number): string => String(value).padStart(2, "0");
-  return `${date.getUTCFullYear()}${digits(date.getUTCMonth() + 1)}${digits(date.getUTCDate())}` +
-    `-${digits(date.getUTCHours())}${digits(date.getUTCMinutes())}${digits(date.getUTCSeconds())}`;
+  return (
+    `${date.getUTCFullYear()}${digits(date.getUTCMonth() + 1)}${digits(date.getUTCDate())}` +
+    `-${digits(date.getUTCHours())}${digits(date.getUTCMinutes())}${digits(date.getUTCSeconds())}`
+  );
 }
 
 function incrementTimestamp(timestamp: string): string {
@@ -198,16 +196,25 @@ function storedStatus(value: unknown, path: string): StoredRunStatus {
     throw new Error(`invalid verify status at ${path}`);
   }
   const candidate = value as Record<string, unknown>;
-  const validState = candidate.state === "running" || candidate.state === "green" ||
-    candidate.state === "failed" || candidate.state === "died";
+  const validState =
+    candidate.state === "running" ||
+    candidate.state === "green" ||
+    candidate.state === "failed" ||
+    candidate.state === "died";
   const validEndedAt = candidate.endedAt === null || typeof candidate.endedAt === "string";
-  const validExitCode = candidate.exitCode === null ||
-    (typeof candidate.exitCode === "number" && Number.isInteger(candidate.exitCode));
-  const validPid = candidate.pid === undefined ||
+  const validExitCode =
+    candidate.exitCode === null || (typeof candidate.exitCode === "number" && Number.isInteger(candidate.exitCode));
+  const validPid =
+    candidate.pid === undefined ||
     (typeof candidate.pid === "number" && Number.isInteger(candidate.pid) && candidate.pid > 0);
   if (
-    typeof candidate.id !== "string" || !validState || typeof candidate.startedAt !== "string" ||
-    !validEndedAt || !validExitCode || typeof candidate.command !== "string" || !validPid
+    typeof candidate.id !== "string" ||
+    !validState ||
+    typeof candidate.startedAt !== "string" ||
+    !validEndedAt ||
+    !validExitCode ||
+    typeof candidate.command !== "string" ||
+    !validPid
   ) {
     throw new Error(`invalid verify status at ${path}`);
   }
@@ -248,7 +255,8 @@ export class VerifyRunner {
     this.#repoRoot = options.repoRoot;
     this.#runsRoot = options.runsRoot ?? join(options.repoRoot, ".verify-runs");
     this.#keepRuns = options.keepRuns ?? DEFAULT_KEEP_RUNS;
-    this.#supervisorPath = options.supervisorPath ?? join(options.repoRoot, "build", "server", "agents", "verify", "supervisor.js");
+    this.#supervisorPath =
+      options.supervisorPath ?? join(options.repoRoot, "build", "server", "agents", "verify", "supervisor.js");
     this.#execute = options.execute ?? executeCommand;
   }
 
@@ -268,7 +276,7 @@ export class VerifyRunner {
       return {
         outcome: "escalate",
         reasons: unsafeDeletions.map(
-          (file) => `${file} (deleted or renamed — stale compiled outputs; run a clean tier)`,
+          (file) => `${file} (deleted or renamed — stale compiled outputs; run a clean tier)`
         ),
       };
     }
@@ -280,8 +288,8 @@ export class VerifyRunner {
     ];
     if (reasons.length > 0) return { outcome: "escalate", reasons };
 
-    const hasSelection = selection.nodeTestFiles.length > 0 || selection.nodeTestDirs.length > 0 ||
-      selection.vitestTargets.length > 0;
+    const hasSelection =
+      selection.nodeTestFiles.length > 0 || selection.nodeTestDirs.length > 0 || selection.vitestTargets.length > 0;
     if (!hasSelection) {
       console.log("nothing to verify");
       return { outcome: "green" };
@@ -302,7 +310,7 @@ export class VerifyRunner {
     }
 
     for (const source of selection.nodeTestDirs) {
-      if (!await compiledTestDirectoryHasMatches(this.#repoRoot, source)) {
+      if (!(await compiledTestDirectoryHasMatches(this.#repoRoot, source))) {
         return {
           outcome: "failed",
           step: `selection (${source} matched no compiled tests — mapping bug)`,
@@ -316,14 +324,14 @@ export class VerifyRunner {
     ];
     if (nodeTests.length > 0) {
       const argv = ["node", "--test", ...nodeTests];
-      if (await this.#execute(argv, { cwd: this.#repoRoot }) !== 0) {
+      if ((await this.#execute(argv, { cwd: this.#repoRoot })) !== 0) {
         return { outcome: "failed", step: argv.join(" ") };
       }
     }
 
     if (selection.vitestTargets.length > 0) {
       const argv = ["npx", "vitest", "run", ...selection.vitestTargets];
-      if (await this.#execute(argv, { cwd: this.#repoRoot }) !== 0) {
+      if ((await this.#execute(argv, { cwd: this.#repoRoot })) !== 0) {
         return { outcome: "failed", step: argv.join(" ") };
       }
     }
@@ -418,14 +426,16 @@ export class VerifyRunner {
   }
 
   public async list(): Promise<readonly VerifyRunStatus[]> {
-    const ids = [...await this.#runDirectories()].reverse();
-    const statuses = await Promise.all(ids.map(async (id) => {
-      try {
-        return await this.status(id);
-      } catch {
-        return undefined;
-      }
-    }));
+    const ids = [...(await this.#runDirectories())].reverse();
+    const statuses = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await this.status(id);
+        } catch {
+          return undefined;
+        }
+      })
+    );
     return statuses.filter((status): status is VerifyRunStatus => status !== undefined);
   }
 
@@ -454,8 +464,9 @@ export class VerifyRunner {
 
     const untracked = untrackedPaths(status.stdout);
     const deletedOrRenamed = [...new Set(lines(stale.stdout).filter((path) => !isRunArtifact(path)))].sort();
-    const files = [...new Set([...lines(diff.stdout), ...untracked, ...deletedOrRenamed]
-      .filter((path) => !isRunArtifact(path)))].sort();
+    const files = [
+      ...new Set([...lines(diff.stdout), ...untracked, ...deletedOrRenamed].filter((path) => !isRunArtifact(path))),
+    ].sort();
     return { files, deletedOrRenamed };
   }
 
@@ -467,7 +478,8 @@ export class VerifyRunner {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    return entries.filter((entry) => entry.isDirectory() && RUN_ID.test(entry.name))
+    return entries
+      .filter((entry) => entry.isDirectory() && RUN_ID.test(entry.name))
       .map((entry) => entry.name)
       .sort();
   }

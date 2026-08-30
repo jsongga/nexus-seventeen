@@ -42,7 +42,7 @@ function exact(
   value: unknown,
   required: readonly string[],
   optional: readonly string[],
-  label: string,
+  label: string
 ): Record<string, unknown> {
   const item = record(value, label);
   const allowed = new Set([...required, ...optional]);
@@ -55,7 +55,10 @@ function exact(
 
 function text(value: unknown, label: string, maximum: number): string {
   if (
-    typeof value !== "string" || value.length < 1 || value.length > maximum || value.trim() !== value ||
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    value.trim() !== value ||
     CONTROL_CHARACTER.test(value)
   ) {
     throw new VerifyContractError(`${label} is invalid`);
@@ -92,9 +95,8 @@ function action(value: unknown, label: string): VerifyRuleAction {
       if (item.nodeTestDirs === undefined && item.vitest === undefined) {
         throw new VerifyContractError(`${label} fixed action requires nodeTestDirs or vitest`);
       }
-      const nodeTestDirs = item.nodeTestDirs === undefined
-        ? undefined
-        : stringList(item.nodeTestDirs, `${label}.nodeTestDirs`);
+      const nodeTestDirs =
+        item.nodeTestDirs === undefined ? undefined : stringList(item.nodeTestDirs, `${label}.nodeTestDirs`);
       const vitest = item.vitest === undefined ? undefined : stringList(item.vitest, `${label}.vitest`);
       return Object.freeze({ kind: "fixed", nodeTestDirs, vitest });
     }

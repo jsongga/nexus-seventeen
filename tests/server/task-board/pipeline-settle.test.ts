@@ -64,14 +64,16 @@ function pipelinePlan(declaredScope: readonly string[]): WorkflowPlanDraft {
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
-    nodes: [{
-      nodeId: "pipeline-scope-node",
-      title: "Enforce pipeline scope",
-      objective: "Check task-branch files before advancing to machine verification.",
-      acceptanceCriteria: ["Only declared files advance."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "pipeline-scope-node",
+        title: "Enforce pipeline scope",
+        objective: "Check task-branch files before advancing to machine verification.",
+        acceptanceCriteria: ["Only declared files advance."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -81,11 +83,14 @@ function handoff(outcome: "passed" | "failed", summary?: string): StageHandoffDr
     summary: summary ?? (outcome === "passed" ? "Implementation checks passed." : "Implementation stopped."),
     evidence: ["The implementation outcome was inspected."],
     artifactIds: [],
-    acceptanceCriteria: [{
-      criterion: "Only declared files advance.",
-      passed: outcome === "passed",
-      evidence: outcome === "passed" ? "The implementation reported success." : "Implementation stopped at a bright line.",
-    }],
+    acceptanceCriteria: [
+      {
+        criterion: "Only declared files advance.",
+        passed: outcome === "passed",
+        evidence:
+          outcome === "passed" ? "The implementation reported success." : "Implementation stopped at a bright line.",
+      },
+    ],
     blockers: outcome === "passed" ? [] : ["A bright line blocked implementation."],
     recommendedReturnStage: outcome === "passed" ? null : "implementation",
   };
@@ -112,18 +117,23 @@ async function pipelineFixture(suffix: string, declaredScope = ["src/allowed"]) 
     description: "Independently reviews a scope-checked pipeline.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: "Enforce pipeline scope at implementation settlement.",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Enforce pipeline scope at implementation settlement.",
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `pipeline-scope-${suffix}`).workItem;
+    `pipeline-scope-${suffix}`
+  ).workItem;
   const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `claim-pipeline-scope-planning-${suffix}`,
     messageCursor: null,
@@ -134,7 +144,9 @@ async function pipelineFixture(suffix: string, declaredScope = ["src/allowed"]) 
     result: "The scope-enforcement plan is ready.",
     workflowPlan: pipelinePlan(declaredScope),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find((candidate) => candidate.state === "proposed");
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.state === "proposed");
   assert.ok(revision);
   fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
   const implementationClaim = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -167,7 +179,10 @@ test("out-of-scope implementation commit parks the pipeline and names the file",
     });
 
     assert.equal(fixture.board.requireWorkItem(fixture.workItem.workItemId).state, "parked");
-    assert.equal(fixture.board.requireTask(fixture.implementationClaim.task!.taskId).result, "scope violation: docs/outside.md");
+    assert.equal(
+      fixture.board.requireTask(fixture.implementationClaim.task!.taskId).result,
+      "scope violation: docs/outside.md"
+    );
     assert.deepEqual(latestParkRecord(fixture.path, fixture.workItem.workItemId), {
       category: "scope_violation",
       reason: "scope violation: docs/outside.md",
@@ -192,9 +207,9 @@ test("scope-violation parking records a failed handoff with the violation detail
       handoff: handoff("passed"),
     });
 
-    const persisted = fixture.board.projectWorkflow(fixture.project.projectId).handoffs.find(
-      (candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId,
-    );
+    const persisted = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .handoffs.find((candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId);
     assert.ok(persisted);
     assert.equal(persisted.outcome, "failed");
     assert.equal(persisted.summary, "scope violation: docs/outside.md");
@@ -232,9 +247,9 @@ test("throwing settlement Git runner fails closed and never advances", async () 
     const node = projects.projectWorkflow(fixture.project.projectId).nodes[0]!;
     assert.equal(node.state, "blocked");
     assert.equal(node.currentStage, "implementation");
-    const persisted = projects.projectWorkflow(fixture.project.projectId).handoffs.find(
-      (candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId,
-    );
+    const persisted = projects
+      .projectWorkflow(fixture.project.projectId)
+      .handoffs.find((candidate) => candidate.taskId === fixture.implementationClaim.task!.taskId);
     assert.ok(persisted);
     assert.equal(persisted.outcome, "failed");
     assert.equal(persisted.summary, "scope check failed");
@@ -322,16 +337,21 @@ test("a non-pipeline BRIGHT_LINE string follows the ordinary failed-stage retry 
       evaluatorProfile: "tests" as const,
       enabled: true,
     };
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [implementationType],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [implementationType],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Retry a non-pipeline implementation failure.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Retry a non-pipeline implementation failure.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "non-pipeline-bright-line").workItem;
+      "non-pipeline-bright-line"
+    ).workItem;
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
       projectId: fixture.project.projectId,
@@ -339,14 +359,16 @@ test("a non-pipeline BRIGHT_LINE string follows the ordinary failed-stage retry 
       assumptions: [],
       acceptanceCriteria: ["The work item remains live after its first failure."],
       skillIds: [],
-      nodes: [{
-        nodeId: "non-pipeline-bright-line-node",
-        title: "Retry ordinary implementation",
-        objective: "Return the failed stage to implementation.",
-        acceptanceCriteria: ["The first failure does not park the work item."],
-        dependencyNodeIds: [],
-        stageTemplate: ["implementation", "verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "non-pipeline-bright-line-node",
+          title: "Retry ordinary implementation",
+          objective: "Return the failed stage to implementation.",
+          acceptanceCriteria: ["The first failure does not park the work item."],
+          dependencyNodeIds: [],
+          stageTemplate: ["implementation", "verification"],
+        },
+      ],
     });
     fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
@@ -404,10 +426,13 @@ test("in-scope implementation commit advances to machine testing", async () => {
 test("planning settlements reject review findings", async () => {
   const fixture = await boardFixture();
   try {
-    const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Reject findings from a planning settlement.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "planning-review-findings").workItem;
+    const workItem = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Reject findings from a planning settlement.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "planning-review-findings"
+    ).workItem;
     const planning = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "claim-planning-review-findings",
       messageCursor: null,
@@ -415,19 +440,22 @@ test("planning settlements reject review findings", async () => {
     assert.ok(planning);
 
     assert.throws(
-      () => fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
-        outcome: "completed",
-        result: "The plan is ready.",
-        workflowPlan: pipelinePlan(["src"]),
-        reviewFindings: [{
-          category: "correctness",
-          severity: "major",
-          expected: "Findings are emitted only by the reviewer.",
-          actual: "The planner attempted to emit a finding.",
-        }],
-      }),
-      (error: unknown) => error instanceof Error &&
-        "code" in error && error.code === "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
+      () =>
+        fixture.board.settleRun(planning.run.runId, fixture.manager.agentId, {
+          outcome: "completed",
+          result: "The plan is ready.",
+          workflowPlan: pipelinePlan(["src"]),
+          reviewFindings: [
+            {
+              category: "correctness",
+              severity: "major",
+              expected: "Findings are emitted only by the reviewer.",
+              actual: "The planner attempted to emit a finding.",
+            },
+          ],
+        }),
+      (error: unknown) =>
+        error instanceof Error && "code" in error && error.code === "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED"
     );
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "planning");
     const db = new DatabaseSync(fixture.path, { readOnly: true });

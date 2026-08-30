@@ -17,9 +17,7 @@ const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
 const TAIL_BYTES = 4_096;
 const START_FAILURE_MARKER = /\[machine-verify-start-failures:(\d+)\]/u;
-export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(
-  new URL("../../agents/verify/supervisor.js", import.meta.url),
-);
+export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(new URL("../../agents/verify/supervisor.js", import.meta.url));
 
 type Row = Record<string, unknown>;
 type OpenAttemptState = "starting" | "running" | "failed_to_start";
@@ -31,10 +29,7 @@ type VerifyAttemptRetirementListener = (retirement: VerifyAttemptRetirement) => 
 
 const retirementListeners = new WeakMap<TaskBoardRuntime, Set<VerifyAttemptRetirementListener>>();
 
-function registerRetirementListener(
-  runtime: TaskBoardRuntime,
-  listener: VerifyAttemptRetirementListener,
-): () => void {
+function registerRetirementListener(runtime: TaskBoardRuntime, listener: VerifyAttemptRetirementListener): () => void {
   const listeners = retirementListeners.get(runtime) ?? new Set<VerifyAttemptRetirementListener>();
   listeners.add(listener);
   retirementListeners.set(runtime, listeners);
@@ -48,13 +43,15 @@ export function retireOpenVerifyAttemptsForWorkItemInTransaction(
   runtime: TaskBoardRuntime,
   workItemId: string,
   reason: string,
-  now: string,
+  now: string
 ): number {
   if (!runtime.store.hasOpenTransaction) {
     throw new Error("TASK_BOARD_VERIFY_ATTEMPT_RETIREMENT_TRANSACTION_REQUIRED");
   }
   const detail = redactForPersistence(`Retired after work item cancellation: ${reason}`, 4_000);
-  const attempts = runtime.store.db.prepare(`
+  const attempts = runtime.store.db
+    .prepare(
+      `
     SELECT verify.verify_attempt_id, verify.state
     FROM verify_attempts verify
     JOIN work_nodes node ON node.node_id=verify.node_id
@@ -62,8 +59,12 @@ export function retireOpenVerifyAttemptsForWorkItemInTransaction(
     WHERE verify.state IN ('starting','running','failed_to_start')
       AND plan.work_item_id=?
     ORDER BY verify.created_at, verify.verify_attempt_id
-  `).all(workItemId) as Array<{ verify_attempt_id: string; state: OpenAttemptState }>;
-  const retired = runtime.store.db.prepare(`
+  `
+    )
+    .all(workItemId) as Array<{ verify_attempt_id: string; state: OpenAttemptState }>;
+  const retired = runtime.store.db
+    .prepare(
+      `
     UPDATE verify_attempts
     SET state='retired',detail=?,ended_at=?
     WHERE state IN ('starting','running','failed_to_start')
@@ -73,12 +74,16 @@ export function retireOpenVerifyAttemptsForWorkItemInTransaction(
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         WHERE plan.work_item_id=?
       )
-  `).run(detail, now, workItemId);
+  `
+    )
+    .run(detail, now, workItemId);
   if (Number(retired.changes) > 0 && attempts.length > 0) {
-    const retirements = attempts.map((attempt) => Object.freeze({
-      verifyAttemptId: String(attempt.verify_attempt_id),
-      previousState: String(attempt.state) as OpenAttemptState,
-    }));
+    const retirements = attempts.map((attempt) =>
+      Object.freeze({
+        verifyAttemptId: String(attempt.verify_attempt_id),
+        previousState: String(attempt.state) as OpenAttemptState,
+      })
+    );
     runtime.store.afterCommit(() => {
       for (const listener of retirementListeners.get(runtime) ?? []) {
         for (const retirement of retirements) listener(retirement);
@@ -117,7 +122,7 @@ export interface VerifyAttemptsDependencies {
     nodeId: string,
     stage: WorkflowStage,
     passed: boolean,
-    evidence: MachineVerifyEvidence,
+    evidence: MachineVerifyEvidence
   ) => readonly WorkNode[];
   readonly activateNodes: (nodes: readonly WorkNode[]) => void;
   readonly reconcileProject: (projectId: string) => void;
@@ -157,14 +162,19 @@ function errorDetail(error: unknown): string {
 
 function redactedCheckOutcome(checks: CheckOutcome): CheckOutcome {
   return Object.freeze({
-    results: Object.freeze(checks.results.map((result) => Object.freeze({
-      criterion: redactForPersistence(result.criterion),
-      check: redactForPersistence(result.check),
-      passed: result.passed,
-    }))),
+    results: Object.freeze(
+      checks.results.map((result) =>
+        Object.freeze({
+          criterion: redactForPersistence(result.criterion),
+          check: redactForPersistence(result.check),
+          passed: result.passed,
+        })
+      )
+    ),
     failures: Object.freeze(checks.failures.map((failure) => redactForPersistence(failure))),
-    failureDetailsByIndex: Object.freeze(checks.failureDetailsByIndex.map((failure) =>
-      failure === null ? null : redactForPersistence(failure))),
+    failureDetailsByIndex: Object.freeze(
+      checks.failureDetailsByIndex.map((failure) => (failure === null ? null : redactForPersistence(failure)))
+    ),
   });
 }
 
@@ -223,26 +233,31 @@ function executeCriterionCheck(command: string, cwd: string, signal: AbortSignal
   const [program, ...args] = argv;
   if (program === undefined) return Promise.resolve({ passed: false, detail: "criterion check is empty" });
   return new Promise((resolve) => {
-    execFile(program, args, {
-      cwd,
-      encoding: "utf8",
-      timeout: CHECK_TIMEOUT_MS,
-      maxBuffer: CHECK_MAX_BYTES,
-      windowsHide: true,
-      shell: false,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      signal,
-    }, (error, stdout, stderr) => {
-      if (error === null) {
-        resolve({ passed: true, detail: "exit 0" });
-        return;
+    execFile(
+      program,
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        timeout: CHECK_TIMEOUT_MS,
+        maxBuffer: CHECK_MAX_BYTES,
+        windowsHide: true,
+        shell: false,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        signal,
+      },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve({ passed: true, detail: "exit 0" });
+          return;
+        }
+        const output = `${stderr}${stdout}`.trim();
+        resolve({
+          passed: false,
+          detail: redactForPersistence(output.length > 0 ? output : error.message, 2_000),
+        });
       }
-      const output = `${stderr}${stdout}`.trim();
-      resolve({
-        passed: false,
-        detail: redactForPersistence(output.length > 0 ? output : error.message, 2_000),
-      });
-    });
+    );
   });
 }
 
@@ -273,9 +288,10 @@ function verifyAttempt(row: Row): VerifyAttempt {
     verifyRunId: row.verify_run_id === null ? null : String(row.verify_run_id),
     workspacePath: row.workspace_path === null ? null : String(row.workspace_path),
     state: String(row.state) as VerifyAttempt["state"],
-    checkResults: row.check_results_json === null
-      ? null
-      : Object.freeze(JSON.parse(String(row.check_results_json)) as NonNullable<VerifyAttempt["checkResults"]>),
+    checkResults:
+      row.check_results_json === null
+        ? null
+        : Object.freeze(JSON.parse(String(row.check_results_json)) as NonNullable<VerifyAttempt["checkResults"]>),
     detail: row.detail === null ? null : String(row.detail),
     createdAt: String(row.created_at),
     endedAt: row.ended_at === null ? null : String(row.ended_at),
@@ -301,14 +317,16 @@ export class VerifyAttemptsCollaborator {
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
-    private readonly dependencies: VerifyAttemptsDependencies,
+    private readonly dependencies: VerifyAttemptsDependencies
   ) {
     this.#supervisorPath = dependencies.supervisorPath ?? DEFAULT_SUPERVISOR_PATH;
-    this.#workspaceManagerFactory = dependencies.workspaceManagerFactory ?? ((repositoryPath) =>
-      new TaskWorkspaceManager({
-        workspaceRoot: runtime.config.verifyWorkspaceRoot,
-        repositoryPath,
-      }));
+    this.#workspaceManagerFactory =
+      dependencies.workspaceManagerFactory ??
+      ((repositoryPath) =>
+        new TaskWorkspaceManager({
+          workspaceRoot: runtime.config.verifyWorkspaceRoot,
+          repositoryPath,
+        }));
     this.#runnerFactory = dependencies.runnerFactory ?? ((options) => new VerifyRunner(options));
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
     this.#git = dependencies.git ?? runDeclaredScopeGit;
@@ -323,51 +341,74 @@ export class VerifyAttemptsCollaborator {
   }
 
   listForWorkItem(workItemId: string): readonly VerifyAttempt[] {
-    return Object.freeze((this.runtime.store.db.prepare(`
+    return Object.freeze(
+      (
+        this.runtime.store.db
+          .prepare(
+            `
       SELECT verify.*
       FROM verify_attempts verify
       JOIN work_nodes node ON node.node_id=verify.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       WHERE plan.work_item_id=? AND plan.state='confirmed'
       ORDER BY verify.created_at,verify.verify_attempt_id
-    `).all(workItemId) as Row[]).map(verifyAttempt));
+    `
+          )
+          .all(workItemId) as Row[]
+      ).map(verifyAttempt)
+    );
   }
 
   createStartingAttemptInTransaction(nodeId: string, stage: WorkflowStage): StartingVerifyAttemptResult {
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT node.project_id, node.title, node.state, node.current_stage, item.pipeline_branch
       FROM work_nodes node
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE node.node_id=?
-    `).get(nodeId) as Row | undefined;
-    if (
-      row === undefined ||
-      row.current_stage !== stage ||
-      (row.state !== "ready" && row.state !== "blocked")
-    ) return Object.freeze({ kind: "ineligible" });
+    `
+      )
+      .get(nodeId) as Row | undefined;
+    if (row === undefined || row.current_stage !== stage || (row.state !== "ready" && row.state !== "blocked"))
+      return Object.freeze({ kind: "ineligible" });
     if (row.pipeline_branch === null) return Object.freeze({ kind: "pipeline_required" });
-    const attempt = Number(this.runtime.store.db.prepare(`
+    const attempt = Number(
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT COALESCE(MAX(prior.attempt), 0) + 1 AS next_attempt
       FROM (
         SELECT attempt FROM verify_attempts WHERE node_id=? AND stage=?
         UNION ALL
         SELECT attempt FROM stage_attempts WHERE node_id=? AND stage=?
       ) prior
-    `).get(nodeId, stage, nodeId, stage)?.next_attempt);
+    `
+        )
+        .get(nodeId, stage, nodeId, stage)?.next_attempt
+    );
     const verifyAttemptId = `verify_${randomUUID()}`;
     const now = exactNow(this.runtime.config.now);
-    this.runtime.store.db.prepare(`
+    this.runtime.store.db
+      .prepare(
+        `
       INSERT INTO verify_attempts(
         verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
         state, check_results_json, detail, created_at, ended_at
       ) VALUES (?, ?, ?, ?, NULL, NULL, 'starting', NULL, NULL, ?, NULL)
-    `).run(verifyAttemptId, nodeId, stage, attempt, now);
-    const updated = this.runtime.store.db.prepare(`
+    `
+      )
+      .run(verifyAttemptId, nodeId, stage, attempt, now);
+    const updated = this.runtime.store.db
+      .prepare(
+        `
       UPDATE work_nodes
       SET state='active',version=version+1,updated_at=?
       WHERE node_id=? AND current_stage=? AND state IN ('ready','blocked')
-    `).run(now, nodeId, stage);
+    `
+      )
+      .run(now, nodeId, stage);
     if (Number(updated.changes) !== 1) throw new Error("TASK_BOARD_MACHINE_VERIFY_ACTIVATION_CONFLICT");
     return Object.freeze({ kind: "created", verifyAttemptId });
   }
@@ -385,9 +426,11 @@ export class VerifyAttemptsCollaborator {
     if (this.#sweepInFlight !== null) return this.#sweepInFlight;
     const sweep = this.#sweepAndDrainRetirements();
     this.#sweepInFlight = sweep;
-    void sweep.finally(() => {
-      if (this.#sweepInFlight === sweep) this.#sweepInFlight = null;
-    }).catch(() => undefined);
+    void sweep
+      .finally(() => {
+        if (this.#sweepInFlight === sweep) this.#sweepInFlight = null;
+      })
+      .catch(() => undefined);
     return sweep;
   }
 
@@ -400,7 +443,7 @@ export class VerifyAttemptsCollaborator {
   async #sweepAndDrainRetirements(): Promise<number> {
     await this.#drainRetirements();
     if (this.#closed) return 0;
-    const processed = await this.#sweepRetiredAttempts() + await this.#sweepOpenAttempts();
+    const processed = (await this.#sweepRetiredAttempts()) + (await this.#sweepOpenAttempts());
     await this.#drainRetirements();
     return processed;
   }
@@ -429,7 +472,10 @@ export class VerifyAttemptsCollaborator {
         });
         terminated = await this.#terminateBestEffort(current.verifyAttemptId, runner, current.verifyRunId);
       } catch (error) {
-        console.error(`[task-board] could not prepare termination for retired verify attempt ${verifyAttemptId}`, error);
+        console.error(
+          `[task-board] could not prepare termination for retired verify attempt ${verifyAttemptId}`,
+          error
+        );
       }
     }
     let workspaceRemoved = current.workspacePath === null;
@@ -440,7 +486,7 @@ export class VerifyAttemptsCollaborator {
           current.verifyAttemptId,
           workspace,
           current.workItemId,
-          current.workspacePath,
+          current.workspacePath
         );
       } catch (error) {
         console.error(`[task-board] could not prepare retired verify workspace cleanup for ${verifyAttemptId}`, error);
@@ -448,27 +494,40 @@ export class VerifyAttemptsCollaborator {
           await removeRecordedTaskWorkspace(this.runtime.config.verifyWorkspaceRoot, current.workspacePath);
           workspaceRemoved = true;
         } catch (cleanupError) {
-          console.error(`[task-board] could not remove recorded verify workspace for ${current.workItemId}`, cleanupError);
+          console.error(
+            `[task-board] could not remove recorded verify workspace for ${current.workItemId}`,
+            cleanupError
+          );
         }
       }
     }
     if (this.#closed) return;
-    this.runtime.store.db.prepare(`
+    this.runtime.store.db
+      .prepare(
+        `
       UPDATE verify_attempts
       SET verify_run_id=CASE WHEN ?=1 THEN NULL ELSE verify_run_id END,
         workspace_path=CASE WHEN ?=1 THEN NULL ELSE workspace_path END
       WHERE verify_attempt_id=? AND state='retired'
-    `).run(terminated ? 1 : 0, workspaceRemoved ? 1 : 0, verifyAttemptId);
+    `
+      )
+      .run(terminated ? 1 : 0, workspaceRemoved ? 1 : 0, verifyAttemptId);
   }
 
   async #sweepRetiredAttempts(): Promise<number> {
     if (this.#closed) return 0;
-    const attemptIds = (this.runtime.store.db.prepare(`
+    const attemptIds = (
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT verify_attempt_id
       FROM verify_attempts
       WHERE state='retired' AND (verify_run_id IS NOT NULL OR workspace_path IS NOT NULL)
       ORDER BY created_at,verify_attempt_id
-    `).all() as Row[]).map((row) => String(row.verify_attempt_id));
+    `
+        )
+        .all() as Row[]
+    ).map((row) => String(row.verify_attempt_id));
     let processed = 0;
     for (const verifyAttemptId of attemptIds) {
       if (this.#closed) break;
@@ -480,12 +539,18 @@ export class VerifyAttemptsCollaborator {
 
   async #sweepOpenAttempts(): Promise<number> {
     if (this.#closed) return 0;
-    const attemptIds = (this.runtime.store.db.prepare(`
+    const attemptIds = (
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT verify_attempt_id
       FROM verify_attempts
       WHERE state IN ('starting','running','failed_to_start')
       ORDER BY created_at, verify_attempt_id
-    `).all() as Row[]).map((row) => String(row.verify_attempt_id));
+    `
+        )
+        .all() as Row[]
+    ).map((row) => String(row.verify_attempt_id));
     let processed = 0;
     for (const verifyAttemptId of attemptIds) {
       if (this.#closed) break;
@@ -501,7 +566,9 @@ export class VerifyAttemptsCollaborator {
   }
 
   #context(verifyAttemptId: string): AttemptContext | undefined {
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT
         verify.*,
         plan.work_item_id,
@@ -515,7 +582,9 @@ export class VerifyAttemptsCollaborator {
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE verify.verify_attempt_id=?
-    `).get(verifyAttemptId) as Row | undefined;
+    `
+      )
+      .get(verifyAttemptId) as Row | undefined;
     return row === undefined ? undefined : attemptContext(row);
   }
 
@@ -538,7 +607,7 @@ export class VerifyAttemptsCollaborator {
       workspacePath = await workspace.create(
         `${current.workItemId}${VERIFY_WORKSPACE_SUFFIX}`,
         current.baseSha ?? undefined,
-        current.workItemId,
+        current.workItemId
       );
       const beforeSpawn = this.#context(verifyAttemptId);
       if (
@@ -580,11 +649,15 @@ export class VerifyAttemptsCollaborator {
       }
       let started = false;
       this.runtime.store.transaction(() => {
-        const update = this.runtime.store.db.prepare(`
+        const update = this.runtime.store.db
+          .prepare(
+            `
           UPDATE verify_attempts
           SET state='running',verify_run_id=?,workspace_path=?,detail=NULL
           WHERE verify_attempt_id=? AND state IN ('starting','failed_to_start')
-        `).run(verifyRunId, workspacePath, verifyAttemptId);
+        `
+          )
+          .run(verifyRunId, workspacePath, verifyAttemptId);
         started = Number(update.changes) === 1;
       });
       if (!started) {
@@ -615,26 +688,31 @@ export class VerifyAttemptsCollaborator {
       const failedAttempt = current;
       const failures = startFailureCount(current.detail) + 1;
       const safeError = errorDetail(error);
-      const detail = redactForPersistence(
-        `[machine-verify-start-failures:${failures}] ${safeError}`,
-        4_000,
-      );
+      const detail = redactForPersistence(`[machine-verify-start-failures:${failures}] ${safeError}`, 4_000);
       let settledNodes: readonly WorkNode[] = [];
       this.runtime.store.transaction(() => {
         if (failures < 2) {
-          this.runtime.store.db.prepare(`
+          this.runtime.store.db
+            .prepare(
+              `
             UPDATE verify_attempts
             SET state='failed_to_start',workspace_path=?,detail=?
             WHERE verify_attempt_id=? AND state IN ('starting','failed_to_start')
-          `).run(workspacePath, detail, verifyAttemptId);
+          `
+            )
+            .run(workspacePath, detail, verifyAttemptId);
           return;
         }
         const now = exactNow(this.runtime.config.now);
-        this.runtime.store.db.prepare(`
+        this.runtime.store.db
+          .prepare(
+            `
           UPDATE verify_attempts
           SET state='failed',workspace_path=?,detail=?,ended_at=?
           WHERE verify_attempt_id=? AND state IN ('starting','failed_to_start')
-        `).run(workspacePath, detail, now, verifyAttemptId);
+        `
+          )
+          .run(workspacePath, detail, now, verifyAttemptId);
         settledNodes = this.dependencies.settleInTransaction(
           failedAttempt.nodeId,
           failedAttempt.stage,
@@ -644,7 +722,7 @@ export class VerifyAttemptsCollaborator {
             evidence: Object.freeze([detail]),
             acceptanceCriteria: Object.freeze([]),
             blockers: Object.freeze([safeError]),
-          }),
+          })
         );
       });
       if (failures >= 2) {
@@ -707,7 +785,7 @@ export class VerifyAttemptsCollaborator {
     if (checks.failures.length > 0) {
       const detail = redactForPersistence(
         `Machine verify criterion checks failed: ${checks.failures.join("; ")}`,
-        4_000,
+        4_000
       );
       await this.#finalize(current, "failed", checks, detail, false);
     } else {
@@ -715,8 +793,14 @@ export class VerifyAttemptsCollaborator {
       try {
         if (current.workspacePath === null) throw new Error("verify workspace path is unavailable");
         verifiedSha = this.#git([
-          "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", current.workspacePath,
-          "rev-parse", "HEAD",
+          "-c",
+          "core.fsmonitor=",
+          "-c",
+          "core.hooksPath=",
+          "-C",
+          current.workspacePath,
+          "rev-parse",
+          "HEAD",
         ]).trim();
         if (!GIT_OBJECT_ID_PATTERN.test(verifiedSha) || verifiedSha.length !== 40) {
           throw new Error("git returned an invalid verified object id");
@@ -725,7 +809,7 @@ export class VerifyAttemptsCollaborator {
         await this.#finalizeFailure(
           current,
           "died",
-          `Machine verify could not record the verified branch tip: ${errorDetail(error)}`,
+          `Machine verify could not record the verified branch tip: ${errorDetail(error)}`
         );
         return true;
       }
@@ -735,7 +819,7 @@ export class VerifyAttemptsCollaborator {
         checks,
         "Machine verify and criterion checks passed.",
         true,
-        `verified-sha:${verifiedSha}`,
+        `verified-sha:${verifiedSha}`
       );
     }
     return true;
@@ -784,11 +868,7 @@ export class VerifyAttemptsCollaborator {
     });
   }
 
-  async #finalizeFailure(
-    current: AttemptContext,
-    state: "failed" | "died",
-    detail: string,
-  ): Promise<void> {
+  async #finalizeFailure(current: AttemptContext, state: "failed" | "died", detail: string): Promise<void> {
     await this.#finalize(
       current,
       state,
@@ -798,7 +878,7 @@ export class VerifyAttemptsCollaborator {
         failureDetailsByIndex: Object.freeze([]),
       }),
       detail,
-      false,
+      false
     );
   }
 
@@ -808,7 +888,7 @@ export class VerifyAttemptsCollaborator {
     checks: CheckOutcome,
     detail: string,
     passed: boolean,
-    storedDetail = detail,
+    storedDetail = detail
   ): Promise<void> {
     if (this.#closed) return;
     const safeChecks = redactedCheckOutcome(checks);
@@ -817,17 +897,21 @@ export class VerifyAttemptsCollaborator {
     let settledNodes: readonly WorkNode[] = [];
     let settled = false;
     this.runtime.store.transaction(() => {
-      const update = this.runtime.store.db.prepare(`
+      const update = this.runtime.store.db
+        .prepare(
+          `
         UPDATE verify_attempts
         SET state=?,check_results_json=?,detail=?,ended_at=?
         WHERE verify_attempt_id=? AND state='running'
-      `).run(
-        state,
-        JSON.stringify(safeChecks.results),
-        safeStoredDetail,
-        exactNow(this.runtime.config.now),
-        current.verifyAttemptId,
-      );
+      `
+        )
+        .run(
+          state,
+          JSON.stringify(safeChecks.results),
+          safeStoredDetail,
+          exactNow(this.runtime.config.now),
+          current.verifyAttemptId
+        );
       if (Number(update.changes) !== 1) return;
       const criterionResults = current.criterionChecks.map((criterion, index) => {
         const safeCriterion = redactForPersistence(criterion.criterion);
@@ -835,9 +919,10 @@ export class VerifyAttemptsCollaborator {
         return Object.freeze({
           criterion: safeCriterion,
           passed: safeChecks.results[index]?.passed ?? false,
-          evidence: safeChecks.results[index]?.passed === true
-            ? `Passed: ${safeCheck}`
-            : safeChecks.failureDetailsByIndex[index] ?? `Failed: ${safeCheck}`,
+          evidence:
+            safeChecks.results[index]?.passed === true
+              ? `Passed: ${safeCheck}`
+              : (safeChecks.failureDetailsByIndex[index] ?? `Failed: ${safeCheck}`),
         });
       });
       settledNodes = this.dependencies.settleInTransaction(
@@ -849,7 +934,7 @@ export class VerifyAttemptsCollaborator {
           evidence: Object.freeze([safeDetail]),
           acceptanceCriteria: Object.freeze(criterionResults),
           blockers: Object.freeze(passed ? [] : [...safeChecks.failures]),
-        }),
+        })
       );
       settled = true;
     });
@@ -865,14 +950,13 @@ export class VerifyAttemptsCollaborator {
     const workspace = this.#workspaceManagerFactory(current.repositoryPath);
     if (passed) {
       await this.#removeAttemptWorkspaceBestEffort(current.verifyAttemptId, workspace, current.workItemId);
-    }
-    else await this.#retainBestEffort(workspace, current.workItemId);
+    } else await this.#retainBestEffort(workspace, current.workItemId);
   }
 
   async #terminateBestEffort(
     verifyAttemptId: string,
     runner: MachineVerifyRunner,
-    verifyRunId: string,
+    verifyRunId: string
   ): Promise<boolean> {
     if (this.#terminationClaims.has(verifyAttemptId)) return false;
     this.#terminationClaims.add(verifyAttemptId);
@@ -891,7 +975,7 @@ export class VerifyAttemptsCollaborator {
     verifyAttemptId: string,
     workspace: MachineVerifyWorkspaceManager,
     workItemId: string,
-    recordedPath?: string,
+    recordedPath?: string
   ): Promise<boolean> {
     if (this.#workspaceCleanupClaims.has(verifyAttemptId)) return false;
     this.#workspaceCleanupClaims.add(verifyAttemptId);

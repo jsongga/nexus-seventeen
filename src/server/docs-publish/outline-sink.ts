@@ -1,19 +1,7 @@
-import {
-  OutlineClient,
-  OutlineHttpError,
-  type OutlineClientOptions,
-} from "./client.js";
+import { OutlineClient, OutlineHttpError, type OutlineClientOptions } from "./client.js";
 import { isDocSourcePath } from "./enumerate.js";
-import {
-  OUTLINE_RETRY_OPTIONS,
-  type RetrySleeper,
-  withRetry,
-} from "./retry.js";
-import type {
-  DocsSink,
-  SinkCollection,
-  SinkDocument,
-} from "./sink.js";
+import { OUTLINE_RETRY_OPTIONS, type RetrySleeper, withRetry } from "./retry.js";
+import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
 
 const PAGE_LIMIT = 100;
 
@@ -91,18 +79,12 @@ function fullDocument(value: unknown, expected: SinkDocument, label: string): Si
   return Object.freeze({ id, title, text: item.text });
 }
 
-function nextOffset(
-  response: Record<string, unknown>,
-  currentOffset: number,
-  label: string,
-): number | null {
+function nextOffset(response: Record<string, unknown>, currentOffset: number, label: string): number | null {
   const pagination = record(response.pagination, `${label}.pagination`);
   if (!Number.isSafeInteger(pagination.total) || Number(pagination.total) < 0) {
     throw new Error(`${label}.pagination.total must be a non-negative integer`);
   }
-  return currentOffset + PAGE_LIMIT < Number(pagination.total)
-    ? currentOffset + PAGE_LIMIT
-    : null;
+  return currentOffset + PAGE_LIMIT < Number(pagination.total) ? currentOffset + PAGE_LIMIT : null;
 }
 
 function pageBody(base: Readonly<Record<string, unknown>>, offset: number): Record<string, unknown> {
@@ -139,7 +121,7 @@ export class OutlineSink implements DocsSink {
     while (true) {
       const response = envelope(
         await this.#client.request("/api/collections.list", pageBody({ limit: PAGE_LIMIT }, offset)),
-        "collections.list",
+        "collections.list"
       );
       const page = parseCollections(response.data, "collections.list.data");
       const match = page.find((candidate) => candidate.name === name);
@@ -155,11 +137,7 @@ export class OutlineSink implements DocsSink {
     const match = await this.#findCollectionOnce(name);
     if (match === undefined) return undefined;
     if (match.permission !== "read") {
-      await this.#dataOnce(
-        "/api/collections.update",
-        { id: match.id, permission: "read" },
-        "collections.update",
-      );
+      await this.#dataOnce("/api/collections.update", { id: match.id, permission: "read" }, "collections.update");
     }
     return Object.freeze({ id: match.id, name: match.name });
   }
@@ -170,17 +148,14 @@ export class OutlineSink implements DocsSink {
 
     try {
       const created = parseCollection(
-        await this.#dataOnce(
-          "/api/collections.create",
-          { name, permission: "read" },
-          "collections.create",
-        ),
-        "collections.create.data",
+        await this.#dataOnce("/api/collections.create", { name, permission: "read" }, "collections.create"),
+        "collections.create.data"
       );
       return Object.freeze({ id: created.id, name: created.name });
     } catch (error) {
       if (
-        !(error instanceof OutlineHttpError) || error.status === 429 ||
+        !(error instanceof OutlineHttpError) ||
+        error.status === 429 ||
         (error.status >= 500 && error.status <= 599)
       ) {
         throw error;
@@ -196,18 +171,15 @@ export class OutlineSink implements DocsSink {
     return this.#retry(() => this.#ensureCollectionOnce(name));
   }
 
-  async #findDocumentByTitleOnce(
-    collection: SinkCollection,
-    title: string,
-  ): Promise<SinkDocument | undefined> {
+  async #findDocumentByTitleOnce(collection: SinkCollection, title: string): Promise<SinkDocument | undefined> {
     let offset = 0;
     while (true) {
       const response = envelope(
         await this.#client.request(
           "/api/documents.list",
-          pageBody({ collectionId: collection.id, limit: PAGE_LIMIT }, offset),
+          pageBody({ collectionId: collection.id, limit: PAGE_LIMIT }, offset)
         ),
-        "documents.list",
+        "documents.list"
       );
       const page = documentSummaries(response.data, "documents.list.data");
       const match = page.find((candidate) => candidate.title === title);
@@ -224,11 +196,11 @@ export class OutlineSink implements DocsSink {
     await this.#retry(async () => {
       const retrying = attempt > 0;
       attempt += 1;
-      if (retrying && await this.#findDocumentByTitleOnce(collection, title) !== undefined) return;
+      if (retrying && (await this.#findDocumentByTitleOnce(collection, title)) !== undefined) return;
       await this.#dataOnce(
         "/api/documents.create",
         { collectionId: collection.id, title, text, publish: true },
-        "documents.create",
+        "documents.create"
       );
     });
   }
@@ -240,9 +212,9 @@ export class OutlineSink implements DocsSink {
       const response = envelope(
         await this.#request(
           "/api/documents.list",
-          pageBody({ collectionId: collection.id, limit: PAGE_LIMIT }, offset),
+          pageBody({ collectionId: collection.id, limit: PAGE_LIMIT }, offset)
         ),
-        "documents.list",
+        "documents.list"
       );
       const page = documentSummaries(response.data, "documents.list.data");
       summaries.push(...page);
@@ -257,21 +229,19 @@ export class OutlineSink implements DocsSink {
         documents.push(summary);
         continue;
       }
-      documents.push(fullDocument(
-        await this.#data("/api/documents.info", { id: summary.id }, "documents.info"),
-        summary,
-        "documents.info.data",
-      ));
+      documents.push(
+        fullDocument(
+          await this.#data("/api/documents.info", { id: summary.id }, "documents.info"),
+          summary,
+          "documents.info.data"
+        )
+      );
     }
     return Object.freeze(documents);
   }
 
   async updateDocument(documentId: string, title: string, text: string): Promise<void> {
-    await this.#data(
-      "/api/documents.update",
-      { id: documentId, title, text },
-      "documents.update",
-    );
+    await this.#data("/api/documents.update", { id: documentId, title, text }, "documents.update");
   }
 
   async archiveDocument(documentId: string): Promise<void> {

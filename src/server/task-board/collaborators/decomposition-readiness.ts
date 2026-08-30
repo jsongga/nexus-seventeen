@@ -7,14 +7,8 @@ import type {
   WorkItemPhase,
   WorkItemState,
 } from "#shared/task-board-contract";
-import {
-  WORK_ITEM_TERMINAL_STATES,
-  isTerminalWorkItemState,
-} from "#shared/task-board-contract";
-import {
-  PUBLISHED_INTERFACE_PATH,
-  type PublishedInterfaceReadResult,
-} from "./interface-context.js";
+import { WORK_ITEM_TERMINAL_STATES, isTerminalWorkItemState } from "#shared/task-board-contract";
+import { PUBLISHED_INTERFACE_PATH, type PublishedInterfaceReadResult } from "./interface-context.js";
 
 export interface DecompositionReadinessBlocker {
   readonly workItemId: string;
@@ -43,15 +37,11 @@ export type MigrateInterfaceReadiness =
 export type PublishedInterfaceReader = (
   repoPath: string,
   sha: string,
-  path: typeof PUBLISHED_INTERFACE_PATH,
+  path: typeof PUBLISHED_INTERFACE_PATH
 ) => PublishedInterfaceReadResult;
 
-const FAILED_TERMINAL_WORK_ITEM_STATES = WORK_ITEM_TERMINAL_STATES.filter(
-  (state) => state !== "merged",
-);
-const FAILED_TERMINAL_WORK_ITEM_STATES_SQL = FAILED_TERMINAL_WORK_ITEM_STATES
-  .map((state) => `'${state}'`)
-  .join(",");
+const FAILED_TERMINAL_WORK_ITEM_STATES = WORK_ITEM_TERMINAL_STATES.filter((state) => state !== "merged");
+const FAILED_TERMINAL_WORK_ITEM_STATES_SQL = FAILED_TERMINAL_WORK_ITEM_STATES.map((state) => `'${state}'`).join(",");
 
 export function isFailedTerminalWorkItemState(state: WorkItemState): boolean {
   return state !== "merged" && isTerminalWorkItemState(state);
@@ -60,7 +50,7 @@ export function isFailedTerminalWorkItemState(state: WorkItemState): boolean {
 /** Mirrors the claim-side role gate for published provider context. */
 export function migrateTaskCarriesCrossRepoContext(
   stage: WorkflowStage | string,
-  assignedRole: AgentRole | string | null,
+  assignedRole: AgentRole | string | null
 ): boolean {
   return stage === "implementation" && assignedRole === "engineer";
 }
@@ -68,7 +58,7 @@ export function migrateTaskCarriesCrossRepoContext(
 /** The parent row and every child row form one project-scoped family. */
 export function decompositionFamilyTouchesProjectSql(
   parentWorkItemIdExpression: string,
-  projectIdExpression: string,
+  projectIdExpression: string
 ): string {
   return `EXISTS(
     SELECT 1
@@ -90,9 +80,11 @@ export function decompositionFamilyTouchesProjectSql(
  */
 export function decompositionReadinessBlocker(
   db: DatabaseSync,
-  workItemId: string,
+  workItemId: string
 ): DecompositionReadinessBlocker | null {
-  const owner = db.prepare(`
+  const owner = db
+    .prepare(
+      `
     SELECT owner.parent_work_item_id,owner.phase,
       EXISTS(
         SELECT 1
@@ -102,15 +94,22 @@ export function decompositionReadinessBlocker(
       ) AS parent_is_phased
     FROM work_items owner
     WHERE owner.work_item_id=?
-  `).get(workItemId) as Readonly<{
-    parent_work_item_id: string | null;
-    phase: WorkItemPhase | null;
-    parent_is_phased: number;
-  }> | undefined;
+  `
+    )
+    .get(workItemId) as
+    | Readonly<{
+        parent_work_item_id: string | null;
+        phase: WorkItemPhase | null;
+        parent_is_phased: number;
+      }>
+    | undefined;
   if (owner === undefined || owner.parent_work_item_id === null) return null;
   if (owner.parent_is_phased !== 1) return null;
-  const row = owner.phase === "contract"
-    ? db.prepare(`
+  const row =
+    owner.phase === "contract"
+      ? db
+          .prepare(
+            `
         SELECT sibling.work_item_id,sibling.phase,sibling.state,
           EXISTS(
             SELECT 1 FROM gate_actions attestation
@@ -137,8 +136,12 @@ export function decompositionReadinessBlocker(
           sibling.child_ordinal,
           sibling.work_item_id
         LIMIT 1
-      `).get(owner.parent_work_item_id)
-    : db.prepare(`
+      `
+          )
+          .get(owner.parent_work_item_id)
+      : db
+          .prepare(
+            `
         SELECT predecessor.work_item_id,predecessor.phase,predecessor.state,0 AS deploy_attested
         FROM work_item_dependencies dependency
         JOIN work_items predecessor
@@ -146,7 +149,9 @@ export function decompositionReadinessBlocker(
         WHERE dependency.work_item_id=? AND predecessor.state<>'merged'
         ORDER BY predecessor.child_ordinal,predecessor.work_item_id
         LIMIT 1
-      `).get(workItemId);
+      `
+          )
+          .get(workItemId);
   if (row === undefined) return null;
   const blocker = row as Readonly<{
     work_item_id: string;
@@ -163,11 +168,10 @@ export function decompositionReadinessBlocker(
 }
 
 /** Resolves the newest durable Expand merge used by a Migrate child. */
-export function migrateInterfaceProvider(
-  db: DatabaseSync,
-  workItemId: string,
-): MigrateInterfaceProvider | null {
-  const provider = db.prepare(`
+export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): MigrateInterfaceProvider | null {
+  const provider = db
+    .prepare(
+      `
     SELECT predecessor.work_item_id,predecessor.state,
       project.project_id,project.name,project.repo_path,
       (
@@ -188,14 +192,18 @@ export function migrateInterfaceProvider(
     WHERE dependency.work_item_id=?
     ORDER BY predecessor.child_ordinal,predecessor.work_item_id
     LIMIT 1
-  `).get(workItemId) as Readonly<{
-    work_item_id: string;
-    state: WorkItemState;
-    project_id: string;
-    name: string;
-    repo_path: string;
-    merge_sha: string | null;
-  }> | undefined;
+  `
+    )
+    .get(workItemId) as
+    | Readonly<{
+        work_item_id: string;
+        state: WorkItemState;
+        project_id: string;
+        name: string;
+        repo_path: string;
+        merge_sha: string | null;
+      }>
+    | undefined;
   if (provider === undefined || provider.state !== "merged" || provider.merge_sha === null) return null;
   return Object.freeze({
     workItemId: provider.work_item_id,
@@ -208,7 +216,7 @@ export function migrateInterfaceProvider(
 
 export function publishedInterfaceBlockSummary(
   result: Exclude<PublishedInterfaceReadResult, { kind: "present" }>,
-  sha: string,
+  sha: string
 ): string {
   if (result.reason === "invalid_markdown" && result.detail === "invalid_utf8") {
     return `blocked: provider docs/interface.md contains invalid UTF-8 at ${sha}; cancel the parent to abandon the decomposition`;
@@ -217,7 +225,7 @@ export function publishedInterfaceBlockSummary(
 }
 
 export function publishedInterfaceFailureLabel(
-  result: Exclude<PublishedInterfaceReadResult, { kind: "present" }>,
+  result: Exclude<PublishedInterfaceReadResult, { kind: "present" }>
 ): string {
   if (result.reason === "invalid_markdown") {
     return result.detail === "invalid_utf8" ? "invalid UTF-8" : "prohibited characters";
@@ -229,7 +237,7 @@ export function publishedInterfaceReasonSummary(
   reason: PublishedInterfaceFailureReason,
   sha: string,
   assembledBytes?: number,
-  budgetBytes?: number,
+  budgetBytes?: number
 ): string {
   switch (reason) {
     case "absent":
@@ -256,7 +264,7 @@ export function publishedInterfaceReasonSummary(
 export function migrateInterfaceReadiness(
   db: DatabaseSync,
   workItemId: string,
-  read: PublishedInterfaceReader,
+  read: PublishedInterfaceReader
 ): MigrateInterfaceReadiness | null {
   const provider = migrateInterfaceProvider(db, workItemId);
   if (provider === null) return null;

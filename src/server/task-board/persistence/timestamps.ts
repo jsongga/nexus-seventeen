@@ -19,7 +19,7 @@ export function expectedCompletedAt(
   status: TaskStatus,
   startedAt: string | null,
   estimateRecordedAt: string | null,
-  minutes: number | null,
+  minutes: number | null
 ): string | null {
   if (status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled") return null;
   if (startedAt === null || estimateRecordedAt === null || minutes === null) return null;

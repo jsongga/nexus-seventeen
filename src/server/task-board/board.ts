@@ -67,10 +67,7 @@ import { TaskBoardError } from "./errors.js";
 import { AgentsCollaborator } from "./collaborators/agents.js";
 import { AutomationCollaborator } from "./collaborators/automation.js";
 import { BoardPauseCollaborator } from "./collaborators/board-pause.js";
-import {
-  BaseBranchPollCollaborator,
-  type BaseBranchSweepResult,
-} from "./collaborators/base-branch-poll.js";
+import { BaseBranchPollCollaborator, type BaseBranchSweepResult } from "./collaborators/base-branch-poll.js";
 import { LedgersCollaborator } from "./collaborators/ledgers.js";
 import { MessagesCollaborator } from "./collaborators/messages.js";
 import {
@@ -78,31 +75,14 @@ import {
   type NotificationDeliveryAdapter,
   type NotificationList,
 } from "./collaborators/notifications.js";
-import {
-  ParkLifecycleCollaborator,
-  type ParkLifecycleSweepResult,
-} from "./collaborators/park-lifecycle.js";
-import {
-  ProjectsCollaborator,
-  type PipelineMergeExecutor,
-} from "./collaborators/projects.js";
-import {
-  RunsCollaborator,
-  type SettlementActor,
-  type SuspendAllActiveRunsResult,
-} from "./collaborators/runs.js";
+import { ParkLifecycleCollaborator, type ParkLifecycleSweepResult } from "./collaborators/park-lifecycle.js";
+import { ProjectsCollaborator, type PipelineMergeExecutor } from "./collaborators/projects.js";
+import { RunsCollaborator, type SettlementActor, type SuspendAllActiveRunsResult } from "./collaborators/runs.js";
 import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
 import type { GitRunner } from "./collaborators/scope-check.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
-import {
-  WallClockCollaborator,
-  type WallClockSweepResult,
-} from "./collaborators/wall-clock.js";
-import {
-  WorkItemsCollaborator,
-  type CreateWorkItemResult,
-  type WorkItemDetail,
-} from "./collaborators/work-items.js";
+import { WallClockCollaborator, type WallClockSweepResult } from "./collaborators/wall-clock.js";
+import { WorkItemsCollaborator, type CreateWorkItemResult, type WorkItemDetail } from "./collaborators/work-items.js";
 import {
   eventFromRow,
   interruptFromRow,
@@ -153,7 +133,7 @@ export class TaskBoard {
       this.#automation,
       this.#tasks,
       reconcileProjectWorkflows,
-      this.#notifications,
+      this.#notifications
     );
     this.#projects = new ProjectsCollaborator(
       this.#runtime,
@@ -163,7 +143,7 @@ export class TaskBoard {
       {},
       dependencies.mergePipeline,
       this.#notifications,
-      this.#boardPause,
+      this.#boardPause
     );
     this.#projects.setStartDesignInTransaction((workItemId) => {
       const task = this.#workItems.startWorkItemDesignInTransaction(workItemId);
@@ -175,23 +155,20 @@ export class TaskBoard {
       this.#runtime,
       this.#notifications,
       this.#workItems,
-      reconcileProjectWorkflows,
+      reconcileProjectWorkflows
     );
-    this.#baseBranchPoll = new BaseBranchPollCollaborator(
-      this.#runtime,
-      this.#projects,
-      dependencies.git,
-    );
+    this.#baseBranchPoll = new BaseBranchPollCollaborator(this.#runtime, this.#projects, dependencies.git);
     this.#runs = new RunsCollaborator(
       this.#runtime,
       this.#automation,
       this.#projects,
       this.#tasks,
       dependencies.git,
-      this.#boardPause,
+      this.#boardPause
     );
     this.#workItems.setSuspendActiveRunInTransaction((runId, reason, actor, now, options) =>
-      this.#runs.suspendActiveRunInTransaction(runId, reason, actor, now, options));
+      this.#runs.suspendActiveRunInTransaction(runId, reason, actor, now, options)
+    );
     this.#wallClock = new WallClockCollaborator(this.#runtime, this.#runs, this.#notifications);
     this.#agents = new AgentsCollaborator(this.#runtime, this.#workItems, this.#projects, this.#runs);
     this.#messages = new MessagesCollaborator(this.#runtime);
@@ -206,9 +183,10 @@ export class TaskBoard {
 
   authenticateAgent(token: string | undefined, expectedAgentId?: string): AgentProfile {
     if (token === undefined) throw new TaskBoardError(401, "UNAUTHORIZED", "Agent authentication is required");
-    const rows = expectedAgentId === undefined
-      ? this.#runtime.store.db.prepare("SELECT * FROM agents").all()
-      : this.#runtime.store.db.prepare("SELECT * FROM agents WHERE agent_id = ?").all(expectedAgentId);
+    const rows =
+      expectedAgentId === undefined
+        ? this.#runtime.store.db.prepare("SELECT * FROM agents").all()
+        : this.#runtime.store.db.prepare("SELECT * FROM agents WHERE agent_id = ?").all(expectedAgentId);
     const row = rows.find((candidate) => tokenMatches(stringValue(candidate, "token_hash"), token));
     if (!row) throw new TaskBoardError(401, "UNAUTHORIZED", "Agent authentication is required");
     return this.#runtime.agentFromRow(row);
@@ -246,12 +224,7 @@ export class TaskBoard {
     return this.#boardPause.getBoardPause();
   }
 
-  setBoardPause(input: {
-    paused: boolean;
-    reason: string | null;
-    version: number;
-    actor: string;
-  }): BoardPause {
+  setBoardPause(input: { paused: boolean; reason: string | null; version: number; actor: string }): BoardPause {
     return this.#boardPause.setBoardPause(input);
   }
 
@@ -264,12 +237,17 @@ export class TaskBoard {
   }
 
   resumePausedWork(): void {
-    const agentIds = this.#runtime.store.db.prepare(`
+    const agentIds = this.#runtime.store.db
+      .prepare(
+        `
       SELECT DISTINCT wakeup.agent_id
       FROM wakeups AS wakeup
       WHERE ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
       ORDER BY wakeup.agent_id
-    `).all(RETIRED_WAKEUP_EVENT_PREFIX).map((row) => stringValue(row, "agent_id"));
+    `
+      )
+      .all(RETIRED_WAKEUP_EVENT_PREFIX)
+      .map((row) => stringValue(row, "agent_id"));
     for (const agentId of agentIds) this.#runtime.wakeupEvents.emit(agentId);
     this.#projects.reconcileWorkflowsBestEffort();
   }
@@ -327,16 +305,12 @@ export class TaskBoard {
   }
 
   confirmWorkflow(planRevisionId: string, request: ConfirmPlanRevisionRequest): ConfirmWorkflowResult {
-    return this.#projects.confirmWorkflow(
-      planRevisionId,
-      request,
-      (workItemId) => {
-        const task = this.#workItems.startWorkItemDesignInTransaction(workItemId);
-        if (task === null) {
-          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A design manager is unavailable");
-        }
-      },
-    );
+    return this.#projects.confirmWorkflow(planRevisionId, request, (workItemId) => {
+      const task = this.#workItems.startWorkItemDesignInTransaction(workItemId);
+      if (task === null) {
+        throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A design manager is unavailable");
+      }
+    });
   }
 
   rejectWorkflowPlan(planRevisionId: string, request: RejectPlanRevisionRequest): RejectPlanRevisionResponse {
@@ -346,7 +320,11 @@ export class TaskBoard {
       if (rejected.outcome === "revising") {
         const planning = this.#workItems.startWorkItemPlanningRevisionInTransaction(rejected.workItemId, request.note);
         if (planning.task === null || planning.wakeAgentId === null) {
-          throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE, "A planning manager is unavailable");
+          throw new TaskBoardError(
+            409,
+            TASK_BOARD_ERROR_CODES.PLANNING_UNAVAILABLE,
+            "A planning manager is unavailable"
+          );
         }
         wakeAgentId = planning.wakeAgentId;
       }
@@ -491,18 +469,25 @@ export class TaskBoard {
     return this.#messages.askQuestion(taskId, agentId, request);
   }
 
-  answerQuestion(questionId: string, request: AnswerHumanQuestionRequest): { question: HumanQuestion; wakeup: Wakeup; duplicate: boolean } {
+  answerQuestion(
+    questionId: string,
+    request: AnswerHumanQuestionRequest
+  ): { question: HumanQuestion; wakeup: Wakeup; duplicate: boolean } {
     return this.#messages.answerQuestion(questionId, request);
   }
 
-  resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
+  resumeAgent(
+    agentId: string,
+    request: ResumeAgentRequest,
+    idempotencyKey: string
+  ): { wakeup: Wakeup; duplicate: boolean } {
     return this.#runs.resumeAgent(agentId, request, idempotencyKey);
   }
 
   interruptAgent(
     agentId: string,
     request: InterruptAgentRequest,
-    idempotencyKey: string,
+    idempotencyKey: string
   ): { interrupt: AgentInterrupt; duplicate: boolean } {
     return this.#runs.interruptAgent(agentId, request, idempotencyKey);
   }
@@ -513,7 +498,7 @@ export class TaskBoard {
     after: number,
     waitMs: number,
     signal: AbortSignal,
-    credentialVersion?: number,
+    credentialVersion?: number
   ): Promise<RunInterruptBatch | null> {
     return this.#runs.waitForRunInterrupts(runId, agentId, after, waitMs, signal, credentialVersion);
   }
@@ -528,7 +513,7 @@ export class TaskBoard {
     request: ClaimRunRequest,
     waitMs: number,
     signal: AbortSignal,
-    credentialVersion?: number,
+    credentialVersion?: number
   ): Promise<ClaimRunResult | null> {
     const result = await this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
     return result !== null && "paused" in result ? null : result;
@@ -539,7 +524,7 @@ export class TaskBoard {
     request: ClaimRunRequest,
     waitMs: number,
     signal: AbortSignal,
-    credentialVersion?: number,
+    credentialVersion?: number
   ): Promise<ClaimRunResponse | null> {
     return this.#runs.waitToClaimRun(agentId, request, waitMs, signal, credentialVersion);
   }
@@ -561,16 +546,51 @@ export class TaskBoard {
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       project,
-      agents: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY created_at, agent_id").all(projectId).map((row) => this.#runtime.agentFromRow(row))),
-      tasks: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY order_key, task_id").all(projectId).map((row) => {
-        const taskId = stringValue(row, "task_id");
-        return taskFromRow(row, this.#runtime.taskPhases(taskId));
-      })),
-      openQuestions: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM questions WHERE project_id = ? AND status = 'open' ORDER BY asked_at, question_id").all(projectId).map(questionFromRow)),
-      recentQuestions: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM questions WHERE project_id = ? ORDER BY asked_at DESC, question_id DESC LIMIT 100").all(projectId).map(questionFromRow)),
-      recentRuns: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 100").all(projectId).map(runFromRow)),
-      recentInterrupts: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM interrupts WHERE project_id = ? ORDER BY sequence DESC LIMIT 100").all(projectId).map(interruptFromRow)),
-      recentEvents: Object.freeze(this.#runtime.store.db.prepare("SELECT * FROM task_events WHERE project_id = ? ORDER BY sequence DESC LIMIT 200").all(projectId).map(eventFromRow)),
+      agents: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY created_at, agent_id")
+          .all(projectId)
+          .map((row) => this.#runtime.agentFromRow(row))
+      ),
+      tasks: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY order_key, task_id")
+          .all(projectId)
+          .map((row) => {
+            const taskId = stringValue(row, "task_id");
+            return taskFromRow(row, this.#runtime.taskPhases(taskId));
+          })
+      ),
+      openQuestions: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM questions WHERE project_id = ? AND status = 'open' ORDER BY asked_at, question_id")
+          .all(projectId)
+          .map(questionFromRow)
+      ),
+      recentQuestions: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM questions WHERE project_id = ? ORDER BY asked_at DESC, question_id DESC LIMIT 100")
+          .all(projectId)
+          .map(questionFromRow)
+      ),
+      recentRuns: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 100")
+          .all(projectId)
+          .map(runFromRow)
+      ),
+      recentInterrupts: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM interrupts WHERE project_id = ? ORDER BY sequence DESC LIMIT 100")
+          .all(projectId)
+          .map(interruptFromRow)
+      ),
+      recentEvents: Object.freeze(
+        this.#runtime.store.db
+          .prepare("SELECT * FROM task_events WHERE project_id = ? ORDER BY sequence DESC LIMIT 200")
+          .all(projectId)
+          .map(eventFromRow)
+      ),
     });
   }
 

@@ -7,24 +7,26 @@ const GIT_MAX_BYTES = 1024 * 1024;
 const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
 
 const runPipelineInspectionGit: GitTextRunner = Object.assign(
-  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-    encoding: "utf8",
-    timeout: GIT_TIMEOUT_MS,
-    maxBuffer: GIT_MAX_BYTES,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  }),
-  {
-    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-      encoding: "buffer",
+  (arguments_: readonly string[]) =>
+    execFileSync("git", [...arguments_], {
+      encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BYTES,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     }),
-  },
+  {
+    bytes: (arguments_: readonly string[]) =>
+      execFileSync("git", [...arguments_], {
+        encoding: "buffer",
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: GIT_MAX_BYTES,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }),
+  }
 );
 
 type Row = Record<string, unknown>;
@@ -51,38 +53,73 @@ export function inspectPipelineBranchSync(options: PipelineInspectionOptions): P
   const git = options.git ?? runPipelineInspectionGit;
   const range = `${options.baseSha}..${options.branch}`;
   const fields = git([
-    "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", options.repoPath,
-    "log", "--format=%H%x00%s", "-z", range, "--",
-  ]).split("\0").filter((field) => field.length > 0);
+    "-c",
+    "core.fsmonitor=",
+    "-c",
+    "core.hooksPath=",
+    "-C",
+    options.repoPath,
+    "log",
+    "--format=%H%x00%s",
+    "-z",
+    range,
+    "--",
+  ])
+    .split("\0")
+    .filter((field) => field.length > 0);
   if (fields.length % 2 !== 0) throw new Error("git returned an invalid commit list");
   const commits: Array<{ sha: string; subject: string }> = [];
   for (let index = 0; index < fields.length; index += 2) {
     commits.push({ sha: fields[index]!, subject: fields[index + 1]! });
   }
   const diffstat = git([
-    "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", options.repoPath,
-    "diff", "--stat", range, "--",
+    "-c",
+    "core.fsmonitor=",
+    "-c",
+    "core.hooksPath=",
+    "-C",
+    options.repoPath,
+    "diff",
+    "--stat",
+    range,
+    "--",
   ]);
   const nameStatusFields = git([
-    "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", options.repoPath,
-    "diff", "--no-renames", "--name-status", "-z", range, "--",
-  ]).split("\0").filter((field) => field.length > 0);
+    "-c",
+    "core.fsmonitor=",
+    "-c",
+    "core.hooksPath=",
+    "-C",
+    options.repoPath,
+    "diff",
+    "--no-renames",
+    "--name-status",
+    "-z",
+    range,
+    "--",
+  ])
+    .split("\0")
+    .filter((field) => field.length > 0);
   if (nameStatusFields.length % 2 !== 0) throw new Error("git returned an invalid name-status list");
   const filesTouched: Array<{ path: string; status: "added" | "modified" | "deleted" }> = [];
   for (let index = 0; index < nameStatusFields.length; index += 2) {
     const rawStatus = nameStatusFields[index];
     const path = nameStatusFields[index + 1]!;
-    const status = rawStatus === "A"
-      ? "added"
-      : rawStatus === "M" || rawStatus === "T"
-        ? "modified"
-        : rawStatus === "D"
-          ? "deleted"
-          : null;
+    const status =
+      rawStatus === "A"
+        ? "added"
+        : rawStatus === "M" || rawStatus === "T"
+          ? "modified"
+          : rawStatus === "D"
+            ? "deleted"
+            : null;
     if (status === null) throw new Error(`git returned unsupported file status ${rawStatus ?? ""}`);
     filesTouched.push({ path, status });
   }
-  const scope = checkDeclaredScopePaths(filesTouched.map((file) => file.path), options.declaredScope);
+  const scope = checkDeclaredScopePaths(
+    filesTouched.map((file) => file.path),
+    options.declaredScope
+  );
   return Object.freeze({
     commits: Object.freeze(commits.map((commit) => Object.freeze(commit))),
     diffstat,
@@ -91,17 +128,14 @@ export function inspectPipelineBranchSync(options: PipelineInspectionOptions): P
   });
 }
 
-export async function inspectPipelineBranch(
-  options: PipelineInspectionOptions,
-): Promise<PipelineInspection> {
+export async function inspectPipelineBranch(options: PipelineInspectionOptions): Promise<PipelineInspection> {
   return inspectPipelineBranchSync(options);
 }
 
-export function pipelineMidRunAssumptions(
-  db: DatabaseSync,
-  workItemId: string,
-): readonly string[] {
-  const handoffRows = db.prepare(`
+export function pipelineMidRunAssumptions(db: DatabaseSync, workItemId: string): readonly string[] {
+  const handoffRows = db
+    .prepare(
+      `
     SELECT
       handoff.payload_json,handoff.stage,
       COALESCE(
@@ -125,19 +159,28 @@ export function pipelineMidRunAssumptions(
     JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
     WHERE plan.work_item_id=?
     ORDER BY handoff.created_at,handoff.rowid
-  `).all(workItemId) as Row[];
-  const evidence = handoffRows.filter((handoffRow) =>
-    handoffRow.stage === "implementation" &&
-    handoffRow.author_id !== null &&
-    !String(handoffRow.author_id).startsWith("system:"),
-  ).flatMap((handoffRow) => {
-    const handoff = JSON.parse(String(handoffRow.payload_json)) as { evidence?: unknown };
-    return Array.isArray(handoff.evidence)
-      ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
-      : [];
-  });
-  return Object.freeze([...new Set(evidence
-    .filter((candidate) => candidate.startsWith(MID_RUN_ASSUMPTION_PREFIX))
-    .map((candidate) => candidate.slice(MID_RUN_ASSUMPTION_PREFIX.length).trim())
-    .filter((candidate) => candidate.length > 0))]);
+  `
+    )
+    .all(workItemId) as Row[];
+  const evidence = handoffRows
+    .filter(
+      (handoffRow) =>
+        handoffRow.stage === "implementation" &&
+        handoffRow.author_id !== null &&
+        !String(handoffRow.author_id).startsWith("system:")
+    )
+    .flatMap((handoffRow) => {
+      const handoff = JSON.parse(String(handoffRow.payload_json)) as { evidence?: unknown };
+      return Array.isArray(handoff.evidence)
+        ? handoff.evidence.filter((entry): entry is string => typeof entry === "string")
+        : [];
+    });
+  return Object.freeze([
+    ...new Set(
+      evidence
+        .filter((candidate) => candidate.startsWith(MID_RUN_ASSUMPTION_PREFIX))
+        .map((candidate) => candidate.slice(MID_RUN_ASSUMPTION_PREFIX.length).trim())
+        .filter((candidate) => candidate.length > 0)
+    ),
+  ]);
 }

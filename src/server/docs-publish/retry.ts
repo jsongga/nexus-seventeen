@@ -14,7 +14,8 @@ export const OUTLINE_RETRY_OPTIONS: RetryOptions = Object.freeze({
 
 function checkedOptions(options: RetryOptions): void {
   if (
-    !Number.isSafeInteger(options.attempts) || options.attempts < 1 ||
+    !Number.isSafeInteger(options.attempts) ||
+    options.attempts < 1 ||
     options.delays.length !== options.attempts - 1 ||
     options.delays.some((delay) => !Number.isSafeInteger(delay) || delay < 0)
   ) {
@@ -23,22 +24,22 @@ function checkedOptions(options: RetryOptions): void {
 }
 
 function retryable(error: unknown): boolean {
-  return error instanceof TypeError || (
-    error instanceof Error && error.name === "AbortError"
-  ) || (
-    error instanceof OutlineHttpError &&
-    (error.status === 429 || (error.status >= 500 && error.status <= 599))
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === "AbortError") ||
+    (error instanceof OutlineHttpError && (error.status === 429 || (error.status >= 500 && error.status <= 599)))
   );
 }
 
-const sleep: RetrySleeper = (delayMs) => new Promise((resolve) => {
-  setTimeout(resolve, delayMs);
-});
+const sleep: RetrySleeper = (delayMs) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 
 export async function withRetry<T>(
   operation: () => Promise<T>,
   options: RetryOptions,
-  sleeper: RetrySleeper = sleep,
+  sleeper: RetrySleeper = sleep
 ): Promise<T> {
   checkedOptions(options);
   for (let attempt = 0; attempt < options.attempts; attempt += 1) {

@@ -76,9 +76,23 @@ export type TaskFleetWorkerFactory = (config: TaskFleetAgentConfig, boardUrl: st
 export type TaskFleetEvent =
   | Readonly<{ type: "lane_started"; agentId: string; workerId: string }>
   | Readonly<{ type: "lane_credential_revoked"; agentId: string; workerId: string; error: string }>
-  | Readonly<{ type: "lane_retrying"; agentId: string; workerId: string; restartCount: number; delayMs: number; error: string }>
+  | Readonly<{
+      type: "lane_retrying";
+      agentId: string;
+      workerId: string;
+      restartCount: number;
+      delayMs: number;
+      error: string;
+    }>
   | Readonly<{ type: "claim_quarantined"; agentId: string; workerId: string; error: string }>
-  | Readonly<{ type: "claim_quarantine_retrying"; agentId: string; workerId: string; attempt: number; delayMs: number; error: string }>
+  | Readonly<{
+      type: "claim_quarantine_retrying";
+      agentId: string;
+      workerId: string;
+      attempt: number;
+      delayMs: number;
+      error: string;
+    }>
   | Readonly<{ type: "claim_dropped"; agentId: string; workerId: string; error: string; settleError: string }>
   | Readonly<{ type: "claim_drop_failed"; agentId: string; workerId: string; error: string }>
   | Readonly<{ type: "lane_error_report_failed"; agentId: string; workerId: string; error: string }>

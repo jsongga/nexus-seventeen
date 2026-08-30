@@ -17,16 +17,20 @@ const DEFAULT_ALLOWED_PORTS = Object.freeze([443]);
 const HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u;
 
 export async function startEgressProxy(options: EgressProxyOptions): Promise<EgressProxy> {
-  const allowedHosts = new Set(options.allowedHosts.map((host) => {
-    if (!HOSTNAME.test(host)) throw new Error(`Egress allowlist entry is invalid: ${host}`);
-    return host;
-  }));
-  const allowedPorts = new Set((options.allowedPorts ?? DEFAULT_ALLOWED_PORTS).map((port) => {
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-      throw new Error(`Egress allowed port is invalid: ${port}`);
-    }
-    return port;
-  }));
+  const allowedHosts = new Set(
+    options.allowedHosts.map((host) => {
+      if (!HOSTNAME.test(host)) throw new Error(`Egress allowlist entry is invalid: ${host}`);
+      return host;
+    })
+  );
+  const allowedPorts = new Set(
+    (options.allowedPorts ?? DEFAULT_ALLOWED_PORTS).map((port) => {
+      if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+        throw new Error(`Egress allowed port is invalid: ${port}`);
+      }
+      return port;
+    })
+  );
   const server = createServer((_request, response) => {
     response.writeHead(405, { connection: "close" }).end();
   });
@@ -60,10 +64,12 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
         reject(new Error("Egress proxy failed to bind"));
         return;
       }
-      resolve(Object.freeze({
-        port: address.port,
-        close: () => new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done()))),
-      }));
+      resolve(
+        Object.freeze({
+          port: address.port,
+          close: () => new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done()))),
+        })
+      );
     });
   });
 }

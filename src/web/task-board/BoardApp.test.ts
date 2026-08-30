@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from "vitest";
 import {
   BoardPauseVersionGuard,
   WorkItemDetailLoadCoordinator,
@@ -9,57 +9,89 @@ import {
   resolveDialogTriggerAction,
   snapshotLostSelectedWorkItem,
   workItemDetailReloadPending,
-} from './BoardApp';
-import { BoardApiError, type TaskBoardClient } from './data/client';
-import type { RawBoardPause } from './data/parse';
-import { NotificationLoadCoordinator } from './model/notification-load';
-import { taskPhasesByOrder, taskRunsByCreatedAt } from './views/TaskDetail';
-import type { BoardRun, BoardSnapshot, BoardTaskPhase, BoardWorkItem, BoardWorkItemDetail } from './types';
+} from "./BoardApp";
+import { BoardApiError, type TaskBoardClient } from "./data/client";
+import type { RawBoardPause } from "./data/parse";
+import { NotificationLoadCoordinator } from "./model/notification-load";
+import { taskPhasesByOrder, taskRunsByCreatedAt } from "./views/TaskDetail";
+import type { BoardRun, BoardSnapshot, BoardTaskPhase, BoardWorkItem, BoardWorkItemDetail } from "./types";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
   return { promise, resolve };
 }
 
-const pauseTimestamp = '2026-08-21T12:00:00.000Z';
+const pauseTimestamp = "2026-08-21T12:00:00.000Z";
 
 function pauseState(version: number, paused: boolean): RawBoardPause {
   return {
     paused,
-    reason: paused ? 'Maintenance window.' : null,
+    reason: paused ? "Maintenance window." : null,
     version,
     updatedAt: pauseTimestamp,
     updatedAtMs: Date.parse(pauseTimestamp),
-    updatedBy: 'human:operator',
+    updatedBy: "human:operator",
   };
 }
 
-describe('dialog trigger action', () => {
+describe("dialog trigger action", () => {
   const firstAnchor = { current: null };
   const secondAnchor = { current: null };
 
   it.each([
-    ['same task anchor, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'task', anchor: firstAnchor }, 'toggle-close'],
-    ['same task anchor, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'task', anchor: firstAnchor }, 'toggle-close'],
-    ['different task anchor, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'task', anchor: secondAnchor }, 're-anchor'],
-    ['different task anchor, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'task', anchor: secondAnchor }, 're-anchor'],
-    ['different dialog, clean', { name: 'task', anchor: firstAnchor, dirty: false }, { name: 'project', anchor: null }, 'switch-clean'],
-    ['different dialog, dirty', { name: 'task', anchor: firstAnchor, dirty: true }, { name: 'project', anchor: null }, 'switch-dirty'],
-  ] as const)('%s resolves correctly', (_label, current, requested, expected) => {
+    [
+      "same task anchor, clean",
+      { name: "task", anchor: firstAnchor, dirty: false },
+      { name: "task", anchor: firstAnchor },
+      "toggle-close",
+    ],
+    [
+      "same task anchor, dirty",
+      { name: "task", anchor: firstAnchor, dirty: true },
+      { name: "task", anchor: firstAnchor },
+      "toggle-close",
+    ],
+    [
+      "different task anchor, clean",
+      { name: "task", anchor: firstAnchor, dirty: false },
+      { name: "task", anchor: secondAnchor },
+      "re-anchor",
+    ],
+    [
+      "different task anchor, dirty",
+      { name: "task", anchor: firstAnchor, dirty: true },
+      { name: "task", anchor: secondAnchor },
+      "re-anchor",
+    ],
+    [
+      "different dialog, clean",
+      { name: "task", anchor: firstAnchor, dirty: false },
+      { name: "project", anchor: null },
+      "switch-clean",
+    ],
+    [
+      "different dialog, dirty",
+      { name: "task", anchor: firstAnchor, dirty: true },
+      { name: "project", anchor: null },
+      "switch-dirty",
+    ],
+  ] as const)("%s resolves correctly", (_label, current, requested, expected) => {
     expect(resolveDialogTriggerAction(current, requested)).toBe(expected);
   });
 });
 
-describe('board pause refresh coordination', () => {
-  it('closes the pause popover when pause state is unavailable or already paused', () => {
+describe("board pause refresh coordination", () => {
+  it("closes the pause popover when pause state is unavailable or already paused", () => {
     expect(pausePopoverShouldClose(null)).toBe(true);
     expect(pausePopoverShouldClose(pauseState(2, true))).toBe(true);
     expect(pausePopoverShouldClose(pauseState(3, false))).toBe(false);
   });
 
-  it('commits and renders a valid snapshot when the independent pause GET fails', async () => {
-    const generatedAt = '2026-08-21T12:00:00.000Z';
+  it("commits and renders a valid snapshot when the independent pause GET fails", async () => {
+    const generatedAt = "2026-08-21T12:00:00.000Z";
     const snapshot: BoardSnapshot = {
       revision: 1,
       generatedAt,
@@ -74,7 +106,7 @@ describe('board pause refresh coordination', () => {
     };
     const client = {
       getSnapshot: vi.fn().mockResolvedValue(snapshot),
-      getBoardPause: vi.fn().mockRejectedValue(new Error('pause route unavailable')),
+      getBoardPause: vi.fn().mockRejectedValue(new Error("pause route unavailable")),
     } as unknown as TaskBoardClient;
     const rendered: BoardSnapshot[] = [];
     const pauseUpdates: Array<RawBoardPause | null> = [];
@@ -82,13 +114,13 @@ describe('board pause refresh coordination', () => {
 
     const result = await refreshBoardSnapshot(
       client,
-      'foreground',
+      "foreground",
       signal,
       async (next) => {
         rendered.push(next);
         return true;
       },
-      (next) => pauseUpdates.push(next),
+      (next) => pauseUpdates.push(next)
     );
     await result.pauseLoad;
 
@@ -97,7 +129,7 @@ describe('board pause refresh coordination', () => {
     expect(pauseUpdates).toEqual([null]);
   });
 
-  it('ignores a stale poll response that resolves after a newer mutation response', async () => {
+  it("ignores a stale poll response that resolves after a newer mutation response", async () => {
     const guard = new BoardPauseVersionGuard();
     const stalePoll = deferred<RawBoardPause>();
     const mutation = deferred<RawBoardPause>();
@@ -117,8 +149,8 @@ describe('board pause refresh coordination', () => {
   });
 });
 
-describe('changeBoardPause', () => {
-  it('does not send a pause request when the reason flow is cancelled', async () => {
+describe("changeBoardPause", () => {
+  it("does not send a pause request when the reason flow is cancelled", async () => {
     const setBoardPause = vi.fn();
     const client = { setBoardPause } as unknown as TaskBoardClient;
 
@@ -126,46 +158,47 @@ describe('changeBoardPause', () => {
     expect(setBoardPause).not.toHaveBeenCalled();
   });
 
-  it('sends an empty reason as null', async () => {
+  it("sends an empty reason as null", async () => {
     const updated = pauseState(2, true);
     const setBoardPause = vi.fn().mockResolvedValue(updated);
     const client = { setBoardPause } as unknown as TaskBoardClient;
 
-    await expect(changeBoardPause(client, pauseState(1, false), '  ')).resolves.toEqual(updated);
+    await expect(changeBoardPause(client, pauseState(1, false), "  ")).resolves.toEqual(updated);
     expect(setBoardPause).toHaveBeenCalledWith({ reason: null, version: 1 });
   });
 
-  it('trims a supplied reason and clamps its raw length to 500 characters', async () => {
+  it("trims a supplied reason and clamps its raw length to 500 characters", async () => {
     const updated = pauseState(2, true);
     const setBoardPause = vi.fn().mockResolvedValue(updated);
     const client = { setBoardPause } as unknown as TaskBoardClient;
 
-    await changeBoardPause(client, pauseState(1, false), `  Maintenance  ${'x'.repeat(500)}`);
+    await changeBoardPause(client, pauseState(1, false), `  Maintenance  ${"x".repeat(500)}`);
 
     expect(setBoardPause).toHaveBeenCalledWith({
-      reason: `Maintenance  ${'x'.repeat(485)}`,
+      reason: `Maintenance  ${"x".repeat(485)}`,
       version: 1,
     });
   });
 
-  it('resumes directly and ignores the reason argument', async () => {
+  it("resumes directly and ignores the reason argument", async () => {
     const resumed = pauseState(3, false);
     const resumeBoard = vi.fn().mockResolvedValue(resumed);
     const setBoardPause = vi.fn();
     const client = { resumeBoard, setBoardPause } as unknown as TaskBoardClient;
 
-    await expect(changeBoardPause(client, pauseState(2, true), 'unused')).resolves.toEqual(resumed);
+    await expect(changeBoardPause(client, pauseState(2, true), "unused")).resolves.toEqual(resumed);
     expect(resumeBoard).toHaveBeenCalledWith({ version: 2 });
     expect(setBoardPause).not.toHaveBeenCalled();
   });
 });
 
-describe('notification refresh coordination', () => {
-  it('loads again for an unchanged-revision snapshot arrival without overlapping snapshot reads', async () => {
+describe("notification refresh coordination", () => {
+  it("loads again for an unchanged-revision snapshot arrival without overlapping snapshot reads", async () => {
     const coordinator = new NotificationLoadCoordinator();
     coordinator.activate();
     const first = deferred<void>();
-    const load = vi.fn()
+    const load = vi
+      .fn()
       .mockImplementationOnce(async () => first.promise)
       .mockResolvedValueOnce(undefined);
     const initialSnapshot = { revision: 7 };
@@ -180,7 +213,7 @@ describe('notification refresh coordination', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it('lets a mark-read refresh land while rejecting an older notification load that resolves last', async () => {
+  it("lets a mark-read refresh land while rejecting an older notification load that resolves last", async () => {
     const coordinator = new NotificationLoadCoordinator();
     coordinator.activate();
     const olderResponse = deferred<string>();
@@ -192,70 +225,69 @@ describe('notification refresh coordination', () => {
 
     coordinator.invalidate();
     await coordinator.refresh(async (token) => {
-      if (coordinator.isLatest(token)) applied.push('refreshed-after-read');
+      if (coordinator.isLatest(token)) applied.push("refreshed-after-read");
     });
-    olderResponse.resolve('stale-unread-row');
+    olderResponse.resolve("stale-unread-row");
     await olderLoad;
 
-    expect(applied).toEqual(['refreshed-after-read']);
+    expect(applied).toEqual(["refreshed-after-read"]);
   });
 });
 
-describe('work-item detail navigation coordination', () => {
-  const detail = (id: string) => ({ id } as BoardWorkItemDetail);
+describe("work-item detail navigation coordination", () => {
+  const detail = (id: string) => ({ id }) as BoardWorkItemDetail;
 
-  it('commits only the latest child detail when requests resolve out of order', async () => {
+  it("commits only the latest child detail when requests resolve out of order", async () => {
     const coordinator = new WorkItemDetailLoadCoordinator();
     const first = deferred<BoardWorkItemDetail>();
     const second = deferred<BoardWorkItemDetail>();
     let firstSignal: AbortSignal | undefined;
-    const firstLoad = coordinator.load('child-first', (signal) => {
+    const firstLoad = coordinator.load("child-first", (signal) => {
       firstSignal = signal;
       return first.promise;
     });
-    const secondLoad = coordinator.load('child-second', () => second.promise);
+    const secondLoad = coordinator.load("child-second", () => second.promise);
 
-    second.resolve(detail('child-second'));
-    await expect(secondLoad).resolves.toEqual({ kind: 'loaded', detail: detail('child-second') });
-    first.resolve(detail('child-first'));
-    await expect(firstLoad).resolves.toEqual({ kind: 'stale' });
+    second.resolve(detail("child-second"));
+    await expect(secondLoad).resolves.toEqual({ kind: "loaded", detail: detail("child-second") });
+    first.resolve(detail("child-first"));
+    await expect(firstLoad).resolves.toEqual({ kind: "stale" });
     expect(firstSignal?.aborted).toBe(true);
   });
 
-  it('detects a selected snapshot row disappearing and classifies its 404 refresh', async () => {
-    const listed = [{ id: 'archived-child' }] as BoardWorkItem[];
-    expect(snapshotLostSelectedWorkItem('archived-child', listed, [])).toBe(true);
-    expect(snapshotLostSelectedWorkItem('another-child', listed, [])).toBe(false);
-    const cached = { id: 'archived-child' } as BoardWorkItemDetail;
-    expect(routedWorkItemSelection(
-      { kind: 'intake', workItemId: 'archived-child' },
-      [],
-      cached,
-      listed,
-    )).toBeUndefined();
+  it("detects a selected snapshot row disappearing and classifies its 404 refresh", async () => {
+    const listed = [{ id: "archived-child" }] as BoardWorkItem[];
+    expect(snapshotLostSelectedWorkItem("archived-child", listed, [])).toBe(true);
+    expect(snapshotLostSelectedWorkItem("another-child", listed, [])).toBe(false);
+    const cached = { id: "archived-child" } as BoardWorkItemDetail;
+    expect(
+      routedWorkItemSelection({ kind: "intake", workItemId: "archived-child" }, [], cached, listed)
+    ).toBeUndefined();
 
     const coordinator = new WorkItemDetailLoadCoordinator();
-    await expect(coordinator.load('archived-child', async () => {
-      throw new BoardApiError('Not found', 404, 'NOT_FOUND');
-    })).resolves.toEqual({ kind: 'not-found' });
+    await expect(
+      coordinator.load("archived-child", async () => {
+        throw new BoardApiError("Not found", 404, "NOT_FOUND");
+      })
+    ).resolves.toEqual({ kind: "not-found" });
   });
 
-  it('holds the intake route while its disappeared-detail reload is pending', () => {
-    const page = { kind: 'intake', workItemId: 'archived-child' } as const;
-    expect(workItemDetailReloadPending(page, '#/intake/archived-child')).toBe(true);
+  it("holds the intake route while its disappeared-detail reload is pending", () => {
+    const page = { kind: "intake", workItemId: "archived-child" } as const;
+    expect(workItemDetailReloadPending(page, "#/intake/archived-child")).toBe(true);
     expect(workItemDetailReloadPending(page, null)).toBe(false);
   });
 });
 
-describe('board timestamp ordering', () => {
-  it('orders same-position phases and runs by absolute instants', () => {
-    const earlierOffset = '2026-07-19T12:00:00+02:00';
-    const laterFraction = '2026-07-19T10:00:00.500Z';
+describe("board timestamp ordering", () => {
+  it("orders same-position phases and runs by absolute instants", () => {
+    const earlierOffset = "2026-07-19T12:00:00+02:00";
+    const laterFraction = "2026-07-19T10:00:00.500Z";
     const phase = (id: string, createdAt: string): BoardTaskPhase => ({
       id,
       title: id,
-      stage: 'execution',
-      status: 'pending',
+      stage: "execution",
+      status: "pending",
       parallelGroup: null,
       orderKey: 1,
       startedAt: null,
@@ -270,10 +302,10 @@ describe('board timestamp ordering', () => {
     });
     const run = (id: string, createdAt: string): BoardRun => ({
       id,
-      projectId: 'project-one',
-      taskId: 'task-one',
-      agentId: 'agent-one',
-      status: 'completed',
+      projectId: "project-one",
+      taskId: "task-one",
+      agentId: "agent-one",
+      status: "completed",
       wakeReason: null,
       startedAt: createdAt,
       startedAtMs: Date.parse(createdAt),
@@ -287,13 +319,11 @@ describe('board timestamp ordering', () => {
       createdAtMs: Date.parse(createdAt),
     });
 
-    expect(taskPhasesByOrder([
-      phase('later', laterFraction),
-      phase('earlier', earlierOffset),
-    ]).map((item) => item.id)).toEqual(['earlier', 'later']);
-    expect(taskRunsByCreatedAt([
-      run('earlier', earlierOffset),
-      run('later', laterFraction),
-    ]).map((item) => item.id)).toEqual(['later', 'earlier']);
+    expect(
+      taskPhasesByOrder([phase("later", laterFraction), phase("earlier", earlierOffset)]).map((item) => item.id)
+    ).toEqual(["earlier", "later"]);
+    expect(
+      taskRunsByCreatedAt([run("earlier", earlierOffset), run("later", laterFraction)]).map((item) => item.id)
+    ).toEqual(["later", "earlier"]);
   });
 });

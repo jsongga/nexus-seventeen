@@ -1,10 +1,6 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import {
-  AGENT_ROLES,
-  IDENTIFIER_PATTERN,
-  type AgentRole,
-} from "#shared/task-board-contract";
+import { AGENT_ROLES, IDENTIFIER_PATTERN, type AgentRole } from "#shared/task-board-contract";
 
 const MAX_PROFILES_BYTES = 1024 * 1024;
 const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
@@ -51,7 +47,7 @@ function exact(
   value: unknown,
   required: readonly string[],
   optional: readonly string[],
-  label: string,
+  label: string
 ): Record<string, unknown> {
   const item = record(value, label);
   const allowed = new Set([...required, ...optional]);
@@ -64,7 +60,10 @@ function exact(
 
 function text(value: unknown, label: string, maximum: number): string {
   if (
-    typeof value !== "string" || value.length < 1 || value.length > maximum || value.trim() !== value ||
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    value.trim() !== value ||
     /[\u0000-\u001f\u007f]/u.test(value)
   ) {
     throw new Error(`${label} is invalid`);
@@ -97,7 +96,7 @@ function runtimeProfile(runtime: string, value: unknown): RuntimeProfile {
     value,
     ["binary", "permissionModel", "roles", "mcp", "toolCallGranularity", "contextNotes"],
     [],
-    label,
+    label
   );
   if (typeof item.mcp !== "boolean") throw new Error(`${label}.mcp must be a boolean`);
   return Object.freeze({

@@ -23,10 +23,7 @@ import type {
   UpdateTaskEstimateRequest,
 } from "#server/agents/task-worker/types";
 import type { AgentRole } from "#shared/task-board-contract";
-import {
-  TASK_BOARD_PAUSED_CLAIM,
-  TaskBoardClaimResponseError,
-} from "#server/agents/task-worker/types";
+import { TASK_BOARD_PAUSED_CLAIM, TaskBoardClaimResponseError } from "#server/agents/task-worker/types";
 import {
   InactiveClaimReplayError,
   RetryableSettlementError,
@@ -69,12 +66,14 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
       expectedAgentMinutes: null,
       phases: [],
     },
-    areaMemory: [{
-      taskId: "task-prior",
-      title: "Trace the retry boundary",
-      result: "The prior task located the customer-visible retry failure.",
-      endedAt: NOW,
-    }],
+    areaMemory: [
+      {
+        taskId: "task-prior",
+        title: "Trace the retry boundary",
+        result: "The prior task located the customer-visible retry failure.",
+        endedAt: NOW,
+      },
+    ],
     parentEvidence: {
       taskId: "task-parent",
       title: "Identify the highest-impact checkout risk",
@@ -86,13 +85,15 @@ export function context(overrides: Partial<BoundedAgentContext> = {}): BoundedAg
       startedAt: NOW,
       endedAt: NOW,
       result: "Retries are the highest-impact customer risk.",
-      messages: [{
-        messageId: "parent-progress-one",
-        author: "agent",
-        kind: "progress",
-        body: "Retry evidence was confirmed by the focused tests.",
-        createdAt: NOW,
-      }],
+      messages: [
+        {
+          messageId: "parent-progress-one",
+          author: "agent",
+          kind: "progress",
+          body: "Retry evidence was confirmed by the focused tests.",
+          createdAt: NOW,
+        },
+      ],
     },
     messagesSinceCursor: null,
     nextMessageCursor: 2,
@@ -129,15 +130,20 @@ export function claimed(
     taskId?: string | null;
     context?: BoundedAgentContext | null;
     pinned?: ClaimedAgentRun["pinned"];
-  }> = {},
+  }> = {}
 ): ClaimedAgentRun {
   const taskId = options.taskId === undefined ? TASK : options.taskId;
-  const messageCursor = taskId === null ? null : request.messageCursors[taskId] ?? null;
-  const boundedContext = options.context === undefined
-    ? (taskId === null ? null : context(messageCursor === null
-        ? { messagesSinceCursor: null }
-        : { messagesSinceCursor: messageCursor, nextMessageCursor: messageCursor, messages: [] }))
-    : options.context;
+  const messageCursor = taskId === null ? null : (request.messageCursors[taskId] ?? null);
+  const boundedContext =
+    options.context === undefined
+      ? taskId === null
+        ? null
+        : context(
+            messageCursor === null
+              ? { messagesSinceCursor: null }
+              : { messagesSinceCursor: messageCursor, nextMessageCursor: messageCursor, messages: [] }
+          )
+      : options.context;
   return {
     claim: {
       apiVersion: 1,
@@ -263,10 +269,12 @@ export class FakeBoard implements TaskBoardClient {
     }
     if (this.poisonedClaimFailures > 0) {
       this.poisonedClaimFailures -= 1;
-      return Promise.reject(new TaskBoardClaimResponseError(
-        "Claim response context is invalid",
-        { ...structuredClone(result.claim), reason: this.poisonedClaimReason ?? result.claim.reason },
-      ));
+      return Promise.reject(
+        new TaskBoardClaimResponseError("Claim response context is invalid", {
+          ...structuredClone(result.claim),
+          reason: this.poisonedClaimReason ?? result.claim.reason,
+        })
+      );
     }
     return Promise.resolve(structuredClone(result));
   }
@@ -279,7 +287,10 @@ export class FakeBoard implements TaskBoardClient {
         resolve(value);
       };
       const abort = () => finish(null);
-      if (signal?.aborted) { resolve(null); return; }
+      if (signal?.aborted) {
+        resolve(null);
+        return;
+      }
       signal?.addEventListener("abort", abort, { once: true });
       this.#waiters.set(claim.runId, finish);
     });
@@ -350,7 +361,8 @@ export class FakeBoard implements TaskBoardClient {
     }
     const prior = this.outputs.find((item) => item.idempotencyKey === request.idempotencyKey);
     if (prior === undefined) this.outputs.push(structuredClone(request));
-    else if (JSON.stringify(prior) !== JSON.stringify(request)) return Promise.reject(new Error("Output idempotency conflict"));
+    else if (JSON.stringify(prior) !== JSON.stringify(request))
+      return Promise.reject(new Error("Output idempotency conflict"));
     if (this.appendFailures > 0) {
       this.appendFailures -= 1;
       return Promise.reject(new Error("Simulated lost output response"));
@@ -363,26 +375,30 @@ export class FakeBoard implements TaskBoardClient {
     if (this.correctableSettleFailures > 0 && request.outcome === "completed") {
       this.correctableSettleFailures -= 1;
       const detail = "Onboarding deliverables are missing: gap report is missing or empty";
-      return Promise.reject(new RetryableSettlementError(
-        "ONBOARDING_DELIVERABLES_MISSING",
-        detail,
-        new TaskBoardHttpError(
-          "Task-board request failed with HTTP 400",
-          400,
+      return Promise.reject(
+        new RetryableSettlementError(
           "ONBOARDING_DELIVERABLES_MISSING",
           detail,
-        ),
-      ));
+          new TaskBoardHttpError(
+            "Task-board request failed with HTTP 400",
+            400,
+            "ONBOARDING_DELIVERABLES_MISSING",
+            detail
+          )
+        )
+      );
     }
     if (this.settleFailures > 0) {
       this.settleFailures -= 1;
       return Promise.reject(new Error("Simulated settlement rejection"));
     }
-    if (containsCarriageReturn({
-      result: request.result,
-      handoff: request.handoff ?? null,
-      workflowPlan: request.workflowPlan ?? null,
-    })) {
+    if (
+      containsCarriageReturn({
+        result: request.result,
+        handoff: request.handoff ?? null,
+        workflowPlan: request.workflowPlan ?? null,
+      })
+    ) {
       return Promise.reject(new Error("Board text validation rejected a carriage return"));
     }
     const prior = this.settlements.find((item) => item.claim.runId === request.claim.runId);
@@ -437,8 +453,14 @@ export class DeferredRunHandle implements AgentRunHandle {
     for (const waiter of this.#activityWaiters.splice(0)) waiter({ done: true, value: undefined });
   }
 
-  resolve(value: AgentRunOutcome): void { this.closeActivity(); this.#resolve(value); }
-  reject(error: unknown): void { this.closeActivity(); this.#reject(error); }
+  resolve(value: AgentRunOutcome): void {
+    this.closeActivity();
+    this.#resolve(value);
+  }
+  reject(error: unknown): void {
+    this.closeActivity();
+    this.#reject(error);
+  }
 
   async interrupt(reason: string): Promise<void> {
     this.interruptReasons.push(reason);

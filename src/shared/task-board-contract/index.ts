@@ -48,7 +48,7 @@ export const TASK_BOARD_ERROR_CODES = Object.freeze({
   WORK_ITEM_ILLEGAL_TRANSITION: "WORK_ITEM_ILLEGAL_TRANSITION",
   WORK_ITEM_NOT_TERMINAL: "WORK_ITEM_NOT_TERMINAL",
 } as const);
-export type TaskBoardErrorCode = typeof TASK_BOARD_ERROR_CODES[keyof typeof TASK_BOARD_ERROR_CODES];
+export type TaskBoardErrorCode = (typeof TASK_BOARD_ERROR_CODES)[keyof typeof TASK_BOARD_ERROR_CODES];
 /** Maximum persisted UTF-8 JSON size of the { agentTypes, stages } automation aggregate. */
 export const AUTOMATION_CONFIGURATION_MAX_BYTES = 48 * 1_024;
 /** Number of chronologically ordered task messages returned by one list read. */
@@ -70,14 +70,14 @@ export const PUBLISHED_INTERFACE_FAILURE_REASONS = Object.freeze([
   "read_error",
   "over_budget",
 ] as const);
-export type PublishedInterfaceFailureReason = typeof PUBLISHED_INTERFACE_FAILURE_REASONS[number];
+export type PublishedInterfaceFailureReason = (typeof PUBLISHED_INTERFACE_FAILURE_REASONS)[number];
 export const AGENT_GAP_REPORT_MAX_CHARACTERS = 32_000;
 export const SCOPE_HOLD_SUMMARY_PREFIX = "scope-hold: ";
 
 export class ContractValidationError extends Error {
   constructor(
     message: string,
-    readonly code = "INVALID_REQUEST",
+    readonly code = "INVALID_REQUEST"
   ) {
     super(message);
     this.name = "ContractValidationError";
@@ -95,8 +95,7 @@ export function normalizeDeclaredScope(declaredScope: readonly string[]): readon
 export function declaredScopesOverlap(a: readonly string[], b: readonly string[]): boolean {
   const normalizedA = normalizeDeclaredScope(a);
   const normalizedB = normalizeDeclaredScope(b);
-  return normalizedA.some((x) => normalizedB.some((y) =>
-    x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
+  return normalizedA.some((x) => normalizedB.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
 }
 
 /**
@@ -128,61 +127,75 @@ export function isValidCrossRepoMarkdown(value: string): boolean {
 }
 
 export const AGENT_ROLES = ["engineer", "manager", "verifier"] as const;
-export type AgentRole = typeof AGENT_ROLES[number];
+export type AgentRole = (typeof AGENT_ROLES)[number];
 
 export const AGENT_STATUSES = ["idle", "ready", "running", "interrupting", "waiting_for_human"] as const;
-export type AgentStatus = typeof AGENT_STATUSES[number];
+export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
 export const WORKER_CONNECTIONS = ["waiting_for_wake", "watching_run"] as const;
-export type WorkerConnection = typeof WORKER_CONNECTIONS[number] | null;
+export type WorkerConnection = (typeof WORKER_CONNECTIONS)[number] | null;
 
 export const TASK_KINDS = ["work", "manager_review", "human_check"] as const;
-export type TaskKind = typeof TASK_KINDS[number];
+export type TaskKind = (typeof TASK_KINDS)[number];
 
-export const TASK_STATUSES = ["backlog", "queued", "in_progress", "blocked", "completed", "failed", "interrupted", "cancelled"] as const;
-export type TaskStatus = typeof TASK_STATUSES[number];
+export const TASK_STATUSES = [
+  "backlog",
+  "queued",
+  "in_progress",
+  "blocked",
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export function isRecoverableTaskStatus(
-  status: TaskStatus,
+  status: TaskStatus
 ): status is Extract<TaskStatus, "failed" | "blocked" | "interrupted"> {
   return status === "failed" || status === "blocked" || status === "interrupted";
 }
 
-export function isHardTerminalTaskStatus(
-  status: TaskStatus,
-): status is Extract<TaskStatus, "completed" | "cancelled"> {
+export function isHardTerminalTaskStatus(status: TaskStatus): status is Extract<TaskStatus, "completed" | "cancelled"> {
   return status === "completed" || status === "cancelled";
 }
 
 export const TASK_PHASE_STAGES = ["research", "planning", "execution", "testing", "review", "done"] as const;
-export type TaskPhaseStage = typeof TASK_PHASE_STAGES[number];
+export type TaskPhaseStage = (typeof TASK_PHASE_STAGES)[number];
 
 export const TASK_PHASE_STATUSES = ["pending", "in_progress", "blocked", "completed", "failed"] as const;
-export type TaskPhaseStatus = typeof TASK_PHASE_STATUSES[number];
+export type TaskPhaseStatus = (typeof TASK_PHASE_STATUSES)[number];
 
 export const TASK_MESSAGE_KINDS = ["note", "progress", "proposal", "result"] as const;
-export type TaskMessageKind = typeof TASK_MESSAGE_KINDS[number];
+export type TaskMessageKind = (typeof TASK_MESSAGE_KINDS)[number];
 
 export const ACTOR_TYPES = ["human", "agent", "system"] as const;
-export type ActorType = typeof ACTOR_TYPES[number];
+export type ActorType = (typeof ACTOR_TYPES)[number];
 
 export const QUESTION_STATUSES = ["open", "answered"] as const;
-export type QuestionStatus = typeof QUESTION_STATUSES[number];
+export type QuestionStatus = (typeof QUESTION_STATUSES)[number];
 
 /** Adding a wake reason here also authorizes the task worker to launch for it. */
-export const WAKEUP_REASONS = ["human_assignment", "human_answer", "human_resume", "workflow_handoff", "assigned", "resumed"] as const;
-export type WakeupReason = typeof WAKEUP_REASONS[number];
+export const WAKEUP_REASONS = [
+  "human_assignment",
+  "human_answer",
+  "human_resume",
+  "workflow_handoff",
+  "assigned",
+  "resumed",
+] as const;
+export type WakeupReason = (typeof WAKEUP_REASONS)[number];
 
 export const RUN_STATUSES = ["active", "waiting_for_human", "completed", "failed", "interrupted"] as const;
-export type RunStatus = typeof RUN_STATUSES[number];
+export type RunStatus = (typeof RUN_STATUSES)[number];
 
 export const TASK_MESSAGE_ACTOR_TYPES = ["human", "agent"] as const;
 
 export const WORK_ITEM_PRIORITIES = ["urgent", "high", "normal", "low", "opportunistic"] as const;
-export type WorkItemPriority = typeof WORK_ITEM_PRIORITIES[number];
+export type WorkItemPriority = (typeof WORK_ITEM_PRIORITIES)[number];
 
 export const WORK_ITEM_TASK_TYPES = ["standard", "onboarding"] as const;
-export type WorkItemTaskType = typeof WORK_ITEM_TASK_TYPES[number];
+export type WorkItemTaskType = (typeof WORK_ITEM_TASK_TYPES)[number];
 
 export const WORK_ITEM_STATES = [
   "queued",
@@ -200,10 +213,10 @@ export const WORK_ITEM_STATES = [
   "abandoned",
   "dead_letter",
 ] as const;
-export type WorkItemState = typeof WORK_ITEM_STATES[number];
+export type WorkItemState = (typeof WORK_ITEM_STATES)[number];
 
 export const WORK_ITEM_PHASES = ["expand", "migrate", "contract"] as const;
-export type WorkItemPhase = typeof WORK_ITEM_PHASES[number];
+export type WorkItemPhase = (typeof WORK_ITEM_PHASES)[number];
 
 export const WORK_ITEM_TERMINAL_STATES = ["merged", "abandoned", "dead_letter"] as const;
 
@@ -211,9 +224,7 @@ export function isTerminalWorkItemState(state: WorkItemState): boolean {
   return (WORK_ITEM_TERMINAL_STATES as readonly WorkItemState[]).includes(state);
 }
 
-export const WORK_ITEM_TRANSITIONS: Readonly<
-  Record<WorkItemState, readonly WorkItemState[]>
-> = {
+export const WORK_ITEM_TRANSITIONS: Readonly<Record<WorkItemState, readonly WorkItemState[]>> = {
   queued: ["planning", "designing", "implementing", "parked", "abandoned", "dead_letter"],
   planning: [
     "plan_approval",
@@ -305,11 +316,21 @@ export function isWorkItemTransitionAllowed(from: WorkItemState, to: WorkItemSta
   return WORK_ITEM_TRANSITIONS[from].includes(to);
 }
 
-export const WORK_ITEM_STAGES = ["refinement", "project_resolution", "research", "planning", "implementation", "testing", "verification", "human_review", "deployment"] as const;
-export type WorkItemStage = typeof WORK_ITEM_STAGES[number];
+export const WORK_ITEM_STAGES = [
+  "refinement",
+  "project_resolution",
+  "research",
+  "planning",
+  "implementation",
+  "testing",
+  "verification",
+  "human_review",
+  "deployment",
+] as const;
+export type WorkItemStage = (typeof WORK_ITEM_STAGES)[number];
 
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
-export type WorkflowStage = typeof WORKFLOW_STAGES[number];
+export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 
 export const PARK_CATEGORIES = [
   "open_question",
@@ -342,22 +363,19 @@ export const GATE_KINDS = [
   "question_answer",
   "deploy_attest",
 ] as const;
-export type ParkCategory = typeof PARK_CATEGORIES[number];
+export type ParkCategory = (typeof PARK_CATEGORIES)[number];
 
 // The pipeline_plans CTE in src/server/task-board/collaborators/wall-clock.ts
 // mirrors this predicate in SQL when discovering capped pipeline runs.
 export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" | "v2" | null {
-  if (
-    template.length === 2 &&
-    template[0] === "implementation" &&
-    template[1] === "testing"
-  ) return "v1";
+  if (template.length === 2 && template[0] === "implementation" && template[1] === "testing") return "v1";
   if (
     template.length === 3 &&
     template[0] === "implementation" &&
     template[1] === "testing" &&
     template[2] === "verification"
-  ) return "v2";
+  )
+    return "v2";
   return null;
 }
 
@@ -372,8 +390,8 @@ export const REVIEW_FINDING_CATEGORIES = [
 ] as const;
 export const REVIEW_FINDING_SEVERITIES = ["minor", "major", "critical"] as const;
 export const BLOCKING_REVIEW_FINDING_CATEGORIES = ["correctness", "security", "plan_deviation"] as const;
-export type ReviewFindingCategory = typeof REVIEW_FINDING_CATEGORIES[number];
-export type ReviewFindingSeverity = typeof REVIEW_FINDING_SEVERITIES[number];
+export type ReviewFindingCategory = (typeof REVIEW_FINDING_CATEGORIES)[number];
+export type ReviewFindingSeverity = (typeof REVIEW_FINDING_SEVERITIES)[number];
 
 // These bounds keep a maximally sized findings list inside the default 64 KiB
 // run-settlement transport, including the settlement's maximally sized result.
@@ -392,7 +410,7 @@ export const DESIGN_FAILURE_POINTS = [
   "duplicate_delivery",
   "concurrent_invocation",
 ] as const;
-export type DesignFailurePointKind = typeof DESIGN_FAILURE_POINTS[number];
+export type DesignFailurePointKind = (typeof DESIGN_FAILURE_POINTS)[number];
 
 // These bounds keep a maximally sized design record plus the settlement's
 // maximally sized result inside the default 64 KiB outcome/HTTP transport.
@@ -405,7 +423,7 @@ export const DESIGN_RECORD_LABEL_MAX_LENGTH = 96;
 export const DESIGN_RECORD_DETAIL_MAX_LENGTH = 128;
 
 export const PLAN_REVISION_STATES = ["proposed", "confirmed", "superseded", "rejected"] as const;
-export type PlanRevisionState = typeof PLAN_REVISION_STATES[number];
+export type PlanRevisionState = (typeof PLAN_REVISION_STATES)[number];
 
 export const PLAN_CHANGE_SHAPES = ["mechanical_sweep", "feature", "blast_radius"] as const;
 export const PLAN_TIERS = ["standard", "hazardous"] as const;
@@ -433,8 +451,8 @@ export interface DeclaredChild {
 
 /** All optional; present together on pipeline plans. */
 export interface PlanRecordFields {
-  readonly changeShape?: typeof PLAN_CHANGE_SHAPES[number];
-  readonly tier?: typeof PLAN_TIERS[number];
+  readonly changeShape?: (typeof PLAN_CHANGE_SHAPES)[number];
+  readonly tier?: (typeof PLAN_TIERS)[number];
   readonly declaredScope?: readonly string[];
   readonly nonGoals?: readonly string[];
   readonly mechanicalPortions?: readonly string[];
@@ -445,8 +463,8 @@ export interface PlanRecordFields {
 export interface WorkflowPipelineContext {
   readonly branch: string;
   readonly baseSha: string;
-  readonly changeShape: typeof PLAN_CHANGE_SHAPES[number];
-  readonly tier: typeof PLAN_TIERS[number];
+  readonly changeShape: (typeof PLAN_CHANGE_SHAPES)[number];
+  readonly tier: (typeof PLAN_TIERS)[number];
   readonly declaredScope: readonly string[];
   readonly nonGoals: readonly string[];
   readonly assumptions: readonly string[];
@@ -476,10 +494,10 @@ export interface WorkflowFixContext {
 }
 
 export const WORK_NODE_STATES = ["pending", "ready", "active", "blocked", "stale", "completed", "cancelled"] as const;
-export type WorkNodeState = typeof WORK_NODE_STATES[number];
+export type WorkNodeState = (typeof WORK_NODE_STATES)[number];
 
 export const STAGE_HANDOFF_OUTCOMES = ["passed", "failed", "needs_input"] as const;
-export type StageHandoffOutcome = typeof STAGE_HANDOFF_OUTCOMES[number];
+export type StageHandoffOutcome = (typeof STAGE_HANDOFF_OUTCOMES)[number];
 export const STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS = 4_000;
 export const STAGE_HANDOFF_BLOCKERS_MAX_ITEMS = 32;
 export type ArtifactMediaType =
@@ -494,10 +512,9 @@ export type WorkItemProjectTarget =
    * Retained for wire compatibility with existing data and older clients.
    * Work-item request parsers currently reject automatic project targets.
    */
-  | Readonly<{ mode: "auto" }>
-  | Readonly<{ mode: "explicit"; projectId: string }>;
+  Readonly<{ mode: "auto" }> | Readonly<{ mode: "explicit"; projectId: string }>;
 export const EVALUATOR_PROFILES = ["tests", "editorial", "visual", "manual"] as const;
-export type AgentTypeEvaluatorProfile = typeof EVALUATOR_PROFILES[number];
+export type AgentTypeEvaluatorProfile = (typeof EVALUATOR_PROFILES)[number];
 export type AutomationStageExecutor =
   | Readonly<{ kind: "agent_type"; agentTypeId: string }>
   | Readonly<{ kind: "machine_verify" }>
@@ -633,13 +650,13 @@ export interface ParkRecord {
   readonly reason: string;
   readonly parkedAt: string;
   readonly resolvedAt: string | null;
-  readonly resolution: typeof PARK_RESOLUTIONS[number] | null;
+  readonly resolution: (typeof PARK_RESOLUTIONS)[number] | null;
 }
 
 export interface BoardNotification {
   readonly notificationId: string;
   readonly sequence: number;
-  readonly kind: typeof NOTIFICATION_KINDS[number];
+  readonly kind: (typeof NOTIFICATION_KINDS)[number];
   readonly dedupeKey: string | null;
   readonly projectId: string | null;
   readonly workItemId: string | null;
@@ -652,7 +669,7 @@ export interface BoardNotification {
 export interface GateAction {
   readonly gateActionId: string;
   readonly workItemId: string;
-  readonly gate: typeof GATE_KINDS[number];
+  readonly gate: (typeof GATE_KINDS)[number];
   readonly actorId: string;
   readonly planRevisionId: string | null;
   readonly verifiedSha: string | null;
@@ -780,7 +797,9 @@ export interface VerifyAttempt {
   readonly verifyRunId: string | null;
   readonly workspacePath: string | null;
   readonly state: "starting" | "running" | "green" | "failed" | "died" | "failed_to_start" | "retired";
-  readonly checkResults: readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[] | null;
+  readonly checkResults:
+    | readonly { readonly criterion: string; readonly check: string; readonly passed: boolean }[]
+    | null;
   readonly detail: string | null;
   readonly createdAt: string;
   readonly endedAt: string | null;

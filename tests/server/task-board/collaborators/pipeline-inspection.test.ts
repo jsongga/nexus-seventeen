@@ -4,16 +4,11 @@ import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  inspectPipelineBranch,
-  type PipelineInspection,
-} from "#server/task-board/collaborators/pipeline-inspection";
+import { inspectPipelineBranch, type PipelineInspection } from "#server/task-board/collaborators/pipeline-inspection";
 import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
 
 const SHA = "a".repeat(40);
-const SAFE_PREFIX = [
-  "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", "/repo",
-] as const;
+const SAFE_PREFIX = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", "/repo"] as const;
 
 function runGit(cwd: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -57,8 +52,12 @@ test("pipeline inspection uses safe git argv and maps name-status paths into rev
   assert.equal(calls.length, 3);
   for (const call of calls) assert.deepEqual(call.slice(0, SAFE_PREFIX.length), SAFE_PREFIX);
   assert.deepEqual(calls[2]?.slice(SAFE_PREFIX.length), [
-    "diff", "--no-renames", "--name-status", "-z",
-    `${"b".repeat(40)}..task/work-item-review`, "--",
+    "diff",
+    "--no-renames",
+    "--name-status",
+    "-z",
+    `${"b".repeat(40)}..task/work-item-review`,
+    "--",
   ]);
 });
 

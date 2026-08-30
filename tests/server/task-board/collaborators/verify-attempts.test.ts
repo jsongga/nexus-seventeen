@@ -20,10 +20,7 @@ import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
-import {
-  TransparentWorkflow,
-  type MachineVerifyEvidence,
-} from "#server/task-board/persistence/workflow";
+import { TransparentWorkflow, type MachineVerifyEvidence } from "#server/task-board/persistence/workflow";
 import { SkillRegistry } from "#server/task-board/skills";
 import {
   HUMAN_TOKEN,
@@ -53,14 +50,16 @@ function heldVerifyPlan(suffix: string): WorkflowPlanDraft {
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
-    nodes: [{
-      nodeId: `verify-scope-release-${suffix}`,
-      title: `Verify scope release ${suffix}`,
-      objective: "Run the standard pipeline through machine verification.",
-      acceptanceCriteria: ["The held sibling can activate when this item exits the in-flight set."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `verify-scope-release-${suffix}`,
+        title: `Verify scope release ${suffix}`,
+        objective: "Run the standard pipeline through machine verification.",
+        acceptanceCriteria: ["The held sibling can activate when this item exits the in-flight set."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -74,13 +73,14 @@ test("verify workspace configuration defaults beside the database and rejects un
     const normalized = config(fixture.path);
     assert.equal(normalized.verifyWorkspaceRoot, join(dirname(fixture.path), "verify-workspaces"));
     assert.throws(
-      () => normalizeTaskBoardConfig({
-        dbPath: fixture.path,
-        humanToken: HUMAN_TOKEN,
-        humanPrincipal: "human:alice",
-        verifyWorkspaceRoot: "relative/verify-workspaces",
-      }),
-      /verifyWorkspaceRoot must be an absolute directory path/u,
+      () =>
+        normalizeTaskBoardConfig({
+          dbPath: fixture.path,
+          humanToken: HUMAN_TOKEN,
+          humanPrincipal: "human:alice",
+          verifyWorkspaceRoot: "relative/verify-workspaces",
+        }),
+      /verifyWorkspaceRoot must be an absolute directory path/u
     );
   } finally {
     fixture.board.close();
@@ -97,7 +97,7 @@ class FakeWorkspaceManager implements MachineVerifyWorkspaceManager {
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
-    private readonly workspace: string,
+    private readonly workspace: string
   ) {}
 
   async create(key: string, baseRef?: string, branchKey?: string): Promise<string> {
@@ -140,7 +140,7 @@ class FakeRunner implements MachineVerifyRunner {
 
   constructor(
     private readonly runtime: TaskBoardRuntime,
-    private readonly repoRoot: string,
+    private readonly repoRoot: string
   ) {}
 
   async startFull(): Promise<string> {
@@ -169,7 +169,8 @@ class FakeRunner implements MachineVerifyRunner {
       state: this.statusState,
       startedAt: "2026-08-19T12:00:00.000Z",
       endedAt: this.statusState === "running" ? null : "2026-08-19T12:01:00.000Z",
-      exitCode: this.statusState === "green" ? 0 : this.statusState === "running" || this.statusState === "died" ? null : 1,
+      exitCode:
+        this.statusState === "green" ? 0 : this.statusState === "running" || this.statusState === "died" ? null : 1,
       command: "npm test",
     };
   }
@@ -186,13 +187,16 @@ async function attemptFixture(
   suffix: string,
   state: AttemptState,
   criterionChecks: readonly { readonly criterion: string; readonly check: string }[] = [],
-  settleWorkflow = false,
+  settleWorkflow = false
 ) {
   const fixture = await boardFixture();
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Machine verify ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `machine-verify-${suffix}`).workItem;
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Machine verify ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    `machine-verify-${suffix}`
+  ).workItem;
   fixture.board.close();
   const boardConfig = config(fixture.path);
   const store = await TaskBoardStore.open(boardConfig.dbPath);
@@ -203,14 +207,21 @@ async function attemptFixture(
   const verifyAttemptId = `verify-attempt-${suffix}`;
   const workspacePath = join(await mkdtemp(join(tmpdir(), "machine-verify-workspace-")), "checkout");
   store.transaction(() => {
-    store.db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
+    store.db
+      .prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
       .run("/target/repository", fixture.project.projectId);
-    store.db.prepare(`
+    store.db
+      .prepare(
+        `
       UPDATE work_items
       SET state='verifying', current_stage='testing', pipeline_branch=?, base_sha=?, version=version+1
       WHERE work_item_id=?
-    `).run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
-    store.db.prepare(`
+    `
+      )
+      .run(`task/${workItem.workItemId}`, "a".repeat(40), workItem.workItemId);
+    store.db
+      .prepare(
+        `
       INSERT INTO plan_revisions(
         plan_revision_id, work_item_id, revision, objective, assumptions_json, acceptance_criteria_json,
         change_shape, tier, declared_scope_json, non_goals_json, mechanical_portions_json,
@@ -218,41 +229,45 @@ async function attemptFixture(
         state, created_by, confirmed_by, created_at, confirmed_at
       ) VALUES (?, ?, 1, ?, '[]', '["Verify succeeds."]', 'feature', 'standard', '["src"]', '[]',
         '[]', '[]', ?, NULL, ?, '{}', 'confirmed', 'human:alice', 'human:alice', ?, ?)
-    `).run(
-      planRevisionId,
-      workItem.workItemId,
-      `Machine verify ${suffix}.`,
-      JSON.stringify(criterionChecks),
-      fixture.project.projectId,
-      "2026-08-19T12:00:00.000Z",
-      "2026-08-19T12:00:00.000Z",
-    );
-    store.db.prepare(`
+    `
+      )
+      .run(
+        planRevisionId,
+        workItem.workItemId,
+        `Machine verify ${suffix}.`,
+        JSON.stringify(criterionChecks),
+        fixture.project.projectId,
+        "2026-08-19T12:00:00.000Z",
+        "2026-08-19T12:00:00.000Z"
+      );
+    store.db
+      .prepare(
+        `
       INSERT INTO work_nodes(
         node_id, plan_revision_id, project_id, title, objective, acceptance_criteria_json,
         stage_template_json, current_stage, state, version, created_at, updated_at
       ) VALUES (?, ?, ?, 'Verify', 'Run machine verify.', '["Verify succeeds."]',
         '["implementation","testing"]', 'testing', 'active', 1, ?, ?)
-    `).run(
-      nodeId,
-      planRevisionId,
-      fixture.project.projectId,
-      "2026-08-19T12:00:00.000Z",
-      "2026-08-19T12:00:00.000Z",
-    );
-    store.db.prepare(`
+    `
+      )
+      .run(nodeId, planRevisionId, fixture.project.projectId, "2026-08-19T12:00:00.000Z", "2026-08-19T12:00:00.000Z");
+    store.db
+      .prepare(
+        `
       INSERT INTO verify_attempts(
         verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
         state, check_results_json, detail, created_at, ended_at
       ) VALUES (?, ?, 'testing', 1, ?, ?, ?, NULL, NULL, ?, NULL)
-    `).run(
-      verifyAttemptId,
-      nodeId,
-      state === "running" ? "verify-run-1" : null,
-      state === "running" ? workspacePath : null,
-      state,
-      "2026-08-19T12:00:00.000Z",
-    );
+    `
+      )
+      .run(
+        verifyAttemptId,
+        nodeId,
+        state === "running" ? "verify-run-1" : null,
+        state === "running" ? workspacePath : null,
+        state,
+        "2026-08-19T12:00:00.000Z"
+      );
   });
 
   const workspace = new FakeWorkspaceManager(runtime, workspacePath);
@@ -270,7 +285,7 @@ async function attemptFixture(
         boardConfig.now,
         (operation) => store.transaction(operation),
         undefined,
-        () => "a".repeat(40),
+        () => "a".repeat(40)
       )
     : null;
   const collaborator = new VerifyAttemptsCollaborator(runtime, {
@@ -286,7 +301,7 @@ async function attemptFixture(
       checkSignals.push(signal);
       return {
         passed: checkPassed,
-        detail: checkPassed ? "exit 0" : checkDetails[checkCalls.length - 1] ?? checkDetails.at(-1) ?? "exit 1",
+        detail: checkPassed ? "exit 0" : (checkDetails[checkCalls.length - 1] ?? checkDetails.at(-1) ?? "exit 1"),
       };
     },
     git: (arguments_) => {
@@ -303,45 +318,80 @@ async function attemptFixture(
     reconcileProject: () => undefined,
   });
 
-  const row = () => store.db.prepare("SELECT * FROM verify_attempts WHERE verify_attempt_id=?")
-    .get(verifyAttemptId) as Record<string, unknown>;
+  const row = () =>
+    store.db.prepare("SELECT * FROM verify_attempts WHERE verify_attempt_id=?").get(verifyAttemptId) as Record<
+      string,
+      unknown
+    >;
   return {
-    runtime, store, collaborator, runner, workspace, settlements, checkCalls, checkSignals, gitCalls, row,
-    verifyAttemptId, workItem, nodeId, workspacePath,
-    setCheckPassed(value: boolean): void { checkPassed = value; },
-    setCheckFailureDetail(value: string): void { checkDetails = [value]; },
-    setCheckFailureDetails(values: readonly string[]): void { checkDetails = [...values]; },
+    runtime,
+    store,
+    collaborator,
+    runner,
+    workspace,
+    settlements,
+    checkCalls,
+    checkSignals,
+    gitCalls,
+    row,
+    verifyAttemptId,
+    workItem,
+    nodeId,
+    workspacePath,
+    setCheckPassed(value: boolean): void {
+      checkPassed = value;
+    },
+    setCheckFailureDetail(value: string): void {
+      checkDetails = [value];
+    },
+    setCheckFailureDetails(values: readonly string[]): void {
+      checkDetails = [...values];
+    },
   };
 }
 
 test("starting attempts start outside the transaction, then green runs execute and record criterion checks", async () => {
-  const fixture = await attemptFixture("green", "starting", [{
-    criterion: "The focused test passes.",
-    check: "node test.mjs",
-  }]);
+  const fixture = await attemptFixture("green", "starting", [
+    {
+      criterion: "The focused test passes.",
+      check: "node test.mjs",
+    },
+  ]);
   try {
     await fixture.collaborator.sweep();
     assert.equal(fixture.row().state, "running");
-    assert.deepEqual(fixture.workspace.creates, [{
-      key: `${fixture.workItem.workItemId}-verify`,
-      baseRef: "a".repeat(40),
-      branchKey: fixture.workItem.workItemId,
-    }]);
+    assert.deepEqual(fixture.workspace.creates, [
+      {
+        key: `${fixture.workItem.workItemId}-verify`,
+        baseRef: "a".repeat(40),
+        branchKey: fixture.workItem.workItemId,
+      },
+    ]);
 
     fixture.runner.statusState = "green";
     await fixture.collaborator.sweep();
 
     assert.equal(fixture.row().state, "green");
-    assert.deepEqual(JSON.parse(String(fixture.row().check_results_json)), [{
-      criterion: "The focused test passes.",
-      check: "node test.mjs",
-      passed: true,
-    }]);
+    assert.deepEqual(JSON.parse(String(fixture.row().check_results_json)), [
+      {
+        criterion: "The focused test passes.",
+        check: "node test.mjs",
+        passed: true,
+      },
+    ]);
     assert.deepEqual(fixture.checkCalls, [{ command: "node test.mjs", cwd: String(fixture.row().workspace_path) }]);
-    assert.deepEqual(fixture.gitCalls, [[
-      "-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", String(fixture.row().workspace_path),
-      "rev-parse", "HEAD",
-    ]]);
+    assert.deepEqual(fixture.gitCalls, [
+      [
+        "-c",
+        "core.fsmonitor=",
+        "-c",
+        "core.hooksPath=",
+        "-C",
+        String(fixture.row().workspace_path),
+        "rev-parse",
+        "HEAD",
+      ],
+    ]);
     assert.equal(fixture.row().detail, `verified-sha:${"b".repeat(40)}`);
     assert.equal(fixture.settlements[0]?.passed, true);
     assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
@@ -362,10 +412,12 @@ test("a stored confirmed v1 pipeline reaches final approval after a green machin
 
     assert.equal(fixture.row().state, "green");
     assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "final_approval");
-    assert.deepEqual({
-      ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
-        .get(fixture.nodeId),
-    }, { state: "completed", current_stage: null });
+    assert.deepEqual(
+      {
+        ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?").get(fixture.nodeId),
+      },
+      { state: "completed", current_stage: null }
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -376,18 +428,25 @@ test("an in-process start exclusively cleans resources created after retirement 
   const fixture = await attemptFixture("retired-while-starting", "starting", [], true);
   try {
     fixture.runner.onStart = () => {
-      fixture.store.db.prepare(`
+      fixture.store.db
+        .prepare(
+          `
         UPDATE verify_attempts
         SET verify_run_id='verify-run-1',workspace_path=?
         WHERE verify_attempt_id=?
-      `).run(fixture.workspacePath, fixture.verifyAttemptId);
+      `
+        )
+        .run(fixture.workspacePath, fixture.verifyAttemptId);
       fixture.store.transaction(() => {
-        assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-          fixture.runtime,
-          fixture.workItem.workItemId,
-          "The work item was cancelled.",
-          "2026-08-19T12:00:30.000Z",
-        ), 1);
+        assert.equal(
+          retireOpenVerifyAttemptsForWorkItemInTransaction(
+            fixture.runtime,
+            fixture.workItem.workItemId,
+            "The work item was cancelled.",
+            "2026-08-19T12:00:30.000Z"
+          ),
+          1
+        );
       });
     };
 
@@ -398,9 +457,14 @@ test("an in-process start exclusively cleans resources created after retirement 
     assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
     assert.deepEqual(fixture.workspace.recordedRemovals, []);
     assert.deepEqual(fixture.settlements, []);
-    assert.equal(Number(fixture.store.db.prepare(
-      "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
-    ).get(fixture.nodeId)?.count), 0);
+    assert.equal(
+      Number(
+        fixture.store.db
+          .prepare("SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'")
+          .get(fixture.nodeId)?.count
+      ),
+      0
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -411,12 +475,15 @@ test("retiring a running attempt terminates its process and removes its workspac
   const fixture = await attemptFixture("retired-while-running", "running", [], true);
   try {
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
     await fixture.collaborator.sweep();
 
@@ -425,9 +492,14 @@ test("retiring a running attempt terminates its process and removes its workspac
     assert.deepEqual(fixture.workspace.removed, []);
     assert.deepEqual(fixture.workspace.recordedRemovals, [fixture.workspacePath]);
     assert.deepEqual(fixture.settlements, []);
-    assert.equal(Number(fixture.store.db.prepare(
-      "SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'",
-    ).get(fixture.nodeId)?.count), 0);
+    assert.equal(
+      Number(
+        fixture.store.db
+          .prepare("SELECT COUNT(*) AS count FROM project_events WHERE node_id=? AND event_type='stage_completed'")
+          .get(fixture.nodeId)?.count
+      ),
+      0
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -437,18 +509,25 @@ test("retiring a running attempt terminates its process and removes its workspac
 test("retiring a persisted starting attempt cleans resources not registered by this collaborator", async () => {
   const fixture = await attemptFixture("retired-persisted-starting", "starting", [], true);
   try {
-    fixture.store.db.prepare(`
+    fixture.store.db
+      .prepare(
+        `
       UPDATE verify_attempts
       SET verify_run_id='verify-run-1',workspace_path=?
       WHERE verify_attempt_id=?
-    `).run(fixture.workspacePath, fixture.verifyAttemptId);
+    `
+      )
+      .run(fixture.workspacePath, fixture.verifyAttemptId);
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
     await fixture.collaborator.sweep();
 
@@ -467,8 +546,12 @@ test("retirement racing a running verify settlement cleans the workspace exactly
   const fixture = await attemptFixture("late-cancellation", "running", [], true);
   let releaseStatus!: () => void;
   let markStatusStarted!: () => void;
-  const statusHeld = new Promise<void>((resolveStatus) => { releaseStatus = resolveStatus; });
-  const statusStarted = new Promise<void>((resolveStarted) => { markStatusStarted = resolveStarted; });
+  const statusHeld = new Promise<void>((resolveStatus) => {
+    releaseStatus = resolveStatus;
+  });
+  const statusStarted = new Promise<void>((resolveStarted) => {
+    markStatusStarted = resolveStarted;
+  });
   try {
     fixture.runner.statusState = "green";
     fixture.runner.onStatus = () => {
@@ -479,12 +562,15 @@ test("retirement racing a running verify settlement cleans the workspace exactly
     await statusStarted;
 
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
     releaseStatus();
     assert.equal(await lateSweep, 1);
@@ -495,10 +581,16 @@ test("retirement racing a running verify settlement cleans the workspace exactly
     assert.deepEqual(fixture.workspace.removed, []);
     assert.deepEqual(fixture.workspace.recordedRemovals, [fixture.workspacePath]);
     assert.deepEqual(fixture.settlements, []);
-    assert.equal(fixture.store.db.prepare("SELECT 1 FROM tasks WHERE task_id=?")
-      .get(`task_${fixture.verifyAttemptId}`), undefined);
-    assert.equal(fixture.store.db.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
-      .get(`handoff_${fixture.verifyAttemptId}`), undefined);
+    assert.equal(
+      fixture.store.db.prepare("SELECT 1 FROM tasks WHERE task_id=?").get(`task_${fixture.verifyAttemptId}`),
+      undefined
+    );
+    assert.equal(
+      fixture.store.db
+        .prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
+        .get(`handoff_${fixture.verifyAttemptId}`),
+      undefined
+    );
   } finally {
     releaseStatus();
     fixture.runtime.close();
@@ -510,12 +602,15 @@ test("retiring a failed_to_start attempt only changes its terminal state", async
   const fixture = await attemptFixture("retired-after-start-failure", "failed_to_start", [], true);
   try {
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
     await fixture.collaborator.sweep();
 
@@ -533,15 +628,19 @@ test("retiring a failed_to_start attempt only changes its terminal state", async
 test("retiring a failed_to_start attempt removes its recorded workspace", async () => {
   const fixture = await attemptFixture("retired-start-failure-workspace", "failed_to_start", [], true);
   try {
-    fixture.store.db.prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
+    fixture.store.db
+      .prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
       .run("/tmp/retired-start-failure-workspace", fixture.verifyAttemptId);
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
     await fixture.collaborator.sweep();
 
@@ -566,7 +665,7 @@ test("retirement cleans a retry workspace when failed_to_start spawning rejects 
           fixture.runtime,
           fixture.workItem.workItemId,
           "The work item was cancelled during retry.",
-          "2026-08-19T12:00:30.000Z",
+          "2026-08-19T12:00:30.000Z"
         );
       });
       throw new Error("retry spawn rejected after cancellation");
@@ -586,11 +685,15 @@ test("retirement cleans a retry workspace when failed_to_start spawning rejects 
 test("sweep replays cleanup for a durable retired attempt left by a crashed process", async () => {
   const fixture = await attemptFixture("retired-crash-replay", "running", [], true);
   try {
-    fixture.store.db.prepare(`
+    fixture.store.db
+      .prepare(
+        `
       UPDATE verify_attempts
       SET state='retired',ended_at='2026-08-19T12:00:30.000Z'
       WHERE verify_attempt_id=?
-    `).run(fixture.verifyAttemptId);
+    `
+      )
+      .run(fixture.verifyAttemptId);
 
     assert.equal(await fixture.collaborator.sweep(), 1);
 
@@ -609,11 +712,15 @@ test("retirement retries verifier termination after workspace cleanup succeeds f
   t.mock.method(console, "error", () => undefined);
   try {
     fixture.runner.terminateErrors.push(new Error("synthetic transient termination failure"));
-    fixture.store.db.prepare(`
+    fixture.store.db
+      .prepare(
+        `
       UPDATE verify_attempts
       SET state='retired',ended_at='2026-08-19T12:00:30.000Z'
       WHERE verify_attempt_id=?
-    `).run(fixture.verifyAttemptId);
+    `
+      )
+      .run(fixture.verifyAttemptId);
 
     assert.equal(await fixture.collaborator.sweep(), 1);
     assert.deepEqual(fixture.runner.terminateCalls, ["verify-run-1"]);
@@ -634,12 +741,21 @@ test("retirement retries verifier termination after workspace cleanup succeeds f
 });
 
 test("retirement aborts an in-flight criterion check before cleaning verifier resources", async () => {
-  const fixture = await attemptFixture("retired-criterion-check", "running", [{
-    criterion: "The held criterion exits on cancellation.",
-    check: "node held-check.mjs",
-  }], true);
+  const fixture = await attemptFixture(
+    "retired-criterion-check",
+    "running",
+    [
+      {
+        criterion: "The held criterion exits on cancellation.",
+        check: "node held-check.mjs",
+      },
+    ],
+    true
+  );
   let checkStarted!: () => void;
-  const started = new Promise<void>((resolve) => { checkStarted = resolve; });
+  const started = new Promise<void>((resolve) => {
+    checkStarted = resolve;
+  });
   const collaborator = new VerifyAttemptsCollaborator(fixture.runtime, {
     workspaceManagerFactory: () => fixture.workspace,
     runnerFactory: () => fixture.runner,
@@ -663,7 +779,7 @@ test("retirement aborts an in-flight criterion check before cleaning verifier re
         fixture.runtime,
         fixture.workItem.workItemId,
         "Cancel the criterion check.",
-        "2026-08-19T12:00:30.000Z",
+        "2026-08-19T12:00:30.000Z"
       );
     });
 
@@ -682,16 +798,20 @@ test("recorded-path retirement falls back to the workspace key when direct remov
   const fixture = await attemptFixture("retired-recorded-path-fallback", "failed_to_start", [], true);
   const recordedPath = "/tmp/retired-recorded-path-fallback";
   try {
-    fixture.store.db.prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
+    fixture.store.db
+      .prepare("UPDATE verify_attempts SET workspace_path=? WHERE verify_attempt_id=?")
       .run(recordedPath, fixture.verifyAttemptId);
     fixture.workspace.recordedRemovalError = new Error("synthetic recorded-path cleanup failure");
     fixture.store.transaction(() => {
-      assert.equal(retireOpenVerifyAttemptsForWorkItemInTransaction(
-        fixture.runtime,
-        fixture.workItem.workItemId,
-        "The work item was cancelled.",
-        "2026-08-19T12:00:30.000Z",
-      ), 1);
+      assert.equal(
+        retireOpenVerifyAttemptsForWorkItemInTransaction(
+          fixture.runtime,
+          fixture.workItem.workItemId,
+          "The work item was cancelled.",
+          "2026-08-19T12:00:30.000Z"
+        ),
+        1
+      );
     });
 
     await fixture.collaborator.sweep();
@@ -706,10 +826,12 @@ test("recorded-path retirement falls back to the workspace key when direct remov
 });
 
 test("a failed criterion settles the green verify run as failed and retains its workspace", async () => {
-  const fixture = await attemptFixture("check-failure", "running", [{
-    criterion: "The focused test passes.",
-    check: "node test.mjs",
-  }]);
+  const fixture = await attemptFixture("check-failure", "running", [
+    {
+      criterion: "The focused test passes.",
+      check: "node test.mjs",
+    },
+  ]);
   try {
     fixture.runner.statusState = "green";
     fixture.setCheckPassed(false);
@@ -729,10 +851,12 @@ test("a failed criterion settles the green verify run as failed and retains its 
 test("criterion commands and failure output are redacted before verify persistence and evidence", async () => {
   const commandSecret = `github_pat_${"c".repeat(48)}`;
   const bearerSecret = `criterion-${"d".repeat(48)}`;
-  const fixture = await attemptFixture("redacted-check", "running", [{
-    criterion: "The secret-bearing check fails safely.",
-    check: `node check.mjs --credential ${commandSecret}`,
-  }]);
+  const fixture = await attemptFixture("redacted-check", "running", [
+    {
+      criterion: "The secret-bearing check fails safely.",
+      check: `node check.mjs --credential ${commandSecret}`,
+    },
+  ]);
   try {
     fixture.runner.statusState = "green";
     fixture.setCheckPassed(false);
@@ -807,12 +931,12 @@ test("a secret-bearing verify tail is redacted before every durable failure proj
   const fixture = await attemptFixture("redacted-tail", "running", [], true);
   const antToken = `sk-ant-${"a".repeat(48)}`;
   const bearerToken = `bearer-${"b".repeat(48)}`;
-  const rawTail = `verify failed ${antToken} Authorization: Bearer ${bearerToken} `
-    .padEnd(4_096, "x");
+  const rawTail = `verify failed ${antToken} Authorization: Bearer ${bearerToken} `.padEnd(4_096, "x");
   assert.equal(rawTail.length, 4_096);
   try {
     fixture.store.transaction(() => {
-      fixture.store.db.prepare("UPDATE work_nodes SET stage_template_json='[\"testing\"]' WHERE node_id=?")
+      fixture.store.db
+        .prepare("UPDATE work_nodes SET stage_template_json='[\"testing\"]' WHERE node_id=?")
         .run(fixture.nodeId);
     });
     fixture.runner.statusState = "failed";
@@ -826,9 +950,9 @@ test("a secret-bearing verify tail is redacted before every durable failure proj
     assert.doesNotMatch(detail, new RegExp(antToken, "u"));
     assert.doesNotMatch(detail, new RegExp(bearerToken, "u"));
 
-    const handoffRow = fixture.store.db.prepare(
-      "SELECT payload_json FROM stage_handoffs WHERE node_id=? AND stage='testing'",
-    ).get(fixture.nodeId);
+    const handoffRow = fixture.store.db
+      .prepare("SELECT payload_json FROM stage_handoffs WHERE node_id=? AND stage='testing'")
+      .get(fixture.nodeId);
     assert.ok(handoffRow);
     const handoffJson = String(handoffRow.payload_json);
     const handoff = JSON.parse(handoffJson) as { readonly summary: string };
@@ -837,11 +961,15 @@ test("a secret-bearing verify tail is redacted before every durable failure proj
     assert.doesNotMatch(handoffJson, new RegExp(antToken, "u"));
     assert.doesNotMatch(handoffJson, new RegExp(bearerToken, "u"));
 
-    const event = fixture.store.db.prepare(`
+    const event = fixture.store.db
+      .prepare(
+        `
       SELECT summary
       FROM project_events
       WHERE node_id=? AND event_type='stage_failed'
-    `).get(fixture.nodeId);
+    `
+      )
+      .get(fixture.nodeId);
     assert.ok(event);
     const eventSummary = String(event.summary);
     assert.match(eventSummary, /\[redacted:token\]/u);
@@ -890,15 +1018,13 @@ test("failed_to_start retries once, while a second start failure settles the ver
 test("starting and failed_to_start verify attempts wait out a board pause", async () => {
   const starting = await attemptFixture("paused-starting", "starting");
   try {
-    starting.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
-      .run();
+    starting.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1").run();
     await starting.collaborator.sweep();
     assert.equal(starting.row().state, "starting");
     assert.deepEqual(starting.runner.starts, []);
     assert.deepEqual(starting.workspace.creates, []);
 
-    starting.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
-      .run();
+    starting.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1").run();
     await starting.collaborator.sweep();
     assert.equal(starting.row().state, "running");
     assert.equal(starting.runner.starts.length, 1);
@@ -914,14 +1040,12 @@ test("starting and failed_to_start verify attempts wait out a board pause", asyn
     assert.equal(failedToStart.row().state, "failed_to_start");
     assert.equal(failedToStart.runner.starts.length, 1);
 
-    failedToStart.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
-      .run();
+    failedToStart.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1").run();
     await failedToStart.collaborator.sweep();
     assert.equal(failedToStart.row().state, "failed_to_start");
     assert.equal(failedToStart.runner.starts.length, 1);
 
-    failedToStart.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
-      .run();
+    failedToStart.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1").run();
     await failedToStart.collaborator.sweep();
     assert.equal(failedToStart.row().state, "running");
     assert.equal(failedToStart.runner.starts.length, 2);
@@ -935,8 +1059,7 @@ test("a pause committed during workspace creation fences the verify supervisor s
   const fixture = await attemptFixture("pause-during-workspace", "starting");
   try {
     fixture.workspace.onCreate = () => {
-      fixture.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1")
-        .run();
+      fixture.store.db.prepare("UPDATE board_pause SET paused=1,reason='maintenance',version=version+1").run();
     };
 
     await fixture.collaborator.sweep();
@@ -945,8 +1068,7 @@ test("a pause committed during workspace creation fences the verify supervisor s
     assert.deepEqual(fixture.workspace.removed, [`${fixture.workItem.workItemId}-verify`]);
 
     fixture.workspace.onCreate = null;
-    fixture.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1")
-      .run();
+    fixture.store.db.prepare("UPDATE board_pause SET paused=0,reason=NULL,version=version+1").run();
     await fixture.collaborator.sweep();
     assert.equal(fixture.row().state, "running");
     assert.equal(fixture.runner.starts.length, 1);
@@ -963,7 +1085,7 @@ test("verify start failures are redacted before attempt detail and machine evide
   try {
     fixture.runner.startErrors.push(
       new Error(`spawn rejected ${antToken}`),
-      new Error(`Authorization: Bearer ${bearerToken}`),
+      new Error(`Authorization: Bearer ${bearerToken}`)
     );
 
     await fixture.collaborator.sweep();
@@ -997,15 +1119,20 @@ test("missing running-attempt status and tail files settle died and return the n
     assert.equal(fixture.settlements[0]?.passed, false);
     assert.match(fixture.settlements[0]?.evidence.summary ?? "", /workspace\/status\.json/u);
     assert.match(fixture.settlements[0]?.evidence.summary ?? "", /workspace\/log/u);
-    const node = fixture.store.db.prepare(
-      "SELECT state,current_stage FROM work_nodes WHERE node_id=?",
-    ).get(fixture.nodeId);
+    const node = fixture.store.db
+      .prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
+      .get(fixture.nodeId);
     assert.equal(node?.state, "ready");
     assert.equal(node?.current_stage, "implementation");
     assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
-    assert.equal(Number(fixture.store.db.prepare(
-      "SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'",
-    ).get(fixture.nodeId)?.count), 1);
+    assert.equal(
+      Number(
+        fixture.store.db
+          .prepare("SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'")
+          .get(fixture.nodeId)?.count
+      ),
+      1
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -1022,17 +1149,31 @@ test("overlapping verify sweeps settle one handoff and one implementation return
 
     assert.equal(fixture.settlements.length, 1);
     assert.deepEqual(fixture.runner.statusCalls, ["verify-run-1"]);
-    assert.equal(Number(fixture.store.db.prepare(
-      "SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'",
-    ).get(fixture.nodeId)?.count), 1);
-    assert.equal(Number(fixture.store.db.prepare(`
+    assert.equal(
+      Number(
+        fixture.store.db
+          .prepare("SELECT COUNT(*) AS count FROM stage_handoffs WHERE node_id=? AND stage='testing'")
+          .get(fixture.nodeId)?.count
+      ),
+      1
+    );
+    assert.equal(
+      Number(
+        fixture.store.db
+          .prepare(
+            `
       SELECT COUNT(*) AS count
       FROM project_events
       WHERE node_id=? AND event_type='stage_retry_ready'
-    `).get(fixture.nodeId)?.count), 1);
-    const node = fixture.store.db.prepare(
-      "SELECT state,current_stage,version FROM work_nodes WHERE node_id=?",
-    ).get(fixture.nodeId);
+    `
+          )
+          .get(fixture.nodeId)?.count
+      ),
+      1
+    );
+    const node = fixture.store.db
+      .prepare("SELECT state,current_stage,version FROM work_nodes WHERE node_id=?")
+      .get(fixture.nodeId);
     assert.equal(node?.state, "ready");
     assert.equal(node?.current_stage, "implementation");
     assert.equal(node?.version, 2);
@@ -1046,7 +1187,8 @@ test("green rounds separated by final rejection do not consume the failed-verify
   const fixture = await attemptFixture("green-rejection-budget", "running", [], true);
   try {
     fixture.store.transaction(() => {
-      fixture.store.db.prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
+      fixture.store.db
+        .prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
         .run(fixture.verifyAttemptId);
       const insert = fixture.store.db.prepare(`
         INSERT INTO verify_attempts(
@@ -1060,7 +1202,7 @@ test("green rounds separated by final rejection do not consume the failed-verify
         1,
         `verified-sha:${"1".repeat(40)}`,
         "2026-08-19T11:00:00.000Z",
-        "2026-08-19T11:01:00.000Z",
+        "2026-08-19T11:01:00.000Z"
       );
       insert.run(
         "verify-prior-green-two",
@@ -1068,7 +1210,7 @@ test("green rounds separated by final rejection do not consume the failed-verify
         3,
         `verified-sha:${"2".repeat(40)}`,
         "2026-08-19T11:30:00.000Z",
-        "2026-08-19T11:31:00.000Z",
+        "2026-08-19T11:31:00.000Z"
       );
     });
     fixture.runner.statusState = "failed";
@@ -1076,10 +1218,12 @@ test("green rounds separated by final rejection do not consume the failed-verify
     await fixture.collaborator.sweep();
 
     assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "implementing");
-    assert.deepEqual({
-      ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?")
-        .get(fixture.nodeId),
-    }, { state: "ready", current_stage: "implementation" });
+    assert.deepEqual(
+      {
+        ...fixture.store.db.prepare("SELECT state,current_stage FROM work_nodes WHERE node_id=?").get(fixture.nodeId),
+      },
+      { state: "ready", current_stage: "implementation" }
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -1090,7 +1234,8 @@ test("three failed or died verify rounds exhaust the verify retry budget", async
   const fixture = await attemptFixture("failed-budget", "running", [], true);
   try {
     fixture.store.transaction(() => {
-      fixture.store.db.prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
+      fixture.store.db
+        .prepare("UPDATE verify_attempts SET attempt=5 WHERE verify_attempt_id=?")
         .run(fixture.verifyAttemptId);
       const insert = fixture.store.db.prepare(`
         INSERT INTO verify_attempts(
@@ -1104,7 +1249,7 @@ test("three failed or died verify rounds exhaust the verify retry budget", async
         1,
         "failed",
         "2026-08-19T11:00:00.000Z",
-        "2026-08-19T11:01:00.000Z",
+        "2026-08-19T11:01:00.000Z"
       );
       insert.run(
         "verify-prior-died-two",
@@ -1112,7 +1257,7 @@ test("three failed or died verify rounds exhaust the verify retry budget", async
         3,
         "died",
         "2026-08-19T11:30:00.000Z",
-        "2026-08-19T11:31:00.000Z",
+        "2026-08-19T11:31:00.000Z"
       );
     });
     fixture.runner.statusState = "failed";
@@ -1120,8 +1265,10 @@ test("three failed or died verify rounds exhaust the verify retry budget", async
     await fixture.collaborator.sweep();
 
     assert.equal(fixture.runtime.requireWorkItem(fixture.workItem.workItemId).state, "dead_letter");
-    assert.equal(fixture.store.db.prepare("SELECT state FROM work_nodes WHERE node_id=?")
-      .get(fixture.nodeId)?.state, "blocked");
+    assert.equal(
+      fixture.store.db.prepare("SELECT state FROM work_nodes WHERE node_id=?").get(fixture.nodeId)?.state,
+      "blocked"
+    );
   } finally {
     fixture.runtime.close();
     fixture.store.close();
@@ -1150,14 +1297,16 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
       name: "Verify scope release verification",
       role: "verifier" as const,
     };
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [implementationType, verificationType],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-        testing: { kind: "machine_verify" },
-        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
-      }),
-    }));
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [implementationType, verificationType],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+          testing: { kind: "machine_verify" },
+          verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+        }),
+      })
+    );
     fixture.board.createAgent(fixture.project.projectId, {
       agentId: "verify-scope-release-second-engineer",
       role: "engineer",
@@ -1168,10 +1317,13 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
     });
 
     const propose = (suffix: string) => {
-      const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-        originalRequest: `Machine verify scope holder ${suffix}.`,
-        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-      }), `verify-scope-release-${suffix}`).workItem;
+      const workItem = fixture.board.createWorkItemAndStartPlanning(
+        workItemRequest({
+          originalRequest: `Machine verify scope holder ${suffix}.`,
+          projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+        }),
+        `verify-scope-release-${suffix}`
+      ).workItem;
       const planning = fixture.board.claimRun(fixture.manager.agentId, {
         claimId: `verify-scope-release-planning-${suffix}`,
         messageCursor: null,
@@ -1182,9 +1334,9 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
         result: "The overlapping pipeline plan is ready.",
         workflowPlan: heldVerifyPlan(suffix),
       });
-      const plan = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-        (candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed",
-      );
+      const plan = fixture.board
+        .projectWorkflow(fixture.project.projectId)
+        .plans.find((candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed");
       assert.ok(plan);
       return { plan, workItem };
     };
@@ -1211,14 +1363,22 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
     assert.ok(holderNode);
     assert.ok(heldNode);
     store.transaction(() => {
-      store.db.prepare(`
+      store.db
+        .prepare(
+          `
         UPDATE work_items SET state='verifying',current_stage='testing',version=version+1
         WHERE work_item_id=?
-      `).run(holder.workItem.workItemId);
-      store.db.prepare(`
+      `
+        )
+        .run(holder.workItem.workItemId);
+      store.db
+        .prepare(
+          `
         UPDATE work_nodes SET state='active',current_stage='testing',version=version+1,updated_at=?
         WHERE node_id=?
-      `).run(now.toISOString(), holderNode.nodeId);
+      `
+        )
+        .run(now.toISOString(), holderNode.nodeId);
       const insert = store.db.prepare(`
         INSERT INTO verify_attempts(
           verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
@@ -1234,7 +1394,7 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
         "failed",
         "prior verify failure",
         "2026-08-19T11:00:00.000Z",
-        "2026-08-19T11:01:00.000Z",
+        "2026-08-19T11:01:00.000Z"
       );
       insert.run(
         "verify-scope-release-prior-died",
@@ -1245,7 +1405,7 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
         "died",
         "prior verify death",
         "2026-08-19T11:30:00.000Z",
-        "2026-08-19T11:31:00.000Z",
+        "2026-08-19T11:31:00.000Z"
       );
       insert.run(
         "verify-scope-release-current",
@@ -1256,35 +1416,29 @@ test("a third machine-verify failure dead-letters the scope holder and immediate
         "running",
         null,
         now.toISOString(),
-        null,
+        null
       );
     });
-    const projects = new ProjectsCollaborator(
-      runtime,
-      automation,
-      tasks,
-      () => baseSha,
-      {
-        workspaceManagerFactory: () => ({
-          create: async () => "/tmp/verify-scope-release-workspace",
-          remove: async () => undefined,
-          retain: async () => undefined,
+    const projects = new ProjectsCollaborator(runtime, automation, tasks, () => baseSha, {
+      workspaceManagerFactory: () => ({
+        create: async () => "/tmp/verify-scope-release-workspace",
+        remove: async () => undefined,
+        retain: async () => undefined,
+      }),
+      runnerFactory: () => ({
+        startFull: async () => "unused-verify-run",
+        terminate: async () => undefined,
+        status: async () => ({
+          id: "verify-scope-release-run",
+          state: "failed",
+          startedAt: "2026-08-19T12:00:00.000Z",
+          endedAt: now.toISOString(),
+          exitCode: 1,
+          command: "npm test",
         }),
-        runnerFactory: () => ({
-          startFull: async () => "unused-verify-run",
-          terminate: async () => undefined,
-          status: async () => ({
-            id: "verify-scope-release-run",
-            state: "failed",
-            startedAt: "2026-08-19T12:00:00.000Z",
-            endedAt: now.toISOString(),
-            exitCode: 1,
-            command: "npm test",
-          }),
-          tail: async () => "third verify failure",
-        }),
-      },
-    );
+        tail: async () => "third verify failure",
+      }),
+    });
     try {
       assert.equal(await projects.sweepVerifyAttempts(), 1);
       assert.equal(runtime.requireWorkItem(holder.workItem.workItemId).state, "dead_letter");

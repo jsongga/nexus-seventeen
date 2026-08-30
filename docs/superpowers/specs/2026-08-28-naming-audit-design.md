@@ -6,7 +6,7 @@
 
 ## Summary
 
-The repo's naming is unusually consistent *by review discipline* (no linter exists): `parse*`/`load*`/`read*` are cleanly split, `*InTransaction` is never violated, 97.7% of test titles are behavioral. The real problems are few and specific:
+The repo's naming is unusually consistent _by review discipline_ (no linter exists): `parse*`/`load*`/`read*` are cleanly split, `*InTransaction` is never violated, 97.7% of test titles are behavioral. The real problems are few and specific:
 
 1. **"task" means two things on one page** — the human's request (`WorkItem`) and the agent job (`BoardTask`). "Add task" creates a `WorkItem`.
 2. **"runtime" means three things** — AI adapters (`agents/runtime/`), the container engine (`task-fleet/runtime.ts`), and the board orchestration runtime (`collaborators/runtime.ts`, which also imports the first).

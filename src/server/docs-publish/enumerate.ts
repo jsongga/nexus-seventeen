@@ -1,7 +1,4 @@
-import {
-  runDeclaredScopeGit,
-  type GitTextRunner,
-} from "../task-board/collaborators/scope-check.js";
+import { runDeclaredScopeGit, type GitTextRunner } from "../task-board/collaborators/scope-check.js";
 import { validateExcludePattern } from "./exclude.js";
 
 export interface DocSource {
@@ -10,24 +7,23 @@ export interface DocSource {
   readonly markdown: string;
   readonly blobSha: string;
 }
-interface EnumerateOptions { readonly exclude?: readonly string[] }
+interface EnumerateOptions {
+  readonly exclude?: readonly string[];
+}
 
-interface TreeEntry { readonly path: string; readonly blobSha: string }
+interface TreeEntry {
+  readonly path: string;
+  readonly blobSha: string;
+}
 
 const TREE_ENTRY_PREVIEW_CHARACTERS = 120;
 
 function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner([
-    "-c", "core.fsmonitor=",
-    "-c", "core.hooksPath=",
-    "-C", repoPath,
-    ...arguments_,
-  ]);
+  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
 }
 
 function excludePrefixes(patterns: readonly string[]): readonly string[] {
-  return patterns.map((pattern, index) =>
-    validateExcludePattern(pattern, `exclude[${index}]`).slice(0, -3));
+  return patterns.map((pattern, index) => validateExcludePattern(pattern, `exclude[${index}]`).slice(0, -3));
 }
 
 export function isDocSourcePath(path: string): boolean {
@@ -51,8 +47,10 @@ function parseTreeEntry(entry: string): TreeEntry | undefined {
   const blobSha = entry.slice(typeEnd + 1, shaEnd);
   const path = entry.slice(shaEnd + 1);
   if (
-    !/^[0-7]{6}$/u.test(mode) || !/^[a-z]+$/u.test(type) ||
-    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(blobSha) || path.length === 0
+    !/^[0-7]{6}$/u.test(mode) ||
+    !/^[a-z]+$/u.test(type) ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(blobSha) ||
+    path.length === 0
   ) {
     throw malformedTreeEntry(entry);
   }
@@ -64,7 +62,7 @@ export function enumerateDocs(
   repoPath: string,
   ref: string,
   options: EnumerateOptions = {},
-  runner: GitTextRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit
 ): readonly DocSource[] {
   const prefixes = excludePrefixes(options.exclude ?? []);
   const output = git(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--", "README.md", "docs"]);
@@ -76,10 +74,14 @@ export function enumerateDocs(
     .filter((entry) => isDocSourcePath(entry.path))
     .filter((entry) => !prefixes.some((prefix) => entry.path.startsWith(`${prefix}/`)));
 
-  return Object.freeze(entries.map(({ path, blobSha }) => Object.freeze({
-    path,
-    title: path,
-    markdown: git(runner, repoPath, ["show", `${ref}:${path}`]),
-    blobSha,
-  })));
+  return Object.freeze(
+    entries.map(({ path, blobSha }) =>
+      Object.freeze({
+        path,
+        title: path,
+        markdown: git(runner, repoPath, ["show", `${ref}:${path}`]),
+        blobSha,
+      })
+    )
+  );
 }

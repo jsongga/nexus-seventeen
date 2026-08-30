@@ -1,6 +1,6 @@
 # Campaign 9.6: Board UX polish — no native dialogs, anchored surfaces
 
-**Status:** Shipped 2026-08-28 (amended after the final review to the as-built behavior — see the *Amendments* section)
+**Status:** Shipped 2026-08-28 (amended after the final review to the as-built behavior — see the _Amendments_ section)
 **Author:** Claude (owner's request 2026-08-26; seam facts from the 2026-08-27 exploration)
 **Date:** 2026-08-27
 **Scope:** roadmap campaign 9.6. Web only (`src/web`, Playwright). No contract or server change.
@@ -92,7 +92,6 @@ for the anchored Add-a-task. Both Playwright projects must pass at close.
 - **One placement helper for both surfaces** — `resolveModalAnchorPlacement` (exported from `components/ui.tsx`) picks the side of the anchor with more space, caps the panel's max-height to that side's available space (no `80dvh` clamp), and returns a **takeover fallback** when the roomier side offers less than 12rem. The Popover reuses it (so it flips above/below like the Modal) and scrolls its body. A null or detached anchor renders the takeover layout.
 - **Anchored dialogs are genuinely non-modal** — no scrim, no scroll lock, no `aria-modal`, and **no Tab trap**; Escape, initial focus, focus restore, outside-mousedown close and the dirty-draft guard remain. The takeover variant is unchanged.
 - **Stable element tree** across the `sm` breakpoint so a draft survives a resize/rotation while open; the anchored header is static (flex column with an internal body scroller) so it can never overlay controls.
-- **Dirty-guard routing** — re-clicking the open dialog's own trigger never resets the dirty state; clicking a *different* trigger while a dirty dialog is open first asks `Discard draft?` (pending open resolved after the decision); route navigation closes an open anchored dialog through the same path.
+- **Dirty-guard routing** — re-clicking the open dialog's own trigger never resets the dirty state; clicking a _different_ trigger while a dirty dialog is open first asks `Discard draft?` (pending open resolved after the decision); route navigation closes an open anchored dialog through the same path.
 - **Pause popover** closes when the `lg` breakpoint is crossed in either direction and restores focus to its anchor only if it held focus.
 - **Residue kept as takeovers** (documented on the roadmap): `Cancel work item`, `Reject proposed plan`, `Request implementation changes`, the agent-type editor, and the project picker.
-

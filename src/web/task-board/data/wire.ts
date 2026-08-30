@@ -52,7 +52,7 @@ import {
   type WakeupReason,
   type WorkerConnection,
   type WorkflowStage,
-} from '@shared/task-board-contract';
+} from "@shared/task-board-contract";
 
 // Prefixed because ./types.ts exports different types under these same three
 // names. Importing the wrong one compiles but is silently incorrect.
@@ -67,12 +67,12 @@ export type { ParkCategory, WorkflowStage };
 export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 
 export const apiVersion = TASK_BOARD_API_VERSION;
-export const unrecognizedState = 'unrecognized' as const;
+export const unrecognizedState = "unrecognized" as const;
 export const maximumAutomationConfigurationBytes = AUTOMATION_CONFIGURATION_MAX_BYTES;
 export const maximumWorkItemCursorBytes = WORK_ITEM_CURSOR_MAX_BYTES;
 export const taskMessagePageSize = TASK_MESSAGE_PAGE_SIZE;
 export const workItemPageSize = WORK_ITEM_PAGE_SIZE;
-export const identifierPattern = new RegExp(IDENTIFIER_PATTERN, 'u');
+export const identifierPattern = new RegExp(IDENTIFIER_PATTERN, "u");
 
 // Array aliases stay intact so view types can derive with `typeof X[number]`.
 export const agentRoleValues = AGENT_ROLES;

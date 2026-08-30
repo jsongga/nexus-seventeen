@@ -167,7 +167,10 @@ test("remove is idempotent, retain prunes oldest timestamps across keys, and bad
   assert.equal(retained.length, 1);
   assert.match(retained[0] ?? "", /^retained-task-a-/u);
   await manager.retain("task-z"); // already gone — no-op
-  assert.throws(() => new TaskWorkspaceManager({ workspaceRoot: "relative", repositoryPath: repo }), TaskWorkspaceError);
+  assert.throws(
+    () => new TaskWorkspaceManager({ workspaceRoot: "relative", repositoryPath: repo }),
+    TaskWorkspaceError
+  );
   await assert.rejects(manager.create("../escape"), TaskWorkspaceError);
   await assert.rejects(manager.create("retained-x"), TaskWorkspaceError);
 });
@@ -202,6 +205,12 @@ test("retainStrays retains direct child workspaces and enforces the retained cap
   const { readdir } = await import("node:fs/promises");
   const entries = await readdir(workspaceRoot);
   assert.equal(entries.length, 2);
-  assert.equal(entries.some((name) => name.startsWith("retained-task-stray-a-")), true);
-  assert.equal(entries.some((name) => name.startsWith("retained-task-stray-b-")), true);
+  assert.equal(
+    entries.some((name) => name.startsWith("retained-task-stray-a-")),
+    true
+  );
+  assert.equal(
+    entries.some((name) => name.startsWith("retained-task-stray-b-")),
+    true
+  );
 });

@@ -26,20 +26,25 @@ export class TaskWorkspaceError extends Error {
 
 function git(cwd: string | null, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", ...args], {
-      ...(cwd === null ? {} : { cwd }),
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BYTES,
-      windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    }, (error, stdout, stderr) => {
-      if (error !== null) {
-        reject(new TaskWorkspaceError(`git ${args[0]} failed: ${stderr.slice(0, 2_000)}`, { cause: error }));
-        return;
+    execFile(
+      "git",
+      ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", ...args],
+      {
+        ...(cwd === null ? {} : { cwd }),
+        encoding: "utf8",
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: GIT_MAX_BYTES,
+        windowsHide: true,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      },
+      (error, stdout, stderr) => {
+        if (error !== null) {
+          reject(new TaskWorkspaceError(`git ${args[0]} failed: ${stderr.slice(0, 2_000)}`, { cause: error }));
+          return;
+        }
+        resolve(stdout);
       }
-      resolve(stdout);
-    });
+    );
   });
 }
 
@@ -58,13 +63,13 @@ function retainedTimestamp(name: string): number {
 export async function removeRecordedTaskWorkspace(workspaceRoot: string, path: string): Promise<void> {
   const relativePath = relative(workspaceRoot, path);
   if (
-    !isAbsolute(workspaceRoot)
-    || !isAbsolute(path)
-    || relativePath === ""
-    || relativePath === ".."
-    || relativePath.startsWith(`..${sep}`)
-    || relativePath.includes(sep)
-    || isAbsolute(relativePath)
+    !isAbsolute(workspaceRoot) ||
+    !isAbsolute(path) ||
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    relativePath.includes(sep) ||
+    isAbsolute(relativePath)
   ) {
     throw new TaskWorkspaceError(`Recorded task workspace path escapes workspaceRoot: ${path}`);
   }
@@ -93,12 +98,7 @@ export class TaskWorkspaceManager {
   }
 
   #key(key: string): string {
-    if (
-      !KEY_PATTERN.test(key)
-      || key.includes("..")
-      || key.endsWith(".")
-      || key.startsWith("retained-")
-    ) {
+    if (!KEY_PATTERN.test(key) || key.includes("..") || key.endsWith(".") || key.startsWith("retained-")) {
       throw new TaskWorkspaceError(`Invalid task workspace key: ${key}`);
     }
     return key;
@@ -107,7 +107,12 @@ export class TaskWorkspaceManager {
   workspacePath(key: string): string {
     const path = join(this.#workspaceRoot, this.#key(key));
     const relativePath = relative(this.#workspaceRoot, path);
-    if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    if (
+      relativePath === "" ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
       throw new TaskWorkspaceError(`Task workspace path escapes workspaceRoot: ${key}`);
     }
     return path;
@@ -120,9 +125,7 @@ export class TaskWorkspaceManager {
     await rm(path, { recursive: true, force: true });
     try {
       await git(null, ["clone", "--no-hardlinks", this.#repositoryPath, path]);
-      const existing = (await git(path, [
-        "branch", "--remotes", "--list", `origin/${branch}`,
-      ])).trim().length > 0;
+      const existing = (await git(path, ["branch", "--remotes", "--list", `origin/${branch}`])).trim().length > 0;
       if (existing) {
         await git(path, ["switch", branch]);
       } else {

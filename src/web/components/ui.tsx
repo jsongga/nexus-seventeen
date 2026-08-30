@@ -8,14 +8,14 @@ import {
   type ReactNode,
   type Ref,
   type RefObject,
-} from 'react';
-import { X } from 'lucide-react';
+} from "react";
+import { X } from "lucide-react";
 import {
   deferDialogOutsideDismissal,
   useConfirmBeforeDiscard,
   useDialogLayer,
   type DialogSwitchTarget,
-} from './dialog-stack';
+} from "./dialog-stack";
 
 const modalViewportInset = 16;
 const modalAnchorGap = 8;
@@ -29,13 +29,9 @@ export function resolveModalTakeover(maxHeight: number, currentlyTakeover: boole
     : maxHeight < modalAnchoredTakeoverThreshold;
 }
 
-export function resolveModalAnchorPlacement(
-  spaceAbove: number,
-  spaceBelow: number,
-  currentlyTakeover = false,
-) {
-  const placement: 'above' | 'below' = spaceAbove > spaceBelow ? 'above' : 'below';
-  const maxHeight = Math.max(0, placement === 'above' ? spaceAbove : spaceBelow);
+export function resolveModalAnchorPlacement(spaceAbove: number, spaceBelow: number, currentlyTakeover = false) {
+  const placement: "above" | "below" = spaceAbove > spaceBelow ? "above" : "below";
+  const maxHeight = Math.max(0, placement === "above" ? spaceAbove : spaceBelow);
 
   return {
     placement,
@@ -45,41 +41,39 @@ export function resolveModalAnchorPlacement(
 }
 
 export function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
+  return classes.filter(Boolean).join(" ");
 }
 
-type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'danger' | 'mint';
+type ButtonVariant = "primary" | "secondary" | "quiet" | "danger" | "mint";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
-  size?: 'sm' | 'md' | 'lg';
+  size?: "sm" | "md" | "lg";
   icon?: ReactNode;
   ref?: Ref<HTMLButtonElement>;
 }
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary:
-    'border-taupe bg-taupe text-white enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover',
-  secondary:
-    'border-line bg-surface text-ink enabled:hover:border-line-strong enabled:hover:bg-muted-surface',
-  quiet: 'border-transparent bg-transparent text-ink enabled:hover:bg-muted-surface',
-  danger: 'border-urgent-border bg-canvas text-urgent enabled:hover:bg-urgent-soft',
-  mint: 'border-success-fill/60 bg-success-soft text-success enabled:hover:bg-surface',
+  primary: "border-taupe bg-taupe text-white enabled:hover:border-taupe-hover enabled:hover:bg-taupe-hover",
+  secondary: "border-line bg-surface text-ink enabled:hover:border-line-strong enabled:hover:bg-muted-surface",
+  quiet: "border-transparent bg-transparent text-ink enabled:hover:bg-muted-surface",
+  danger: "border-urgent-border bg-canvas text-urgent enabled:hover:bg-urgent-soft",
+  mint: "border-success-fill/60 bg-success-soft text-success enabled:hover:bg-surface",
 };
 
 const buttonSizes = {
-  sm: 'min-h-9 gap-1.5 rounded-[99px] px-3 text-[12px]',
-  md: 'min-h-11 gap-2 rounded-[99px] px-4 text-sm',
-  lg: 'min-h-12 gap-2.5 rounded-[99px] px-5 text-[15px]',
+  sm: "min-h-9 gap-1.5 rounded-[99px] px-3 text-[12px]",
+  md: "min-h-11 gap-2 rounded-[99px] px-4 text-sm",
+  lg: "min-h-12 gap-2.5 rounded-[99px] px-5 text-[15px]",
 };
 
 export function Button({
   className,
-  variant = 'secondary',
-  size = 'md',
+  variant = "secondary",
+  size = "md",
   icon,
   children,
-  type = 'button',
+  type = "button",
   ref,
   ...props
 }: ButtonProps) {
@@ -88,10 +82,10 @@ export function Button({
       ref={ref}
       type={type}
       className={cn(
-        'inline-flex items-center justify-center border font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-safe:active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed disabled:opacity-45',
+        "inline-flex items-center justify-center border font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-safe:active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed disabled:opacity-45",
         buttonVariants[variant],
         buttonSizes[size],
-        className,
+        className
       )}
       {...props}
     >
@@ -104,36 +98,27 @@ export function Button({
 export function Card({
   children,
   className,
-  as: Component = 'div',
+  as: Component = "div",
 }: {
   children: ReactNode;
   className?: string;
-  as?: 'div' | 'section' | 'article';
+  as?: "div" | "section" | "article";
 }) {
-  return (
-    <Component
-      className={cn(
-        'rounded-sm border border-line bg-card',
-        className,
-      )}
-    >
-      {children}
-    </Component>
-  );
+  return <Component className={cn("rounded-sm border border-line bg-card", className)}>{children}</Component>;
 }
 
 const pillTones = {
-  neutral: 'bg-muted-surface text-muted',
-  green: 'bg-success-soft text-success',
-  amber: 'bg-caution-soft text-caution',
-  red: 'bg-urgent-fill text-white',
-  blue: 'bg-info-soft text-info',
-  purple: 'bg-alt-soft text-alt',
+  neutral: "bg-muted-surface text-muted",
+  green: "bg-success-soft text-success",
+  amber: "bg-caution-soft text-caution",
+  red: "bg-urgent-fill text-white",
+  blue: "bg-info-soft text-info",
+  purple: "bg-alt-soft text-alt",
 };
 
 export function Pill({
   children,
-  tone = 'neutral',
+  tone = "neutral",
   dot,
   className,
 }: {
@@ -145,9 +130,9 @@ export function Pill({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11px] font-medium',
+        "inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11px] font-medium",
         pillTones[tone],
-        className,
+        className
       )}
     >
       {dot ? <span className="size-1.5 rounded-full bg-current opacity-70" /> : null}
@@ -164,7 +149,7 @@ export function Modal({
   children,
   className,
   isDirty,
-  variant = 'takeover',
+  variant = "takeover",
   anchorRef,
   dialogTrigger,
   dialogSwitchTarget,
@@ -178,7 +163,7 @@ export function Modal({
   children: ReactNode | ((requestClose: () => void) => ReactNode);
   className?: string;
   isDirty?: () => boolean;
-  variant?: 'takeover' | 'anchored';
+  variant?: "takeover" | "anchored";
   anchorRef?: RefObject<HTMLElement | null>;
   dialogTrigger?: string;
   dialogSwitchTarget?: DialogSwitchTarget;
@@ -186,22 +171,20 @@ export function Modal({
   onKeepEditing?: () => void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
-  const [desktopBreakpointMatches, setDesktopBreakpointMatches] = useState(() => (
-    typeof window === 'undefined' || window.matchMedia('(min-width: 640px)').matches
-  ));
+  const [desktopBreakpointMatches, setDesktopBreakpointMatches] = useState(
+    () => typeof window === "undefined" || window.matchMedia("(min-width: 640px)").matches
+  );
   const [anchorPosition, setAnchorPosition] = useState({
     top: 16,
     right: 16,
     maxHeight: modalAnchoredMinMaxHeight,
-    placement: 'below' as 'above' | 'below',
+    placement: "below" as "above" | "below",
     takeover: false,
   });
   const updateAnchorPositionRef = useRef<(() => void) | null>(null);
   const ignoreAnchorMeasurementRef = useRef(false);
-  const anchoredOnDesktop = variant === 'anchored' && desktopBreakpointMatches;
-  const anchoredLayout = anchoredOnDesktop
-    && anchorRef?.current?.isConnected === true
-    && !anchorPosition.takeover;
+  const anchoredOnDesktop = variant === "anchored" && desktopBreakpointMatches;
+  const anchoredLayout = anchoredOnDesktop && anchorRef?.current?.isConnected === true && !anchorPosition.takeover;
   const takeoverLayout = !anchoredLayout;
   const previousScrollLockRef = useRef(takeoverLayout);
   const {
@@ -235,11 +218,11 @@ export function Modal({
   }, [open, requestClose, requestCloseRef]);
 
   useEffect(() => {
-    const desktop = window.matchMedia('(min-width: 640px)');
+    const desktop = window.matchMedia("(min-width: 640px)");
     const updateBreakpoint = () => setDesktopBreakpointMatches(desktop.matches);
     updateBreakpoint();
-    desktop.addEventListener('change', updateBreakpoint);
-    return () => desktop.removeEventListener('change', updateBreakpoint);
+    desktop.addEventListener("change", updateBreakpoint);
+    return () => desktop.removeEventListener("change", updateBreakpoint);
   }, []);
 
   useLayoutEffect(() => {
@@ -256,7 +239,7 @@ export function Modal({
   useLayoutEffect(() => {
     if (!open || !anchoredOnDesktop) return;
     if (!anchorRef?.current?.isConnected || !dialogRef.current) {
-      setAnchorPosition((current) => current.takeover ? current : { ...current, takeover: true });
+      setAnchorPosition((current) => (current.takeover ? current : { ...current, takeover: true }));
       return;
     }
     const anchor = anchorRef.current;
@@ -264,33 +247,21 @@ export function Modal({
     const updatePosition = () => {
       if (ignoreAnchorMeasurementRef.current) return;
       if (!anchor.isConnected || !dialog.isConnected) {
-        setAnchorPosition((current) => current.takeover ? current : { ...current, takeover: true });
+        setAnchorPosition((current) => (current.takeover ? current : { ...current, takeover: true }));
         return;
       }
       const anchorBounds = anchor.getBoundingClientRect();
       const dialogBounds = dialog.getBoundingClientRect();
       const viewportWidth = document.documentElement.clientWidth;
       const desiredRight = viewportWidth - anchorBounds.right;
-      const maxRight = Math.max(
-        modalViewportInset,
-        viewportWidth - dialogBounds.width - modalViewportInset,
-      );
+      const maxRight = Math.max(modalViewportInset, viewportWidth - dialogBounds.width - modalViewportInset);
       const right = Math.min(maxRight, Math.max(modalViewportInset, desiredRight));
-      const spaceBelow = window.innerHeight
-        - anchorBounds.bottom
-        - modalAnchorGap
-        - modalViewportInset;
+      const spaceBelow = window.innerHeight - anchorBounds.bottom - modalAnchorGap - modalViewportInset;
       const spaceAbove = anchorBounds.top - modalAnchorGap - modalViewportInset;
       setAnchorPosition((current) => {
-        const placement = resolveModalAnchorPlacement(
-          spaceAbove,
-          spaceBelow,
-          current.takeover,
-        );
-        const anchorEdge = placement.placement === 'above' ? anchorBounds.top : anchorBounds.bottom;
-        const top = anchorEdge
-          + window.scrollY
-          + (placement.placement === 'above' ? -modalAnchorGap : modalAnchorGap);
+        const placement = resolveModalAnchorPlacement(spaceAbove, spaceBelow, current.takeover);
+        const anchorEdge = placement.placement === "above" ? anchorBounds.top : anchorBounds.bottom;
+        const top = anchorEdge + window.scrollY + (placement.placement === "above" ? -modalAnchorGap : modalAnchorGap);
         const next = {
           top: Math.round(top),
           right: Math.round(right),
@@ -298,11 +269,11 @@ export function Modal({
           placement: placement.placement,
           takeover: placement.takeover,
         };
-        return current.top === next.top
-          && current.right === next.right
-          && current.maxHeight === next.maxHeight
-          && current.placement === next.placement
-          && current.takeover === next.takeover
+        return current.top === next.top &&
+          current.right === next.right &&
+          current.maxHeight === next.maxHeight &&
+          current.placement === next.placement &&
+          current.takeover === next.takeover
           ? current
           : next;
       });
@@ -313,13 +284,13 @@ export function Modal({
     updatePosition();
     resizeObserver.observe(anchor);
     resizeObserver.observe(dialog);
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     return () => {
       if (updateAnchorPositionRef.current === updatePosition) updateAnchorPositionRef.current = null;
       resizeObserver.disconnect();
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
   }, [anchorRef, anchoredOnDesktop, open]);
 
@@ -336,8 +307,8 @@ export function Modal({
       if (!(target instanceof Node)) return;
       if (dialogRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
       const targetElement = target instanceof Element ? target : target.parentElement;
-      const registeredTrigger = targetElement?.closest('[data-dialog-trigger]');
-      if (registeredTrigger?.getAttribute('data-dialog-trigger') === dialogTrigger) return;
+      const registeredTrigger = targetElement?.closest("[data-dialog-trigger]");
+      if (registeredTrigger?.getAttribute("data-dialog-trigger") === dialogTrigger) return;
       if (targetElement?.closest('[role="dialog"], [data-dialog-layer]')) return;
       deferDialogOutsideDismissal(event, dialogSwitchTarget ?? layerId, requestClose);
     };
@@ -345,18 +316,18 @@ export function Modal({
     // Capture the originating layer before a trigger can mount another dialog and
     // remove this listener. The queued dismissal still runs after React marks the
     // click for any same-owner dialog switch.
-    document.addEventListener('click', handleClick, true);
-    return () => document.removeEventListener('click', handleClick, true);
+    document.addEventListener("click", handleClick, true);
+    return () => document.removeEventListener("click", handleClick, true);
   }, [anchorRef, anchoredLayout, dialogSwitchTarget, dialogTrigger, isTopmost, layerId, open, requestClose]);
 
   if (!open) return null;
 
   const anchorStyle = anchoredLayout
-    ? {
-        '--modal-anchor-top': `${anchorPosition.top}px`,
-        '--modal-anchor-right': `${anchorPosition.right}px`,
-        '--modal-anchor-max-height': `${anchorPosition.maxHeight}px`,
-      } as CSSProperties
+    ? ({
+        "--modal-anchor-top": `${anchorPosition.top}px`,
+        "--modal-anchor-right": `${anchorPosition.right}px`,
+        "--modal-anchor-max-height": `${anchorPosition.maxHeight}px`,
+      } as CSSProperties)
     : undefined;
 
   return (
@@ -364,11 +335,12 @@ export function Modal({
       <div
         data-dialog-layer={layerId}
         className={cn(
-          takeoverLayout && 'cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5',
-          !isTopmost && 'pointer-events-none',
+          takeoverLayout &&
+            "cicada-scrim-enter fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[3px] sm:items-center sm:p-5",
+          !isTopmost && "pointer-events-none"
         )}
-        data-testid={takeoverLayout ? 'modal-scrim' : undefined}
-        role={takeoverLayout ? 'presentation' : undefined}
+        data-testid={takeoverLayout ? "modal-scrim" : undefined}
+        role={takeoverLayout ? "presentation" : undefined}
         aria-hidden={isTopmost ? undefined : true}
         onMouseDown={(event) => {
           if (isTopmost && event.target === event.currentTarget) requestClose();
@@ -377,21 +349,25 @@ export function Modal({
         <section
           ref={dialogRef}
           role="dialog"
-          aria-modal={isTopmost && takeoverLayout ? 'true' : undefined}
+          aria-modal={isTopmost && takeoverLayout ? "true" : undefined}
           aria-labelledby={`${layerId}-title`}
           tabIndex={-1}
           style={anchorStyle}
           className={cn(
             anchoredLayout
-              ? 'cicada-modal-enter flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] ring-1 ring-line-strong/60 sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[var(--modal-anchor-max-height)] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md'
-              : 'cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md',
-            anchoredLayout && anchorPosition.placement === 'above' && 'sm:-translate-y-full',
-            className,
+              ? "cicada-modal-enter flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] ring-1 ring-line-strong/60 sm:absolute sm:right-[var(--modal-anchor-right)] sm:top-[var(--modal-anchor-top)] sm:z-50 sm:max-h-[var(--modal-anchor-max-height)] sm:w-[min(28rem,calc(100vw-2rem))] sm:rounded-md"
+              : "cicada-modal-enter max-h-[94dvh] w-full overflow-y-auto rounded-t-md border border-line bg-surface shadow-[0_24px_64px_var(--elevation-shadow-color)] sm:max-w-lg sm:rounded-md",
+            anchoredLayout && anchorPosition.placement === "above" && "sm:-translate-y-full",
+            className
           )}
         >
-          <header className={anchoredLayout
-            ? 'flex shrink-0 items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6'
-            : 'sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6'}>
+          <header
+            className={
+              anchoredLayout
+                ? "flex shrink-0 items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6"
+                : "sticky top-0 z-10 flex items-start justify-between gap-5 border-b border-line bg-canvas/95 px-5 py-4 backdrop-blur sm:px-6"
+            }
+          >
             <div>
               <h2 id={`${layerId}-title`} className="font-display text-xl font-light tracking-[0.01em]">
                 {title}
@@ -407,8 +383,8 @@ export function Modal({
               <X size={19} />
             </button>
           </header>
-          <div className={anchoredLayout ? 'min-h-0 flex-1 overflow-y-auto' : undefined}>
-            {typeof children === 'function' ? children(requestClose) : children}
+          <div className={anchoredLayout ? "min-h-0 flex-1 overflow-y-auto" : undefined}>
+            {typeof children === "function" ? children(requestClose) : children}
           </div>
         </section>
       </div>
@@ -419,8 +395,12 @@ export function Modal({
         description="Your unsaved text will be lost."
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
-          <Button variant="danger" onClick={discard}>Discard</Button>
-          <Button data-dialog-initial-focus onClick={keepEditing}>Keep editing</Button>
+          <Button variant="danger" onClick={discard}>
+            Discard
+          </Button>
+          <Button data-dialog-initial-focus onClick={keepEditing}>
+            Keep editing
+          </Button>
         </div>
       </Modal>
     </>
@@ -438,7 +418,7 @@ export function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor
 export function Toast({
   children,
   onDismiss,
-  dismissLabel = 'Dismiss error',
+  dismissLabel = "Dismiss error",
   className,
 }: {
   children: ReactNode;
@@ -450,8 +430,8 @@ export function Toast({
     <div
       role="alert"
       className={cn(
-        'rounded-md border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]',
-        className,
+        "rounded-md border border-urgent/25 bg-urgent-soft px-4 py-3 text-sm text-urgent shadow-[0_12px_34px_rgba(23,28,36,.18)]",
+        className
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -480,9 +460,13 @@ export function InlineActionErrors({
 }) {
   if (errors.length === 0) return null;
   return (
-    <div className={cn('space-y-2', className)}>
+    <div className={cn("space-y-2", className)}>
       {errors.map((entry) => (
-        <div key={entry.context} className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent" role="alert">
+        <div
+          key={entry.context}
+          className="rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent"
+          role="alert"
+        >
           <div className="flex items-start justify-between gap-3">
             <span className="min-w-0 flex-1 leading-5">{entry.error}</span>
             <button
@@ -501,4 +485,4 @@ export function InlineActionErrors({
 }
 
 export const inputClass =
-  'min-h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink transition-[background-color,border-color,box-shadow] duration-150 ease-out placeholder:text-muted hover:border-taupe-hover focus:border-taupe-hover focus:bg-surface';
+  "min-h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink transition-[background-color,border-color,box-shadow] duration-150 ease-out placeholder:text-muted hover:border-taupe-hover focus:border-taupe-hover focus:bg-surface";

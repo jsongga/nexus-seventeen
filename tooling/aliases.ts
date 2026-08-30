@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from "node:url";
 
 /**
  * The browser resolves the shared contract from SOURCE, so Vite can hot-reload
@@ -11,5 +11,5 @@ import { fileURLToPath } from 'node:url';
  * configs and both need it.
  */
 export const sharedContractAlias = {
-  '@shared': fileURLToPath(new URL('../src/shared', import.meta.url)),
+  "@shared": fileURLToPath(new URL("../src/shared", import.meta.url)),
 };

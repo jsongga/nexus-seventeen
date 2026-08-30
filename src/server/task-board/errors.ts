@@ -3,7 +3,7 @@ export class TaskBoardError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions
   ) {
     super(message, options);
     this.name = "TaskBoardError";

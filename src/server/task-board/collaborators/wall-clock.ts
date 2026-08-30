@@ -37,22 +37,25 @@ function timestampMilliseconds(value: unknown, source: string): number {
 }
 
 function elapsedSeconds(startedAt: string, now: string): number {
-  return Math.max(0, Math.floor(
-    (timestampMilliseconds(now, "wall_clock_now") - timestampMilliseconds(startedAt, "wall_clock_started_at")) / 1_000,
-  ));
+  return Math.max(
+    0,
+    Math.floor(
+      (timestampMilliseconds(now, "wall_clock_now") - timestampMilliseconds(startedAt, "wall_clock_started_at")) / 1_000
+    )
+  );
 }
 
-export function stageElapsedSeconds(
-  db: TaskBoardStore["db"],
-  nodeId: string,
-  now: string,
-): number | null {
+export function stageElapsedSeconds(db: TaskBoardStore["db"], nodeId: string, now: string): number | null {
   if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT MAX(created_at) AS started_at
     FROM project_events
     WHERE node_id=? AND event_type IN ('stage_started','stage_retry_ready')
-  `).get(nodeId) as Row | undefined;
+  `
+    )
+    .get(nodeId) as Row | undefined;
   if (row === undefined || row.started_at === null) return null;
   if (typeof row.started_at !== "string") {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:stage_clock_started_at");
@@ -60,13 +63,11 @@ export function stageElapsedSeconds(
   return elapsedSeconds(row.started_at, now);
 }
 
-export function taskActiveSeconds(
-  db: TaskBoardStore["db"],
-  workItemId: string,
-  now: string,
-): number {
+export function taskActiveSeconds(db: TaskBoardStore["db"], workItemId: string, now: string): number {
   if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     WITH resumed_epoch AS (
       SELECT MAX(resolved_at) AS resumed_at
       FROM park_records
@@ -88,7 +89,9 @@ export function taskActiveSeconds(
     CROSS JOIN resumed_epoch AS epoch
     WHERE epoch.resumed_at IS NULL OR run.started_at>=epoch.resumed_at
     ORDER BY run.started_at,run.run_id
-  `).all(workItemId, workItemId, workItemId, workItemId) as Row[];
+  `
+    )
+    .all(workItemId, workItemId, workItemId, workItemId) as Row[];
   let activeMilliseconds = 0;
   for (const row of rows) {
     if (typeof row.started_at !== "string") {
@@ -106,14 +109,14 @@ export function taskActiveSeconds(
 
 function candidateFromRow(row: Row): WallClockCandidate {
   if (
-    typeof row.run_id !== "string"
-    || typeof row.work_item_id !== "string"
-    || typeof row.project_id !== "string"
-    || (row.node_id !== null && typeof row.node_id !== "string")
-    || typeof row.attempt_or_run_id !== "string"
-    || typeof row.stage !== "string"
-    || typeof row.run_started_at !== "string"
-    || typeof row.item_state !== "string"
+    typeof row.run_id !== "string" ||
+    typeof row.work_item_id !== "string" ||
+    typeof row.project_id !== "string" ||
+    (row.node_id !== null && typeof row.node_id !== "string") ||
+    typeof row.attempt_or_run_id !== "string" ||
+    typeof row.stage !== "string" ||
+    typeof row.run_started_at !== "string" ||
+    typeof row.item_state !== "string"
   ) {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:wall_clock_candidate");
   }
@@ -133,7 +136,7 @@ export class WallClockCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly runs: RunsCollaborator,
-    private readonly notifications: NotificationsCollaborator,
+    private readonly notifications: NotificationsCollaborator
   ) {}
 
   sweepWallClockCaps(now: string): WallClockSweepResult {
@@ -143,7 +146,10 @@ export class WallClockCollaborator {
     }
     if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
 
-    const candidates = (this.runtime.store.db.prepare(`
+    const candidates = (
+      this.runtime.store.db
+        .prepare(
+          `
       -- Mirrors pipelineTemplateShape in src/shared/task-board-contract/index.ts.
       WITH pipeline_plans AS (
         SELECT plan.plan_revision_id,plan.work_item_id
@@ -230,7 +236,10 @@ export class WallClockCollaborator {
         )
 
       ORDER BY run_started_at,run_id
-    `).all() as Row[]).map(candidateFromRow);
+    `
+        )
+        .all() as Row[]
+    ).map(candidateFromRow);
     // A planner has no confirmed plan (and therefore no pipeline identity) yet. It
     // is intentionally capped for every work item: a runaway planner is still a runaway.
 
@@ -238,9 +247,10 @@ export class WallClockCollaborator {
     let parked = 0;
     for (const candidate of candidates) {
       try {
-        const stageElapsed = candidate.nodeId === null
-          ? elapsedSeconds(candidate.runStartedAt, now)
-          : stageElapsedSeconds(this.runtime.store.db, candidate.nodeId, now);
+        const stageElapsed =
+          candidate.nodeId === null
+            ? elapsedSeconds(candidate.runStartedAt, now)
+            : stageElapsedSeconds(this.runtime.store.db, candidate.nodeId, now);
         let action: CapAction | null = null;
         if (stageCapSeconds > 0 && stageElapsed !== null && stageElapsed > stageCapSeconds) {
           action = Object.freeze({
@@ -261,12 +271,16 @@ export class WallClockCollaborator {
         if (action === null) continue;
 
         const applied = this.runtime.store.transaction(() => {
-          const current = this.runtime.store.db.prepare(`
+          const current = this.runtime.store.db
+            .prepare(
+              `
             SELECT run.status,item.state,item.current_stage
             FROM runs AS run
             JOIN work_items AS item ON item.work_item_id=?
             WHERE run.run_id=?
-          `).get(candidate.workItemId, candidate.runId) as Row | undefined;
+          `
+            )
+            .get(candidate.workItemId, candidate.runId) as Row | undefined;
           if (current === undefined || current.status !== "active" || current.state !== candidate.state) {
             return null;
           }
@@ -286,23 +300,23 @@ export class WallClockCollaborator {
             currentStage: currentStage as WorkItemStage | null,
             park: { category: action.category, reason: action.reason },
           });
-          this.notifications.insertNotificationAtInTransaction({
-            kind: "cap_parked",
-            dedupeKey: `cap_parked:${candidate.workItemId}:${candidate.attemptOrRunId}`,
-            projectId: candidate.projectId,
-            workItemId: candidate.workItemId,
-            summary: `Work item parked: ${action.reason}`,
-          }, now);
+          this.notifications.insertNotificationAtInTransaction(
+            {
+              kind: "cap_parked",
+              dedupeKey: `cap_parked:${candidate.workItemId}:${candidate.attemptOrRunId}`,
+              projectId: candidate.projectId,
+              workItemId: candidate.workItemId,
+              summary: `Work item parked: ${action.reason}`,
+            },
+            now
+          );
           return Object.freeze({ parked: transition.fromState !== "parked" });
         });
         if (applied === null) continue;
         suspended += 1;
         if (applied.parked) parked += 1;
       } catch (error) {
-        console.error(
-          `[task-board] wall-clock cap sweep failed for work item ${candidate.workItemId}`,
-          error,
-        );
+        console.error(`[task-board] wall-clock cap sweep failed for work item ${candidate.workItemId}`, error);
       }
     }
     return Object.freeze({ suspended, parked });

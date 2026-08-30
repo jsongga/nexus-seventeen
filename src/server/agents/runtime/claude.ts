@@ -1,8 +1,5 @@
 import type { AgentRole } from "#shared/task-board-contract";
-import {
-  RESULT_SCHEMA,
-  type ProviderArgumentOptions,
-} from "../task-worker/agent-envelope.js";
+import { RESULT_SCHEMA, type ProviderArgumentOptions } from "../task-worker/agent-envelope.js";
 import { AgentProcessError, type RuntimeAdapter, type RuntimeEvent } from "./adapter.js";
 import { RuntimeCapabilityError, type RuntimeProfile } from "./profiles.js";
 
@@ -13,9 +10,7 @@ const FAILURE_STATES = new Set(["cancelled", "error", "failed", "rejected"]);
 type JsonObject = Record<string, unknown>;
 
 function object(value: unknown): JsonObject | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as JsonObject
-    : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : null;
 }
 
 function eventFromLine(line: string): JsonObject | null {
@@ -29,7 +24,7 @@ function eventFromLine(line: string): JsonObject | null {
 }
 
 function failed(item: JsonObject): boolean {
-  if (item.is_error === true || item.error !== undefined && item.error !== null) return true;
+  if (item.is_error === true || (item.error !== undefined && item.error !== null)) return true;
   if (typeof item.exit_code === "number" && item.exit_code !== 0) return true;
   return typeof item.status === "string" && FAILURE_STATES.has(item.status.toLowerCase());
 }
@@ -53,12 +48,12 @@ function contentText(value: unknown): string {
   if (!Array.isArray(value)) return jsonText(value);
   // Accepted divergence from the legacy parser: flattening makes derive.ts select the last
   // valid STEWARD marker across sub-blocks, while the old block-by-block scan selected the first.
-  return value.map((entry) => {
-    const block = object(entry);
-    return block?.type === "text" && typeof block.text === "string"
-      ? block.text
-      : jsonText(entry);
-  }).join("\n");
+  return value
+    .map((entry) => {
+      const block = object(entry);
+      return block?.type === "text" && typeof block.text === "string" ? block.text : jsonText(entry);
+    })
+    .join("\n");
 }
 
 function assistantEvents(content: unknown): RuntimeEvent[] {
@@ -132,7 +127,7 @@ function claudeEvents(line: string): readonly RuntimeEvent[] {
     case "tool_use_summary":
       return frozenEvents([{ type: "tool_result", name: "summary", output: "" }]);
     case "result":
-      return failed(event) || typeof event.subtype === "string" && event.subtype.toLowerCase().includes("error")
+      return failed(event) || (typeof event.subtype === "string" && event.subtype.toLowerCase().includes("error"))
         ? frozenEvents([{ type: "error", detail: errorDetail(event) }])
         : frozenEvents([{ type: "stage_finished" }]);
     default:
@@ -149,7 +144,7 @@ function claudeSandbox(profile: RuntimeProfile, role: AgentRole): string {
     throw new RuntimeCapabilityError(
       profile.runtime,
       role,
-      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`,
+      sandbox === undefined ? "the role is missing from its capability profile" : `unknown sandbox ${sandbox}`
     );
   }
   return sandbox;
@@ -158,13 +153,14 @@ function claudeSandbox(profile: RuntimeProfile, role: AgentRole): string {
 function claudeArgs(
   options: ProviderArgumentOptions,
   fixedRole: AgentRole,
-  profile: RuntimeProfile,
+  profile: RuntimeProfile
 ): readonly string[] {
-  const tools = fixedRole === "engineer"
-    ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
-    : fixedRole === "verifier"
-      ? ["Read", "Glob", "Grep", "Bash"]
-      : ["Read", "Glob", "Grep"];
+  const tools =
+    fixedRole === "engineer"
+      ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+      : fixedRole === "verifier"
+        ? ["Read", "Glob", "Grep", "Bash"]
+        : ["Read", "Glob", "Grep"];
   const settings = {
     sandbox: {
       enabled: true,
@@ -224,8 +220,17 @@ function claudeArgs(
 
 function claudeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const keys = [
-    "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
-    "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR",
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CONFIG_DIR",
   ] as const;
   const result: NodeJS.ProcessEnv = Object.create(null) as NodeJS.ProcessEnv;
   for (const key of keys) {
@@ -257,14 +262,15 @@ function claudeResult(stdout: string): unknown {
   let envelope: JsonObject | null = null;
   for (const line of stdout.split(/\r?\n/u)) {
     if (line.trim().length === 0) continue;
-    if (line.length > MAX_RESULT_EVENT_CHARACTERS) throw new AgentProcessError("Claude emitted an oversized stream event");
+    if (line.length > MAX_RESULT_EVENT_CHARACTERS)
+      throw new AgentProcessError("Claude emitted an oversized stream event");
     const event = outputObject(decodeJson(line, "Claude stream event"), "Claude stream event");
     if (event.type === "result") envelope = event;
   }
   if (envelope === null) throw new AgentProcessError("Claude ended without a terminal result event");
   if (
     envelope.is_error === true ||
-    typeof envelope.subtype === "string" && envelope.subtype.toLowerCase().includes("error")
+    (typeof envelope.subtype === "string" && envelope.subtype.toLowerCase().includes("error"))
   ) {
     throw new AgentProcessError("Claude reported a failed run");
   }

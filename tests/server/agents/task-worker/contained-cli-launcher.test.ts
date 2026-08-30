@@ -50,7 +50,7 @@ function jsonSchemaAccepts(schemaValue: unknown, value: unknown): boolean {
   if (typeof value === "string") {
     if (typeof schema.minLength === "number" && value.length < schema.minLength) return false;
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return false;
-    if (typeof schema.pattern === "string" && !(new RegExp(schema.pattern, "u")).test(value)) return false;
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) return false;
   }
   if (typeof value === "number") {
     if (actualType === "number" && acceptedTypes.includes("integer") && !Number.isInteger(value)) return false;
@@ -61,17 +61,31 @@ function jsonSchemaAccepts(schemaValue: unknown, value: unknown): boolean {
   if (Array.isArray(value)) {
     if (typeof schema.minItems === "number" && value.length < schema.minItems) return false;
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) return false;
-    if (schema.uniqueItems === true && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) return false;
+    if (schema.uniqueItems === true && new Set(value.map((item) => JSON.stringify(item))).size !== value.length)
+      return false;
     if (schema.items !== undefined && value.some((item) => !jsonSchemaAccepts(schema.items, item))) return false;
   }
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     const object = value as Record<string, unknown>;
     const properties = schema.properties as Record<string, unknown> | undefined;
-    if (Array.isArray(schema.required) && schema.required.some((field) => typeof field !== "string" || !(field in object))) return false;
-    if (schema.additionalProperties === false && properties !== undefined && Object.keys(object).some((field) => !(field in properties))) return false;
-    if (properties !== undefined && Object.entries(object).some(([field, item]) => (
-      properties[field] !== undefined && !jsonSchemaAccepts(properties[field], item)
-    ))) return false;
+    if (
+      Array.isArray(schema.required) &&
+      schema.required.some((field) => typeof field !== "string" || !(field in object))
+    )
+      return false;
+    if (
+      schema.additionalProperties === false &&
+      properties !== undefined &&
+      Object.keys(object).some((field) => !(field in properties))
+    )
+      return false;
+    if (
+      properties !== undefined &&
+      Object.entries(object).some(
+        ([field, item]) => properties[field] !== undefined && !jsonSchemaAccepts(properties[field], item)
+      )
+    )
+      return false;
   }
   return true;
 }
@@ -83,7 +97,7 @@ function renderPrompt(request: Parameters<typeof agentPrompt>[0]): string {
 async function fakeCli(
   root: string,
   command: string,
-  source: string,
+  source: string
 ): Promise<{ bin: string; working: string; scratch: string }> {
   const bin = join(root, "bin");
   const working = join(root, "workspace");
@@ -109,7 +123,9 @@ async function collectActivity(activity: AsyncIterable<RuntimeEvent>): Promise<R
 
 test("generated provider schema is the launcher schema and derives contract enums", async () => {
   assert.equal(existsSync(join(process.cwd(), "src/server/agents/task-worker/agent-result.schema.json")), false);
-  const generated = JSON.parse(await readFile(join(process.cwd(), "build/server/agents/task-worker/agent-result.schema.json"), "utf8")) as unknown;
+  const generated = JSON.parse(
+    await readFile(join(process.cwd(), "build/server/agents/task-worker/agent-result.schema.json"), "utf8")
+  ) as unknown;
   assert.deepEqual(generated, RESULT_SCHEMA);
   assert.equal(RESULT_SCHEMA.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(RESULT_SCHEMA.properties.gapReport.maxLength, AGENT_GAP_REPORT_MAX_CHARACTERS);
@@ -117,80 +133,101 @@ test("generated provider schema is the launcher schema and derives contract enum
   assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.stage.enum, TASK_PHASE_STAGES);
   assert.deepEqual(RESULT_SCHEMA.properties.phases.items.properties.status.enum, TASK_PHASE_STATUSES);
   assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.outcome.enum, STAGE_HANDOFF_OUTCOMES);
-  assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.recommendedReturnStage.enum, [...WORKFLOW_STAGES, null]);
+  assert.deepEqual(RESULT_SCHEMA.properties.handoff.anyOf[1].properties.recommendedReturnStage.enum, [
+    ...WORKFLOW_STAGES,
+    null,
+  ]);
   assert.equal(RESULT_SCHEMA.properties.reviewFindings.maxItems, REVIEW_FINDING_DRAFT_MAX_ITEMS);
   assert.equal(
     RESULT_SCHEMA.properties.reviewFindings.items.properties.expected.maxLength,
-    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH
   );
   assert.equal(
     RESULT_SCHEMA.properties.reviewFindings.items.properties.actual.maxLength,
-    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
+    REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH
   );
   assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.properties.category.enum, REVIEW_FINDING_CATEGORIES);
   assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.properties.severity.enum, REVIEW_FINDING_SEVERITIES);
-  assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.required, ["category", "severity", "expected", "actual"]);
+  assert.deepEqual(RESULT_SCHEMA.properties.reviewFindings.items.required, [
+    "category",
+    "severity",
+    "expected",
+    "actual",
+  ]);
   assert.equal("blocking" in RESULT_SCHEMA.properties.reviewFindings.items.properties, false);
   assert.ok(RESULT_SCHEMA.required.includes("reviewFindings"));
   assert.ok(RESULT_SCHEMA.required.includes("designRecord"));
   assert.deepEqual(
     RESULT_SCHEMA.properties.designRecord.anyOf[1].properties.failurePoints.items.properties.point.enum,
-    DESIGN_FAILURE_POINTS,
+    DESIGN_FAILURE_POINTS
   );
-  assert.deepEqual(
-    RESULT_SCHEMA.properties.designRecord.anyOf[1].required,
-    ["states", "transitions", "failurePoints", "idempotencyKeys", "faultInjectionCases"],
-  );
+  assert.deepEqual(RESULT_SCHEMA.properties.designRecord.anyOf[1].required, [
+    "states",
+    "transitions",
+    "failurePoints",
+    "idempotencyKeys",
+    "faultInjectionCases",
+  ]);
   const designProperties = RESULT_SCHEMA.properties.designRecord.anyOf[1].properties;
   assert.equal(designProperties.states.maxItems, DESIGN_RECORD_MAX_STATES);
   assert.equal(designProperties.states.items.maxLength, DESIGN_RECORD_LABEL_MAX_LENGTH);
   assert.equal(designProperties.transitions.maxItems, DESIGN_RECORD_MAX_TRANSITIONS);
   assert.equal(
     designProperties.transitions.items.properties.durablePrecondition.maxLength,
-    DESIGN_RECORD_DETAIL_MAX_LENGTH,
+    DESIGN_RECORD_DETAIL_MAX_LENGTH
   );
   assert.equal(designProperties.failurePoints.maxItems, DESIGN_RECORD_MAX_FAILURE_POINTS);
   assert.equal(designProperties.idempotencyKeys.maxItems, DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS);
   assert.equal(designProperties.faultInjectionCases.maxItems, DESIGN_RECORD_MAX_FAULT_INJECTION_CASES);
-  assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum, WORKFLOW_STAGES);
+  assert.deepEqual(
+    RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.stageTemplate.items.enum,
+    WORKFLOW_STAGES
+  );
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.changeShape.enum, PLAN_CHANGE_SHAPES);
   assert.deepEqual(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.tier.enum, PLAN_TIERS);
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.declaredScope.minItems, 1);
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.blockingQuestions.maxItems, 16);
   assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.criterionChecks.maxItems, 32);
   assert.equal(RESULT_SCHEMA.properties.phases.items.properties.phaseId.pattern, IDENTIFIER_PATTERN);
-  assert.equal(RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern, IDENTIFIER_PATTERN);
+  assert.equal(
+    RESULT_SCHEMA.properties.workflowPlan.anyOf[1].properties.nodes.items.properties.nodeId.pattern,
+    IDENTIFIER_PATTERN
+  );
 });
 
 test("workflow plan child JSON schema stays in parity with the draft validator", () => {
-  const children = [{
-    key: "expand-provider",
-    objective: "Publish the expanded provider interface.",
-    projectId: "provider-project",
-    declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
-    acceptanceCriteria: ["The expanded interface is verified."],
-    phase: "expand",
-    dependsOn: [],
-    splitBy: "phase",
-  }, {
-    key: "migrate-consumer",
-    objective: "Migrate the consumer to the expanded interface.",
-    projectId: "consumer-project",
-    declaredScope: ["src/consumer"],
-    acceptanceCriteria: ["The consumer uses the expanded interface."],
-    phase: "migrate",
-    dependsOn: ["expand-provider"],
-    splitBy: "consumer",
-  }, {
-    key: "contract-provider",
-    objective: "Remove the old provider interface.",
-    projectId: "provider-project",
-    declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
-    acceptanceCriteria: ["The old interface is removed."],
-    phase: "contract",
-    dependsOn: ["migrate-consumer"],
-    splitBy: "phase",
-  }] as const;
+  const children = [
+    {
+      key: "expand-provider",
+      objective: "Publish the expanded provider interface.",
+      projectId: "provider-project",
+      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
+      acceptanceCriteria: ["The expanded interface is verified."],
+      phase: "expand",
+      dependsOn: [],
+      splitBy: "phase",
+    },
+    {
+      key: "migrate-consumer",
+      objective: "Migrate the consumer to the expanded interface.",
+      projectId: "consumer-project",
+      declaredScope: ["src/consumer"],
+      acceptanceCriteria: ["The consumer uses the expanded interface."],
+      phase: "migrate",
+      dependsOn: ["expand-provider"],
+      splitBy: "consumer",
+    },
+    {
+      key: "contract-provider",
+      objective: "Remove the old provider interface.",
+      projectId: "provider-project",
+      declaredScope: ["src/provider/interface.ts", "docs/interface.md"],
+      acceptanceCriteria: ["The old interface is removed."],
+      phase: "contract",
+      dependsOn: ["migrate-consumer"],
+      splitBy: "phase",
+    },
+  ] as const;
   const draft = {
     objective: "Coordinate a phased provider migration.",
     assumptions: [],
@@ -202,14 +239,16 @@ test("workflow plan child JSON schema stays in parity with the draft validator",
     mechanicalPortions: [],
     blockingQuestions: [],
     criterionChecks: [],
-    nodes: [{
-      nodeId: "coordinate-provider-migration",
-      title: "Coordinate provider migration",
-      objective: "Keep the parent plan available for confirmation.",
-      acceptanceCriteria: ["The declaration is durable."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: "coordinate-provider-migration",
+        title: "Coordinate provider migration",
+        objective: "Keep the parent plan available for confirmation.",
+        acceptanceCriteria: ["The declaration is durable."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
     children,
   } as const;
   const workflowSchema = RESULT_SCHEMA.properties.workflowPlan.anyOf[1];
@@ -221,10 +260,7 @@ test("workflow plan child JSON schema stays in parity with the draft validator",
   assert.deepEqual(childSchema.properties.phase.enum, WORK_ITEM_PHASES);
   assert.deepEqual(childSchema.properties.splitBy.enum, ["consumer", "phase"]);
   assert.equal(childSchema.properties.dependsOn.uniqueItems, true);
-  assert.throws(
-    () => parseWorkflowPlanDraft({ ...draft, children: undefined }),
-    ContractValidationError,
-  );
+  assert.throws(() => parseWorkflowPlanDraft({ ...draft, children: undefined }), ContractValidationError);
 });
 
 test("structured provider outcomes accept and thread an optional bounded gap report", () => {
@@ -246,21 +282,25 @@ test("structured provider outcomes accept and thread an optional bounded gap rep
   });
 
   assert.equal(outcome.gapReport, gapReport);
-  assert.throws(() => structuredOutcome({
-    status: "completed",
-    progress: [],
-    result: "Onboarding implementation completed.",
-    proposedChildTasks: [],
-    expectedAgentMinutes: null,
-    phases: [],
-    humanQuestion: null,
-    handoff: null,
-    workflowPlan: null,
-    reviewFindings: [],
-    designRecord: null,
-    gapReport: "x".repeat(AGENT_GAP_REPORT_MAX_CHARACTERS + 1),
-    detail: "Onboarding implementation completed.",
-  }), /gapReport/u);
+  assert.throws(
+    () =>
+      structuredOutcome({
+        status: "completed",
+        progress: [],
+        result: "Onboarding implementation completed.",
+        proposedChildTasks: [],
+        expectedAgentMinutes: null,
+        phases: [],
+        humanQuestion: null,
+        handoff: null,
+        workflowPlan: null,
+        reviewFindings: [],
+        designRecord: null,
+        gapReport: "x".repeat(AGENT_GAP_REPORT_MAX_CHARACTERS + 1),
+        detail: "Onboarding implementation completed.",
+      }),
+    /gapReport/u
+  );
 });
 
 test("manager planning prompt branches on intake rather than the task title", () => {
@@ -290,18 +330,20 @@ test("manager planning prompt branches on intake rather than the task title", ()
   assert.match(intakePrompt, /Refine the supplied request into a small dependency-aware workflow plan/u);
   assert.match(
     intakePrompt,
-    /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing","verification"\] \(Implement, machine Verify, then an independent review\)/u,
+    /For a single-implementation pipeline plan, return exactly one node with stageTemplate \["implementation","testing","verification"\] \(Implement, machine Verify, then an independent review\)/u
   );
   assert.match(
     intakePrompt,
-    /For blast_radius plans, include children with key, objective, projectId, declaredScope, acceptanceCriteria, splitBy, and optional phase and dependsOn/u,
+    /For blast_radius plans, include children with key, objective, projectId, declaredScope, acceptanceCriteria, splitBy, and optional phase and dependsOn/u
   );
   assert.match(intakePrompt, /Apply the reversibility test/u);
 });
 
 test("runs one real contained Codex process with bounded full-task context", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCodex(root, `
+  const fixture = await fakeCodex(
+    root,
+    `
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { input += chunk; });
@@ -325,7 +367,8 @@ process.stdin.on("end", () => {
   process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
 });
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
@@ -351,21 +394,27 @@ process.stdin.on("end", () => {
   const observedActivity = await activity;
 
   assert.equal(outcome.status, "completed");
-  assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "result"]);
+  assert.deepEqual(
+    outcome.outputs.map((output) => output.type),
+    ["progress", "result"]
+  );
   assert.deepEqual(observedActivity, [
     { type: "stage_started" },
     { type: "tool_call", name: "command", detail: "cat /Users/alice/private.txt" },
     { type: "tool_result", name: "command", output: "STEWARD_ESTIMATE_MINUTES=45\n", failed: false },
-    { type: "message_delta", text: JSON.stringify({
-      status: "completed",
-      progress: ["The focused retry checks pass."],
-      result: "Customers can retry checkout without a duplicate charge.",
-      proposedChildTasks: [],
-      expectedAgentMinutes: 45,
-      phases: [],
-      humanQuestion: null,
-      detail: "Checkout retries are now idempotent and tested.",
-    }) },
+    {
+      type: "message_delta",
+      text: JSON.stringify({
+        status: "completed",
+        progress: ["The focused retry checks pass."],
+        result: "Customers can retry checkout without a duplicate charge.",
+        proposedChildTasks: [],
+        expectedAgentMinutes: 45,
+        phases: [],
+        humanQuestion: null,
+        detail: "Checkout retries are now idempotent and tested.",
+      }),
+    },
     { type: "stage_finished" },
   ]);
   const prompt = await readFile(join(fixture.scratch, "prompt.txt"), "utf8");
@@ -383,14 +432,18 @@ process.stdin.on("end", () => {
 
 test("spawns the binary selected by the runtime profile", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCli(root, "profile-codex", `
+  const fixture = await fakeCli(
+    root,
+    "profile-codex",
+    `
 process.stdin.resume();
 process.stdin.on("end", () => {
   const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
   console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
   console.log(JSON.stringify({type:"turn.completed"}));
 });
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: { ...CODEX_PROFILE, binary: "profile-codex" },
@@ -416,19 +469,23 @@ process.stdin.on("end", () => {
 
 test("parses Claude stream-json activity while preserving its terminal structured result", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCli(root, "claude", [
-    'let input = "";',
-    'process.stdin.setEncoding("utf8");',
-    'process.stdin.on("data", (chunk) => { input += chunk; });',
-    'process.stdin.on("end", () => {',
-    '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "prompt.txt"), input);',
-    '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
-    '  const result = {status:"completed",progress:["The focused checks pass."],result:"Customers see a reliable checkout retry.",proposedChildTasks:[],expectedAgentMinutes:45,phases:[],humanQuestion:null,detail:"The checkout retry is implemented and verified."};',
-    '  console.log(JSON.stringify({type:"system",subtype:"init",cwd:"/Users/alice/private-repo",session_id:"secret-session"}));',
-    '  console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",name:"Read",input:{file_path:"/Users/alice/private.ts",token:"sk-ant-provider-secret"}}]}}));',
-    '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result,result:"raw terminal text"}));',
-    '});',
-  ].join("\n"));
+  const fixture = await fakeCli(
+    root,
+    "claude",
+    [
+      'let input = "";',
+      'process.stdin.setEncoding("utf8");',
+      'process.stdin.on("data", (chunk) => { input += chunk; });',
+      'process.stdin.on("end", () => {',
+      '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "prompt.txt"), input);',
+      '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
+      '  const result = {status:"completed",progress:["The focused checks pass."],result:"Customers see a reliable checkout retry.",proposedChildTasks:[],expectedAgentMinutes:45,phases:[],humanQuestion:null,detail:"The checkout retry is implemented and verified."};',
+      '  console.log(JSON.stringify({type:"system",subtype:"init",cwd:"/Users/alice/private-repo",session_id:"secret-session"}));',
+      '  console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",name:"Read",input:{file_path:"/Users/alice/private.ts",token:"sk-ant-provider-secret"}}]}}));',
+      '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result,result:"raw terminal text"}));',
+      "});",
+    ].join("\n")
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
     profile: CLAUDE_PROFILE,
@@ -454,7 +511,10 @@ test("parses Claude stream-json activity while preserving its terminal structure
   const observedActivity = await activity;
 
   assert.equal(outcome.status, "completed");
-  assert.deepEqual(outcome.outputs.map((output) => output.type), ["progress", "result"]);
+  assert.deepEqual(
+    outcome.outputs.map((output) => output.type),
+    ["progress", "result"]
+  );
   const result = outcome.outputs.at(-1);
   assert.equal(result?.type === "result" ? result.body : null, "Customers see a reliable checkout retry.");
   assert.deepEqual(observedActivity, [
@@ -479,14 +539,18 @@ test("parses Claude stream-json activity while preserving its terminal structure
 
 test("uses Claude bare mode when an explicit API key supplies authentication", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCli(root, "claude", [
-    'process.stdin.resume();',
-    'process.stdin.on("end", () => {',
-    '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
-    '  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};',
-    '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result}));',
-    '});',
-  ].join("\n"));
+  const fixture = await fakeCli(
+    root,
+    "claude",
+    [
+      "process.stdin.resume();",
+      'process.stdin.on("end", () => {',
+      '  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "args.json"), JSON.stringify(process.argv.slice(2)));',
+      '  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};',
+      '  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:result}));',
+      "});",
+    ].join("\n")
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: claudeAdapter,
     profile: CLAUDE_PROFILE,
@@ -515,7 +579,9 @@ test("uses Claude bare mode when an explicit API key supplies authentication", a
 
 test("manager role with a legacy planning title and no intake signal is launched with an oversight prompt", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCodex(root, `
+  const fixture = await fakeCodex(
+    root,
+    `
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { input += chunk; });
@@ -526,7 +592,8 @@ process.stdin.on("end", () => {
   console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
   console.log(JSON.stringify({type:"turn.completed"}));
 });
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
@@ -552,7 +619,10 @@ process.stdin.on("end", () => {
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];
   assert.ok(args.includes("read-only"));
   assert.match(await readFile(join(fixture.scratch, "prompt.txt"), "utf8"), /read-only oversight/u);
-  assert.match(await readFile(join(fixture.scratch, "prompt.txt"), "utf8"), /READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED/u);
+  assert.match(
+    await readFile(join(fixture.scratch, "prompt.txt"), "utf8"),
+    /READY_FOR_HUMAN_CHECK or CHANGES_REQUESTED/u
+  );
 });
 
 test("rejects a missing role capability at launch before spawning the runtime", async () => {
@@ -577,15 +647,16 @@ test("rejects a missing role capability at launch before spawning the runtime", 
       wakeReason: "human_assignment",
       context: context(),
     }),
-    (error: unknown) => error instanceof RuntimeCapabilityError
-      && error.runtime === "codex"
-      && error.role === "engineer",
+    (error: unknown) =>
+      error instanceof RuntimeCapabilityError && error.runtime === "codex" && error.role === "engineer"
   );
 });
 
 test("direct interrupt kills and confirms absence of the entire OS process group", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCodex(root, `
+  const fixture = await fakeCodex(
+    root,
+    `
 const fs = require("node:fs");
 const path = require("node:path");
 const {spawn} = require("node:child_process");
@@ -594,7 +665,8 @@ spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},
 process.on("SIGTERM", () => {});
 process.stdin.resume();
 setInterval(() => {}, 1000);
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
@@ -618,12 +690,17 @@ setInterval(() => {}, 1000);
   const groupId = Number(await readFile(marker, "utf8"));
   await handle.interrupt("Human interrupted this agent run");
   await assert.rejects(completion, /interrupted/u);
-  assert.throws(() => process.kill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
+  assert.throws(
+    () => process.kill(-groupId, 0),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH"
+  );
 });
 
 test("direct interrupt cannot let a credential-like reason prevent process-group termination", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCodex(root, `
+  const fixture = await fakeCodex(
+    root,
+    `
 const fs = require("node:fs");
 const path = require("node:path");
 const {spawn} = require("node:child_process");
@@ -632,7 +709,8 @@ spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},
 process.on("SIGTERM", () => {});
 process.stdin.resume();
 setInterval(() => {}, 1000);
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
@@ -657,22 +735,30 @@ setInterval(() => {}, 1000);
   try {
     await handle.interrupt("Human reported sk-proj-0123456789abcdef in the interrupt reason");
     await assert.rejects(completion, /interrupted/u);
-    assert.throws(() => process.kill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
+    assert.throws(
+      () => process.kill(-groupId, 0),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH"
+    );
   } finally {
-    try { process.kill(-groupId, "SIGKILL"); } catch {}
+    try {
+      process.kill(-groupId, "SIGKILL");
+    } catch {}
   }
 });
 
 test("direct interrupt shares an in-flight termination but clears a rejected launcher attempt for retry", async () => {
   const root = await tempRoot();
-  const fixture = await fakeCodex(root, `
+  const fixture = await fakeCodex(
+    root,
+    `
 const fs = require("node:fs");
 const path = require("node:path");
 fs.writeFileSync(path.join(process.env.TMPDIR, "pid.txt"), String(process.pid));
 process.on("SIGTERM", () => {});
 process.stdin.resume();
 setInterval(() => {}, 1000);
-`);
+`
+  );
   const launcher = new ContainedCliAgentLauncher({
     adapter: codexAdapter,
     profile: CODEX_PROFILE,
@@ -722,9 +808,14 @@ setInterval(() => {}, 1000);
     await handle.interrupt("Human retried the interrupt");
     assert.equal(sigtermAttempts, 2);
     await assert.rejects(completion, /interrupted/u);
-    assert.throws(() => originalKill(-groupId, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH");
+    assert.throws(
+      () => originalKill(-groupId, 0),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH"
+    );
   } finally {
     Object.defineProperty(process, "kill", { configurable: true, value: originalKill });
-    try { originalKill(-groupId, "SIGKILL"); } catch {}
+    try {
+      originalKill(-groupId, "SIGKILL");
+    } catch {}
   }
 });

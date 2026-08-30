@@ -22,22 +22,30 @@ export function generatedToken(runtime: TaskBoardRuntime): string {
     const token = randomBytes(32).toString("base64url");
     const tokenHash = sha256(token);
     if (
-      tokenHash !== sha256(runtime.config.humanToken)
-      && runtime.store.db.prepare("SELECT 1 FROM agents WHERE token_hash=?").get(tokenHash) === undefined
-    ) return token;
+      tokenHash !== sha256(runtime.config.humanToken) &&
+      runtime.store.db.prepare("SELECT 1 FROM agents WHERE token_hash=?").get(tokenHash) === undefined
+    )
+      return token;
   }
   throw new Error("TASK_BOARD_AGENT_TOKEN_GENERATION_FAILED");
 }
 
 function identitySlug(value: string): string {
-  return value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "") || "project";
+  return (
+    value
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-|-$/gu, "") || "project"
+  );
 }
 
 function availableIdentityId(runtime: TaskBoardRuntime, projectName: string, role: AgentRole): string {
   const base = `${identitySlug(projectName).slice(0, 96)}-${role}`;
   if (runtime.store.db.prepare("SELECT 1 FROM agents WHERE agent_id=?").get(base) === undefined) return base;
   let suffix = 2;
-  while (runtime.store.db.prepare("SELECT 1 FROM agents WHERE agent_id=?").get(`${base}-${suffix}`) !== undefined) suffix += 1;
+  while (runtime.store.db.prepare("SELECT 1 FROM agents WHERE agent_id=?").get(`${base}-${suffix}`) !== undefined)
+    suffix += 1;
   return `${base}-${suffix}`;
 }
 
@@ -45,60 +53,72 @@ export function insertAgentIdentityInTransaction(
   runtime: TaskBoardRuntime,
   projectId: string,
   input: AgentIdentityInput,
-  actor: IdentityActor,
+  actor: IdentityActor
 ): AgentProfile {
   const now = exactNow(runtime.config.now);
-  runtime.store.db.prepare(`
+  runtime.store.db
+    .prepare(
+      `
     INSERT INTO agents(agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)
-  `).run(
-    input.agentId,
+  `
+    )
+    .run(input.agentId, projectId, input.role, input.area, input.mission, input.model, sha256(input.token), now);
+  runtime.insertEvent(
     projectId,
-    input.role,
-    input.area,
-    input.mission,
-    input.model,
-    sha256(input.token),
-    now,
+    null,
+    actor,
+    "agent_profile_created",
+    {
+      agentId: input.agentId,
+      role: input.role,
+      area: input.area,
+      model: input.model,
+    },
+    now
   );
-  runtime.insertEvent(projectId, null, actor, "agent_profile_created", {
-    agentId: input.agentId,
-    role: input.role,
-    area: input.area,
-    model: input.model,
-  }, now);
   return runtime.requireAgent(input.agentId);
 }
 
 export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projectId: string): AgentProfile {
-  const existing = runtime.store.db.prepare(
-    "SELECT * FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id LIMIT 1",
-  ).get(projectId);
+  const existing = runtime.store.db
+    .prepare("SELECT * FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id LIMIT 1")
+    .get(projectId);
   if (existing !== undefined) return runtime.agentFromRow(existing);
   const project = runtime.requireProject(projectId);
-  return insertAgentIdentityInTransaction(runtime, projectId, {
-    agentId: availableIdentityId(runtime, project.name, "manager"),
-    role: "manager",
-    area: project.name,
-    mission: `Refine incoming ${project.name} work, plan durable workflows, and prepare completed work for human review.`,
-    model: "auto",
-    token: generatedToken(runtime),
-  }, { type: "system", id: LAZY_IDENTITY_ACTOR });
+  return insertAgentIdentityInTransaction(
+    runtime,
+    projectId,
+    {
+      agentId: availableIdentityId(runtime, project.name, "manager"),
+      role: "manager",
+      area: project.name,
+      mission: `Refine incoming ${project.name} work, plan durable workflows, and prepare completed work for human review.`,
+      model: "auto",
+      token: generatedToken(runtime),
+    },
+    { type: "system", id: LAZY_IDENTITY_ACTOR }
+  );
 }
 
 export function createLazyExecutorInTransaction(
   runtime: TaskBoardRuntime,
   projectId: string,
-  agentType: AutomationAgentType,
+  agentType: AutomationAgentType
 ): AgentProfile {
   const project = runtime.requireProject(projectId);
   const mission = [agentType.description, agentType.supplementalInstructions].filter(Boolean).join(" ").slice(0, 4_000);
-  return insertAgentIdentityInTransaction(runtime, projectId, {
-    agentId: availableIdentityId(runtime, project.name, agentType.role),
-    role: agentType.role,
-    area: `${project.name}: ${agentType.name}`.slice(0, 256),
-    mission,
-    model: "auto",
-    token: generatedToken(runtime),
-  }, { type: "system", id: LAZY_IDENTITY_ACTOR });
+  return insertAgentIdentityInTransaction(
+    runtime,
+    projectId,
+    {
+      agentId: availableIdentityId(runtime, project.name, agentType.role),
+      role: agentType.role,
+      area: `${project.name}: ${agentType.name}`.slice(0, 256),
+      mission,
+      model: "auto",
+      token: generatedToken(runtime),
+    },
+    { type: "system", id: LAZY_IDENTITY_ACTOR }
+  );
 }

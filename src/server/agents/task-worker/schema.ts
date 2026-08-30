@@ -27,7 +27,8 @@ const journalProse = (value: unknown, label: string, maximum: number): string =>
 const nullableProse = (value: unknown, label: string, maximum: number): string | null =>
   value === null ? null : journalProse(value, label, maximum);
 const nonNegativeInteger = (value: unknown, label: string): number => integer(value, label, 0, `${label} is invalid`);
-const nullableCursor = (value: unknown, label: string): number | null => value === null ? null : nonNegativeInteger(value, label);
+const nullableCursor = (value: unknown, label: string): number | null =>
+  value === null ? null : nonNegativeInteger(value, label);
 
 export function parseTaskWakeClaim(value: unknown): TaskWakeClaim {
   return parseWorkerTaskWakeClaim(value);
@@ -70,15 +71,27 @@ function messageCursorMap(value: unknown, label: string): Readonly<Record<string
 function sameCursorMaps(left: Readonly<Record<string, number>>, right: Readonly<Record<string, number>>): boolean {
   const leftEntries = Object.entries(left).sort(([leftTask], [rightTask]) => leftTask.localeCompare(rightTask));
   const rightEntries = Object.entries(right).sort(([leftTask], [rightTask]) => leftTask.localeCompare(rightTask));
-  return leftEntries.length === rightEntries.length && leftEntries.every(([taskId, cursor], index) => {
-    const other = rightEntries[index];
-    return other?.[0] === taskId && other[1] === cursor;
-  });
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(([taskId, cursor], index) => {
+      const other = rightEntries[index];
+      return other?.[0] === taskId && other[1] === cursor;
+    })
+  );
 }
 
 function parseCompleted(value: unknown, index: number): CompletedRunJournalEntry {
-  const item = exact(value, ["runId", "wakeId", "taskId", "outcome", "detail", "startedAt", "endedAt"], `Completed run ${index}`);
-  if (item.outcome !== "completed" && item.outcome !== "failed" && item.outcome !== "interrupted" && item.outcome !== "waiting_for_human") {
+  const item = exact(
+    value,
+    ["runId", "wakeId", "taskId", "outcome", "detail", "startedAt", "endedAt"],
+    `Completed run ${index}`
+  );
+  if (
+    item.outcome !== "completed" &&
+    item.outcome !== "failed" &&
+    item.outcome !== "interrupted" &&
+    item.outcome !== "waiting_for_human"
+  ) {
     throw new Error(`Completed run ${index} outcome is invalid`);
   }
   const startedAt = journalTimestamp(item.startedAt, `completed[${index}].startedAt`);
@@ -98,9 +111,13 @@ function parseCompleted(value: unknown, index: number): CompletedRunJournalEntry
 export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdentity): TaskWorkerJournal {
   const raw = record(value, "Task worker journal");
   const legacy = raw.version === 1;
-  const item = exact(value, legacy
-    ? ["version", "identity", "messageCursor", "pendingClaim", "active", "completed"]
-    : ["version", "identity", "messageCursors", "pendingClaim", "active", "completed"], "Task worker journal");
+  const item = exact(
+    value,
+    legacy
+      ? ["version", "identity", "messageCursor", "pendingClaim", "active", "completed"]
+      : ["version", "identity", "messageCursors", "pendingClaim", "active", "completed"],
+    "Task worker journal"
+  );
   if (!legacy && item.version !== 2) throw new Error("Task worker journal version is invalid");
   const storedIdentity = exact(item.identity, ["workerId", "agentId"], "Task worker identity");
   if (storedIdentity.workerId !== identity.workerId || storedIdentity.agentId !== identity.agentId) {
@@ -113,25 +130,45 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
     const pending = exact(item.pendingClaim, ["claimId", "messageCursors"], "Pending board claim");
     const cursors = messageCursorMap(pending.messageCursors, "pendingClaim.messageCursors");
     if (!sameCursorMaps(cursors, messageCursors)) throw new Error("Pending board claim cursors are stale");
-    pendingClaim = Object.freeze({ claimId: identifier(pending.claimId, "pendingClaim.claimId"), messageCursors: cursors });
+    pendingClaim = Object.freeze({
+      claimId: identifier(pending.claimId, "pendingClaim.claimId"),
+      messageCursors: cursors,
+    });
   }
   let active: TaskWorkerJournal["active"] = null;
   if (item.active !== null) {
     const rawActive = record(item.active, "Active run");
     const hasRejectionCounter = Object.hasOwn(rawActive, "correctableSettlementRejections");
     const hasRejectionDetail = Object.hasOwn(rawActive, "previousPlanRejectionDetail");
-    const entry = exact(item.active, [
-      "claim", "phase", "contextDigest", "launchStartedAt", "interruptReason", "outcome", "nextOutputIndex",
-      ...(hasRejectionCounter ? ["correctableSettlementRejections"] : []),
-      ...(hasRejectionDetail ? ["previousPlanRejectionDetail"] : []),
-    ], "Active run");
-    if (entry.phase !== "claimed" && entry.phase !== "launch_started" && entry.phase !== "running" && entry.phase !== "outputs_pending") {
+    const entry = exact(
+      item.active,
+      [
+        "claim",
+        "phase",
+        "contextDigest",
+        "launchStartedAt",
+        "interruptReason",
+        "outcome",
+        "nextOutputIndex",
+        ...(hasRejectionCounter ? ["correctableSettlementRejections"] : []),
+        ...(hasRejectionDetail ? ["previousPlanRejectionDetail"] : []),
+      ],
+      "Active run"
+    );
+    if (
+      entry.phase !== "claimed" &&
+      entry.phase !== "launch_started" &&
+      entry.phase !== "running" &&
+      entry.phase !== "outputs_pending"
+    ) {
       throw new Error("Active run phase is invalid");
     }
     const claim = parseTaskWakeClaim(entry.claim);
     const contextDigest = entry.contextDigest === null ? null : journalProse(entry.contextDigest, "contextDigest", 80);
-    if (contextDigest !== null && !/^sha256:[a-f0-9]{64}$/u.test(contextDigest)) throw new Error("contextDigest is invalid");
-    const launchStartedAt = entry.launchStartedAt === null ? null : journalTimestamp(entry.launchStartedAt, "launchStartedAt");
+    if (contextDigest !== null && !/^sha256:[a-f0-9]{64}$/u.test(contextDigest))
+      throw new Error("contextDigest is invalid");
+    const launchStartedAt =
+      entry.launchStartedAt === null ? null : journalTimestamp(entry.launchStartedAt, "launchStartedAt");
     const interruptReason = nullableProse(entry.interruptReason, "interruptReason", 1_000);
     const outcome = entry.outcome === null ? null : parseAgentRunOutcome(entry.outcome);
     const nextOutputIndex = nonNegativeInteger(entry.nextOutputIndex, "nextOutputIndex");
@@ -143,11 +180,14 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
       : null;
     if (
       (entry.phase === "claimed" && (contextDigest !== null || launchStartedAt !== null || outcome !== null)) ||
-      ((entry.phase === "launch_started" || entry.phase === "running") && (contextDigest === null || launchStartedAt === null || outcome !== null)) ||
+      ((entry.phase === "launch_started" || entry.phase === "running") &&
+        (contextDigest === null || launchStartedAt === null || outcome !== null)) ||
       (entry.phase === "outputs_pending" && (contextDigest === null) !== (launchStartedAt === null)) ||
-      (entry.phase === "outputs_pending") !== (outcome !== null) || (outcome === null && nextOutputIndex !== 0) ||
+      (entry.phase === "outputs_pending") !== (outcome !== null) ||
+      (outcome === null && nextOutputIndex !== 0) ||
       (outcome !== null && nextOutputIndex > outcome.outputs.length)
-    ) throw new Error("Active run phase fields are inconsistent");
+    )
+      throw new Error("Active run phase fields are inconsistent");
     if (correctableSettlementRejections > 3) throw new Error("correctableSettlementRejections is invalid");
     active = Object.freeze({
       claim,
@@ -160,9 +200,11 @@ export function parseTaskWorkerJournal(value: unknown, identity: TaskWorkerIdent
       correctableSettlementRejections,
       previousPlanRejectionDetail,
     });
-    if (legacy && claim.taskId !== null && legacyCursor !== null) messageCursors = Object.freeze({ [claim.taskId]: legacyCursor });
+    if (legacy && claim.taskId !== null && legacyCursor !== null)
+      messageCursors = Object.freeze({ [claim.taskId]: legacyCursor });
   }
-  if (!Array.isArray(item.completed) || item.completed.length > 256) throw new Error("Completed run journal is invalid");
+  if (!Array.isArray(item.completed) || item.completed.length > 256)
+    throw new Error("Completed run journal is invalid");
   const completed = item.completed.map(parseCompleted);
   if (new Set(completed.map((entry) => entry.runId)).size !== completed.length) {
     throw new Error("Completed run journal contains duplicate run IDs");

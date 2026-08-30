@@ -13,27 +13,33 @@ test("captures the provider CLI label and immutable container image identity", a
     runtimeVersion: "1.2.3+abcdef012345",
     imageId: "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
   });
-  assert.deepEqual(calls, [{
-    command: "docker",
-    arguments_: [
-      "image",
-      "inspect",
-      "-f",
-      "{{index .Config.Labels \"steward.cli.codex\"}}|{{.Id}}",
-      "steward-agent:test",
-    ],
-  }]);
+  assert.deepEqual(calls, [
+    {
+      command: "docker",
+      arguments_: [
+        "image",
+        "inspect",
+        "-f",
+        '{{index .Config.Labels "steward.cli.codex"}}|{{.Id}}',
+        "steward-agent:test",
+      ],
+    },
+  ]);
 });
 
 test("treats Docker inspection failures and unsafe identity output as unavailable", async () => {
   assert.equal(
-    await captureContainerRuntimeVersion("claude", "steward-agent:test", async () => { throw new Error("missing"); }),
-    null,
+    await captureContainerRuntimeVersion("claude", "steward-agent:test", async () => {
+      throw new Error("missing");
+    }),
+    null
   );
   assert.equal(
-    await captureContainerRuntimeVersion("claude", "steward-agent:test", async () => (
-      "1.2.3\u0000|sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\n"
-    )),
-    null,
+    await captureContainerRuntimeVersion(
+      "claude",
+      "steward-agent:test",
+      async () => "1.2.3\u0000|sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\n"
+    ),
+    null
   );
 });

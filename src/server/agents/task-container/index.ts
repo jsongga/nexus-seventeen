@@ -8,7 +8,4 @@ export {
   ensureNetwork,
   prepareContainerInfrastructure,
 } from "./infrastructure.js";
-export type {
-  ContainerInfrastructure,
-  ContainerInfrastructureOptions,
-} from "./infrastructure.js";
+export type { ContainerInfrastructure, ContainerInfrastructureOptions } from "./infrastructure.js";

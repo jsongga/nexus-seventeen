@@ -1,10 +1,5 @@
-import {
-  isHardTerminalTaskStatus,
-  isRecoverableTaskStatus,
-  rawTaskStatuses,
-  type WireTaskStatus,
-} from '../data/wire';
-import type { TaskKind, TaskStatus } from '../types';
+import { isHardTerminalTaskStatus, isRecoverableTaskStatus, rawTaskStatuses, type WireTaskStatus } from "../data/wire";
+import type { TaskKind, TaskStatus } from "../types";
 
 interface TaskDetailMutationAffordances {
   answerQuestion: boolean;
@@ -22,7 +17,7 @@ export function deriveTaskDetailMutationAffordances(input: {
   hasActiveRun: boolean;
   hasRecovery: boolean;
 }): TaskDetailMutationAffordances {
-  if (input.status === 'unrecognized') {
+  if (input.status === "unrecognized") {
     return {
       answerQuestion: false,
       decideHumanCheck: false,
@@ -32,15 +27,16 @@ export function deriveTaskDetailMutationAffordances(input: {
     };
   }
 
-  const agentTask = input.kind !== 'human_check';
-  const queuedUnclaimed = input.status === 'queued' && !input.hasActiveRun;
+  const agentTask = input.kind !== "human_check";
+  const queuedUnclaimed = input.status === "queued" && !input.hasActiveRun;
   return {
     answerQuestion: agentTask && input.hasOpenQuestion,
     decideHumanCheck: !agentTask && !input.ended,
     recover: agentTask && input.hasRecovery && !input.hasOpenQuestion,
-    assign: agentTask
-      && !input.hasOpenQuestion
-      && (input.status === 'backlog' || input.status === 'proposed' || queuedUnclaimed),
+    assign:
+      agentTask &&
+      !input.hasOpenQuestion &&
+      (input.status === "backlog" || input.status === "proposed" || queuedUnclaimed),
     interrupt: agentTask && input.hasActiveRun,
   };
 }
@@ -73,10 +69,7 @@ export function initialAgentPickerSelection(taskId: string, defaultAgentId: stri
   return { taskId, agentId: defaultAgentId, explicit: false };
 }
 
-export function explicitAgentPickerSelection(
-  current: AgentPickerSelection,
-  agentId: string,
-): AgentPickerSelection {
+export function explicitAgentPickerSelection(current: AgentPickerSelection, agentId: string): AgentPickerSelection {
   return { ...current, agentId, explicit: true };
 }
 
@@ -84,7 +77,7 @@ export function syncAgentPickerSelection(
   current: AgentPickerSelection,
   taskId: string,
   defaultAgentId: string,
-  eligibleAgentIds?: readonly string[],
+  eligibleAgentIds?: readonly string[]
 ): AgentPickerSelection {
   if (current.taskId !== taskId) return initialAgentPickerSelection(taskId, defaultAgentId);
   if (current.explicit) {
@@ -116,9 +109,7 @@ export function recoveryAffordances(input: RecoveryAffordanceInput): RecoveryAff
     reassign: {
       primary: !assigned,
       eligibleAgentIds,
-      disabledReason: eligibleAgentIds.length > 0
-        ? null
-        : assigned ? 'No other eligible agents' : 'No eligible agents',
+      disabledReason: eligibleAgentIds.length > 0 ? null : assigned ? "No other eligible agents" : "No eligible agents",
     },
     backlog: input.workflowBound === true ? null : { primary: false },
   };

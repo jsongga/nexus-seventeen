@@ -2,12 +2,7 @@ import assert from "node:assert/strict";
 import { access, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  createTaskBoardService,
-  type BoardSnapshot,
-  type BoardTask,
-  type Project,
-} from "#server/task-board";
+import { createTaskBoardService, type BoardSnapshot, type BoardTask, type Project } from "#server/task-board";
 import { createTaskFleetWorker, parseTaskFleetConfig } from "#server/agents/task-fleet";
 import { agentImage, docker, fixtureRepo, requireDocker, runGit, tempRoot } from "./helpers.js";
 
@@ -21,7 +16,7 @@ async function request<T>(
   token: string,
   expectedStatus: number,
   body?: unknown,
-  idempotencyKey?: string,
+  idempotencyKey?: string
 ): Promise<T> {
   const response = await fetch(`${origin}${path}`, {
     method,
@@ -52,17 +47,10 @@ test("a board-claimed task executes in a disposable container against its own wo
   let worker: Awaited<ReturnType<typeof createTaskFleetWorker>> | null = null;
   try {
     const address = await service.start();
-    const { project } = await request<{ project: Project }>(
-      address.url,
-      "/v1/projects",
-      "POST",
-      HUMAN_TOKEN,
-      201,
-      {
-        name: "Container execution",
-        description: "Prove container-per-task execution end to end.",
-      },
-    );
+    const { project } = await request<{ project: Project }>(address.url, "/v1/projects", "POST", HUMAN_TOKEN, 201, {
+      name: "Container execution",
+      description: "Prove container-per-task execution end to end.",
+    });
     await request(address.url, `/v1/projects/${project.projectId}/agents`, "POST", HUMAN_TOKEN, 201, {
       agentId: "container-engineer",
       role: "engineer",
@@ -86,33 +74,35 @@ test("a board-claimed task executes in a disposable container against its own wo
         assignedAgentId: "container-engineer",
         assignedRole: "engineer",
         expectedAgentMinutes: 15,
-      },
+      }
     );
     const config = parseTaskFleetConfig({
       version: 1,
       boardUrl: address.url,
-      agents: [{
-        workerId: "container-e2e-worker",
-        agentId: "container-engineer",
-        token: AGENT_TOKEN,
-        provider: "codex",
-        model: "stub-model",
-        workingDirectory: repo,
-        statePath: join(root, "worker", "journal.json"),
-        longPollMs: 1000,
-        runtime: "container",
-        container: {
-          workspaceRoot: join(root, "workspaces"),
-          image,
-          agentCommand: "steward-stub",
+      agents: [
+        {
+          workerId: "container-e2e-worker",
+          agentId: "container-engineer",
+          token: AGENT_TOKEN,
+          provider: "codex",
+          model: "stub-model",
+          workingDirectory: repo,
+          statePath: join(root, "worker", "journal.json"),
+          longPollMs: 1000,
+          runtime: "container",
+          container: {
+            workspaceRoot: join(root, "workspaces"),
+            image,
+            agentCommand: "steward-stub",
+          },
         },
-      }],
+      ],
     });
     worker = await createTaskFleetWorker(config.agents[0]!, config.boardUrl);
     assert.equal(
       await worker.run(new AbortController().signal),
       true,
-      "the container lane claimed and settled the wake",
+      "the container lane claimed and settled the wake"
     );
 
     const board = await request<BoardSnapshot>(
@@ -120,7 +110,7 @@ test("a board-claimed task executes in a disposable container against its own wo
       `/v1/projects/${project.projectId}/board`,
       "GET",
       HUMAN_TOKEN,
-      200,
+      200
     );
     const run = board.recentRuns.find((candidate) => candidate.taskId === task.taskId);
     assert.equal(run?.status, "completed");

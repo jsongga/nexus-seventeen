@@ -30,7 +30,12 @@ test("captures the first CLI version line once and treats failures or invalid ou
   assert.equal(captured, "codex-cli 1.2.3");
   assert.deepEqual(calls, [{ command: "codex", arguments_: ["--version"] }]);
 
-  assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => { throw new Error("missing"); }), null);
+  assert.equal(
+    await captureTaskFleetRuntimeVersion("claude", async () => {
+      throw new Error("missing");
+    }),
+    null
+  );
   assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "\nsecond line"), null);
   assert.equal(await captureTaskFleetRuntimeVersion("claude", async () => "v".repeat(129)), null);
 });
@@ -40,15 +45,17 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
   const config = parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-one",
-      agentId: "engineer-one",
-      token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      model: "codex-test",
-      workingDirectory: root,
-      statePath: join(root, "journal", "state.json"),
-    }],
+    agents: [
+      {
+        workerId: "worker-one",
+        agentId: "engineer-one",
+        token: "agent-one-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+        provider: "codex",
+        model: "codex-test",
+        workingDirectory: root,
+        statePath: join(root, "journal", "state.json"),
+      },
+    ],
   }).agents[0]!;
   let environmentCalls = 0;
   let promptLoads = 0;
@@ -87,7 +94,7 @@ test("constructs a worker with the registry-selected adapter and rejects an unkn
       registry: runtimeRegistry([]),
       profiles: SHIPPED_RUNTIME_PROFILES,
     }),
-    /Unknown runtime adapter: codex/u,
+    /Unknown runtime adapter: codex/u
   );
 });
 
@@ -96,15 +103,17 @@ test("rejects a registry runtime that is missing from the capability profiles", 
   const config = parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-ghost",
-      agentId: "engineer-ghost",
-      token: "agent-ghost-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "ghost",
-      model: "ghost-test",
-      workingDirectory: root,
-      statePath: join(root, "journal", "ghost.json"),
-    }],
+    agents: [
+      {
+        workerId: "worker-ghost",
+        agentId: "engineer-ghost",
+        token: "agent-ghost-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+        provider: "ghost",
+        model: "ghost-test",
+        workingDirectory: root,
+        statePath: join(root, "journal", "ghost.json"),
+      },
+    ],
   }).agents[0]!;
   const ghostAdapter = Object.freeze({ ...codexAdapter, runtime: "ghost" });
 
@@ -113,7 +122,7 @@ test("rejects a registry runtime that is missing from the capability profiles", 
       registry: runtimeRegistry([ghostAdapter]),
       profiles: SHIPPED_RUNTIME_PROFILES,
     }),
-    /Unknown runtime profile: ghost/u,
+    /Unknown runtime profile: ghost/u
   );
 });
 
@@ -122,16 +131,18 @@ test("validates an operator-declared lane role during worker construction", asyn
   const config = parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-role",
-      agentId: "engineer-role",
-      token: "agent-role-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      role: "engineer",
-      model: "codex-test",
-      workingDirectory: root,
-      statePath: join(root, "journal", "role.json"),
-    }],
+    agents: [
+      {
+        workerId: "worker-role",
+        agentId: "engineer-role",
+        token: "agent-role-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+        provider: "codex",
+        role: "engineer",
+        model: "codex-test",
+        workingDirectory: root,
+        statePath: join(root, "journal", "role.json"),
+      },
+    ],
   }).agents[0]!;
   const cases = [
     parseRuntimeProfiles({
@@ -168,9 +179,8 @@ test("validates an operator-declared lane role during worker construction", asyn
         registry: runtimeRegistry([codexAdapter]),
         profiles,
       }),
-      (error: unknown) => error instanceof RuntimeCapabilityError
-        && error.runtime === "codex"
-        && error.role === "engineer",
+      (error: unknown) =>
+        error instanceof RuntimeCapabilityError && error.runtime === "codex" && error.role === "engineer"
     );
   }
 });
@@ -198,11 +208,15 @@ test("deduplicates successful profile disk loads per resolved path", async () =>
     return loadRuntimeProfiles(path);
   };
 
-  const workers = await Promise.all(configs.map((config) => createTaskFleetWorker(
-    config,
-    "http://127.0.0.1:4318",
-    { registry: runtimeRegistry([codexAdapter]), runtimesConfigPath: profilesPath, loadProfiles },
-  )));
+  const workers = await Promise.all(
+    configs.map((config) =>
+      createTaskFleetWorker(config, "http://127.0.0.1:4318", {
+        registry: runtimeRegistry([codexAdapter]),
+        runtimesConfigPath: profilesPath,
+        loadProfiles,
+      })
+    )
+  );
   try {
     assert.equal(loads, 1);
   } finally {
@@ -217,15 +231,17 @@ test("evicts a failed profile disk load so a fixed file succeeds on retry", asyn
   const config = parseTaskFleetConfig({
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-retry",
-      agentId: "engineer-retry",
-      token: "agent-retry-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      model: "codex-test",
-      workingDirectory: root,
-      statePath: join(root, "journal", "retry.json"),
-    }],
+    agents: [
+      {
+        workerId: "worker-retry",
+        agentId: "engineer-retry",
+        token: "agent-retry-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+        provider: "codex",
+        model: "codex-test",
+        workingDirectory: root,
+        statePath: join(root, "journal", "retry.json"),
+      },
+    ],
   }).agents[0]!;
   let loads = 0;
   const loadProfiles = async (path: string) => {
@@ -234,10 +250,7 @@ test("evicts a failed profile disk load so a fixed file succeeds on retry", asyn
   };
   const options = { registry: runtimeRegistry([codexAdapter]), runtimesConfigPath: profilesPath, loadProfiles };
 
-  await assert.rejects(
-    createTaskFleetWorker(config, "http://127.0.0.1:4318", options),
-    /not valid JSON/u,
-  );
+  await assert.rejects(createTaskFleetWorker(config, "http://127.0.0.1:4318", options), /not valid JSON/u);
   await writeFile(profilesPath, await readFile(resolve("config/runtimes.json"), "utf8"), { mode: 0o600 });
   const worker = await createTaskFleetWorker(config, "http://127.0.0.1:4318", options);
   try {

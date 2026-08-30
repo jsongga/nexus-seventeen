@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TASK_MESSAGE_PAGE_SIZE } from '@shared/task-board-contract';
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TASK_MESSAGE_PAGE_SIZE } from "@shared/task-board-contract";
 import {
   agentQueryConversationContextMarker,
   agentQueryRoutingContextMarker,
@@ -7,123 +7,123 @@ import {
   BoardApiError,
   parseBoardSnapshot,
   randomUuid,
-} from './client';
-import type { AutomationAgentType, AutomationStageConfiguration } from '../types';
-import { newest } from '../model/project';
+} from "./client";
+import type { AutomationAgentType, AutomationStageConfiguration } from "../types";
+import { newest } from "../model/project";
 
-describe('randomUuid', () => {
+describe("randomUuid", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('uses secure random bytes when randomUUID is unavailable', () => {
-    vi.stubGlobal('crypto', {
+  it("uses secure random bytes when randomUUID is unavailable", () => {
+    vi.stubGlobal("crypto", {
       getRandomValues: (bytes: Uint8Array) => {
         for (let index = 0; index < bytes.length; index += 1) bytes[index] = index;
         return bytes;
       },
     });
 
-    expect(randomUuid()).toBe('00010203-0405-4607-8809-0a0b0c0d0e0f');
+    expect(randomUuid()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
   });
 });
 
-const apiVersion = 'steward.task-board/v1';
+const apiVersion = "steward.task-board/v1";
 const project = {
   apiVersion,
-  projectId: 'project-one',
-  name: 'Cicada platform',
-  description: 'Make the product more reliable for customers.',
-  repoPath: '/repos/cicada-platform',
+  projectId: "project-one",
+  name: "Cicada platform",
+  description: "Make the product more reliable for customers.",
+  repoPath: "/repos/cicada-platform",
   version: 1,
-  createdAt: '2026-07-19T10:00:00.000Z',
-  updatedAt: '2026-07-19T10:15:00.000Z',
+  createdAt: "2026-07-19T10:00:00.000Z",
+  updatedAt: "2026-07-19T10:15:00.000Z",
 };
 const workItem = {
   apiVersion,
-  workItemId: 'work-item-one',
-  originalRequest: 'Improve invoice recovery for customers.',
+  workItemId: "work-item-one",
+  originalRequest: "Improve invoice recovery for customers.",
   refinedObjective: null,
-  priority: 'normal',
-  taskType: 'standard',
-  projectTarget: { mode: 'auto' },
+  priority: "normal",
+  taskType: "standard",
+  projectTarget: { mode: "auto" },
   resolvedProjectId: null,
   planningTaskId: null,
-  state: 'queued',
-  currentStage: 'refinement',
-  createdBy: 'human:operator',
+  state: "queued",
+  currentStage: "refinement",
+  createdBy: "human:operator",
   version: 1,
-  createdAt: '2026-07-19T10:09:00.000Z',
-  updatedAt: '2026-07-19T10:09:00.000Z',
+  createdAt: "2026-07-19T10:09:00.000Z",
+  updatedAt: "2026-07-19T10:09:00.000Z",
   endedAt: null,
   cancelledReason: null,
   archivedAt: null,
 };
 const initialWorkItemTransition = {
   fromState: null,
-  toState: 'queued',
-  actorType: 'human',
-  actorId: 'human:operator',
-  createdAt: '2026-07-19T10:09:00.000Z',
+  toState: "queued",
+  actorType: "human",
+  actorId: "human:operator",
+  createdAt: "2026-07-19T10:09:00.000Z",
 };
 const workItemDetail = { ...workItem, transitions: [initialWorkItemTransition] };
 const automationConfiguration = {
   apiVersion,
-  configurationId: 'company-default',
+  configurationId: "company-default",
   agentTypes: [
     {
-      agentTypeId: 'workflow-manager',
-      name: 'Workflow manager',
-      description: 'Refines requests and plans durable work.',
-      role: 'manager',
-      supplementalInstructions: 'Preserve the original request and ground decisions in project evidence.',
-      skillIds: ['task-refinement', 'project-research'],
-      evaluatorProfile: 'editorial',
+      agentTypeId: "workflow-manager",
+      name: "Workflow manager",
+      description: "Refines requests and plans durable work.",
+      role: "manager",
+      supplementalInstructions: "Preserve the original request and ground decisions in project evidence.",
+      skillIds: ["task-refinement", "project-research"],
+      evaluatorProfile: "editorial",
       enabled: true,
     },
     {
-      agentTypeId: 'implementation-engineer',
-      name: 'Implementation engineer',
-      description: 'Implements and tests scoped workspace changes.',
-      role: 'engineer',
-      supplementalInstructions: 'Make the smallest safe change and run focused tests.',
-      skillIds: ['code-review'],
-      evaluatorProfile: 'tests',
+      agentTypeId: "implementation-engineer",
+      name: "Implementation engineer",
+      description: "Implements and tests scoped workspace changes.",
+      role: "engineer",
+      supplementalInstructions: "Make the smallest safe change and run focused tests.",
+      skillIds: ["code-review"],
+      evaluatorProfile: "tests",
       enabled: true,
     },
     {
-      agentTypeId: 'independent-verifier',
-      name: 'Independent verifier',
-      description: 'Checks implementation evidence independently.',
-      role: 'verifier',
-      supplementalInstructions: 'Inspect the result and report evidence without modifying files.',
+      agentTypeId: "independent-verifier",
+      name: "Independent verifier",
+      description: "Checks implementation evidence independently.",
+      role: "verifier",
+      supplementalInstructions: "Inspect the result and report evidence without modifying files.",
       skillIds: [],
-      evaluatorProfile: 'manual',
+      evaluatorProfile: "manual",
       enabled: true,
     },
   ],
   stages: [
-    { stage: 'refinement', executor: { kind: 'agent_type', agentTypeId: 'workflow-manager' } },
-    { stage: 'project_resolution', executor: { kind: 'agent_type', agentTypeId: 'workflow-manager' } },
-    { stage: 'research', executor: { kind: 'agent_type', agentTypeId: 'implementation-engineer' } },
-    { stage: 'planning', executor: { kind: 'agent_type', agentTypeId: 'implementation-engineer' } },
-    { stage: 'implementation', executor: { kind: 'agent_type', agentTypeId: 'implementation-engineer' } },
-    { stage: 'testing', executor: { kind: 'agent_type', agentTypeId: 'implementation-engineer' } },
-    { stage: 'verification', executor: { kind: 'agent_type', agentTypeId: 'independent-verifier' } },
-    { stage: 'human_review', executor: { kind: 'human' } },
-    { stage: 'deployment', executor: { kind: 'disabled' } },
+    { stage: "refinement", executor: { kind: "agent_type", agentTypeId: "workflow-manager" } },
+    { stage: "project_resolution", executor: { kind: "agent_type", agentTypeId: "workflow-manager" } },
+    { stage: "research", executor: { kind: "agent_type", agentTypeId: "implementation-engineer" } },
+    { stage: "planning", executor: { kind: "agent_type", agentTypeId: "implementation-engineer" } },
+    { stage: "implementation", executor: { kind: "agent_type", agentTypeId: "implementation-engineer" } },
+    { stage: "testing", executor: { kind: "agent_type", agentTypeId: "implementation-engineer" } },
+    { stage: "verification", executor: { kind: "agent_type", agentTypeId: "independent-verifier" } },
+    { stage: "human_review", executor: { kind: "human" } },
+    { stage: "deployment", executor: { kind: "disabled" } },
   ],
   version: 4,
-  createdAt: '2026-07-19T10:00:00.000Z',
-  updatedAt: '2026-07-19T10:15:00.000Z',
-  updatedBy: 'human:operator',
+  createdAt: "2026-07-19T10:00:00.000Z",
+  updatedAt: "2026-07-19T10:15:00.000Z",
+  updatedBy: "human:operator",
 };
 
 function paginatedWorkItem(index: number, overrides: Record<string, unknown> = {}) {
-  const timestamp = new Date(Date.parse('2026-07-19T10:09:00.000Z') + index * 1_000).toISOString();
+  const timestamp = new Date(Date.parse("2026-07-19T10:09:00.000Z") + index * 1_000).toISOString();
   return {
     ...workItem,
-    workItemId: `work-item-page-${index.toString().padStart(5, '0')}`,
+    workItemId: `work-item-page-${index.toString().padStart(5, "0")}`,
     originalRequest: `Paginated request ${index}`,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -132,62 +132,62 @@ function paginatedWorkItem(index: number, overrides: Record<string, unknown> = {
 }
 const agent = {
   apiVersion,
-  agentId: 'billing-engineer',
-  projectId: 'project-one',
-  role: 'engineer',
-  area: 'Billing',
-  mission: 'Keep customer billing dependable.',
-  model: 'economy-coding-model',
-  status: 'running',
-  workerConnection: 'watching_run',
-  lastError: 'Board rejected the prior claim.',
+  agentId: "billing-engineer",
+  projectId: "project-one",
+  role: "engineer",
+  area: "Billing",
+  mission: "Keep customer billing dependable.",
+  model: "economy-coding-model",
+  status: "running",
+  workerConnection: "watching_run",
+  lastError: "Board rejected the prior claim.",
   version: 1,
-  createdAt: '2026-07-19T10:01:00.000Z',
+  createdAt: "2026-07-19T10:01:00.000Z",
 };
 const manager = {
   ...agent,
-  agentId: 'release-manager',
-  role: 'manager',
-  area: 'Release review',
-  mission: 'Review work before it reaches the human release gate.',
-  status: 'idle',
+  agentId: "release-manager",
+  role: "manager",
+  area: "Release review",
+  mission: "Review work before it reaches the human release gate.",
+  status: "idle",
 };
 const task = {
   apiVersion,
-  taskId: 'task-one',
-  projectId: 'project-one',
+  taskId: "task-one",
+  projectId: "project-one",
   parentTaskId: null,
-  kind: 'work',
+  kind: "work",
   requiredRole: null,
   requiresReview: true,
-  title: 'Improve invoice recovery',
-  objective: 'Customers can recover a failed invoice without support.',
-  acceptanceCriteria: 'The recovery path passes its focused tests.',
-  workspaceRefs: ['/workspace/billing'],
-  status: 'in_progress',
-  assignedAgentId: 'billing-engineer',
-  assignedRole: 'engineer',
+  title: "Improve invoice recovery",
+  objective: "Customers can recover a failed invoice without support.",
+  acceptanceCriteria: "The recovery path passes its focused tests.",
+  workspaceRefs: ["/workspace/billing"],
+  status: "in_progress",
+  assignedAgentId: "billing-engineer",
+  assignedRole: "engineer",
   expectedAgentMinutes: 30,
-  estimateRecordedAt: '2026-07-19T10:15:00.000Z',
+  estimateRecordedAt: "2026-07-19T10:15:00.000Z",
   orderKey: 1024,
   phases: [],
-  startedAt: '2026-07-19T10:15:00.000Z',
-  expectedCompletedAt: '2026-07-19T10:45:00.000Z',
+  startedAt: "2026-07-19T10:15:00.000Z",
+  expectedCompletedAt: "2026-07-19T10:45:00.000Z",
   endedAt: null,
   result: null,
   version: 2,
-  createdAt: '2026-07-19T10:10:00.000Z',
-  updatedAt: '2026-07-19T10:15:00.000Z',
+  createdAt: "2026-07-19T10:10:00.000Z",
+  updatedAt: "2026-07-19T10:15:00.000Z",
 };
 const managerReview = {
   ...task,
-  taskId: 'task-manager-review',
+  taskId: "task-manager-review",
   parentTaskId: task.taskId,
-  kind: 'manager_review',
-  requiredRole: 'manager',
+  kind: "manager_review",
+  requiredRole: "manager",
   requiresReview: false,
-  title: 'Manager review: Improve invoice recovery',
-  status: 'backlog',
+  title: "Manager review: Improve invoice recovery",
+  status: "backlog",
   assignedAgentId: null,
   assignedRole: null,
   expectedAgentMinutes: 15,
@@ -197,38 +197,38 @@ const managerReview = {
 };
 const humanCheck = {
   ...managerReview,
-  taskId: 'task-human-check',
+  taskId: "task-human-check",
   parentTaskId: managerReview.taskId,
-  kind: 'human_check',
+  kind: "human_check",
   requiredRole: null,
-  title: 'Human check: Improve invoice recovery',
+  title: "Human check: Improve invoice recovery",
 };
 const question = {
   apiVersion,
-  questionId: 'question-one',
-  projectId: 'project-one',
-  taskId: 'task-one',
-  agentId: 'billing-engineer',
-  runId: 'run-one',
-  question: 'Should recovery preserve the previous payment method?',
-  status: 'open',
+  questionId: "question-one",
+  projectId: "project-one",
+  taskId: "task-one",
+  agentId: "billing-engineer",
+  runId: "run-one",
+  question: "Should recovery preserve the previous payment method?",
+  status: "open",
   answer: null,
-  askedAt: '2026-07-19T10:20:00.000Z',
+  askedAt: "2026-07-19T10:20:00.000Z",
   answeredAt: null,
   answeredBy: null,
   version: 1,
 };
 const run = {
   apiVersion,
-  runId: 'run-one',
-  claimId: 'claim-one',
-  projectId: 'project-one',
-  agentId: 'billing-engineer',
-  wakeupId: 'wakeup-one',
-  taskId: 'task-one',
-  status: 'active',
-  startedAt: '2026-07-19T10:15:00.000Z',
-  heartbeatAt: '2026-07-19T10:24:00.000Z',
+  runId: "run-one",
+  claimId: "claim-one",
+  projectId: "project-one",
+  agentId: "billing-engineer",
+  wakeupId: "wakeup-one",
+  taskId: "task-one",
+  status: "active",
+  startedAt: "2026-07-19T10:15:00.000Z",
+  heartbeatAt: "2026-07-19T10:24:00.000Z",
   endedAt: null,
   result: null,
   runtime: null,
@@ -238,95 +238,97 @@ const run = {
 };
 const event = {
   apiVersion,
-  eventId: 'event-one',
-  projectId: 'project-one',
-  taskId: 'task-one',
-  actorType: 'agent',
-  actorId: 'billing-engineer',
-  eventType: 'agent_run_claimed',
-  data: { runId: 'run-one', wakeReason: 'human_assignment' },
-  createdAt: '2026-07-19T10:15:00.000Z',
+  eventId: "event-one",
+  projectId: "project-one",
+  taskId: "task-one",
+  actorType: "agent",
+  actorId: "billing-engineer",
+  eventType: "agent_run_claimed",
+  data: { runId: "run-one", wakeReason: "human_assignment" },
+  createdAt: "2026-07-19T10:15:00.000Z",
 };
 const workflowPlan = {
   apiVersion,
-  planRevisionId: 'plan-one',
+  planRevisionId: "plan-one",
   workItemId: workItem.workItemId,
   revision: 1,
-  objective: 'Make invoice recovery dependable.',
-  assumptions: ['The billing provider remains available.'],
-  acceptanceCriteria: ['The focused recovery test passes.'],
-  children: [{
-    key: 'invoice-provider',
-    objective: 'Publish the invoice recovery interface.',
-    projectId: project.projectId,
-    declaredScope: ['src/provider'],
-    acceptanceCriteria: ['The provider interface is available.'],
-    phase: 'expand',
-    dependsOn: [],
-    splitBy: 'phase',
-  }],
+  objective: "Make invoice recovery dependable.",
+  assumptions: ["The billing provider remains available."],
+  acceptanceCriteria: ["The focused recovery test passes."],
+  children: [
+    {
+      key: "invoice-provider",
+      objective: "Publish the invoice recovery interface.",
+      projectId: project.projectId,
+      declaredScope: ["src/provider"],
+      acceptanceCriteria: ["The provider interface is available."],
+      phase: "expand",
+      dependsOn: [],
+      splitBy: "phase",
+    },
+  ],
   projectId: project.projectId,
-  skillDigests: { 'cicada-software-implementation': `sha256:${'1'.repeat(64)}` },
-  state: 'confirmed',
-  createdBy: 'human:operator',
-  confirmedBy: 'human:operator',
-  createdAt: '2026-07-19T10:20:00.000Z',
-  confirmedAt: '2026-07-19T10:21:00.000Z',
+  skillDigests: { "cicada-software-implementation": `sha256:${"1".repeat(64)}` },
+  state: "confirmed",
+  createdBy: "human:operator",
+  confirmedBy: "human:operator",
+  createdAt: "2026-07-19T10:20:00.000Z",
+  confirmedAt: "2026-07-19T10:21:00.000Z",
 };
 const workflowNode = {
   apiVersion,
-  nodeId: 'node-one',
+  nodeId: "node-one",
   planRevisionId: workflowPlan.planRevisionId,
   projectId: project.projectId,
-  title: 'Verify invoice recovery',
-  objective: 'Prove the recovery path is dependable.',
-  acceptanceCriteria: ['The focused recovery test passes.'],
+  title: "Verify invoice recovery",
+  objective: "Prove the recovery path is dependable.",
+  acceptanceCriteria: ["The focused recovery test passes."],
   dependencyNodeIds: [],
-  stageTemplate: ['implementation', 'testing', 'verification'],
-  currentStage: 'testing',
-  state: 'active',
+  stageTemplate: ["implementation", "testing", "verification"],
+  currentStage: "testing",
+  state: "active",
   version: 2,
-  createdAt: '2026-07-19T10:21:00.000Z',
-  updatedAt: '2026-07-19T10:22:00.000Z',
+  createdAt: "2026-07-19T10:21:00.000Z",
+  updatedAt: "2026-07-19T10:22:00.000Z",
 };
 const workflowHandoff = {
   apiVersion,
-  handoffId: 'handoff-one',
+  handoffId: "handoff-one",
   nodeId: workflowNode.nodeId,
   taskId: task.taskId,
-  stage: 'implementation',
-  outcome: 'passed',
-  summary: 'Invoice recovery implementation is complete.',
-  evidence: ['Focused tests passed.'],
-  artifactIds: ['artifact-one'],
-  acceptanceCriteria: [{ criterion: 'The focused recovery test passes.', passed: true, evidence: 'Passed.' }],
+  stage: "implementation",
+  outcome: "passed",
+  summary: "Invoice recovery implementation is complete.",
+  evidence: ["Focused tests passed."],
+  artifactIds: ["artifact-one"],
+  acceptanceCriteria: [{ criterion: "The focused recovery test passes.", passed: true, evidence: "Passed." }],
   blockers: [],
   recommendedReturnStage: null,
-  createdAt: '2026-07-19T10:22:00.000Z',
+  createdAt: "2026-07-19T10:22:00.000Z",
 };
 const workflowEvent = {
   apiVersion,
   sequence: 1,
-  eventId: 'workflow-event-one',
+  eventId: "workflow-event-one",
   projectId: project.projectId,
   nodeId: workflowNode.nodeId,
   taskId: task.taskId,
-  eventType: 'stage_completed',
-  summary: 'Implementation completed; testing is ready.',
-  createdAt: '2026-07-19T10:22:00.000Z',
+  eventType: "stage_completed",
+  summary: "Implementation completed; testing is ready.",
+  createdAt: "2026-07-19T10:22:00.000Z",
 };
 const projectArtifact = {
   apiVersion,
-  artifactId: 'artifact-one',
+  artifactId: "artifact-one",
   projectId: project.projectId,
   nodeId: workflowNode.nodeId,
   taskId: task.taskId,
-  mediaType: 'text/markdown',
+  mediaType: "text/markdown",
   byteSize: 42,
-  digest: `sha256:${'a'.repeat(64)}`,
-  caption: 'Focused invoice recovery evidence',
-  createdBy: 'agent:billing-engineer',
-  createdAt: '2026-07-19T10:22:00.000Z',
+  digest: `sha256:${"a".repeat(64)}`,
+  caption: "Focused invoice recovery evidence",
+  createdBy: "agent:billing-engineer",
+  createdAt: "2026-07-19T10:22:00.000Z",
 };
 
 function workflowSnapshot(overrides: Record<string, unknown> = {}) {
@@ -352,57 +354,57 @@ function boardSnapshot() {
   };
 }
 
-describe('task-board protocol projection', () => {
-  it('chooses the same newest timestamp spelling regardless of input order', () => {
-    const utc = { iso: '2026-07-19T10:00:00Z', ms: Date.parse('2026-07-19T10:00:00Z') };
-    const offset = { iso: '2026-07-19T12:00:00+02:00', ms: Date.parse('2026-07-19T12:00:00+02:00') };
-    const fallback = { iso: '1970-01-01T00:00:00.000Z', ms: 0 };
+describe("task-board protocol projection", () => {
+  it("chooses the same newest timestamp spelling regardless of input order", () => {
+    const utc = { iso: "2026-07-19T10:00:00Z", ms: Date.parse("2026-07-19T10:00:00Z") };
+    const offset = { iso: "2026-07-19T12:00:00+02:00", ms: Date.parse("2026-07-19T12:00:00+02:00") };
+    const fallback = { iso: "1970-01-01T00:00:00.000Z", ms: 0 };
 
     expect(newest([utc, offset], fallback)).toEqual(offset);
     expect(newest([offset, utc], fallback)).toEqual(offset);
   });
 
-  it('maps the durable service contract into user-facing task and run state', () => {
+  it("maps the durable service contract into user-facing task and run state", () => {
     const snapshot = parseBoardSnapshot(boardSnapshot());
-    expect(snapshot.projects[0]).toMatchObject({ id: 'project-one' });
+    expect(snapshot.projects[0]).toMatchObject({ id: "project-one" });
     expect(snapshot.agents[0]).toMatchObject({
-      id: 'billing-engineer',
-      status: 'running',
-      workerConnection: 'watching_run',
-      lastError: 'Board rejected the prior claim.',
-      currentTaskId: 'task-one',
+      id: "billing-engineer",
+      status: "running",
+      workerConnection: "watching_run",
+      lastError: "Board rejected the prior claim.",
+      currentTaskId: "task-one",
     });
-    expect(snapshot.tasks[0]).toMatchObject({ id: 'task-one', status: 'waiting_for_human', expectedAgentMinutes: 30 });
-    expect(snapshot.questions[0]).toMatchObject({ id: 'question-one', version: 1 });
+    expect(snapshot.tasks[0]).toMatchObject({ id: "task-one", status: "waiting_for_human", expectedAgentMinutes: 30 });
+    expect(snapshot.questions[0]).toMatchObject({ id: "question-one", version: 1 });
     expect(snapshot.runs[0]).toMatchObject({
-      id: 'run-one',
-      taskId: 'task-one',
-      wakeReason: 'human_assignment',
-      heartbeatAt: '2026-07-19T10:24:00.000Z',
-      heartbeatAtMs: Date.parse('2026-07-19T10:24:00.000Z'),
+      id: "run-one",
+      taskId: "task-one",
+      wakeReason: "human_assignment",
+      heartbeatAt: "2026-07-19T10:24:00.000Z",
+      heartbeatAtMs: Date.parse("2026-07-19T10:24:00.000Z"),
     });
     expect(snapshot.revision).toBe(3);
   });
 
-  it('keeps an unknown task status visible and inert despite an open question', () => {
+  it("keeps an unknown task status visible and inert despite an open question", () => {
     const snapshot = parseBoardSnapshot({
       ...boardSnapshot(),
-      tasks: [{ ...task, status: 'future_task_state' }],
+      tasks: [{ ...task, status: "future_task_state" }],
     });
 
-    expect(snapshot.tasks[0]?.status).toBe('unrecognized');
+    expect(snapshot.tasks[0]?.status).toBe("unrecognized");
   });
 
-  it('orders mixed-precision and mixed-offset timestamps by their absolute instant', () => {
-    const earlierOffset = '2026-07-19T12:30:00+02:00';
-    const middleFraction = '2026-07-19T10:30:00.500Z';
-    const laterWholeSecond = '2026-07-19T10:30:01Z';
+  it("orders mixed-precision and mixed-offset timestamps by their absolute instant", () => {
+    const earlierOffset = "2026-07-19T12:30:00+02:00";
+    const middleFraction = "2026-07-19T10:30:00.500Z";
+    const laterWholeSecond = "2026-07-19T10:30:01Z";
     const snapshot = parseBoardSnapshot({
       ...boardSnapshot(),
       project: { ...project, updatedAt: middleFraction },
       recentEvents: [
-        { ...event, eventId: 'event-offset', createdAt: earlierOffset },
-        { ...event, eventId: 'event-later', createdAt: laterWholeSecond },
+        { ...event, eventId: "event-offset", createdAt: earlierOffset },
+        { ...event, eventId: "event-later", createdAt: laterWholeSecond },
       ],
     });
 
@@ -418,30 +420,34 @@ describe('task-board protocol projection', () => {
     });
   });
 
-  it('continues to reject timestamp strings that Date.parse cannot handle', () => {
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      project: { ...project, updatedAt: 'not-a-timestamp' },
-    })).toThrow(/board\.project\.updatedAt must be a timestamp/u);
+  it("continues to reject timestamp strings that Date.parse cannot handle", () => {
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        project: { ...project, updatedAt: "not-a-timestamp" },
+      })
+    ).toThrow(/board\.project\.updatedAt must be a timestamp/u);
   });
 
-  it('drops stale completion forecasts from terminal task projections', () => {
+  it("drops stale completion forecasts from terminal task projections", () => {
     const terminalStatuses = [
-      ['completed', 'completed'],
-      ['failed', 'failed'],
-      ['cancelled', 'cancelled'],
+      ["completed", "completed"],
+      ["failed", "failed"],
+      ["cancelled", "cancelled"],
     ] as const;
 
     for (const [rawStatus, projectedStatus] of terminalStatuses) {
       const snapshot = parseBoardSnapshot({
         ...boardSnapshot(),
-        tasks: [{
-          ...task,
-          status: rawStatus,
-          expectedCompletedAt: '2026-07-20T10:45:00.000Z',
-          endedAt: '2026-07-19T10:30:00.000Z',
-          result: 'The task is closed.',
-        }],
+        tasks: [
+          {
+            ...task,
+            status: rawStatus,
+            expectedCompletedAt: "2026-07-20T10:45:00.000Z",
+            endedAt: "2026-07-19T10:30:00.000Z",
+            result: "The task is closed.",
+          },
+        ],
         openQuestions: [],
         recentQuestions: [],
       });
@@ -454,21 +460,21 @@ describe('task-board protocol projection', () => {
     }
   });
 
-  it('retains older open questions outside the recent history without duplicating overlap', () => {
+  it("retains older open questions outside the recent history without duplicating overlap", () => {
     const olderOpenQuestion = {
       ...question,
-      questionId: 'question-older-open',
-      question: 'Which customer group should this prioritize?',
-      askedAt: '2026-07-18T10:20:00.000Z',
+      questionId: "question-older-open",
+      question: "Which customer group should this prioritize?",
+      askedAt: "2026-07-18T10:20:00.000Z",
     };
     const answeredQuestion = {
       ...question,
-      questionId: 'question-recent-answered',
-      question: 'Should we preserve the prior invoice reference?',
-      status: 'answered',
-      answer: 'Yes.',
-      answeredAt: '2026-07-19T10:25:00.000Z',
-      answeredBy: 'human:operator',
+      questionId: "question-recent-answered",
+      question: "Should we preserve the prior invoice reference?",
+      status: "answered",
+      answer: "Yes.",
+      answeredAt: "2026-07-19T10:25:00.000Z",
+      answeredBy: "human:operator",
       version: 2,
     };
 
@@ -484,71 +490,85 @@ describe('task-board protocol projection', () => {
       olderOpenQuestion.questionId,
     ]);
     expect(snapshot.questions.filter((item) => item.id === question.questionId)).toHaveLength(1);
-    expect(snapshot.questions.find((item) => item.id === olderOpenQuestion.questionId)).toMatchObject({ status: 'open' });
-    expect(snapshot.tasks[0]?.status).toBe('waiting_for_human');
+    expect(snapshot.questions.find((item) => item.id === olderOpenQuestion.questionId)).toMatchObject({
+      status: "open",
+    });
+    expect(snapshot.tasks[0]?.status).toBe("waiting_for_human");
   });
 
-  it('rejects invalid versions, model status values, and non-15-minute estimates', () => {
-    expect(() => parseBoardSnapshot({ ...boardSnapshot(), apiVersion: 'old' })).toThrow(/apiVersion/u);
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      agents: [{ ...agent, status: 'online' }],
-    })).toThrow(/status/u);
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      agents: [{ ...agent, workerConnection: 'offline' }],
-    })).toThrow(/workerConnection/u);
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{ ...task, expectedAgentMinutes: 17 }],
-    })).toThrow(/15-minute/u);
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{ ...task, kind: 'review' }],
-    })).toThrow(/kind/u);
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{ ...task, kind: 'manager_review', requiredRole: 'engineer' }],
-    })).toThrow(/requiredRole/u);
+  it("rejects invalid versions, model status values, and non-15-minute estimates", () => {
+    expect(() => parseBoardSnapshot({ ...boardSnapshot(), apiVersion: "old" })).toThrow(/apiVersion/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        agents: [{ ...agent, status: "online" }],
+      })
+    ).toThrow(/status/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        agents: [{ ...agent, workerConnection: "offline" }],
+      })
+    ).toThrow(/workerConnection/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [{ ...task, expectedAgentMinutes: 17 }],
+      })
+    ).toThrow(/15-minute/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [{ ...task, kind: "review" }],
+      })
+    ).toThrow(/kind/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [{ ...task, kind: "manager_review", requiredRole: "engineer" }],
+      })
+    ).toThrow(/requiredRole/u);
   });
 
-  it('treats a missing worker connection as not detected for rolling compatibility', () => {
+  it("treats a missing worker connection as not detected for rolling compatibility", () => {
     const { workerConnection: _workerConnection, lastError: _lastError, ...legacyAgent } = agent;
     const snapshot = parseBoardSnapshot({ ...boardSnapshot(), agents: [legacyAgent] });
-    expect(snapshot.agents[0]).toMatchObject({ status: 'running', workerConnection: null, lastError: null });
+    expect(snapshot.agents[0]).toMatchObject({ status: "running", workerConnection: null, lastError: null });
   });
 
-  it('projects nullable estimates and parallel phase progress with legacy fallbacks', () => {
+  it("projects nullable estimates and parallel phase progress with legacy fallbacks", () => {
     const phase = {
       apiVersion,
-      phaseId: 'phase-api',
+      phaseId: "phase-api",
       projectId: project.projectId,
       taskId: task.taskId,
-      title: 'Implement API changes',
-      stage: 'execution',
-      status: 'in_progress',
-      parallelGroup: 'implementation',
+      title: "Implement API changes",
+      stage: "execution",
+      status: "in_progress",
+      parallelGroup: "implementation",
       orderKey: 0,
-      startedAt: '2026-07-19T10:20:00.000Z',
+      startedAt: "2026-07-19T10:20:00.000Z",
       endedAt: null,
       version: 2,
-      createdAt: '2026-07-19T10:16:00.000Z',
-      updatedAt: '2026-07-19T10:20:00.000Z',
+      createdAt: "2026-07-19T10:16:00.000Z",
+      updatedAt: "2026-07-19T10:20:00.000Z",
     };
     const snapshot = parseBoardSnapshot({
       ...boardSnapshot(),
-      tasks: [{
-        ...task,
-        expectedAgentMinutes: null,
-        estimateRecordedAt: null,
-        expectedCompletedAt: null,
-        phases: [phase],
-      }],
+      tasks: [
+        {
+          ...task,
+          expectedAgentMinutes: null,
+          estimateRecordedAt: null,
+          expectedCompletedAt: null,
+          phases: [phase],
+        },
+      ],
     });
     expect(snapshot.tasks[0]).toMatchObject({
       expectedAgentMinutes: null,
       orderKey: 1024,
-      phases: [expect.objectContaining({ id: 'phase-api', stage: 'execution', parallelGroup: 'implementation' })],
+      phases: [expect.objectContaining({ id: "phase-api", stage: "execution", parallelGroup: "implementation" })],
     });
 
     const { phases: _phases, estimateRecordedAt: _recorded, ...legacyTask } = task;
@@ -559,158 +579,203 @@ describe('task-board protocol projection', () => {
     });
   });
 
-  it('rejects a task that omits its required order key', () => {
+  it("rejects a task that omits its required order key", () => {
     const { orderKey: _orderKey, ...missingOrderKey } = task;
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [missingOrderKey],
-    })).toThrow(/board\.tasks\[0\]\.orderKey/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [missingOrderKey],
+      })
+    ).toThrow(/board\.tasks\[0\]\.orderKey/u);
   });
 
-  it('accepts completed semantic phases and restricts the legacy done stage to completion', () => {
+  it("accepts completed semantic phases and restricts the legacy done stage to completion", () => {
     const phase = {
       apiVersion,
-      phaseId: 'phase-research',
+      phaseId: "phase-research",
       projectId: project.projectId,
       taskId: task.taskId,
-      title: 'Research recovery behavior',
-      stage: 'research',
-      status: 'completed',
+      title: "Research recovery behavior",
+      stage: "research",
+      status: "completed",
       parallelGroup: null,
       orderKey: 0,
-      startedAt: '2026-07-19T10:16:00.000Z',
-      endedAt: '2026-07-19T10:20:00.000Z',
+      startedAt: "2026-07-19T10:16:00.000Z",
+      endedAt: "2026-07-19T10:20:00.000Z",
       version: 2,
-      createdAt: '2026-07-19T10:16:00.000Z',
-      updatedAt: '2026-07-19T10:20:00.000Z',
+      createdAt: "2026-07-19T10:16:00.000Z",
+      updatedAt: "2026-07-19T10:20:00.000Z",
     };
 
-    expect(parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{ ...task, phases: [phase] }],
-    }).tasks[0]?.phases[0]).toMatchObject({ stage: 'research', status: 'completed' });
+    expect(
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [{ ...task, phases: [phase] }],
+      }).tasks[0]?.phases[0]
+    ).toMatchObject({ stage: "research", status: "completed" });
 
-    expect(parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{ ...task, phases: [{ ...phase, phaseId: 'phase-done', stage: 'done' }] }],
-    }).tasks[0]?.phases[0]).toMatchObject({ stage: 'done', status: 'completed' });
+    expect(
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [{ ...task, phases: [{ ...phase, phaseId: "phase-done", stage: "done" }] }],
+      }).tasks[0]?.phases[0]
+    ).toMatchObject({ stage: "done", status: "completed" });
 
-    expect(() => parseBoardSnapshot({
-      ...boardSnapshot(),
-      tasks: [{
-        ...task,
-        phases: [{ ...phase, phaseId: 'phase-invalid-done', stage: 'done', status: 'in_progress' }],
-      }],
-    })).toThrow(/legacy done stage only when status is completed/u);
+    expect(() =>
+      parseBoardSnapshot({
+        ...boardSnapshot(),
+        tasks: [
+          {
+            ...task,
+            phases: [{ ...phase, phaseId: "phase-invalid-done", stage: "done", status: "in_progress" }],
+          },
+        ],
+      })
+    ).toThrow(/legacy done stage only when status is completed/u);
   });
 });
 
-describe('task-board HTTP client', () => {
-  it('loads and validates host project roots', async () => {
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      roots: [{
-        name: 'WebstormProjects',
-        path: '/home/x/WebstormProjects',
-        projects: [{
-          name: 'nexus-seventeen',
-          path: '/home/x/WebstormProjects/nexus-seventeen',
-          hasGit: true,
-          modifiedAtMs: 1_786_742_400_000,
-        }],
-        truncated: false,
-      }],
-    })));
+describe("task-board HTTP client", () => {
+  it("loads and validates host project roots", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            roots: [
+              {
+                name: "WebstormProjects",
+                path: "/home/x/WebstormProjects",
+                projects: [
+                  {
+                    name: "nexus-seventeen",
+                    path: "/home/x/WebstormProjects/nexus-seventeen",
+                    hasGit: true,
+                    modifiedAtMs: 1_786_742_400_000,
+                  },
+                ],
+                truncated: false,
+              },
+            ],
+          })
+        )
+    );
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.getHostProjectRoots()).resolves.toEqual([{
-      name: 'WebstormProjects',
-      path: '/home/x/WebstormProjects',
-      projects: [{
-        name: 'nexus-seventeen',
-        path: '/home/x/WebstormProjects/nexus-seventeen',
-        hasGit: true,
-        modifiedAtMs: 1_786_742_400_000,
-      }],
-      truncated: false,
-    }]);
+    await expect(client.getHostProjectRoots()).resolves.toEqual([
+      {
+        name: "WebstormProjects",
+        path: "/home/x/WebstormProjects",
+        projects: [
+          {
+            name: "nexus-seventeen",
+            path: "/home/x/WebstormProjects/nexus-seventeen",
+            hasGit: true,
+            modifiedAtMs: 1_786_742_400_000,
+          },
+        ],
+        truncated: false,
+      },
+    ]);
     expect(request).toHaveBeenCalledWith(
-      'https://board.example.test/v1/host/project-roots',
-      expect.objectContaining({ cache: 'no-store' }),
+      "https://board.example.test/v1/host/project-roots",
+      expect.objectContaining({ cache: "no-store" })
     );
   });
 
-  it('rejects malformed host project roots', async () => {
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      roots: [{
-        name: 'WebstormProjects',
-        path: '/home/x/WebstormProjects',
-        projects: {},
-        truncated: false,
-      }],
-    })));
+  it("rejects malformed host project roots", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            roots: [
+              {
+                name: "WebstormProjects",
+                path: "/home/x/WebstormProjects",
+                projects: {},
+                truncated: false,
+              },
+            ],
+          })
+        )
+    );
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
     await expect(client.getHostProjectRoots()).rejects.toThrow(
-      'host roots response.roots[0].projects must be an array',
+      "host roots response.roots[0].projects must be an array"
     );
   });
 
-  it('loads host directories with an encoded path or the bare endpoint', async () => {
-    const request = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify({
-      listing: {
-        path: String(url).includes('?path=') ? '/home/x' : '/home',
-        parent: String(url).includes('?path=') ? '/home' : null,
-        entries: [{ name: 'x', path: '/home/x', hasGit: false }],
-        truncated: false,
-      },
-    })));
+  it("loads host directories with an encoded path or the bare endpoint", async () => {
+    const request = vi.fn(
+      async (url: string | URL | Request) =>
+        new Response(
+          JSON.stringify({
+            listing: {
+              path: String(url).includes("?path=") ? "/home/x" : "/home",
+              parent: String(url).includes("?path=") ? "/home" : null,
+              entries: [{ name: "x", path: "/home/x", hasGit: false }],
+              truncated: false,
+            },
+          })
+        )
+    );
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.getHostDirectories('/home/x')).resolves.toEqual({
-      path: '/home/x',
-      parent: '/home',
-      entries: [{ name: 'x', path: '/home/x', hasGit: false }],
+    await expect(client.getHostDirectories("/home/x")).resolves.toEqual({
+      path: "/home/x",
+      parent: "/home",
+      entries: [{ name: "x", path: "/home/x", hasGit: false }],
       truncated: false,
     });
     await expect(client.getHostDirectories()).resolves.toEqual({
-      path: '/home',
+      path: "/home",
       parent: null,
-      entries: [{ name: 'x', path: '/home/x', hasGit: false }],
+      entries: [{ name: "x", path: "/home/x", hasGit: false }],
       truncated: false,
     });
     expect(request.mock.calls.map(([url]) => String(url))).toEqual([
-      'https://board.example.test/v1/host/directories?path=%2Fhome%2Fx',
-      'https://board.example.test/v1/host/directories',
+      "https://board.example.test/v1/host/directories?path=%2Fhome%2Fx",
+      "https://board.example.test/v1/host/directories",
     ]);
   });
 
-  it('preserves host directory error codes', async () => {
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      error: { code: 'HOST_PATH_OUTSIDE_ROOTS', message: 'Path is outside configured roots' },
-    }), { status: 403 }));
+  it("preserves host directory error codes", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { code: "HOST_PATH_OUTSIDE_ROOTS", message: "Path is outside configured roots" },
+          }),
+          { status: 403 }
+        )
+    );
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client.getHostDirectories('/etc')).rejects.toEqual(expect.objectContaining({
-      name: 'BoardApiError',
-      status: 403,
-      code: 'HOST_PATH_OUTSIDE_ROOTS',
-      message: 'Path is outside configured roots',
-    } satisfies Partial<BoardApiError>));
+    await expect(client.getHostDirectories("/etc")).rejects.toEqual(
+      expect.objectContaining({
+        name: "BoardApiError",
+        status: 403,
+        code: "HOST_PATH_OUTSIDE_ROOTS",
+        message: "Path is outside configured roots",
+      } satisfies Partial<BoardApiError>)
+    );
   });
 
-  it('consumes CRLF workflow events with optional data-field spacing', async () => {
-    const request = vi.fn(async () => new Response(
-      `event: workflow\r\ndata:${JSON.stringify({ event: workflowEvent })}\r\n\r\n`,
-      { headers: { 'content-type': 'text/event-stream' } },
-    ));
+  it("consumes CRLF workflow events with optional data-field spacing", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(`event: workflow\r\ndata:${JSON.stringify({ event: workflowEvent })}\r\n\r\n`, {
+          headers: { "content-type": "text/event-stream" },
+        })
+    );
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
     const received: string[] = [];
@@ -725,177 +790,199 @@ describe('task-board HTTP client', () => {
     expect(received).toEqual([`1:${workflowEvent.summary}`]);
   });
 
-  it('parses valid workflow and artifact payloads into the web projection', async () => {
+  it("parses valid workflow and artifact payloads into the web projection", async () => {
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects/project-one/workflow')) {
+      if (path.endsWith("/v1/projects/project-one/workflow")) {
         return new Response(JSON.stringify({ workflow: workflowSnapshot() }));
       }
-      if (path.endsWith('/v1/projects/project-one/artifacts')) {
+      if (path.endsWith("/v1/projects/project-one/artifacts")) {
         return new Response(JSON.stringify({ artifacts: [projectArtifact] }));
       }
-      return new Response('{}', { status: 404 });
+      return new Response("{}", { status: 404 });
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     await expect(client.getProjectWorkflow(project.projectId)).resolves.toEqual({
-      plans: [{
-        planRevisionId: workflowPlan.planRevisionId,
-        workItemId: workflowPlan.workItemId,
-        revision: 1,
-        objective: workflowPlan.objective,
-        assumptions: workflowPlan.assumptions,
-        acceptanceCriteria: workflowPlan.acceptanceCriteria,
-        children: workflowPlan.children,
-        state: 'confirmed',
-        createdAt: workflowPlan.createdAt,
-        createdAtMs: Date.parse(workflowPlan.createdAt),
-        confirmedAt: workflowPlan.confirmedAt,
-        confirmedAtMs: Date.parse(workflowPlan.confirmedAt),
-      }],
-      nodes: [{
-        nodeId: workflowNode.nodeId,
-        planRevisionId: workflowPlan.planRevisionId,
-        title: workflowNode.title,
-        objective: workflowNode.objective,
-        acceptanceCriteria: workflowNode.acceptanceCriteria,
-        dependencyNodeIds: [],
-        stageTemplate: ['implementation', 'testing', 'verification'],
-        currentStage: 'testing',
-        state: 'active',
-        createdAt: workflowNode.createdAt,
-        createdAtMs: Date.parse(workflowNode.createdAt),
-        updatedAt: workflowNode.updatedAt,
-        updatedAtMs: Date.parse(workflowNode.updatedAt),
-      }],
-      handoffs: [{
-        handoffId: workflowHandoff.handoffId,
-        nodeId: workflowNode.nodeId,
-        taskId: task.taskId,
-        stage: 'implementation',
-        outcome: 'passed',
-        summary: workflowHandoff.summary,
-        evidence: workflowHandoff.evidence,
-        artifactIds: workflowHandoff.artifactIds,
-        blockers: [],
-        createdAt: workflowHandoff.createdAt,
-        createdAtMs: Date.parse(workflowHandoff.createdAt),
-      }],
-      events: [{
-        sequence: 1,
-        eventId: workflowEvent.eventId,
-        nodeId: workflowNode.nodeId,
-        taskId: task.taskId,
-        eventType: workflowEvent.eventType,
-        summary: workflowEvent.summary,
-        createdAt: workflowEvent.createdAt,
-        createdAtMs: Date.parse(workflowEvent.createdAt),
-      }],
+      plans: [
+        {
+          planRevisionId: workflowPlan.planRevisionId,
+          workItemId: workflowPlan.workItemId,
+          revision: 1,
+          objective: workflowPlan.objective,
+          assumptions: workflowPlan.assumptions,
+          acceptanceCriteria: workflowPlan.acceptanceCriteria,
+          children: workflowPlan.children,
+          state: "confirmed",
+          createdAt: workflowPlan.createdAt,
+          createdAtMs: Date.parse(workflowPlan.createdAt),
+          confirmedAt: workflowPlan.confirmedAt,
+          confirmedAtMs: Date.parse(workflowPlan.confirmedAt),
+        },
+      ],
+      nodes: [
+        {
+          nodeId: workflowNode.nodeId,
+          planRevisionId: workflowPlan.planRevisionId,
+          title: workflowNode.title,
+          objective: workflowNode.objective,
+          acceptanceCriteria: workflowNode.acceptanceCriteria,
+          dependencyNodeIds: [],
+          stageTemplate: ["implementation", "testing", "verification"],
+          currentStage: "testing",
+          state: "active",
+          createdAt: workflowNode.createdAt,
+          createdAtMs: Date.parse(workflowNode.createdAt),
+          updatedAt: workflowNode.updatedAt,
+          updatedAtMs: Date.parse(workflowNode.updatedAt),
+        },
+      ],
+      handoffs: [
+        {
+          handoffId: workflowHandoff.handoffId,
+          nodeId: workflowNode.nodeId,
+          taskId: task.taskId,
+          stage: "implementation",
+          outcome: "passed",
+          summary: workflowHandoff.summary,
+          evidence: workflowHandoff.evidence,
+          artifactIds: workflowHandoff.artifactIds,
+          blockers: [],
+          createdAt: workflowHandoff.createdAt,
+          createdAtMs: Date.parse(workflowHandoff.createdAt),
+        },
+      ],
+      events: [
+        {
+          sequence: 1,
+          eventId: workflowEvent.eventId,
+          nodeId: workflowNode.nodeId,
+          taskId: task.taskId,
+          eventType: workflowEvent.eventType,
+          summary: workflowEvent.summary,
+          createdAt: workflowEvent.createdAt,
+          createdAtMs: Date.parse(workflowEvent.createdAt),
+        },
+      ],
     });
-    await expect(client.getProjectArtifacts(project.projectId)).resolves.toEqual([{
-      artifactId: projectArtifact.artifactId,
-      nodeId: workflowNode.nodeId,
-      taskId: task.taskId,
-      mediaType: 'text/markdown',
-      byteSize: 42,
-      caption: projectArtifact.caption,
-      createdAt: projectArtifact.createdAt,
-      createdAtMs: Date.parse(projectArtifact.createdAt),
-    }]);
+    await expect(client.getProjectArtifacts(project.projectId)).resolves.toEqual([
+      {
+        artifactId: projectArtifact.artifactId,
+        nodeId: workflowNode.nodeId,
+        taskId: task.taskId,
+        mediaType: "text/markdown",
+        byteSize: 42,
+        caption: projectArtifact.caption,
+        createdAt: projectArtifact.createdAt,
+        createdAtMs: Date.parse(projectArtifact.createdAt),
+      },
+    ]);
   });
 
-  it('loads the onboarding gap-report artifact id from work-item detail and fetches its content', async () => {
-    const artifactId = 'artifact-onboarding-gap-report';
-    const report = '# Gaps\n\n- Branch protection is deferred.';
+  it("loads the onboarding gap-report artifact id from work-item detail and fetches its content", async () => {
+    const artifactId = "artifact-onboarding-gap-report";
+    const report = "# Gaps\n\n- Branch protection is deferred.";
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/work-items/work-item-one')) {
-        return new Response(JSON.stringify({
-          workItem: {
-            ...workItemDetail,
-            taskType: 'onboarding',
-            gapReportArtifactId: artifactId,
-          },
-        }));
+      if (path.endsWith("/v1/work-items/work-item-one")) {
+        return new Response(
+          JSON.stringify({
+            workItem: {
+              ...workItemDetail,
+              taskType: "onboarding",
+              gapReportArtifactId: artifactId,
+            },
+          })
+        );
       }
       if (path.endsWith(`/v1/artifacts/${artifactId}`)) {
-        return new Response(report, { headers: { 'content-type': 'text/markdown' } });
+        return new Response(report, { headers: { "content-type": "text/markdown" } });
       }
-      return new Response('{}', { status: 404 });
+      return new Response("{}", { status: 404 });
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     await expect(client.getWorkItem(workItem.workItemId)).resolves.toMatchObject({
       id: workItem.workItemId,
-      taskType: 'onboarding',
+      taskType: "onboarding",
       gapReportArtifactId: artifactId,
     });
     await expect((await client.getArtifactBlob(artifactId)).text()).resolves.toBe(report);
   });
 
-  it('rejects an unknown workflow enum member at the response boundary', async () => {
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      workflow: workflowSnapshot({ nodes: [{ ...workflowNode, state: 'paused' }] }),
-    })));
+  it("rejects an unknown workflow enum member at the response boundary", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            workflow: workflowSnapshot({ nodes: [{ ...workflowNode, state: "paused" }] }),
+          })
+        )
+    );
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
     await expect(client.getProjectWorkflow(project.projectId)).rejects.toThrow(
-      'workflow response.workflow.nodes[0].state has an unsupported value',
+      "workflow response.workflow.nodes[0].state has an unsupported value"
     );
   });
 
-  it('rejects an artifact with a missing required field at the response boundary', async () => {
+  it("rejects an artifact with a missing required field at the response boundary", async () => {
     const missingCaption: Record<string, unknown> = { ...projectArtifact };
     delete missingCaption.caption;
     const request = vi.fn(async () => new Response(JSON.stringify({ artifacts: [missingCaption] })));
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
     await expect(client.getProjectArtifacts(project.projectId)).rejects.toThrow(
-      'artifacts response.artifacts[0].caption must be a string',
+      "artifacts response.artifacts[0].caption must be a string"
     );
   });
 
-  it('loads automation configuration on demand and sends one exact versioned replacement', async () => {
+  it("loads automation configuration on demand and sends one exact versioned replacement", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response(JSON.stringify({
-        configuration: init?.method === 'PATCH'
-          ? { ...automationConfiguration, version: 5, updatedAt: '2026-07-19T10:20:00.000Z' }
-          : automationConfiguration,
-      }));
+      return new Response(
+        JSON.stringify({
+          configuration:
+            init?.method === "PATCH"
+              ? { ...automationConfiguration, version: 5, updatedAt: "2026-07-19T10:20:00.000Z" }
+              : automationConfiguration,
+        })
+      );
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     const loaded = await client.getAutomationConfiguration();
     expect(loaded).toMatchObject({
-      id: 'company-default',
+      id: "company-default",
       version: 4,
       agentTypes: [
-        expect.objectContaining({ id: 'workflow-manager', role: 'manager' }),
-        expect.objectContaining({ id: 'implementation-engineer', role: 'engineer' }),
-        expect.objectContaining({ id: 'independent-verifier', role: 'verifier' }),
+        expect.objectContaining({ id: "workflow-manager", role: "manager" }),
+        expect.objectContaining({ id: "implementation-engineer", role: "engineer" }),
+        expect.objectContaining({ id: "independent-verifier", role: "verifier" }),
       ],
     });
 
-    await expect(client.saveAutomationConfiguration({
-      version: loaded.version,
-      agentTypes: loaded.agentTypes,
-      stages: loaded.stages,
-    })).resolves.toMatchObject({ version: 5 });
+    await expect(
+      client.saveAutomationConfiguration({
+        version: loaded.version,
+        agentTypes: loaded.agentTypes,
+        stages: loaded.stages,
+      })
+    ).resolves.toMatchObject({ version: 5 });
 
-    expect(calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
-      ['https://board.example.test/v1/automation-configuration', 'GET'],
-      ['https://board.example.test/v1/automation-configuration', 'PATCH'],
+    expect(calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      ["https://board.example.test/v1/automation-configuration", "GET"],
+      ["https://board.example.test/v1/automation-configuration", "PATCH"],
     ]);
     expect(JSON.parse(String(calls[1]?.[1]?.body))).toEqual({
       version: 4,
@@ -904,14 +991,16 @@ describe('task-board HTTP client', () => {
     });
   });
 
-  it('strictly rejects unsafe automation configuration responses', async () => {
+  it("strictly rejects unsafe automation configuration responses", async () => {
     async function load(configuration: unknown) {
       const request = vi.fn(async () => new Response(JSON.stringify({ configuration })));
       return createTaskBoardClient({ fetch: request as unknown as typeof fetch }).getAutomationConfiguration();
     }
 
-    const withExtraField = structuredClone(automationConfiguration) as typeof automationConfiguration & { secret?: string };
-    withExtraField.secret = 'must-not-cross-the-client-boundary';
+    const withExtraField = structuredClone(automationConfiguration) as typeof automationConfiguration & {
+      secret?: string;
+    };
+    withExtraField.secret = "must-not-cross-the-client-boundary";
     await expect(load(withExtraField)).rejects.toThrow(/secret is not supported/u);
 
     const duplicateId = structuredClone(automationConfiguration);
@@ -927,30 +1016,30 @@ describe('task-board HTTP client', () => {
     await expect(load(disabledReference)).rejects.toThrow(/references a disabled agent type/u);
 
     const wrongRoleAssignments = [
-      [0, 'implementation-engineer', /refinement requires a manager/u],
-      [1, 'independent-verifier', /project_resolution requires a manager/u],
-      [2, 'workflow-manager', /research requires an engineer or verifier/u],
-      [3, 'workflow-manager', /planning requires an engineer/u],
-      [4, 'independent-verifier', /implementation requires an engineer/u],
-      [5, 'workflow-manager', /testing requires an engineer or verifier/u],
-      [6, 'implementation-engineer', /verification requires a verifier/u],
+      [0, "implementation-engineer", /refinement requires a manager/u],
+      [1, "independent-verifier", /project_resolution requires a manager/u],
+      [2, "workflow-manager", /research requires an engineer or verifier/u],
+      [3, "workflow-manager", /planning requires an engineer/u],
+      [4, "independent-verifier", /implementation requires an engineer/u],
+      [5, "workflow-manager", /testing requires an engineer or verifier/u],
+      [6, "implementation-engineer", /verification requires a verifier/u],
     ] as const;
     for (const [stageIndex, agentTypeId, message] of wrongRoleAssignments) {
       const wrongRole = structuredClone(automationConfiguration);
-      wrongRole.stages[stageIndex]!.executor = { kind: 'agent_type', agentTypeId };
+      wrongRole.stages[stageIndex]!.executor = { kind: "agent_type", agentTypeId };
       await expect(load(wrongRole)).rejects.toThrow(message);
     }
 
     const unlockedHumanReview = structuredClone(automationConfiguration);
-    unlockedHumanReview.stages[7]!.executor = { kind: 'disabled' };
+    unlockedHumanReview.stages[7]!.executor = { kind: "disabled" };
     await expect(load(unlockedHumanReview)).rejects.toThrow(/human_review must be owned by a human/u);
 
     const enabledWithoutInstructions = structuredClone(automationConfiguration);
-    enabledWithoutInstructions.agentTypes[0]!.supplementalInstructions = '';
+    enabledWithoutInstructions.agentTypes[0]!.supplementalInstructions = "";
     await expect(load(enabledWithoutInstructions)).rejects.toThrow(/cannot be empty while the agent type is enabled/u);
 
     const pathAsSkillId = structuredClone(automationConfiguration);
-    pathAsSkillId.agentTypes[0]!.skillIds = ['skills/task-refinement'];
+    pathAsSkillId.agentTypes[0]!.skillIds = ["skills/task-refinement"];
     await expect(load(pathAsSkillId)).rejects.toThrow(/not a URL or path/u);
 
     const tooManyTypes = structuredClone(automationConfiguration);
@@ -965,15 +1054,17 @@ describe('task-board HTTP client', () => {
     await expect(load(tooManySkills)).rejects.toThrow(/more than 32 entries/u);
 
     const oversizedUtf8Payload = structuredClone(automationConfiguration);
-    oversizedUtf8Payload.agentTypes.push(...Array.from({ length: 5 }, (_, index) => ({
-      ...oversizedUtf8Payload.agentTypes[1]!,
-      agentTypeId: `unicode-engineer-${index}`,
-      supplementalInstructions: '🦋'.repeat(3_000),
-    })));
+    oversizedUtf8Payload.agentTypes.push(
+      ...Array.from({ length: 5 }, (_, index) => ({
+        ...oversizedUtf8Payload.agentTypes[1]!,
+        agentTypeId: `unicode-engineer-${index}`,
+        supplementalInstructions: "🦋".repeat(3_000),
+      }))
+    );
     await expect(load(oversizedUtf8Payload)).rejects.toThrow(/cannot exceed 48 KiB of UTF-8 JSON/u);
   });
 
-  it('rejects invalid automation drafts before issuing a PATCH', async () => {
+  it("rejects invalid automation drafts before issuing a PATCH", async () => {
     const request = vi.fn();
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
     const agentTypes = automationConfiguration.agentTypes.map((agentType) => ({
@@ -981,13 +1072,15 @@ describe('task-board HTTP client', () => {
       id: agentType.agentTypeId,
     }));
 
-    await expect(client.saveAutomationConfiguration({
-      version: 4,
-      agentTypes: agentTypes.map((agentType, index) => index === 0
-        ? { ...agentType, supplementalInstructions: '' }
-        : agentType) as AutomationAgentType[],
-      stages: automationConfiguration.stages as AutomationStageConfiguration[],
-    })).rejects.toThrow(/cannot be empty while the agent type is enabled/u);
+    await expect(
+      client.saveAutomationConfiguration({
+        version: 4,
+        agentTypes: agentTypes.map((agentType, index) =>
+          index === 0 ? { ...agentType, supplementalInstructions: "" } : agentType
+        ) as AutomationAgentType[],
+        stages: automationConfiguration.stages as AutomationStageConfiguration[],
+      })
+    ).rejects.toThrow(/cannot be empty while the agent type is enabled/u);
 
     const oversizedAgentTypes = [
       ...agentTypes,
@@ -995,293 +1088,328 @@ describe('task-board HTTP client', () => {
         ...agentTypes[1]!,
         id: `unicode-engineer-${index}`,
         agentTypeId: `unicode-engineer-${index}`,
-        supplementalInstructions: '🦋'.repeat(3_000),
+        supplementalInstructions: "🦋".repeat(3_000),
       })),
     ] as AutomationAgentType[];
-    await expect(client.saveAutomationConfiguration({
-      version: 4,
-      agentTypes: oversizedAgentTypes,
-      stages: automationConfiguration.stages as AutomationStageConfiguration[],
-    })).rejects.toThrow(/cannot exceed 48 KiB of UTF-8 JSON/u);
+    await expect(
+      client.saveAutomationConfiguration({
+        version: 4,
+        agentTypes: oversizedAgentTypes,
+        stages: automationConfiguration.stages as AutomationStageConfiguration[],
+      })
+    ).rejects.toThrow(/cannot exceed 48 KiB of UTF-8 JSON/u);
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('creates a durable explicitly targeted work item with a caller-stable idempotency key', async () => {
+  it("creates a durable explicitly targeted work item with a caller-stable idempotency key", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
       return new Response(JSON.stringify({ workItem: workItemDetail }));
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.createWorkItem({
-      originalRequest: '  Improve invoice recovery for customers.  ',
-      priority: 'normal',
-      taskType: 'onboarding',
-      projectId: project.projectId,
-      idempotencyKey: 'work-item:create:one',
-    })).resolves.toMatchObject({
+    await expect(
+      client.createWorkItem({
+        originalRequest: "  Improve invoice recovery for customers.  ",
+        priority: "normal",
+        taskType: "onboarding",
+        projectId: project.projectId,
+        idempotencyKey: "work-item:create:one",
+      })
+    ).resolves.toMatchObject({
       id: workItem.workItemId,
       originalRequest: workItem.originalRequest,
-      state: 'queued',
-      currentStage: 'refinement',
-      transitions: [{
-        fromState: null,
-        toState: 'queued',
-        actorType: 'human',
-        actorId: 'human:operator',
-        createdAt: '2026-07-19T10:09:00.000Z',
-        createdAtMs: Date.parse('2026-07-19T10:09:00.000Z'),
-      }],
+      state: "queued",
+      currentStage: "refinement",
+      transitions: [
+        {
+          fromState: null,
+          toState: "queued",
+          actorType: "human",
+          actorId: "human:operator",
+          createdAt: "2026-07-19T10:09:00.000Z",
+          createdAtMs: Date.parse("2026-07-19T10:09:00.000Z"),
+        },
+      ],
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe('https://board.example.test/v1/work-items');
+    expect(calls[0]?.[0]).toBe("https://board.example.test/v1/work-items");
     expect(calls[0]?.[1]).toMatchObject({
-      method: 'POST',
-      headers: expect.objectContaining({ 'idempotency-key': 'work-item:create:one' }),
+      method: "POST",
+      headers: expect.objectContaining({ "idempotency-key": "work-item:create:one" }),
     });
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
-      originalRequest: 'Improve invoice recovery for customers.',
-      priority: 'normal',
-      taskType: 'onboarding',
-      projectTarget: { mode: 'explicit', projectId: project.projectId },
+      originalRequest: "Improve invoice recovery for customers.",
+      priority: "normal",
+      taskType: "onboarding",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
     });
   });
 
-  it('rejects invalid work item inputs before making a request', async () => {
+  it("rejects invalid work item inputs before making a request", async () => {
     const request = vi.fn();
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client.createWorkItem({
-      originalRequest: '   ',
-      priority: 'normal',
-      taskType: 'standard',
-      projectId: project.projectId,
-      idempotencyKey: 'work-item:create:one',
-    })).rejects.toThrow(/enter a task/iu);
-    await expect(client.createWorkItem({
-      originalRequest: 'A valid task',
-      priority: 'normal',
-      taskType: 'standard',
-      projectId: project.projectId,
-      idempotencyKey: 'short',
-    })).rejects.toThrow(/idempotency key/iu);
-    await expect(client.createWorkItem({
-      originalRequest: 'A valid task',
-      priority: 'normal',
-      taskType: 'standard',
-      projectId: '   ',
-      idempotencyKey: 'work-item:create:one',
-    })).rejects.toThrow(/choose a project/iu);
+    await expect(
+      client.createWorkItem({
+        originalRequest: "   ",
+        priority: "normal",
+        taskType: "standard",
+        projectId: project.projectId,
+        idempotencyKey: "work-item:create:one",
+      })
+    ).rejects.toThrow(/enter a task/iu);
+    await expect(
+      client.createWorkItem({
+        originalRequest: "A valid task",
+        priority: "normal",
+        taskType: "standard",
+        projectId: project.projectId,
+        idempotencyKey: "short",
+      })
+    ).rejects.toThrow(/idempotency key/iu);
+    await expect(
+      client.createWorkItem({
+        originalRequest: "A valid task",
+        priority: "normal",
+        taskType: "standard",
+        projectId: "   ",
+        idempotencyKey: "work-item:create:one",
+      })
+    ).rejects.toThrow(/choose a project/iu);
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('sends exact cancel and archive work-item actions and parses their updated snapshots', async () => {
+  it("sends exact cancel and archive work-item actions and parses their updated snapshots", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
       const body = JSON.parse(String(init?.body)) as { action: string };
       const abandoned = {
         ...workItem,
-        state: 'abandoned',
+        state: "abandoned",
         currentStage: null,
         version: 2,
-        endedAt: '2026-07-19T10:10:00.000Z',
-        cancelledReason: 'The request is no longer needed.',
+        endedAt: "2026-07-19T10:10:00.000Z",
+        cancelledReason: "The request is no longer needed.",
         transitions: [
           initialWorkItemTransition,
           {
-            fromState: 'queued',
-            toState: 'abandoned',
-            actorType: 'human',
-            actorId: 'human:operator',
-            createdAt: '2026-07-19T10:10:00.000Z',
+            fromState: "queued",
+            toState: "abandoned",
+            actorType: "human",
+            actorId: "human:operator",
+            createdAt: "2026-07-19T10:10:00.000Z",
           },
         ],
       };
-      return new Response(JSON.stringify({
-        workItem: body.action === 'archive'
-          ? { ...abandoned, version: 3, archivedAt: '2026-07-19T10:11:00.000Z' }
-          : abandoned,
-      }));
+      return new Response(
+        JSON.stringify({
+          workItem:
+            body.action === "archive"
+              ? { ...abandoned, version: 3, archivedAt: "2026-07-19T10:11:00.000Z" }
+              : abandoned,
+        })
+      );
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.cancelWorkItem(workItem.workItemId, {
-      version: 1,
-      reason: '  The request is no longer needed.  ',
-    })).resolves.toMatchObject({
-      state: 'abandoned',
+    await expect(
+      client.cancelWorkItem(workItem.workItemId, {
+        version: 1,
+        reason: "  The request is no longer needed.  ",
+      })
+    ).resolves.toMatchObject({
+      state: "abandoned",
       version: 2,
-      cancelledReason: 'The request is no longer needed.',
+      cancelledReason: "The request is no longer needed.",
     });
     await expect(client.archiveWorkItem(workItem.workItemId, { version: 2 })).resolves.toMatchObject({
-      archivedAt: '2026-07-19T10:11:00.000Z',
+      archivedAt: "2026-07-19T10:11:00.000Z",
       version: 3,
     });
 
     expect(calls.map(([url, init]) => [url, init?.method, JSON.parse(String(init?.body))])).toEqual([
       [
-        'https://board.example.test/v1/work-items/work-item-one',
-        'PATCH',
-        { version: 1, action: 'cancel', reason: 'The request is no longer needed.' },
+        "https://board.example.test/v1/work-items/work-item-one",
+        "PATCH",
+        { version: 1, action: "cancel", reason: "The request is no longer needed." },
       ],
-      [
-        'https://board.example.test/v1/work-items/work-item-one',
-        'PATCH',
-        { version: 2, action: 'archive' },
-      ],
+      ["https://board.example.test/v1/work-items/work-item-one", "PATCH", { version: 2, action: "archive" }],
     ]);
   });
 
-  it('preserves a structured board error code for inline work-item conflict handling', async () => {
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      error: { code: 'WORK_ITEM_ENDED', message: 'Work item has ended' },
-    }), { status: 409 }));
+  it("preserves a structured board error code for inline work-item conflict handling", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { code: "WORK_ITEM_ENDED", message: "Work item has ended" },
+          }),
+          { status: 409 }
+        )
+    );
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client.confirmWorkflow('plan-one')).rejects.toEqual(expect.objectContaining({
-      name: 'BoardApiError',
-      status: 409,
-      code: 'WORK_ITEM_ENDED',
-      message: 'Work item has ended',
-    } satisfies Partial<BoardApiError>));
+    await expect(client.confirmWorkflow("plan-one")).rejects.toEqual(
+      expect.objectContaining({
+        name: "BoardApiError",
+        status: 409,
+        code: "WORK_ITEM_ENDED",
+        message: "Work item has ended",
+      } satisfies Partial<BoardApiError>)
+    );
   });
 
-  it('loads and validates global work items independently of projects', async () => {
+  it("loads and validates global work items independently of projects", async () => {
     const load = async (item: unknown) => {
       const request = vi.fn(async (url: string | URL | Request) => {
         const path = String(url);
-        if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-        if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [item] }));
-        return new Response('{}');
+        if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+        if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [item] }));
+        return new Response("{}");
       });
       return createTaskBoardClient({
-        baseUrl: 'https://board.example.test',
+        baseUrl: "https://board.example.test",
         fetch: request as unknown as typeof fetch,
       }).getSnapshot();
     };
 
     await expect(load(workItem)).resolves.toMatchObject({
-      workItems: [expect.objectContaining({
-        id: workItem.workItemId,
-        priority: 'normal',
-        projectTarget: { mode: 'auto' },
-        state: 'queued',
-      })],
+      workItems: [
+        expect.objectContaining({
+          id: workItem.workItemId,
+          priority: "normal",
+          projectTarget: { mode: "auto" },
+          state: "queued",
+        }),
+      ],
     });
-    await expect(load({
-      ...workItem,
-      workItemId: 'work-item-explicit',
-      projectTarget: { mode: 'explicit', projectId: project.projectId },
-      resolvedProjectId: project.projectId,
-      state: 'planning',
-      currentStage: 'human_review',
-    })).resolves.toMatchObject({
-      workItems: [expect.objectContaining({ currentStage: 'human_review' })],
+    await expect(
+      load({
+        ...workItem,
+        workItemId: "work-item-explicit",
+        projectTarget: { mode: "explicit", projectId: project.projectId },
+        resolvedProjectId: project.projectId,
+        state: "planning",
+        currentStage: "human_review",
+      })
+    ).resolves.toMatchObject({
+      workItems: [expect.objectContaining({ currentStage: "human_review" })],
     });
-    await expect(load({ ...workItem, state: 'future_work_item_state' })).resolves.toMatchObject({
-      workItems: [expect.objectContaining({ state: 'unrecognized' })],
+    await expect(load({ ...workItem, state: "future_work_item_state" })).resolves.toMatchObject({
+      workItems: [expect.objectContaining({ state: "unrecognized" })],
     });
-    await expect(load({ ...workItem, projectTarget: { mode: 'auto', unexpected: true } })).rejects.toThrow(/unsupported fields/iu);
-    await expect(load({ ...workItem, state: 'merged', endedAt: null })).rejects.toThrow(/endedAt/iu);
-    await expect(load({ ...workItem, archivedAt: '2026-07-19T10:10:00.000Z' })).rejects.toThrow(/terminal state/iu);
-    await expect(load({ ...workItem, cancelledReason: 'Not cancelled.' })).rejects.toThrow(/abandoned state/iu);
-    await expect(load({
-      ...workItem,
-      planningTaskId: 'planning-task-one',
-      state: 'abandoned',
-      currentStage: null,
-      endedAt: '2026-07-19T10:10:00.000Z',
-      cancelledReason: 'The request was cancelled.',
-      archivedAt: '2026-07-19T10:11:00.000Z',
-    })).resolves.toMatchObject({
-      workItems: [expect.objectContaining({
-        planningTaskId: 'planning-task-one',
-        cancelledReason: 'The request was cancelled.',
-        archivedAt: '2026-07-19T10:11:00.000Z',
-      })],
+    await expect(load({ ...workItem, projectTarget: { mode: "auto", unexpected: true } })).rejects.toThrow(
+      /unsupported fields/iu
+    );
+    await expect(load({ ...workItem, state: "merged", endedAt: null })).rejects.toThrow(/endedAt/iu);
+    await expect(load({ ...workItem, archivedAt: "2026-07-19T10:10:00.000Z" })).rejects.toThrow(/terminal state/iu);
+    await expect(load({ ...workItem, cancelledReason: "Not cancelled." })).rejects.toThrow(/abandoned state/iu);
+    await expect(
+      load({
+        ...workItem,
+        planningTaskId: "planning-task-one",
+        state: "abandoned",
+        currentStage: null,
+        endedAt: "2026-07-19T10:10:00.000Z",
+        cancelledReason: "The request was cancelled.",
+        archivedAt: "2026-07-19T10:11:00.000Z",
+      })
+    ).resolves.toMatchObject({
+      workItems: [
+        expect.objectContaining({
+          planningTaskId: "planning-task-one",
+          cancelledReason: "The request was cancelled.",
+          archivedAt: "2026-07-19T10:11:00.000Z",
+        }),
+      ],
     });
-    await expect(load({
-      ...workItem,
-      projectTarget: { mode: 'explicit', projectId: project.projectId },
-      resolvedProjectId: 'another-project',
-    })).rejects.toThrow(/explicit project target/iu);
+    await expect(
+      load({
+        ...workItem,
+        projectTarget: { mode: "explicit", projectId: project.projectId },
+        resolvedProjectId: "another-project",
+      })
+    ).rejects.toThrow(/explicit project target/iu);
   });
 
-  it('keeps the legacy work-item collection to one unchanged request', async () => {
+  it("keeps the legacy work-item collection to one unchanged request", async () => {
     const calls: string[] = [];
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
       calls.push(path);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [workItem] }));
-      return new Response('{}');
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [workItem] }));
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     await expect(client.getSnapshot()).resolves.toMatchObject({
       workItems: [expect.objectContaining({ id: workItem.workItemId })],
     });
-    expect(calls.filter((path) => path.includes('/v1/work-items'))).toEqual([
-      'https://board.example.test/v1/work-items',
+    expect(calls.filter((path) => path.includes("/v1/work-items"))).toEqual([
+      "https://board.example.test/v1/work-items",
     ]);
   });
 
-  it('loads a 200-plus-one work-item collection with an encoded continuation', async () => {
+  it("loads a 200-plus-one work-item collection with an encoded continuation", async () => {
     const firstPage = Array.from({ length: 200 }, (_, index) => paginatedWorkItem(index));
-    const cursor = 'cursor/with spaces?and=delimiters';
+    const cursor = "cursor/with spaces?and=delimiters";
     const workItemCalls: string[] = [];
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.includes('/v1/work-items')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.includes("/v1/work-items")) {
         workItemCalls.push(path);
-        if (path.endsWith('/v1/work-items')) {
+        if (path.endsWith("/v1/work-items")) {
           return new Response(JSON.stringify({ workItems: firstPage, nextCursor: cursor }));
         }
         return new Response(JSON.stringify({ workItems: [paginatedWorkItem(200)] }));
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     const snapshot = await client.getSnapshot();
 
     expect(snapshot.workItems).toHaveLength(201);
-    expect(snapshot.workItems.at(-1)?.id).toBe('work-item-page-00200');
+    expect(snapshot.workItems.at(-1)?.id).toBe("work-item-page-00200");
     expect(workItemCalls).toEqual([
-      'https://board.example.test/v1/work-items',
+      "https://board.example.test/v1/work-items",
       `https://board.example.test/v1/work-items?cursor=${encodeURIComponent(cursor)}`,
     ]);
   });
 
-  it('rejects a repeated work-item continuation cursor', async () => {
+  it("rejects a repeated work-item continuation cursor", async () => {
     let workItemCalls = 0;
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.includes('/v1/work-items')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.includes("/v1/work-items")) {
         workItemCalls += 1;
-        return new Response(JSON.stringify({
-          workItems: [paginatedWorkItem(workItemCalls)],
-          nextCursor: 'repeated-cursor',
-        }));
+        return new Response(
+          JSON.stringify({
+            workItems: [paginatedWorkItem(workItemCalls)],
+            nextCursor: "repeated-cursor",
+          })
+        );
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
@@ -1289,34 +1417,38 @@ describe('task-board HTTP client', () => {
     expect(workItemCalls).toBe(2);
   });
 
-  it('rejects oversized work-item pages and invalid continuation cursors', async () => {
+  it("rejects oversized work-item pages and invalid continuation cursors", async () => {
     async function load(workItems: unknown[], nextCursor?: unknown) {
       const request = vi.fn(async (url: string | URL | Request) => {
-        if (String(url).endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
+        if (String(url).endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
         return new Response(JSON.stringify({ workItems, ...(nextCursor === undefined ? {} : { nextCursor }) }));
       });
       return createTaskBoardClient({ fetch: request as unknown as typeof fetch }).getSnapshot();
     }
 
-    await expect(load(Array.from({ length: 201 }, (_, index) => paginatedWorkItem(index)))).rejects.toThrow(/more than 200 records/u);
-    await expect(load([], '')).rejects.toThrow(/nonempty string/u);
-    await expect(load([], '🦋'.repeat(129))).rejects.toThrow(/512 UTF-8 bytes/u);
+    await expect(load(Array.from({ length: 201 }, (_, index) => paginatedWorkItem(index)))).rejects.toThrow(
+      /more than 200 records/u
+    );
+    await expect(load([], "")).rejects.toThrow(/nonempty string/u);
+    await expect(load([], "🦋".repeat(129))).rejects.toThrow(/512 UTF-8 bytes/u);
   });
 
-  it('stops at the 50-page and 10,000-raw-row work-item boundary', async () => {
+  it("stops at the 50-page and 10,000-raw-row work-item boundary", async () => {
     const pageRows = Array.from({ length: 200 }, (_, index) => paginatedWorkItem(index));
     let workItemCalls = 0;
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.includes('/v1/work-items')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.includes("/v1/work-items")) {
         workItemCalls += 1;
-        return new Response(JSON.stringify({
-          workItems: pageRows,
-          nextCursor: `cursor-${workItemCalls}`,
-        }));
+        return new Response(
+          JSON.stringify({
+            workItems: pageRows,
+            nextCursor: `cursor-${workItemCalls}`,
+          })
+        );
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
@@ -1324,106 +1456,112 @@ describe('task-board HTTP client', () => {
     expect(workItemCalls).toBe(50);
   });
 
-  it('deduplicates live work-item page boundaries at the highest version without moving the first position', async () => {
-    const boundaryId = 'work-item-live-boundary';
+  it("deduplicates live work-item page boundaries at the highest version without moving the first position", async () => {
+    const boundaryId = "work-item-live-boundary";
     let workItemCalls = 0;
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.includes('/v1/work-items')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.includes("/v1/work-items")) {
         workItemCalls += 1;
         if (workItemCalls === 1) {
-          return new Response(JSON.stringify({
-            workItems: [
-              paginatedWorkItem(1),
-              paginatedWorkItem(2, { workItemId: boundaryId, version: 1, refinedObjective: null }),
-            ],
-            nextCursor: 'boundary-cursor',
-          }));
+          return new Response(
+            JSON.stringify({
+              workItems: [
+                paginatedWorkItem(1),
+                paginatedWorkItem(2, { workItemId: boundaryId, version: 1, refinedObjective: null }),
+              ],
+              nextCursor: "boundary-cursor",
+            })
+          );
         }
-        return new Response(JSON.stringify({
-          workItems: [
-            paginatedWorkItem(2, {
-              workItemId: boundaryId,
-              version: 3,
-              refinedObjective: 'The newer live-boundary refinement.',
-              updatedAt: '2026-07-19T10:20:00.000Z',
-            }),
-            paginatedWorkItem(3),
-          ],
-        }));
+        return new Response(
+          JSON.stringify({
+            workItems: [
+              paginatedWorkItem(2, {
+                workItemId: boundaryId,
+                version: 3,
+                refinedObjective: "The newer live-boundary refinement.",
+                updatedAt: "2026-07-19T10:20:00.000Z",
+              }),
+              paginatedWorkItem(3),
+            ],
+          })
+        );
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
     const snapshot = await client.getSnapshot();
 
     expect(snapshot.workItems.map((item) => item.id)).toEqual([
-      'work-item-page-00001',
+      "work-item-page-00001",
       boundaryId,
-      'work-item-page-00003',
+      "work-item-page-00003",
     ]);
     expect(snapshot.workItems[1]).toMatchObject({
       id: boundaryId,
       version: 3,
-      refinedObjective: 'The newer live-boundary refinement.',
+      refinedObjective: "The newer live-boundary refinement.",
     });
   });
 
-  it('propagates the same abort signal through work-item continuation requests', async () => {
+  it("propagates the same abort signal through work-item continuation requests", async () => {
     const controller = new AbortController();
     const workItemSignals: Array<AbortSignal | null | undefined> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.endsWith('/v1/work-items')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.endsWith("/v1/work-items")) {
         workItemSignals.push(init?.signal);
-        return new Response(JSON.stringify({ workItems: [paginatedWorkItem(1)], nextCursor: 'next-page' }));
+        return new Response(JSON.stringify({ workItems: [paginatedWorkItem(1)], nextCursor: "next-page" }));
       }
-      if (path.includes('/v1/work-items?cursor=')) {
+      if (path.includes("/v1/work-items?cursor=")) {
         workItemSignals.push(init?.signal);
         controller.abort();
-        throw new DOMException('The operation was aborted.', 'AbortError');
+        throw new DOMException("The operation was aborted.", "AbortError");
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client.getSnapshot(controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(client.getSnapshot(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(workItemSignals).toEqual([controller.signal, controller.signal]);
     expect(controller.signal.aborted).toBe(true);
   });
 
-  it('marks the entry requests for a coordinator-triggered snapshot read', async () => {
+  it("marks the entry requests for a coordinator-triggered snapshot read", async () => {
     const markers: Array<string | null> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects') || path.endsWith('/v1/work-items')) {
-        markers.push(new Headers(init?.headers).get('x-nexus-refresh-kind'));
+      if (path.endsWith("/v1/projects") || path.endsWith("/v1/work-items")) {
+        markers.push(new Headers(init?.headers).get("x-nexus-refresh-kind"));
       }
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
-      return new Response('{}');
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      return new Response("{}");
     });
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await client.getSnapshot(undefined, 'mutation');
+    await client.getSnapshot(undefined, "mutation");
 
-    expect(markers).toEqual(['mutation', 'mutation']);
+    expect(markers).toEqual(["mutation", "mutation"]);
   });
 
-  it('returns the created project from the existing project response envelope', async () => {
+  it("returns the created project from the existing project response envelope", async () => {
     const request = vi.fn(async () => new Response(JSON.stringify({ project })));
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.createProject({
-      name: 'Cicada platform',
-      description: 'Make the product more reliable for customers.',
-    })).resolves.toEqual({
+    await expect(
+      client.createProject({
+        name: "Cicada platform",
+        description: "Make the product more reliable for customers.",
+      })
+    ).resolves.toEqual({
       id: project.projectId,
       name: project.name,
       description: project.description,
@@ -1434,58 +1572,60 @@ describe('task-board HTTP client', () => {
       updatedAtMs: Date.parse(project.updatedAt),
     });
     expect(request).toHaveBeenCalledWith(
-      'https://board.example.test/v1/projects',
+      "https://board.example.test/v1/projects",
       expect.objectContaining({
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify({
-          name: 'Cicada platform',
-          description: 'Make the product more reliable for customers.',
+          name: "Cicada platform",
+          description: "Make the product more reliable for customers.",
         }),
-      }),
+      })
     );
   });
 
-  it('updates project metadata and repository identity through the project PATCH route', async () => {
+  it("updates project metadata and repository identity through the project PATCH route", async () => {
     const updated = {
       ...project,
-      description: 'Updated project context.',
-      repoPath: '/var/lib/steward/repos/cicada-platform',
+      description: "Updated project context.",
+      repoPath: "/var/lib/steward/repos/cicada-platform",
       version: project.version + 1,
     };
     const request = vi.fn(async () => new Response(JSON.stringify({ project: updated })));
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.updateProject(project.projectId, {
-      description: updated.description,
-      repoPath: updated.repoPath,
-    })).resolves.toMatchObject({
+    await expect(
+      client.updateProject(project.projectId, {
+        description: updated.description,
+        repoPath: updated.repoPath,
+      })
+    ).resolves.toMatchObject({
       description: updated.description,
       repoPath: updated.repoPath,
     });
     expect(request).toHaveBeenCalledWith(
       `https://board.example.test/v1/projects/${project.projectId}`,
       expect.objectContaining({
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify({
           description: updated.description,
           repoPath: updated.repoPath,
         }),
-      }),
+      })
     );
   });
 
-  it('rotates an agent token with its current version and parses the one-time token response', async () => {
-    const token = 'rotated-token-012345678901234567890123456789';
+  it("rotates an agent token with its current version and parses the one-time token response", async () => {
+    const token = "rotated-token-012345678901234567890123456789";
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response(JSON.stringify({ agent: { ...agent, status: 'idle', version: 2 }, token }));
+      return new Response(JSON.stringify({ agent: { ...agent, status: "idle", version: 2 }, token }));
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
@@ -1494,17 +1634,19 @@ describe('task-board HTTP client', () => {
       version: 2,
       token,
     });
-    expect(calls).toEqual([[
-      'https://board.example.test/v1/agents/billing-engineer/rotate-token',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ version: 1 }) }),
-    ]]);
+    expect(calls).toEqual([
+      [
+        "https://board.example.test/v1/agents/billing-engineer/rotate-token",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ version: 1 }) }),
+      ],
+    ]);
   });
 
-  it('rejects malformed token-rotation response envelopes', async () => {
+  it("rejects malformed token-rotation response envelopes", async () => {
     const malformed = [
-      { agent: { ...agent, status: 'idle', version: 2 } },
-      { agent: { ...agent, status: 'idle', version: 2 }, token: 'short' },
-      { agent: { ...agent, status: 'idle', version: 2 }, token: 'x'.repeat(32), extra: true },
+      { agent: { ...agent, status: "idle", version: 2 } },
+      { agent: { ...agent, status: "idle", version: 2 }, token: "short" },
+      { agent: { ...agent, status: "idle", version: 2 }, token: "x".repeat(32), extra: true },
     ];
     for (const response of malformed) {
       const client = createTaskBoardClient({
@@ -1514,480 +1656,545 @@ describe('task-board HTTP client', () => {
     }
   });
 
-  it('creates an assigned agent query and wake with one atomic task request', async () => {
+  it("creates an assigned agent query and wake with one atomic task request", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
     const workspaceRefs = [
-      '/workspace/billing',
-      '/workspace/billing',
+      "/workspace/billing",
+      "/workspace/billing",
       ...Array.from({ length: 34 }, (_, index) => `/workspace/reference-${index}`),
     ];
 
     await client.createAgentQuery({
       projectId: project.projectId,
       agentId: agent.agentId,
-      assignedRole: 'engineer',
-      prompt: '  Explain the invoice retry behavior\nand propose follow-up work if needed.  ',
+      assignedRole: "engineer",
+      prompt: "  Explain the invoice retry behavior\nand propose follow-up work if needed.  ",
       workspaceRefs,
-      routingContext: '- Billing: billing-engineer (engineer, Billing)',
+      routingContext: "- Billing: billing-engineer (engineer, Billing)",
     });
 
     expect(request).toHaveBeenCalledTimes(1);
-    expect(calls[0]?.[0]).toBe('https://board.example.test/v1/projects/project-one/tasks');
-    expect(calls[0]?.[1]?.method).toBe('POST');
+    expect(calls[0]?.[0]).toBe("https://board.example.test/v1/projects/project-one/tasks");
+    expect(calls[0]?.[1]?.method).toBe("POST");
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
       parentTaskId: null,
-      title: 'Request for billing-engineer: Explain the invoice retry behavior and propose follow-up work if needed.',
-      objective: 'Explain the invoice retry behavior\nand propose follow-up work if needed.\n\nCompany routing map (use this only to identify the best project or agent):\n- Billing: billing-engineer (engineer, Billing)',
-      acceptanceCriteria: 'Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.',
-      workspaceRefs: ['/workspace/billing', ...workspaceRefs.slice(2, 33)],
-      assignedAgentId: 'billing-engineer',
-      assignedRole: 'engineer',
+      title: "Request for billing-engineer: Explain the invoice retry behavior and propose follow-up work if needed.",
+      objective:
+        "Explain the invoice retry behavior\nand propose follow-up work if needed.\n\nCompany routing map (use this only to identify the best project or agent):\n- Billing: billing-engineer (engineer, Billing)",
+      acceptanceCriteria:
+        "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
+      workspaceRefs: ["/workspace/billing", ...workspaceRefs.slice(2, 33)],
+      assignedAgentId: "billing-engineer",
+      assignedRole: "engineer",
       requiresReview: false,
     });
-    expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
-    expect(calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+    expect(calls.some(([url]) => url.includes("/resume") || url.includes("/interrupt"))).toBe(false);
+    expect(calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
-  it('does not send an empty agent query', async () => {
+  it("does not send an empty agent query", async () => {
     const request = vi.fn();
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client.createAgentQuery({
-      projectId: project.projectId,
-      agentId: agent.agentId,
-      assignedRole: 'engineer',
-      prompt: '   ',
-      workspaceRefs: [],
-    })).rejects.toThrow(/question or request/u);
+    await expect(
+      client.createAgentQuery({
+        projectId: project.projectId,
+        agentId: agent.agentId,
+        assignedRole: "engineer",
+        prompt: "   ",
+        workspaceRefs: [],
+      })
+    ).rejects.toThrow(/question or request/u);
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('adds only bounded recent conversation to an agent follow-up', async () => {
+  it("adds only bounded recent conversation to an agent follow-up", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
-    const prompt = 'What should we tell customers next?';
+    const prompt = "What should we tell customers next?";
     const recentConversation = Array.from({ length: 20 }, (_, index) => ({
-      role: index % 2 === 0 ? 'human' as const : 'agent' as const,
-      body: `${index === 0 ? 'oldest' : `turn-${index}`} ${'context '.repeat(70)}`,
+      role: index % 2 === 0 ? ("human" as const) : ("agent" as const),
+      body: `${index === 0 ? "oldest" : `turn-${index}`} ${"context ".repeat(70)}`,
     }));
-    recentConversation.push({ role: 'human', body: prompt });
-    recentConversation.push({ role: 'agent', body: 'Newest useful result.' });
+    recentConversation.push({ role: "human", body: prompt });
+    recentConversation.push({ role: "agent", body: "Newest useful result." });
 
     await client.createAgentQuery({
       projectId: project.projectId,
       agentId: agent.agentId,
-      assignedRole: 'engineer',
+      assignedRole: "engineer",
       prompt,
       workspaceRefs: [],
-      routingContext: '- Billing: billing-engineer',
+      routingContext: "- Billing: billing-engineer",
       recentConversation,
     });
 
     const body = JSON.parse(String(calls[0]?.[1]?.body)) as { objective: string };
     expect(body.objective.length).toBeLessThanOrEqual(8_000);
     expect(body.objective.startsWith(`${prompt}${agentQueryConversationContextMarker}`)).toBe(true);
-    expect(body.objective).toContain('Agent: Newest useful result.');
-    expect(body.objective).not.toContain('oldest');
-    expect(body.objective.match(new RegExp(prompt.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'gu'))).toHaveLength(1);
+    expect(body.objective).toContain("Agent: Newest useful result.");
+    expect(body.objective).not.toContain("oldest");
+    expect(body.objective.match(new RegExp(prompt.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "gu"))).toHaveLength(1);
     expect(body.objective).toContain(agentQueryRoutingContextMarker);
   });
 
-  it('omits hidden context before rejecting a valid maximum-length prompt', async () => {
+  it("omits hidden context before rejecting a valid maximum-length prompt", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
-    const prompt = 'x'.repeat(8_000);
+    const prompt = "x".repeat(8_000);
 
-    await expect(client.createAgentQuery({
-      projectId: project.projectId,
-      agentId: agent.agentId,
-      assignedRole: 'engineer',
-      prompt,
-      workspaceRefs: [],
-      routingContext: '- Billing: billing-engineer',
-      recentConversation: [{ role: 'agent', body: 'Earlier result that is optional context.' }],
-    })).resolves.toBeUndefined();
+    await expect(
+      client.createAgentQuery({
+        projectId: project.projectId,
+        agentId: agent.agentId,
+        assignedRole: "engineer",
+        prompt,
+        workspaceRefs: [],
+        routingContext: "- Billing: billing-engineer",
+        recentConversation: [{ role: "agent", body: "Earlier result that is optional context." }],
+      })
+    ).resolves.toBeUndefined();
 
     const body = JSON.parse(String(calls[0]?.[1]?.body)) as { objective: string };
     expect(body.objective).toBe(prompt);
   });
 
-  it('returns an unclaimed queued task to backlog without a run command', async () => {
+  it("returns an unclaimed queued task to backlog without a run command", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await client.returnTaskToBacklog('task-one', { version: 3 });
+    await client.returnTaskToBacklog("task-one", { version: 3 });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe('https://board.example.test/v1/tasks/task-one');
-    expect(calls[0]?.[1]?.method).toBe('PATCH');
+    expect(calls[0]?.[0]).toBe("https://board.example.test/v1/tasks/task-one");
+    expect(calls[0]?.[1]?.method).toBe("PATCH");
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
       version: 3,
       assignedAgentId: null,
       assignedRole: null,
-      status: 'backlog',
+      status: "backlog",
     });
-    expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
+    expect(calls.some(([url]) => url.includes("/resume") || url.includes("/interrupt"))).toBe(false);
   });
 
-  it('sends version-checked retry and backlog recovery commands to their dedicated endpoints', async () => {
+  it("sends version-checked retry and backlog recovery commands to their dedicated endpoints", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response(JSON.stringify({ task: { taskId: 'task-one' } }));
+      return new Response(JSON.stringify({ task: { taskId: "task-one" } }));
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await expect(client.retryTask('task one', 4)).resolves.toBeUndefined();
-    await expect(client.backlogTask('task one', 5)).resolves.toBeUndefined();
+    await expect(client.retryTask("task one", 4)).resolves.toBeUndefined();
+    await expect(client.backlogTask("task one", 5)).resolves.toBeUndefined();
 
     expect(calls.map(([url, init]) => [url, init?.method, JSON.parse(String(init?.body))])).toEqual([
-      ['https://board.example.test/v1/tasks/task%20one/retry', 'POST', { version: 4 }],
-      ['https://board.example.test/v1/tasks/task%20one/backlog', 'POST', { version: 5 }],
+      ["https://board.example.test/v1/tasks/task%20one/retry", "POST", { version: 4 }],
+      ["https://board.example.test/v1/tasks/task%20one/backlog", "POST", { version: 5 }],
     ]);
 
-    await expect(client.retryTask('task-one', 0)).rejects.toThrow(/positive/iu);
-    await expect(client.backlogTask('task-one', Number.NaN)).rejects.toThrow(/integer/iu);
+    await expect(client.retryTask("task-one", 0)).rejects.toThrow(/positive/iu);
+    await expect(client.backlogTask("task-one", Number.NaN)).rejects.toThrow(/integer/iu);
     expect(calls).toHaveLength(2);
   });
 
   it.each([
-    ['retryTask', 'retry', 'TASK_TERMINAL', 'Completed tasks cannot be retried'],
-    ['backlogTask', 'backlog', 'TASK_WORKFLOW_BOUND', 'Workflow stage tasks cannot return to backlog'],
-    ['retryTask', 'retry', 'TASK_VERSION_CONFLICT', 'Task version changed'],
-  ] as const)('preserves %s 409 code %s', async (method, endpoint, code, message) => {
+    ["retryTask", "retry", "TASK_TERMINAL", "Completed tasks cannot be retried"],
+    ["backlogTask", "backlog", "TASK_WORKFLOW_BOUND", "Workflow stage tasks cannot return to backlog"],
+    ["retryTask", "retry", "TASK_VERSION_CONFLICT", "Task version changed"],
+  ] as const)("preserves %s 409 code %s", async (method, endpoint, code, message) => {
     const request = vi.fn(async () => new Response(JSON.stringify({ error: { code, message } }), { status: 409 }));
     const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
 
-    await expect(client[method]('task-one', 2)).rejects.toEqual(expect.objectContaining({
-      name: 'BoardApiError',
-      status: 409,
-      code,
-      message,
-    } satisfies Partial<BoardApiError>));
-    expect(request).toHaveBeenCalledWith(`/v1/tasks/task-one/${endpoint}`, expect.objectContaining({ method: 'POST' }));
+    await expect(client[method]("task-one", 2)).rejects.toEqual(
+      expect.objectContaining({
+        name: "BoardApiError",
+        status: 409,
+        code,
+        message,
+      } satisfies Partial<BoardApiError>)
+    );
+    expect(request).toHaveBeenCalledWith(`/v1/tasks/task-one/${endpoint}`, expect.objectContaining({ method: "POST" }));
   });
 
-  it('uses the extended assignment PATCH to recover onto a different eligible agent', async () => {
+  it("uses the extended assignment PATCH to recover onto a different eligible agent", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
-    const replacement = { ...agent, agentId: 'replacement-engineer', status: 'idle' };
+    const replacement = { ...agent, agentId: "replacement-engineer", status: "idle" };
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = String(url);
       calls.push([path, init]);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
-      if (path.endsWith('/v1/projects/project-one/board')) {
-        return new Response(JSON.stringify({
-          ...boardSnapshot(),
-          agents: [agent, replacement],
-          tasks: [{
-            ...task,
-            status: 'failed',
-            assignedAgentId: agent.agentId,
-            assignedRole: 'engineer',
-            endedAt: '2026-07-19T10:30:00.000Z',
-            result: 'The first attempt failed.',
-            version: 3,
-          }],
-          openQuestions: [],
-        }));
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith("/v1/projects/project-one/board")) {
+        return new Response(
+          JSON.stringify({
+            ...boardSnapshot(),
+            agents: [agent, replacement],
+            tasks: [
+              {
+                ...task,
+                status: "failed",
+                assignedAgentId: agent.agentId,
+                assignedRole: "engineer",
+                endedAt: "2026-07-19T10:30:00.000Z",
+                result: "The first attempt failed.",
+                version: 3,
+              },
+            ],
+            openQuestions: [],
+          })
+        );
       }
-      if (path.includes('/messages?after=0')) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
-      return new Response('{}');
+      if (path.includes("/messages?after=0")) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     await client.getSnapshot();
     await client.assignTask(task.taskId, { agentId: replacement.agentId, version: 3 });
 
-    const assignment = calls.find(([url, init]) => url.endsWith(`/v1/tasks/${task.taskId}`) && init?.method === 'PATCH');
+    const assignment = calls.find(
+      ([url, init]) => url.endsWith(`/v1/tasks/${task.taskId}`) && init?.method === "PATCH"
+    );
     expect(JSON.parse(String(assignment?.[1]?.body))).toEqual({
       version: 3,
       assignedAgentId: replacement.agentId,
-      assignedRole: 'engineer',
-      status: 'queued',
+      assignedRole: "engineer",
+      status: "queued",
     });
   });
 
-  it('exposes the durable task order key without coupling it to assignment', async () => {
+  it("exposes the durable task order key without coupling it to assignment", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push([String(url), init]);
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
-    await client.reorderTask('task-one', { orderKey: 4096, version: 3 });
+    await client.reorderTask("task-one", { orderKey: 4096, version: 3 });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe('https://board.example.test/v1/tasks/task-one');
-    expect(calls[0]?.[1]?.method).toBe('PATCH');
+    expect(calls[0]?.[0]).toBe("https://board.example.test/v1/tasks/task-one");
+    expect(calls[0]?.[1]?.method).toBe("PATCH");
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({ version: 3, orderKey: 4096 });
-    await expect(client.reorderTask('task-one', { orderKey: -1, version: 3 })).rejects.toThrow(/non-negative/u);
+    await expect(client.reorderTask("task-one", { orderKey: -1, version: 3 })).rejects.toThrow(/non-negative/u);
   });
 
-  it('uses the exact API and keeps notes separate from the three wake operations', async () => {
+  it("uses the exact API and keeps notes separate from the three wake operations", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = String(url);
       calls.push([path, init]);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [workItem] }));
-      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
-      if (path.includes('/v1/tasks/task-one/messages?after=0')) {
-        return new Response(JSON.stringify({ messages: [{
-          apiVersion,
-          messageId: 'message-one',
-          sequence: 1,
-          projectId: 'project-one',
-          taskId: 'task-one',
-          runId: 'run-one',
-          actorType: 'agent',
-          actorId: 'billing-engineer',
-          kind: 'progress',
-          body: 'Research complete; planning the smallest safe change.',
-          createdAt: '2026-07-19T10:18:00.000Z',
-        }], cursor: 1 }));
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [workItem] }));
+      if (path.endsWith("/v1/projects/project-one/board")) return new Response(JSON.stringify(boardSnapshot()));
+      if (path.includes("/v1/tasks/task-one/messages?after=0")) {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                apiVersion,
+                messageId: "message-one",
+                sequence: 1,
+                projectId: "project-one",
+                taskId: "task-one",
+                runId: "run-one",
+                actorType: "agent",
+                actorId: "billing-engineer",
+                kind: "progress",
+                body: "Research complete; planning the smallest safe change.",
+                createdAt: "2026-07-19T10:18:00.000Z",
+              },
+            ],
+            cursor: 1,
+          })
+        );
       }
-      if (path.endsWith('/v1/agents/billing-engineer/interrupt')) {
-        return new Response(JSON.stringify({
-          interrupt: {
-            apiVersion,
-            sequence: 1,
-            interruptId: 'interrupt-one',
-            projectId: 'project-one',
-            agentId: 'billing-engineer',
-            runId: null,
-            reason: 'Human interrupted this agent from the task board',
-            requestedBy: 'human',
-            requestedAt: '2026-07-19T10:19:00.000Z',
-          },
-          duplicate: false,
-        }));
+      if (path.endsWith("/v1/agents/billing-engineer/interrupt")) {
+        return new Response(
+          JSON.stringify({
+            interrupt: {
+              apiVersion,
+              sequence: 1,
+              interruptId: "interrupt-one",
+              projectId: "project-one",
+              agentId: "billing-engineer",
+              runId: null,
+              reason: "Human interrupted this agent from the task board",
+              requestedBy: "human",
+              requestedAt: "2026-07-19T10:19:00.000Z",
+            },
+            duplicate: false,
+          })
+        );
       }
-      return new Response('{}');
+      return new Response("{}");
     });
     const client = createTaskBoardClient({
-      baseUrl: 'https://board.example.test',
+      baseUrl: "https://board.example.test",
       fetch: request as unknown as typeof fetch,
     });
 
     const snapshot = await client.getSnapshot();
     expect(snapshot.messages).toHaveLength(1);
-    await client.assignTask('task-one', { agentId: 'billing-engineer', version: 2 });
-    await client.addMessage('task-one', { body: 'Preserve the existing payment method.', version: 2 });
-    await client.answerQuestion('question-one', { answer: 'Yes, preserve it.' });
-    await client.resumeTask('task-one', { version: 2 });
-    const interruptResult = await client.interruptRun('run-one');
+    await client.assignTask("task-one", { agentId: "billing-engineer", version: 2 });
+    await client.addMessage("task-one", { body: "Preserve the existing payment method.", version: 2 });
+    await client.answerQuestion("question-one", { answer: "Yes, preserve it." });
+    await client.resumeTask("task-one", { version: 2 });
+    const interruptResult = await client.interruptRun("run-one");
 
-    const assignment = calls.find(([url, init]) => url.endsWith('/v1/tasks/task-one') && init?.method === 'PATCH');
+    const assignment = calls.find(([url, init]) => url.endsWith("/v1/tasks/task-one") && init?.method === "PATCH");
     expect(JSON.parse(String(assignment?.[1]?.body))).toEqual({
       version: 2,
-      assignedAgentId: 'billing-engineer',
-      assignedRole: 'engineer',
-      status: 'queued',
+      assignedAgentId: "billing-engineer",
+      assignedRole: "engineer",
+      status: "queued",
     });
-    const note = calls.find(([url, init]) => url.endsWith('/v1/tasks/task-one/messages') && init?.method === 'POST');
-    expect(JSON.parse(String(note?.[1]?.body))).toMatchObject({ kind: 'note', body: 'Preserve the existing payment method.' });
-    expect(calls.some(([url]) => url.endsWith('/v1/questions/question-one/answer'))).toBe(true);
-    expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/resume'))).toBe(true);
-    expect(calls.some(([url]) => url.endsWith('/v1/agents/billing-engineer/interrupt'))).toBe(true);
+    const note = calls.find(([url, init]) => url.endsWith("/v1/tasks/task-one/messages") && init?.method === "POST");
+    expect(JSON.parse(String(note?.[1]?.body))).toMatchObject({
+      kind: "note",
+      body: "Preserve the existing payment method.",
+    });
+    expect(calls.some(([url]) => url.endsWith("/v1/questions/question-one/answer"))).toBe(true);
+    expect(calls.some(([url]) => url.endsWith("/v1/agents/billing-engineer/resume"))).toBe(true);
+    expect(calls.some(([url]) => url.endsWith("/v1/agents/billing-engineer/interrupt"))).toBe(true);
     expect(interruptResult).toEqual({ runId: null });
-    expect(calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)).toBe(true);
-    expect(calls.every(([, init]) => init?.credentials === 'omit' && init.redirect === 'error')).toBe(true);
+    expect(
+      calls.every(([, init]) => (init?.headers as Record<string, string> | undefined)?.authorization === undefined)
+    ).toBe(true);
+    expect(calls.every(([, init]) => init?.credentials === "omit" && init.redirect === "error")).toBe(true);
   });
 
-  it('loads progress and results after one contract-sized message page in chronological order', async () => {
+  it("loads progress and results after one contract-sized message page in chronological order", async () => {
     const firstPage = Array.from({ length: TASK_MESSAGE_PAGE_SIZE }, (_, index) => ({
       apiVersion,
       messageId: `message-${index + 1}`,
       sequence: index + 1,
       projectId: project.projectId,
       taskId: task.taskId,
-      runId: 'run-one',
-      actorType: 'agent',
+      runId: "run-one",
+      actorType: "agent",
       actorId: agent.agentId,
-      kind: 'progress',
+      kind: "progress",
       body: `Progress update ${index + 1}`,
-      createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + index * 1_000).toISOString(),
+      createdAt: new Date(Date.parse("2026-07-19T10:00:00.000Z") + index * 1_000).toISOString(),
     }));
     const laterMessages = [
       {
         ...firstPage[0],
         messageId: `message-${TASK_MESSAGE_PAGE_SIZE + 1}`,
         sequence: TASK_MESSAGE_PAGE_SIZE + 1,
-        body: 'The focused verification passed.',
-        createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + TASK_MESSAGE_PAGE_SIZE * 1_000).toISOString(),
+        body: "The focused verification passed.",
+        createdAt: new Date(Date.parse("2026-07-19T10:00:00.000Z") + TASK_MESSAGE_PAGE_SIZE * 1_000).toISOString(),
       },
       {
         ...firstPage[0],
         messageId: `message-${TASK_MESSAGE_PAGE_SIZE + 2}`,
         sequence: TASK_MESSAGE_PAGE_SIZE + 2,
-        kind: 'result',
-        body: 'Customers can recover failed invoices without support.',
-        createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + (TASK_MESSAGE_PAGE_SIZE + 1) * 1_000).toISOString(),
+        kind: "result",
+        body: "Customers can recover failed invoices without support.",
+        createdAt: new Date(
+          Date.parse("2026-07-19T10:00:00.000Z") + (TASK_MESSAGE_PAGE_SIZE + 1) * 1_000
+        ).toISOString(),
       },
     ];
     const calls: string[] = [];
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
       calls.push(path);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
-      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
-      if (path.endsWith('/v1/tasks/task-one/messages?after=0')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith("/v1/projects/project-one/board")) return new Response(JSON.stringify(boardSnapshot()));
+      if (path.endsWith("/v1/tasks/task-one/messages?after=0")) {
         return new Response(JSON.stringify({ messages: firstPage, cursor: TASK_MESSAGE_PAGE_SIZE }));
       }
       if (path.endsWith(`/v1/tasks/task-one/messages?after=${TASK_MESSAGE_PAGE_SIZE}`)) {
         return new Response(JSON.stringify({ messages: laterMessages, cursor: TASK_MESSAGE_PAGE_SIZE + 2 }));
       }
-      return new Response('{}');
+      return new Response("{}");
     });
-    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+    const client = createTaskBoardClient({
+      baseUrl: "https://board.example.test",
+      fetch: request as unknown as typeof fetch,
+    });
 
     const snapshot = await client.getSnapshot();
 
-    expect(calls.filter((path) => path.includes('/v1/tasks/task-one/messages?after='))).toEqual([
-      'https://board.example.test/v1/tasks/task-one/messages?after=0',
+    expect(calls.filter((path) => path.includes("/v1/tasks/task-one/messages?after="))).toEqual([
+      "https://board.example.test/v1/tasks/task-one/messages?after=0",
       `https://board.example.test/v1/tasks/task-one/messages?after=${TASK_MESSAGE_PAGE_SIZE}`,
     ]);
     expect(snapshot.messages).toHaveLength(TASK_MESSAGE_PAGE_SIZE + 2);
     expect(snapshot.messages.slice(-2)).toEqual([
-      expect.objectContaining({ id: `message-${TASK_MESSAGE_PAGE_SIZE + 1}`, kind: 'progress', body: 'The focused verification passed.' }),
-      expect.objectContaining({ id: `message-${TASK_MESSAGE_PAGE_SIZE + 2}`, kind: 'result', body: 'Customers can recover failed invoices without support.' }),
+      expect.objectContaining({
+        id: `message-${TASK_MESSAGE_PAGE_SIZE + 1}`,
+        kind: "progress",
+        body: "The focused verification passed.",
+      }),
+      expect.objectContaining({
+        id: `message-${TASK_MESSAGE_PAGE_SIZE + 2}`,
+        kind: "result",
+        body: "Customers can recover failed invoices without support.",
+      }),
     ]);
   });
 
-  it('rejects a full message page whose cursor does not advance', async () => {
+  it("rejects a full message page whose cursor does not advance", async () => {
     const page = Array.from({ length: TASK_MESSAGE_PAGE_SIZE }, (_, index) => ({
       apiVersion,
       messageId: `stalled-message-${index + 1}`,
       sequence: index + 1,
       projectId: project.projectId,
       taskId: task.taskId,
-      runId: 'run-one',
-      actorType: 'agent',
+      runId: "run-one",
+      actorType: "agent",
       actorId: agent.agentId,
-      kind: 'progress',
+      kind: "progress",
       body: `Progress update ${index + 1}`,
-      createdAt: new Date(Date.parse('2026-07-19T10:00:00.000Z') + index * 1_000).toISOString(),
+      createdAt: new Date(Date.parse("2026-07-19T10:00:00.000Z") + index * 1_000).toISOString(),
     }));
     const request = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
-      if (path.endsWith('/v1/projects/project-one/board')) return new Response(JSON.stringify(boardSnapshot()));
-      if (path.endsWith('/v1/tasks/task-one/messages?after=0')) {
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith("/v1/projects/project-one/board")) return new Response(JSON.stringify(boardSnapshot()));
+      if (path.endsWith("/v1/tasks/task-one/messages?after=0")) {
         return new Response(JSON.stringify({ messages: page, cursor: 0 }));
       }
-      return new Response('{}');
+      return new Response("{}");
     });
-    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+    const client = createTaskBoardClient({
+      baseUrl: "https://board.example.test",
+      fetch: request as unknown as typeof fetch,
+    });
 
     await expect(client.getSnapshot()).rejects.toThrow(/cursor did not advance/u);
-    expect(request.mock.calls.filter(([url]) => String(url).includes('/messages?after='))).toHaveLength(1);
+    expect(request.mock.calls.filter(([url]) => String(url).includes("/messages?after="))).toHaveLength(1);
   });
 
-  it('rejects remote insecure and scheme-relative board URLs while allowing loopback development', () => {
-    expect(() => createTaskBoardClient({ baseUrl: 'http://board.example.test' })).toThrow(/HTTPS/u);
-    expect(() => createTaskBoardClient({ baseUrl: '//board.example.test' })).toThrow(/invalid/u);
-    expect(() => createTaskBoardClient({ baseUrl: 'http://127.0.0.1:4318' })).not.toThrow();
+  it("rejects remote insecure and scheme-relative board URLs while allowing loopback development", () => {
+    expect(() => createTaskBoardClient({ baseUrl: "http://board.example.test" })).toThrow(/HTTPS/u);
+    expect(() => createTaskBoardClient({ baseUrl: "//board.example.test" })).toThrow(/invalid/u);
+    expect(() => createTaskBoardClient({ baseUrl: "http://127.0.0.1:4318" })).not.toThrow();
   });
 
-  it('enforces manager review assignment and records a human check without waking an agent', async () => {
+  it("enforces manager review assignment and records a human check without waking an agent", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = String(url);
       calls.push([path, init]);
-      if (path.endsWith('/v1/projects')) return new Response(JSON.stringify({ projects: [project] }));
-      if (path.endsWith('/v1/work-items')) return new Response(JSON.stringify({ workItems: [] }));
-      if (path.endsWith('/v1/projects/project-one/board')) {
-        return new Response(JSON.stringify({
-          ...boardSnapshot(),
-          agents: [agent, manager],
-          tasks: [managerReview, humanCheck],
-          openQuestions: [],
-          recentQuestions: [],
-          recentRuns: [],
-          recentEvents: [],
-        }));
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith("/v1/projects/project-one/board")) {
+        return new Response(
+          JSON.stringify({
+            ...boardSnapshot(),
+            agents: [agent, manager],
+            tasks: [managerReview, humanCheck],
+            openQuestions: [],
+            recentQuestions: [],
+            recentRuns: [],
+            recentEvents: [],
+          })
+        );
       }
-      if (path.includes('/messages?after=0')) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
-      return new Response('{}');
+      if (path.includes("/messages?after=0")) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      return new Response("{}");
     });
-    const client = createTaskBoardClient({ baseUrl: 'https://board.example.test', fetch: request as unknown as typeof fetch });
+    const client = createTaskBoardClient({
+      baseUrl: "https://board.example.test",
+      fetch: request as unknown as typeof fetch,
+    });
 
     const snapshot = await client.getSnapshot();
-    expect(snapshot.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: managerReview.taskId, kind: 'manager_review', requiredRole: 'manager' }),
-      expect.objectContaining({ id: humanCheck.taskId, kind: 'human_check', requiredRole: null }),
-    ]));
-    await expect(client.assignTask(managerReview.taskId, { agentId: agent.agentId, version: 1 })).rejects.toThrow(/requires a manager/u);
-    await expect(client.assignTask(humanCheck.taskId, { agentId: manager.agentId, version: 1 })).rejects.toThrow(/cannot be assigned/u);
+    expect(snapshot.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: managerReview.taskId, kind: "manager_review", requiredRole: "manager" }),
+        expect.objectContaining({ id: humanCheck.taskId, kind: "human_check", requiredRole: null }),
+      ])
+    );
+    await expect(client.assignTask(managerReview.taskId, { agentId: agent.agentId, version: 1 })).rejects.toThrow(
+      /requires a manager/u
+    );
+    await expect(client.assignTask(humanCheck.taskId, { agentId: manager.agentId, version: 1 })).rejects.toThrow(
+      /cannot be assigned/u
+    );
     await expect(client.resumeTask(humanCheck.taskId, { version: 1 })).rejects.toThrow(/cannot wake/u);
-    await expect(client.decideHumanCheck(managerReview.taskId, { version: 1, status: 'completed', result: 'Ready.' })).rejects.toThrow(/Only human checks/u);
-    await expect(client.decideHumanCheck(humanCheck.taskId, { version: 1, status: 'completed', result: '  ' })).rejects.toThrow(/rationale/u);
+    await expect(
+      client.decideHumanCheck(managerReview.taskId, { version: 1, status: "completed", result: "Ready." })
+    ).rejects.toThrow(/Only human checks/u);
+    await expect(
+      client.decideHumanCheck(humanCheck.taskId, { version: 1, status: "completed", result: "  " })
+    ).rejects.toThrow(/rationale/u);
 
     await client.assignTask(managerReview.taskId, { agentId: manager.agentId, version: 1 });
     await client.decideHumanCheck(humanCheck.taskId, {
       version: 1,
-      status: 'completed',
-      result: 'Approved for an external human-controlled release step. Rationale: focused checks passed.',
+      status: "completed",
+      result: "Approved for an external human-controlled release step. Rationale: focused checks passed.",
     });
 
     const patches = calls
-      .filter(([, init]) => init?.method === 'PATCH')
+      .filter(([, init]) => init?.method === "PATCH")
       .map(([url, init]) => [url, JSON.parse(String(init?.body))] as const);
     expect(patches).toEqual([
-      ['https://board.example.test/v1/tasks/task-manager-review', {
-        version: 1,
-        assignedAgentId: manager.agentId,
-        assignedRole: 'manager',
-        status: 'queued',
-      }],
-      ['https://board.example.test/v1/tasks/task-human-check', {
-        version: 1,
-        status: 'completed',
-        result: 'Approved for an external human-controlled release step. Rationale: focused checks passed.',
-      }],
+      [
+        "https://board.example.test/v1/tasks/task-manager-review",
+        {
+          version: 1,
+          assignedAgentId: manager.agentId,
+          assignedRole: "manager",
+          status: "queued",
+        },
+      ],
+      [
+        "https://board.example.test/v1/tasks/task-human-check",
+        {
+          version: 1,
+          status: "completed",
+          result: "Approved for an external human-controlled release step. Rationale: focused checks passed.",
+        },
+      ],
     ]);
-    expect(calls.some(([url]) => url.includes('/resume') || url.includes('/interrupt'))).toBe(false);
+    expect(calls.some(([url]) => url.includes("/resume") || url.includes("/interrupt"))).toBe(false);
   });
 });

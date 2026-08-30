@@ -1,40 +1,22 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type RefObject,
-} from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 
-type DialogDismissalDecision = 'close' | 'confirm';
+type DialogDismissalDecision = "close" | "confirm";
 
 export type DialogSwitchTarget = string;
 
 const dialogSwitchEvents = new WeakMap<Event, DialogSwitchTarget>();
 
 /** Records which dialog owner already routed a trigger click in its React handler. */
-export function markDialogSwitchEvent(
-  event: Event | undefined,
-  target: DialogSwitchTarget,
-): void {
+export function markDialogSwitchEvent(event: Event | undefined, target: DialogSwitchTarget): void {
   if (event) dialogSwitchEvents.set(event, target);
 }
 
-export function dialogSwitchWasHandledForLayer(
-  event: Event,
-  layer: DialogSwitchTarget,
-): boolean {
+export function dialogSwitchWasHandledForLayer(event: Event, layer: DialogSwitchTarget): boolean {
   return dialogSwitchEvents.get(event) === layer;
 }
 
 /** Lets React route a trigger click before the originating dialog acts on it. */
-export function deferDialogOutsideDismissal(
-  event: Event,
-  layer: DialogSwitchTarget,
-  onDismiss: () => void,
-): void {
+export function deferDialogOutsideDismissal(event: Event, layer: DialogSwitchTarget, onDismiss: () => void): void {
   queueMicrotask(() => {
     if (!dialogSwitchWasHandledForLayer(event, layer)) onDismiss();
   });
@@ -46,17 +28,17 @@ export function fieldsAreDirty(values: readonly string[]): boolean {
 
 /** Evaluates lazily so a dialog always protects the text visible at dismissal time. */
 export function dialogDismissalDecision(isDirty?: () => boolean): DialogDismissalDecision {
-  return isDirty?.() ? 'confirm' : 'close';
+  return isDirty?.() ? "confirm" : "close";
 }
 
 const FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
-].join(', ');
+].join(", ");
 
 interface DialogLayerRecord {
   id: string;
@@ -89,7 +71,7 @@ function syncBodyScrollLock() {
   const shouldLock = dialogLayersLockScroll(layers.map((layer) => layer.lockScroll));
   if (shouldLock && priorBodyOverflow === undefined) {
     priorBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = "hidden";
     return;
   }
   if (!shouldLock && priorBodyOverflow !== undefined) {
@@ -108,9 +90,7 @@ function addLayer(id: string, lockScroll: boolean) {
 function updateLayerScrollLock(id: string, lockScroll: boolean) {
   const layer = layers.find((candidate) => candidate.id === id);
   if (!layer || layer.lockScroll === lockScroll) return;
-  layers = layers.map((candidate) => candidate.id === id
-    ? { ...candidate, lockScroll }
-    : candidate);
+  layers = layers.map((candidate) => (candidate.id === id ? { ...candidate, lockScroll } : candidate));
   syncBodyScrollLock();
 }
 
@@ -124,9 +104,7 @@ function removeLayer(id: string) {
 function focusableElements(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (element) =>
-      !element.hidden &&
-      element.getAttribute('aria-hidden') !== 'true' &&
-      element.getClientRects().length > 0,
+      !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0
   );
 }
 
@@ -145,11 +123,7 @@ interface ConfirmBeforeDiscardOptions {
 }
 
 /** Routes every opt-in dismissal through the same dirty-state decision. */
-export function useConfirmBeforeDiscard({
-  open,
-  isDirty,
-  onDiscard,
-}: ConfirmBeforeDiscardOptions) {
+export function useConfirmBeforeDiscard({ open, isDirty, onDiscard }: ConfirmBeforeDiscardOptions) {
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const isDirtyRef = useRef(isDirty);
   const onDiscardRef = useRef(onDiscard);
@@ -161,7 +135,7 @@ export function useConfirmBeforeDiscard({
   }, [open]);
 
   const requestClose = useCallback(() => {
-    if (dialogDismissalDecision(isDirtyRef.current) === 'confirm') {
+    if (dialogDismissalDecision(isDirtyRef.current) === "confirm") {
       setConfirmationOpen(true);
       return;
     }
@@ -185,7 +159,7 @@ export function useDialogLayer({
   lockScroll = true,
   trapFocus = true,
 }: DialogLayerOptions) {
-  const reactId = useId().replace(/:/g, '');
+  const reactId = useId().replace(/:/g, "");
   const layerId = `dialog-${reactId}`;
   const onCloseRef = useRef(onClose);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -197,9 +171,8 @@ export function useDialogLayer({
 
   // Capture during render, before React commits a descendant's `autoFocus`.
   // A passive effect is too late and would remember the dialog input itself.
-  if (open && !wasOpenRef.current && typeof document !== 'undefined') {
-    previouslyFocusedRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (open && !wasOpenRef.current && typeof document !== "undefined") {
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
   wasOpenRef.current = open;
 
@@ -249,9 +222,7 @@ export function useDialogLayer({
     queueMicrotask(() => {
       const container = containerRef.current;
       if (!container) return;
-      const explicitTarget = container.querySelector<HTMLElement>(
-        '[data-dialog-initial-focus], [autofocus]',
-      );
+      const explicitTarget = container.querySelector<HTMLElement>("[data-dialog-initial-focus], [autofocus]");
       if (explicitTarget && document.activeElement !== explicitTarget) {
         explicitTarget.focus({ preventScroll: true });
         return;
@@ -266,13 +237,13 @@ export function useDialogLayer({
     if (!isTopmost) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
         onCloseRef.current();
         return;
       }
-      if (!trapFocus || event.key !== 'Tab' || !containerRef.current) return;
+      if (!trapFocus || event.key !== "Tab" || !containerRef.current) return;
 
       const focusable = focusableElements(containerRef.current);
       if (focusable.length === 0) {
@@ -292,8 +263,8 @@ export function useDialogLayer({
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [containerRef, isTopmost, trapFocus]);
 
   return { layerId, isTopmost };

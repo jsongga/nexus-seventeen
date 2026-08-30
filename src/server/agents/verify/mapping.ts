@@ -45,7 +45,7 @@ export function mapChangedFiles(
   changed: readonly string[],
   rules: readonly VerifyRule[],
   tier: VerifyTier,
-  host: MappingHost,
+  host: MappingHost
 ): VerifySelection {
   const nodeTestFiles = new Set<string>();
   const nodeTestDirs = new Set<string>();
@@ -95,11 +95,7 @@ export function mapChangedFiles(
           break;
         }
         const isTestFile = /\.test\.tsx?$/u.test(file);
-        const testFile = isTestFile
-          ? file
-          : /\.tsx?$/u.test(file)
-            ? file.replace(/(\.tsx?)$/u, ".test$1")
-            : undefined;
+        const testFile = isTestFile ? file : /\.tsx?$/u.test(file) ? file.replace(/(\.tsx?)$/u, ".test$1") : undefined;
         if (testFile !== undefined && (isTestFile || host.fileExists(testFile))) vitestTargets.add(testFile);
         else vitestTargets.add(action.vitestFallback);
         break;

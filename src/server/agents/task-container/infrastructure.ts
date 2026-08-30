@@ -11,11 +11,7 @@ const PROXY_READY_POLL_MS = 250;
 
 const proxyReconciliations = new Map<string, Promise<void>>();
 
-export const DEFAULT_ALLOWED_HOSTS = Object.freeze([
-  "api.anthropic.com",
-  "api.openai.com",
-  "registry.npmjs.org",
-]);
+export const DEFAULT_ALLOWED_HOSTS = Object.freeze(["api.anthropic.com", "api.openai.com", "registry.npmjs.org"]);
 
 export interface ContainerInfrastructureOptions {
   readonly image: string;
@@ -56,27 +52,32 @@ interface DockerCommandOutput {
 function dockerCommandOutput(
   dockerBinary: string,
   args: readonly string[],
-  timeoutMs = DOCKER_TIMEOUT_MS,
+  timeoutMs = DOCKER_TIMEOUT_MS
 ): Promise<DockerCommandOutput> {
   return new Promise((resolve, reject) => {
-    execFile(dockerBinary, [...args], {
-      encoding: "utf8",
-      timeout: timeoutMs,
-    }, (error, stdout, stderr) => {
-      if (error !== null) {
-        const detail = stderr.trim() || error.message.trim();
-        reject(new DockerExecutionError(args, detail, error));
-        return;
+    execFile(
+      dockerBinary,
+      [...args],
+      {
+        encoding: "utf8",
+        timeout: timeoutMs,
+      },
+      (error, stdout, stderr) => {
+        if (error !== null) {
+          const detail = stderr.trim() || error.message.trim();
+          reject(new DockerExecutionError(args, detail, error));
+          return;
+        }
+        resolve({ stdout, stderr });
       }
-      resolve({ stdout, stderr });
-    });
+    );
   });
 }
 
 async function dockerCommand(
   dockerBinary: string,
   args: readonly string[],
-  timeoutMs = DOCKER_TIMEOUT_MS,
+  timeoutMs = DOCKER_TIMEOUT_MS
 ): Promise<string> {
   return (await dockerCommandOutput(dockerBinary, args, timeoutMs)).stdout;
 }
@@ -104,18 +105,13 @@ export async function assertDockerAvailable(dockerBinary = "docker"): Promise<vo
     await dockerCommand(dockerBinary, ["version", "--format", "{{.Server.Version}}"]);
   } catch (error) {
     const detail = dockerDetail(error);
-    throw new ContainerInfrastructureError(
-      `Docker daemon unreachable — start Docker Desktop and retry (${detail})`,
-      { cause: error },
-    );
+    throw new ContainerInfrastructureError(`Docker daemon unreachable — start Docker Desktop and retry (${detail})`, {
+      cause: error,
+    });
   }
 }
 
-export async function ensureNetwork(
-  dockerBinary: string,
-  networkName: string,
-  internal: boolean,
-): Promise<void> {
+export async function ensureNetwork(dockerBinary: string, networkName: string, internal: boolean): Promise<void> {
   try {
     await dockerCommand(dockerBinary, ["network", "inspect", networkName]);
     return;
@@ -124,12 +120,7 @@ export async function ensureNetwork(
   }
 
   try {
-    await dockerCommand(dockerBinary, [
-      "network",
-      "create",
-      ...(internal ? ["--internal"] : []),
-      networkName,
-    ]);
+    await dockerCommand(dockerBinary, ["network", "create", ...(internal ? ["--internal"] : []), networkName]);
   } catch (createError) {
     try {
       await dockerCommand(dockerBinary, ["network", "inspect", networkName]);
@@ -140,17 +131,11 @@ export async function ensureNetwork(
 }
 
 async function assertInternalNetwork(dockerBinary: string, networkName: string): Promise<void> {
-  const output = await dockerCommand(dockerBinary, [
-    "network",
-    "inspect",
-    "-f",
-    "{{.Internal}}",
-    networkName,
-  ]);
+  const output = await dockerCommand(dockerBinary, ["network", "inspect", "-f", "{{.Internal}}", networkName]);
   if (output.trim() !== "true") {
     throw new ContainerInfrastructureError(
-      `Docker network ${networkName} exists but is not internal and must be removed; use `
-        + `\`docker network rm ${networkName}\` and retry`,
+      `Docker network ${networkName} exists but is not internal and must be removed; use ` +
+        `\`docker network rm ${networkName}\` and retry`
     );
   }
 }
@@ -191,10 +176,7 @@ function inspectedNetworkNames(output: string): readonly string[] {
   }
 }
 
-async function inspectProxy(
-  dockerBinary: string,
-  proxyContainerName: string,
-): Promise<ProxyInspection | null> {
+async function inspectProxy(dockerBinary: string, proxyContainerName: string): Promise<ProxyInspection | null> {
   try {
     const environmentOutput = await dockerCommand(dockerBinary, [
       "inspect",
@@ -202,12 +184,7 @@ async function inspectProxy(
       "{{.State.Running}}|{{range .Config.Env}}{{.}} {{end}}",
       proxyContainerName,
     ]);
-    const image = await dockerCommand(dockerBinary, [
-      "inspect",
-      "-f",
-      "{{.Config.Image}}",
-      proxyContainerName,
-    ]);
+    const image = await dockerCommand(dockerBinary, ["inspect", "-f", "{{.Config.Image}}", proxyContainerName]);
     const networks = await dockerCommand(dockerBinary, [
       "inspect",
       "-f",
@@ -237,7 +214,10 @@ interface ProxyConfiguration {
 function allowedHostList(value: string | null): readonly string[] {
   return value === null
     ? []
-    : value.split(",").map((host) => host.trim()).filter((host) => host.length > 0);
+    : value
+        .split(",")
+        .map((host) => host.trim())
+        .filter((host) => host.length > 0);
 }
 
 function isAllowedHostSuperset(actual: string | null, requested: string): boolean {
@@ -255,13 +235,15 @@ function reconciledAllowedHosts(proxy: ProxyInspection | null, requested: string
 }
 
 function isProxyHealthy(proxy: ProxyInspection | null, expected: ProxyConfiguration): boolean {
-  return proxy !== null
-    && proxy.running
-    && isAllowedHostSuperset(proxy.allowedHosts, expected.allowedHosts)
-    && proxy.proxyPort === String(expected.proxyPort)
-    && proxy.image === expected.image
-    && proxy.networks.includes(expected.agentNetwork)
-    && proxy.networks.includes(expected.egressNetwork);
+  return (
+    proxy !== null &&
+    proxy.running &&
+    isAllowedHostSuperset(proxy.allowedHosts, expected.allowedHosts) &&
+    proxy.proxyPort === String(expected.proxyPort) &&
+    proxy.image === expected.image &&
+    proxy.networks.includes(expected.agentNetwork) &&
+    proxy.networks.includes(expected.egressNetwork)
+  );
 }
 
 async function startProxy(input: ProxyConfiguration): Promise<void> {
@@ -308,12 +290,7 @@ async function startProxy(input: ProxyConfiguration): Promise<void> {
   }
 
   try {
-    await dockerCommand(input.dockerBinary, [
-      "network",
-      "connect",
-      input.egressNetwork,
-      input.proxyContainerName,
-    ]);
+    await dockerCommand(input.dockerBinary, ["network", "connect", input.egressNetwork, input.proxyContainerName]);
   } catch (error) {
     if (!isAlreadyConnected(error)) throw error;
   }
@@ -323,30 +300,23 @@ function proxyReadinessError(
   proxyContainerName: string,
   reason: string,
   logs: string,
-  cause?: unknown,
+  cause?: unknown
 ): ContainerInfrastructureError {
   const logTail = logs.slice(-500).trim() || "<no logs>";
   return new ContainerInfrastructureError(
     `Egress proxy ${proxyContainerName} ${reason}. Last docker logs (up to 500 chars): ${logTail}`,
-    cause === undefined ? undefined : { cause },
+    cause === undefined ? undefined : { cause }
   );
 }
 
-async function waitForProxyReady(
-  dockerBinary: string,
-  proxyContainerName: string,
-): Promise<void> {
+async function waitForProxyReady(dockerBinary: string, proxyContainerName: string): Promise<void> {
   const deadline = Date.now() + PROXY_READY_TIMEOUT_MS;
   let lastLogs = "";
 
   while (true) {
     const logsTimeoutMs = Math.max(1, deadline - Date.now());
     try {
-      const output = await dockerCommandOutput(
-        dockerBinary,
-        ["logs", proxyContainerName],
-        logsTimeoutMs,
-      );
+      const output = await dockerCommandOutput(dockerBinary, ["logs", proxyContainerName], logsTimeoutMs);
       lastLogs = [output.stdout, output.stderr].filter((entry) => entry.length > 0).join("\n");
     } catch (error) {
       lastLogs = `docker logs failed: ${dockerDetail(error)}`;
@@ -355,24 +325,23 @@ async function waitForProxyReady(
       throw proxyReadinessError(
         proxyContainerName,
         `did not become ready within ${PROXY_READY_TIMEOUT_MS}ms`,
-        lastLogs,
+        lastLogs
       );
     }
 
     let running: string;
     try {
-      running = await dockerCommand(dockerBinary, [
-        "inspect",
-        "-f",
-        "{{.State.Running}}",
-        proxyContainerName,
-      ], Math.max(1, deadline - Date.now()));
+      running = await dockerCommand(
+        dockerBinary,
+        ["inspect", "-f", "{{.State.Running}}", proxyContainerName],
+        Math.max(1, deadline - Date.now())
+      );
     } catch (error) {
       throw proxyReadinessError(
         proxyContainerName,
         `could not be inspected during readiness polling (${dockerDetail(error)})`,
         lastLogs,
-        error,
+        error
       );
     }
 
@@ -384,13 +353,12 @@ async function waitForProxyReady(
       throw proxyReadinessError(
         proxyContainerName,
         `did not become ready within ${PROXY_READY_TIMEOUT_MS}ms`,
-        lastLogs,
+        lastLogs
       );
     }
-    await new Promise<void>((resolve) => setTimeout(
-      resolve,
-      Math.min(PROXY_READY_POLL_MS, Math.max(1, deadline - Date.now())),
-    ));
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.min(PROXY_READY_POLL_MS, Math.max(1, deadline - Date.now())))
+    );
   }
 }
 
@@ -405,10 +373,7 @@ async function reconcileProxy(input: ProxyConfiguration): Promise<void> {
   await waitForProxyReady(input.dockerBinary, input.proxyContainerName);
 }
 
-async function serializeProxyReconciliation(
-  proxyContainerName: string,
-  reconcile: () => Promise<void>,
-): Promise<void> {
+async function serializeProxyReconciliation(proxyContainerName: string, reconcile: () => Promise<void>): Promise<void> {
   const previous = proxyReconciliations.get(proxyContainerName) ?? Promise.resolve();
   const current = previous.then(reconcile, reconcile);
   proxyReconciliations.set(proxyContainerName, current);
@@ -425,20 +390,18 @@ async function sweepOrphanedTaskContainers(dockerBinary: string): Promise<void> 
   // Safe only while no task lane is live and while a single fleet process owns the host.
   // Docker-gated test files run serially so a prepare-time sweep in one file cannot
   // remove another file's active lane. Multi-fleet ownership labels are campaign 7 scope.
-  const output = await dockerCommand(dockerBinary, [
-    "ps",
-    "-aq",
-    "--filter",
-    "label=steward.task",
-  ]);
-  const containerIds = output.split(/\r?\n/u).map((id) => id.trim()).filter((id) => id.length > 0);
+  const output = await dockerCommand(dockerBinary, ["ps", "-aq", "--filter", "label=steward.task"]);
+  const containerIds = output
+    .split(/\r?\n/u)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
   for (const containerId of containerIds) {
     await dockerCommand(dockerBinary, ["rm", "-f", containerId]);
   }
 }
 
 export async function prepareContainerInfrastructure(
-  options: ContainerInfrastructureOptions,
+  options: ContainerInfrastructureOptions
 ): Promise<ContainerInfrastructure> {
   const dockerBinary = options.dockerBinary ?? "docker";
   const agentNetwork = options.agentNetwork ?? DEFAULT_AGENT_NETWORK;
@@ -452,9 +415,8 @@ export async function prepareContainerInfrastructure(
   await assertInternalNetwork(dockerBinary, agentNetwork);
   await ensureNetwork(dockerBinary, egressNetwork, false);
 
-  await serializeProxyReconciliation(
-    proxyContainerName,
-    () => reconcileProxy({
+  await serializeProxyReconciliation(proxyContainerName, () =>
+    reconcileProxy({
       dockerBinary,
       proxyContainerName,
       agentNetwork,
@@ -462,7 +424,7 @@ export async function prepareContainerInfrastructure(
       allowedHosts,
       proxyPort,
       image: options.image,
-    }),
+    })
   );
 
   await sweepOrphanedTaskContainers(dockerBinary);

@@ -32,9 +32,15 @@ const service = await createTaskBoardService({
   stageCapSeconds: optionalInteger("STEWARD_TASK_BOARD_STAGE_CAP_SECONDS", 3_600),
   taskCapSeconds: optionalInteger("STEWARD_TASK_BOARD_TASK_CAP_SECONDS", 10_800),
   verifyWorkspaceRoot: process.env.STEWARD_TASK_BOARD_VERIFY_WORKSPACE_ROOT,
-  host: projectRootsRaw === undefined ? undefined : {
-    projectRoots: projectRootsRaw.split(":").map((value) => value.trim()).filter((value) => value.length > 0),
-  },
+  host:
+    projectRootsRaw === undefined
+      ? undefined
+      : {
+          projectRoots: projectRootsRaw
+            .split(":")
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+        },
 });
 
 const address = await service.start();
@@ -44,7 +50,10 @@ let closing = false;
 const shutdown = (): void => {
   if (closing) return;
   closing = true;
-  void service.close().then(() => process.exit(0), () => process.exit(1));
+  void service.close().then(
+    () => process.exit(0),
+    () => process.exit(1)
+  );
 };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

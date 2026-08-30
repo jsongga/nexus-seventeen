@@ -1,5 +1,12 @@
-export interface SinkCollection { readonly id: string; readonly name: string }
-export interface SinkDocument { readonly id: string; readonly title: string; readonly text: string }
+export interface SinkCollection {
+  readonly id: string;
+  readonly name: string;
+}
+export interface SinkDocument {
+  readonly id: string;
+  readonly title: string;
+  readonly text: string;
+}
 export interface DocsSink {
   ensureCollection(repoName: string): Promise<SinkCollection>;
   listDocuments(collection: SinkCollection): Promise<readonly SinkDocument[]>;

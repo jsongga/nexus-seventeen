@@ -3,22 +3,21 @@ import { OutlineHttpError } from "./client.js";
 import type { DocsPublishRepo } from "./config.js";
 import { enumerateDocs } from "./enumerate.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
-import {
-  runDeclaredScopeGit,
-  type GitTextRunner,
-} from "../task-board/collaborators/scope-check.js";
+import { runDeclaredScopeGit, type GitTextRunner } from "../task-board/collaborators/scope-check.js";
 
-export interface PublishReport { readonly repo: string; readonly created: number; readonly updated: number; readonly archived: number; readonly unchanged: number; readonly failures: readonly string[] }
+export interface PublishReport {
+  readonly repo: string;
+  readonly created: number;
+  readonly updated: number;
+  readonly archived: number;
+  readonly unchanged: number;
+  readonly failures: readonly string[];
+}
 
 const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ blob ([0-9a-f]{12})\./su;
 
 function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner([
-    "-c", "core.fsmonitor=",
-    "-c", "core.hooksPath=",
-    "-C", repoPath,
-    ...arguments_,
-  ]);
+  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
 }
 
 function errorDetail(error: unknown): string {
@@ -34,7 +33,7 @@ function report(
   updated: number,
   archived: number,
   unchanged: number,
-  failures: readonly string[],
+  failures: readonly string[]
 ): PublishReport {
   return Object.freeze({
     repo,
@@ -48,7 +47,7 @@ function report(
 
 async function collectionState(
   entry: DocsPublishRepo,
-  sink: DocsSink,
+  sink: DocsSink
 ): Promise<Readonly<{ collection: SinkCollection; documents: readonly SinkDocument[] }>> {
   const collection = await sink.ensureCollection(entry.name);
   return Object.freeze({ collection, documents: await sink.listDocuments(collection) });
@@ -61,7 +60,7 @@ function sourceBlobPrefix(text: string): string | undefined {
 export async function publishRepo(
   entry: DocsPublishRepo,
   sink: DocsSink,
-  runner: GitTextRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit
 ): Promise<PublishReport> {
   let sources: ReturnType<typeof enumerateDocs>;
   try {
@@ -81,10 +80,15 @@ export async function publishRepo(
     return report(entry.name, 0, 0, 0, 0, [`prepare collection: ${errorDetail(error)}`]);
   }
 
-  const desired = new Map(sources.map((source) => [source.title, Object.freeze({
-    blobPrefix: source.blobSha.slice(0, 12),
-    text: withSourceBanner(source, entry.name),
-  })]));
+  const desired = new Map(
+    sources.map((source) => [
+      source.title,
+      Object.freeze({
+        blobPrefix: source.blobSha.slice(0, 12),
+        text: withSourceBanner(source, entry.name),
+      }),
+    ])
+  );
   const existing = new Map(state.documents.map((document) => [document.title, document]));
   const failures: string[] = [];
   let created = 0;

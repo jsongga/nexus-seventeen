@@ -83,33 +83,87 @@ export function parseIdentifier(value: unknown, field: string): string {
   return adapt(() => parseBoardIdentifier(value, field));
 }
 
-export function parseCreateProject(value: unknown): CreateProjectRequest { return adapt(() => parseBoardCreateProject(value)); }
-export function parseUpdateProject(value: unknown): UpdateProjectRequest { return adapt(() => parseBoardUpdateProject(value)); }
-export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest { return adapt(() => parseBoardConfirmPlan(value)); }
-export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest { return adapt(() => parseBoardRejectPlan(value)); }
-export function parseApprovePipelineMergeRequest(value: unknown): ApprovePipelineMergeRequest { return adapt(() => parseBoardApprovePipelineMerge(value)); }
-export function parseAttestDeployRequest(value: unknown): AttestDeployRequest { return adapt(() => parseBoardAttestDeploy(value)); }
-export function parseRejectFinalApprovalRequest(value: unknown): RejectFinalApprovalRequest { return adapt(() => parseBoardRejectFinalApproval(value)); }
-export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest { return adapt(() => parseBoardCreateWorkItem(value)); }
-export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest { return adapt(() => parseBoardUpdateWorkItem(value)); }
-export function parseUpdateAutomationConfiguration(value: unknown): UpdateAutomationConfigurationRequest { return adapt(() => parseBoardAutomationUpdate(value)); }
-export function parseCreateAgent(value: unknown): CreateAgentRequest { return adapt(() => parseBoardCreateAgent(value)); }
-export function parseRotateAgentToken(value: unknown): RotateAgentTokenRequest { return adapt(() => parseBoardRotateAgentToken(value)); }
-export function parseCreateTask(value: unknown): CreateTaskRequest { return adapt(() => parseBoardCreateTask(value)); }
-export function parseCreateTaskPhase(value: unknown): CreateTaskPhaseRequest { return adapt(() => parseBoardCreateTaskPhase(value)); }
-export function parseUpdateTaskPhase(value: unknown): UpdateTaskPhaseRequest { return adapt(() => parseBoardUpdateTaskPhase(value)); }
-export function parseUpdateTask(value: unknown): UpdateTaskRequest { return adapt(() => parseBoardUpdateTask(value)); }
-export function parseRetryTask(value: unknown): RetryTaskRequest { return adapt(() => parseBoardRetryTask(value)); }
-export function parseBacklogTask(value: unknown): BacklogTaskRequest { return adapt(() => parseBoardBacklogTask(value)); }
-export function parseAgentMessage(value: unknown): CreateTaskMessageRequest { return adapt(() => parseBoardAgentMessage(value)); }
-export function parseHumanMessage(value: unknown): CreateHumanTaskMessageRequest { return adapt(() => parseBoardHumanMessage(value)); }
-export function parseQuestion(value: unknown): CreateHumanQuestionRequest { return adapt(() => parseBoardQuestion(value)); }
-export function parseAnswer(value: unknown): AnswerHumanQuestionRequest { return adapt(() => parseBoardAnswer(value)); }
-export function parseResume(value: unknown): ResumeAgentRequest { return adapt(() => parseBoardResume(value)); }
-export function parseInterrupt(value: unknown): InterruptAgentRequest { return adapt(() => parseBoardInterrupt(value)); }
-export function parseClaim(value: unknown): ClaimRunRequest { return adapt(() => parseBoardClaim(value)); }
-export function parseSettle(value: unknown): SettleRunRequest { return adapt(() => parseBoardSettle(value)); }
-export function parseIdempotencyKey(value: string | string[] | undefined): string { return adapt(() => parseBoardIdempotencyKey(value)); }
+export function parseCreateProject(value: unknown): CreateProjectRequest {
+  return adapt(() => parseBoardCreateProject(value));
+}
+export function parseUpdateProject(value: unknown): UpdateProjectRequest {
+  return adapt(() => parseBoardUpdateProject(value));
+}
+export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest {
+  return adapt(() => parseBoardConfirmPlan(value));
+}
+export function parseRejectPlanRevisionRequest(value: unknown): RejectPlanRevisionRequest {
+  return adapt(() => parseBoardRejectPlan(value));
+}
+export function parseApprovePipelineMergeRequest(value: unknown): ApprovePipelineMergeRequest {
+  return adapt(() => parseBoardApprovePipelineMerge(value));
+}
+export function parseAttestDeployRequest(value: unknown): AttestDeployRequest {
+  return adapt(() => parseBoardAttestDeploy(value));
+}
+export function parseRejectFinalApprovalRequest(value: unknown): RejectFinalApprovalRequest {
+  return adapt(() => parseBoardRejectFinalApproval(value));
+}
+export function parseCreateWorkItem(value: unknown): CreateWorkItemRequest {
+  return adapt(() => parseBoardCreateWorkItem(value));
+}
+export function parseUpdateWorkItem(value: unknown): UpdateWorkItemRequest {
+  return adapt(() => parseBoardUpdateWorkItem(value));
+}
+export function parseUpdateAutomationConfiguration(value: unknown): UpdateAutomationConfigurationRequest {
+  return adapt(() => parseBoardAutomationUpdate(value));
+}
+export function parseCreateAgent(value: unknown): CreateAgentRequest {
+  return adapt(() => parseBoardCreateAgent(value));
+}
+export function parseRotateAgentToken(value: unknown): RotateAgentTokenRequest {
+  return adapt(() => parseBoardRotateAgentToken(value));
+}
+export function parseCreateTask(value: unknown): CreateTaskRequest {
+  return adapt(() => parseBoardCreateTask(value));
+}
+export function parseCreateTaskPhase(value: unknown): CreateTaskPhaseRequest {
+  return adapt(() => parseBoardCreateTaskPhase(value));
+}
+export function parseUpdateTaskPhase(value: unknown): UpdateTaskPhaseRequest {
+  return adapt(() => parseBoardUpdateTaskPhase(value));
+}
+export function parseUpdateTask(value: unknown): UpdateTaskRequest {
+  return adapt(() => parseBoardUpdateTask(value));
+}
+export function parseRetryTask(value: unknown): RetryTaskRequest {
+  return adapt(() => parseBoardRetryTask(value));
+}
+export function parseBacklogTask(value: unknown): BacklogTaskRequest {
+  return adapt(() => parseBoardBacklogTask(value));
+}
+export function parseAgentMessage(value: unknown): CreateTaskMessageRequest {
+  return adapt(() => parseBoardAgentMessage(value));
+}
+export function parseHumanMessage(value: unknown): CreateHumanTaskMessageRequest {
+  return adapt(() => parseBoardHumanMessage(value));
+}
+export function parseQuestion(value: unknown): CreateHumanQuestionRequest {
+  return adapt(() => parseBoardQuestion(value));
+}
+export function parseAnswer(value: unknown): AnswerHumanQuestionRequest {
+  return adapt(() => parseBoardAnswer(value));
+}
+export function parseResume(value: unknown): ResumeAgentRequest {
+  return adapt(() => parseBoardResume(value));
+}
+export function parseInterrupt(value: unknown): InterruptAgentRequest {
+  return adapt(() => parseBoardInterrupt(value));
+}
+export function parseClaim(value: unknown): ClaimRunRequest {
+  return adapt(() => parseBoardClaim(value));
+}
+export function parseSettle(value: unknown): SettleRunRequest {
+  return adapt(() => parseBoardSettle(value));
+}
+export function parseIdempotencyKey(value: string | string[] | undefined): string {
+  return adapt(() => parseBoardIdempotencyKey(value));
+}
 export function parseWorkItemAudit(value: unknown): WorkItemAudit {
   return adapt(() => parseWorkItemAuditContract(value, "workItemAudit"));
 }
@@ -151,10 +205,7 @@ export function parseBoardPauseRequest(value: unknown): Readonly<{
       throw new TaskBoardError(400, "INVALID_REQUEST", "reason is invalid");
     }
     reason = item.reason.trim();
-    if (
-      reason.length < 1 || item.reason.length > 500 ||
-      /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(item.reason)
-    ) {
+    if (reason.length < 1 || item.reason.length > 500 || /[\u0000-\u0008\u000b-\u001f\u007f]/u.test(item.reason)) {
       throw new TaskBoardError(400, "INVALID_REQUEST", "reason is invalid");
     }
   }

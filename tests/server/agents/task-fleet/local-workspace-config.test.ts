@@ -6,16 +6,18 @@ function config(workspaceRoot?: string): Record<string, unknown> {
   return {
     version: 1,
     boardUrl: "http://127.0.0.1:4318",
-    agents: [{
-      workerId: "worker-pipeline",
-      agentId: "engineer-pipeline",
-      token: "pipeline-agent-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-      provider: "codex",
-      model: "codex-model",
-      workingDirectory: "/work/repository",
-      statePath: "/state/pipeline.json",
-      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
-    }],
+    agents: [
+      {
+        workerId: "worker-pipeline",
+        agentId: "engineer-pipeline",
+        token: "pipeline-agent-token-0123456789-abcdefghijklmnopqrstuvwxyz",
+        provider: "codex",
+        model: "codex-model",
+        workingDirectory: "/work/repository",
+        statePath: "/state/pipeline.json",
+        ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+      },
+    ],
   };
 }
 
@@ -23,7 +25,10 @@ test("local-process lanes optionally accept an absolute workspace root without c
   const legacy = parseTaskFleetConfig(config()).agents[0] as unknown as Record<string, unknown>;
   assert.equal(Object.hasOwn(legacy, "workspaceRoot"), false);
 
-  const workspaceLane = parseTaskFleetConfig(config("/work/task-workspaces")).agents[0] as unknown as Record<string, unknown>;
+  const workspaceLane = parseTaskFleetConfig(config("/work/task-workspaces")).agents[0] as unknown as Record<
+    string,
+    unknown
+  >;
   assert.equal(workspaceLane.workspaceRoot, "/work/task-workspaces");
 
   assert.throws(() => parseTaskFleetConfig(config("relative-workspaces")), /workspaceRoot must be absolute/u);

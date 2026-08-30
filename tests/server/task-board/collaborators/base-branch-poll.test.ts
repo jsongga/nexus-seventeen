@@ -55,18 +55,22 @@ function pipelinePlan(suffix: string): WorkflowPlanDraft {
     nonGoals: ["Do not push a remote branch."],
     mechanicalPortions: ["Update one fixture file."],
     blockingQuestions: [],
-    criterionChecks: [{
-      criterion: "The base branch is re-anchored before merge.",
-      check: "node check.mjs",
-    }],
-    nodes: [{
-      nodeId: `base-poll-${suffix}`,
-      title: `Base poll ${suffix}`,
-      objective: "Return stale approval to implementation.",
-      acceptanceCriteria: ["The task branch composes with the new base."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    criterionChecks: [
+      {
+        criterion: "The base branch is re-anchored before merge.",
+        check: "node check.mjs",
+      },
+    ],
+    nodes: [
+      {
+        nodeId: `base-poll-${suffix}`,
+        title: `Base poll ${suffix}`,
+        objective: "Return stale approval to implementation.",
+        acceptanceCriteria: ["The task branch composes with the new base."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -81,8 +85,10 @@ async function finalApprovalFixture(suffix: string) {
   const fixture = await boardFixture(undefined, () => new Date(NOW), { git: fakeGit(control) });
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-      .run(`/fixture/${suffix}`, fixture.project.projectId);
+    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(
+      `/fixture/${suffix}`,
+      fixture.project.projectId
+    );
   } finally {
     db.close();
   }
@@ -102,18 +108,23 @@ async function finalApprovalFixture(suffix: string) {
     name: "Base poll verifier",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementation, verification],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementation, verification],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItem(
+    workItemRequest({
+      originalRequest: `Poll the base branch for ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItem(workItemRequest({
-    originalRequest: `Poll the base branch for ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `base-poll-${suffix}`).workItem;
+    `base-poll-${suffix}`
+  ).workItem;
   const proposed = fixture.board.proposeWorkflow({
     ...pipelinePlan(suffix),
     workItemId: workItem.workItemId,
@@ -124,7 +135,9 @@ async function finalApprovalFixture(suffix: string) {
 
   const seeded = new DatabaseSync(fixture.path);
   try {
-    seeded.prepare(`
+    seeded
+      .prepare(
+        `
       UPDATE tasks
       SET status='completed',started_at=?,ended_at=?,result='Ready for approval',version=version+1,updated_at=?
       WHERE task_id IN (
@@ -134,17 +147,27 @@ async function finalApprovalFixture(suffix: string) {
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         WHERE plan.work_item_id=?
       )
-    `).run(NOW, NOW, NOW, workItem.workItemId);
-    seeded.prepare(`
+    `
+      )
+      .run(NOW, NOW, NOW, workItem.workItemId);
+    seeded
+      .prepare(
+        `
       UPDATE work_nodes
       SET state='completed',current_stage=NULL,version=version+1,updated_at=?
       WHERE plan_revision_id=?
-    `).run(NOW, proposed.plans[0]!.planRevisionId);
-    seeded.prepare(`
+    `
+      )
+      .run(NOW, proposed.plans[0]!.planRevisionId);
+    seeded
+      .prepare(
+        `
       UPDATE work_items
       SET state='final_approval',current_stage=NULL,version=version+1,updated_at=?
       WHERE work_item_id=?
-    `).run(NOW, workItem.workItemId);
+    `
+      )
+      .run(NOW, workItem.workItemId);
   } finally {
     seeded.close();
   }
@@ -159,7 +182,7 @@ test("an unchanged base sha is a no-op", async () => {
     assert.equal(fixture.board.requireWorkItem(fixture.workItemId).state, "final_approval");
     assert.equal(
       fixture.control.commands.some((command) => command[0] === "merge-base"),
-      false,
+      false
     );
   } finally {
     fixture.board.close();
@@ -180,29 +203,45 @@ test("an advanced base withdraws final approval once with system attribution", a
     const note = `base branch advanced to ${ADVANCED_SHA}; rebase onto it and re-verify`;
     const database = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const transition = database.prepare(`
+      const transition = database
+        .prepare(
+          `
         SELECT actor_type,actor_id
         FROM work_item_transitions
         WHERE work_item_id=?
         ORDER BY sequence DESC
         LIMIT 1
-      `).get(fixture.workItemId);
-      assert.deepEqual({ ...transition }, {
-        actor_type: "system",
-        actor_id: "system:base-branch-poll",
-      });
-      const event = database.prepare(`
+      `
+        )
+        .get(fixture.workItemId);
+      assert.deepEqual(
+        { ...transition },
+        {
+          actor_type: "system",
+          actor_id: "system:base-branch-poll",
+        }
+      );
+      const event = database
+        .prepare(
+          `
         SELECT actor_type,actor_id
         FROM task_events
         WHERE json_extract(data_json,'$.workItemId')=?
         ORDER BY created_at DESC,rowid DESC
         LIMIT 1
-      `).get(fixture.workItemId);
-      assert.deepEqual({ ...event }, {
-        actor_type: "system",
-        actor_id: "system:base-branch-poll",
-      });
-      const handoff = database.prepare(`
+      `
+        )
+        .get(fixture.workItemId);
+      assert.deepEqual(
+        { ...event },
+        {
+          actor_type: "system",
+          actor_id: "system:base-branch-poll",
+        }
+      );
+      const handoff = database
+        .prepare(
+          `
         SELECT handoff.payload_json
         FROM stage_handoffs handoff
         JOIN work_nodes node ON node.node_id=handoff.node_id
@@ -210,20 +249,27 @@ test("an advanced base withdraws final approval once with system attribution", a
         WHERE plan.work_item_id=?
         ORDER BY handoff.created_at DESC,handoff.rowid DESC
         LIMIT 1
-      `).get(fixture.workItemId);
+      `
+        )
+        .get(fixture.workItemId);
       assert.equal(JSON.parse(String(handoff?.payload_json)).summary, note);
     } finally {
       database.close();
     }
-    assert.deepEqual(fixture.board.listNotifications().unread.map((notification) => ({
-      kind: notification.kind,
-      dedupeKey: notification.dedupeKey,
-      summary: notification.summary,
-    })), [{
-      kind: "final_approval_withdrawn",
-      dedupeKey: `final_approval_withdrawn:${fixture.workItemId}:${ADVANCED_SHA}`,
-      summary: `Final approval withdrawn: base branch advanced to ${ADVANCED_SHA.slice(0, 10)}`,
-    }]);
+    assert.deepEqual(
+      fixture.board.listNotifications().unread.map((notification) => ({
+        kind: notification.kind,
+        dedupeKey: notification.dedupeKey,
+        summary: notification.summary,
+      })),
+      [
+        {
+          kind: "final_approval_withdrawn",
+          dedupeKey: `final_approval_withdrawn:${fixture.workItemId}:${ADVANCED_SHA}`,
+          summary: `Final approval withdrawn: base branch advanced to ${ADVANCED_SHA.slice(0, 10)}`,
+        },
+      ]
+    );
   } finally {
     fixture.board.close();
   }
@@ -240,15 +286,16 @@ test("detached, task-branch, and dirty merge targets are no-ops", async (t) => {
       const fixture = await finalApprovalFixture(candidate.name.replaceAll(" ", "-"));
       try {
         fixture.control.head = ADVANCED_SHA;
-        fixture.control.branch = candidate.branch === "item"
-          ? fixture.board.requireWorkItem(fixture.workItemId).pipelineBranch!
-          : candidate.branch;
+        fixture.control.branch =
+          candidate.branch === "item"
+            ? fixture.board.requireWorkItem(fixture.workItemId).pipelineBranch!
+            : candidate.branch;
         fixture.control.dirty = candidate.dirty;
         assert.deepEqual(fixture.board.sweepBaseBranch(NOW), { withdrawn: 0, diverged: 0 });
         assert.equal(fixture.board.requireWorkItem(fixture.workItemId).state, "final_approval");
         assert.equal(
           fixture.control.commands.some((command) => command.join(" ") === "rev-parse HEAD"),
-          false,
+          false
         );
       } finally {
         fixture.board.close();
@@ -268,24 +315,36 @@ test("rewritten base history parks the item as base_diverged", async () => {
       category: "base_diverged",
       reason: `base branch history rewritten (was ${BASE_SHA}, now ${ADVANCED_SHA})`,
     });
-    assert.ok(fixture.board.listNotifications().unread.some((notification) => (
-      notification.kind === "final_approval_withdrawn"
-      && notification.workItemId === fixture.workItemId
-      && notification.dedupeKey === `final_approval_withdrawn:${fixture.workItemId}:base-diverged:${ADVANCED_SHA}`
-    )));
+    assert.ok(
+      fixture.board
+        .listNotifications()
+        .unread.some(
+          (notification) =>
+            notification.kind === "final_approval_withdrawn" &&
+            notification.workItemId === fixture.workItemId &&
+            notification.dedupeKey === `final_approval_withdrawn:${fixture.workItemId}:base-diverged:${ADVANCED_SHA}`
+        )
+    );
     const database = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const transition = database.prepare(`
+      const transition = database
+        .prepare(
+          `
         SELECT actor_type,actor_id
         FROM work_item_transitions
         WHERE work_item_id=?
         ORDER BY sequence DESC
         LIMIT 1
-      `).get(fixture.workItemId);
-      assert.deepEqual({ ...transition }, {
-        actor_type: "system",
-        actor_id: "system:base-branch-poll",
-      });
+      `
+        )
+        .get(fixture.workItemId);
+      assert.deepEqual(
+        { ...transition },
+        {
+          actor_type: "system",
+          actor_id: "system:base-branch-poll",
+        }
+      );
     } finally {
       database.close();
     }
@@ -296,11 +355,18 @@ test("rewritten base history parks the item as base_diverged", async () => {
     assert.equal(resumed.baseSha, ADVANCED_SHA);
     const resumedDatabase = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(resumedDatabase.prepare(`
+      assert.equal(
+        resumedDatabase
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM park_records
         WHERE work_item_id=? AND resolved_at IS NULL
-      `).get(fixture.workItemId)?.count, 0);
+      `
+          )
+          .get(fixture.workItemId)?.count,
+        0
+      );
     } finally {
       resumedDatabase.close();
     }
@@ -319,7 +385,7 @@ test("a per-item git failure is logged and does not escape the sweep", async (t)
     assert.equal(logged.mock.callCount(), 1);
     assert.equal(
       logged.mock.calls[0]?.arguments[0],
-      `[task-board] base-branch sweep failed for work item ${fixture.workItemId}`,
+      `[task-board] base-branch sweep failed for work item ${fixture.workItemId}`
     );
   } finally {
     fixture.board.close();
@@ -344,12 +410,16 @@ async function integrationRepository(): Promise<string> {
   await writeFile(join(repo, "shared.txt"), "fixture base\n");
   await writeFile(
     join(repo, "docs", "workflow.md"),
-    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
-      version: 1,
-      compile: ["node check.mjs"],
-      rules: [{ match: "**", action: { kind: "none" } }],
-      full: ["node verify-full.mjs"],
-    }, null, 2)}\n\`\`\`\n`,
+    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify(
+      {
+        version: 1,
+        compile: ["node check.mjs"],
+        rules: [{ match: "**", action: { kind: "none" } }],
+        full: ["node verify-full.mjs"],
+      },
+      null,
+      2
+    )}\n\`\`\`\n`
   );
   await writeFile(join(repo, "check.mjs"), "process.exit(0);\n");
   await writeFile(join(repo, "verify-full.mjs"), "process.exit(0);\n");
@@ -361,7 +431,7 @@ async function integrationRepository(): Promise<string> {
 async function waitForState(
   board: Awaited<ReturnType<typeof boardFixture>>["board"],
   workItemId: string,
-  state: "reviewing",
+  state: "reviewing"
 ): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -388,8 +458,7 @@ test("a fixture pipeline rebases after withdrawal and merges both the base and t
   try {
     const database = new DatabaseSync(fixture.path);
     try {
-      database.prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-        .run(repo, fixture.project.projectId);
+      database.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
     } finally {
       database.close();
     }
@@ -417,18 +486,23 @@ test("a fixture pipeline rebases after withdrawal and merges both the base and t
       name: "Base poll integration verifier",
       role: "verifier" as const,
     };
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [implementation, verification],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
-        testing: { kind: "machine_verify" },
-        verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [implementation, verification],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
+          testing: { kind: "machine_verify" },
+          verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Compose a pipeline branch with a newly advanced base.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Compose a pipeline branch with a newly advanced base.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "base-poll-integration").workItem;
+      "base-poll-integration"
+    ).workItem;
     const proposed = fixture.board.proposeWorkflow({
       ...pipelinePlan("integration"),
       workItemId: workItem.workItemId,
@@ -482,7 +556,7 @@ test("a fixture pipeline rebases after withdrawal and merges both the base and t
     assert.ok(secondImplementation);
     assert.equal(
       secondImplementation.context.workflow?.dependencyHandoffs.at(-1)?.summary,
-      `base branch advanced to ${advancedHead}; rebase onto it and re-verify`,
+      `base branch advanced to ${advancedHead}; rebase onto it and re-verify`
     );
     fixtureGit(repo, "switch", taskBranch);
     fixtureGit(repo, "merge", "main");
@@ -512,7 +586,7 @@ test("a fixture pipeline rebases after withdrawal and merges both the base and t
     fixtureGit(repo, "switch", "main");
     assert.equal(
       (await fixture.board.approvePipelineMerge(workItem.workItemId, { version: finalApproval.version })).state,
-      "merged",
+      "merged"
     );
     fixtureGit(repo, "merge-base", "--is-ancestor", advancedHead, "main");
     assert.equal(await readFile(join(repo, "base-change.txt"), "utf8"), "base change\n");

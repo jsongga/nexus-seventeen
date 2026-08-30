@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import {
-  TaskBoard,
-  TaskBoardError,
-  normalizeTaskBoardConfig,
-} from "#server/task-board";
+import { TaskBoard, TaskBoardError, normalizeTaskBoardConfig } from "#server/task-board";
 import { NotificationsCollaborator } from "#server/task-board/collaborators/notifications";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
@@ -29,7 +25,7 @@ function seedNotifications(path: string): void {
         sequence,
         `Seeded notification ${sequence}`,
         createdAt,
-        sequence <= 52 ? createdAt : null,
+        sequence <= 52 ? createdAt : null
       );
     }
   } finally {
@@ -39,12 +35,14 @@ function seedNotifications(path: string): void {
 
 test("notification lists are bounded and read updates use versioned CAS", async () => {
   const path = await databasePath();
-  const board = await TaskBoard.open(normalizeTaskBoardConfig({
-    dbPath: path,
-    humanToken: HUMAN_TOKEN,
-    humanPrincipal: "human:alice",
-    now: () => new Date(NOW),
-  }));
+  const board = await TaskBoard.open(
+    normalizeTaskBoardConfig({
+      dbPath: path,
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      now: () => new Date(NOW),
+    })
+  );
   try {
     seedNotifications(path);
     const listed = board.listNotifications();
@@ -61,13 +59,12 @@ test("notification lists are bounded and read updates use versioned CAS", async 
     assert.equal(board.listNotifications().recentRead[0]?.notificationId, "notification-154");
     assert.throws(
       () => board.markNotificationRead("notification-154", 1),
-      (error: unknown) => error instanceof TaskBoardError && error.status === 409,
+      (error: unknown) => error instanceof TaskBoardError && error.status === 409
     );
     assert.throws(
       () => board.markNotificationRead("notification-unknown", 1),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 404
-        && error.code === "TASK_BOARD_NOTIFICATION_NOT_FOUND",
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 404 && error.code === "TASK_BOARD_NOTIFICATION_NOT_FOUND"
     );
   } finally {
     board.close();
@@ -91,8 +88,10 @@ test("duplicate cap notification inserts exercise INSERT OR IGNORE and return nu
     const second = store.transaction(() => notifications.insertNotificationAtInTransaction(input, NOW));
     assert.ok(first);
     assert.equal(second, null);
-    assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE dedupe_key=?")
-      .get(input.dedupeKey)?.count, 1);
+    assert.equal(
+      store.db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE dedupe_key=?").get(input.dedupeKey)?.count,
+      1
+    );
   } finally {
     runtime.close();
     store.close();

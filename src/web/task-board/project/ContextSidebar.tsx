@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { cn } from '../../components/ui';
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useEffect, useState } from "react";
+import { cn } from "../../components/ui";
 
 export interface ContextDocument {
   id: string;
@@ -14,8 +14,9 @@ function orderedDocuments(documents: ContextDocument[], order: string[]): Contex
   return [...documents].sort((left, right) => {
     const leftIndex = order.indexOf(left.id);
     const rightIndex = order.indexOf(right.id);
-    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex)
-      - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    return (
+      (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+    );
   });
 }
 
@@ -38,8 +39,8 @@ export function ContextSidebar({
       return;
     }
     try {
-      const saved = JSON.parse(window.localStorage.getItem(orderStorageKey) ?? '[]') as unknown;
-      setOrder(Array.isArray(saved) && saved.every((item) => typeof item === 'string') ? saved : []);
+      const saved = JSON.parse(window.localStorage.getItem(orderStorageKey) ?? "[]") as unknown;
+      setOrder(Array.isArray(saved) && saved.every((item) => typeof item === "string") ? saved : []);
     } catch {
       setOrder([]);
     }
@@ -77,7 +78,9 @@ export function ContextSidebar({
 
   return (
     <aside className="max-h-[40%] w-full shrink-0 overflow-y-auto border-b border-line p-4 md:max-h-none md:w-[260px] md:border-b-0 md:border-r md:p-8">
-      <h2 className="mb-6 inline-block border-b-2 border-ink pb-1 text-xs font-semibold tracking-[0.2px] text-ink">Context &amp; Materials</h2>
+      <h2 className="mb-6 inline-block border-b-2 border-ink pb-1 text-xs font-semibold tracking-[0.2px] text-ink">
+        Context &amp; Materials
+      </h2>
       <p className="mb-6 whitespace-pre-line text-xs leading-[1.5] text-muted">{intro}</p>
       <h3 className="mb-4 text-xs font-semibold tracking-[0.2px] text-ink">Important Documents</h3>
       {ordered.length > 0 ? (
@@ -86,8 +89,8 @@ export function ContextSidebar({
             <li
               key={document.id}
               className={cn(
-                'group -m-1 flex min-w-0 items-start gap-2 rounded-[4px] p-1 text-[13px] leading-[1.3] text-muted transition-colors hover:bg-muted-surface hover:text-ink focus-within:bg-muted-surface focus-within:text-ink',
-                draggedId === document.id && 'opacity-50',
+                "group -m-1 flex min-w-0 items-start gap-2 rounded-[4px] p-1 text-[13px] leading-[1.3] text-muted transition-colors hover:bg-muted-surface hover:text-ink focus-within:bg-muted-surface focus-within:text-ink",
+                draggedId === document.id && "opacity-50"
               )}
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => drop(document.id)}
@@ -140,7 +143,9 @@ export function ContextSidebar({
             </li>
           ))}
         </ul>
-      ) : <p className="text-xs leading-[1.5] text-muted">No important documents recorded.</p>}
+      ) : (
+        <p className="text-xs leading-[1.5] text-muted">No important documents recorded.</p>
+      )}
     </aside>
   );
 }

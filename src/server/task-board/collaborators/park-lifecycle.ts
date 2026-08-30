@@ -22,12 +22,12 @@ export interface ParkLifecycleSweepResult {
 
 function openParkRecordFromRow(row: Row): OpenParkRecord {
   if (
-    typeof row.park_record_id !== "string"
-    || typeof row.work_item_id !== "string"
-    || typeof row.category !== "string"
-    || typeof row.reason !== "string"
-    || typeof row.parked_at !== "string"
-    || (row.project_id !== null && typeof row.project_id !== "string")
+    typeof row.park_record_id !== "string" ||
+    typeof row.work_item_id !== "string" ||
+    typeof row.category !== "string" ||
+    typeof row.reason !== "string" ||
+    typeof row.parked_at !== "string" ||
+    (row.project_id !== null && typeof row.project_id !== "string")
   ) {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:open_park_record");
   }
@@ -70,13 +70,16 @@ export class ParkLifecycleCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly notifications: NotificationsCollaborator,
     private readonly workItems: WorkItemsCollaborator,
-    private readonly reconcileWorkflowsBestEffort: (projectId: string) => void,
+    private readonly reconcileWorkflowsBestEffort: (projectId: string) => void
   ) {}
 
   sweepParkLifecycle(now: string): ParkLifecycleSweepResult {
     if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
     const nowMilliseconds = Date.parse(now);
-    const openRecords = () => this.runtime.store.db.prepare(`
+    const openRecords = () =>
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT
         park_record.park_record_id,
         park_record.work_item_id,
@@ -88,7 +91,10 @@ export class ParkLifecycleCollaborator {
       JOIN work_items AS work_item ON work_item.work_item_id=park_record.work_item_id
       WHERE park_record.resolved_at IS NULL
       ORDER BY park_record.parked_at, park_record.rowid
-    `).all().map((row) => openParkRecordFromRow(row));
+    `
+        )
+        .all()
+        .map((row) => openParkRecordFromRow(row));
     let notified = 0;
     if (this.runtime.config.parkNotifySeconds !== 0) {
       for (const record of openRecords()) {
@@ -96,17 +102,24 @@ export class ParkLifecycleCollaborator {
         if (!Number.isFinite(ageSeconds)) throw new Error("TASK_BOARD_DATABASE_CORRUPT:parked_at");
         if (ageSeconds <= this.runtime.config.parkNotifySeconds) continue;
         const inserted = this.runtime.store.transaction(() => {
-          const stillOpen = this.runtime.store.db.prepare(`
+          const stillOpen = this.runtime.store.db
+            .prepare(
+              `
             SELECT 1 FROM park_records WHERE park_record_id=? AND resolved_at IS NULL
-          `).get(record.parkRecordId);
+          `
+            )
+            .get(record.parkRecordId);
           if (stillOpen === undefined) return null;
-          return this.notifications.insertNotificationAtInTransaction({
-            kind: "park_aged",
-            dedupeKey: `park_aged:${record.parkRecordId}`,
-            projectId: record.projectId,
-            workItemId: record.workItemId,
-            summary: notificationSummary(record, nowMilliseconds),
-          }, now);
+          return this.notifications.insertNotificationAtInTransaction(
+            {
+              kind: "park_aged",
+              dedupeKey: `park_aged:${record.parkRecordId}`,
+              projectId: record.projectId,
+              workItemId: record.workItemId,
+              summary: notificationSummary(record, nowMilliseconds),
+            },
+            now
+          );
         });
         if (inserted !== null) notified += 1;
       }
@@ -119,7 +132,9 @@ export class ParkLifecycleCollaborator {
         if (!Number.isFinite(ageSeconds)) throw new Error("TASK_BOARD_DATABASE_CORRUPT:parked_at");
         if (ageSeconds <= this.runtime.config.parkAutoAbandonSeconds) continue;
         const abandonment = this.runtime.store.transaction(() => {
-          const current = this.runtime.store.db.prepare(`
+          const current = this.runtime.store.db
+            .prepare(
+              `
             SELECT
               park_record.park_record_id,
               park_record.work_item_id,
@@ -131,17 +146,14 @@ export class ParkLifecycleCollaborator {
             FROM park_records AS park_record
             JOIN work_items AS work_item ON work_item.work_item_id=park_record.work_item_id
             WHERE park_record.park_record_id=? AND park_record.resolved_at IS NULL
-          `).get(record.parkRecordId) as (Row & Readonly<{ state: WorkItemState }>) | undefined;
+          `
+            )
+            .get(record.parkRecordId) as (Row & Readonly<{ state: WorkItemState }>) | undefined;
           if (current === undefined || current.state !== "parked") return null;
           const currentRecord = openParkRecordFromRow(current);
           const cancelledReason = `parked past auto-abandon threshold (${currentRecord.category})`;
           const actor = { type: "system" as const, id: "system:park-lifecycle" };
-          this.workItems.closeWorkItemWorkInTransaction(
-            currentRecord.workItemId,
-            cancelledReason,
-            actor,
-            now,
-          );
+          this.workItems.closeWorkItemWorkInTransaction(currentRecord.workItemId, cancelledReason, actor, now);
           transitionWorkItemInTransaction(this.runtime.store, {
             workItemId: currentRecord.workItemId,
             to: "abandoned",
@@ -152,13 +164,16 @@ export class ParkLifecycleCollaborator {
             cancelledReason,
             currentStage: null,
           });
-          this.notifications.insertNotificationAtInTransaction({
-            kind: "park_auto_abandoned",
-            dedupeKey: `park_auto_abandoned:${currentRecord.parkRecordId}`,
-            projectId: currentRecord.projectId,
-            workItemId: currentRecord.workItemId,
-            summary: notificationSummary(currentRecord, nowMilliseconds),
-          }, now);
+          this.notifications.insertNotificationAtInTransaction(
+            {
+              kind: "park_auto_abandoned",
+              dedupeKey: `park_auto_abandoned:${currentRecord.parkRecordId}`,
+              projectId: currentRecord.projectId,
+              workItemId: currentRecord.workItemId,
+              summary: notificationSummary(currentRecord, nowMilliseconds),
+            },
+            now
+          );
           return Object.freeze({ projectId: currentRecord.projectId });
         });
         if (abandonment !== null) {

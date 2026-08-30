@@ -72,11 +72,7 @@ export function decodeWorkItemCursor(value: string): WorkItemCursorTuple {
 export function encodeWorkItemCursor(row: Row): string {
   const terminalRank = numberValue(row, "work_item_terminal_rank");
   const priorityRank = numberValue(row, "work_item_priority_rank");
-  if (
-    (terminalRank !== 0 && terminalRank !== 1) ||
-    priorityRank < 0 ||
-    priorityRank >= WORK_ITEM_PRIORITIES.length
-  ) {
+  if ((terminalRank !== 0 && terminalRank !== 1) || priorityRank < 0 || priorityRank >= WORK_ITEM_PRIORITIES.length) {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_cursor_rank");
   }
   const payload: WorkItemCursorTuple = Object.freeze({

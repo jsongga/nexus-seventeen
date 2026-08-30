@@ -9,10 +9,7 @@ export const PUBLISHED_INTERFACE_MAX_BYTES = 64 * 1_024;
 export const PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES = 128;
 export const PUBLISHED_INTERFACE_PATH = "docs/interface.md" as const;
 
-export type PublishedInterfaceContentFailureDetail =
-  | "invalid_utf8"
-  | "prohibited_characters"
-  | "empty";
+export type PublishedInterfaceContentFailureDetail = "invalid_utf8" | "prohibited_characters" | "empty";
 
 export type PublishedInterfaceReadResult =
   | Readonly<{ kind: "present"; markdown: string }>
@@ -28,12 +25,7 @@ export type PublishedInterfaceReadResult =
     }>;
 
 function gitArguments(repoPath: string, arguments_: readonly string[]): readonly string[] {
-  return [
-    "-c", "core.fsmonitor=",
-    "-c", "core.hooksPath=",
-    "-C", repoPath,
-    ...arguments_,
-  ];
+  return ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_];
 }
 
 function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
@@ -48,7 +40,9 @@ function publishedTreeEntry(tree: string, path: string): "absent" | "blob" | "no
   const entries = tree.split("\0").filter((entry) => entry.length > 0);
   if (entries.length === 0) return "absent";
   if (entries.length !== 1) return "read_error";
-  const match = /^(?<mode>[0-7]{6}) (?<type>[a-z]+) (?:[0-9a-f]{40}|[0-9a-f]{64})\t(?<path>[\s\S]+)$/u.exec(entries[0]!);
+  const match = /^(?<mode>[0-7]{6}) (?<type>[a-z]+) (?:[0-9a-f]{40}|[0-9a-f]{64})\t(?<path>[\s\S]+)$/u.exec(
+    entries[0]!
+  );
   if (match?.groups?.path !== path) return "read_error";
   return match.groups.type === "blob" && (match.groups.mode === "100644" || match.groups.mode === "100755")
     ? "blob"
@@ -56,19 +50,19 @@ function publishedTreeEntry(tree: string, path: string): "absent" | "blob" | "no
 }
 
 function blocked(
-  reason: Exclude<PublishedInterfaceFailureReason, "over_budget" | "invalid_markdown" | "empty">,
+  reason: Exclude<PublishedInterfaceFailureReason, "over_budget" | "invalid_markdown" | "empty">
 ): PublishedInterfaceReadResult;
 function blocked(
   reason: "invalid_markdown",
-  detail: Exclude<PublishedInterfaceContentFailureDetail, "empty">,
+  detail: Exclude<PublishedInterfaceContentFailureDetail, "empty">
 ): PublishedInterfaceReadResult;
 function blocked(reason: "empty", detail: "empty"): PublishedInterfaceReadResult;
 function blocked(
   reason: Exclude<PublishedInterfaceFailureReason, "over_budget">,
-  detail?: PublishedInterfaceContentFailureDetail,
+  detail?: PublishedInterfaceContentFailureDetail
 ): PublishedInterfaceReadResult {
   return Object.freeze(
-    detail === undefined ? { kind: "blocked", reason } : { kind: "blocked", reason, detail },
+    detail === undefined ? { kind: "blocked", reason } : { kind: "blocked", reason, detail }
   ) as PublishedInterfaceReadResult;
 }
 
@@ -83,7 +77,10 @@ function assertReadTarget(repoPath: string, sha: string, path: string): void {
   if (!GIT_OBJECT_ID_PATTERN.test(sha)) throw new TypeError("published interface SHA is invalid");
   const segments = path.split("/");
   if (
-    path.length === 0 || path.startsWith("/") || path.includes("\0") || path.includes(":") ||
+    path.length === 0 ||
+    path.startsWith("/") ||
+    path.includes("\0") ||
+    path.includes(":") ||
     segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     throw new TypeError("published interface path is invalid");
@@ -94,7 +91,7 @@ export function readPublishedInterface(
   repoPath: string,
   sha: string,
   path = PUBLISHED_INTERFACE_PATH,
-  runner: GitRunner = runDeclaredScopeGit,
+  runner: GitRunner = runDeclaredScopeGit
 ): PublishedInterfaceReadResult {
   assertReadTarget(repoPath, sha, path);
   let tree: string;

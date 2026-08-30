@@ -65,7 +65,10 @@ test("enumerates committed markdown from the requested ref and applies prefix ex
     },
   ]);
   assert.equal(sources.find((source) => source.path === "docs/guide.md")?.blobSha, guideBlobSha);
-  assert.equal(sources.some((source) => source.path === "docs/worktree-only.md"), false);
+  assert.equal(
+    sources.some((source) => source.path === "docs/worktree-only.md"),
+    false
+  );
 });
 
 test("reports the offending raw tree entry when git output is malformed", () => {
@@ -80,45 +83,36 @@ test("reports the offending raw tree entry when git output is malformed", () => 
       assert.match(error.message, /…/u);
       assert.doesNotMatch(error.message, /hidden tail/u);
       return true;
-    },
+    }
   );
 });
 
 test("limits recursive tree enumeration to the README and docs pathspecs", () => {
   const calls: Array<readonly string[]> = [];
 
-  assert.deepEqual(enumerateDocs("/repo", "HEAD", {}, (arguments_) => {
-    calls.push([...arguments_]);
-    return "";
-  }), []);
+  assert.deepEqual(
+    enumerateDocs("/repo", "HEAD", {}, (arguments_) => {
+      calls.push([...arguments_]);
+      return "";
+    }),
+    []
+  );
 
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0]?.slice(-7), [
-    "ls-tree",
-    "-r",
-    "-z",
-    "HEAD",
-    "--",
-    "README.md",
-    "docs",
-  ]);
+  assert.deepEqual(calls[0]?.slice(-7), ["ls-tree", "-r", "-z", "HEAD", "--", "README.md", "docs"]);
 });
 
 test("rejects the same unsafe exclude patterns as config parsing before invoking git", () => {
-  const patterns = [
-    "/docs/private/**",
-    "docs/*/private/**",
-    "docs/./private/**",
-    "docs/../private/**",
-  ];
+  const patterns = ["/docs/private/**", "docs/*/private/**", "docs/./private/**", "docs/../private/**"];
 
   for (const pattern of patterns) {
     assert.throws(
-      () => enumerateDocs("/repo", "HEAD", { exclude: [pattern] }, () => {
-        throw new Error("git must not run for an invalid exclude");
-      }),
+      () =>
+        enumerateDocs("/repo", "HEAD", { exclude: [pattern] }, () => {
+          throw new Error("git must not run for an invalid exclude");
+        }),
       /glob-lite <prefix>\/\*\* syntax/u,
-      pattern,
+      pattern
     );
   }
 });

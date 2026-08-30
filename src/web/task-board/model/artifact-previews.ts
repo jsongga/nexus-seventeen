@@ -19,22 +19,24 @@ export function beginArtifactPreviewLoad(options: ArtifactPreviewLoadOptions): A
   const revokeObjectURL = options.revokeObjectURL ?? ((url: string) => URL.revokeObjectURL(url));
   let disposed = false;
 
-  const done = Promise.all(options.artifactIds.map(async (artifactId) => {
-    let url: string;
-    try {
-      const blob = await options.getBlob(artifactId, controller.signal);
-      url = createObjectURL(blob);
-    } catch {
-      if (!disposed) options.onPreview(artifactId, null);
-      return;
-    }
-    if (disposed) {
-      revokeObjectURL(url);
-      return;
-    }
-    created.add(url);
-    options.onPreview(artifactId, url);
-  })).then(() => undefined);
+  const done = Promise.all(
+    options.artifactIds.map(async (artifactId) => {
+      let url: string;
+      try {
+        const blob = await options.getBlob(artifactId, controller.signal);
+        url = createObjectURL(blob);
+      } catch {
+        if (!disposed) options.onPreview(artifactId, null);
+        return;
+      }
+      if (disposed) {
+        revokeObjectURL(url);
+        return;
+      }
+      created.add(url);
+      options.onPreview(artifactId, url);
+    })
+  ).then(() => undefined);
 
   return {
     done,

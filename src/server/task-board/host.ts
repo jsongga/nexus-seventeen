@@ -65,7 +65,11 @@ function pathNotFound(): TaskBoardError {
 }
 
 function pathOutsideRoots(): TaskBoardError {
-  return new TaskBoardError(403, TASK_BOARD_ERROR_CODES.HOST_PATH_OUTSIDE_ROOTS, "The folder is outside the browsable area");
+  return new TaskBoardError(
+    403,
+    TASK_BOARD_ERROR_CODES.HOST_PATH_OUTSIDE_ROOTS,
+    "The folder is outside the browsable area"
+  );
 }
 
 function pathUnreadable(): TaskBoardError {
@@ -113,9 +117,9 @@ export async function listProjectRoots(context: HostContext): Promise<HostProjec
     } catch {
       continue;
     }
-    const projects = (await Promise.all(
-      names.slice(0, HOST_LIST_CAP).map((name) => projectEntry(rootPath, resolvedRoot, name, bases)),
-    )).filter((entry): entry is HostProjectEntry => entry !== null);
+    const projects = (
+      await Promise.all(names.slice(0, HOST_LIST_CAP).map((name) => projectEntry(rootPath, resolvedRoot, name, bases)))
+    ).filter((entry): entry is HostProjectEntry => entry !== null);
     roots.push({ name: basename(rootPath), path: rootPath, projects, truncated: names.length > HOST_LIST_CAP });
   }
   return roots.sort((left, right) => left.name.localeCompare(right.name));
@@ -151,7 +155,7 @@ async function projectEntry(
   rootPath: string,
   resolvedRoot: string,
   name: string,
-  bases: readonly string[],
+  bases: readonly string[]
 ): Promise<HostProjectEntry | null> {
   const path = join(rootPath, name);
   try {
@@ -207,7 +211,7 @@ async function resolveRequestedPath(requestedPath: string, bases: readonly strin
 async function directoryEntry(
   parent: string,
   name: string,
-  bases: readonly string[],
+  bases: readonly string[]
 ): Promise<HostDirectoryEntry | null> {
   const path = join(parent, name);
   try {
@@ -241,9 +245,9 @@ export async function listDirectories(context: HostContext, requestedPath: strin
     throwMappedDirectoryError(error);
   }
   const parentPath = dirname(resolved);
-  const entries = (await Promise.all(
-    names.slice(0, HOST_LIST_CAP).map((name) => directoryEntry(resolved, name, bases)),
-  )).filter((entry): entry is HostDirectoryEntry => entry !== null);
+  const entries = (
+    await Promise.all(names.slice(0, HOST_LIST_CAP).map((name) => directoryEntry(resolved, name, bases)))
+  ).filter((entry): entry is HostDirectoryEntry => entry !== null);
   return {
     path: resolved,
     parent: parentPath !== resolved && withinBases(parentPath, bases) ? parentPath : null,

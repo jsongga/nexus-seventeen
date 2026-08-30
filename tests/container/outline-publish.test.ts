@@ -31,11 +31,7 @@ function dataRecord(value: unknown, label: string): Record<string, unknown> {
   return record(record(value, `${label} response`).data, `${label}.data`);
 }
 
-async function outlineApi(
-  fixture: OutlineFixture,
-  path: string,
-  body: unknown,
-): Promise<OutlineEnvelope> {
+async function outlineApi(fixture: OutlineFixture, path: string, body: unknown): Promise<OutlineEnvelope> {
   const response = await fetch(`${fixture.baseUrl}${path}`, {
     method: "POST",
     headers: {
@@ -63,91 +59,102 @@ test("Outline container image stays equal to the deployment compose pin", async 
   assert.equal(composeImage, OUTLINE_IMAGE);
 });
 
-test("real Outline publishes this repo idempotently and archives excluded docs", {
-  timeout: 600_000,
-}, async (t) => {
-  const fixture = await bootOutline();
-  t.after(() => fixture.teardown());
-  const repoPath = resolve(".");
-  const entry: DocsPublishRepo = Object.freeze({
-    name: REPO_NAME,
-    path: repoPath,
-    ref: "HEAD",
-    exclude: Object.freeze(["docs/superpowers/**"]),
-  });
-  const sink = new OutlineSink({
-    baseUrl: fixture.baseUrl,
-    token: fixture.token,
-    allowInsecureBaseUrl: true,
-    timeoutMs: 30_000,
-  });
+test(
+  "real Outline publishes this repo idempotently and archives excluded docs",
+  {
+    timeout: 600_000,
+  },
+  async (t) => {
+    const fixture = await bootOutline();
+    t.after(() => fixture.teardown());
+    const repoPath = resolve(".");
+    const entry: DocsPublishRepo = Object.freeze({
+      name: REPO_NAME,
+      path: repoPath,
+      ref: "HEAD",
+      exclude: Object.freeze(["docs/superpowers/**"]),
+    });
+    const sink = new OutlineSink({
+      baseUrl: fixture.baseUrl,
+      token: fixture.token,
+      allowInsecureBaseUrl: true,
+      timeoutMs: 30_000,
+    });
 
-  const first = await fixture.step("publish-run-1-create", async () => {
-    const report = await publishRepo(entry, sink);
-    assert.equal(report.failures.length, 0, `run 1 failures: ${report.failures.join("; ")}`);
-    assert.ok(report.created > 0, `run 1 should create documents: ${JSON.stringify(report)}`);
-    return report;
-  });
+    const first = await fixture.step("publish-run-1-create", async () => {
+      const report = await publishRepo(entry, sink);
+      assert.equal(report.failures.length, 0, `run 1 failures: ${report.failures.join("; ")}`);
+      assert.ok(report.created > 0, `run 1 should create documents: ${JSON.stringify(report)}`);
+      return report;
+    });
 
-  await fixture.step("publish-run-2-all-unchanged", async () => {
-    const report = await publishRepo(entry, sink);
-    assert.equal(report.failures.length, 0, `run 2 failures: ${report.failures.join("; ")}`);
-    assert.equal(report.created, 0);
-    assert.equal(report.updated, 0);
-    assert.equal(report.archived, 0);
-    assert.equal(report.unchanged, first.created, `run 2 was not all-unchanged: ${JSON.stringify(report)}`);
-  });
+    await fixture.step("publish-run-2-all-unchanged", async () => {
+      const report = await publishRepo(entry, sink);
+      assert.equal(report.failures.length, 0, `run 2 failures: ${report.failures.join("; ")}`);
+      assert.equal(report.created, 0);
+      assert.equal(report.updated, 0);
+      assert.equal(report.archived, 0);
+      assert.equal(report.unchanged, first.created, `run 2 was not all-unchanged: ${JSON.stringify(report)}`);
+    });
 
-  const workflowDocument = await fixture.step("assert-read-only-collection-and-banner", async () => {
-    const collections = dataArray(
-      await outlineApi(fixture, "/api/collections.list", { limit: 100 }),
-      "collections.list",
-    );
-    const collection = collections.find((candidate) => candidate.name === COLLECTION_NAME);
-    assert.ok(collection, `collection ${COLLECTION_NAME} was not returned by collections.list`);
-    assert.equal(collection.permission, "read");
-    assert.equal(typeof collection.id, "string");
+    const workflowDocument = await fixture.step("assert-read-only-collection-and-banner", async () => {
+      const collections = dataArray(
+        await outlineApi(fixture, "/api/collections.list", { limit: 100 }),
+        "collections.list"
+      );
+      const collection = collections.find((candidate) => candidate.name === COLLECTION_NAME);
+      assert.ok(collection, `collection ${COLLECTION_NAME} was not returned by collections.list`);
+      assert.equal(collection.permission, "read");
+      assert.equal(typeof collection.id, "string");
 
-    const documents = dataArray(
-      await outlineApi(fixture, "/api/documents.list", { collectionId: collection.id, limit: 100 }),
-      "documents.list",
-    );
-    const workflow = documents.find((candidate) => candidate.title === WORKFLOW_TITLE);
-    assert.ok(workflow, `${WORKFLOW_TITLE} was not returned by documents.list`);
-    assert.equal(typeof workflow.id, "string");
+      const documents = dataArray(
+        await outlineApi(fixture, "/api/documents.list", { collectionId: collection.id, limit: 100 }),
+        "documents.list"
+      );
+      const workflow = documents.find((candidate) => candidate.title === WORKFLOW_TITLE);
+      assert.ok(workflow, `${WORKFLOW_TITLE} was not returned by documents.list`);
+      assert.equal(typeof workflow.id, "string");
 
-    const document = dataRecord(
-      await outlineApi(fixture, "/api/documents.info", { id: workflow.id }),
-      "documents.info",
-    );
-    assert.equal(document.id, workflow.id);
-    assert.equal(document.title, WORKFLOW_TITLE);
-    const text = document.text;
-    assert.ok(typeof text === "string", "documents.info.data.text must be a string");
-    const blobSha = (await runGit(repoPath, ["rev-parse", `HEAD:${WORKFLOW_TITLE}`])).trim();
-    const expectedBanner = `> **Read-only mirror.** Source: \`${REPO_NAME}/${WORKFLOW_TITLE}\` @ blob ${blobSha.slice(0, 12)}. Edit in the repository — this page is republished on merge. Comments are welcome here.`;
-    assert.equal(text.split("\n", 1)[0], expectedBanner);
-    return Object.freeze({ id: workflow.id, title: workflow.title });
-  });
+      const document = dataRecord(
+        await outlineApi(fixture, "/api/documents.info", { id: workflow.id }),
+        "documents.info"
+      );
+      assert.equal(document.id, workflow.id);
+      assert.equal(document.title, WORKFLOW_TITLE);
+      const text = document.text;
+      assert.ok(typeof text === "string", "documents.info.data.text must be a string");
+      const blobSha = (await runGit(repoPath, ["rev-parse", `HEAD:${WORKFLOW_TITLE}`])).trim();
+      const expectedBanner = `> **Read-only mirror.** Source: \`${REPO_NAME}/${WORKFLOW_TITLE}\` @ blob ${blobSha.slice(0, 12)}. Edit in the repository — this page is republished on merge. Comments are welcome here.`;
+      assert.equal(text.split("\n", 1)[0], expectedBanner);
+      return Object.freeze({ id: workflow.id, title: workflow.title });
+    });
 
-  await fixture.step("publish-run-3-archive-widened-exclude", async () => {
-    const report = await publishRepo(Object.freeze({
-      ...entry,
-      exclude: Object.freeze(["docs/superpowers/**", "docs/**"]),
-    }), sink);
-    assert.equal(report.failures.length, 0, `run 3 failures: ${report.failures.join("; ")}`);
-    assert.equal(report.created, 0);
-    assert.equal(report.updated, 0);
-    assert.equal(report.archived, first.created - 1, `every docs/** title except README.md should archive: ${JSON.stringify(report)}`);
+    await fixture.step("publish-run-3-archive-widened-exclude", async () => {
+      const report = await publishRepo(
+        Object.freeze({
+          ...entry,
+          exclude: Object.freeze(["docs/superpowers/**", "docs/**"]),
+        }),
+        sink
+      );
+      assert.equal(report.failures.length, 0, `run 3 failures: ${report.failures.join("; ")}`);
+      assert.equal(report.created, 0);
+      assert.equal(report.updated, 0);
+      assert.equal(
+        report.archived,
+        first.created - 1,
+        `every docs/** title except README.md should archive: ${JSON.stringify(report)}`
+      );
 
-    const archived = dataRecord(
-      await outlineApi(fixture, "/api/documents.info", { id: workflowDocument.id }),
-      "documents.info archived",
-    );
-    assert.equal(archived.id, workflowDocument.id, "archived document was deleted or replaced");
-    assert.equal(archived.title, workflowDocument.title);
-    const archivedAt = archived.archivedAt;
-    assert.ok(typeof archivedAt === "string", "dropped document must have archivedAt set");
-    assert.ok(archivedAt.length > 0, "dropped document archivedAt must be non-empty");
-  });
-});
+      const archived = dataRecord(
+        await outlineApi(fixture, "/api/documents.info", { id: workflowDocument.id }),
+        "documents.info archived"
+      );
+      assert.equal(archived.id, workflowDocument.id, "archived document was deleted or replaced");
+      assert.equal(archived.title, workflowDocument.title);
+      const archivedAt = archived.archivedAt;
+      assert.ok(typeof archivedAt === "string", "dropped document must have archivedAt set");
+      assert.ok(archivedAt.length > 0, "dropped document archivedAt must be non-empty");
+    });
+  }
+);

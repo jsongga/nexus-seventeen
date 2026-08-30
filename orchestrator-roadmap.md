@@ -13,7 +13,7 @@ Nexus-seventeen already contains the design's §3 foundations — durable
 SQLite state with validate-inside-transaction writes, conditional claiming
 with replay protection, a reconciler, after-commit events with SSE replay —
 plus credential fencing and a proto-adapter over the Codex/Claude CLIs. What
-it lacks is everything that makes the design an *orchestrator*: the
+it lacks is everything that makes the design an _orchestrator_: the
 ten-state task pipeline, git worktrees and PRs, per-task containers, test
 tiering, the review/fix loop with a findings ledger, scheduling, budgets,
 and Outline. The plan is a retrofit in `§15` build order, not a rewrite: ten
@@ -21,15 +21,15 @@ campaigns, each independently shippable, riding on the hardened store.
 
 ## Gap analysis
 
-| Design § | State | Evidence / gap |
-| --- | --- | --- |
-| §3 durable writes, conditional claim, reconciler | **Have** | Audit campaign: `BEGIN IMMEDIATE` validate-before-write, claim replay protection, ready-node reconciler |
-| §13 event stream (durable → tail, replay) | **Have** | After-commit events, SSE with sequence cursor |
-| §12 trust boundary (tokens) | **Partial** | Credential versioning/rotation/quarantine exist; repo-scoped git tokens, secret scanning, egress control do not |
-| §4 plan approval gate | **Partial** | Confirm/reject on manager plans exists; the rich plan record (change shape, tier, declared scope, executable acceptance criteria, assumptions) does not |
-| §11 runtime adapter | **Partial** | Contained CLI launcher wraps Codex/Claude; no internal event schema, no capability profiles |
-| §3 task states, heartbeat, pinned claim metadata | **Missing (conflicts)** | Board vocabulary is intake-era; no heartbeat; nothing pinned at claim |
-| §4 stages (Intake→…→merged), §10 containers, git/PR flow, §5 tiers, §6 onboarding, review/fix + ledgers, §8 scheduling, §12 budgets, §7 decomposition, §9 cross-repo, §2 Outline | **Missing** | The build below |
+| Design §                                                                                                                                                                         | State                   | Evidence / gap                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3 durable writes, conditional claim, reconciler                                                                                                                                 | **Have**                | Audit campaign: `BEGIN IMMEDIATE` validate-before-write, claim replay protection, ready-node reconciler                                                 |
+| §13 event stream (durable → tail, replay)                                                                                                                                        | **Have**                | After-commit events, SSE with sequence cursor                                                                                                           |
+| §12 trust boundary (tokens)                                                                                                                                                      | **Partial**             | Credential versioning/rotation/quarantine exist; repo-scoped git tokens, secret scanning, egress control do not                                         |
+| §4 plan approval gate                                                                                                                                                            | **Partial**             | Confirm/reject on manager plans exists; the rich plan record (change shape, tier, declared scope, executable acceptance criteria, assumptions) does not |
+| §11 runtime adapter                                                                                                                                                              | **Partial**             | Contained CLI launcher wraps Codex/Claude; no internal event schema, no capability profiles                                                             |
+| §3 task states, heartbeat, pinned claim metadata                                                                                                                                 | **Missing (conflicts)** | Board vocabulary is intake-era; no heartbeat; nothing pinned at claim                                                                                   |
+| §4 stages (Intake→…→merged), §10 containers, git/PR flow, §5 tiers, §6 onboarding, review/fix + ledgers, §8 scheduling, §12 budgets, §7 decomposition, §9 cross-repo, §2 Outline | **Missing**             | The build below                                                                                                                                         |
 
 **Conflicts to migrate, not build around:** the task state machine (v19
 schema migration through the single-sourced enums — old open tabs must
@@ -45,11 +45,11 @@ Follows `§15`'s order, with scheduling/budgets and Outline inserted where
 their prerequisites exist; each campaign names its design sections and its
 exit criterion.
 
-**0. Project picker** *(shipped 2026-08-15)* — registration front door
+**0. Project picker** _(shipped 2026-08-15)_ — registration front door
 for onboarding. Exit: add a project by picking a discovered repo. Small;
 ships while campaign 1 is specced.
 
-**1. Task record and state machine** *(shipped 2026-08-16; §3; §15 item 1 delta)* — v19
+**1. Task record and state machine** _(shipped 2026-08-16; §3; §15 item 1 delta)_ — v19
 migration to `queued → planning → plan_approval → designing → implementing →
 verifying → reviewing → fixing → final_approval → merged` plus
 `parked | abandoned | dead_letter`; heartbeat writes and a reconciler keyed
@@ -58,18 +58,18 @@ per-stage elapsed tracking; forward-tolerant web enum parsing (closes the
 parked audit finding). Exit: a task can be driven through the full state
 graph by tests, and a killed run is swept and re-entered cleanly.
 
-**2. Worktree + container execution** *(shipped 2026-08-18; §10; item 2)* — one git worktree and
+**2. Worktree + container execution** _(shipped 2026-08-18; §10; item 2)_ — one git worktree and
 branch per task; Docker `agent` image target for nexus-seventeen itself;
 container-per-task lifecycle behind the runtime adapter; egress allowlist;
 no prod secrets. Exit: a task runs in a disposable container against its own
 worktree and the container's death is uneventful.
 
-**3. Fast verify path** *(shipped 2026-08-19; §5; item 3)* — three-tier test contract in
+**3. Fast verify path** _(shipped 2026-08-19; §5; item 3)_ — three-tier test contract in
 `workflow.md`, diff-derived fast tier, background execution for long runs;
 nexus-seventeen onboards itself as the proof. Exit: fast tier under ~10 s
 here, full tier runs headless with tail-only ingestion.
 
-**4. Pipeline v1: Intake → plan gate → Implement → Verify** *(shipped 2026-08-19, local-first — GitHub PR slice deferred; §4; item 4)* —
+**4. Pipeline v1: Intake → plan gate → Implement → Verify** _(shipped 2026-08-19, local-first — GitHub PR slice deferred; §4; item 4)_ —
 single runtime; the full plan record (change shape, tier, declared scope,
 acceptance criteria, assumptions, decision-enumeration); plan-approval UI;
 Implement's bright lines and staged commits; machine-only Verify; PR keyed
@@ -78,39 +78,39 @@ Serial execution (one task at a time) defers §8. Exit: a real task flows
 request → approved plan → green Verify → PR → merge with no human in the
 middle.
 
-**5. Review + Fix loop** *(shipped 2026-08-19; §4; item 5)* — reviewer on a different
+**5. Review + Fix loop** _(shipped 2026-08-19; §4; item 5)_ — reviewer on a different
 runtime/model; structured findings; files-touched vs predicted; fix rounds
 (cap 3) with fresh sessions; dead letter; Design stage for hazardous tier
 with its failure-point table. Exit: a seeded defect is caught, fixed, and
 re-verified without human input.
 
-**6. Ledgers + observability** *(shipped 2026-08-20; §13; item 6)* — findings and park ledgers
+**6. Ledgers + observability** _(shipped 2026-08-20; §13; item 6)_ — findings and park ledgers
 with categories; park lifecycle (age, notify, auto-abandon); stage
 timeline / round count / heartbeat default view; audit view; redact before
 persisting. Exit: recurring finding categories are queryable, park reasons
 reviewable.
 
-**7. Scheduling + budgets** *(shipped 2026-08-21; §8, §12)* — scope-overlap claim gating;
+**7. Scheduling + budgets** _(shipped 2026-08-21; §8, §12)_ — scope-overlap claim gating;
 per-stage and per-task wall-clock caps; kill switch; base-branch-push
 webhook withdrawing a pending final approval. Concurrency >1 turns on here.
 Exit: overlapping tasks serialize, a runaway stage is caught by its cap, the
 kill switch drains cleanly.
 
-**8. Second runtime + onboarding task type** *(shipped 2026-08-25; §11, §6; item 7)* — internal
+**8. Second runtime + onboarding task type** _(shipped 2026-08-25; §11, §6; item 7)_ — internal
 event schema, capability profiles, second adapter; onboarding as a pipeline
 task producing the doc slots, tiers, `agent` image, and gap report for the
 first product repos (start with the Cicada estate's most active pair). Exit:
 adding the second runtime touched one adapter + one profile; one external
 repo onboarded end to end.
 
-**9. Outline + docs pipeline** *(shipped 2026-08-27; §2)* — self-hosted Outline (Dokploy);
+**9. Outline + docs pipeline** _(shipped 2026-08-27; §2)_ — self-hosted Outline (Dokploy);
 read-only CI publish of repo docs on merge; board pen-documents retired
 (export, then remove editor and routes). Runs parallel to 7–8 once 4 exists;
 listed here because retirement waits for the replacement. Exit: repo docs
 readable in Outline with source banners; Documents page gone.
 
-**9.5. File diet + consolidation** *(shipped 2026-08-27; approved 2026-08-26; from the five-agent
-layout/dead-code analysis)* — Tier A: `.gitignore` the `.superpowers/`
+**9.5. File diet + consolidation** _(shipped 2026-08-27; approved 2026-08-26; from the five-agent
+layout/dead-code analysis)_ — Tier A: `.gitignore` the `.superpowers/`
 scratch; move the company bootstrap into `config/`; mirror-rule fix (move
 the 10 collaborator-named tests into
 `tests/server/task-board/collaborators/`, relocate the stray persistence
@@ -138,7 +138,7 @@ against the pre-v25 production DB), this roadmap file, all schema fixtures,
 files ≲72, `src`+`tests` ≲260, zero single-file directories outside
 mandated conventions, gates + goldens green.
 
-**9.6. Board UX polish** *(shipped 2026-08-28; requested 2026-08-26; spec 2026-08-27)* — no browser-native
+**9.6. Board UX polish** _(shipped 2026-08-28; requested 2026-08-26; spec 2026-08-27)_ — no browser-native
 dialogs anywhere: replace the pause-reason `globalThis.prompt` at
 `BoardApp.tsx:566` with a custom anchored popover (reason field + confirm,
 matching the design system) — this is the only native dialog in the app;
@@ -150,16 +150,16 @@ alert` calls; task creation keeps the board visibly present behind it.
 Shipped 2026-08-28; deliberate audit residue left as takeovers: `Cancel work item`,
 `Reject proposed plan`, `Request implementation changes`, the agent-type editor, and the project picker.
 
-**9.6.1. Anchored-dialog follow-ups** *(shipped 2026-08-28; parked at the 9.6 fix-wave cap)* —
+**9.6.1. Anchored-dialog follow-ups** _(shipped 2026-08-28; parked at the 9.6 fix-wave cap)_ —
 clean (non-dirty) cross-dialog switches request close twice before React commits
-(pending open can be clobbered); clicking the *other* Add-task trigger while the
+(pending open can be clobbered); clicking the _other_ Add-task trigger while the
 form is open drops the re-anchor; a `lg` breakpoint crossing during an in-flight
 pause hides a later 409/network error and the typed reason; no Playwright flow
 opens `Approve and merge pipeline`; the scrimless anchored panel's edge relies on
 the elevation shadow alone. None destroys data; a second click or retry recovers.
 
-**9.7. Naming audit** *(queued 2026-08-28; analysis first, renames as reviewed
-mechanical tasks)* — sweep code, config, docs, and UI copy for inconsistent
+**9.7. Naming audit** _(queued 2026-08-28; analysis first, renames as reviewed
+mechanical tasks)_ — sweep code, config, docs, and UI copy for inconsistent
 vocabulary (`steward` vs `nexus-seventeen`, `provider` vs `runtime`, `intake` /
 `onboarding` / `work item` / `task`, `lane` vs `worker`), file names vs their
 primary export, folder names vs the seam they hold, abbreviations and
@@ -167,7 +167,7 @@ misleading names; produce a renaming plan with ripple costs and the
 migration-sensitive exceptions (Dokploy volume names, pinned identifiers,
 external env vars) called out.
 
-**9.8. Load-tolerant pipeline e2e timing** *(queued 2026-08-29)* — the
+**9.8. Load-tolerant pipeline e2e timing** _(queued 2026-08-29)_ — the
 `machine-verify-integration` and `pipeline-e2e` arcs pin fixed windows
 ("verify sweep did not reach reviewing"; a 122 s kill-switch run gets
 wall-clock-parked) and fail whenever a reviewer runs tests concurrently;
@@ -177,14 +177,14 @@ arc is intermittent under load too (0/5 failures isolated, 1/3 loaded). Make the
 observed sweep latency (or gate on state transitions instead of elapsed
 time) so a loaded machine cannot fake a regression.
 
-**9.9. Repository identity separate from the product project** *(queued
-2026-08-29)* — a board Project has exactly one `repo_path`, and decomposition
+**9.9. Repository identity separate from the product project** _(queued
+2026-08-29)_ — a board Project has exactly one `repo_path`, and decomposition
 assigns one child per project, so a product that spans several repositories
 inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
 repositories as their own records (project → repositories), let a declared
 child target a repository, and migrate `repo_path` into it.
 
-**10. Decomposition + cross-repo** *(shipped 2026-08-29)* — parent/child work
+**10. Decomposition + cross-repo** _(shipped 2026-08-29)_ — parent/child work
 items (`coordinating` parent, children created pre-confirmed at plan confirm),
 the independently-mergeable split rule by change shape, Expand → Migrate →
 Contract with auto-merge under the parent plan and a human gate on Contract
@@ -198,8 +198,8 @@ board (claims now carry `phase` + `crossRepoContext`). Limits: one level of
 decomposition; one repository per Project (→ 9.9); an abandoned Expand/Migrate
 leaves cancel as the only exit.
 
-**11. Codebase health — formatting, comments, shared plumbing** *(proposed
-2026-08-29; spec `docs/superpowers/specs/2026-08-29-codebase-health-audit.md`)* —
+**11. Codebase health — formatting, comments, shared plumbing** _(proposed
+2026-08-29; spec `docs/superpowers/specs/2026-08-29-codebase-health-audit.md`)_ —
 prettier as one whitespace-only commit, then the adopted comment convention
 (`/** header */` + `/* —— Section —— */` banners, ratcheted by a tooling test,
 not eslint) over the nine highest-value files; one `server/shared/git.ts` for
@@ -207,13 +207,13 @@ four byte-identical git factories; single-source credential recognition and the
 automation stage→role table; five cheap moves that delete redundant levels; two
 dead exports. Exit: the style test is green with an allowlist that only shrinks.
 
-**12. Layering — workflow orchestration out of persistence** *(proposed
-2026-08-29)* — break the `persistence/` ↔ `collaborators/` cycle (workflow.ts
+**12. Layering — workflow orchestration out of persistence** _(proposed
+2026-08-29)_ — break the `persistence/` ↔ `collaborators/` cycle (workflow.ts
 imports three collaborators; 18 of 24 import back), split `ProjectsCollaborator`
 and `validate.ts` behind unchanged façades. Exit: a dependency-direction test
 that fails on a back-import.
 
-**13. Web feature seams** *(proposed 2026-08-29)* — flatten
+**13. Web feature seams** _(proposed 2026-08-29)_ — flatten
 `src/web/task-board/*` → `src/web/*` (21 import lines), move `BoardPage` to
 routing ownership, split `WorkItemDetail.tsx` along the seam its five test files
 already use, then slice model/views into feature folders. Exit: no file over

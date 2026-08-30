@@ -1,4 +1,4 @@
-type ProjectMetadataKind = 'workspace' | 'github' | 'dokploy' | 'live' | 'docs' | 'other';
+type ProjectMetadataKind = "workspace" | "github" | "dokploy" | "live" | "docs" | "other";
 
 export interface ProjectMetadataEntry {
   key: string;
@@ -16,40 +16,40 @@ interface ProjectMetadata {
 const keyedLine = /^([A-Za-z][A-Za-z0-9 _-]{0,39}):[ \t]*(.*)$/u;
 const windowsWorkspace = /^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/u;
 
-const knownKeys: Readonly<Record<string, { label: string; kind: ProjectMetadataKind | 'summary' }>> = {
-  summary: { label: 'Summary', kind: 'summary' },
-  description: { label: 'Summary', kind: 'summary' },
-  overview: { label: 'Summary', kind: 'summary' },
-  workspace: { label: 'Workspace', kind: 'workspace' },
-  workspaces: { label: 'Workspace', kind: 'workspace' },
-  'workspace path': { label: 'Workspace', kind: 'workspace' },
-  github: { label: 'GitHub', kind: 'github' },
-  'github repo': { label: 'GitHub', kind: 'github' },
-  'github repository': { label: 'GitHub', kind: 'github' },
-  dokploy: { label: 'Dokploy', kind: 'dokploy' },
-  live: { label: 'Live site', kind: 'live' },
-  'live site': { label: 'Live site', kind: 'live' },
-  site: { label: 'Live site', kind: 'live' },
-  website: { label: 'Live site', kind: 'live' },
-  docs: { label: 'Documentation', kind: 'docs' },
-  documentation: { label: 'Documentation', kind: 'docs' },
-  runbook: { label: 'Documentation', kind: 'docs' },
+const knownKeys: Readonly<Record<string, { label: string; kind: ProjectMetadataKind | "summary" }>> = {
+  summary: { label: "Summary", kind: "summary" },
+  description: { label: "Summary", kind: "summary" },
+  overview: { label: "Summary", kind: "summary" },
+  workspace: { label: "Workspace", kind: "workspace" },
+  workspaces: { label: "Workspace", kind: "workspace" },
+  "workspace path": { label: "Workspace", kind: "workspace" },
+  github: { label: "GitHub", kind: "github" },
+  "github repo": { label: "GitHub", kind: "github" },
+  "github repository": { label: "GitHub", kind: "github" },
+  dokploy: { label: "Dokploy", kind: "dokploy" },
+  live: { label: "Live site", kind: "live" },
+  "live site": { label: "Live site", kind: "live" },
+  site: { label: "Live site", kind: "live" },
+  website: { label: "Live site", kind: "live" },
+  docs: { label: "Documentation", kind: "docs" },
+  documentation: { label: "Documentation", kind: "docs" },
+  runbook: { label: "Documentation", kind: "docs" },
 };
 
 function normalizedKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[_-]+/gu, ' ').replace(/\s+/gu, ' ');
+  return value.trim().toLowerCase().replace(/[_-]+/gu, " ").replace(/\s+/gu, " ");
 }
 
 function humanizeKey(value: string): string {
   return normalizedKey(value)
-    .split(' ')
+    .split(" ")
     .filter(Boolean)
     .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
-    .join(' ');
+    .join(" ");
 }
 
 function isWorkspacePath(value: string): boolean {
-  return value.startsWith('/') || value.startsWith('~/') || windowsWorkspace.test(value);
+  return value.startsWith("/") || value.startsWith("~/") || windowsWorkspace.test(value);
 }
 
 /** Returns a canonical href only for ordinary, credential-free HTTP(S) URLs. */
@@ -58,7 +58,7 @@ export function safeProjectMetadataHref(value: string): string | null {
   if (!candidate || /[\u0000-\u0020\u007f]/u.test(candidate)) return null;
   try {
     const url = new URL(candidate);
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return null;
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) return null;
     return url.href;
   } catch {
     return null;
@@ -89,13 +89,13 @@ export function parseProjectMetadata(description: string | null | undefined): Pr
   const prose: string[] = [];
 
   const flushProse = () => {
-    const value = prose.join('\n').trim();
+    const value = prose.join("\n").trim();
     prose.length = 0;
     if (!value) return;
     summaries.push(value);
   };
 
-  for (const sourceLine of source.replace(/\r\n?/gu, '\n').split('\n')) {
+  for (const sourceLine of source.replace(/\r\n?/gu, "\n").split("\n")) {
     const line = sourceLine.trim();
     if (!line) {
       flushProse();
@@ -103,12 +103,12 @@ export function parseProjectMetadata(description: string | null | undefined): Pr
     }
     if (safeProjectMetadataHref(line) !== null) {
       flushProse();
-      entries.push(entry('link', 'Project link', 'other', line));
+      entries.push(entry("link", "Project link", "other", line));
       continue;
     }
     if (isWorkspacePath(line)) {
       flushProse();
-      entries.push(entry('workspace', 'Workspace', 'workspace', line));
+      entries.push(entry("workspace", "Workspace", "workspace", line));
       continue;
     }
     const match = keyedLine.exec(line);
@@ -118,21 +118,16 @@ export function parseProjectMetadata(description: string | null | undefined): Pr
     }
 
     flushProse();
-    const rawKey = match[1] ?? '';
-    const value = (match[2] ?? '').trim();
+    const rawKey = match[1] ?? "";
+    const value = (match[2] ?? "").trim();
     if (!value) continue;
     const key = normalizedKey(rawKey);
     const definition = knownKeys[key];
-    if (definition?.kind === 'summary') {
+    if (definition?.kind === "summary") {
       summaries.push(value);
       continue;
     }
-    entries.push(entry(
-      key,
-      definition?.label ?? humanizeKey(rawKey),
-      definition?.kind ?? 'other',
-      value,
-    ));
+    entries.push(entry(key, definition?.label ?? humanizeKey(rawKey), definition?.kind ?? "other", value));
   }
   flushProse();
 

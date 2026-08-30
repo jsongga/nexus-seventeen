@@ -65,18 +65,22 @@ function plan(suffix: string): WorkflowPlanDraft {
     nonGoals: ["Do not change the schema."],
     mechanicalPortions: ["Rename generated symbols."],
     blockingQuestions: [],
-    criterionChecks: [{
-      criterion: "The review context contains the approved criterion.",
-      check: "npm run test:runtime",
-    }],
-    nodes: [{
-      nodeId: `review-claim-${suffix}`,
-      title: `Review claim ${suffix}`,
-      objective: "Expose isolated review evidence.",
-      acceptanceCriteria: ["The reviewer can inspect the implementation branch."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    criterionChecks: [
+      {
+        criterion: "The review context contains the approved criterion.",
+        check: "npm run test:runtime",
+      },
+    ],
+    nodes: [
+      {
+        nodeId: `review-claim-${suffix}`,
+        title: `Review claim ${suffix}`,
+        objective: "Expose isolated review evidence.",
+        acceptanceCriteria: ["The reviewer can inspect the implementation branch."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -85,14 +89,17 @@ function completeTask(
   projectId: string,
   agentId: string,
   role: AgentRole,
-  suffix: string,
+  suffix: string
 ): void {
-  board.createTask(projectId, taskRequest({
-    title: `Prior area memory ${suffix}`,
-    assignedAgentId: agentId,
-    assignedRole: role,
-    requiresReview: false,
-  }));
+  board.createTask(
+    projectId,
+    taskRequest({
+      title: `Prior area memory ${suffix}`,
+      assignedAgentId: agentId,
+      assignedRole: role,
+      requiresReview: false,
+    })
+  );
   const claim = board.claimRun(agentId, { claimId: `prior-area-memory-${suffix}`, messageCursor: null });
   assert.ok(claim);
   board.settleRun(claim.run.runId, agentId, { outcome: "completed", result: `Remembered result ${suffix}.` });
@@ -101,7 +108,7 @@ function completeTask(
 async function reviewFixture(
   suffix: string,
   implementPin: ClaimRunPinning | undefined = IMPLEMENT_PIN,
-  boardGit?: GitTextRunner,
+  boardGit?: GitTextRunner
 ) {
   const fixture = await boardFixture(undefined, undefined, boardGit === undefined ? {} : { git: boardGit });
   const { repo, baseSha } = await repository();
@@ -116,7 +123,13 @@ async function reviewFixture(
   const db = new DatabaseSync(fixture.path);
   db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
   db.close();
-  completeTask(fixture.board, fixture.project.projectId, fixture.engineer.agentId, fixture.engineer.role, `${suffix}-engineer`);
+  completeTask(
+    fixture.board,
+    fixture.project.projectId,
+    fixture.engineer.agentId,
+    fixture.engineer.role,
+    `${suffix}-engineer`
+  );
   completeTask(fixture.board, fixture.project.projectId, verifier.agentId, verifier.role, `${suffix}-verifier`);
   const implementationType = {
     agentTypeId: `review-implementation-${suffix}`,
@@ -135,18 +148,23 @@ async function reviewFixture(
     description: "Reviews the pipeline branch independently.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementationType, verificationType],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementationType, verificationType],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementationType.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verificationType.agentTypeId },
+      }),
+    })
+  );
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: `Build review claim fixture ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     }),
-  }));
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: `Build review claim fixture ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `review-claim-${suffix}`).workItem;
+    `review-claim-${suffix}`
+  ).workItem;
   const planningClaim = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `review-planning-${suffix}`,
     messageCursor: null,
@@ -157,9 +175,9 @@ async function reviewFixture(
     result: "The review plan is ready.",
     workflowPlan: plan(suffix),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-    (candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed",
-  );
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed");
   assert.ok(revision);
   const confirmed = fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
   const node = confirmed.nodes.find((candidate) => candidate.planRevisionId === revision.planRevisionId);
@@ -183,20 +201,29 @@ async function reviewFixture(
   await git(repo, ["commit", "-m", "implement review claim"]);
   await git(repo, ["switch", "main"]);
 
-  const verificationTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: `verification: ${node.title}`,
-    objective: node.objective,
-    acceptanceCriteria: node.acceptanceCriteria.join("\n"),
-    workspaceRefs: [],
-    assignedAgentId: verifier.agentId,
-    assignedRole: verifier.role,
-    requiresReview: false,
-  }));
+  const verificationTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: `verification: ${node.title}`,
+      objective: node.objective,
+      acceptanceCriteria: node.acceptanceCriteria.join("\n"),
+      workspaceRefs: [],
+      assignedAgentId: verifier.agentId,
+      assignedRole: verifier.role,
+      requiresReview: false,
+    })
+  );
   const direct = new DatabaseSync(fixture.path);
   try {
-    const implementationTaskId = String(direct.prepare(`
+    const implementationTaskId = String(
+      direct
+        .prepare(
+          `
       SELECT task_id FROM stage_attempts WHERE node_id=? AND stage='implementation' ORDER BY attempt DESC LIMIT 1
-    `).get(node.nodeId)?.task_id);
+    `
+        )
+        .get(node.nodeId)?.task_id
+    );
     const now = "2026-08-19T16:00:00.000Z";
     const handoff = {
       apiVersion: "steward.task-board/v1",
@@ -213,43 +240,72 @@ async function reviewFixture(
       recommendedReturnStage: null,
       createdAt: now,
     };
-    direct.prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)").run(
-      handoff.handoffId,
-      node.nodeId,
-      implementationTaskId,
-      handoff.stage,
-      handoff.outcome,
-      JSON.stringify(handoff),
-      now,
-    );
-    direct.prepare(`
+    direct
+      .prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)")
+      .run(
+        handoff.handoffId,
+        node.nodeId,
+        implementationTaskId,
+        handoff.stage,
+        handoff.outcome,
+        JSON.stringify(handoff),
+        now
+      );
+    direct
+      .prepare(
+        `
       INSERT INTO task_events(event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at)
       VALUES (?, ?, ?, 'agent', ?, 'task_run_settled', '{}', ?)
-    `).run(`event-review-${suffix}`, fixture.project.projectId, implementationTaskId, fixture.engineer.agentId, now);
-    direct.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
-      `attempt-review-${suffix}`,
-      node.nodeId,
-      verificationTask.taskId,
-      "verification",
-      1,
-      "{}",
-    );
-    direct.prepare(`
+    `
+      )
+      .run(`event-review-${suffix}`, fixture.project.projectId, implementationTaskId, fixture.engineer.agentId, now);
+    direct
+      .prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)")
+      .run(`attempt-review-${suffix}`, node.nodeId, verificationTask.taskId, "verification", 1, "{}");
+    direct
+      .prepare(
+        `
       INSERT INTO review_findings(
         finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
-      `finding-review-${suffix}-round-2`, node.nodeId, "verification", 2, "src/existing.ts", 1,
-      "correctness", "major", "The value is reviewed.", "The value was not reviewed.", 1, "2026-08-19T16:02:00.000Z",
-    );
-    direct.prepare(`
+    `
+      )
+      .run(
+        `finding-review-${suffix}-round-2`,
+        node.nodeId,
+        "verification",
+        2,
+        "src/existing.ts",
+        1,
+        "correctness",
+        "major",
+        "The value is reviewed.",
+        "The value was not reviewed.",
+        1,
+        "2026-08-19T16:02:00.000Z"
+      );
+    direct
+      .prepare(
+        `
       INSERT INTO review_findings(
         finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
-      `finding-review-${suffix}-round-1`, node.nodeId, "verification", 1, null, null,
-      "docs", "minor", "The review notes exist.", "The notes were missing.", 0, "2026-08-19T16:01:00.000Z",
-    );
+    `
+      )
+      .run(
+        `finding-review-${suffix}-round-1`,
+        node.nodeId,
+        "verification",
+        1,
+        null,
+        null,
+        "docs",
+        "minor",
+        "The review notes exist.",
+        "The notes were missing.",
+        0,
+        "2026-08-19T16:01:00.000Z"
+      );
   } finally {
     direct.close();
   }
@@ -262,25 +318,34 @@ function installImplementationRunHistory(
     olderAttempt: RuntimeModelPair;
     latestAttemptOlderRun: RuntimeModelPair;
     latestAttemptLatestRun: RuntimeModelPair;
-  }>,
+  }>
 ): void {
-  const latestTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-    title: `Later implementation attempt ${fixture.node.nodeId}`,
-    assignedAgentId: fixture.engineer.agentId,
-    assignedRole: fixture.engineer.role,
-    requiresReview: false,
-  }));
+  const latestTask = fixture.board.createTask(
+    fixture.project.projectId,
+    taskRequest({
+      title: `Later implementation attempt ${fixture.node.nodeId}`,
+      assignedAgentId: fixture.engineer.agentId,
+      assignedRole: fixture.engineer.role,
+      requiresReview: false,
+    })
+  );
   const db = new DatabaseSync(fixture.path);
   try {
-    const olderTaskId = String(db.prepare(`
+    const olderTaskId = String(
+      db
+        .prepare(
+          `
       SELECT task_id
       FROM stage_attempts
       WHERE node_id=? AND stage='implementation' AND attempt=1
-    `).get(fixture.node.nodeId)?.task_id);
+    `
+        )
+        .get(fixture.node.nodeId)?.task_id
+    );
     db.prepare("UPDATE runs SET runtime=?,model=? WHERE task_id=?").run(
       pairs.olderAttempt.runtime,
       pairs.olderAttempt.model,
-      olderTaskId,
+      olderTaskId
     );
     db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
       `attempt-latest-${fixture.node.nodeId}`,
@@ -288,18 +353,26 @@ function installImplementationRunHistory(
       latestTask.taskId,
       "implementation",
       2,
-      "{}",
+      "{}"
     );
-    const firstWakeupId = String(db.prepare(`
+    const firstWakeupId = String(
+      db
+        .prepare(
+          `
       SELECT wakeup_id FROM wakeups WHERE task_id=? ORDER BY created_at,wakeup_id LIMIT 1
-    `).get(latestTask.taskId)?.wakeup_id);
+    `
+        )
+        .get(latestTask.taskId)?.wakeup_id
+    );
     const secondWakeupId = `wakeup-latest-${fixture.node.nodeId}`;
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO wakeups(
         wakeup_id,project_id,agent_id,reason,source_key,task_id,question_id,
         detail,created_by,created_at,claimed_at,run_id
       ) VALUES(?,?,?,'resumed',?,?,NULL,?,?,?,NULL,NULL)
-    `).run(
+    `
+    ).run(
       secondWakeupId,
       fixture.project.projectId,
       fixture.engineer.agentId,
@@ -307,21 +380,18 @@ function installImplementationRunHistory(
       latestTask.taskId,
       "Second run for implementation ordering coverage",
       "system:test",
-      "2026-08-19T17:00:00.000Z",
+      "2026-08-19T17:00:00.000Z"
     );
-    const insertRun = (
-      suffix: string,
-      wakeupId: string,
-      startedAt: string,
-      pair: RuntimeModelPair,
-    ): void => {
+    const insertRun = (suffix: string, wakeupId: string, startedAt: string, pair: RuntimeModelPair): void => {
       const runId = `run-${suffix}-${fixture.node.nodeId}`;
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO runs(
           run_id,claim_id,claim_request_hash,claim_result_json,project_id,agent_id,wakeup_id,task_id,
           status,started_at,ended_at,result,heartbeat_at,runtime,runtime_version,model,prompts_sha
         ) VALUES(?,?,?,NULL,?,?,?,?, 'completed',?,?,?,NULL,?,NULL,?,NULL)
-      `).run(
+      `
+      ).run(
         runId,
         `claim-${suffix}-${fixture.node.nodeId}`,
         `hash-${suffix}`,
@@ -333,7 +403,7 @@ function installImplementationRunHistory(
         startedAt,
         `Completed ${suffix} run`,
         pair.runtime,
-        pair.model,
+        pair.model
       );
       db.prepare("UPDATE wakeups SET claimed_at=?,run_id=? WHERE wakeup_id=?").run(startedAt, runId, wakeupId);
     };
@@ -348,30 +418,31 @@ test("verification claims include isolated review context and reject an equal im
   const fixture = await reviewFixture("context-conflict");
   try {
     assert.throws(
-      () => fixture.board.claimRun(fixture.verifier.agentId, {
-        claimId: "review-runtime-conflict-equal",
-        messageCursor: null,
-        pinned: IMPLEMENT_PIN,
-      }),
-      (error: unknown) => (
+      () =>
+        fixture.board.claimRun(fixture.verifier.agentId, {
+          claimId: "review-runtime-conflict-equal",
+          messageCursor: null,
+          pinned: IMPLEMENT_PIN,
+        }),
+      (error: unknown) =>
         error instanceof TaskBoardError &&
         error.status === 409 &&
         error.code === "TASK_BOARD_REVIEW_RUNTIME_CONFLICT" &&
-        error.message === "review runtime matches implement runtime (codex/gpt-5.6) — configure a different reviewer lane"
-      ),
+        error.message ===
+          "review runtime matches implement runtime (codex/gpt-5.6) — configure a different reviewer lane"
     );
     assert.throws(
-      () => fixture.board.claimRun(fixture.verifier.agentId, {
-        claimId: "review-runtime-conflict-equal-retry",
-        messageCursor: null,
-        pinned: IMPLEMENT_PIN,
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.code === "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
+      () =>
+        fixture.board.claimRun(fixture.verifier.agentId, {
+          claimId: "review-runtime-conflict-equal-retry",
+          messageCursor: null,
+          pinned: IMPLEMENT_PIN,
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_BOARD_REVIEW_RUNTIME_CONFLICT"
     );
-    const conflictEvents = fixture.board.projectWorkflow(fixture.project.projectId).events.filter(
-      (event) => event.eventType === "review_runtime_conflict" && event.nodeId === fixture.node.nodeId,
-    );
+    const conflictEvents = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .events.filter((event) => event.eventType === "review_runtime_conflict" && event.nodeId === fixture.node.nodeId);
     assert.equal(conflictEvents.length, 1);
     assert.match(conflictEvents[0]?.summary ?? "", /codex\/gpt-5\.6/u);
 
@@ -408,12 +479,17 @@ test("verification claims include isolated review context and reject an equal im
     assert.equal(workflow.review.scopeOk, true);
     assert.deepEqual(workflow.review.midRunAssumptions, ["Keep the review clone isolated."]);
     assert.deepEqual(workflow.review.acceptanceCriteria, ["The review context contains the approved criterion."]);
-    assert.deepEqual(workflow.review.criterionChecks, [{
-      criterion: "The review context contains the approved criterion.",
-      check: "npm run test:runtime",
-    }]);
+    assert.deepEqual(workflow.review.criterionChecks, [
+      {
+        criterion: "The review context contains the approved criterion.",
+        check: "npm run test:runtime",
+      },
+    ]);
     assert.deepEqual(workflow.review.mechanicalPortions, ["Rename generated symbols."]);
-    assert.deepEqual(workflow.review.priorFindings.map((finding) => finding.round), [1, 2]);
+    assert.deepEqual(
+      workflow.review.priorFindings.map((finding) => finding.round),
+      [1, 2]
+    );
     assert.equal(workflow.review.priorFindingsTruncated, false);
     assert.deepEqual(claim.context.areaMemory, []);
   } finally {
@@ -431,13 +507,13 @@ test("runtime conflict uses the latest run of the latest implementation attempt"
     });
 
     assert.throws(
-      () => fixture.board.claimRun(fixture.verifier.agentId, {
-        claimId: "review-runtime-latest-order-conflict",
-        messageCursor: null,
-        pinned: IMPLEMENT_PIN,
-      }),
-      (error: unknown) => error instanceof TaskBoardError &&
-        error.code === "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
+      () =>
+        fixture.board.claimRun(fixture.verifier.agentId, {
+          claimId: "review-runtime-latest-order-conflict",
+          messageCursor: null,
+          pinned: IMPLEMENT_PIN,
+        }),
+      (error: unknown) => error instanceof TaskBoardError && error.code === "TASK_BOARD_REVIEW_RUNTIME_CONFLICT"
     );
   } finally {
     fixture.board.close();
@@ -468,14 +544,10 @@ test("runtime conflict ignores matching older implementation attempts and runs",
 test("oversized review Git evidence is bounded before persistence and round-trips through the worker", async () => {
   const syntheticSha = "f".repeat(40);
   const oversizedDiffstat = "x".repeat(70_000);
-  const syntheticLog = Array.from(
-    { length: 1_100 },
-    (_unused, index) => `${syntheticSha}\0Commit ${index}\0`,
-  ).join("");
-  const syntheticNameStatus = Array.from(
-    { length: 11_000 },
-    (_unused, index) => `M\0src/generated-${index}.ts\0`,
-  ).join("");
+  const syntheticLog = Array.from({ length: 1_100 }, (_unused, index) => `${syntheticSha}\0Commit ${index}\0`).join("");
+  const syntheticNameStatus = Array.from({ length: 11_000 }, (_unused, index) => `M\0src/generated-${index}.ts\0`).join(
+    ""
+  );
   let fixturePath: string | null = null;
   let inspectionCalls = 0;
   const syntheticGit: GitTextRunner = (arguments_) => {
@@ -519,10 +591,11 @@ test("oversized review Git evidence is bounded before persistence and round-trip
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: "review-round-trip-token-0123456789abcdef",
-      fetchImplementation: (async () => new Response(JSON.stringify(replay), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(JSON.stringify(replay), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
     const workerClaim = await client.claimNextWake({
       agentId: fixture.verifier.agentId,
@@ -550,10 +623,11 @@ test("oversized review Git evidence is bounded before persistence and round-trip
     const legacyClient = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: "legacy-review-token-0123456789abcdef",
-      fetchImplementation: (async () => new Response(JSON.stringify(legacyReplay), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(JSON.stringify(legacyReplay), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
     const legacyWorkerClaim = await legacyClient.claimNextWake({
       agentId: fixture.verifier.agentId,
@@ -593,7 +667,7 @@ test("oversized prior review findings keep the newest evidence and round-trip wi
             `Expected ${round}-${index} ${"e".repeat(1_780)}`,
             `Actual ${round}-${index} ${"a".repeat(1_784)}`,
             1,
-            `2026-08-19T18:${String(round).padStart(2, "0")}:${String(index).padStart(2, "0")}.000Z`,
+            `2026-08-19T18:${String(round).padStart(2, "0")}:${String(index).padStart(2, "0")}.000Z`
           );
         }
       }
@@ -617,10 +691,11 @@ test("oversized prior review findings keep the newest evidence and round-trip wi
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: "oversized-prior-findings-token-0123456789abcdef",
-      fetchImplementation: (async () => new Response(JSON.stringify(claim), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(JSON.stringify(claim), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
     const workerClaim = await client.claimNextWake({
       agentId: fixture.verifier.agentId,
@@ -630,10 +705,7 @@ test("oversized prior review findings keep the newest evidence and round-trip wi
       pinned: REVIEW_PIN,
     });
     assert.equal(workerClaim?.context?.workflow?.review?.priorFindingsTruncated, true);
-    assert.deepEqual(
-      workerClaim?.context?.workflow?.review?.priorFindings,
-      boardReview.priorFindings,
-    );
+    assert.deepEqual(workerClaim?.context?.workflow?.review?.priorFindings, boardReview.priorFindings);
   } finally {
     fixture.board.close();
   }
@@ -648,9 +720,12 @@ test("verification claims allow absent pinning without emitting a runtime-confli
     });
     assert.ok(claim);
     assert.equal(claim.context.workflow?.workspaceKey, `${fixture.workItem.workItemId}-review`);
-    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).events.some(
-      (event) => event.eventType === "review_runtime_conflict",
-    ), false);
+    assert.equal(
+      fixture.board
+        .projectWorkflow(fixture.project.projectId)
+        .events.some((event) => event.eventType === "review_runtime_conflict"),
+      false
+    );
   } finally {
     fixture.board.close();
   }
@@ -666,9 +741,12 @@ test("verification claims allow a pinned reviewer when implementation pinning is
     });
     assert.ok(claim);
     assert.equal(claim.context.workflow?.workspaceKey, `${fixture.workItem.workItemId}-review`);
-    assert.equal(fixture.board.projectWorkflow(fixture.project.projectId).events.some(
-      (event) => event.eventType === "review_runtime_conflict",
-    ), false);
+    assert.equal(
+      fixture.board
+        .projectWorkflow(fixture.project.projectId)
+        .events.some((event) => event.eventType === "review_runtime_conflict"),
+      false
+    );
   } finally {
     fixture.board.close();
   }

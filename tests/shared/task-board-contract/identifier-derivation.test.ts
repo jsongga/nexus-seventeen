@@ -12,7 +12,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) files.push(...await sourceFiles(join(directory, entry.name)));
+      if (!ignoredDirectories.has(entry.name)) files.push(...(await sourceFiles(join(directory, entry.name))));
     } else if (entry.isFile() && sourceExtensions.has(extname(entry.name))) {
       files.push(join(directory, entry.name));
     }

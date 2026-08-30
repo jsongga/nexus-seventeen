@@ -1,4 +1,9 @@
-import { TASK_BOARD_ERROR_CODES, type AgentProfile, type CreateAgentRequest, type RotateAgentTokenResponse } from "#shared/task-board-contract";
+import {
+  TASK_BOARD_ERROR_CODES,
+  type AgentProfile,
+  type CreateAgentRequest,
+  type RotateAgentTokenResponse,
+} from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
@@ -13,7 +18,7 @@ export class AgentsCollaborator {
     private readonly runtime: TaskBoardRuntime,
     private readonly workItems: WorkItemsCollaborator,
     private readonly projects: ProjectsCollaborator,
-    private readonly runs: RunsCollaborator,
+    private readonly runs: RunsCollaborator
   ) {}
 
   createAgent(projectId: string, request: CreateAgentRequest): AgentProfile {
@@ -24,12 +29,10 @@ export class AgentsCollaborator {
     }
     try {
       this.runtime.store.transaction(() => {
-        insertAgentIdentityInTransaction(
-          this.runtime,
-          projectId,
-          request,
-          { type: "human", id: this.runtime.config.humanPrincipal },
-        );
+        insertAgentIdentityInTransaction(this.runtime, projectId, request, {
+          type: "human",
+          id: this.runtime.config.humanPrincipal,
+        });
       });
     } catch (error) {
       if (String(error).includes("UNIQUE constraint failed")) {
@@ -39,9 +42,11 @@ export class AgentsCollaborator {
     }
     const created = this.runtime.requireAgent(request.agentId);
     if (created.role === "manager") {
-      const pending = this.runtime.store.db.prepare(
-        "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='queued' AND ended_at IS NULL ORDER BY created_at,work_item_id",
-      ).all(projectId);
+      const pending = this.runtime.store.db
+        .prepare(
+          "SELECT work_item_id FROM work_items WHERE resolved_project_id=? AND state='queued' AND ended_at IS NULL ORDER BY created_at,work_item_id"
+        )
+        .all(projectId);
       for (const row of pending) {
         const workItemId = String(row.work_item_id);
         if (this.workItems.workItemAwaitsIntakePlanning(workItemId)) {
@@ -62,24 +67,38 @@ export class AgentsCollaborator {
       this.runs.interruptActiveRunForTokenRotationInTransaction(agentId, version);
       const token = generatedToken(this.runtime);
       const tokenHash = sha256(token);
-      const update = this.runtime.store.db.prepare(`
+      const update = this.runtime.store.db
+        .prepare(
+          `
         UPDATE agents SET token_hash=?,version=version+1 WHERE agent_id=? AND version=?
-      `).run(tokenHash, agentId, version);
+      `
+        )
+        .run(tokenHash, agentId, version);
       if (Number(update.changes) !== 1) {
         throw conflict(TASK_BOARD_ERROR_CODES.AGENT_VERSION_CONFLICT, "Agent credential version changed");
       }
       const now = exactNow(this.runtime.config.now);
-      this.runtime.insertEvent(current.projectId, null, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_token_rotated", {
-        agentId,
-        previousVersion: version,
-        version: version + 1,
-      }, now);
+      this.runtime.insertEvent(
+        current.projectId,
+        null,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "agent_token_rotated",
+        {
+          agentId,
+          previousVersion: version,
+          version: version + 1,
+        },
+        now
+      );
       return Object.freeze({ agent: this.runtime.requireAgent(agentId), token });
     });
   }
 
   setLaneError(agentId: string, detail: string | null): void {
-    if (this.runtime.store.db.prepare("UPDATE agents SET last_error=? WHERE agent_id=?").run(detail, agentId).changes !== 1) {
+    if (
+      this.runtime.store.db.prepare("UPDATE agents SET last_error=? WHERE agent_id=?").run(detail, agentId).changes !==
+      1
+    ) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:agent_lane_error");
     }
   }

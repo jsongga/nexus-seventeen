@@ -3,10 +3,7 @@ import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  loadRuntimeProfiles,
-  parseRuntimeProfiles,
-} from "../../../../src/server/agents/runtime/profiles.js";
+import { loadRuntimeProfiles, parseRuntimeProfiles } from "../../../../src/server/agents/runtime/profiles.js";
 
 function validProfiles(): Record<string, unknown> {
   return {
@@ -69,21 +66,43 @@ test("parses the shipped runtime capability profiles", async () => {
 
 test("rejects malformed or ambiguous runtime profile shapes", () => {
   const cases: Array<readonly [string, (value: Record<string, unknown>) => void, RegExp]> = [
-    ["unknown version", (value) => { value.version = 2; }, /version must be 1/u],
-    ["missing binary", (value) => {
-      delete ((value.runtimes as Record<string, Record<string, unknown>>).codex!).binary;
-    }, /codex is missing binary/u],
-    ["non-record roles", (value) => {
-      (value.runtimes as Record<string, Record<string, unknown>>).codex!.roles = [];
-    }, /codex\.roles must be an object/u],
-    ["unknown role", (value) => {
-      const codex = (value.runtimes as Record<string, Record<string, unknown>>).codex!;
-      (codex.roles as Record<string, unknown>).designer = { sandbox: "read-only" };
-    }, /roles has unknown field designer/u],
-    ["empty sandbox", (value) => {
-      const codex = (value.runtimes as Record<string, Record<string, unknown>>).codex!;
-      ((codex.roles as Record<string, Record<string, unknown>>).engineer!).sandbox = "";
-    }, /engineer\.sandbox is invalid/u],
+    [
+      "unknown version",
+      (value) => {
+        value.version = 2;
+      },
+      /version must be 1/u,
+    ],
+    [
+      "missing binary",
+      (value) => {
+        delete (value.runtimes as Record<string, Record<string, unknown>>).codex!.binary;
+      },
+      /codex is missing binary/u,
+    ],
+    [
+      "non-record roles",
+      (value) => {
+        (value.runtimes as Record<string, Record<string, unknown>>).codex!.roles = [];
+      },
+      /codex\.roles must be an object/u,
+    ],
+    [
+      "unknown role",
+      (value) => {
+        const codex = (value.runtimes as Record<string, Record<string, unknown>>).codex!;
+        (codex.roles as Record<string, unknown>).designer = { sandbox: "read-only" };
+      },
+      /roles has unknown field designer/u,
+    ],
+    [
+      "empty sandbox",
+      (value) => {
+        const codex = (value.runtimes as Record<string, Record<string, unknown>>).codex!;
+        (codex.roles as Record<string, Record<string, unknown>>).engineer!.sandbox = "";
+      },
+      /engineer\.sandbox is invalid/u,
+    ],
   ];
 
   for (const [label, mutate, expected] of cases) {

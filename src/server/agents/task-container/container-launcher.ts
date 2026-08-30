@@ -31,7 +31,8 @@ const CONTAINER_POLL_MS = 100;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const DOCKER_REMOVE_TIMEOUT_MS = 10_000;
 const DOCKER_CLIENT_CLOSE_TIMEOUT_MS = 10_000;
-const CONTAINER_IMAGE_PATTERN = /^(?:sha256:[a-f0-9]{64}|[a-z0-9][a-z0-9._\-\/]*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?)$/u;
+const CONTAINER_IMAGE_PATTERN =
+  /^(?:sha256:[a-f0-9]{64}|[a-z0-9][a-z0-9._\-\/]*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?)$/u;
 const DOCKER_ENVIRONMENT_KEYS = [
   "DOCKER_HOST",
   "DOCKER_CONFIG",
@@ -75,24 +76,29 @@ function dockerCommand(
   dockerBinary: string,
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(dockerBinary, [...args], {
-      encoding: "utf8",
-      env: environment,
-      timeout: timeoutMs,
-    }, (error, stdout, stderr) => {
-      if (error !== null) reject(new DockerCommandError(error, stderr));
-      else resolve(stdout);
-    });
+    execFile(
+      dockerBinary,
+      [...args],
+      {
+        encoding: "utf8",
+        env: environment,
+        timeout: timeoutMs,
+      },
+      (error, stdout, stderr) => {
+        if (error !== null) reject(new DockerCommandError(error, stderr));
+        else resolve(stdout);
+      }
+    );
   });
 }
 
 function isExplicitDockerAbsence(error: unknown): boolean {
-  return error instanceof DockerCommandError
-    && !error.timedOut
-    && /No such object|no such container/iu.test(error.stderr);
+  return (
+    error instanceof DockerCommandError && !error.timedOut && /No such object|no such container/iu.test(error.stderr)
+  );
 }
 
 function childClosesWithin(childClose: Promise<unknown>, timeoutMs: number): Promise<boolean> {
@@ -109,14 +115,14 @@ function childClosesWithin(childClose: Promise<unknown>, timeoutMs: number): Pro
 async function inspectContainer(
   dockerBinary: string,
   containerName: string,
-  environment: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv
 ): Promise<"absent" | "present" | "unknown"> {
   try {
     await dockerCommand(
       dockerBinary,
       ["inspect", "--format", "{{.State.Running}}", containerName],
       environment,
-      DOCKER_INSPECT_TIMEOUT_MS,
+      DOCKER_INSPECT_TIMEOUT_MS
     );
     return "present";
   } catch (error) {
@@ -131,7 +137,7 @@ async function terminateContainer(
   environment: NodeJS.ProcessEnv,
   child: ChildProcess,
   childClose: Promise<unknown>,
-  childIsClosed: () => boolean,
+  childIsClosed: () => boolean
 ): Promise<void> {
   const graceDeadline = Date.now() + terminationGraceMs;
   const graceSeconds = Math.ceil(terminationGraceMs / 1_000);
@@ -140,7 +146,7 @@ async function terminateContainer(
       dockerBinary,
       ["stop", "-t", String(graceSeconds), containerName],
       environment,
-      graceSeconds * 1_000 + 10_000,
+      graceSeconds * 1_000 + 10_000
     );
   } catch {
     // A concurrent exit or a missing container is confirmed by inspect below.
@@ -162,12 +168,7 @@ async function terminateContainer(
   }
 
   try {
-    await dockerCommand(
-      dockerBinary,
-      ["rm", "-f", containerName],
-      environment,
-      DOCKER_REMOVE_TIMEOUT_MS,
-    );
+    await dockerCommand(dockerBinary, ["rm", "-f", containerName], environment, DOCKER_REMOVE_TIMEOUT_MS);
   } catch {
     // The final inspect is the authoritative absence check.
   }
@@ -193,9 +194,8 @@ export class ContainerAgentLauncher implements AgentLauncher {
   constructor(options: ContainerAgentLauncherOptions) {
     const image = configText(options.image, "image", 512);
     if (!CONTAINER_IMAGE_PATTERN.test(image)) throw new Error("image is invalid");
-    const agentCommand = options.agentCommand === undefined
-      ? undefined
-      : configText(options.agentCommand, "agentCommand", 256);
+    const agentCommand =
+      options.agentCommand === undefined ? undefined : configText(options.agentCommand, "agentCommand", 256);
     if (agentCommand?.startsWith("-") === true) throw new Error("agentCommand is invalid");
     const sourceEnvironment = options.environment ?? process.env;
     this.#environment = options.adapter.environment(sourceEnvironment);
@@ -221,7 +221,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       throw new RuntimeCapabilityError(
         this.#options.profile.runtime,
         role,
-        `claim role does not match configured lane role ${this.#options.role}`,
+        `claim role does not match configured lane role ${this.#options.role}`
       );
     }
     this.#options.adapter.assertRole(this.#options.profile, role);
@@ -264,12 +264,14 @@ export class ContainerAgentLauncher implements AgentLauncher {
     let childSpawned = false;
     let childClosed = false;
     let spawnFailed = false;
-    const childClose = new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>((resolve) => {
-      child.once("close", (code, signal) => {
-        childClosed = true;
-        resolve({ code, signal });
-      });
-    });
+    const childClose = new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child.once("close", (code, signal) => {
+          childClosed = true;
+          resolve({ code, signal });
+        });
+      }
+    );
     child.once("spawn", () => {
       childSpawned = true;
       activity.publish({ type: "tool_call", name: "container_starting", detail: "" });
@@ -278,7 +280,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       spawnFailed = !childSpawned;
       failure ??= new AgentProcessError(
         spawnFailed ? "Unable to start the docker client" : "Docker client process failed",
-        { cause: error },
+        { cause: error }
       );
     });
     const decoder = new StringDecoder("utf8");
@@ -316,7 +318,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
           this.#dockerEnvironment,
           child,
           childClose,
-          () => childClosed,
+          () => childClosed
         );
         termination = attempt;
         void attempt.catch(() => {
@@ -341,14 +343,20 @@ export class ContainerAgentLauncher implements AgentLauncher {
         activity.publish({ type: "tool_call", name: "container_attached", detail: "" });
       }
       stdoutBytes += chunk.length;
-      if (stdoutBytes > MAX_STDOUT_BYTES) { failBound("stdout"); return; }
+      if (stdoutBytes > MAX_STDOUT_BYTES) {
+        failBound("stdout");
+        return;
+      }
       stdout.push(Buffer.from(chunk));
       observeChunk(chunk);
     });
     child.stderr?.on("data", (chunkValue: Buffer | string) => {
       const chunk = Buffer.isBuffer(chunkValue) ? chunkValue : Buffer.from(chunkValue);
       stderrBytes += chunk.length;
-      if (stderrBytes > MAX_STDERR_BYTES) { failBound("stderr"); return; }
+      if (stderrBytes > MAX_STDERR_BYTES) {
+        failBound("stderr");
+        return;
+      }
       stderr.push(Buffer.from(chunk));
     });
     child.stdin?.once("error", (error) => {
@@ -364,7 +372,11 @@ export class ContainerAgentLauncher implements AgentLauncher {
       finishActivity();
       try {
         if (termination !== null) {
-          try { await termination; } catch (error) { failure ??= error as Error; }
+          try {
+            await termination;
+          } catch (error) {
+            failure ??= error as Error;
+          }
         }
         if (failure !== null) throw failure;
         if (code !== 0) {
@@ -384,7 +396,9 @@ export class ContainerAgentLauncher implements AgentLauncher {
       interrupt: async (_reason: string): Promise<void> => {
         failure ??= new AgentProcessError("Agent container was interrupted directly");
         await terminate();
-        try { await completion; } catch {}
+        try {
+          await completion;
+        } catch {}
       },
     });
   }

@@ -14,12 +14,7 @@ interface OnboardingCheckResult {
 }
 
 function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner([
-    "-c", "core.fsmonitor=",
-    "-c", "core.hooksPath=",
-    "-C", repoPath,
-    ...arguments_,
-  ]);
+  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
 }
 
 function branchFile(runner: GitTextRunner, repoPath: string, branch: string, path: string): string | null {
@@ -34,7 +29,7 @@ export function onboardingDeliverablesCheck(
   repoPath: string,
   branch: string,
   gapReport: string | undefined,
-  runner: GitTextRunner = runDeclaredScopeGit,
+  runner: GitTextRunner = runDeclaredScopeGit
 ): OnboardingCheckResult {
   const missing: string[] = [];
   if (typeof repoPath !== "string" || repoPath.trim().length === 0) {
@@ -46,10 +41,13 @@ export function onboardingDeliverablesCheck(
   if (typeof gapReport !== "string" || gapReport.trim().length === 0) {
     missing.push("gap report is missing or empty");
   }
-  if (missing.length > 0 && (
-    typeof repoPath !== "string" || repoPath.trim().length === 0 ||
-    typeof branch !== "string" || branch.trim().length === 0
-  )) {
+  if (
+    missing.length > 0 &&
+    (typeof repoPath !== "string" ||
+      repoPath.trim().length === 0 ||
+      typeof branch !== "string" ||
+      branch.trim().length === 0)
+  ) {
     return Object.freeze({ ok: false, missing: Object.freeze(missing) });
   }
 

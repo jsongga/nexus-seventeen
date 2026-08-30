@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  loadVerifyContract,
-  mapChangedFiles,
-  parseVerifyContract,
-  VerifyContractError,
-} from "#server/agents/verify";
+import { loadVerifyContract, mapChangedFiles, parseVerifyContract, VerifyContractError } from "#server/agents/verify";
 
 test("parses the real repo contract from docs/workflow.md", async () => {
   const contract = await loadVerifyContract(process.cwd());
@@ -14,18 +9,21 @@ test("parses the real repo contract from docs/workflow.md", async () => {
   assert.deepEqual(contract.full, ["npm run typecheck:all", "npm run test:all", "npm run test:container"]);
   assert.equal(contract.rules[0]?.match, "tests/container/**");
   assert.equal(contract.rules[0]?.action.kind, "escalate");
-  assert.deepEqual(
-    contract.rules.find((rule) => rule.match === "docs/workflow.md")?.action,
-    { kind: "fixed", nodeTestDirs: ["tests/server/agents/verify"], vitest: undefined },
-  );
-  assert.deepEqual(
-    contract.rules.find((rule) => rule.match === "config/skills.md")?.action,
-    { kind: "fixed", nodeTestDirs: ["tests/server/task-board"], vitest: undefined },
-  );
-  assert.deepEqual(
-    contract.rules.find((rule) => rule.match === "src/server/task-board/persistence/**")?.action,
-    { kind: "fixed", nodeTestDirs: ["tests/server/task-board"], vitest: undefined },
-  );
+  assert.deepEqual(contract.rules.find((rule) => rule.match === "docs/workflow.md")?.action, {
+    kind: "fixed",
+    nodeTestDirs: ["tests/server/agents/verify"],
+    vitest: undefined,
+  });
+  assert.deepEqual(contract.rules.find((rule) => rule.match === "config/skills.md")?.action, {
+    kind: "fixed",
+    nodeTestDirs: ["tests/server/task-board"],
+    vitest: undefined,
+  });
+  assert.deepEqual(contract.rules.find((rule) => rule.match === "src/server/task-board/persistence/**")?.action, {
+    kind: "fixed",
+    nodeTestDirs: ["tests/server/task-board"],
+    vitest: undefined,
+  });
   assert.ok(contract.rules.length >= 10);
 });
 
@@ -80,8 +78,32 @@ test("rejects malformed contracts closed-world", () => {
   assert.throws(() => parseVerifyContract("# no block here"), VerifyContractError);
   assert.throws(() => parseVerifyContract(wrap("{}") + wrap("{}")), /multiple fenced json blocks/u);
   assert.throws(() => parseVerifyContract(wrap("not json")), VerifyContractError);
-  assert.throws(() => parseVerifyContract(wrap('{"version":2,"compile":["x"],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"]}')), /version/u);
-  assert.throws(() => parseVerifyContract(wrap('{"version":1,"compile":["x"],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"],"extra":1}')), /unknown field/iu);
-  assert.throws(() => parseVerifyContract(wrap('{"version":1,"compile":["x"],"rules":[{"match":"a","action":{"kind":"fixed"}}],"full":["y"]}')), /fixed/u);
-  assert.throws(() => parseVerifyContract(wrap('{"version":1,"compile":[],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"]}')), /compile/u);
+  assert.throws(
+    () =>
+      parseVerifyContract(
+        wrap('{"version":2,"compile":["x"],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"]}')
+      ),
+    /version/u
+  );
+  assert.throws(
+    () =>
+      parseVerifyContract(
+        wrap('{"version":1,"compile":["x"],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"],"extra":1}')
+      ),
+    /unknown field/iu
+  );
+  assert.throws(
+    () =>
+      parseVerifyContract(
+        wrap('{"version":1,"compile":["x"],"rules":[{"match":"a","action":{"kind":"fixed"}}],"full":["y"]}')
+      ),
+    /fixed/u
+  );
+  assert.throws(
+    () =>
+      parseVerifyContract(
+        wrap('{"version":1,"compile":[],"rules":[{"match":"a","action":{"kind":"none"}}],"full":["y"]}')
+      ),
+    /compile/u
+  );
 });

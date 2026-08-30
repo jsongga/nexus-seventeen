@@ -10,11 +10,11 @@ test("prepends the source banner byte-exactly and leaves markdown unchanged", ()
       markdown: "# Workflow\n\nBody.\n",
       blobSha: "0123456789abcdef0123456789abcdef01234567",
     },
-    "nexus-seventeen",
+    "nexus-seventeen"
   );
 
   assert.equal(
     result,
-    "> **Read-only mirror.** Source: `nexus-seventeen/docs/workflow.md` @ blob 0123456789ab. Edit in the repository — this page is republished on merge. Comments are welcome here.\n\n# Workflow\n\nBody.\n",
+    "> **Read-only mirror.** Source: `nexus-seventeen/docs/workflow.md` @ blob 0123456789ab. Edit in the repository — this page is republished on merge. Comments are welcome here.\n\n# Workflow\n\nBody.\n"
   );
 });

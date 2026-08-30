@@ -67,7 +67,7 @@ export class TaskBoardRuntime {
 
   constructor(
     readonly config: TaskBoardConfig,
-    readonly store: TaskBoardStore,
+    readonly store: TaskBoardStore
   ) {
     registerWorkItemTransitionStore(store);
     this.#gateActionWriter = new GateActionWriter(store, config.now);
@@ -82,20 +82,32 @@ export class TaskBoardRuntime {
 
   agentFromRow(row: Row): AgentProfile {
     const agentId = stringValue(row, "agent_id");
-    const active = this.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+    const active = this.store.db
+      .prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'")
+      .get(agentId);
     let status: AgentProfile["status"];
     if (active) {
-      const interrupted = this.store.db.prepare("SELECT 1 FROM interrupts WHERE run_id = ? LIMIT 1").get(stringValue(active, "run_id"));
+      const interrupted = this.store.db
+        .prepare("SELECT 1 FROM interrupts WHERE run_id = ? LIMIT 1")
+        .get(stringValue(active, "run_id"));
       status = interrupted ? "interrupting" : "running";
-    } else if (this.store.db.prepare(`
+    } else if (
+      this.store.db
+        .prepare(
+          `
       SELECT 1
       FROM wakeups AS wakeup
       WHERE wakeup.agent_id = ?
         AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
       LIMIT 1
-    `).get(agentId, RETIRED_WAKEUP_EVENT_PREFIX)) {
+    `
+        )
+        .get(agentId, RETIRED_WAKEUP_EVENT_PREFIX)
+    ) {
       status = "ready";
-    } else if (this.store.db.prepare("SELECT 1 FROM questions WHERE agent_id = ? AND status = 'open' LIMIT 1").get(agentId)) {
+    } else if (
+      this.store.db.prepare("SELECT 1 FROM questions WHERE agent_id = ? AND status = 'open' LIMIT 1").get(agentId)
+    ) {
       status = "waiting_for_human";
     } else {
       status = "idle";
@@ -123,14 +135,18 @@ export class TaskBoardRuntime {
   }
 
   requireWorkItem(workItemId: string) {
-    const row = this.store.db.prepare(`
+    const row = this.store.db
+      .prepare(
+        `
       SELECT work_item.*,
         CASE WHEN onboarding.work_item_id IS NULL THEN 'standard' ELSE 'onboarding' END AS task_type,
         (SELECT task_id FROM work_item_planning_tasks planning WHERE planning.work_item_id=work_item.work_item_id) AS planning_task_id
       FROM work_items work_item
       LEFT JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
       WHERE work_item.work_item_id = ?
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     if (!row) throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
     return workItemFromRow(row);
   }
@@ -150,29 +166,46 @@ export class TaskBoardRuntime {
   }
 
   nextTaskOrderKey(): number {
-    const row = this.store.db.prepare(`
+    const row = this.store.db
+      .prepare(
+        `
       SELECT COALESCE(MAX(order_key), -1024) + 1024 AS next_order_key
       FROM tasks
-    `).get();
+    `
+      )
+      .get();
     const orderKey = numberValue(row!, "next_order_key");
-    if (!Number.isSafeInteger(orderKey) || orderKey < 0) throw conflict("TASK_ORDER_EXHAUSTED", "Task order key space is exhausted");
+    if (!Number.isSafeInteger(orderKey) || orderKey < 0)
+      throw conflict("TASK_ORDER_EXHAUSTED", "Task order key space is exhausted");
     return orderKey;
   }
 
   nextPhaseOrderKey(taskId: string): number {
-    const row = this.store.db.prepare(`
+    const row = this.store.db
+      .prepare(
+        `
       SELECT COALESCE(MAX(order_key), -1024) + 1024 AS next_order_key
       FROM task_phases WHERE task_id = ?
-    `).get(taskId);
+    `
+      )
+      .get(taskId);
     const orderKey = numberValue(row!, "next_order_key");
-    if (!Number.isSafeInteger(orderKey) || orderKey < 0) throw conflict("TASK_PHASE_ORDER_EXHAUSTED", "Task phase order key space is exhausted");
+    if (!Number.isSafeInteger(orderKey) || orderKey < 0)
+      throw conflict("TASK_PHASE_ORDER_EXHAUSTED", "Task phase order key space is exhausted");
     return orderKey;
   }
 
   taskPhases(taskId: string): readonly TaskPhase[] {
-    return Object.freeze(this.store.db.prepare(`
+    return Object.freeze(
+      this.store.db
+        .prepare(
+          `
       SELECT * FROM task_phases WHERE task_id = ? ORDER BY order_key, phase_id
-    `).all(taskId).map(phaseFromRow));
+    `
+        )
+        .all(taskId)
+        .map(phaseFromRow)
+    );
   }
 
   requireTaskPhase(phaseId: string): TaskPhase {
@@ -185,34 +218,50 @@ export class TaskBoardRuntime {
     task: BoardTask,
     taskStatus: Extract<TaskStatus, "completed" | "failed" | "interrupted" | "cancelled">,
     actor: Actor | Readonly<{ type: "system"; id: string }>,
-    now: string,
+    now: string
   ): void {
-    const phases = this.store.db.prepare(`
+    const phases = this.store.db
+      .prepare(
+        `
       SELECT * FROM task_phases
       WHERE task_id = ? AND ended_at IS NULL
       ORDER BY order_key, phase_id
-    `).all(task.taskId).map(phaseFromRow);
+    `
+      )
+      .all(task.taskId)
+      .map(phaseFromRow);
     const phaseStatus: TaskPhaseStatus = taskStatus === "completed" ? "completed" : "failed";
     for (const phase of phases) {
       const stage = phase.stage;
       const nextVersion = phase.version + 1;
-      const update = this.store.db.prepare(`
+      const update = this.store.db
+        .prepare(
+          `
         UPDATE task_phases SET
           stage = ?, status = ?, started_at = COALESCE(started_at, ?), ended_at = ?,
           version = ?, updated_at = ?
         WHERE phase_id = ? AND version = ? AND ended_at IS NULL
-      `).run(stage, phaseStatus, now, now, nextVersion, now, phase.phaseId, phase.version);
+      `
+        )
+        .run(stage, phaseStatus, now, now, nextVersion, now, phase.phaseId, phase.version);
       if (Number(update.changes) !== 1) {
         throw conflict("TASK_PHASE_VERSION_CONFLICT", "Task phase changed while its task became terminal");
       }
-      this.insertEvent(task.projectId, task.taskId, actor, "task_phase_updated", {
-        phaseId: phase.phaseId,
-        previousVersion: phase.version,
-        version: nextVersion,
-        stage,
-        status: phaseStatus,
-        terminalTaskStatus: taskStatus,
-      }, now);
+      this.insertEvent(
+        task.projectId,
+        task.taskId,
+        actor,
+        "task_phase_updated",
+        {
+          phaseId: phase.phaseId,
+          previousVersion: phase.version,
+          version: nextVersion,
+          stage,
+          status: phaseStatus,
+          terminalTaskStatus: taskStatus,
+        },
+        now
+      );
     }
   }
 
@@ -230,7 +279,7 @@ export class TaskBoardRuntime {
     taskId: string,
     actor: WorkItemTransitionActor,
     now: string,
-    park: NonNullable<WorkItemTransitionRequest["park"]>,
+    park: NonNullable<WorkItemTransitionRequest["park"]>
   ): boolean {
     const link = this.workItemLinkForTask(taskId);
     if (link === undefined || isTerminalWorkItemState(link.currentState)) return false;
@@ -251,13 +300,7 @@ export class TaskBoardRuntime {
     const recoveryStage = link.currentStage ?? link.taskStage;
     transitionWorkItemInTransaction(this.store, {
       workItemId: link.workItemId,
-      to: workItemStateForNodeStage(
-        this.store.db,
-        link.workItemId,
-        link.nodeId,
-        recoveryStage,
-        link.currentState,
-      ),
+      to: workItemStateForNodeStage(this.store.db, link.workItemId, link.nodeId, recoveryStage, link.currentState),
       actorType: actor.type,
       actorId: actor.id,
       now,
@@ -269,7 +312,10 @@ export class TaskBoardRuntime {
   workItemForTaskHasOpenQuestionsInTransaction(taskId: string): boolean {
     const link = this.workItemLinkForTask(taskId);
     if (link === undefined) return false;
-    return this.store.db.prepare(`
+    return (
+      this.store.db
+        .prepare(
+          `
       SELECT 1
       FROM questions question
       LEFT JOIN work_item_planning_tasks planning ON planning.task_id = question.task_id
@@ -279,19 +325,20 @@ export class TaskBoardRuntime {
       WHERE question.status = 'open'
         AND COALESCE(planning.work_item_id, plan.work_item_id) = ?
       LIMIT 1
-    `).get(link.workItemId) !== undefined;
+    `
+        )
+        .get(link.workItemId) !== undefined
+    );
   }
 
   workItemIdForTask(taskId: string): string | null {
     return this.workItemLinkForTask(taskId)?.workItemId ?? null;
   }
 
-  recoverWorkflowTaskInTransaction(
-    taskId: string,
-    transition: "retry" | "reassign",
-    now: string,
-  ): boolean {
-    const link = this.store.db.prepare(`
+  recoverWorkflowTaskInTransaction(taskId: string, transition: "retry" | "reassign", now: string): boolean {
+    const link = this.store.db
+      .prepare(
+        `
       SELECT
         attempt.node_id,
         attempt.stage,
@@ -309,7 +356,9 @@ export class TaskBoardRuntime {
       JOIN plan_revisions plan ON plan.plan_revision_id = node.plan_revision_id
       JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
       WHERE attempt.task_id = ?
-    `).get(taskId);
+    `
+      )
+      .get(taskId);
     if (link === undefined) {
       return this.recoverWorkItemForTaskInTransaction(
         taskId,
@@ -317,7 +366,7 @@ export class TaskBoardRuntime {
           type: "system",
           id: transition === "retry" ? "system:planning-retry" : "system:planning-reassign",
         },
-        now,
+        now
       );
     }
     const nodeId = stringValue(link, "node_id");
@@ -325,28 +374,32 @@ export class TaskBoardRuntime {
     const currentStage = nullableString(link, "current_stage");
     const state = stringValue(link, "state");
     const attempt = numberValue(link, "attempt");
-    const newerAttempt = this.store.db.prepare(`
+    const newerAttempt = this.store.db
+      .prepare(
+        `
       SELECT 1 FROM stage_attempts
       WHERE node_id = ? AND stage = ? AND attempt > ?
       LIMIT 1
-    `).get(nodeId, stage, attempt);
-    if (
-      currentStage !== stage ||
-      (state !== "active" && state !== "blocked") ||
-      newerAttempt !== undefined
-    ) {
+    `
+      )
+      .get(nodeId, stage, attempt);
+    if (currentStage !== stage || (state !== "active" && state !== "blocked") || newerAttempt !== undefined) {
       throw conflict(
         TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_ATTEMPT_SUPERSEDED,
-        "Workflow task attempt is no longer recoverable",
+        "Workflow task attempt is no longer recoverable"
       );
     }
     const nodeVersion = numberValue(link, "version");
     this.store.db.prepare("DELETE FROM stage_handoffs WHERE task_id = ?").run(taskId);
-    const update = this.store.db.prepare(`
+    const update = this.store.db
+      .prepare(
+        `
       UPDATE work_nodes
       SET state = 'active', current_stage = ?, version = version + 1, updated_at = ?
       WHERE node_id = ? AND version = ? AND current_stage = ? AND state IN ('active', 'blocked')
-    `).run(stage, now, nodeId, nodeVersion, stage);
+    `
+      )
+      .run(stage, now, nodeId, nodeVersion, stage);
     if (Number(update.changes) !== 1) {
       throw conflict(TASK_BOARD_ERROR_CODES.WORK_NODE_VERSION_CONFLICT, "Workflow node changed during task recovery");
     }
@@ -358,7 +411,7 @@ export class TaskBoardRuntime {
           stringValue(link, "work_item_id"),
           nodeId,
           stage,
-          stringValue(link, "work_item_state") as WorkItemState,
+          stringValue(link, "work_item_state") as WorkItemState
         ),
         actorType: "system",
         actorId: transition === "retry" ? "system:workflow-retry" : "system:workflow-reassign",
@@ -369,14 +422,21 @@ export class TaskBoardRuntime {
     const projectId = stringValue(link, "project_id");
     const eventId = `event_${randomUUID()}`;
     const eventType = transition === "retry" ? "stage_task_retried" : "stage_task_reassigned";
-    const summary = transition === "retry"
-      ? `${stringValue(link, "title")} ${stage} attempt resumed`
-      : `${stringValue(link, "title")} ${stage} attempt reassigned`;
-    this.store.db.prepare(`
+    const summary =
+      transition === "retry"
+        ? `${stringValue(link, "title")} ${stage} attempt resumed`
+        : `${stringValue(link, "title")} ${stage} attempt reassigned`;
+    this.store.db
+      .prepare(
+        `
       INSERT INTO project_events(event_id, project_id, node_id, task_id, event_type, summary, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(eventId, projectId, nodeId, taskId, eventType, summary, now);
-    const sequence = Number(this.store.db.prepare("SELECT sequence FROM project_events WHERE event_id = ?").get(eventId)?.sequence);
+    `
+      )
+      .run(eventId, projectId, nodeId, taskId, eventType, summary, now);
+    const sequence = Number(
+      this.store.db.prepare("SELECT sequence FROM project_events WHERE event_id = ?").get(eventId)?.sequence
+    );
     const event: ProjectEvent = Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       sequence,
@@ -400,14 +460,18 @@ export class TaskBoardRuntime {
     return true;
   }
 
-  private workItemLinkForTask(taskId: string): Readonly<{
-    workItemId: string;
-    nodeId: string | null;
-    taskStage: WorkItemStage;
-    currentState: WorkItemState;
-    currentStage: WorkItemStage | null;
-  }> | undefined {
-    const row = this.store.db.prepare(`
+  private workItemLinkForTask(taskId: string):
+    | Readonly<{
+        workItemId: string;
+        nodeId: string | null;
+        taskStage: WorkItemStage;
+        currentState: WorkItemState;
+        currentStage: WorkItemStage | null;
+      }>
+    | undefined {
+    const row = this.store.db
+      .prepare(
+        `
       SELECT
         planning.work_item_id,
         NULL AS node_id,
@@ -430,7 +494,9 @@ export class TaskBoardRuntime {
       JOIN work_items work_item ON work_item.work_item_id = plan.work_item_id
       WHERE attempt.task_id = ?
       LIMIT 1
-    `).get(taskId, taskId);
+    `
+      )
+      .get(taskId, taskId);
     if (row === undefined) return undefined;
     return Object.freeze({
       workItemId: stringValue(row, "work_item_id"),
@@ -448,7 +514,8 @@ export class TaskBoardRuntime {
     if (active && run.status !== "active") throw conflict("RUN_NOT_ACTIVE", "Run is no longer active");
     if (taskId !== null) {
       const wake = this.store.db.prepare("SELECT task_id FROM wakeups WHERE wakeup_id = ?").get(run.wakeupId);
-      if (!wake || nullableString(wake, "task_id") !== taskId) throw conflict("RUN_TASK_MISMATCH", "Run is not bound to this task");
+      if (!wake || nullableString(wake, "task_id") !== taskId)
+        throw conflict("RUN_TASK_MISMATCH", "Run is not bound to this task");
     }
     return run;
   }
@@ -460,18 +527,23 @@ export class TaskBoardRuntime {
   }
 
   assertNoActiveRunForTaskInTransaction(taskId: string): void {
-    const active = this.store.db.prepare("SELECT 1 FROM runs WHERE task_id = ? AND status = 'active' LIMIT 1").get(taskId);
+    const active = this.store.db
+      .prepare("SELECT 1 FROM runs WHERE task_id = ? AND status = 'active' LIMIT 1")
+      .get(taskId);
     if (active !== undefined) throw conflict("AGENT_RUN_ACTIVE", "Task already has an active run");
   }
 
   assertAssignment(projectId: string, agentId: string, role: AgentRole): void {
     const agent = this.requireAgent(agentId);
-    if (agent.projectId !== projectId) throw conflict("AGENT_PROJECT_MISMATCH", "Assigned agent belongs to another project");
-    if (agent.role !== role) throw conflict("AGENT_ROLE_MISMATCH", "Assigned role does not match the fixed agent profile");
+    if (agent.projectId !== projectId)
+      throw conflict("AGENT_PROJECT_MISMATCH", "Assigned agent belongs to another project");
+    if (agent.role !== role)
+      throw conflict("AGENT_ROLE_MISMATCH", "Assigned role does not match the fixed agent profile");
   }
 
   assertTaskAssignment(task: BoardTask, agentId: string, role: AgentRole): void {
-    if (task.kind === "human_check") throw conflict("HUMAN_CHECK_NOT_ASSIGNABLE", "Human checks cannot be assigned to agents");
+    if (task.kind === "human_check")
+      throw conflict("HUMAN_CHECK_NOT_ASSIGNABLE", "Human checks cannot be assigned to agents");
     if (task.requiredRole !== null && role !== task.requiredRole) {
       throw conflict("TASK_REQUIRED_ROLE_MISMATCH", `This task requires the ${task.requiredRole} role`);
     }
@@ -479,11 +551,12 @@ export class TaskBoardRuntime {
   }
 
   createReviewFollowup(parent: BoardTask, now: string): ReviewFollowupResult | null {
-    const nextKind: TaskKind | null = parent.kind === "manager_review"
-      ? "human_check"
-      : parent.kind === "work" && parent.requiresReview && parent.assignedRole === "engineer"
-        ? "manager_review"
-        : null;
+    const nextKind: TaskKind | null =
+      parent.kind === "manager_review"
+        ? "human_check"
+        : parent.kind === "work" && parent.requiresReview && parent.assignedRole === "engineer"
+          ? "manager_review"
+          : null;
     if (nextKind === null) return null;
     let source = parent;
     if (nextKind === "human_check") {
@@ -491,36 +564,50 @@ export class TaskBoardRuntime {
       source = this.requireTask(parent.parentTaskId);
       if (source.kind !== "work" || !source.requiresReview) return null;
     }
-    const existing = this.store.db.prepare(`
+    const existing = this.store.db
+      .prepare(
+        `
       SELECT task_id FROM tasks WHERE parent_task_id = ? AND task_kind = ? LIMIT 1
-    `).get(parent.taskId, nextKind);
+    `
+      )
+      .get(parent.taskId, nextKind);
     if (existing) return Object.freeze({ taskId: stringValue(existing, "task_id"), wakeAgentId: null });
 
     const taskId = randomUUID();
     const requiredRole: AgentRole | null = nextKind === "manager_review" ? "manager" : null;
-    const managers = nextKind === "manager_review"
-      ? this.store.db.prepare(`
+    const managers =
+      nextKind === "manager_review"
+        ? this.store.db
+            .prepare(
+              `
           SELECT agent_id FROM agents
           WHERE project_id = ? AND role = 'manager'
           ORDER BY created_at, agent_id
           LIMIT 2
-        `).all(parent.projectId)
-      : [];
+        `
+            )
+            .all(parent.projectId)
+        : [];
     const assignedAgentId = managers.length === 1 ? stringValue(managers[0]!, "agent_id") : null;
     const assignedRole: AgentRole | null = assignedAgentId === null ? null : "manager";
     const status: TaskStatus = assignedAgentId === null ? "backlog" : "queued";
     const titlePrefix = nextKind === "manager_review" ? "Manager review: " : "Human check: ";
     const title = `${titlePrefix}${source.title}`.slice(0, 240).trimEnd();
-    const objective = (nextKind === "manager_review"
-      ? `Review the completed engineer work and its evidence for this outcome: ${source.objective}`
-      : `Decide whether the reviewed work is ready for the next human-controlled release step: ${source.objective}`)
+    const objective = (
+      nextKind === "manager_review"
+        ? `Review the completed engineer work and its evidence for this outcome: ${source.objective}`
+        : `Decide whether the reviewed work is ready for the next human-controlled release step: ${source.objective}`
+    )
       .slice(0, 4_000)
       .trimEnd();
-    const acceptanceCriteria = nextKind === "manager_review"
-      ? "Inspect the completed work, test evidence, result, and risks; record a clear recommendation for a human."
-      : "A human records the final decision and rationale. This task cannot be assigned to or completed by an agent.";
+    const acceptanceCriteria =
+      nextKind === "manager_review"
+        ? "Inspect the completed work, test evidence, result, and risks; record a clear recommendation for a human."
+        : "A human records the final decision and rationale. This task cannot be assigned to or completed by an agent.";
     const orderKey = this.nextTaskOrderKey();
-    this.store.db.prepare(`
+    this.store.db
+      .prepare(
+        `
       INSERT INTO tasks(
         task_id, project_id, parent_task_id, task_kind, required_role, requires_review,
         title, objective, acceptance_criteria, workspace_refs_json,
@@ -528,39 +615,55 @@ export class TaskBoardRuntime {
         estimate_recorded_at, order_key, started_at, ended_at,
         result, version, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 15, NULL, NULL, ?, NULL, NULL, NULL, 1, ?, ?)
-    `).run(
+    `
+      )
+      .run(
+        taskId,
+        parent.projectId,
+        parent.taskId,
+        nextKind,
+        requiredRole,
+        title,
+        objective,
+        acceptanceCriteria,
+        canonicalJson(parent.workspaceRefs),
+        status,
+        assignedAgentId,
+        assignedRole,
+        orderKey,
+        now,
+        now
+      );
+    this.insertEvent(
+      parent.projectId,
       taskId,
+      { type: "system", id: REVIEW_WORKFLOW_ACTOR },
+      "task_created",
+      {
+        kind: nextKind,
+        requiredRole,
+        requiresReview: false,
+        parentTaskId: parent.taskId,
+        status,
+        assignedAgentId,
+        expectedAgentMinutes: null,
+        orderKey,
+      },
+      now
+    );
+    this.insertEvent(
       parent.projectId,
       parent.taskId,
-      nextKind,
-      requiredRole,
-      title,
-      objective,
-      acceptanceCriteria,
-      canonicalJson(parent.workspaceRefs),
-      status,
-      assignedAgentId,
-      assignedRole,
-      orderKey,
-      now,
-      now,
+      { type: "system", id: REVIEW_WORKFLOW_ACTOR },
+      "review_followup_created",
+      {
+        childTaskId: taskId,
+        childKind: nextKind,
+        childRequiredRole: requiredRole,
+        childAssignedAgentId: assignedAgentId,
+      },
+      now
     );
-    this.insertEvent(parent.projectId, taskId, { type: "system", id: REVIEW_WORKFLOW_ACTOR }, "task_created", {
-      kind: nextKind,
-      requiredRole,
-      requiresReview: false,
-      parentTaskId: parent.taskId,
-      status,
-      assignedAgentId,
-      expectedAgentMinutes: null,
-      orderKey,
-    }, now);
-    this.insertEvent(parent.projectId, parent.taskId, { type: "system", id: REVIEW_WORKFLOW_ACTOR }, "review_followup_created", {
-      childTaskId: taskId,
-      childKind: nextKind,
-      childRequiredRole: requiredRole,
-      childAssignedAgentId: assignedAgentId,
-    }, now);
     if (assignedAgentId !== null) {
       this.insertWakeup(
         parent.projectId,
@@ -571,7 +674,7 @@ export class TaskBoardRuntime {
         null,
         `Review completed engineer task: ${source.title}`,
         now,
-        REVIEW_WORKFLOW_ACTOR,
+        REVIEW_WORKFLOW_ACTOR
       );
     }
     return Object.freeze({ taskId, wakeAgentId: assignedAgentId });
@@ -581,10 +684,12 @@ export class TaskBoardRuntime {
     taskId: string,
     retirementReason: string,
     now: string,
-    preservedWakeupId: string | null = null,
+    preservedWakeupId: string | null = null
   ): void {
     const task = this.requireTask(taskId);
-    const rows = this.store.db.prepare(`
+    const rows = this.store.db
+      .prepare(
+        `
       SELECT *
       FROM wakeups AS wakeup
       WHERE wakeup.task_id = ?
@@ -594,14 +699,18 @@ export class TaskBoardRuntime {
           WHERE event.event_id = ? || wakeup.wakeup_id
         )
       ORDER BY wakeup.created_at, wakeup.rowid
-    `).all(taskId, RETIRED_WAKEUP_EVENT_PREFIX);
+    `
+      )
+      .all(taskId, RETIRED_WAKEUP_EVENT_PREFIX);
     for (const row of rows) {
       if (stringValue(row, "wakeup_id") !== preservedWakeupId) this.retireWakeup(row, task, retirementReason, now);
     }
   }
 
   retireStaleWakeupsForAgent(agentId: string, now: string): void {
-    const rows = this.store.db.prepare(`
+    const rows = this.store.db
+      .prepare(
+        `
       SELECT *
       FROM wakeups AS wakeup
       WHERE wakeup.agent_id = ?
@@ -612,7 +721,9 @@ export class TaskBoardRuntime {
           WHERE event.event_id = ? || wakeup.wakeup_id
         )
       ORDER BY wakeup.created_at DESC, wakeup.rowid DESC
-    `).all(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
+    `
+      )
+      .all(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
     const preferredByTask = new Map<string, { wakeupId: string; isHumanAnswer: boolean }>();
     for (const row of rows) {
       const wakeup = wakeupFromRow(row);
@@ -638,14 +749,20 @@ export class TaskBoardRuntime {
       else if (task.projectId !== wakeup.projectId) retirementReason = "task_project_changed";
       else {
         if (wakeup.reason === "workflow_handoff") {
-          const sourceRow = task.parentTaskId === null
-            ? undefined
-            : this.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(task.parentTaskId);
+          const sourceRow =
+            task.parentTaskId === null
+              ? undefined
+              : this.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(task.parentTaskId);
           const source = sourceRow === undefined ? null : this.requireTask(stringValue(sourceRow, "task_id"));
           if (
-            task.kind !== "manager_review" || task.requiredRole !== "manager" ||
-            source === null || source.kind !== "work" || !source.requiresReview ||
-            source.status !== "completed" || source.endedAt === null || source.result === null
+            task.kind !== "manager_review" ||
+            task.requiredRole !== "manager" ||
+            source === null ||
+            source.kind !== "work" ||
+            !source.requiresReview ||
+            source.status !== "completed" ||
+            source.endedAt === null ||
+            source.result === null
           ) {
             retirementReason = "workflow_handoff_scope_invalid";
           }
@@ -673,26 +790,19 @@ export class TaskBoardRuntime {
     questionId: string | null,
     detail: string,
     now: string,
-    createdBy = this.config.humanPrincipal,
+    createdBy = this.config.humanPrincipal
   ): string {
     const wakeupId = randomUUID();
-    this.store.db.prepare(`
+    this.store.db
+      .prepare(
+        `
       INSERT INTO wakeups(
         wakeup_id, project_id, agent_id, reason, source_key, task_id, question_id,
         detail, created_by, created_at, claimed_at, run_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
-    `).run(
-      wakeupId,
-      projectId,
-      agentId,
-      reason,
-      sourceKey,
-      taskId,
-      questionId,
-      detail,
-      createdBy,
-      now,
-    );
+    `
+      )
+      .run(wakeupId, projectId, agentId, reason, sourceKey, taskId, questionId, detail, createdBy, now);
     return wakeupId;
   }
 
@@ -702,12 +812,16 @@ export class TaskBoardRuntime {
     actor: Actor | Readonly<{ type: "system"; id: string }>,
     eventType: string,
     data: Readonly<Record<string, unknown>>,
-    now: string,
+    now: string
   ): void {
-    this.store.db.prepare(`
+    this.store.db
+      .prepare(
+        `
       INSERT INTO task_events(event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(randomUUID(), projectId, taskId, actor.type, actor.id, eventType, canonicalJson(data), now);
+    `
+      )
+      .run(randomUUID(), projectId, taskId, actor.type, actor.id, eventType, canonicalJson(data), now);
   }
 
   retainWorkerConnection(agentId: string, connection: ActiveWorkerConnection): () => void {
@@ -745,29 +859,33 @@ export class TaskBoardRuntime {
     task: BoardTask | null,
     retirementReason: string,
     now: string,
-    supersededByWakeupId: string | null = null,
+    supersededByWakeupId: string | null = null
   ): void {
     const wakeup = wakeupFromRow(row);
     const eventId = retiredWakeupEventId(wakeup.wakeupId);
     if (this.store.db.prepare("SELECT 1 FROM task_events WHERE event_id = ?").get(eventId)) return;
-    this.store.db.prepare(`
+    this.store.db
+      .prepare(
+        `
       INSERT INTO task_events(
         event_id, project_id, task_id, actor_type, actor_id, event_type, data_json, created_at
       ) VALUES (?, ?, ?, 'system', 'steward:wakeup-retirement', 'agent_wakeup_retired', ?, ?)
-    `).run(
-      eventId,
-      wakeup.projectId,
-      task === null ? null : wakeup.taskId,
-      canonicalJson({
-        agentId: wakeup.agentId,
-        assignedAgentId: task?.assignedAgentId ?? null,
-        retirementReason,
-        supersededByWakeupId,
-        taskStatus: task?.status ?? null,
-        wakeReason: wakeup.reason,
-        wakeupId: wakeup.wakeupId,
-      }),
-      now,
-    );
+    `
+      )
+      .run(
+        eventId,
+        wakeup.projectId,
+        task === null ? null : wakeup.taskId,
+        canonicalJson({
+          agentId: wakeup.agentId,
+          assignedAgentId: task?.assignedAgentId ?? null,
+          retirementReason,
+          supersededByWakeupId,
+          taskStatus: task?.status ?? null,
+          wakeReason: wakeup.reason,
+          wakeupId: wakeup.wakeupId,
+        }),
+        now
+      );
   }
 }

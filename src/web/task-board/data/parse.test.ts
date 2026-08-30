@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { DESIGN_FAILURE_POINTS, TASK_BOARD_API_VERSION } from '@shared/task-board-contract';
+import { describe, expect, it, vi } from "vitest";
+import { DESIGN_FAILURE_POINTS, TASK_BOARD_API_VERSION } from "@shared/task-board-contract";
 
 const entityParserSpies = vi.hoisted(() => ({
   agent: vi.fn(),
@@ -12,8 +12,8 @@ const entityParserSpies = vi.hoisted(() => ({
   taskPhase: vi.fn(),
 }));
 
-vi.mock('@shared/task-board-contract/validate', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@shared/task-board-contract/validate')>();
+vi.mock("@shared/task-board-contract/validate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@shared/task-board-contract/validate")>();
   return {
     ...actual,
     parseAgentEntity: (...args: Parameters<typeof actual.parseAgentEntity>) => {
@@ -87,15 +87,15 @@ import {
   parseWorkItem,
   parseWorkItemAudit,
   parseWorkItemDetail,
-} from './parse';
+} from "./parse";
 
-const NOW = '2026-08-09T20:00:00.000Z';
+const NOW = "2026-08-09T20:00:00.000Z";
 
 const project = {
   apiVersion: TASK_BOARD_API_VERSION,
-  projectId: 'project-one',
-  name: 'Project one',
-  description: 'Regression fixture.',
+  projectId: "project-one",
+  name: "Project one",
+  description: "Regression fixture.",
   version: 1,
   createdAt: NOW,
   updatedAt: NOW,
@@ -103,13 +103,13 @@ const project = {
 
 const agent = {
   apiVersion: TASK_BOARD_API_VERSION,
-  agentId: 'agent-one',
-  projectId: 'project-one',
-  role: 'engineer',
-  area: 'Validation',
-  mission: 'Preserve the browser contract.',
-  model: 'model-one',
-  status: 'idle',
+  agentId: "agent-one",
+  projectId: "project-one",
+  role: "engineer",
+  area: "Validation",
+  mission: "Preserve the browser contract.",
+  model: "model-one",
+  status: "idle",
   workerConnection: null,
   lastError: null,
   version: 1,
@@ -118,12 +118,12 @@ const agent = {
 
 const phase = {
   apiVersion: TASK_BOARD_API_VERSION,
-  phaseId: 'phase-one',
-  projectId: 'project-one',
-  taskId: 'task-one',
-  title: 'Validate',
-  stage: 'testing',
-  status: 'pending',
+  phaseId: "phase-one",
+  projectId: "project-one",
+  taskId: "task-one",
+  title: "Validate",
+  stage: "testing",
+  status: "pending",
   parallelGroup: null,
   orderKey: 0,
   startedAt: null,
@@ -135,19 +135,19 @@ const phase = {
 
 const task = {
   apiVersion: TASK_BOARD_API_VERSION,
-  taskId: 'task-one',
-  projectId: 'project-one',
+  taskId: "task-one",
+  projectId: "project-one",
   parentTaskId: null,
-  kind: 'work',
+  kind: "work",
   requiredRole: null,
   requiresReview: false,
-  title: 'Validate browser parsing',
-  objective: 'Preserve the existing browser contract.',
-  acceptanceCriteria: 'Every regression pin passes.',
+  title: "Validate browser parsing",
+  objective: "Preserve the existing browser contract.",
+  acceptanceCriteria: "Every regression pin passes.",
   workspaceRefs: [],
-  status: 'in_progress',
-  assignedAgentId: 'agent-one',
-  assignedRole: 'engineer',
+  status: "in_progress",
+  assignedAgentId: "agent-one",
+  assignedRole: "engineer",
   expectedAgentMinutes: 30,
   estimateRecordedAt: NOW,
   orderKey: 0,
@@ -163,17 +163,17 @@ const task = {
 
 const workItem = {
   apiVersion: TASK_BOARD_API_VERSION,
-  workItemId: 'work-item-one',
-  originalRequest: 'Keep browser parsing forward compatible.',
+  workItemId: "work-item-one",
+  originalRequest: "Keep browser parsing forward compatible.",
   refinedObjective: null,
-  priority: 'normal',
-  taskType: 'standard',
-  projectTarget: { mode: 'auto' },
+  priority: "normal",
+  taskType: "standard",
+  projectTarget: { mode: "auto" },
   resolvedProjectId: null,
   planningTaskId: null,
-  state: 'queued',
-  currentStage: 'refinement',
-  createdBy: 'human:operator',
+  state: "queued",
+  currentStage: "refinement",
+  createdBy: "human:operator",
   version: 1,
   createdAt: NOW,
   updatedAt: NOW,
@@ -184,181 +184,225 @@ const workItem = {
 
 const question = {
   apiVersion: TASK_BOARD_API_VERSION,
-  questionId: 'question-one',
-  projectId: 'project-one',
-  taskId: 'task-one',
-  agentId: 'agent-one',
-  question: 'Proceed?',
-  status: 'open',
+  questionId: "question-one",
+  projectId: "project-one",
+  taskId: "task-one",
+  agentId: "agent-one",
+  question: "Proceed?",
+  status: "open",
   answer: null,
   askedAt: NOW,
   answeredAt: null,
   version: 1,
 };
 
-describe('browser task-board validator adapter', () => {
-  it('loosely projects board pause state with its parsed update instant', () => {
-    expect(parseBoardPause({
+describe("browser task-board validator adapter", () => {
+  it("loosely projects board pause state with its parsed update instant", () => {
+    expect(
+      parseBoardPause(
+        {
+          paused: true,
+          reason: "Emergency operator hold.",
+          version: 4,
+          updatedAt: NOW,
+          updatedBy: "human:operator",
+          additiveField: "ignored",
+        },
+        "boardPause"
+      )
+    ).toEqual({
       paused: true,
-      reason: 'Emergency operator hold.',
-      version: 4,
-      updatedAt: NOW,
-      updatedBy: 'human:operator',
-      additiveField: 'ignored',
-    }, 'boardPause')).toEqual({
-      paused: true,
-      reason: 'Emergency operator hold.',
+      reason: "Emergency operator hold.",
       version: 4,
       updatedAt: NOW,
       updatedAtMs: Date.parse(NOW),
-      updatedBy: 'human:operator',
+      updatedBy: "human:operator",
     });
   });
 
-  it('keeps response identifiers opaque and omits apiVersion from raw projections', () => {
-    const parsed = parseProject({
-      ...project,
-      projectId: '',
-      name: 'Legacy project',
-      description: 'The browser historically treats response IDs as opaque strings.',
-    }, 'project');
+  it("keeps response identifiers opaque and omits apiVersion from raw projections", () => {
+    const parsed = parseProject(
+      {
+        ...project,
+        projectId: "",
+        name: "Legacy project",
+        description: "The browser historically treats response IDs as opaque strings.",
+      },
+      "project"
+    );
 
     expect(parsed).toEqual({
-      projectId: '',
-      name: 'Legacy project',
-      description: 'The browser historically treats response IDs as opaque strings.',
-      repoPath: 'The browser historically treats response IDs as opaque strings.',
+      projectId: "",
+      name: "Legacy project",
+      description: "The browser historically treats response IDs as opaque strings.",
+      repoPath: "The browser historically treats response IDs as opaque strings.",
       version: 1,
       createdAt: NOW,
       createdAtMs: Date.parse(NOW),
       updatedAt: NOW,
       updatedAtMs: Date.parse(NOW),
     });
-    expect(parsed).not.toHaveProperty('apiVersion');
+    expect(parsed).not.toHaveProperty("apiVersion");
   });
 
-  it('projects repository paths and decomposition fields while tolerating future phases', () => {
-    expect(parseProject({ ...project, repoPath: '/repos/project-one' }, 'project').repoPath)
-      .toBe('/repos/project-one');
-    expect(parseWorkItem({
-      ...workItem,
-      parentWorkItemId: 'parent-work-item',
-      phase: 'migrate',
-      childOrdinal: 2,
-    }, 'workItem')).toMatchObject({
-      parentWorkItemId: 'parent-work-item',
-      phase: 'migrate',
+  it("projects repository paths and decomposition fields while tolerating future phases", () => {
+    expect(parseProject({ ...project, repoPath: "/repos/project-one" }, "project").repoPath).toBe("/repos/project-one");
+    expect(
+      parseWorkItem(
+        {
+          ...workItem,
+          parentWorkItemId: "parent-work-item",
+          phase: "migrate",
+          childOrdinal: 2,
+        },
+        "workItem"
+      )
+    ).toMatchObject({
+      parentWorkItemId: "parent-work-item",
+      phase: "migrate",
       childOrdinal: 2,
     });
-    expect(parseWorkItem({
-      ...workItem,
-      parentWorkItemId: null,
-      phase: 'future_phase',
-      childOrdinal: null,
-    }, 'workItem').phase).toBe('unrecognized');
+    expect(
+      parseWorkItem(
+        {
+          ...workItem,
+          parentWorkItemId: null,
+          phase: "future_phase",
+          childOrdinal: null,
+        },
+        "workItem"
+      ).phase
+    ).toBe("unrecognized");
   });
 
-  it('validates a terminal task completion timestamp before projecting it to null', () => {
-    expect(() => parseTask({
-      ...task,
-      status: 'completed',
-      expectedCompletedAt: 'not-a-timestamp',
-      endedAt: NOW,
-    }, 'task')).toThrow('task.expectedCompletedAt must be a timestamp');
+  it("validates a terminal task completion timestamp before projecting it to null", () => {
+    expect(() =>
+      parseTask(
+        {
+          ...task,
+          status: "completed",
+          expectedCompletedAt: "not-a-timestamp",
+          endedAt: NOW,
+        },
+        "task"
+      )
+    ).toThrow("task.expectedCompletedAt must be a timestamp");
   });
 
-  it('keeps type-first browser scalar messages', () => {
-    expect(() => parseProject({ ...project, createdAt: 1 }, 'project')).toThrow('project.createdAt must be a string');
-    expect(() => parseAgent({ ...agent, role: 1 }, 'agent')).toThrow('agent.role must be a string');
-    expect(() => parseTask({ ...task, expectedAgentMinutes: '30' }, 'task')).toThrow(
-      'task.expectedAgentMinutes must be a safe integer of at least 15',
+  it("keeps type-first browser scalar messages", () => {
+    expect(() => parseProject({ ...project, createdAt: 1 }, "project")).toThrow("project.createdAt must be a string");
+    expect(() => parseAgent({ ...agent, role: 1 }, "agent")).toThrow("agent.role must be a string");
+    expect(() => parseTask({ ...task, expectedAgentMinutes: "30" }, "task")).toThrow(
+      "task.expectedAgentMinutes must be a safe integer of at least 15"
     );
-    expect(() => parseAutomationAgentType({
-      agentTypeId: 'type-one',
-      name: 1,
-      description: 'Regression fixture.',
-      role: 'engineer',
-      supplementalInstructions: '',
-      skillIds: [],
-      evaluatorProfile: 'tests',
-      enabled: false,
-    }, 'agentType')).toThrow('agentType.name must be a string');
+    expect(() =>
+      parseAutomationAgentType(
+        {
+          agentTypeId: "type-one",
+          name: 1,
+          description: "Regression fixture.",
+          role: "engineer",
+          supplementalInstructions: "",
+          skillIds: [],
+          evaluatorProfile: "tests",
+          enabled: false,
+        },
+        "agentType"
+      )
+    ).toThrow("agentType.name must be a string");
   });
 
-  it('buckets unknown task and work-item states without widening the wire validators', () => {
-    expect(parseTask({ ...task, status: 'future_task_state' }, 'tasks[0]').status).toBe('unrecognized');
-    expect(parseWorkItem({
-      ...workItem,
-      state: 'future_work_item_state',
-      endedAt: NOW,
-      archivedAt: NOW,
-      cancelledReason: 'A future state may carry terminal metadata.',
-    }, 'workItems[0]').state).toBe('unrecognized');
+  it("buckets unknown task and work-item states without widening the wire validators", () => {
+    expect(parseTask({ ...task, status: "future_task_state" }, "tasks[0]").status).toBe("unrecognized");
+    expect(
+      parseWorkItem(
+        {
+          ...workItem,
+          state: "future_work_item_state",
+          endedAt: NOW,
+          archivedAt: NOW,
+          cancelledReason: "A future state may carry terminal metadata.",
+        },
+        "workItems[0]"
+      ).state
+    ).toBe("unrecognized");
   });
 
-  it('preserves unknown work-item task types verbatim for rolling compatibility', () => {
-    expect(parseWorkItem({ ...workItem, taskType: 'future_onboarding' }, 'workItems[0]').taskType)
-      .toBe('future_onboarding');
+  it("preserves unknown work-item task types verbatim for rolling compatibility", () => {
+    expect(parseWorkItem({ ...workItem, taskType: "future_onboarding" }, "workItems[0]").taskType).toBe(
+      "future_onboarding"
+    );
   });
 
-  it('loosely projects review findings and design records across additive response changes', () => {
-    const finding = parseReviewFinding({
-      findingId: 'finding-one',
-      nodeId: 'node-one',
-      stage: 'future_stage',
-      round: 1,
-      file: null,
-      line: null,
-      category: 'future_category',
-      severity: 'future_severity',
-      expected: 'The retry is idempotent.',
-      actual: 'The retry duplicates a write.',
-      blocking: true,
-      createdAt: NOW,
-      additiveField: 'ignored',
-    }, 'finding');
+  it("loosely projects review findings and design records across additive response changes", () => {
+    const finding = parseReviewFinding(
+      {
+        findingId: "finding-one",
+        nodeId: "node-one",
+        stage: "future_stage",
+        round: 1,
+        file: null,
+        line: null,
+        category: "future_category",
+        severity: "future_severity",
+        expected: "The retry is idempotent.",
+        actual: "The retry duplicates a write.",
+        blocking: true,
+        createdAt: NOW,
+        additiveField: "ignored",
+      },
+      "finding"
+    );
     expect(finding).toMatchObject({
-      stage: 'unrecognized',
-      category: 'unrecognized',
-      severity: 'unrecognized',
+      stage: "unrecognized",
+      category: "unrecognized",
+      severity: "unrecognized",
     });
-    expect(finding).not.toHaveProperty('additiveField');
+    expect(finding).not.toHaveProperty("additiveField");
 
-    const design = parseDesignRecord({
-      designRecordId: 'design-one',
-      workItemId: 'work-item-one',
-      planRevisionId: 'plan-one',
-      states: ['pending'],
-      transitions: [{ from: 'pending', to: 'committed', additiveField: 'ignored' }],
-      failurePoints: DESIGN_FAILURE_POINTS.map((point, index) => ({
-        point: index === 0 ? 'future_failure_point' : point,
-        resultingState: 'durable',
-        recovery: 'Retry with the persisted idempotency key.',
-      })),
-      idempotencyKeys: [],
-      faultInjectionCases: [],
-      createdAt: NOW,
-      additiveField: 'ignored',
-    }, 'design');
-    expect(design.failurePoints[0]?.point).toBe('unrecognized');
-    expect(design.transitions[0]).not.toHaveProperty('additiveField');
-    expect(design).not.toHaveProperty('additiveField');
+    const design = parseDesignRecord(
+      {
+        designRecordId: "design-one",
+        workItemId: "work-item-one",
+        planRevisionId: "plan-one",
+        states: ["pending"],
+        transitions: [{ from: "pending", to: "committed", additiveField: "ignored" }],
+        failurePoints: DESIGN_FAILURE_POINTS.map((point, index) => ({
+          point: index === 0 ? "future_failure_point" : point,
+          resultingState: "durable",
+          recovery: "Retry with the persisted idempotency key.",
+        })),
+        idempotencyKeys: [],
+        faultInjectionCases: [],
+        createdAt: NOW,
+        additiveField: "ignored",
+      },
+      "design"
+    );
+    expect(design.failurePoints[0]?.point).toBe("unrecognized");
+    expect(design.transitions[0]).not.toHaveProperty("additiveField");
+    expect(design).not.toHaveProperty("additiveField");
   });
 
-  it('loosely projects ledgers and preserves old work-item payloads without observability fields', () => {
-    const oldPayload = parseWorkItem(workItem, 'workItem');
-    expect(oldPayload).not.toHaveProperty('stateSince');
-    expect(oldPayload).not.toHaveProperty('stateSinceMs');
-    expect(oldPayload).not.toHaveProperty('reviewRound');
-    expect(oldPayload).not.toHaveProperty('heartbeatAt');
-    expect(oldPayload).not.toHaveProperty('heartbeatAtMs');
+  it("loosely projects ledgers and preserves old work-item payloads without observability fields", () => {
+    const oldPayload = parseWorkItem(workItem, "workItem");
+    expect(oldPayload).not.toHaveProperty("stateSince");
+    expect(oldPayload).not.toHaveProperty("stateSinceMs");
+    expect(oldPayload).not.toHaveProperty("reviewRound");
+    expect(oldPayload).not.toHaveProperty("heartbeatAt");
+    expect(oldPayload).not.toHaveProperty("heartbeatAtMs");
 
-    expect(parseWorkItem({
-      ...workItem,
-      stateSince: NOW,
-      reviewRound: 3,
-      heartbeatAt: null,
-    }, 'workItem')).toMatchObject({
+    expect(
+      parseWorkItem(
+        {
+          ...workItem,
+          stateSince: NOW,
+          reviewRound: 3,
+          heartbeatAt: null,
+        },
+        "workItem"
+      )
+    ).toMatchObject({
       stateSince: NOW,
       stateSinceMs: Date.parse(NOW),
       reviewRound: 3,
@@ -367,192 +411,219 @@ describe('browser task-board validator adapter', () => {
     });
 
     const finding = {
-      findingId: 'finding-one',
-      nodeId: 'node-one',
-      stage: 'verification',
+      findingId: "finding-one",
+      nodeId: "node-one",
+      stage: "verification",
       round: 1,
       file: null,
       line: null,
-      category: 'correctness',
-      severity: 'major',
-      expected: 'The retry is idempotent.',
-      actual: 'The retry duplicates a write.',
+      category: "correctness",
+      severity: "major",
+      expected: "The retry is idempotent.",
+      actual: "The retry duplicates a write.",
       blocking: true,
       createdAt: NOW,
-      workItemId: 'work-item-one',
+      workItemId: "work-item-one",
     };
-    const findings = parseFindingsLedger({
-      categories: [{
-        category: 'future_category',
-        severity: 'future_severity',
-        blocking: true,
-        count: 1,
+    const findings = parseFindingsLedger(
+      {
+        categories: [
+          {
+            category: "future_category",
+            severity: "future_severity",
+            blocking: true,
+            count: 1,
+            additiveField: true,
+          },
+        ],
+        perProject: [{ projectId: "project-one", category: "future_category", count: 1 }],
+        recent: [{ ...finding, additiveField: true }],
         additiveField: true,
-      }],
-      perProject: [{ projectId: 'project-one', category: 'future_category', count: 1 }],
-      recent: [{ ...finding, additiveField: true }],
-      additiveField: true,
-    }, 'findingsLedger');
-    expect(findings.categories[0]).toMatchObject({ category: 'unrecognized', severity: 'unrecognized' });
-    expect(findings.perProject[0]?.category).toBe('unrecognized');
-    expect(findings.recent[0]).toMatchObject({ workItemId: 'work-item-one', createdAtMs: Date.parse(NOW) });
+      },
+      "findingsLedger"
+    );
+    expect(findings.categories[0]).toMatchObject({ category: "unrecognized", severity: "unrecognized" });
+    expect(findings.perProject[0]?.category).toBe("unrecognized");
+    expect(findings.recent[0]).toMatchObject({ workItemId: "work-item-one", createdAtMs: Date.parse(NOW) });
 
-    const parks = parseParksLedger({
-      open: [{
-        parkRecordId: 'park-one',
-        workItemId: 'work-item-one',
-        category: 'future_category',
-        reason: 'Wait for an operator decision.',
-        parkedAt: NOW,
-        resolvedAt: null,
-        resolution: null,
-        workItemTitle: 'Make retry behavior observable.',
+    const parks = parseParksLedger(
+      {
+        open: [
+          {
+            parkRecordId: "park-one",
+            workItemId: "work-item-one",
+            category: "future_category",
+            reason: "Wait for an operator decision.",
+            parkedAt: NOW,
+            resolvedAt: null,
+            resolution: null,
+            workItemTitle: "Make retry behavior observable.",
+            additiveField: true,
+          },
+        ],
+        resolved: [],
+        recordsSince: "2026-08-20",
         additiveField: true,
-      }],
-      resolved: [],
-      recordsSince: '2026-08-20',
-      additiveField: true,
-    }, 'parksLedger');
-    expect(parks.open[0]?.category).toBe('unrecognized');
+      },
+      "parksLedger"
+    );
+    expect(parks.open[0]?.category).toBe("unrecognized");
     expect(parks.open[0]).toMatchObject({ parkedAtMs: Date.parse(NOW), resolvedAtMs: null });
-    expect(parks.recordsSince).toBe('2026-08-20');
+    expect(parks.recordsSince).toBe("2026-08-20");
   });
 
-  it('loosely projects ledger enums as unrecognized across additive response changes', () => {
-    const park = parseParkRecord({
-      parkRecordId: 'park-record-one',
-      workItemId: 'work-item-one',
-      category: 'future_category',
-      reason: 'Waiting for an operator.',
-      parkedAt: NOW,
-      resolvedAt: NOW,
-      resolution: 'future_resolution',
-      additiveField: 'ignored',
-    }, 'parkRecord');
-    expect(park).toMatchObject({ category: 'unrecognized', resolution: 'unrecognized' });
-    expect(park).not.toHaveProperty('additiveField');
+  it("loosely projects ledger enums as unrecognized across additive response changes", () => {
+    const park = parseParkRecord(
+      {
+        parkRecordId: "park-record-one",
+        workItemId: "work-item-one",
+        category: "future_category",
+        reason: "Waiting for an operator.",
+        parkedAt: NOW,
+        resolvedAt: NOW,
+        resolution: "future_resolution",
+        additiveField: "ignored",
+      },
+      "parkRecord"
+    );
+    expect(park).toMatchObject({ category: "unrecognized", resolution: "unrecognized" });
+    expect(park).not.toHaveProperty("additiveField");
 
-    const notification = parseBoardNotification({
-      notificationId: 'notification-one',
-      sequence: 1,
-      kind: 'future_kind',
-      dedupeKey: null,
-      projectId: null,
-      workItemId: 'work-item-one',
-      summary: 'A future notification kind arrived.',
-      createdAt: NOW,
-      readAt: null,
-      version: 1,
-      additiveField: 'ignored',
-    }, 'notification');
-    expect(notification.kind).toBe('unrecognized');
+    const notification = parseBoardNotification(
+      {
+        notificationId: "notification-one",
+        sequence: 1,
+        kind: "future_kind",
+        dedupeKey: null,
+        projectId: null,
+        workItemId: "work-item-one",
+        summary: "A future notification kind arrived.",
+        createdAt: NOW,
+        readAt: null,
+        version: 1,
+        additiveField: "ignored",
+      },
+      "notification"
+    );
+    expect(notification.kind).toBe("unrecognized");
     expect(notification).toMatchObject({ createdAtMs: Date.parse(NOW), readAtMs: null });
-    expect(notification).not.toHaveProperty('additiveField');
+    expect(notification).not.toHaveProperty("additiveField");
 
-    const gate = parseGateAction({
-      gateActionId: 'gate-action-one',
-      workItemId: 'work-item-one',
-      gate: 'future_gate',
-      actorId: 'human:operator',
-      planRevisionId: null,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note: null,
-      createdAt: NOW,
-      additiveField: 'ignored',
-    }, 'gateAction');
-    expect(gate.gate).toBe('unrecognized');
-    expect(gate).not.toHaveProperty('additiveField');
-
-    const audit = parseWorkItemAudit({
-      gateActions: [{
-        gateActionId: 'gate-action-one',
-        workItemId: 'work-item-one',
-        gate: 'future_gate',
-        actorId: 'human:operator',
+    const gate = parseGateAction(
+      {
+        gateActionId: "gate-action-one",
+        workItemId: "work-item-one",
+        gate: "future_gate",
+        actorId: "human:operator",
         planRevisionId: null,
         verifiedSha: null,
         mergeSha: null,
         refId: null,
         note: null,
         createdAt: NOW,
-        additiveGateField: 'ignored',
-      }],
-      transitions: [{
-        fromState: null,
-        toState: 'queued',
-        actorType: 'human',
-        actorId: 'human:operator',
-        createdAt: NOW,
-        additiveTransitionField: 'ignored',
-      }],
-      additiveAuditField: 'ignored',
-    }, 'audit');
-    expect(audit.gateActions[0]).toMatchObject({ gate: 'unrecognized', createdAtMs: Date.parse(NOW) });
-    expect(audit.transitions[0]).toMatchObject({ toState: 'queued', createdAtMs: Date.parse(NOW) });
-    expect(audit).not.toHaveProperty('additiveAuditField');
+        additiveField: "ignored",
+      },
+      "gateAction"
+    );
+    expect(gate.gate).toBe("unrecognized");
+    expect(gate).not.toHaveProperty("additiveField");
+
+    const audit = parseWorkItemAudit(
+      {
+        gateActions: [
+          {
+            gateActionId: "gate-action-one",
+            workItemId: "work-item-one",
+            gate: "future_gate",
+            actorId: "human:operator",
+            planRevisionId: null,
+            verifiedSha: null,
+            mergeSha: null,
+            refId: null,
+            note: null,
+            createdAt: NOW,
+            additiveGateField: "ignored",
+          },
+        ],
+        transitions: [
+          {
+            fromState: null,
+            toState: "queued",
+            actorType: "human",
+            actorId: "human:operator",
+            createdAt: NOW,
+            additiveTransitionField: "ignored",
+          },
+        ],
+        additiveAuditField: "ignored",
+      },
+      "audit"
+    );
+    expect(audit.gateActions[0]).toMatchObject({ gate: "unrecognized", createdAtMs: Date.parse(NOW) });
+    expect(audit.transitions[0]).toMatchObject({ toState: "queued", createdAtMs: Date.parse(NOW) });
+    expect(audit).not.toHaveProperty("additiveAuditField");
   });
 
-  it('projects pipeline findings and the design record while ignoring additive response fields', () => {
+  it("projects pipeline findings and the design record while ignoring additive response fields", () => {
     const summary = {
-      commits: [{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'Review the pipeline' }],
-      diffstat: ' src/change.ts | 1 +',
-      filesTouched: ['src/change.ts'],
-      declaredScope: ['src'],
+      commits: [{ sha: "0123456789abcdef0123456789abcdef01234567", subject: "Review the pipeline" }],
+      diffstat: " src/change.ts | 1 +",
+      filesTouched: ["src/change.ts"],
+      declaredScope: ["src"],
       scopeOk: true,
-      assumptions: ['The current contract remains stable.'],
+      assumptions: ["The current contract remains stable."],
       midRunAssumptions: [],
       verify: [],
-      criteria: ['The review evidence is visible.'],
+      criteria: ["The review evidence is visible."],
       criterionChecks: [],
-      findings: [{
-        findingId: 'finding-one',
-        nodeId: 'node-one',
-        stage: 'verification',
-        round: 2,
-        file: 'src/change.ts',
-        line: 17,
-        category: 'correctness',
-        severity: 'major',
-        expected: 'The write is idempotent.',
-        actual: 'A retry duplicates the write.',
-        blocking: true,
-        createdAt: NOW,
-        additiveField: 'ignored',
-      }],
+      findings: [
+        {
+          findingId: "finding-one",
+          nodeId: "node-one",
+          stage: "verification",
+          round: 2,
+          file: "src/change.ts",
+          line: 17,
+          category: "correctness",
+          severity: "major",
+          expected: "The write is idempotent.",
+          actual: "A retry duplicates the write.",
+          blocking: true,
+          createdAt: NOW,
+          additiveField: "ignored",
+        },
+      ],
       designRecord: {
-        states: ['pending', 'committed'],
-        transitions: [{ from: 'pending', to: 'committed', durablePrecondition: 'The key is persisted.' }],
+        states: ["pending", "committed"],
+        transitions: [{ from: "pending", to: "committed", durablePrecondition: "The key is persisted." }],
         failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
           point,
-          resultingState: 'pending',
-          recovery: 'Retry with the persisted key.',
+          resultingState: "pending",
+          recovery: "Retry with the persisted key.",
         })),
-        idempotencyKeys: [{
-          name: 'requestId',
-          generatedAt: 'Before the first send.',
-          persistedAt: 'With the pending state.',
-          reuse: 'Reuse for every retry.',
-        }],
-        faultInjectionCases: [{
-          name: 'Crash after send',
-          scenario: 'Stop before the response.',
-          expectation: 'The retry reuses requestId.',
-        }],
-        additiveField: 'ignored',
+        idempotencyKeys: [
+          {
+            name: "requestId",
+            generatedAt: "Before the first send.",
+            persistedAt: "With the pending state.",
+            reuse: "Reuse for every retry.",
+          },
+        ],
+        faultInjectionCases: [
+          {
+            name: "Crash after send",
+            scenario: "Stop before the response.",
+            expectation: "The retry reuses requestId.",
+          },
+        ],
+        additiveField: "ignored",
       },
-      additiveField: 'ignored',
+      additiveField: "ignored",
     };
 
-    const {
-      additiveField: _summaryAdditiveField,
-      findings: _findings,
-      designRecord,
-      ...summaryFields
-    } = summary;
+    const { additiveField: _summaryAdditiveField, findings: _findings, designRecord, ...summaryFields } = summary;
     const { additiveField: _designAdditiveField, ...designFields } = designRecord;
-    expect(parsePipelineSummary(summary, 'pipeline summary')).toEqual({
+    expect(parsePipelineSummary(summary, "pipeline summary")).toEqual({
       ...summaryFields,
       findings: summary.findings.map(({ additiveField: _additiveField, ...finding }) => finding),
       designRecord: {
@@ -565,46 +636,61 @@ describe('browser task-board validator adapter', () => {
     });
   });
 
-  it('defaults pipeline findings and the design record when an older tab receives neither field', () => {
-    expect(parsePipelineSummary({
-      commits: [],
-      diffstat: '',
-      filesTouched: [],
-      declaredScope: ['src'],
-      scopeOk: true,
-      assumptions: [],
-      midRunAssumptions: [],
-      verify: [],
-      criteria: [],
-      criterionChecks: [],
-    }, 'pipeline summary')).toMatchObject({ findings: [], designRecord: null });
+  it("defaults pipeline findings and the design record when an older tab receives neither field", () => {
+    expect(
+      parsePipelineSummary(
+        {
+          commits: [],
+          diffstat: "",
+          filesTouched: [],
+          declaredScope: ["src"],
+          scopeOk: true,
+          assumptions: [],
+          midRunAssumptions: [],
+          verify: [],
+          criteria: [],
+          criterionChecks: [],
+        },
+        "pipeline summary"
+      )
+    ).toMatchObject({ findings: [], designRecord: null });
   });
 
-  it('parses typed transition history on the work-item detail path', () => {
+  it("parses typed transition history on the work-item detail path", () => {
     const transition = {
       fromState: null,
-      toState: 'queued',
-      actorType: 'human',
-      actorId: 'human:operator',
+      toState: "queued",
+      actorType: "human",
+      actorId: "human:operator",
       createdAt: NOW,
     };
-    const detail = parseWorkItemDetail({
-      ...workItem,
-      transitions: [transition],
-      parkCategory: 'base_diverged',
-    }, 'workItem');
-    expect(detail.transitions).toEqual([{
-      ...transition,
-      createdAtMs: Date.parse(NOW),
-    }]);
-    expect(detail.parkCategory).toBe('base_diverged');
-    expect(() => parseWorkItemDetail({
-      ...workItem,
-      transitions: [{ ...transition, toState: 'future_work_item_state' }],
-    }, 'workItem')).toThrow('workItem.transitions[0].toState has an unsupported value');
+    const detail = parseWorkItemDetail(
+      {
+        ...workItem,
+        transitions: [transition],
+        parkCategory: "base_diverged",
+      },
+      "workItem"
+    );
+    expect(detail.transitions).toEqual([
+      {
+        ...transition,
+        createdAtMs: Date.parse(NOW),
+      },
+    ]);
+    expect(detail.parkCategory).toBe("base_diverged");
+    expect(() =>
+      parseWorkItemDetail(
+        {
+          ...workItem,
+          transitions: [{ ...transition, toState: "future_work_item_state" }],
+        },
+        "workItem"
+      )
+    ).toThrow("workItem.transitions[0].toState has an unsupported value");
   });
 
-  it('runs every entity parser once while projecting a board snapshot', () => {
+  it("runs every entity parser once while projecting a board snapshot", () => {
     Object.values(entityParserSpies).forEach((spy) => spy.mockClear());
     parseRawBoard({
       apiVersion: TASK_BOARD_API_VERSION,
@@ -612,40 +698,46 @@ describe('browser task-board validator adapter', () => {
       agents: [agent],
       tasks: [task],
       openQuestions: [question],
-      recentQuestions: [{ ...question, questionId: 'question-two' }],
-      recentRuns: [{
-        apiVersion: TASK_BOARD_API_VERSION,
-        runId: 'run-one',
-        projectId: 'project-one',
-        agentId: 'agent-one',
-        taskId: 'task-one',
-        status: 'active',
-        startedAt: NOW,
-        heartbeatAt: null,
-        endedAt: null,
-        runtime: null,
-        runtimeVersion: null,
-        model: null,
-        promptsSha: null,
-      }],
-      recentInterrupts: [{
-        apiVersion: TASK_BOARD_API_VERSION,
-        sequence: 1,
-        agentId: 'agent-one',
-        runId: 'run-one',
-        requestedAt: NOW,
-      }],
-      recentEvents: [{
-        apiVersion: TASK_BOARD_API_VERSION,
-        eventId: 'event-one',
-        projectId: 'project-one',
-        taskId: 'task-one',
-        actorType: 'agent',
-        actorId: 'agent-one',
-        eventType: 'run_started',
-        data: {},
-        createdAt: NOW,
-      }],
+      recentQuestions: [{ ...question, questionId: "question-two" }],
+      recentRuns: [
+        {
+          apiVersion: TASK_BOARD_API_VERSION,
+          runId: "run-one",
+          projectId: "project-one",
+          agentId: "agent-one",
+          taskId: "task-one",
+          status: "active",
+          startedAt: NOW,
+          heartbeatAt: null,
+          endedAt: null,
+          runtime: null,
+          runtimeVersion: null,
+          model: null,
+          promptsSha: null,
+        },
+      ],
+      recentInterrupts: [
+        {
+          apiVersion: TASK_BOARD_API_VERSION,
+          sequence: 1,
+          agentId: "agent-one",
+          runId: "run-one",
+          requestedAt: NOW,
+        },
+      ],
+      recentEvents: [
+        {
+          apiVersion: TASK_BOARD_API_VERSION,
+          eventId: "event-one",
+          projectId: "project-one",
+          taskId: "task-one",
+          actorType: "agent",
+          actorId: "agent-one",
+          eventType: "run_started",
+          data: {},
+          createdAt: NOW,
+        },
+      ],
     });
 
     expect(entityParserSpies.project).toHaveBeenCalledTimes(1);
@@ -658,42 +750,52 @@ describe('browser task-board validator adapter', () => {
     expect(entityParserSpies.event).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves rolling compatibility for response fields omitted by the raw projection', () => {
-    expect(parseQuestion({
-      apiVersion: TASK_BOARD_API_VERSION,
-      questionId: 'question-one',
-      projectId: 'project-one',
-      taskId: 'task-one',
-      agentId: 'agent-one',
-      question: 'Proceed?',
-      status: 'open',
-      answer: null,
-      askedAt: NOW,
-      answeredAt: null,
-      version: 1,
-    }, 'question')).not.toHaveProperty('apiVersion');
+  it("preserves rolling compatibility for response fields omitted by the raw projection", () => {
+    expect(
+      parseQuestion(
+        {
+          apiVersion: TASK_BOARD_API_VERSION,
+          questionId: "question-one",
+          projectId: "project-one",
+          taskId: "task-one",
+          agentId: "agent-one",
+          question: "Proceed?",
+          status: "open",
+          answer: null,
+          askedAt: NOW,
+          answeredAt: null,
+          version: 1,
+        },
+        "question"
+      )
+    ).not.toHaveProperty("apiVersion");
 
-    expect(parseRun({
-      apiVersion: TASK_BOARD_API_VERSION,
-      runId: 'run-one',
-      projectId: 'project-one',
-      agentId: 'agent-one',
-      taskId: 'task-one',
-      status: 'active',
-      startedAt: NOW,
-      heartbeatAt: null,
-      endedAt: null,
-      runtime: null,
-      runtimeVersion: null,
-      model: null,
-      promptsSha: null,
-    }, 'run')).not.toHaveProperty('apiVersion');
+    expect(
+      parseRun(
+        {
+          apiVersion: TASK_BOARD_API_VERSION,
+          runId: "run-one",
+          projectId: "project-one",
+          agentId: "agent-one",
+          taskId: "task-one",
+          status: "active",
+          startedAt: NOW,
+          heartbeatAt: null,
+          endedAt: null,
+          runtime: null,
+          runtimeVersion: null,
+          model: null,
+          promptsSha: null,
+        },
+        "run"
+      )
+    ).not.toHaveProperty("apiVersion");
   });
 
-  it('keeps the browser automation executor error path and type message', () => {
-    expect(() => parseAutomationExecutor({ kind: 1 }, 'executor')).toThrow('executor.kind must be a string');
-    expect(() => parseAutomationExecutor({ kind: 'unknown' }, 'executor')).toThrow(
-      'executor.kind has an unsupported value',
+  it("keeps the browser automation executor error path and type message", () => {
+    expect(() => parseAutomationExecutor({ kind: 1 }, "executor")).toThrow("executor.kind must be a string");
+    expect(() => parseAutomationExecutor({ kind: "unknown" }, "executor")).toThrow(
+      "executor.kind has an unsupported value"
     );
   });
 });

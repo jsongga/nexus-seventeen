@@ -1,4 +1,4 @@
-import { BoardApiError } from '../data/client';
+import { BoardApiError } from "../data/client";
 
 /**
  * The board sits behind staff SSO, which the app never sees succeed -- it only
@@ -18,10 +18,11 @@ export function signInFailure(caught: unknown): { message: string; canRetrySignI
   if (!(caught instanceof BoardApiError)) return null;
   if (caught.status === 403) {
     return {
-      message: 'You are signed in, but your account is not a board operator. Ask an administrator to add you to the nexus-operator group.',
+      message:
+        "You are signed in, but your account is not a board operator. Ask an administrator to add you to the nexus-operator group.",
       canRetrySignIn: false,
     };
   }
   if (caught.status !== 401) return null;
-  return { message: 'Your sign-in has expired.', canRetrySignIn: true };
+  return { message: "Your sign-in has expired.", canRetrySignIn: true };
 }

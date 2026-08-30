@@ -38,13 +38,18 @@ const DESIGN_RECORD_SCHEMA = Object.freeze({
       additionalProperties: false,
       properties: {
         states: {
-          type: "array", minItems: 1, maxItems: DESIGN_RECORD_MAX_STATES,
+          type: "array",
+          minItems: 1,
+          maxItems: DESIGN_RECORD_MAX_STATES,
           items: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
         },
         transitions: {
-          type: "array", minItems: 1, maxItems: DESIGN_RECORD_MAX_TRANSITIONS,
+          type: "array",
+          minItems: 1,
+          maxItems: DESIGN_RECORD_MAX_TRANSITIONS,
           items: {
-            type: "object", additionalProperties: false,
+            type: "object",
+            additionalProperties: false,
             properties: {
               from: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
               to: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
@@ -55,9 +60,12 @@ const DESIGN_RECORD_SCHEMA = Object.freeze({
           },
         },
         failurePoints: {
-          type: "array", minItems: DESIGN_FAILURE_POINTS.length, maxItems: DESIGN_RECORD_MAX_FAILURE_POINTS,
+          type: "array",
+          minItems: DESIGN_FAILURE_POINTS.length,
+          maxItems: DESIGN_RECORD_MAX_FAILURE_POINTS,
           items: {
-            type: "object", additionalProperties: false,
+            type: "object",
+            additionalProperties: false,
             properties: {
               point: { type: "string", enum: DESIGN_FAILURE_POINTS },
               resultingState: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
@@ -67,9 +75,11 @@ const DESIGN_RECORD_SCHEMA = Object.freeze({
           },
         },
         idempotencyKeys: {
-          type: "array", maxItems: DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
+          type: "array",
+          maxItems: DESIGN_RECORD_MAX_IDEMPOTENCY_KEYS,
           items: {
-            type: "object", additionalProperties: false,
+            type: "object",
+            additionalProperties: false,
             properties: {
               name: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
               generatedAt: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
@@ -80,9 +90,11 @@ const DESIGN_RECORD_SCHEMA = Object.freeze({
           },
         },
         faultInjectionCases: {
-          type: "array", maxItems: DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
+          type: "array",
+          maxItems: DESIGN_RECORD_MAX_FAULT_INJECTION_CASES,
           items: {
-            type: "object", additionalProperties: false,
+            type: "object",
+            additionalProperties: false,
             properties: {
               name: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_LABEL_MAX_LENGTH },
               scenario: { type: "string", minLength: 1, maxLength: DESIGN_RECORD_DETAIL_MAX_LENGTH },
@@ -148,15 +160,19 @@ export const RESULT_SCHEMA = Object.freeze({
       anyOf: [
         { type: "null" },
         {
-          type: "object", additionalProperties: false,
+          type: "object",
+          additionalProperties: false,
           properties: {
             outcome: { type: "string", enum: STAGE_HANDOFF_OUTCOMES },
             summary: { type: "string", minLength: 1, maxLength: STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS },
             evidence: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2_000 } },
             artifactIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 128 } },
             acceptanceCriteria: {
-              type: "array", maxItems: 32, items: {
-                type: "object", additionalProperties: false,
+              type: "array",
+              maxItems: 32,
+              items: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
                   criterion: { type: "string", minLength: 1, maxLength: 1_000 },
                   passed: { type: "boolean" },
@@ -172,7 +188,15 @@ export const RESULT_SCHEMA = Object.freeze({
             },
             recommendedReturnStage: { type: ["string", "null"], enum: [...WORKFLOW_STAGES, null] },
           },
-          required: ["outcome", "summary", "evidence", "artifactIds", "acceptanceCriteria", "blockers", "recommendedReturnStage"],
+          required: [
+            "outcome",
+            "summary",
+            "evidence",
+            "artifactIds",
+            "acceptanceCriteria",
+            "blockers",
+            "recommendedReturnStage",
+          ],
         },
       ],
     },
@@ -203,22 +227,37 @@ export const RESULT_SCHEMA = Object.freeze({
       anyOf: [
         { type: "null" },
         {
-          type: "object", additionalProperties: false,
+          type: "object",
+          additionalProperties: false,
           properties: {
             objective: { type: "string", minLength: 1, maxLength: 8_000 },
             assumptions: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
-            acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
+            acceptanceCriteria: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: { type: "string", minLength: 1, maxLength: 2_000 },
+            },
             changeShape: { type: "string", enum: ["mechanical_sweep", "feature", "blast_radius"] },
             tier: { type: "string", enum: ["standard", "hazardous"] },
             declaredScope: {
-              type: "array", minItems: 1, maxItems: 64,
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
               items: { type: "string", minLength: 1, maxLength: 256, pattern: "^(?!/)(?!.*\\.\\.).+$" },
             },
             nonGoals: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 1_000 } },
-            mechanicalPortions: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 1_000 } },
+            mechanicalPortions: {
+              type: "array",
+              maxItems: 32,
+              items: { type: "string", minLength: 1, maxLength: 1_000 },
+            },
             blockingQuestions: {
-              type: "array", maxItems: 16, items: {
-                type: "object", additionalProperties: false,
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
                   question: { type: "string", minLength: 1, maxLength: 1_000 },
                   recommendedDefault: { type: "string", minLength: 1, maxLength: 1_000 },
@@ -227,8 +266,11 @@ export const RESULT_SCHEMA = Object.freeze({
               },
             },
             criterionChecks: {
-              type: "array", maxItems: 32, items: {
-                type: "object", additionalProperties: false,
+              type: "array",
+              maxItems: 32,
+              items: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
                   criterion: { type: "string", minLength: 1, maxLength: 1_000 },
                   check: { type: "string", minLength: 1, maxLength: 512, pattern: "^[^\\u0000-\\u001f\\u007f]+$" },
@@ -237,23 +279,32 @@ export const RESULT_SCHEMA = Object.freeze({
               },
             },
             children: {
-              type: "array", maxItems: 64, items: {
-                type: "object", additionalProperties: false,
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
                   key: { type: "string", pattern: IDENTIFIER_PATTERN },
                   objective: { type: "string", minLength: 1, maxLength: 4_000 },
                   projectId: { type: "string", pattern: IDENTIFIER_PATTERN },
                   declaredScope: {
-                    type: "array", minItems: 1, maxItems: 64,
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 64,
                     items: { type: "string", minLength: 1, maxLength: 256, pattern: "^(?!/)(?!.*\\.\\.).+$" },
                   },
                   acceptanceCriteria: {
-                    type: "array", minItems: 1, maxItems: 64,
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 64,
                     items: { type: "string", minLength: 1, maxLength: 2_000 },
                   },
                   phase: { type: "string", enum: WORK_ITEM_PHASES },
                   dependsOn: {
-                    type: "array", maxItems: 64, uniqueItems: true,
+                    type: "array",
+                    maxItems: 64,
+                    uniqueItems: true,
                     items: { type: "string", pattern: IDENTIFIER_PATTERN },
                   },
                   splitBy: { type: "string", enum: ["consumer", "phase"] },
@@ -262,16 +313,32 @@ export const RESULT_SCHEMA = Object.freeze({
               },
             },
             nodes: {
-              type: "array", minItems: 1, maxItems: 64, items: {
-                type: "object", additionalProperties: false,
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
                   nodeId: { type: "string", pattern: IDENTIFIER_PATTERN },
                   title: { type: "string", minLength: 1, maxLength: 512 },
                   objective: { type: "string", minLength: 1, maxLength: 4_000 },
-                  acceptanceCriteria: { type: "array", minItems: 1, maxItems: 64, items: { type: "string", minLength: 1, maxLength: 2_000 } },
-                  dependencyNodeIds: { type: "array", maxItems: 64, items: { type: "string", pattern: IDENTIFIER_PATTERN } },
+                  acceptanceCriteria: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 64,
+                    items: { type: "string", minLength: 1, maxLength: 2_000 },
+                  },
+                  dependencyNodeIds: {
+                    type: "array",
+                    maxItems: 64,
+                    items: { type: "string", pattern: IDENTIFIER_PATTERN },
+                  },
                   stageTemplate: {
-                    type: "array", minItems: 1, maxItems: 5, uniqueItems: true,
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 5,
+                    uniqueItems: true,
                     items: { type: "string", enum: WORKFLOW_STAGES },
                   },
                 },
@@ -286,7 +353,18 @@ export const RESULT_SCHEMA = Object.freeze({
     detail: { type: "string", minLength: 1, maxLength: 2_000 },
   },
   required: [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion", "handoff", "workflowPlan", "reviewFindings", "designRecord", "detail",
+    "status",
+    "progress",
+    "result",
+    "proposedChildTasks",
+    "expectedAgentMinutes",
+    "phases",
+    "humanQuestion",
+    "handoff",
+    "workflowPlan",
+    "reviewFindings",
+    "designRecord",
+    "detail",
   ],
 } as const);
 
@@ -346,7 +424,13 @@ export class ActivityChannel implements AsyncIterable<RuntimeEvent> {
   }
 }
 
-export function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number, label: string): number {
+export function boundedInteger(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  label: string
+): number {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < minimum || result > maximum) throw new Error(`${label} is invalid`);
   return result;
@@ -360,7 +444,8 @@ export function configText(value: string, label: string, maximum: number): strin
 }
 
 export function assertCredentialSafe(value: string, label: string): void {
-  if (SECRET_PATTERNS.some((pattern) => pattern.test(value))) throw new AgentProcessError(`${label} failed the credential-safety filter`);
+  if (SECRET_PATTERNS.some((pattern) => pattern.test(value)))
+    throw new AgentProcessError(`${label} failed the credential-safety filter`);
 }
 
 export function delay(milliseconds: number): Promise<void> {
@@ -375,172 +460,185 @@ export function agentRole(request: AgentLaunchRequest): AgentRole {
   return value as AgentRole;
 }
 
-function promptBlock(
-  prompts: PromptRegistry,
-  name: string,
-  vars: Readonly<Record<string, string>> = {},
-): string {
+function promptBlock(prompts: PromptRegistry, name: string, vars: Readonly<Record<string, string>> = {}): string {
   const rendered = prompts.render(name, vars);
-  return rendered.endsWith("\r\n")
-    ? rendered.slice(0, -2)
-    : rendered.endsWith("\n") ? rendered.slice(0, -1) : rendered;
+  return rendered.endsWith("\r\n") ? rendered.slice(0, -2) : rendered.endsWith("\n") ? rendered.slice(0, -1) : rendered;
 }
 
 export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry): string {
   const fixedRole = agentRole(request);
   const planningRun = request.context.intake === true;
   const onboarding = request.context.onboarding === true;
-  const boardProjects = planningRun && request.context.boardProjects !== undefined
-    ? promptBlock(prompts, "board-projects", {
-        projects: request.context.boardProjects.map((project) =>
-          `- ${project.projectId} | ${project.name} | ${project.repoName}${
-            project.projectId === request.context.projectId ? " (parent project)" : ""
-          }`).join("\n"),
-      })
-    : null;
-  const previousPlanRejection = request.previousPlanRejectionDetail === undefined
-    ? null
-    : promptBlock(prompts, "previous-plan-rejection", {
-        detail: configText(request.previousPlanRejectionDetail, "previousPlanRejectionDetail", 2_000),
-      });
+  const boardProjects =
+    planningRun && request.context.boardProjects !== undefined
+      ? promptBlock(prompts, "board-projects", {
+          projects: request.context.boardProjects
+            .map(
+              (project) =>
+                `- ${project.projectId} | ${project.name} | ${project.repoName}${
+                  project.projectId === request.context.projectId ? " (parent project)" : ""
+                }`
+            )
+            .join("\n"),
+        })
+      : null;
+  const previousPlanRejection =
+    request.previousPlanRejectionDetail === undefined
+      ? null
+      : promptBlock(prompts, "previous-plan-rejection", {
+          detail: configText(request.previousPlanRejectionDetail, "previousPlanRejectionDetail", 2_000),
+        });
   const pipeline = request.context.workflow?.pipeline;
   const designRecord = pipeline?.designRecord ?? null;
   const renderedDesignRecord = designRecord === null ? null : JSON.stringify(designRecord);
-  const hazardousImplementationDesign = fixedRole === "engineer" &&
-    request.context.workflow?.stage === "implementation" && renderedDesignRecord !== null
-    ? promptBlock(prompts, "hazardous-implementation", { designRecord: renderedDesignRecord })
-    : null;
-  const hazardousReviewDesign = fixedRole === "verifier" &&
-    request.context.workflow?.stage === "verification" && renderedDesignRecord !== null
-    ? promptBlock(prompts, "hazardous-review", { designRecord: renderedDesignRecord })
-    : null;
-  const crossRepoInterface = fixedRole === "engineer" && request.context.crossRepoContext !== undefined
-    ? promptBlock(prompts, "engineer-cross-repo-interface", {
-        interfacePath: request.context.crossRepoContext.interfacePath,
-        sha: request.context.crossRepoContext.sha,
-        providerProjectId: request.context.crossRepoContext.providerProjectId,
-        providerRepoName: request.context.crossRepoContext.providerRepoName,
-        markdown: request.context.crossRepoContext.markdown,
-      })
-    : null;
-  const interfacePhase = request.context.phase === "expand" || request.context.phase === "contract"
-    ? request.context.phase
-    : null;
+  const hazardousImplementationDesign =
+    fixedRole === "engineer" && request.context.workflow?.stage === "implementation" && renderedDesignRecord !== null
+      ? promptBlock(prompts, "hazardous-implementation", { designRecord: renderedDesignRecord })
+      : null;
+  const hazardousReviewDesign =
+    fixedRole === "verifier" && request.context.workflow?.stage === "verification" && renderedDesignRecord !== null
+      ? promptBlock(prompts, "hazardous-review", { designRecord: renderedDesignRecord })
+      : null;
+  const crossRepoInterface =
+    fixedRole === "engineer" && request.context.crossRepoContext !== undefined
+      ? promptBlock(prompts, "engineer-cross-repo-interface", {
+          interfacePath: request.context.crossRepoContext.interfacePath,
+          sha: request.context.crossRepoContext.sha,
+          providerProjectId: request.context.crossRepoContext.providerProjectId,
+          providerRepoName: request.context.crossRepoContext.providerRepoName,
+          markdown: request.context.crossRepoContext.markdown,
+        })
+      : null;
+  const interfacePhase =
+    request.context.phase === "expand" || request.context.phase === "contract" ? request.context.phase : null;
   const brightLineBlock = promptBlock(prompts, "bright-line", {
-    publishedInterfaceRule: interfacePhase === null
-      ? "change a published interface"
-      : "change a published interface other than docs/interface.md",
+    publishedInterfaceRule:
+      interfacePhase === null
+        ? "change a published interface"
+        : "change a published interface other than docs/interface.md",
   });
-  const interfacePhaseAuthorization = fixedRole === "engineer" &&
-    request.context.workflow?.stage === "implementation" && pipeline != null && interfacePhase !== null
-    ? promptBlock(prompts, "engineer-interface-phase-authorization", {
-        phase: interfacePhase === "expand" ? "Expand" : "Contract",
-      })
-    : null;
-  const pipelineImplementation = fixedRole === "engineer" &&
-    request.context.workflow?.stage === "implementation" && pipeline != null
-    ? (() => {
-        const onboardingBlock = onboarding
-          ? promptBlock(prompts, "onboarding-engineer", {
+  const interfacePhaseAuthorization =
+    fixedRole === "engineer" &&
+    request.context.workflow?.stage === "implementation" &&
+    pipeline != null &&
+    interfacePhase !== null
+      ? promptBlock(prompts, "engineer-interface-phase-authorization", {
+          phase: interfacePhase === "expand" ? "Expand" : "Contract",
+        })
+      : null;
+  const pipelineImplementation =
+    fixedRole === "engineer" && request.context.workflow?.stage === "implementation" && pipeline != null
+      ? (() => {
+          const onboardingBlock = onboarding
+            ? promptBlock(prompts, "onboarding-engineer", {
+                branch: pipeline.branch,
+                declaredScope: pipeline.declaredScope.join(", "),
+                nonGoals: pipeline.nonGoals.join(", ") || "none",
+                brightLine: brightLineBlock,
+              })
+            : null;
+          const fix = request.context.workflow?.fix;
+          if (fix !== null && fix !== undefined) {
+            const fixBlock = promptBlock(prompts, "engineer-fix", {
+              round: String(fix.round),
               branch: pipeline.branch,
+              findings: fix.findings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n"),
+              brightLine: brightLineBlock,
+            });
+            return onboardingBlock === null ? [fixBlock] : [fixBlock, onboardingBlock];
+          }
+          return [
+            onboardingBlock ??
+              promptBlock(prompts, "pipeline-implementation", {
+                branch: pipeline.branch,
+                declaredScope: pipeline.declaredScope.join(", "),
+                nonGoals: pipeline.nonGoals.join(", "),
+                brightLine: brightLineBlock,
+              }),
+          ];
+        })()
+      : [];
+  const pipelineReview =
+    fixedRole === "verifier" && request.context.workflow?.stage === "verification" && pipeline != null
+      ? (() => {
+          const review = request.context.workflow?.review;
+          const scopeInstruction =
+            review === null || review === undefined
+              ? promptBlock(prompts, "reviewer-scope-legacy")
+              : promptBlock(prompts, "reviewer-scope", { scopeOk: String(review.scopeOk) });
+          const block = promptBlock(prompts, "reviewer", {
+            branch: pipeline.branch,
+            changeShape: pipeline.changeShape,
+            scopeInstruction,
+          });
+          if (review === null || review === undefined) {
+            return [block, promptBlock(prompts, "reviewer-legacy")] as const;
+          }
+          const commits =
+            review.commits.length === 0
+              ? "- none"
+              : review.commits.map((commit) => `- ${commit.sha} ${commit.subject}`).join("\n");
+          const files =
+            review.filesTouched.length === 0
+              ? "- none"
+              : review.filesTouched.map((file) => `- ${file.path} (${file.status})`).join("\n");
+          const assumptions =
+            review.midRunAssumptions.length === 0
+              ? "- none"
+              : review.midRunAssumptions.map((assumption) => `- ${assumption}`).join("\n");
+          const criteria =
+            review.acceptanceCriteria.length === 0
+              ? "- none"
+              : review.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n");
+          const criterionChecks =
+            review.criterionChecks.length === 0
+              ? "- none"
+              : review.criterionChecks.map((criterion) => `- ${criterion.criterion}: ${criterion.check}`).join("\n");
+          const mechanicalPortions =
+            review.mechanicalPortions.length === 0
+              ? "- none"
+              : review.mechanicalPortions.map((portion) => `- ${portion}`).join("\n");
+          const priorFindings =
+            review.priorFindings.length === 0
+              ? "- none"
+              : review.priorFindings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n");
+          return [
+            block,
+            promptBlock(prompts, "reviewer-evidence", {
               declaredScope: pipeline.declaredScope.join(", "),
               nonGoals: pipeline.nonGoals.join(", ") || "none",
-              brightLine: brightLineBlock,
-            })
-          : null;
-        const fix = request.context.workflow?.fix;
-        if (fix !== null && fix !== undefined) {
-          const fixBlock = promptBlock(prompts, "engineer-fix", {
-            round: String(fix.round),
-            branch: pipeline.branch,
-            findings: fix.findings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n"),
-            brightLine: brightLineBlock,
-          });
-          return onboardingBlock === null ? [fixBlock] : [fixBlock, onboardingBlock];
-        }
-        return [onboardingBlock ?? promptBlock(prompts, "pipeline-implementation", {
-          branch: pipeline.branch,
-          declaredScope: pipeline.declaredScope.join(", "),
-          nonGoals: pipeline.nonGoals.join(", "),
-          brightLine: brightLineBlock,
-        })];
-      })()
-    : [];
-  const pipelineReview = fixedRole === "verifier" &&
-    request.context.workflow?.stage === "verification" && pipeline != null
-    ? (() => {
-        const review = request.context.workflow?.review;
-        const scopeInstruction = review === null || review === undefined
-          ? promptBlock(prompts, "reviewer-scope-legacy")
-          : promptBlock(prompts, "reviewer-scope", { scopeOk: String(review.scopeOk) });
-        const block = promptBlock(prompts, "reviewer", {
-          branch: pipeline.branch,
-          changeShape: pipeline.changeShape,
-          scopeInstruction,
-        });
-        if (review === null || review === undefined) {
-          return [block, promptBlock(prompts, "reviewer-legacy")] as const;
-        }
-        const commits = review.commits.length === 0
-          ? "- none"
-          : review.commits.map((commit) => `- ${commit.sha} ${commit.subject}`).join("\n");
-        const files = review.filesTouched.length === 0
-          ? "- none"
-          : review.filesTouched.map((file) => `- ${file.path} (${file.status})`).join("\n");
-        const assumptions = review.midRunAssumptions.length === 0
-          ? "- none"
-          : review.midRunAssumptions.map((assumption) => `- ${assumption}`).join("\n");
-        const criteria = review.acceptanceCriteria.length === 0
-          ? "- none"
-          : review.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n");
-        const criterionChecks = review.criterionChecks.length === 0
-          ? "- none"
-          : review.criterionChecks.map((criterion) => `- ${criterion.criterion}: ${criterion.check}`).join("\n");
-        const mechanicalPortions = review.mechanicalPortions.length === 0
-          ? "- none"
-          : review.mechanicalPortions.map((portion) => `- ${portion}`).join("\n");
-        const priorFindings = review.priorFindings.length === 0
-          ? "- none"
-          : review.priorFindings.map((finding) => `- ${JSON.stringify(finding)}`).join("\n");
-        return [
-          block,
-          promptBlock(prompts, "reviewer-evidence", {
-            declaredScope: pipeline.declaredScope.join(", "),
-            nonGoals: pipeline.nonGoals.join(", ") || "none",
-            assumptions: pipeline.assumptions.join(" | ") || "none",
-            commits,
-            diffstat: review.diffstat,
-            files,
-            midRunAssumptions: assumptions,
-            acceptanceCriteria: criteria,
-            criterionChecks,
-            mechanicalPortions,
-            priorFindingsLabel: promptBlock(
-              prompts,
-              review.priorFindingsTruncated ? "reviewer-prior-findings-truncated" : "reviewer-prior-findings",
-            ),
-            priorFindings,
-          }),
-        ] as const;
-      })()
-    : null;
+              assumptions: pipeline.assumptions.join(" | ") || "none",
+              commits,
+              diffstat: review.diffstat,
+              files,
+              midRunAssumptions: assumptions,
+              acceptanceCriteria: criteria,
+              criterionChecks,
+              mechanicalPortions,
+              priorFindingsLabel: promptBlock(
+                prompts,
+                review.priorFindingsTruncated ? "reviewer-prior-findings-truncated" : "reviewer-prior-findings"
+              ),
+              priorFindings,
+            }),
+          ] as const;
+        })()
+      : null;
   const workflow = request.context.design
     ? [promptBlock(prompts, "designer")]
     : fixedRole === "engineer"
       ? [promptBlock(prompts, "engineer")]
       : fixedRole === "verifier"
-      ? [promptBlock(prompts, "verifier")]
-      : planningRun
-        ? [promptBlock(prompts, onboarding ? "onboarding-intake" : "intake")]
-        : [promptBlock(prompts, "oversight")];
+        ? [promptBlock(prompts, "verifier")]
+        : planningRun
+          ? [promptBlock(prompts, onboarding ? "onboarding-intake" : "intake")]
+          : [promptBlock(prompts, "oversight")];
   const trailer = promptBlock(prompts, "trailer", {
     planningInstruction: promptBlock(prompts, planningRun ? "intake-return" : "workflow-plan-return"),
     wakeReason: request.wakeReason,
-    context: JSON.stringify((({
-      phase: _phase,
-      crossRepoContext: _crossRepoContext,
-      ...context
-    }) => context)(request.context)),
+    context: JSON.stringify(
+      (({ phase: _phase, crossRepoContext: _crossRepoContext, ...context }) => context)(request.context)
+    ),
   });
   return [
     promptBlock(prompts, "header", {
@@ -562,14 +660,21 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
 }
 
 function outputObject(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new AgentProcessError(`${label} is invalid`);
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new AgentProcessError(`${label} is invalid`);
   return value as Record<string, unknown>;
 }
 
 export function structuredOutcome(value: unknown): AgentRunOutcome {
   const item = outputObject(value, "Provider result");
   const expected = [
-    "status", "progress", "result", "proposedChildTasks", "expectedAgentMinutes", "phases", "humanQuestion",
+    "status",
+    "progress",
+    "result",
+    "proposedChildTasks",
+    "expectedAgentMinutes",
+    "phases",
+    "humanQuestion",
     ...("handoff" in item ? ["handoff"] : []),
     ...("workflowPlan" in item ? ["workflowPlan"] : []),
     ...("reviewFindings" in item ? ["reviewFindings"] : []),

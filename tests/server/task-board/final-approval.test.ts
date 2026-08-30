@@ -61,12 +61,16 @@ async function repository(machineVerify = false): Promise<{ repo: string; baseSh
     await mkdir(join(repo, "docs"), { recursive: true });
     await writeFile(
       join(repo, "docs", "workflow.md"),
-      `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
-        version: 1,
-        compile: ["node check.mjs"],
-        rules: [{ match: "**", action: { kind: "none" } }],
-        full: ["node verify-full.mjs"],
-      }, null, 2)}\n\`\`\`\n`,
+      `# Verify workflow\n\n\`\`\`json\n${JSON.stringify(
+        {
+          version: 1,
+          compile: ["node check.mjs"],
+          rules: [{ match: "**", action: { kind: "none" } }],
+          full: ["node verify-full.mjs"],
+        },
+        null,
+        2
+      )}\n\`\`\`\n`
     );
     await writeFile(join(repo, "check.mjs"), "process.exit(0);\n");
     await writeFile(join(repo, "unmatched.mjs"), "process.exit(0);\n");
@@ -93,10 +97,7 @@ async function orderedBoardFixture(): Promise<OrderedFixture> {
   };
 }
 
-function plan(
-  suffix: string,
-  declaredScope: readonly string[] = ["src/allowed"],
-): WorkflowPlanDraft {
+function plan(suffix: string, declaredScope: readonly string[] = ["src/allowed"]): WorkflowPlanDraft {
   return {
     objective: `Review and merge pipeline ${suffix}.`,
     assumptions: ["The default branch stays available."],
@@ -114,14 +115,16 @@ function plan(
       { criterion: "The human can inspect the complete pipeline evidence.", check: "node check.mjs" },
       { criterion: "An unmatched machine check remains visible.", check: "node unmatched.mjs" },
     ],
-    nodes: [{
-      nodeId: `final-approval-${suffix}`,
-      title: `Final approval ${suffix}`,
-      objective: "Produce one bounded implementation commit.",
-      acceptanceCriteria: ["The commit is reviewable."],
-      dependencyNodeIds: [],
-      stageTemplate: ["implementation", "testing", "verification"],
-    }],
+    nodes: [
+      {
+        nodeId: `final-approval-${suffix}`,
+        title: `Final approval ${suffix}`,
+        objective: "Produce one bounded implementation commit.",
+        acceptanceCriteria: ["The commit is reviewable."],
+        dependencyNodeIds: [],
+        stageTemplate: ["implementation", "testing", "verification"],
+      },
+    ],
   };
 }
 
@@ -143,14 +146,16 @@ function configurePipeline(fixture: Fixture, suffix: string): void {
     description: "Independently reviews the machine-verified pipeline.",
     role: "verifier" as const,
   };
-  fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-    agentTypes: [implementation, verification],
-    stages: automationStages({
-      implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
-      testing: { kind: "machine_verify" },
-      verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
-    }),
-  }));
+  fixture.board.updateAutomationConfiguration(
+    automationConfigurationRequest({
+      agentTypes: [implementation, verification],
+      stages: automationStages({
+        implementation: { kind: "agent_type", agentTypeId: implementation.agentTypeId },
+        testing: { kind: "machine_verify" },
+        verification: { kind: "agent_type", agentTypeId: verification.agentTypeId },
+      }),
+    })
+  );
 }
 
 function setProjectRepository(fixture: Fixture, repo: string): void {
@@ -165,12 +170,15 @@ function setProjectRepository(fixture: Fixture, repo: string): void {
 function proposePipeline(
   fixture: Fixture,
   suffix: string,
-  declaredScope: readonly string[] = ["src/allowed"],
+  declaredScope: readonly string[] = ["src/allowed"]
 ): { workItemId: string; planRevisionId: string } {
-  const workItem = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: `Prepare final approval ${suffix}.`,
-    projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-  }), `final-approval-${suffix}`).workItem;
+  const workItem = fixture.board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: `Prepare final approval ${suffix}.`,
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+    }),
+    `final-approval-${suffix}`
+  ).workItem;
   const claim = fixture.board.claimRun(fixture.manager.agentId, {
     claimId: `final-approval-plan-${suffix}`,
     messageCursor: null,
@@ -181,9 +189,9 @@ function proposePipeline(
     result: "The pipeline plan is ready.",
     workflowPlan: plan(suffix, declaredScope),
   });
-  const revision = fixture.board.projectWorkflow(fixture.project.projectId).plans.find(
-    (candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed",
-  );
+  const revision = fixture.board
+    .projectWorkflow(fixture.project.projectId)
+    .plans.find((candidate) => candidate.workItemId === workItem.workItemId && candidate.state === "proposed");
   assert.ok(revision);
   return { workItemId: workItem.workItemId, planRevisionId: revision.planRevisionId };
 }
@@ -191,7 +199,9 @@ function proposePipeline(
 function assignedImplementationAgent(path: string, planRevisionId: string): string {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    const assignment = db.prepare(`
+    const assignment = db
+      .prepare(
+        `
       SELECT task.assigned_agent_id
       FROM work_nodes node
       JOIN stage_attempts attempt
@@ -201,7 +211,9 @@ function assignedImplementationAgent(path: string, planRevisionId: string): stri
       WHERE node.plan_revision_id=?
       ORDER BY attempt.attempt DESC
       LIMIT 1
-    `).get(planRevisionId);
+    `
+      )
+      .get(planRevisionId);
     assert.ok(assignment);
     return String(assignment.assigned_agent_id);
   } finally {
@@ -219,10 +231,12 @@ function startEngineerRun(fixture: Fixture, agentId: string, suffix: string): vo
     assignedAgentId: agentId,
     assignedRole: "engineer",
   });
-  assert.ok(fixture.board.claimRun(agentId, {
-    claimId: `claim-busy-engineer-${suffix}`,
-    messageCursor: null,
-  }));
+  assert.ok(
+    fixture.board.claimRun(agentId, {
+      claimId: `claim-busy-engineer-${suffix}`,
+      messageCursor: null,
+    })
+  );
 }
 
 function implementationHandoff(): StageHandoffDraft {
@@ -231,11 +245,13 @@ function implementationHandoff(): StageHandoffDraft {
     summary: "The scoped implementation is ready for machine verification.",
     evidence: ["The task branch contains the scoped commit."],
     artifactIds: [],
-    acceptanceCriteria: [{
-      criterion: "The implementation is committed.",
-      passed: true,
-      evidence: "The task branch contains the implementation commit.",
-    }],
+    acceptanceCriteria: [
+      {
+        criterion: "The implementation is committed.",
+        passed: true,
+        evidence: "The task branch contains the implementation commit.",
+      },
+    ],
     blockers: [],
     recommendedReturnStage: null,
   };
@@ -244,7 +260,7 @@ function implementationHandoff(): StageHandoffDraft {
 async function waitForWorkItemState(
   fixture: Fixture,
   workItemId: string,
-  expectedState: "reviewing" | "final_approval",
+  expectedState: "reviewing" | "final_approval"
 ): Promise<void> {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
@@ -258,7 +274,9 @@ async function waitForWorkItemState(
 function forceFinalApproval(path: string, workItemId: string, verifiedSha: string): number {
   const db = new DatabaseSync(path);
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT
         node.node_id,node.project_id,node.title,node.objective,node.acceptance_criteria_json,
         attempt.task_id
@@ -266,16 +284,20 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
       JOIN stage_attempts attempt ON attempt.node_id=node.node_id AND attempt.stage='implementation'
       WHERE plan.work_item_id=?
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(row);
     const nodeId = String(row.node_id);
     const taskId = String(row.task_id);
     const now = "2026-08-19T16:00:00.000Z";
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE tasks
       SET status='completed',started_at=COALESCE(started_at,?),ended_at=?,result='Implementation complete.',version=version+1,updated_at=?
       WHERE task_id=?
-    `).run(now, now, now, taskId);
+    `
+    ).run(now, now, now, taskId);
     const handoff: StageHandoff = {
       apiVersion: "steward.task-board/v1",
       handoffId: `handoff-final-${workItemId}`,
@@ -302,32 +324,39 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
       handoff.stage,
       handoff.outcome,
       JSON.stringify(handoff),
-      now,
+      now
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO task_events(event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at)
       VALUES (?, ?, ?, 'agent', 'engineer-one', 'task_run_settled', '{}', ?)
-    `).run(`event-engineer-${workItemId}`, String(row.project_id), taskId, now);
-    db.prepare(`
+    `
+    ).run(`event-engineer-${workItemId}`, String(row.project_id), taskId, now);
+    db.prepare(
+      `
       INSERT INTO verify_attempts(
         verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
         check_results_json,detail,created_at,ended_at
       ) VALUES(?,?,'testing',1,'verify-run-one',NULL,'green',?,?,?,?)
-    `).run(
+    `
+    ).run(
       `verify-final-${workItemId}`,
       nodeId,
-      JSON.stringify([{
-        criterion: "The human can inspect the complete pipeline evidence.",
-        check: "node check.mjs",
-        passed: true,
-      }]),
+      JSON.stringify([
+        {
+          criterion: "The human can inspect the complete pipeline evidence.",
+          check: "node check.mjs",
+          passed: true,
+        },
+      ]),
       `verified-sha:${verifiedSha}`,
       now,
-      now,
+      now
     );
     const verifyTaskId = `task-machine-${workItemId}`;
     const orderKey = Number(db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO tasks(
         task_id,project_id,parent_task_id,task_kind,required_role,requires_review,
         title,objective,acceptance_criteria,workspace_refs_json,status,assigned_agent_id,
@@ -335,7 +364,8 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
         order_key,started_at,ended_at,result,version,created_at,updated_at
       ) VALUES (?, ?, NULL, 'work', NULL, 0, ?, ?, ?, '[]', 'completed', NULL,
         NULL, 15, NULL, NULL, ?, ?, ?, ?, 1, ?, ?)
-    `).run(
+    `
+    ).run(
       verifyTaskId,
       String(row.project_id),
       `Machine verify: ${String(row.title)}`,
@@ -346,12 +376,14 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
       now,
       "All configured checks passed.",
       now,
-      now,
+      now
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO task_events(event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at)
       VALUES (?, ?, ?, 'system', 'system:machine-verify', 'task_created', '{}', ?)
-    `).run(`event-machine-${workItemId}`, String(row.project_id), verifyTaskId, now);
+    `
+    ).run(`event-machine-${workItemId}`, String(row.project_id), verifyTaskId, now);
     const verifyHandoff: StageHandoff = {
       apiVersion: "steward.task-board/v1",
       handoffId: `handoff-machine-${workItemId}`,
@@ -374,12 +406,14 @@ function forceFinalApproval(path: string, workItemId: string, verifiedSha: strin
       verifyHandoff.stage,
       verifyHandoff.outcome,
       JSON.stringify(verifyHandoff),
-      now,
+      now
     );
-    db.prepare("UPDATE work_nodes SET state='completed',current_stage=NULL,version=version+1,updated_at=? WHERE node_id=?")
-      .run(now, nodeId);
-    db.prepare("UPDATE work_items SET state='final_approval',current_stage=NULL,version=version+1,updated_at=? WHERE work_item_id=?")
-      .run(now, workItemId);
+    db.prepare(
+      "UPDATE work_nodes SET state='completed',current_stage=NULL,version=version+1,updated_at=? WHERE node_id=?"
+    ).run(now, nodeId);
+    db.prepare(
+      "UPDATE work_items SET state='final_approval',current_stage=NULL,version=version+1,updated_at=? WHERE work_item_id=?"
+    ).run(now, workItemId);
     return Number(db.prepare("SELECT version FROM work_items WHERE work_item_id=?").get(workItemId)?.version);
   } finally {
     db.close();
@@ -414,14 +448,18 @@ async function directFinalApprovalFixture(suffix: string): Promise<{
 function seedActiveBlockingFixLoop(path: string, workItemId: string): void {
   const db = new DatabaseSync(path);
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT node.node_id,handoff.task_id
       FROM plan_revisions plan
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
       JOIN stage_handoffs handoff ON handoff.node_id=node.node_id AND handoff.stage='testing'
       WHERE plan.work_item_id=? AND plan.state='confirmed'
       LIMIT 1
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(row);
     db.prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)").run(
       `attempt-conflict-review-${workItemId}`,
@@ -429,13 +467,15 @@ function seedActiveBlockingFixLoop(path: string, workItemId: string): void {
       String(row.task_id),
       "verification",
       1,
-      "{}",
+      "{}"
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO review_findings(
         finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
+    `
+    ).run(
       `finding-conflict-review-${workItemId}`,
       String(row.node_id),
       "verification",
@@ -447,7 +487,7 @@ function seedActiveBlockingFixLoop(path: string, workItemId: string): void {
       "The pipeline branch merges cleanly.",
       "The merge target conflicts with the pipeline branch.",
       1,
-      "2026-08-19T16:30:00.000Z",
+      "2026-08-19T16:30:00.000Z"
     );
   } finally {
     db.close();
@@ -458,7 +498,7 @@ async function settleMergeConflict(
   path: string,
   workItemId: string,
   version: number,
-  summary = "merge conflict in shared.txt",
+  summary = "merge conflict in shared.txt"
 ): Promise<string> {
   const store = await TaskBoardStore.open(path);
   registerWorkItemTransitionStore(store);
@@ -470,28 +510,30 @@ async function settleMergeConflict(
       () => new Date("2026-08-19T17:00:00.000Z"),
       (operation) => store.transaction(operation),
       undefined,
-      () => "",
+      () => ""
     );
-    store.transaction(() => workflow.settlePipelineMergeInTransaction(
-      workItemId,
-      version,
-      { kind: "conflict", summary },
-      "human:alice",
-    ));
+    store.transaction(() =>
+      workflow.settlePipelineMergeInTransaction(workItemId, version, { kind: "conflict", summary }, "human:alice")
+    );
     return String(store.db.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(workItemId)?.state);
   } finally {
     store.close();
   }
 }
 
-function finalApprovalReturnPersistence(path: string, workItemId: string): Readonly<{
+function finalApprovalReturnPersistence(
+  path: string,
+  workItemId: string
+): Readonly<{
   taskResult: string;
   handoff: StageHandoff;
   eventSummary: string;
 }> {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT task.result,handoff.payload_json
       FROM task_events created
       JOIN tasks task ON task.task_id=created.task_id
@@ -503,15 +545,21 @@ function finalApprovalReturnPersistence(path: string, workItemId: string): Reado
         AND handoff.outcome='failed'
       ORDER BY created.created_at DESC, created.rowid DESC
       LIMIT 1
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(row);
-    const event = db.prepare(`
+    const event = db
+      .prepare(
+        `
       SELECT summary
       FROM project_events
       WHERE event_type='final_approval_rejected'
       ORDER BY sequence DESC
       LIMIT 1
-    `).get();
+    `
+      )
+      .get();
     assert.ok(event);
     return Object.freeze({
       taskResult: String(row.result),
@@ -526,44 +574,56 @@ function finalApprovalReturnPersistence(path: string, workItemId: string): Reado
 function addReviewAndDesignEvidence(path: string, workItemId: string): DesignRecordDraft {
   const designRecord: DesignRecordDraft = {
     states: ["pending", "sent", "committed"],
-    transitions: [{
-      from: "pending",
-      to: "sent",
-      durablePrecondition: "requestId is persisted",
-      recovery: "Reuse requestId",
-    }],
+    transitions: [
+      {
+        from: "pending",
+        to: "sent",
+        durablePrecondition: "requestId is persisted",
+        recovery: "Reuse requestId",
+      },
+    ],
     failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
       point,
       resultingState: "pending",
       recovery: "Retry with requestId",
     })),
-    idempotencyKeys: [{
-      name: "requestId",
-      generatedAt: "Before send",
-      persistedAt: "With pending state",
-      reuse: "Every retry",
-    }],
-    faultInjectionCases: [{
-      name: "Lost response",
-      scenario: "Crash after send",
-      expectation: "One durable write",
-    }],
+    idempotencyKeys: [
+      {
+        name: "requestId",
+        generatedAt: "Before send",
+        persistedAt: "With pending state",
+        reuse: "Every retry",
+      },
+    ],
+    faultInjectionCases: [
+      {
+        name: "Lost response",
+        scenario: "Crash after send",
+        expectation: "One durable write",
+      },
+    ],
   };
   const db = new DatabaseSync(path);
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT plan.plan_revision_id,node.node_id
       FROM plan_revisions plan
       JOIN work_nodes node ON node.plan_revision_id=plan.plan_revision_id
       WHERE plan.work_item_id=? AND plan.state='confirmed'
       LIMIT 1
-    `).get(workItemId);
+    `
+      )
+      .get(workItemId);
     assert.ok(row);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO review_findings(
         finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
+    `
+    ).run(
       `finding-round-two-${workItemId}`,
       String(row.node_id),
       "verification",
@@ -575,13 +635,15 @@ function addReviewAndDesignEvidence(path: string, workItemId: string): DesignRec
       "The retry reuses requestId.",
       "The retry generated a new key.",
       1,
-      "2026-08-19T16:01:00.000Z",
+      "2026-08-19T16:01:00.000Z"
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO review_findings(
         finding_id,node_id,stage,round,file,line,category,severity,expected,actual,blocking,created_at
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
+    `
+    ).run(
       `finding-round-one-${workItemId}`,
       String(row.node_id),
       "verification",
@@ -593,17 +655,19 @@ function addReviewAndDesignEvidence(path: string, workItemId: string): DesignRec
       "The operator notes are present.",
       "The notes were absent.",
       0,
-      "2026-08-19T16:02:00.000Z",
+      "2026-08-19T16:02:00.000Z"
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO design_records(design_record_id,work_item_id,plan_revision_id,payload_json,created_at)
       VALUES(?,?,?,?,?)
-    `).run(
+    `
+    ).run(
       `design-${workItemId}`,
       workItemId,
       String(row.plan_revision_id),
       JSON.stringify(designRecord),
-      "2026-08-19T16:03:00.000Z",
+      "2026-08-19T16:03:00.000Z"
     );
   } finally {
     db.close();
@@ -611,12 +675,7 @@ function addReviewAndDesignEvidence(path: string, workItemId: string): DesignRec
   return designRecord;
 }
 
-async function finalApprovalFixture(
-  suffix: string,
-  conflict = false,
-  forceSettlementConflict = false,
-  empty = false,
-) {
+async function finalApprovalFixture(suffix: string, conflict = false, forceSettlementConflict = false, empty = false) {
   const fixture = await boardFixture();
   const repo = await repository();
   setProjectRepository(fixture, repo.repo);
@@ -627,10 +686,7 @@ async function finalApprovalFixture(
   await git(repo.repo, ["switch", "-c", branch]);
   if (!empty) {
     await mkdir(join(repo.repo, "src", "allowed"), { recursive: true });
-    await writeFile(
-      join(repo.repo, conflict ? "shared.txt" : "src/allowed/change.txt"),
-      "pipeline\n",
-    );
+    await writeFile(join(repo.repo, conflict ? "shared.txt" : "src/allowed/change.txt"), "pipeline\n");
     await git(repo.repo, ["add", "."]);
     await git(repo.repo, ["commit", "-m", `pipeline ${suffix}`]);
   }
@@ -652,20 +708,22 @@ async function finalApprovalFixture(
       reconcileIntervalSeconds: 0,
       now: () => new Date("2026-08-19T17:00:00.000Z"),
     },
-    forceSettlementConflict ? {
-      mergePipeline: (request_) => {
-        const result = mergePipelineBranch(request_);
-        if (result.kind === "merged") {
-          const db = new DatabaseSync(fixture.path);
-          try {
-            db.prepare("UPDATE work_items SET version=version+1 WHERE work_item_id=?").run(proposed.workItemId);
-          } finally {
-            db.close();
-          }
+    forceSettlementConflict
+      ? {
+          mergePipeline: (request_) => {
+            const result = mergePipelineBranch(request_);
+            if (result.kind === "merged") {
+              const db = new DatabaseSync(fixture.path);
+              try {
+                db.prepare("UPDATE work_items SET version=version+1 WHERE work_item_id=?").run(proposed.workItemId);
+              } finally {
+                db.close();
+              }
+            }
+            return result;
+          },
         }
-        return result;
-      },
-    } : {},
+      : {}
   );
   const address = await service.start();
   return { ...fixture, ...repo, ...proposed, branch, verifiedSha, version, service, origin: address.url };
@@ -676,7 +734,7 @@ function request(
   path: string,
   method: "GET" | "POST",
   body?: unknown,
-  token = HUMAN_TOKEN,
+  token = HUMAN_TOKEN
 ): Promise<Response> {
   return fetch(`${origin}${path}`, {
     method,
@@ -709,11 +767,14 @@ test("board pipeline summary assembles ordered findings and the validated design
 
     const summary = fixture.board.pipelineSummary(proposed.workItemId);
 
-    assert.deepEqual(summary.findings.map((finding) => finding.round), [1, 2]);
-    assert.deepEqual(summary.findings.map((finding) => finding.findingId), [
-      `finding-round-one-${proposed.workItemId}`,
-      `finding-round-two-${proposed.workItemId}`,
-    ]);
+    assert.deepEqual(
+      summary.findings.map((finding) => finding.round),
+      [1, 2]
+    );
+    assert.deepEqual(
+      summary.findings.map((finding) => finding.findingId),
+      [`finding-round-one-${proposed.workItemId}`, `finding-round-two-${proposed.workItemId}`]
+    );
     assert.equal(summary.findings[1]?.blocking, true);
     assert.deepEqual(summary.designRecord, designRecord);
   } finally {
@@ -727,42 +788,50 @@ test("pipeline summary returns git, scope, finding, design, verify, and criteria
     const designRecord = addReviewAndDesignEvidence(fixture.path, fixture.workItemId);
     const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/pipeline-summary`, "GET");
     assert.equal(response.status, 200);
-    const summary = await response.json() as Record<string, unknown>;
-    assert.deepEqual(summary.commits, [{
-      sha: (await git(fixture.repo, ["rev-parse", fixture.branch])).trim(),
-      subject: "pipeline summary",
-    }]);
+    const summary = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(summary.commits, [
+      {
+        sha: (await git(fixture.repo, ["rev-parse", fixture.branch])).trim(),
+        subject: "pipeline summary",
+      },
+    ]);
     assert.match(String(summary.diffstat), /src\/allowed\/change\.txt/u);
     assert.deepEqual(summary.filesTouched, ["src/allowed/change.txt"]);
     assert.deepEqual(summary.declaredScope, ["src/allowed"]);
     assert.equal(summary.scopeOk, true);
     assert.deepEqual(summary.assumptions, ["The default branch stays available."]);
     assert.deepEqual(summary.midRunAssumptions, ["Use a plain-text marker for v1."]);
-    assert.deepEqual((summary.findings as Array<Record<string, unknown>>).map((finding) => ({
-      findingId: finding.findingId,
-      round: finding.round,
-      file: finding.file,
-      line: finding.line,
-      category: finding.category,
-      severity: finding.severity,
-      blocking: finding.blocking,
-    })), [{
-      findingId: `finding-round-one-${fixture.workItemId}`,
-      round: 1,
-      file: null,
-      line: null,
-      category: "docs",
-      severity: "minor",
-      blocking: false,
-    }, {
-      findingId: `finding-round-two-${fixture.workItemId}`,
-      round: 2,
-      file: "src/allowed/change.txt",
-      line: 7,
-      category: "correctness",
-      severity: "major",
-      blocking: true,
-    }]);
+    assert.deepEqual(
+      (summary.findings as Array<Record<string, unknown>>).map((finding) => ({
+        findingId: finding.findingId,
+        round: finding.round,
+        file: finding.file,
+        line: finding.line,
+        category: finding.category,
+        severity: finding.severity,
+        blocking: finding.blocking,
+      })),
+      [
+        {
+          findingId: `finding-round-one-${fixture.workItemId}`,
+          round: 1,
+          file: null,
+          line: null,
+          category: "docs",
+          severity: "minor",
+          blocking: false,
+        },
+        {
+          findingId: `finding-round-two-${fixture.workItemId}`,
+          round: 2,
+          file: "src/allowed/change.txt",
+          line: 7,
+          category: "correctness",
+          severity: "major",
+          blocking: true,
+        },
+      ]
+    );
     assert.deepEqual(summary.designRecord, designRecord);
     assert.deepEqual(summary.criteria, ["The pipeline commit lands only after approval."]);
     assert.deepEqual(summary.criterionChecks, [
@@ -775,24 +844,36 @@ test("pipeline summary returns git, scope, finding, design, verify, and criteria
         check: "node unmatched.mjs",
       },
     ]);
-    assert.deepEqual((summary.verify as Array<Record<string, unknown>>).map((attempt) => ({
-      state: attempt.state,
-      checkResults: attempt.checkResults,
-    })), [{
-      state: "green",
-      checkResults: [{
-        criterion: "The human can inspect the complete pipeline evidence.",
-        check: "node check.mjs",
-        passed: true,
-      }],
-    }]);
-    assert.equal((await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/pipeline-summary`,
-      "GET",
-      undefined,
-      "not-a-human-token",
-    )).status, 401);
+    assert.deepEqual(
+      (summary.verify as Array<Record<string, unknown>>).map((attempt) => ({
+        state: attempt.state,
+        checkResults: attempt.checkResults,
+      })),
+      [
+        {
+          state: "green",
+          checkResults: [
+            {
+              criterion: "The human can inspect the complete pipeline evidence.",
+              check: "node check.mjs",
+              passed: true,
+            },
+          ],
+        },
+      ]
+    );
+    assert.equal(
+      (
+        await request(
+          fixture.origin,
+          `/v1/work-items/${fixture.workItemId}/pipeline-summary`,
+          "GET",
+          undefined,
+          "not-a-human-token"
+        )
+      ).status,
+      401
+    );
   } finally {
     await fixture.service.close();
   }
@@ -801,14 +882,11 @@ test("pipeline summary returns git, scope, finding, design, verify, and criteria
 test("approve-merge merges before transitioning the work item to merged", async () => {
   const fixture = await finalApprovalFixture("approve");
   try {
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/approve-merge`,
-      "POST",
-      { version: fixture.version },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+      version: fixture.version,
+    });
     assert.equal(response.status, 200);
-    const body = await response.json() as { workItem: { state: string; endedAt: string | null } };
+    const body = (await response.json()) as { workItem: { state: string; endedAt: string | null } };
     assert.equal(body.workItem.state, "merged");
     assert.notEqual(body.workItem.endedAt, null);
     assert.equal(await readFile(join(fixture.repo, "src", "allowed", "change.txt"), "utf8"), "pipeline\n");
@@ -816,7 +894,9 @@ test("approve-merge merges before transitioning the work item to merged", async 
     const mergeSha = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const event = db.prepare("SELECT summary FROM project_events WHERE event_type='pipeline_merged' ORDER BY sequence DESC LIMIT 1").get();
+      const event = db
+        .prepare("SELECT summary FROM project_events WHERE event_type='pipeline_merged' ORDER BY sequence DESC LIMIT 1")
+        .get();
       assert.match(String(event?.summary), /^merged [0-9a-f]{40,64}$/u);
     } finally {
       db.close();
@@ -826,41 +906,47 @@ test("approve-merge merges before transitioning the work item to merged", async 
     const approvedAction = actions.find((action) => action.gate === "final_approve");
     assert.ok(approvedAction);
     assert.match(approvedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...approvedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: fixture.workItemId,
-      gate: "final_approve",
-      actorId: "human:alice",
-      planRevisionId: fixture.planRevisionId,
-      verifiedSha: fixture.verifiedSha,
-      mergeSha,
-      refId: null,
-      note: null,
-      createdAt: "2026-08-19T17:00:00.000Z",
-    });
-
-    const auditResponse = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/audit`,
-      "GET",
+    assert.deepEqual(
+      { ...approvedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: fixture.workItemId,
+        gate: "final_approve",
+        actorId: "human:alice",
+        planRevisionId: fixture.planRevisionId,
+        verifiedSha: fixture.verifiedSha,
+        mergeSha,
+        refId: null,
+        note: null,
+        createdAt: "2026-08-19T17:00:00.000Z",
+      }
     );
+
+    const auditResponse = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/audit`, "GET");
     assert.equal(auditResponse.status, 200);
-    const audit = await auditResponse.json() as WorkItemAudit;
+    const audit = (await auditResponse.json()) as WorkItemAudit;
     assert.deepEqual(audit.gateActions, actions);
-    assert.deepEqual(audit.gateActions.map((action) => action.gate), ["plan_confirm", "final_approve"]);
+    assert.deepEqual(
+      audit.gateActions.map((action) => action.gate),
+      ["plan_confirm", "final_approve"]
+    );
     assert.equal(audit.transitions.at(-1)?.toState, "merged");
-    assert.equal((await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/audit?unexpected=1`,
-      "GET",
-    )).status, 400);
-    assert.equal((await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/audit`,
-      "GET",
-      undefined,
-      "not-a-human-token",
-    )).status, 401);
+    assert.equal(
+      (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/audit?unexpected=1`, "GET")).status,
+      400
+    );
+    assert.equal(
+      (
+        await request(
+          fixture.origin,
+          `/v1/work-items/${fixture.workItemId}/audit`,
+          "GET",
+          undefined,
+          "not-a-human-token"
+        )
+      ).status,
+      401
+    );
   } finally {
     await fixture.service.close();
   }
@@ -876,15 +962,12 @@ test("approve-merge rejects a branch advanced after green verification without t
     await git(fixture.repo, ["commit", "-m", "advance after verification"]);
     await git(fixture.repo, ["switch", "main"]);
 
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/approve-merge`,
-      "POST",
-      { version: fixture.version },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+      version: fixture.version,
+    });
 
     assert.equal(response.status, 409);
-    const error = await response.json() as { error: { code: string; message: string } };
+    const error = (await response.json()) as { error: { code: string; message: string } };
     assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BRANCH_MOVED");
     assert.equal(error.error.message, "branch advanced since verification — request changes to re-verify");
     assert.equal((await git(fixture.repo, ["branch", "--show-current"])).trim(), "main");
@@ -892,9 +975,12 @@ test("approve-merge rejects a branch advanced after green verification without t
     assert.equal(await git(fixture.repo, ["status", "--porcelain"]), "");
     await assert.rejects(readFile(join(fixture.repo, "src", "allowed", "post-verify.txt")));
     assert.equal(
-      (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET")
-        .then((result) => result.json()) as { workItem: { state: string } }).workItem.state,
-      "final_approval",
+      (
+        (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET").then((result) =>
+          result.json()
+        )) as { workItem: { state: string } }
+      ).workItem.state,
+      "final_approval"
     );
   } finally {
     await fixture.service.close();
@@ -905,22 +991,22 @@ test("approve-merge rejects a zero-commit pipeline branch as empty", async () =>
   const fixture = await finalApprovalFixture("empty", false, false, true);
   try {
     const before = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/approve-merge`,
-      "POST",
-      { version: fixture.version },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+      version: fixture.version,
+    });
 
     assert.equal(response.status, 409);
-    const error = await response.json() as { error: { code: string; message: string } };
+    const error = (await response.json()) as { error: { code: string; message: string } };
     assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BRANCH_EMPTY");
     assert.equal(error.error.message, "nothing to merge");
     assert.equal((await git(fixture.repo, ["rev-parse", "HEAD"])).trim(), before);
     assert.equal(
-      (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET")
-        .then((result) => result.json()) as { workItem: { state: string } }).workItem.state,
-      "final_approval",
+      (
+        (await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET").then((result) =>
+          result.json()
+        )) as { workItem: { state: string } }
+      ).workItem.state,
+      "final_approval"
     );
   } finally {
     await fixture.service.close();
@@ -931,30 +1017,26 @@ test("concurrent approve and reject serialize so exactly one wins without an orp
   const fixture = await finalApprovalFixture("approval-race");
   try {
     const [approve, reject] = await Promise.all([
-      request(
-        fixture.origin,
-        `/v1/work-items/${fixture.workItemId}/approve-merge`,
-        "POST",
-        { version: fixture.version },
-      ),
-      request(
-        fixture.origin,
-        `/v1/work-items/${fixture.workItemId}/reject-final`,
-        "POST",
-        { version: fixture.version, note: "Hold this merge for one more implementation pass." },
-      ),
+      request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+        version: fixture.version,
+      }),
+      request(fixture.origin, `/v1/work-items/${fixture.workItemId}/reject-final`, "POST", {
+        version: fixture.version,
+        note: "Hold this merge for one more implementation pass.",
+      }),
     ]);
-    assert.deepEqual([approve.status, reject.status].sort((left, right) => left - right), [200, 409]);
-    const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
-    assert.match(
-      (await current.json() as { workItem: { state: string } }).workItem.state,
-      /^(?:merged|fixing)$/u,
+    assert.deepEqual(
+      [approve.status, reject.status].sort((left, right) => left - right),
+      [200, 409]
     );
+    const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
+    assert.match(((await current.json()) as { workItem: { state: string } }).workItem.state, /^(?:merged|fixing)$/u);
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.equal(db.prepare(
-        "SELECT COUNT(*) AS n FROM project_events WHERE event_type='pipeline_merge_orphaned'",
-      ).get()?.n, 0);
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM project_events WHERE event_type='pipeline_merge_orphaned'").get()?.n,
+        0
+      );
     } finally {
       db.close();
     }
@@ -966,31 +1048,32 @@ test("concurrent approve and reject serialize so exactly one wins without an orp
 test("a forced post-merge settlement CAS failure records the orphaned sha and returns its distinct code", async () => {
   const fixture = await finalApprovalFixture("settlement-conflict", false, true);
   try {
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/approve-merge`,
-      "POST",
-      { version: fixture.version },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+      version: fixture.version,
+    });
     assert.equal(response.status, 409);
     assert.equal(
-      (await response.json() as { error: { code: string } }).error.code,
-      "TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT",
+      ((await response.json()) as { error: { code: string } }).error.code,
+      "TASK_BOARD_PIPELINE_MERGE_SETTLEMENT_CONFLICT"
     );
     const mergeSha = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const event = db.prepare(`
+      const event = db
+        .prepare(
+          `
         SELECT summary
         FROM project_events
         WHERE event_type='pipeline_merge_orphaned'
         ORDER BY sequence DESC
         LIMIT 1
-      `).get();
+      `
+        )
+        .get();
       assert.match(String(event?.summary), new RegExp(mergeSha, "u"));
       assert.equal(
         db.prepare("SELECT state FROM work_items WHERE work_item_id=?").get(fixture.workItemId)?.state,
-        "final_approval",
+        "final_approval"
       );
     } finally {
       db.close();
@@ -1008,19 +1091,16 @@ test("approve-merge returns a distinct divergence conflict without mutating the 
     await git(fixture.repo, ["add", "."]);
     await git(fixture.repo, ["commit", "-m", "unrelated merge target"]);
     const before = (await git(fixture.repo, ["rev-parse", "HEAD"])).trim();
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/approve-merge`,
-      "POST",
-      { version: fixture.version },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/approve-merge`, "POST", {
+      version: fixture.version,
+    });
     assert.equal(response.status, 409);
-    const error = await response.json() as { error: { code: string; message: string } };
+    const error = (await response.json()) as { error: { code: string; message: string } };
     assert.equal(error.error.code, "TASK_BOARD_PIPELINE_BASE_DIVERGED");
     assert.match(error.error.message, /diverged/iu);
     assert.equal((await git(fixture.repo, ["rev-parse", "HEAD"])).trim(), before);
     const current = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
-    assert.equal((await current.json() as { workItem: { state: string } }).workItem.state, "final_approval");
+    assert.equal(((await current.json()) as { workItem: { state: string } }).workItem.state, "final_approval");
   } finally {
     await fixture.service.close();
   }
@@ -1034,10 +1114,10 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
       conflictFixture.origin,
       `/v1/work-items/${conflictFixture.workItemId}/approve-merge`,
       "POST",
-      { version: conflictFixture.version },
+      { version: conflictFixture.version }
     );
     assert.equal(response.status, 200);
-    const body = await response.json() as { workItem: { state: string; currentStage: string } };
+    const body = (await response.json()) as { workItem: { state: string; currentStage: string } };
     assert.equal(body.workItem.state, "implementing");
     assert.equal(body.workItem.currentStage, "implementation");
     assert.equal((await git(conflictFixture.repo, ["rev-parse", "HEAD"])).trim(), before);
@@ -1047,10 +1127,10 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
       `/v1/agents/${conflictFixture.engineer.agentId}/runs/claim`,
       "POST",
       { claimId: "claim-merge-conflict", messageCursor: null },
-      AGENT_ONE_TOKEN,
+      AGENT_ONE_TOKEN
     );
     assert.equal(claimResponse.status, 201);
-    const claim = await claimResponse.json() as {
+    const claim = (await claimResponse.json()) as {
       run: { runId: string };
       task: { taskId: string };
       context: { workflow: { stage: string; dependencyHandoffs: Array<{ outcome: string; summary: string }> } };
@@ -1069,25 +1149,27 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
         question: "Should the conflict resolution preserve the pipeline branch behavior?",
         runId: claim.run.runId,
       },
-      AGENT_ONE_TOKEN,
+      AGENT_ONE_TOKEN
     );
     assert.equal(questionResponse.status, 201);
-    const question = (await questionResponse.json() as {
-      question: { questionId: string; version: number };
-    }).question;
+    const question = (
+      (await questionResponse.json()) as {
+        question: { questionId: string; version: number };
+      }
+    ).question;
     const answerResponse = await request(
       conflictFixture.origin,
       `/v1/questions/${question.questionId}/answer`,
       "POST",
-      { answer: "Yes, preserve the reviewed behavior.", version: question.version },
+      { answer: "Yes, preserve the reviewed behavior.", version: question.version }
     );
     assert.equal(answerResponse.status, 201);
     const resumedResponse = await request(
       conflictFixture.origin,
       `/v1/work-items/${conflictFixture.workItemId}`,
-      "GET",
+      "GET"
     );
-    assert.equal((await resumedResponse.json() as { workItem: { state: string } }).workItem.state, "implementing");
+    assert.equal(((await resumedResponse.json()) as { workItem: { state: string } }).workItem.state, "implementing");
   } finally {
     await conflictFixture.service.close();
   }
@@ -1099,12 +1181,12 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
       busyFixture.origin,
       `/v1/work-items/${busyFixture.workItemId}/approve-merge`,
       "POST",
-      { version: busyFixture.version },
+      { version: busyFixture.version }
     );
     assert.equal(response.status, 409);
-    assert.equal((await response.json() as { error: { code: string } }).error.code, "TASK_BOARD_PIPELINE_REPO_BUSY");
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "TASK_BOARD_PIPELINE_REPO_BUSY");
     const current = await request(busyFixture.origin, `/v1/work-items/${busyFixture.workItemId}`, "GET");
-    assert.equal((await current.json() as { workItem: { state: string } }).workItem.state, "final_approval");
+    assert.equal(((await current.json()) as { workItem: { state: string } }).workItem.state, "final_approval");
   } finally {
     await busyFixture.service.close();
   }
@@ -1113,20 +1195,14 @@ test("approve-merge returns conflicts to implementation and returns repo-busy wi
 test("merge-conflict settlement without findings history returns to implementing", async () => {
   const fixture = await directFinalApprovalFixture("conflict-no-findings");
 
-  assert.equal(
-    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version),
-    "implementing",
-  );
+  assert.equal(await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version), "implementing");
 });
 
 test("merge-conflict settlement with an active blocking findings loop returns to fixing", async () => {
   const fixture = await directFinalApprovalFixture("conflict-active-fix-loop");
   seedActiveBlockingFixLoop(fixture.path, fixture.workItemId);
 
-  assert.equal(
-    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version),
-    "fixing",
-  );
+  assert.equal(await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version), "fixing");
 });
 
 test("merge-conflict settlement redacts every durable return-to-implementation projection", async () => {
@@ -1135,10 +1211,7 @@ test("merge-conflict settlement redacts every durable return-to-implementation p
   const summary = `merge conflict in shared.txt exposed ${secret}`;
   const expected = "merge conflict in shared.txt exposed [redacted:token]";
 
-  assert.equal(
-    await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version, summary),
-    "implementing",
-  );
+  assert.equal(await settleMergeConflict(fixture.path, fixture.workItemId, fixture.version, summary), "implementing");
 
   const persisted = finalApprovalReturnPersistence(fixture.path, fixture.workItemId);
   assert.equal(persisted.taskResult, expected);
@@ -1174,21 +1247,24 @@ test("successful approval settlement persists the verified branch tip and merge 
     const approvedAction = actions.find((action) => action.gate === "final_approve");
     assert.ok(approvedAction);
     assert.match(approvedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...approvedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: proposed.workItemId,
-      gate: "final_approve",
-      actorId: "human:alice",
-      planRevisionId: proposed.planRevisionId,
-      verifiedSha,
-      mergeSha,
-      refId: null,
-      note: null,
-      createdAt: "2026-07-19T20:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...approvedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: proposed.workItemId,
+        gate: "final_approve",
+        actorId: "human:alice",
+        planRevisionId: proposed.planRevisionId,
+        verifiedSha,
+        mergeSha,
+        refId: null,
+        note: null,
+        createdAt: "2026-07-19T20:00:00.000Z",
+      }
+    );
     assert.deepEqual(
       fixture.board.workItemAudit(proposed.workItemId).gateActions.map((action) => action.gate),
-      ["plan_confirm", "final_approve"],
+      ["plan_confirm", "final_approve"]
     );
   } finally {
     fixture.board.close();
@@ -1197,10 +1273,7 @@ test("successful approval settlement persists the verified branch tip and merge 
 
 test("final rejection persists a human-attributed gate action and task event", async () => {
   const fixture = await directFinalApprovalFixture("direct-reject-ledger");
-  const board = await TaskBoard.open(config(
-    fixture.path,
-    () => new Date("2026-08-19T17:00:00.000Z"),
-  ));
+  const board = await TaskBoard.open(config(fixture.path, () => new Date("2026-08-19T17:00:00.000Z")));
   try {
     const note = "Add the missing rollback assertion.";
     const rejected = await board.rejectFinalApproval(fixture.workItemId, {
@@ -1209,32 +1282,39 @@ test("final rejection persists a human-attributed gate action and task event", a
     });
     assert.equal(rejected.state, "fixing");
     const rejectedAction = gateActions(fixture.path, fixture.workItemId).find(
-      (action) => action.gate === "final_reject",
+      (action) => action.gate === "final_reject"
     );
     assert.ok(rejectedAction);
     assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: fixture.workItemId,
-      gate: "final_reject",
-      actorId: "human:alice",
-      planRevisionId: fixture.planRevisionId,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note,
-      createdAt: "2026-08-19T17:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...rejectedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: fixture.workItemId,
+        gate: "final_reject",
+        actorId: "human:alice",
+        planRevisionId: fixture.planRevisionId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note,
+        createdAt: "2026-08-19T17:00:00.000Z",
+      }
+    );
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const event = db.prepare(`
+      const event = db
+        .prepare(
+          `
         SELECT actor_type, actor_id
         FROM task_events
         WHERE event_type='task_created'
           AND json_extract(data_json,'$.workItemId')=?
         ORDER BY created_at DESC, rowid DESC
         LIMIT 1
-      `).get(fixture.workItemId);
+      `
+        )
+        .get(fixture.workItemId);
       assert.deepEqual({ ...event }, { actor_type: "human", actor_id: "human:alice" });
     } finally {
       db.close();
@@ -1246,10 +1326,7 @@ test("final rejection persists a human-attributed gate action and task event", a
 
 test("final rejection redacts its task, handoff, gate-action, and event projections", async () => {
   const fixture = await directFinalApprovalFixture("direct-reject-redaction");
-  const board = await TaskBoard.open(config(
-    fixture.path,
-    () => new Date("2026-08-19T17:00:00.000Z"),
-  ));
+  const board = await TaskBoard.open(config(fixture.path, () => new Date("2026-08-19T17:00:00.000Z")));
   const secret = `final-reject-${"r".repeat(48)}`;
   const note = `Re-run with Authorization: Bearer ${secret}.`;
   const expected = "Re-run with Authorization: [redacted:bearer]";
@@ -1267,7 +1344,7 @@ test("final rejection redacts its task, handoff, gate-action, and event projecti
     assert.equal(persisted.eventSummary, expected);
     assert.equal(
       gateActions(fixture.path, fixture.workItemId).find((action) => action.gate === "final_reject")?.note,
-      expected,
+      expected
     );
     assert.doesNotMatch(JSON.stringify(persisted), new RegExp(secret, "u"));
   } finally {
@@ -1279,63 +1356,66 @@ test("reject-final records a human implementation handoff and re-arms engineerin
   const fixture = await finalApprovalFixture("reject");
   try {
     const note = "Keep the implementation, but add the missing rollback assertion.";
-    const response = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}/reject-final`,
-      "POST",
-      { version: fixture.version, note },
-    );
+    const response = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}/reject-final`, "POST", {
+      version: fixture.version,
+      note,
+    });
     assert.equal(response.status, 200);
-    const body = await response.json() as { workItem: { state: string; currentStage: string } };
+    const body = (await response.json()) as { workItem: { state: string; currentStage: string } };
     assert.equal(body.workItem.state, "fixing");
     assert.equal(body.workItem.currentStage, "implementation");
     const rejectedAction = gateActions(fixture.path, fixture.workItemId).find(
-      (action) => action.gate === "final_reject",
+      (action) => action.gate === "final_reject"
     );
     assert.ok(rejectedAction);
     assert.match(rejectedAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...rejectedAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: fixture.workItemId,
-      gate: "final_reject",
-      actorId: "human:alice",
-      planRevisionId: fixture.planRevisionId,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: null,
-      note,
-      createdAt: "2026-08-19T17:00:00.000Z",
-    });
+    assert.deepEqual(
+      { ...rejectedAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: fixture.workItemId,
+        gate: "final_reject",
+        actorId: "human:alice",
+        planRevisionId: fixture.planRevisionId,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: null,
+        note,
+        createdAt: "2026-08-19T17:00:00.000Z",
+      }
+    );
 
     const summaryResponse = await request(
       fixture.origin,
       `/v1/work-items/${fixture.workItemId}/pipeline-summary`,
-      "GET",
+      "GET"
     );
     assert.equal(summaryResponse.status, 200);
-    assert.deepEqual(
-      (await summaryResponse.json() as { midRunAssumptions: string[] }).midRunAssumptions,
-      ["Use a plain-text marker for v1."],
-    );
+    assert.deepEqual(((await summaryResponse.json()) as { midRunAssumptions: string[] }).midRunAssumptions, [
+      "Use a plain-text marker for v1.",
+    ]);
 
     const claimResponse = await request(
       fixture.origin,
       `/v1/agents/${fixture.engineer.agentId}/runs/claim`,
       "POST",
       { claimId: "claim-final-rejection", messageCursor: null },
-      AGENT_ONE_TOKEN,
+      AGENT_ONE_TOKEN
     );
     assert.equal(claimResponse.status, 201);
-    const claim = await claimResponse.json() as {
+    const claim = (await claimResponse.json()) as {
       run: { runId: string };
       task: { taskId: string };
       context: { workflow: { stage: string; dependencyHandoffs: Array<{ outcome: string; summary: string }> } };
     };
     assert.equal(claim.context.workflow.stage, "implementation");
-    assert.deepEqual(claim.context.workflow.dependencyHandoffs.map((handoff) => ({
-      outcome: handoff.outcome,
-      summary: handoff.summary,
-    })), [{ outcome: "failed", summary: note }]);
+    assert.deepEqual(
+      claim.context.workflow.dependencyHandoffs.map((handoff) => ({
+        outcome: handoff.outcome,
+        summary: handoff.summary,
+      })),
+      [{ outcome: "failed", summary: note }]
+    );
 
     const questionResponse = await request(
       fixture.origin,
@@ -1346,64 +1426,66 @@ test("reject-final records a human implementation handoff and re-arms engineerin
         question: "Should the missing rollback assertion cover a timed-out retry?",
         runId: claim.run.runId,
       },
-      AGENT_ONE_TOKEN,
+      AGENT_ONE_TOKEN
     );
     assert.equal(questionResponse.status, 201);
-    const question = (await questionResponse.json() as {
-      question: { questionId: string; version: number };
-    }).question;
-    const parkedResponse = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}`,
-      "GET",
-    );
-    assert.equal((await parkedResponse.json() as { workItem: { state: string } }).workItem.state, "parked");
+    const question = (
+      (await questionResponse.json()) as {
+        question: { questionId: string; version: number };
+      }
+    ).question;
+    const parkedResponse = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
+    assert.equal(((await parkedResponse.json()) as { workItem: { state: string } }).workItem.state, "parked");
 
-    const answerResponse = await request(
-      fixture.origin,
-      `/v1/questions/${question.questionId}/answer`,
-      "POST",
-      { answer: "Yes, cover the timed-out retry.", version: question.version },
-    );
+    const answerResponse = await request(fixture.origin, `/v1/questions/${question.questionId}/answer`, "POST", {
+      answer: "Yes, cover the timed-out retry.",
+      version: question.version,
+    });
     assert.equal(answerResponse.status, 201);
     const answerAction = gateActions(fixture.path, fixture.workItemId).find(
-      (action) => action.gate === "question_answer",
+      (action) => action.gate === "question_answer"
     );
     assert.ok(answerAction);
     assert.match(answerAction.gateActionId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual({ ...answerAction, gateActionId: undefined }, {
-      gateActionId: undefined,
-      workItemId: fixture.workItemId,
-      gate: "question_answer",
-      actorId: "human:alice",
-      planRevisionId: null,
-      verifiedSha: null,
-      mergeSha: null,
-      refId: question.questionId,
-      note: null,
-      createdAt: "2026-08-19T17:00:00.000Z",
-    });
-    const resumedResponse = await request(
-      fixture.origin,
-      `/v1/work-items/${fixture.workItemId}`,
-      "GET",
+    assert.deepEqual(
+      { ...answerAction, gateActionId: undefined },
+      {
+        gateActionId: undefined,
+        workItemId: fixture.workItemId,
+        gate: "question_answer",
+        actorId: "human:alice",
+        planRevisionId: null,
+        verifiedSha: null,
+        mergeSha: null,
+        refId: question.questionId,
+        note: null,
+        createdAt: "2026-08-19T17:00:00.000Z",
+      }
     );
-    assert.equal((await resumedResponse.json() as { workItem: { state: string } }).workItem.state, "fixing");
+    const resumedResponse = await request(fixture.origin, `/v1/work-items/${fixture.workItemId}`, "GET");
+    assert.equal(((await resumedResponse.json()) as { workItem: { state: string } }).workItem.state, "fixing");
 
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const author = db.prepare(`
+      const author = db
+        .prepare(
+          `
         SELECT event.actor_type, event.actor_id, handoff.stage, handoff.outcome
         FROM stage_handoffs handoff
         JOIN task_events event ON event.task_id=handoff.task_id AND event.event_type='task_created'
         WHERE json_extract(handoff.payload_json,'$.summary')=?
-      `).get(note);
-      assert.deepEqual({ ...author }, {
-        actor_type: "human",
-        actor_id: "human:alice",
-        stage: "implementation",
-        outcome: "failed",
-      });
+      `
+        )
+        .get(note);
+      assert.deepEqual(
+        { ...author },
+        {
+          actor_type: "human",
+          actor_id: "human:alice",
+          stage: "implementation",
+          outcome: "failed",
+        }
+      );
     } finally {
       db.close();
     }
@@ -1425,14 +1507,16 @@ test("confirming a second overlapping pipeline plan holds its node while the fir
   registerWorkItemTransitionStore(store);
   registerParentTerminationCascade(store, () => undefined);
   try {
-    store.transaction(() => transitionWorkItemInTransaction(store, {
-      workItemId: first.workItemId,
-      to: "reviewing",
-      actorType: "system",
-      actorId: "system:test",
-      now: "2026-08-19T16:00:00.000Z",
-      currentStage: "verification",
-    }));
+    store.transaction(() =>
+      transitionWorkItemInTransaction(store, {
+        workItemId: first.workItemId,
+        to: "reviewing",
+        actorType: "system",
+        actorId: "system:test",
+        now: "2026-08-19T16:00:00.000Z",
+        currentStage: "verification",
+      })
+    );
   } finally {
     store.close();
   }
@@ -1440,22 +1524,26 @@ test("confirming a second overlapping pipeline plan holds its node while the fir
   const board = await TaskBoard.open(config(fixture.path, fixture.now));
   try {
     board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" });
-    const node = board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
-    );
+    const node = board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(node?.state, "blocked");
-    const blockedEvent = board.listProjectEvents(fixture.project.projectId)
+    const blockedEvent = board
+      .listProjectEvents(fixture.project.projectId)
       .filter((event) => event.nodeId === node?.nodeId && event.eventType === "node_blocked")
       .at(-1);
     assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);
     const db = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      assert.deepEqual({
-        ...db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(second.workItemId),
-      }, {
-        pipeline_branch: `task/${second.workItemId}`,
-        base_sha: repo.baseSha,
-      });
+      assert.deepEqual(
+        {
+          ...db.prepare("SELECT pipeline_branch,base_sha FROM work_items WHERE work_item_id=?").get(second.workItemId),
+        },
+        {
+          pipeline_branch: `task/${second.workItemId}`,
+          base_sha: repo.baseSha,
+        }
+      );
     } finally {
       db.close();
     }
@@ -1573,18 +1661,21 @@ test("a retired wakeup does not keep the oldest engineer from being selected as 
     });
     const db = new DatabaseSync(fixture.path);
     try {
-      const wakeup = db.prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
+      const wakeup = db
+        .prepare("SELECT wakeup_id FROM wakeups WHERE task_id=? AND claimed_at IS NULL")
         .get(reserved.taskId);
       assert.ok(wakeup);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO task_events(
           event_id,project_id,task_id,actor_type,actor_id,event_type,data_json,created_at
         ) VALUES (?,?,?,'system','test:wakeup-retirement','agent_wakeup_retired','{}',?)
-      `).run(
+      `
+      ).run(
         `retired-wakeup:${String(wakeup.wakeup_id)}`,
         fixture.project.projectId,
         reserved.taskId,
-        "2026-08-19T16:00:00.000Z",
+        "2026-08-19T16:00:00.000Z"
       );
     } finally {
       db.close();
@@ -1618,11 +1709,12 @@ test("an older overlapping pipeline proceeds to testing, merges, and releases th
     const second = proposePipeline(fixture, "scope-deadlock-second");
     fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
 
-    const blockedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
-    );
+    const blockedNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(blockedNode?.state, "blocked");
-    const blockedEvent = fixture.board.listProjectEvents(fixture.project.projectId)
+    const blockedEvent = fixture.board
+      .listProjectEvents(fixture.project.projectId)
       .filter((event) => event.nodeId === blockedNode?.nodeId && event.eventType === "node_blocked")
       .at(-1);
     assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);
@@ -1644,18 +1736,21 @@ test("an older overlapping pipeline proceeds to testing, merges, and releases th
       handoff: implementationHandoff(),
     });
 
-    const testingNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === first.planRevisionId,
-    );
+    const testingNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === first.planRevisionId);
     assert.equal(testingNode?.state, "active");
     assert.equal(testingNode?.currentStage, "testing");
     assert.equal(
-      fixture.board.listProjectEvents(fixture.project.projectId).some(
-        (event) => event.nodeId === testingNode?.nodeId &&
-          event.eventType === "node_blocked" &&
-          event.summary.startsWith("scope-hold: "),
-      ),
-      false,
+      fixture.board
+        .listProjectEvents(fixture.project.projectId)
+        .some(
+          (event) =>
+            event.nodeId === testingNode?.nodeId &&
+            event.eventType === "node_blocked" &&
+            event.summary.startsWith("scope-hold: ")
+        ),
+      false
     );
 
     await waitForWorkItemState(fixture, first.workItemId, "reviewing");
@@ -1684,9 +1779,9 @@ test("an older overlapping pipeline proceeds to testing, merges, and releases th
     const version = fixture.board.requireWorkItem(first.workItemId).version;
     assert.equal((await fixture.board.approvePipelineMerge(first.workItemId, { version })).state, "merged");
 
-    const activatedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
-    );
+    const activatedNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(activatedNode?.state, "active");
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-scope-release-second",
@@ -1710,20 +1805,23 @@ test("cancelling an older overlapping pipeline immediately releases the held new
     const second = proposePipeline(fixture, "scope-cancel-release-second");
     fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
 
-    const blockedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
-    );
+    const blockedNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(blockedNode?.state, "blocked");
     const firstItem = fixture.board.requireWorkItem(first.workItemId);
-    assert.equal(fixture.board.updateWorkItem(first.workItemId, {
-      action: "cancel",
-      version: firstItem.version,
-      reason: "Cancel the older overlapping pipeline.",
-    }).state, "abandoned");
-
-    const activatedNode = fixture.board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
+    assert.equal(
+      fixture.board.updateWorkItem(first.workItemId, {
+        action: "cancel",
+        version: firstItem.version,
+        reason: "Cancel the older overlapping pipeline.",
+      }).state,
+      "abandoned"
     );
+
+    const activatedNode = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(activatedNode?.state, "active");
     const claim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "claim-scope-cancel-release-second",
@@ -1766,7 +1864,8 @@ test("three overlapping pipelines advance in confirmation order after the oldest
     const thirdNode = nodes.find((candidate) => candidate.planRevisionId === third.planRevisionId);
     assert.equal(secondNode?.state, "active");
     assert.equal(thirdNode?.state, "blocked");
-    const thirdBlock = fixture.board.listProjectEvents(fixture.project.projectId)
+    const thirdBlock = fixture.board
+      .listProjectEvents(fixture.project.projectId)
       .filter((event) => event.nodeId === thirdNode?.nodeId && event.eventType === "node_blocked")
       .at(-1);
     assert.equal(thirdBlock?.summary, `scope-hold: overlaps ${second.workItemId}`);
@@ -1794,17 +1893,20 @@ test("disjoint pipeline scopes activate immediately in the same project", async 
     const second = proposePipeline(fixture, "scope-disjoint-second", ["src/second"]);
     fixture.confirmAt(second.planRevisionId, "2026-08-19T16:00:01.000Z");
 
-    const nodes = fixture.board.projectWorkflow(fixture.project.projectId).nodes.filter(
-      (candidate) => [first.planRevisionId, second.planRevisionId].includes(candidate.planRevisionId),
-    );
+    const nodes = fixture.board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.filter((candidate) => [first.planRevisionId, second.planRevisionId].includes(candidate.planRevisionId));
     assert.equal(nodes.length, 2);
-    assert.equal(nodes.every((node) => node.state === "active"), true);
+    assert.equal(
+      nodes.every((node) => node.state === "active"),
+      true
+    );
     const firstAgentId = assignedImplementationAgent(fixture.path, first.planRevisionId);
     const secondAgentId = assignedImplementationAgent(fixture.path, second.planRevisionId);
-    assert.deepEqual(new Set([firstAgentId, secondAgentId]), new Set([
-      fixture.engineer.agentId,
-      secondEngineer.agentId,
-    ]));
+    assert.deepEqual(
+      new Set([firstAgentId, secondAgentId]),
+      new Set([fixture.engineer.agentId, secondEngineer.agentId])
+    );
 
     const firstClaim = fixture.board.claimRun(firstAgentId, {
       claimId: "claim-scope-disjoint-first",
@@ -1823,10 +1925,12 @@ test("disjoint pipeline scopes activate immediately in the same project", async 
     assert.notEqual(firstClaim.run.runId, secondClaim.run.runId);
     assert.notEqual(firstClaim.run.agentId, secondClaim.run.agentId);
     assert.equal(
-      fixture.board.snapshot(fixture.project.projectId).recentRuns.filter(
-        (run) => [firstClaim.run.runId, secondClaim.run.runId].includes(run.runId) && run.status === "active",
-      ).length,
-      2,
+      fixture.board
+        .snapshot(fixture.project.projectId)
+        .recentRuns.filter(
+          (run) => [firstClaim.run.runId, secondClaim.run.runId].includes(run.runId) && run.status === "active"
+        ).length,
+      2
     );
 
     fixture.board.settleRun(firstClaim.run.runId, firstClaim.run.agentId, {
@@ -1856,14 +1960,16 @@ test("a parked pipeline item still holds an overlapping pipeline node", async ()
   registerWorkItemTransitionStore(store);
   registerParentTerminationCascade(store, () => undefined);
   try {
-    store.transaction(() => transitionWorkItemInTransaction(store, {
-      workItemId: first.workItemId,
-      to: "parked",
-      actorType: "system",
-      actorId: "system:test",
-      now: "2026-08-19T16:00:00.000Z",
-      park: { category: "open_question", reason: "Waiting for an operator decision." },
-    }));
+    store.transaction(() =>
+      transitionWorkItemInTransaction(store, {
+        workItemId: first.workItemId,
+        to: "parked",
+        actorType: "system",
+        actorId: "system:test",
+        now: "2026-08-19T16:00:00.000Z",
+        park: { category: "open_question", reason: "Waiting for an operator decision." },
+      })
+    );
   } finally {
     store.close();
   }
@@ -1872,11 +1978,12 @@ test("a parked pipeline item still holds an overlapping pipeline node", async ()
   const board = await TaskBoard.open(config(fixture.path, fixture.now));
   try {
     board.confirmWorkflow(second.planRevisionId, { expectedState: "proposed" });
-    const node = board.projectWorkflow(fixture.project.projectId).nodes.find(
-      (candidate) => candidate.planRevisionId === second.planRevisionId,
-    );
+    const node = board
+      .projectWorkflow(fixture.project.projectId)
+      .nodes.find((candidate) => candidate.planRevisionId === second.planRevisionId);
     assert.equal(node?.state, "blocked");
-    const blockedEvent = board.listProjectEvents(fixture.project.projectId)
+    const blockedEvent = board
+      .listProjectEvents(fixture.project.projectId)
       .filter((event) => event.nodeId === node?.nodeId && event.eventType === "node_blocked")
       .at(-1);
     assert.equal(blockedEvent?.summary, `scope-hold: overlaps ${first.workItemId}`);

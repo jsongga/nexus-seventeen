@@ -33,20 +33,19 @@ import {
   WORKFLOW_STAGES,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board/errors";
-import {
-  TaskBoardStore,
-  migrateVersion13To14,
-  migrateVersion25To26,
-} from "#server/task-board/persistence/store";
+import { TaskBoardStore, migrateVersion13To14, migrateVersion25To26 } from "#server/task-board/persistence/store";
 import { boardFixture, databasePath, workItemRequest } from "./helpers.js";
 
 test("workflow persistence accepts contract identifiers and exactly the contract stages", async () => {
   const fixture = await boardFixture();
   try {
     for (const [index, stage] of [...WORKFLOW_STAGES, "not_a_contract_member"].entries()) {
-      const item = fixture.board.createWorkItem(workItemRequest({
-        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-      }), `workflow-contract-${index}`).workItem;
+      const item = fixture.board.createWorkItem(
+        workItemRequest({
+          projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+        }),
+        `workflow-contract-${index}`
+      ).workItem;
       const proposal = {
         workItemId: item.workItemId,
         projectId: fixture.project.projectId,
@@ -54,19 +53,21 @@ test("workflow persistence accepts contract identifiers and exactly the contract
         assumptions: [],
         acceptanceCriteria: ["The persistence validator stays aligned."],
         skillIds: [],
-        nodes: [{
-          nodeId: "Node/One",
-          title: "Inspect persistence",
-          objective: "Verify persistence accepts the shared contract.",
-          acceptanceCriteria: ["The proposal is persisted."],
-          dependencyNodeIds: [],
-          stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
-        }],
+        nodes: [
+          {
+            nodeId: "Node/One",
+            title: "Inspect persistence",
+            objective: "Verify persistence accepts the shared contract.",
+            acceptanceCriteria: ["The proposal is persisted."],
+            dependencyNodeIds: [],
+            stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
+          },
+        ],
       };
       if (stage === "not_a_contract_member") {
         assert.throws(
           () => fixture.board.proposeWorkflow(proposal as never),
-          (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_INVALID",
+          (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_INVALID"
         );
       } else {
         assert.equal(fixture.board.proposeWorkflow(proposal as never).plans.length, index + 1);
@@ -82,42 +83,77 @@ function sqlList(values: readonly string[], separator = ", "): string {
 }
 
 const V22_PARK_CATEGORIES = [
-  "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
-  "plan_rejected_twice", "bright_line", "scope_violation",
+  "open_question",
+  "planning_run_failed",
+  "design_run_failed",
+  "hazardous_without_pipeline",
+  "plan_rejected_twice",
+  "bright_line",
+  "scope_violation",
 ] as const;
 const V22_NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned"] as const;
 const V25_WORK_ITEM_STATES = [
-  "queued", "planning", "plan_approval", "designing", "implementing", "verifying", "reviewing", "fixing",
-  "final_approval", "merged", "parked", "abandoned", "dead_letter",
+  "queued",
+  "planning",
+  "plan_approval",
+  "designing",
+  "implementing",
+  "verifying",
+  "reviewing",
+  "fixing",
+  "final_approval",
+  "merged",
+  "parked",
+  "abandoned",
+  "dead_letter",
 ] as const;
-const V25_NOTIFICATION_KINDS = [
-  "park_aged", "park_auto_abandoned", "cap_parked", "final_approval_withdrawn",
-] as const;
+const V25_NOTIFICATION_KINDS = ["park_aged", "park_auto_abandoned", "cap_parked", "final_approval_withdrawn"] as const;
 const V25_PARK_CATEGORIES = [
-  "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
-  "plan_rejected_twice", "bright_line", "scope_violation", "stage_cap_exceeded",
-  "task_cap_exceeded", "base_diverged",
+  "open_question",
+  "planning_run_failed",
+  "design_run_failed",
+  "hazardous_without_pipeline",
+  "plan_rejected_twice",
+  "bright_line",
+  "scope_violation",
+  "stage_cap_exceeded",
+  "task_cap_exceeded",
+  "base_diverged",
 ] as const;
 const V25_GATE_KINDS = [
-  "plan_confirm", "plan_reject", "final_approve", "final_reject", "cancel", "question_answer",
+  "plan_confirm",
+  "plan_reject",
+  "final_approve",
+  "final_reject",
+  "cancel",
+  "question_answer",
 ] as const;
 
 function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26): string {
-  const rows = store.db.prepare(`
+  const rows = store.db
+    .prepare(
+      `
     SELECT type, name, sql
     FROM sqlite_master
     WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
     ORDER BY type, name
-  `).all() as Array<Readonly<{ type: string; name: string; sql: string }>>;
+  `
+    )
+    .all() as Array<Readonly<{ type: string; name: string; sql: string }>>;
   return `${rows
-    .filter((row) => ![
-      ...(version <= 22 ? ["board_pause"] : []),
-      ...(version <= 23 ? ["work_item_onboarding_tasks", "onboarding_once_per_project", "onboarding_task_link"] : []),
-      ...(version <= 21 ? ["park_records", "notifications", "gate_actions"] : []),
-      ...(version <= 20 ? ["review_findings", "design_records", "work_item_design_tasks"] : []),
-      ...(version === 19 ? ["verify_attempts"] : []),
-      ...(version <= 25 ? ["work_item_dependencies"] : []),
-    ].includes(row.name))
+    .filter(
+      (row) =>
+        ![
+          ...(version <= 22 ? ["board_pause"] : []),
+          ...(version <= 23
+            ? ["work_item_onboarding_tasks", "onboarding_once_per_project", "onboarding_task_link"]
+            : []),
+          ...(version <= 21 ? ["park_records", "notifications", "gate_actions"] : []),
+          ...(version <= 20 ? ["review_findings", "design_records", "work_item_design_tasks"] : []),
+          ...(version === 19 ? ["verify_attempts"] : []),
+          ...(version <= 25 ? ["work_item_dependencies"] : []),
+        ].includes(row.name)
+    )
     .map((row) => {
       let sql = row.sql;
       if (version <= 25 && row.name === "projects") {
@@ -127,9 +163,9 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
         sql = sql
           .replace(
             "  parent_work_item_id TEXT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,\n" +
-            `  phase TEXT NULL CHECK (phase IS NULL OR phase IN (${sqlList(WORK_ITEM_PHASES)})),\n` +
-            "  child_ordinal INTEGER NULL,\n",
-            "",
+              `  phase TEXT NULL CHECK (phase IS NULL OR phase IN (${sqlList(WORK_ITEM_PHASES)})),\n` +
+              "  child_ordinal INTEGER NULL,\n",
+            ""
           )
           .replace(sqlList(WORK_ITEM_STATES), sqlList(V25_WORK_ITEM_STATES));
       }
@@ -142,7 +178,7 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
       if (version <= 25 && row.name === "notifications") {
         sql = sql.replace(
           sqlList(NOTIFICATION_KINDS),
-          sqlList(version <= 22 ? V22_NOTIFICATION_KINDS : V25_NOTIFICATION_KINDS),
+          sqlList(version <= 22 ? V22_NOTIFICATION_KINDS : V25_NOTIFICATION_KINDS)
         );
       }
       if (version <= 25 && row.name === "gate_actions") {
@@ -151,13 +187,13 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
       if (version <= 25 && row.name === "park_records") {
         sql = sql.replace(
           sqlList(PARK_CATEGORIES),
-          sqlList(version === 22 ? V22_PARK_CATEGORIES : V25_PARK_CATEGORIES),
+          sqlList(version === 22 ? V22_PARK_CATEGORIES : V25_PARK_CATEGORIES)
         );
       }
       if (version <= 25 && row.name === "verify_attempts") {
         sql = sql.replace(
           "state IN ('starting','running','green','failed','died','failed_to_start','retired')",
-          "state IN ('starting','running','green','failed','died','failed_to_start')",
+          "state IN ('starting','running','green','failed','died','failed_to_start')"
         );
       }
       if (version === 19 && row.name === "work_items") {
@@ -165,9 +201,9 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
       } else if (version === 19 && row.name === "plan_revisions") {
         sql = sql.replace(
           "  change_shape TEXT NULL,\n  tier TEXT NULL,\n  declared_scope_json TEXT NULL,\n  non_goals_json TEXT NULL,\n" +
-          "  mechanical_portions_json TEXT NULL,\n  blocking_questions_json TEXT NULL,\n" +
-          "  criterion_checks_json TEXT NULL,\n  rejected_note TEXT NULL,\n",
-          "",
+            "  mechanical_portions_json TEXT NULL,\n  blocking_questions_json TEXT NULL,\n" +
+            "  criterion_checks_json TEXT NULL,\n  rejected_note TEXT NULL,\n",
+          ""
         );
       }
       return `-- ${row.type}: ${row.name}\n${sql};`;
@@ -178,9 +214,12 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
 function withoutRetiredDocumentSchema(schema: string): string {
   return schema
     .split(/(?=^-- (?:index|table|trigger): )/mu)
-    .filter((section) => !/^-- (?:index|table): (?:document_events|document_events_project|documents|documents_project)$/mu.test(
-      section.split("\n", 1)[0] ?? "",
-    ))
+    .filter(
+      (section) =>
+        !/^-- (?:index|table): (?:document_events|document_events_project|documents|documents_project)$/mu.test(
+          section.split("\n", 1)[0] ?? ""
+        )
+    )
     .join("");
 }
 
@@ -189,12 +228,18 @@ async function installFrozenSchema(path: string, version: 23 | 24 | 25): Promise
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const legacy = new DatabaseSync(path);
   try {
-    const frozen = await readFile(join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`), "utf8");
+    const frozen = await readFile(
+      join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`),
+      "utf8"
+    );
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executable = frozen
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executable);
     legacy.exec(`PRAGMA user_version = ${version};`);
@@ -253,12 +298,16 @@ async function historicalVersion14TaskSchema(): Promise<readonly HistoricalSchem
   const historical = new DatabaseSync(path);
   try {
     migrateVersion13To14(historical);
-    return historical.prepare(`
+    return historical
+      .prepare(
+        `
       SELECT type, name, tbl_name AS tableName, sql
       FROM sqlite_master
       WHERE tbl_name IN ('tasks', 'wakeups')
       ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END, name
-    `).all() as unknown as readonly HistoricalSchemaObject[];
+    `
+      )
+      .all() as unknown as readonly HistoricalSchemaObject[];
   } finally {
     historical.close();
   }
@@ -266,7 +315,7 @@ async function historicalVersion14TaskSchema(): Promise<readonly HistoricalSchem
 
 async function installLegacyQuotedTaskSchema(
   path: string,
-  legacyTables: readonly ("tasks" | "wakeups")[],
+  legacyTables: readonly ("tasks" | "wakeups")[]
 ): Promise<void> {
   const { DatabaseSync } = await import("node:sqlite");
   const historicalObjects = await historicalVersion14TaskSchema();
@@ -291,27 +340,43 @@ async function installLegacyQuotedTaskSchema(
 }
 
 function rowsJson(db: DatabaseSync, table: string): string {
-  return JSON.stringify(db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all().map((row) => ({ ...row })));
+  return JSON.stringify(
+    db
+      .prepare(`SELECT * FROM ${table} ORDER BY rowid`)
+      .all()
+      .map((row) => ({ ...row }))
+  );
 }
 
 function taskTableObjects(db: DatabaseSync, table: "tasks" | "wakeups"): string {
-  return JSON.stringify(db.prepare(`
+  return JSON.stringify(
+    db
+      .prepare(
+        `
     SELECT type, name
     FROM sqlite_master
     WHERE tbl_name = ? AND type IN ('table', 'index', 'trigger')
     ORDER BY type, name
-  `).all(table).map((row) => ({ ...row })));
+  `
+      )
+      .all(table)
+      .map((row) => ({ ...row }))
+  );
 }
 
 function migrationLeftovers(db: DatabaseSync): readonly unknown[] {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT type, name
     FROM sqlite_master
     WHERE name LIKE 'temp\\_%' ESCAPE '\\'
        OR name LIKE '%\\_v25' ESCAPE '\\'
        OR lower(name) LIKE '%backup%'
     ORDER BY type, name
-  `).all();
+  `
+    )
+    .all();
 }
 
 test("fresh v26 DDL preserves the byte-identical non-document v19 through v25 schemas", async () => {
@@ -325,16 +390,25 @@ test("fresh v26 DDL preserves the byte-identical non-document v19 through v25 sc
       const golden = await readFile(fixturePath, "utf8");
       assert.equal(frozenProjection(store, version), withoutRetiredDocumentSchema(golden));
     }
-    assert.deepEqual({ ...store.db.prepare(`
+    assert.deepEqual(
+      {
+        ...store.db
+          .prepare(
+            `
       SELECT pause_id, paused, reason, version, updated_at, updated_by FROM board_pause
-    `).get() }, {
-      pause_id: "board",
-      paused: 0,
-      reason: null,
-      version: 1,
-      updated_at: "1970-01-01T00:00:00.000Z",
-      updated_by: "system:steward-default",
-    });
+    `
+          )
+          .get(),
+      },
+      {
+        pause_id: "board",
+        paused: 0,
+        reason: null,
+        version: 1,
+        updated_at: "1970-01-01T00:00:00.000Z",
+        updated_by: "system:steward-default",
+      }
+    );
   } finally {
     store.close();
   }
@@ -351,33 +425,30 @@ test("v23 fixture migrates through v26 to the same schema as a fresh database", 
     const onboardingColumns = upgraded.db.prepare("PRAGMA table_info(work_item_onboarding_tasks)").all();
     assert.deepEqual(
       onboardingColumns.map((row) => String(row.name)),
-      ["work_item_id", "project_id", "task_id", "gap_report_artifact_id", "created_at"],
+      ["work_item_id", "project_id", "task_id", "gap_report_artifact_id", "created_at"]
     );
     const gapReportColumn = onboardingColumns.find((row) => row.name === "gap_report_artifact_id");
     assert.ok(gapReportColumn);
-    assert.deepEqual({
-      type: gapReportColumn.type,
-      notnull: gapReportColumn.notnull,
-      defaultValue: gapReportColumn.dflt_value,
-    }, { type: "TEXT", notnull: 0, defaultValue: null });
+    assert.deepEqual(
+      {
+        type: gapReportColumn.type,
+        notnull: gapReportColumn.notnull,
+        defaultValue: gapReportColumn.dflt_value,
+      },
+      { type: "TEXT", notnull: 0, defaultValue: null }
+    );
     for (const [name, sql] of [
       [
         "onboarding_once_per_project",
         "CREATE UNIQUE INDEX onboarding_once_per_project ON work_item_onboarding_tasks(project_id)",
       ],
-      [
-        "onboarding_task_link",
-        "CREATE UNIQUE INDEX onboarding_task_link ON work_item_onboarding_tasks(task_id)",
-      ],
+      ["onboarding_task_link", "CREATE UNIQUE INDEX onboarding_task_link ON work_item_onboarding_tasks(task_id)"],
     ] as const) {
       assert.equal(
         upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name)?.sql,
-        sql,
+        sql
       );
-      assert.equal(
-        fresh.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name)?.sql,
-        sql,
-      );
+      assert.equal(fresh.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name)?.sql, sql);
     }
     assert.equal(frozenProjection(upgraded, 26), frozenProjection(fresh, 26));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -426,13 +497,13 @@ test("v24 fixture migrates to the same v26 schema as a fresh database and retire
       for (const table of ["document_events", "documents"]) {
         assert.equal(
           store.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
-          undefined,
+          undefined
         );
       }
     }
     assert.equal(
       upgraded.db.prepare("SELECT name FROM projects WHERE project_id = 'migration-project'").get()?.name,
-      "Migration project",
+      "Migration project"
     );
     assert.equal(frozenProjection(upgraded, 26), frozenProjection(fresh, 26));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -467,7 +538,7 @@ test("v10 workflow creation migrates through v26 to byte-identical fresh DDL", a
     assert.equal(before.prepare("PRAGMA user_version").get()?.user_version, 10);
     assert.equal(
       before.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='plan_revisions'").get(),
-      undefined,
+      undefined
     );
   } finally {
     before.close();
@@ -496,12 +567,14 @@ test("populated v14-quoted task tables migrate without changing rows, references
   let rowsBefore: Readonly<Record<string, string>>;
   let objectsBefore: Readonly<Record<"tasks" | "wakeups", string>>;
   try {
-    assert.match(String(legacy.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
-    ).get()?.sql), /^CREATE TABLE "tasks"/u);
-    assert.match(String(legacy.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'",
-    ).get()?.sql), /^CREATE TABLE "wakeups"/u);
+    assert.match(
+      String(legacy.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
+      /^CREATE TABLE "tasks"/u
+    );
+    assert.match(
+      String(legacy.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wakeups'").get()?.sql),
+      /^CREATE TABLE "wakeups"/u
+    );
     legacy.exec(`
       PRAGMA foreign_keys = ON;
       INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
@@ -586,35 +659,59 @@ test("populated v14-quoted task tables migrate without changing rows, references
       assert.equal(taskTableObjects(upgraded.db, table), objectsBefore[table]);
       assert.equal(taskTableObjects(upgraded.db, table), taskTableObjects(fresh.db, table));
     }
-    assert.deepEqual(upgraded.db.prepare(`
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
       SELECT runs.run_id, tasks.task_id, wakeups.wakeup_id
       FROM runs
       JOIN tasks ON tasks.task_id = runs.task_id
       JOIN wakeups ON wakeups.wakeup_id = runs.wakeup_id
       ORDER BY runs.rowid
-    `).all().map((row) => ({ ...row })), [
-      { run_id: "run-answer", task_id: "task-review", wakeup_id: "wakeup-answer" },
-      { run_id: "run-complete", task_id: "task-root", wakeup_id: "wakeup-assignment" },
-    ]);
-    assert.deepEqual(upgraded.db.prepare(`
+    `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { run_id: "run-answer", task_id: "task-review", wakeup_id: "wakeup-answer" },
+        { run_id: "run-complete", task_id: "task-root", wakeup_id: "wakeup-assignment" },
+      ]
+    );
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
       SELECT task_phases.phase_id, tasks.task_id
       FROM task_phases JOIN tasks ON tasks.task_id = task_phases.task_id
       ORDER BY task_phases.rowid
-    `).all().map((row) => ({ ...row })), [
-      { phase_id: "phase-root", task_id: "task-root" },
-      { phase_id: "phase-review", task_id: "task-review" },
-    ]);
-    assert.deepEqual(upgraded.db.prepare(`
+    `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { phase_id: "phase-root", task_id: "task-root" },
+        { phase_id: "phase-review", task_id: "task-review" },
+      ]
+    );
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
       SELECT wakeups.wakeup_id, tasks.task_id, questions.question_id
       FROM wakeups
       LEFT JOIN tasks ON tasks.task_id = wakeups.task_id
       LEFT JOIN questions ON questions.question_id = wakeups.question_id
       ORDER BY wakeups.rowid
-    `).all().map((row) => ({ ...row })), [
-      { wakeup_id: "wakeup-assignment", task_id: "task-root", question_id: null },
-      { wakeup_id: "wakeup-answer", task_id: "task-review", question_id: "question-answered" },
-      { wakeup_id: "wakeup-resume", task_id: null, question_id: null },
-    ]);
+    `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { wakeup_id: "wakeup-assignment", task_id: "task-root", question_id: null },
+        { wakeup_id: "wakeup-answer", task_id: "task-review", question_id: "question-answered" },
+        { wakeup_id: "wakeup-resume", task_id: null, question_id: null },
+      ]
+    );
     assert.deepEqual(migrationLeftovers(upgraded.db), []);
     assert.deepEqual(upgraded.db.prepare("SELECT type, name FROM sqlite_temp_master ORDER BY type, name").all(), []);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -633,9 +730,10 @@ test("v25-to-v26 canonicalizes a lone legacy tasks table without requiring wakeu
   const legacy = new DatabaseSync(path);
   try {
     legacy.exec("PRAGMA foreign_keys = OFF; DROP TABLE wakeups; PRAGMA user_version = 25;");
-    assert.match(String(legacy.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
-    ).get()?.sql), /^CREATE TABLE "tasks"/u);
+    assert.match(
+      String(legacy.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
+      /^CREATE TABLE "tasks"/u
+    );
   } finally {
     legacy.close();
   }
@@ -643,9 +741,10 @@ test("v25-to-v26 canonicalizes a lone legacy tasks table without requiring wakeu
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    assert.match(String(upgraded.db.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
-    ).get()?.sql), /^CREATE TABLE tasks \(/u);
+    assert.match(
+      String(upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
+      /^CREATE TABLE tasks \(/u
+    );
     assert.deepEqual(migrationLeftovers(upgraded.db), []);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
@@ -695,19 +794,37 @@ test("v25-to-v26 preserves pre-existing decomposition columns when its body runs
       FROM work_items ORDER BY rowid
     `;
     const before = JSON.stringify({
-      projects: db.prepare(projectSql).all().map((row) => ({ ...row })),
-      workItems: db.prepare(workItemSql).all().map((row) => ({ ...row })),
+      projects: db
+        .prepare(projectSql)
+        .all()
+        .map((row) => ({ ...row })),
+      workItems: db
+        .prepare(workItemSql)
+        .all()
+        .map((row) => ({ ...row })),
     });
 
     migrateVersion25To26(db);
     const afterFirst = JSON.stringify({
-      projects: db.prepare(projectSql).all().map((row) => ({ ...row })),
-      workItems: db.prepare(workItemSql).all().map((row) => ({ ...row })),
+      projects: db
+        .prepare(projectSql)
+        .all()
+        .map((row) => ({ ...row })),
+      workItems: db
+        .prepare(workItemSql)
+        .all()
+        .map((row) => ({ ...row })),
     });
     migrateVersion25To26(db);
     const afterSecond = JSON.stringify({
-      projects: db.prepare(projectSql).all().map((row) => ({ ...row })),
-      workItems: db.prepare(workItemSql).all().map((row) => ({ ...row })),
+      projects: db
+        .prepare(projectSql)
+        .all()
+        .map((row) => ({ ...row })),
+      workItems: db
+        .prepare(workItemSql)
+        .all()
+        .map((row) => ({ ...row })),
     });
 
     assert.equal(afterFirst, before);
@@ -809,108 +926,202 @@ Workspace: /repos/catalog-provider',
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    assert.deepEqual(upgraded.db.prepare(`
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
       SELECT name, description, repo_path, version
       FROM projects
       WHERE project_id IN ('v26-catalog-project', 'v26-project')
       ORDER BY project_id
-    `).all().map((row) => ({ ...row })), [{
-      name: "Catalog migration",
-      description: "Summary: Catalog-managed provider\nDocs: https://docs.example.com/provider\nWorkspace: /repos/catalog-provider",
-      repo_path: "/repos/catalog-provider",
-      version: 2,
-    }, {
-      name: "V26 migration",
-      description: "/repos/provider",
-      repo_path: "/repos/provider",
-      version: 3,
-    }]);
-    assert.deepEqual(upgraded.db.prepare(`
+    `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          name: "Catalog migration",
+          description:
+            "Summary: Catalog-managed provider\nDocs: https://docs.example.com/provider\nWorkspace: /repos/catalog-provider",
+          repo_path: "/repos/catalog-provider",
+          version: 2,
+        },
+        {
+          name: "V26 migration",
+          description: "/repos/provider",
+          repo_path: "/repos/provider",
+          version: 3,
+        },
+      ]
+    );
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
       SELECT work_item_id, parent_work_item_id, phase, child_ordinal, state, version
       FROM work_items ORDER BY work_item_id
-    `).all().map((row) => ({ ...row })), [
+    `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          work_item_id: "v26-child",
+          parent_work_item_id: null,
+          phase: null,
+          child_ordinal: null,
+          state: "queued",
+          version: 1,
+        },
+        {
+          work_item_id: "v26-parent",
+          parent_work_item_id: null,
+          phase: null,
+          child_ordinal: null,
+          state: "plan_approval",
+          version: 4,
+        },
+      ]
+    );
+    assert.equal(
+      upgraded.db.prepare("SELECT kind FROM notifications WHERE notification_id='v25-notification'").get()?.kind,
+      "final_approval_withdrawn"
+    );
+    assert.equal(
+      upgraded.db.prepare("SELECT gate FROM gate_actions WHERE gate_action_id='v25-gate'").get()?.gate,
+      "cancel"
+    );
+    assert.deepEqual(
       {
-        work_item_id: "v26-child", parent_work_item_id: null, phase: null,
-        child_ordinal: null, state: "queued", version: 1,
-      },
-      {
-        work_item_id: "v26-parent", parent_work_item_id: null, phase: null,
-        child_ordinal: null, state: "plan_approval", version: 4,
-      },
-    ]);
-    assert.equal(upgraded.db.prepare("SELECT kind FROM notifications WHERE notification_id='v25-notification'").get()?.kind,
-      "final_approval_withdrawn");
-    assert.equal(upgraded.db.prepare("SELECT gate FROM gate_actions WHERE gate_action_id='v25-gate'").get()?.gate,
-      "cancel");
-    assert.deepEqual({ ...upgraded.db.prepare(`
+        ...upgraded.db
+          .prepare(
+            `
       SELECT verify_attempt_id, verify_run_id, workspace_path, state
       FROM verify_attempts WHERE verify_attempt_id='v26-verify-attempt'
-    `).get() }, {
-      verify_attempt_id: "v26-verify-attempt",
-      verify_run_id: "run-v26",
-      workspace_path: "/tmp/v26-verify",
-      state: "running",
-    });
-    upgraded.db.prepare(`
+    `
+          )
+          .get(),
+      },
+      {
+        verify_attempt_id: "v26-verify-attempt",
+        verify_run_id: "run-v26",
+        workspace_path: "/tmp/v26-verify",
+        state: "running",
+      }
+    );
+    upgraded.db
+      .prepare(
+        `
       UPDATE verify_attempts SET state='retired',ended_at=? WHERE verify_attempt_id='v26-verify-attempt'
-    `).run(createdAt);
-    assert.equal(upgraded.db.prepare(`
+    `
+      )
+      .run(createdAt);
+    assert.equal(
+      upgraded.db
+        .prepare(
+          `
       SELECT state FROM verify_attempts WHERE verify_attempt_id='v26-verify-attempt'
-    `).get()?.state, "retired");
-    assert.deepEqual({ ...upgraded.db.prepare(`
+    `
+        )
+        .get()?.state,
+      "retired"
+    );
+    assert.deepEqual(
+      {
+        ...upgraded.db
+          .prepare(
+            `
       SELECT work_item_id, category, reason, parked_at, resolved_at, resolution
       FROM park_records WHERE park_record_id='v25-park'
-    `).get() }, {
-      work_item_id: "v26-parent",
-      category: "open_question",
-      reason: "Preserve this park record.",
-      parked_at: createdAt,
-      resolved_at: null,
-      resolution: null,
-    });
+    `
+          )
+          .get(),
+      },
+      {
+        work_item_id: "v26-parent",
+        category: "open_question",
+        reason: "Preserve this park record.",
+        parked_at: createdAt,
+        resolved_at: null,
+        resolution: null,
+      }
+    );
     assert.equal(
-      upgraded.db.prepare("SELECT children FROM plan_revisions WHERE plan_revision_id='v25-parent-plan'").get()?.children,
-      null,
+      upgraded.db.prepare("SELECT children FROM plan_revisions WHERE plan_revision_id='v25-parent-plan'").get()
+        ?.children,
+      null
     );
 
-    upgraded.db.prepare(`
+    upgraded.db
+      .prepare(
+        `
       UPDATE work_items
       SET parent_work_item_id='v26-parent', phase='migrate', child_ordinal=1
       WHERE work_item_id='v26-child'
-    `).run();
-    upgraded.db.prepare(`
+    `
+      )
+      .run();
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO work_item_dependencies(work_item_id, depends_on_work_item_id)
       VALUES ('v26-child', 'v26-parent')
-    `).run();
-    upgraded.db.prepare(`
+    `
+      )
+      .run();
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO notifications(
         notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
         summary, created_at, read_at, version
       ) VALUES ('v26-notification', 8, 'phase_ready', 'v26-notification-key',
         'v26-project', 'v26-parent', 'The next phase is ready.', '${createdAt}', NULL, 1)
-    `).run();
-    upgraded.db.prepare(`
+    `
+      )
+      .run();
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO gate_actions(
         gate_action_id, work_item_id, gate, actor_id, plan_revision_id,
         verified_sha, merge_sha, ref_id, note, created_at
       ) VALUES ('v26-gate', 'v26-child', 'deploy_attest', 'human:migration', NULL,
         NULL, NULL, 'deploy-one', NULL, '${createdAt}')
-    `).run();
-    upgraded.db.prepare(`
+    `
+      )
+      .run();
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO park_records(
         park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
       ) VALUES ('v26-child-failed-park', 'v26-parent', 'child_failed',
         'A child reached a terminal failure state.', '${createdAt}', NULL, NULL)
-    `).run();
+    `
+      )
+      .run();
     assert.equal(
-      upgraded.db.prepare("SELECT category FROM park_records WHERE park_record_id='v26-child-failed-park'").get()?.category,
-      "child_failed",
+      upgraded.db.prepare("SELECT category FROM park_records WHERE park_record_id='v26-child-failed-park'").get()
+        ?.category,
+      "child_failed"
     );
-    assert.throws(() => upgraded.db.prepare(`
+    assert.throws(
+      () =>
+        upgraded.db
+          .prepare(
+            `
       INSERT INTO work_item_dependencies(work_item_id, depends_on_work_item_id)
       VALUES ('v26-parent', 'v26-parent')
-    `).run(), /CHECK/u);
-    assert.throws(() => upgraded.db.prepare("UPDATE work_items SET phase='future' WHERE work_item_id='v26-child'").run(), /CHECK/u);
+    `
+          )
+          .run(),
+      /CHECK/u
+    );
+    assert.throws(
+      () => upgraded.db.prepare("UPDATE work_items SET phase='future' WHERE work_item_id='v26-child'").run(),
+      /CHECK/u
+    );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
   } finally {
@@ -966,16 +1177,21 @@ test("v26 table CHECK clauses contain byte-identical contract-derived enum lists
     ];
     for (const [table, fragment] of expected) assert.ok(tableSql(table).includes(fragment), `${table}: ${fragment}`);
     assert.ok(tableSql("projects").includes("repo_path TEXT NOT NULL"));
-    assert.ok(tableSql("work_items").includes(
-      "parent_work_item_id TEXT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT",
-    ));
+    assert.ok(
+      tableSql("work_items").includes(
+        "parent_work_item_id TEXT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT"
+      )
+    );
     assert.ok(tableSql("work_items").includes("child_ordinal INTEGER NULL"));
     assert.ok(tableSql("plan_revisions").includes("children TEXT NULL"));
-    assert.equal(tableSql("work_item_dependencies"), `CREATE TABLE work_item_dependencies (
+    assert.equal(
+      tableSql("work_item_dependencies"),
+      `CREATE TABLE work_item_dependencies (
   work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
   depends_on_work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
   PRIMARY KEY(work_item_id, depends_on_work_item_id), CHECK(work_item_id <> depends_on_work_item_id)
-) STRICT, WITHOUT ROWID`);
+) STRICT, WITHOUT ROWID`
+    );
   } finally {
     store.close();
   }
@@ -991,8 +1207,11 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV19 = frozenV19
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV19);
     legacy.exec(`
@@ -1039,44 +1258,84 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
-      .map((row) => String(row.name));
+    const columns = (table: string): string[] =>
+      upgraded.db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => String(row.name));
     for (const column of ["pipeline_branch", "base_sha"]) {
       assert.ok(columns("work_items").includes(column), `work_items.${column}`);
     }
     for (const column of [
-      "change_shape", "tier", "declared_scope_json", "non_goals_json",
-      "mechanical_portions_json", "blocking_questions_json", "criterion_checks_json", "rejected_note", "children",
+      "change_shape",
+      "tier",
+      "declared_scope_json",
+      "non_goals_json",
+      "mechanical_portions_json",
+      "blocking_questions_json",
+      "criterion_checks_json",
+      "rejected_note",
+      "children",
     ]) {
       assert.ok(columns("plan_revisions").includes(column), `plan_revisions.${column}`);
     }
     assert.deepEqual(columns("verify_attempts"), [
-      "verify_attempt_id", "node_id", "stage", "attempt", "verify_run_id", "workspace_path",
-      "state", "check_results_json", "detail", "created_at", "ended_at",
+      "verify_attempt_id",
+      "node_id",
+      "stage",
+      "attempt",
+      "verify_run_id",
+      "workspace_path",
+      "state",
+      "check_results_json",
+      "detail",
+      "created_at",
+      "ended_at",
     ]);
     assert.deepEqual(
-      { ...upgraded.db.prepare(`
+      {
+        ...upgraded.db
+          .prepare(
+            `
         SELECT original_request, pipeline_branch, base_sha
         FROM work_items WHERE work_item_id = 'pipeline-work-item'
-      `).get() },
-      { original_request: "Preserve this work item.", pipeline_branch: null, base_sha: null },
+      `
+          )
+          .get(),
+      },
+      { original_request: "Preserve this work item.", pipeline_branch: null, base_sha: null }
     );
     assert.deepEqual(
-      { ...upgraded.db.prepare(`
+      {
+        ...upgraded.db
+          .prepare(
+            `
         SELECT objective, change_shape, tier, declared_scope_json, non_goals_json,
           mechanical_portions_json, blocking_questions_json, criterion_checks_json, rejected_note, children
         FROM plan_revisions WHERE plan_revision_id = 'pipeline-plan'
-      `).get() },
-      {
-        objective: "Preserve this plan.", change_shape: null, tier: null, declared_scope_json: null,
-        non_goals_json: null, mechanical_portions_json: null, blocking_questions_json: null,
-        criterion_checks_json: null, rejected_note: null, children: null,
+      `
+          )
+          .get(),
       },
+      {
+        objective: "Preserve this plan.",
+        change_shape: null,
+        tier: null,
+        declared_scope_json: null,
+        non_goals_json: null,
+        mechanical_portions_json: null,
+        blocking_questions_json: null,
+        criterion_checks_json: null,
+        rejected_note: null,
+        children: null,
+      }
     );
-    const verifySql = String(upgraded.db.prepare(
-      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'",
-    ).get()?.sql);
-    assert.equal(verifySql, `CREATE TABLE verify_attempts (
+    const verifySql = String(
+      upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verify_attempts'").get()?.sql
+    );
+    assert.equal(
+      verifySql,
+      `CREATE TABLE verify_attempts (
   verify_attempt_id TEXT PRIMARY KEY,
   node_id TEXT NOT NULL REFERENCES work_nodes(node_id),
   stage TEXT NOT NULL,
@@ -1089,20 +1348,42 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
   created_at TEXT NOT NULL,
   ended_at TEXT NULL,
   UNIQUE(node_id, stage, attempt)
-)`);
-    upgraded.db.prepare(`
+)`
+    );
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO verify_attempts(
         verify_attempt_id, node_id, stage, attempt, verify_run_id, workspace_path,
         state, check_results_json, detail, created_at, ended_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "verify-attempt-one", "pipeline-node", "testing", 1, null, null,
-      "starting", null, null, "2026-08-18T12:03:00.000Z", null,
-    );
-    assert.throws(() => upgraded.db.prepare(`
+    `
+      )
+      .run(
+        "verify-attempt-one",
+        "pipeline-node",
+        "testing",
+        1,
+        null,
+        null,
+        "starting",
+        null,
+        null,
+        "2026-08-18T12:03:00.000Z",
+        null
+      );
+    assert.throws(
+      () =>
+        upgraded.db
+          .prepare(
+            `
       INSERT INTO verify_attempts(verify_attempt_id, node_id, stage, attempt, state, created_at)
       VALUES ('verify-attempt-two', 'pipeline-node', 'testing', 1, 'running', '2026-08-18T12:04:00.000Z')
-    `).run(), /UNIQUE/u);
+    `
+          )
+          .run(),
+      /UNIQUE/u
+    );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA foreign_keys").get()?.foreign_keys, 1);
   } finally {
@@ -1120,8 +1401,11 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV20 = frozenV20
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV20);
     legacy.exec(`
@@ -1177,38 +1461,74 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
-      .map((row) => String(row.name));
+    const columns = (table: string): string[] =>
+      upgraded.db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => String(row.name));
     assert.deepEqual(columns("review_findings"), [
-      "finding_id", "node_id", "stage", "round", "file", "line", "category", "severity",
-      "expected", "actual", "blocking", "created_at",
+      "finding_id",
+      "node_id",
+      "stage",
+      "round",
+      "file",
+      "line",
+      "category",
+      "severity",
+      "expected",
+      "actual",
+      "blocking",
+      "created_at",
     ]);
     assert.deepEqual(columns("design_records"), [
-      "design_record_id", "work_item_id", "plan_revision_id", "payload_json", "created_at",
+      "design_record_id",
+      "work_item_id",
+      "plan_revision_id",
+      "payload_json",
+      "created_at",
     ]);
     assert.deepEqual(columns("work_item_design_tasks"), ["work_item_id", "task_id", "created_at"]);
     assert.deepEqual(
-      { ...upgraded.db.prepare(`
+      {
+        ...upgraded.db
+          .prepare(
+            `
         SELECT original_request, pipeline_branch, base_sha
         FROM work_items WHERE work_item_id = 'review-work-item'
-      `).get() },
+      `
+          )
+          .get(),
+      },
       {
         original_request: "Preserve this work item.",
         pipeline_branch: "pipeline/review-work-item",
         base_sha: "0123456789abcdef",
-      },
+      }
     );
 
-    upgraded.db.prepare(`
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO review_findings(
         finding_id, node_id, stage, round, file, line, category, severity,
         expected, actual, blocking, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "finding-one", "review-node", "verification", 1, "src/example.ts", 42,
-      "correctness", "major", "A retry is idempotent.", "A retry duplicates a write.", 1,
-      "2026-08-19T12:05:00.000Z",
-    );
+    `
+      )
+      .run(
+        "finding-one",
+        "review-node",
+        "verification",
+        1,
+        "src/example.ts",
+        42,
+        "correctness",
+        "major",
+        "A retry is idempotent.",
+        "A retry duplicates a write.",
+        1,
+        "2026-08-19T12:05:00.000Z"
+      );
     const payload = JSON.stringify({
       states: ["pending", "committed"],
       transitions: [{ from: "pending", to: "committed" }],
@@ -1220,25 +1540,49 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
       idempotencyKeys: [],
       faultInjectionCases: [],
     });
-    upgraded.db.prepare(`
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO design_records(design_record_id, work_item_id, plan_revision_id, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?)
-    `).run("design-one", "review-work-item", "review-plan", payload, "2026-08-19T12:06:00.000Z");
-    upgraded.db.prepare(`
+    `
+      )
+      .run("design-one", "review-work-item", "review-plan", payload, "2026-08-19T12:06:00.000Z");
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO work_item_design_tasks(work_item_id, task_id, created_at)
       VALUES (?, ?, ?)
-    `).run("review-work-item", "design-task", "2026-08-19T12:07:00.000Z");
+    `
+      )
+      .run("review-work-item", "design-task", "2026-08-19T12:07:00.000Z");
 
-    assert.throws(() => upgraded.db.prepare(`
+    assert.throws(
+      () =>
+        upgraded.db
+          .prepare(
+            `
       INSERT INTO review_findings(
         finding_id, node_id, stage, round, category, severity, expected, actual, blocking, created_at
       ) VALUES ('finding-invalid', 'review-node', 'verification', 2, 'unknown', 'major', 'x', 'y', 0,
         '2026-08-19T12:08:00.000Z')
-    `).run(), /CHECK constraint failed/u);
-    assert.throws(() => upgraded.db.prepare(`
+    `
+          )
+          .run(),
+      /CHECK constraint failed/u
+    );
+    assert.throws(
+      () =>
+        upgraded.db
+          .prepare(
+            `
       INSERT INTO design_records(design_record_id, work_item_id, plan_revision_id, payload_json, created_at)
       VALUES ('design-invalid', 'review-work-item', 'review-plan', 'not-json', '2026-08-19T12:08:00.000Z')
-    `).run(), /CHECK constraint failed/u);
+    `
+          )
+          .run(),
+      /CHECK constraint failed/u
+    );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     upgraded.close();
@@ -1255,8 +1599,11 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV21 = frozenV21
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV21);
     legacy.exec(`
@@ -1284,60 +1631,123 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
   const upgraded = await TaskBoardStore.open(path);
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
-    const columns = (table: string): string[] => upgraded.db.prepare(`PRAGMA table_info(${table})`).all()
-      .map((row) => String(row.name));
+    const columns = (table: string): string[] =>
+      upgraded.db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => String(row.name));
     assert.deepEqual(columns("park_records"), [
-      "park_record_id", "work_item_id", "category", "reason", "parked_at", "resolved_at", "resolution",
+      "park_record_id",
+      "work_item_id",
+      "category",
+      "reason",
+      "parked_at",
+      "resolved_at",
+      "resolution",
     ]);
     assert.deepEqual(columns("notifications"), [
-      "notification_id", "sequence", "kind", "dedupe_key", "project_id", "work_item_id",
-      "summary", "created_at", "read_at", "version",
+      "notification_id",
+      "sequence",
+      "kind",
+      "dedupe_key",
+      "project_id",
+      "work_item_id",
+      "summary",
+      "created_at",
+      "read_at",
+      "version",
     ]);
     assert.deepEqual(columns("gate_actions"), [
-      "gate_action_id", "work_item_id", "gate", "actor_id", "plan_revision_id", "verified_sha",
-      "merge_sha", "ref_id", "note", "created_at",
+      "gate_action_id",
+      "work_item_id",
+      "gate",
+      "actor_id",
+      "plan_revision_id",
+      "verified_sha",
+      "merge_sha",
+      "ref_id",
+      "note",
+      "created_at",
     ]);
     assert.deepEqual(
-      { ...upgraded.db.prepare(`
+      {
+        ...upgraded.db
+          .prepare(
+            `
         SELECT original_request, refined_objective, pipeline_branch, base_sha, state
         FROM work_items WHERE work_item_id = 'ledger-work-item'
-      `).get() },
+      `
+          )
+          .get(),
+      },
       {
         original_request: "Preserve this work item.",
         refined_objective: "Add durable observability.",
         pipeline_branch: "pipeline/ledger-work-item",
         base_sha: "0123456789abcdef0123456789abcdef01234567",
         state: "parked",
-      },
+      }
     );
 
-    upgraded.db.prepare(`
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO park_records(
         park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "park-record-one", "ledger-work-item", "open_question", "Waiting for an answer.",
-      "2026-08-20T12:03:00.000Z", null, null,
-    );
-    upgraded.db.prepare(`
+    `
+      )
+      .run(
+        "park-record-one",
+        "ledger-work-item",
+        "open_question",
+        "Waiting for an answer.",
+        "2026-08-20T12:03:00.000Z",
+        null,
+        null
+      );
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO notifications(
         notification_id, sequence, kind, dedupe_key, project_id, work_item_id,
         summary, created_at, read_at, version
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "notification-one", 1, "park_aged", "park-aged:park-record-one", "ledger-project", "ledger-work-item",
-      "The work item has remained parked.", "2026-08-20T12:04:00.000Z", null, 1,
-    );
-    upgraded.db.prepare(`
+    `
+      )
+      .run(
+        "notification-one",
+        1,
+        "park_aged",
+        "park-aged:park-record-one",
+        "ledger-project",
+        "ledger-work-item",
+        "The work item has remained parked.",
+        "2026-08-20T12:04:00.000Z",
+        null,
+        1
+      );
+    upgraded.db
+      .prepare(
+        `
       INSERT INTO gate_actions(
         gate_action_id, work_item_id, gate, actor_id, plan_revision_id,
         verified_sha, merge_sha, ref_id, note, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "gate-action-one", "ledger-work-item", "cancel", "human:operator", null,
-      "0123456789abcdef0123456789abcdef01234567", null, "request-one", "Cancelled deliberately.",
-      "2026-08-20T12:05:00.000Z",
-    );
+    `
+      )
+      .run(
+        "gate-action-one",
+        "ledger-work-item",
+        "cancel",
+        "human:operator",
+        null,
+        "0123456789abcdef0123456789abcdef01234567",
+        null,
+        "request-one",
+        "Cancelled deliberately.",
+        "2026-08-20T12:05:00.000Z"
+      );
     assert.equal(upgraded.db.prepare("SELECT count(*) AS count FROM park_records").get()?.count, 1);
     assert.equal(upgraded.db.prepare("SELECT count(*) AS count FROM notifications").get()?.count, 1);
     assert.equal(upgraded.db.prepare("SELECT count(*) AS count FROM gate_actions").get()?.count, 1);
@@ -1359,8 +1769,11 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV22 = frozenV22
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV22);
     legacy.exec(`
@@ -1392,7 +1805,7 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
         `Preserve ${category} byte-for-byte — café ${index}.`,
         `2026-08-21T12:${String(index + 2).padStart(2, "0")}:00.000Z`,
         resolution === null ? null : `2026-08-21T13:${String(index).padStart(2, "0")}:00.000Z`,
-        resolution,
+        resolution
       );
     }
     const insertNotification = legacy.prepare(`
@@ -1412,12 +1825,16 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
         `Preserve ${kind} byte-for-byte — café ${index}.`,
         `2026-08-21T14:0${index}:00.000Z`,
         index === 0 ? null : `2026-08-21T15:0${index}:00.000Z`,
-        index + 3,
+        index + 3
       );
     }
-    parkRowsBefore = legacy.prepare("SELECT rowid, * FROM park_records ORDER BY rowid").all()
+    parkRowsBefore = legacy
+      .prepare("SELECT rowid, * FROM park_records ORDER BY rowid")
+      .all()
       .map((row) => ({ ...row }));
-    notificationRowsBefore = legacy.prepare("SELECT rowid, * FROM notifications ORDER BY rowid").all()
+    notificationRowsBefore = legacy
+      .prepare("SELECT rowid, * FROM notifications ORDER BY rowid")
+      .all()
       .map((row) => ({ ...row }));
     legacy.exec("PRAGMA user_version = 22;");
   } finally {
@@ -1429,17 +1846,22 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
     assert.deepEqual(
-      upgraded.db.prepare("SELECT rowid, * FROM park_records ORDER BY rowid").all().map((row) => ({ ...row })),
-      parkRowsBefore,
+      upgraded.db
+        .prepare("SELECT rowid, * FROM park_records ORDER BY rowid")
+        .all()
+        .map((row) => ({ ...row })),
+      parkRowsBefore
     );
     assert.deepEqual(
-      upgraded.db.prepare("SELECT rowid, * FROM notifications ORDER BY rowid").all().map((row) => ({ ...row })),
-      notificationRowsBefore,
+      upgraded.db
+        .prepare("SELECT rowid, * FROM notifications ORDER BY rowid")
+        .all()
+        .map((row) => ({ ...row })),
+      notificationRowsBefore
     );
 
-    const tableSql = (name: string): string => String(upgraded.db.prepare(
-      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-    ).get(name)?.sql);
+    const tableSql = (name: string): string =>
+      String(upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)?.sql);
     assert.ok(tableSql("park_records").includes(`CHECK (category IN (${sqlList(PARK_CATEGORIES)}))`));
     assert.ok(tableSql("notifications").includes(`CHECK (kind IN (${sqlList(NOTIFICATION_KINDS)}))`));
 
@@ -1448,7 +1870,10 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
         park_record_id, work_item_id, category, reason, parked_at, resolved_at, resolution
       ) VALUES (?, 'v23-work-item', ?, 'Migration insertability check.', '2026-08-21T16:00:00.000Z', NULL, NULL)
     `);
-    for (const [index, category] of [...V22_PARK_CATEGORIES, ...PARK_CATEGORIES.slice(V22_PARK_CATEGORIES.length)].entries()) {
+    for (const [index, category] of [
+      ...V22_PARK_CATEGORIES,
+      ...PARK_CATEGORIES.slice(V22_PARK_CATEGORIES.length),
+    ].entries()) {
       insertPark.run(`post-v23-park-${index}`, category);
     }
     const insertNotification = upgraded.db.prepare(`
@@ -1457,32 +1882,38 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
         summary, created_at, read_at, version
       ) VALUES (?, ?, ?, ?, NULL, NULL, 'Migration insertability check.', '2026-08-21T16:01:00.000Z', NULL, 1)
     `);
-    for (const [index, kind] of [...V22_NOTIFICATION_KINDS, ...NOTIFICATION_KINDS.slice(V22_NOTIFICATION_KINDS.length)].entries()) {
+    for (const [index, kind] of [
+      ...V22_NOTIFICATION_KINDS,
+      ...NOTIFICATION_KINDS.slice(V22_NOTIFICATION_KINDS.length),
+    ].entries()) {
       insertNotification.run(`post-v23-notification-${index}`, 100 + index, kind, `post-v23-dedupe-${index}`);
     }
-    assert.throws(
-      () => insertNotification.run("duplicate-sequence", 100, "cap_parked", "unique-dedupe"),
-      /UNIQUE/u,
-    );
-    assert.throws(
-      () => insertNotification.run("duplicate-dedupe", 999, "cap_parked", "post-v23-dedupe-0"),
-      /UNIQUE/u,
-    );
+    assert.throws(() => insertNotification.run("duplicate-sequence", 100, "cap_parked", "unique-dedupe"), /UNIQUE/u);
+    assert.throws(() => insertNotification.run("duplicate-dedupe", 999, "cap_parked", "post-v23-dedupe-0"), /UNIQUE/u);
 
-    assert.deepEqual({ ...upgraded.db.prepare(`
+    assert.deepEqual(
+      {
+        ...upgraded.db
+          .prepare(
+            `
       SELECT paused, reason, version, updated_at, updated_by
       FROM board_pause WHERE pause_id = 'board'
-    `).get() }, {
-      paused: 0,
-      reason: null,
-      version: 1,
-      updated_at: "1970-01-01T00:00:00.000Z",
-      updated_by: "system:steward-default",
-    });
+    `
+          )
+          .get(),
+      },
+      {
+        paused: 0,
+        reason: null,
+        version: 1,
+        updated_at: "1970-01-01T00:00:00.000Z",
+        updated_by: "system:steward-default",
+      }
+    );
     assert.ok(tableSql("board_pause").includes("pause_id TEXT PRIMARY KEY CHECK (pause_id = 'board')"));
     assert.throws(
       () => upgraded.db.prepare("UPDATE board_pause SET pause_id = 'other' WHERE pause_id = 'board'").run(),
-      /CHECK/u,
+      /CHECK/u
     );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA foreign_keys").get()?.foreign_keys, 1);
@@ -1497,14 +1928,16 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const legacy = new DatabaseSync(path);
   const explicitProjectId = "migration-project-explicit";
-  const mappingCells: ReadonlyArray<Readonly<{
-    id: string;
-    state: string;
-    currentStage: string | null;
-    migratedState: string;
-    targetProjectId?: string;
-    archivedAt?: string;
-  }>> = [
+  const mappingCells: ReadonlyArray<
+    Readonly<{
+      id: string;
+      state: string;
+      currentStage: string | null;
+      migratedState: string;
+      targetProjectId?: string;
+      archivedAt?: string;
+    }>
+  > = [
     {
       id: "migration-01-submitted",
       state: "submitted",
@@ -1522,9 +1955,24 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
     },
     { id: "migration-04-failed", state: "failed", currentStage: "testing", migratedState: "dead_letter" },
     { id: "migration-05-cancelled", state: "cancelled", currentStage: null, migratedState: "abandoned" },
-    { id: "migration-06-human-review", state: "waiting_for_human_review", currentStage: "human_review", migratedState: "plan_approval" },
-    { id: "migration-07-plan-approval", state: "waiting_for_human_review", currentStage: "planning", migratedState: "plan_approval" },
-    { id: "migration-08-implementation", state: "processing", currentStage: "implementation", migratedState: "implementing" },
+    {
+      id: "migration-06-human-review",
+      state: "waiting_for_human_review",
+      currentStage: "human_review",
+      migratedState: "plan_approval",
+    },
+    {
+      id: "migration-07-plan-approval",
+      state: "waiting_for_human_review",
+      currentStage: "planning",
+      migratedState: "plan_approval",
+    },
+    {
+      id: "migration-08-implementation",
+      state: "processing",
+      currentStage: "implementation",
+      migratedState: "implementing",
+    },
     { id: "migration-09-deployment", state: "processing", currentStage: "deployment", migratedState: "implementing" },
     { id: "migration-10-testing", state: "processing", currentStage: "testing", migratedState: "verifying" },
     { id: "migration-11-verification", state: "processing", currentStage: "verification", migratedState: "reviewing" },
@@ -1536,14 +1984,21 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV18 = frozenV18
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV18);
-    legacy.prepare(`
+    legacy
+      .prepare(
+        `
       INSERT INTO projects(project_id, name, description, version, created_at, updated_at)
       VALUES (?, 'Migration target', 'Exercises explicit project references.', 1, ?, ?)
-    `).run(explicitProjectId, "2026-08-15T11:00:00.000Z", "2026-08-15T11:00:00.000Z");
+    `
+      )
+      .run(explicitProjectId, "2026-08-15T11:00:00.000Z", "2026-08-15T11:00:00.000Z");
     const insert = legacy.prepare(`
       INSERT INTO work_items(
         work_item_id, original_request, priority, project_target_mode, target_project_id,
@@ -1569,7 +2024,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
         timestamp,
         terminal ? timestamp : null,
         cell.state === "cancelled" ? "Superseded during migration" : null,
-        cell.archivedAt ?? null,
+        cell.archivedAt ?? null
       );
     }
     legacy.exec("PRAGMA user_version = 18;");
@@ -1582,18 +2037,23 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
   try {
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
     assert.deepEqual(
-      upgraded.db.prepare(`
+      upgraded.db
+        .prepare(
+          `
         SELECT work_item_id, state, project_target_mode, target_project_id, resolved_project_id, archived_at
         FROM work_items
         ORDER BY work_item_id
-      `).all().map((row) => ({
-        work_item_id: row.work_item_id,
-        state: row.state,
-        project_target_mode: row.project_target_mode,
-        target_project_id: row.target_project_id,
-        resolved_project_id: row.resolved_project_id,
-        archived_at: row.archived_at,
-      })),
+      `
+        )
+        .all()
+        .map((row) => ({
+          work_item_id: row.work_item_id,
+          state: row.state,
+          project_target_mode: row.project_target_mode,
+          target_project_id: row.target_project_id,
+          resolved_project_id: row.resolved_project_id,
+          archived_at: row.archived_at,
+        })),
       mappingCells.map((cell) => ({
         work_item_id: cell.id,
         state: cell.migratedState,
@@ -1601,22 +2061,27 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
         target_project_id: cell.targetProjectId ?? null,
         resolved_project_id: cell.targetProjectId ?? null,
         archived_at: cell.archivedAt ?? null,
-      })),
+      }))
     );
     assert.deepEqual(
-      upgraded.db.prepare(`
+      upgraded.db
+        .prepare(
+          `
         SELECT work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
         FROM work_item_transitions
         ORDER BY work_item_id, sequence
-      `).all().map((row) => ({
-        work_item_id: row.work_item_id,
-        sequence: row.sequence,
-        from_state: row.from_state,
-        to_state: row.to_state,
-        actor_type: row.actor_type,
-        actor_id: row.actor_id,
-        created_at: row.created_at,
-      })),
+      `
+        )
+        .all()
+        .map((row) => ({
+          work_item_id: row.work_item_id,
+          sequence: row.sequence,
+          from_state: row.from_state,
+          to_state: row.to_state,
+          actor_type: row.actor_type,
+          actor_id: row.actor_id,
+          created_at: row.created_at,
+        })),
       mappingCells.map((cell, index) => ({
         work_item_id: cell.id,
         sequence: 1,
@@ -1625,10 +2090,13 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
         actor_type: "system",
         actor_id: "system:migration",
         created_at: `2026-08-15T12:${String(index).padStart(2, "0")}:00.000Z`,
-      })),
+      }))
     );
     const runColumns = new Set(
-      upgraded.db.prepare("PRAGMA table_info(runs)").all().map((row) => String(row.name)),
+      upgraded.db
+        .prepare("PRAGMA table_info(runs)")
+        .all()
+        .map((row) => String(row.name))
     );
     for (const column of ["heartbeat_at", "runtime", "runtime_version", "model", "prompts_sha"]) {
       assert.ok(runColumns.has(column), `runs.${column}`);
@@ -1658,7 +2126,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
       "guard-hash-reviewing",
       "2026-08-15T14:00:00.000Z",
       "2026-08-15T14:02:00.000Z",
-      null,
+      null
     );
     insertWorkItem.run(
       "guard-merged",
@@ -1669,22 +2137,24 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
       "guard-hash-merged",
       "2026-08-15T15:00:00.000Z",
       "2026-08-15T15:02:00.000Z",
-      "2026-08-15T15:02:00.000Z",
+      "2026-08-15T15:02:00.000Z"
     );
     const insertTransition = original.db.prepare(`
       INSERT INTO work_item_transitions(
         work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+    insertTransition.run("guard-reviewing", 1, null, "queued", "system", "system:intake", "2026-08-15T14:00:00.000Z");
     insertTransition.run(
-      "guard-reviewing", 1, null, "queued", "system", "system:intake", "2026-08-15T14:00:00.000Z",
+      "guard-reviewing",
+      2,
+      "queued",
+      "reviewing",
+      "agent",
+      "agent:reviewer",
+      "2026-08-15T14:02:00.000Z"
     );
-    insertTransition.run(
-      "guard-reviewing", 2, "queued", "reviewing", "agent", "agent:reviewer", "2026-08-15T14:02:00.000Z",
-    );
-    insertTransition.run(
-      "guard-merged", 1, null, "merged", "human", "human:approver", "2026-08-15T15:02:00.000Z",
-    );
+    insertTransition.run("guard-merged", 1, null, "merged", "human", "human:approver", "2026-08-15T15:02:00.000Z");
     original.db.exec("PRAGMA user_version = 18;");
   } finally {
     original.close();
@@ -1694,27 +2164,34 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
   try {
     assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 26);
     assert.deepEqual(
-      reopened.db.prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id").all()
+      reopened.db
+        .prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id")
+        .all()
         .map((row) => ({ work_item_id: row.work_item_id, state: row.state })),
       [
         { work_item_id: "guard-merged", state: "merged" },
         { work_item_id: "guard-reviewing", state: "reviewing" },
-      ],
+      ]
     );
     assert.deepEqual(
-      reopened.db.prepare(`
+      reopened.db
+        .prepare(
+          `
         SELECT work_item_id, sequence, from_state, to_state, actor_type, actor_id, created_at
         FROM work_item_transitions
         ORDER BY work_item_id, sequence
-      `).all().map((row) => ({
-        work_item_id: row.work_item_id,
-        sequence: row.sequence,
-        from_state: row.from_state,
-        to_state: row.to_state,
-        actor_type: row.actor_type,
-        actor_id: row.actor_id,
-        created_at: row.created_at,
-      })),
+      `
+        )
+        .all()
+        .map((row) => ({
+          work_item_id: row.work_item_id,
+          sequence: row.sequence,
+          from_state: row.from_state,
+          to_state: row.to_state,
+          actor_type: row.actor_type,
+          actor_id: row.actor_id,
+          created_at: row.created_at,
+        })),
       [
         {
           work_item_id: "guard-merged",
@@ -1743,7 +2220,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
           actor_id: "agent:reviewer",
           created_at: "2026-08-15T14:02:00.000Z",
         },
-      ],
+      ]
     );
   } finally {
     reopened.close();
@@ -1760,8 +2237,11 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
     const schemaKindOrder = ["-- table:", "-- index:", "-- trigger:"];
     const executableV17 = frozenV17
       .split(/(?=^-- (?:index|table|trigger): )/m)
-      .sort((left, right) => schemaKindOrder.findIndex((prefix) => left.startsWith(prefix))
-        - schemaKindOrder.findIndex((prefix) => right.startsWith(prefix)))
+      .sort(
+        (left, right) =>
+          schemaKindOrder.findIndex((prefix) => left.startsWith(prefix)) -
+          schemaKindOrder.findIndex((prefix) => right.startsWith(prefix))
+      )
       .join("");
     legacy.exec(executableV17);
     legacy.exec("PRAGMA user_version = 17;");
@@ -1775,7 +2255,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
     assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 26);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
-      "CREATE INDEX project_events_node ON project_events(node_id, sequence)",
+      "CREATE INDEX project_events_node ON project_events(node_id, sequence)"
     );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {

@@ -15,11 +15,7 @@ function usage(): number {
   return 64;
 }
 
-async function foreground(
-  runner: VerifyRunner,
-  tier: VerifyTier,
-  args: readonly string[],
-): Promise<number> {
+async function foreground(runner: VerifyRunner, tier: VerifyTier, args: readonly string[]): Promise<number> {
   let base = "main";
   if (args.length !== 0) {
     const candidate = args[1];

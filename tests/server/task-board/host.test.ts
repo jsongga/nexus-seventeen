@@ -22,14 +22,22 @@ test("listProjectRoots finds *Projects roots, skips hidden and files, flags git"
   const home = await makeHome();
   try {
     const roots = await listProjectRoots({ homeDir: home, rootsOverride: null });
-    assert.deepEqual(roots.map((root) => root.name), ["PycharmProjects", "WebstormProjects"]);
+    assert.deepEqual(
+      roots.map((root) => root.name),
+      ["PycharmProjects", "WebstormProjects"]
+    );
     const web = roots[1];
-    assert.deepEqual(web.projects.map((p) => p.name), ["alpha", "beta"]);
+    assert.deepEqual(
+      web.projects.map((p) => p.name),
+      ["alpha", "beta"]
+    );
     assert.equal(web.projects[0].hasGit, true);
     assert.equal(web.projects[1].hasGit, false);
     assert.ok(web.projects.every((p) => p.modifiedAtMs > 0));
     assert.equal(web.truncated, false);
-  } finally { await rm(home, { recursive: true, force: true }); }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("listProjectRoots override replaces detection and skips missing roots", async () => {
@@ -39,8 +47,13 @@ test("listProjectRoots override replaces detection and skips missing roots", asy
       homeDir: home,
       rootsOverride: [join(home, "NotAroot"), join(home, "missing")],
     });
-    assert.deepEqual(roots.map((root) => root.name), ["NotAroot"]);
-  } finally { await rm(home, { recursive: true, force: true }); }
+    assert.deepEqual(
+      roots.map((root) => root.name),
+      ["NotAroot"]
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("listDirectories lists subdirectories with parent, rejects escape/missing/file", async () => {
@@ -48,14 +61,28 @@ test("listDirectories lists subdirectories with parent, rejects escape/missing/f
   try {
     const context = { homeDir: home, rootsOverride: null };
     const listing = await listDirectories(context, join(home, "WebstormProjects"));
-    assert.deepEqual(listing.entries.map((e) => e.name), ["alpha", "beta"]);
+    assert.deepEqual(
+      listing.entries.map((e) => e.name),
+      ["alpha", "beta"]
+    );
     assert.equal(listing.parent, home);
     const top = await listDirectories(context, home);
     assert.equal(top.parent, null);
-    await assert.rejects(() => listDirectories(context, "/etc"), (error: { code: string }) => error.code === "HOST_PATH_OUTSIDE_ROOTS");
-    await assert.rejects(() => listDirectories(context, join(home, "nope")), (error: { code: string }) => error.code === "HOST_PATH_NOT_FOUND");
-    await assert.rejects(() => listDirectories(context, join(home, "WebstormProjects", "afile.txt")), (error: { code: string }) => error.code === "HOST_PATH_NOT_DIRECTORY");
-  } finally { await rm(home, { recursive: true, force: true }); }
+    await assert.rejects(
+      () => listDirectories(context, "/etc"),
+      (error: { code: string }) => error.code === "HOST_PATH_OUTSIDE_ROOTS"
+    );
+    await assert.rejects(
+      () => listDirectories(context, join(home, "nope")),
+      (error: { code: string }) => error.code === "HOST_PATH_NOT_FOUND"
+    );
+    await assert.rejects(
+      () => listDirectories(context, join(home, "WebstormProjects", "afile.txt")),
+      (error: { code: string }) => error.code === "HOST_PATH_NOT_DIRECTORY"
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("listDirectories refuses a symlink that escapes the browsable area", async () => {
@@ -64,24 +91,31 @@ test("listDirectories refuses a symlink that escapes the browsable area", async 
     await symlink("/etc", join(home, "escape"));
     await assert.rejects(
       () => listDirectories({ homeDir: home, rootsOverride: null }, join(home, "escape")),
-      (error: { code: string }) => error.code === "HOST_PATH_OUTSIDE_ROOTS",
+      (error: { code: string }) => error.code === "HOST_PATH_OUTSIDE_ROOTS"
     );
-  } finally { await rm(home, { recursive: true, force: true }); }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("listings cap at HOST_LIST_CAP and set truncated", async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), "host-cap-")));
   try {
     const root = join(home, "BigProjects");
-    await Promise.all(Array.from({ length: HOST_LIST_CAP + 1 }, (_, i) =>
-      mkdir(join(root, `p${String(i).padStart(4, "0")}`), { recursive: true })));
+    await Promise.all(
+      Array.from({ length: HOST_LIST_CAP + 1 }, (_, i) =>
+        mkdir(join(root, `p${String(i).padStart(4, "0")}`), { recursive: true })
+      )
+    );
     const roots = await listProjectRoots({ homeDir: home, rootsOverride: null });
     assert.equal(roots[0].projects.length, HOST_LIST_CAP);
     assert.equal(roots[0].truncated, true);
     const listing = await listDirectories({ homeDir: home, rootsOverride: null }, root);
     assert.equal(listing.entries.length, HOST_LIST_CAP);
     assert.equal(listing.truncated, true);
-  } finally { await rm(home, { recursive: true, force: true }); }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("listProjectRoots skips an auto-detected root symlinked outside home", async () => {
@@ -91,7 +125,10 @@ test("listProjectRoots skips an auto-detected root symlinked outside home", asyn
     await mkdir(join(outside, "secret"));
     await symlink(outside, join(home, "EvilProjects"));
     const roots = await listProjectRoots({ homeDir: home, rootsOverride: null });
-    assert.equal(roots.some((root) => root.name === "EvilProjects"), false);
+    assert.equal(
+      roots.some((root) => root.name === "EvilProjects"),
+      false
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
@@ -105,13 +142,16 @@ test("project and directory listings skip entries symlinked outside home", async
     await symlink(outside, join(home, "WebstormProjects", "external"));
     const roots = await listProjectRoots({ homeDir: home, rootsOverride: null });
     const web = roots.find((root) => root.name === "WebstormProjects");
-    assert.deepEqual(web?.projects.map((project) => project.name), ["alpha", "beta"]);
-
-    const listing = await listDirectories(
-      { homeDir: home, rootsOverride: null },
-      join(home, "WebstormProjects"),
+    assert.deepEqual(
+      web?.projects.map((project) => project.name),
+      ["alpha", "beta"]
     );
-    assert.deepEqual(listing.entries.map((entry) => entry.name), ["alpha", "beta"]);
+
+    const listing = await listDirectories({ homeDir: home, rootsOverride: null }, join(home, "WebstormProjects"));
+    assert.deepEqual(
+      listing.entries.map((entry) => entry.name),
+      ["alpha", "beta"]
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
@@ -127,8 +167,7 @@ test("listDirectories rejects an existing sibling with a shared path prefix", as
     await mkdir(sibling, { recursive: true });
     await assert.rejects(
       () => listDirectories({ homeDir: home, rootsOverride: null }, sibling),
-      (error: { code: string; status: number }) =>
-        error.status === 403 && error.code === "HOST_PATH_OUTSIDE_ROOTS",
+      (error: { code: string; status: number }) => error.status === 403 && error.code === "HOST_PATH_OUTSIDE_ROOTS"
     );
   } finally {
     await rm(fixture, { recursive: true, force: true });
@@ -141,13 +180,11 @@ test("listDirectories does not reveal whether paths outside home exist", async (
     const context = { homeDir: home, rootsOverride: null };
     await assert.rejects(
       () => listDirectories(context, "/definitely/not/a/real/path"),
-      (error: { code: string; status: number }) =>
-        error.status === 403 && error.code === "HOST_PATH_OUTSIDE_ROOTS",
+      (error: { code: string; status: number }) => error.status === 403 && error.code === "HOST_PATH_OUTSIDE_ROOTS"
     );
     await assert.rejects(
       () => listDirectories(context, join(home, "nope")),
-      (error: { code: string; status: number }) =>
-        error.status === 404 && error.code === "HOST_PATH_NOT_FOUND",
+      (error: { code: string; status: number }) => error.status === 404 && error.code === "HOST_PATH_NOT_FOUND"
     );
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -166,8 +203,7 @@ test("listDirectories reports an unreadable directory", async (t) => {
     await chmod(unreadable, 0o000);
     await assert.rejects(
       () => listDirectories({ homeDir: home, rootsOverride: null }, unreadable),
-      (error: { code: string; status: number }) =>
-        error.status === 403 && error.code === "HOST_PATH_UNREADABLE",
+      (error: { code: string; status: number }) => error.status === 403 && error.code === "HOST_PATH_UNREADABLE"
     );
   } finally {
     await chmod(unreadable, 0o700).catch(() => undefined);
@@ -183,7 +219,10 @@ test("listProjectRoots sorts override roots by name", async () => {
     await mkdir(rootA);
     await mkdir(rootB);
     const roots = await listProjectRoots({ homeDir: home, rootsOverride: [rootB, rootA] });
-    assert.deepEqual(roots.map((root) => root.name), ["A", "B"]);
+    assert.deepEqual(
+      roots.map((root) => root.name),
+      ["A", "B"]
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }

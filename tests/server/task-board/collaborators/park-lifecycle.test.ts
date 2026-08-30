@@ -17,10 +17,12 @@ function atAge(days: number, hours = 0): Date {
   return new Date(Date.parse(PARKED_AT) + (days * 24 + hours) * 60 * 60 * 1_000);
 }
 
-async function lifecycleFixture(overrides: Readonly<{
-  parkNotifySeconds?: number;
-  parkAutoAbandonSeconds?: number;
-}> = {}) {
+async function lifecycleFixture(
+  overrides: Readonly<{
+    parkNotifySeconds?: number;
+    parkAutoAbandonSeconds?: number;
+  }> = {}
+) {
   const path = await databasePath();
   let clock = new Date(PARKED_AT);
   const delivered: BoardNotification[] = [];
@@ -29,10 +31,11 @@ async function lifecycleFixture(overrides: Readonly<{
       const inspected = new DatabaseSync(path, { readOnly: true });
       try {
         assert.equal(
-          inspected.prepare("SELECT COUNT(*) AS count FROM notifications WHERE notification_id=?")
+          inspected
+            .prepare("SELECT COUNT(*) AS count FROM notifications WHERE notification_id=?")
             .get(notification.notificationId)?.count,
           1,
-          "delivery must run after the notification transaction commits",
+          "delivery must run after the notification transaction commits"
         );
       } finally {
         inspected.close();
@@ -40,14 +43,17 @@ async function lifecycleFixture(overrides: Readonly<{
       delivered.push(notification);
     },
   };
-  const board = await TaskBoard.open(normalizeTaskBoardConfig({
-    dbPath: path,
-    humanToken: HUMAN_TOKEN,
-    humanPrincipal: "human:alice",
-    port: 0,
-    now: () => clock,
-    ...overrides,
-  }), { notificationDelivery: delivery });
+  const board = await TaskBoard.open(
+    normalizeTaskBoardConfig({
+      dbPath: path,
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      port: 0,
+      now: () => clock,
+      ...overrides,
+    }),
+    { notificationDelivery: delivery }
+  );
   const project = board.createProject({
     name: "Park lifecycle",
     description: "Exercise aged parked work and in-app delivery.",
@@ -60,10 +66,13 @@ async function lifecycleFixture(overrides: Readonly<{
     model: "claude-haiku",
     token: AGENT_TWO_TOKEN,
   });
-  const created = board.createWorkItemAndStartPlanning(workItemRequest({
-    originalRequest: "Preserve the intended rollback path before implementation proceeds.",
-    projectTarget: { mode: "explicit", projectId: project.projectId },
-  }), "park-lifecycle-work-item-0001").workItem;
+  const created = board.createWorkItemAndStartPlanning(
+    workItemRequest({
+      originalRequest: "Preserve the intended rollback path before implementation proceeds.",
+      projectTarget: { mode: "explicit", projectId: project.projectId },
+    }),
+    "park-lifecycle-work-item-0001"
+  ).workItem;
   assert.ok(created.planningTaskId);
   const claim = board.claimRun(manager.agentId, {
     claimId: "park-lifecycle-claim-0001",
@@ -90,20 +99,29 @@ async function lifecycleFixture(overrides: Readonly<{
   };
 }
 
-function parkResolution(path: string, workItemId: string): Readonly<{
+function parkResolution(
+  path: string,
+  workItemId: string
+): Readonly<{
   park_record_id: string;
   resolved_at: string | null;
   resolution: string | null;
 }> {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    return { ...db.prepare(`
+    return {
+      ...db
+        .prepare(
+          `
       SELECT park_record_id, resolved_at, resolution
       FROM park_records
       WHERE work_item_id=?
       ORDER BY parked_at DESC, rowid DESC
       LIMIT 1
-    `).get(workItemId) } as { park_record_id: string; resolved_at: string | null; resolution: string | null };
+    `
+        )
+        .get(workItemId),
+    } as { park_record_id: string; resolved_at: string | null; resolution: string | null };
   } finally {
     db.close();
   }
@@ -145,24 +163,27 @@ test("park lifecycle configuration defaults, disables at zero, and validates thr
     { parkNotifySeconds: 120, parkAutoAbandonSeconds: 60 },
   ]) {
     assert.throws(
-      () => normalizeTaskBoardConfig({
-        dbPath: path,
-        humanToken: HUMAN_TOKEN,
-        humanPrincipal: "human:alice",
-        ...options,
-      }),
-      (error: unknown) => error instanceof TaskBoardError
-        && error.status === 500
-        && error.code === "INVALID_CONFIGURATION",
+      () =>
+        normalizeTaskBoardConfig({
+          dbPath: path,
+          humanToken: HUMAN_TOKEN,
+          humanPrincipal: "human:alice",
+          ...options,
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 500 && error.code === "INVALID_CONFIGURATION"
     );
   }
-  assert.equal(normalizeTaskBoardConfig({
-    dbPath: path,
-    humanToken: HUMAN_TOKEN,
-    humanPrincipal: "human:alice",
-    parkNotifySeconds: 120,
-    parkAutoAbandonSeconds: 0,
-  }).parkAutoAbandonSeconds, 0);
+  assert.equal(
+    normalizeTaskBoardConfig({
+      dbPath: path,
+      humanToken: HUMAN_TOKEN,
+      humanPrincipal: "human:alice",
+      parkNotifySeconds: 120,
+      parkAutoAbandonSeconds: 0,
+    }).parkAutoAbandonSeconds,
+    0
+  );
 });
 
 test("the clock-driven lifecycle sweep notifies once then auto-abandons an open-question park", async () => {
@@ -225,31 +246,41 @@ test("the clock-driven lifecycle sweep notifies once then auto-abandons an open-
       resolution: "auto_abandoned",
     });
     assert.equal(fixture.board.requireTask(fixture.created.planningTaskId!).status, "cancelled");
-    const closedQuestion = fixture.board.snapshot(fixture.project.projectId).openQuestions.find(
-      (candidate) => candidate.questionId === fixture.question.questionId,
-    );
-    assert.equal(
-      closedQuestion,
-      undefined,
-      "auto-abandon closes questions on linked work",
-    );
+    const closedQuestion = fixture.board
+      .snapshot(fixture.project.projectId)
+      .openQuestions.find((candidate) => candidate.questionId === fixture.question.questionId);
+    assert.equal(closedQuestion, undefined, "auto-abandon closes questions on linked work");
     const inspected = new DatabaseSync(fixture.path, { readOnly: true });
     try {
-      const question = inspected.prepare(`
+      const question = inspected
+        .prepare(
+          `
         SELECT status,answer,answered_at,answered_by FROM questions WHERE question_id=?
-      `).get(fixture.question.questionId);
-      assert.deepEqual({ ...question }, {
-        status: "answered",
-        answer: "Closed because the work item was cancelled: parked past auto-abandon threshold (open_question)",
-        answered_at: atAge(8).toISOString(),
-        answered_by: "system:park-lifecycle",
-      });
-      assert.equal(inspected.prepare(`
+      `
+        )
+        .get(fixture.question.questionId);
+      assert.deepEqual(
+        { ...question },
+        {
+          status: "answered",
+          answer: "Closed because the work item was cancelled: parked past auto-abandon threshold (open_question)",
+          answered_at: atAge(8).toISOString(),
+          answered_by: "system:park-lifecycle",
+        }
+      );
+      assert.equal(
+        inspected
+          .prepare(
+            `
         SELECT COUNT(*) AS count FROM task_events
         WHERE task_id=? AND event_type='human_question_closed'
           AND actor_type='system' AND actor_id='system:park-lifecycle'
           AND json_extract(data_json, '$.reason')='work_item_cancelled'
-      `).get(fixture.created.planningTaskId)?.count, 1);
+      `
+          )
+          .get(fixture.created.planningTaskId)?.count,
+        1
+      );
     } finally {
       inspected.close();
     }
@@ -260,10 +291,7 @@ test("the clock-driven lifecycle sweep notifies once then auto-abandons an open-
     assert.equal(notifications[0]?.sequence, 2);
     assert.equal(notifications[0]?.dedupeKey, `park_auto_abandoned:${parkRecordId}`);
     assert.equal(notifications[0]?.createdAt, atAge(8).toISOString());
-    assert.equal(
-      notifications[0]?.summary,
-      `Work item parked 8 days (open_question): ${QUESTION.slice(0, 200)}`,
-    );
+    assert.equal(notifications[0]?.summary, `Work item parked 8 days (open_question): ${QUESTION.slice(0, 200)}`);
     assert.equal(fixture.delivered.length, 2);
   } finally {
     fixture.board.close();
@@ -290,7 +318,10 @@ test("a park resolved between lifecycle sweeps is not auto-abandoned", async () 
     const resumedRecord = parkResolution(fixture.path, fixture.created.workItemId);
     assert.equal(resumedRecord.resolved_at, atAge(2).toISOString());
     assert.equal(resumedRecord.resolution, "resumed");
-    assert.deepEqual(fixture.board.listNotifications().unread.map((item) => item.kind), ["park_aged"]);
+    assert.deepEqual(
+      fixture.board.listNotifications().unread.map((item) => item.kind),
+      ["park_aged"]
+    );
   } finally {
     fixture.board.close();
   }
@@ -306,7 +337,7 @@ test("zero independently disables notification and auto-abandon halves", async (
     });
     assert.deepEqual(
       notifyDisabled.board.listNotifications().unread.map((notification) => notification.kind),
-      ["park_auto_abandoned"],
+      ["park_auto_abandoned"]
     );
   } finally {
     notifyDisabled.board.close();
@@ -322,7 +353,7 @@ test("zero independently disables notification and auto-abandon halves", async (
     assert.equal(abandonDisabled.board.requireWorkItem(abandonDisabled.created.workItemId).state, "parked");
     assert.deepEqual(
       abandonDisabled.board.listNotifications().unread.map((notification) => notification.kind),
-      ["park_aged"],
+      ["park_aged"]
     );
   } finally {
     abandonDisabled.board.close();

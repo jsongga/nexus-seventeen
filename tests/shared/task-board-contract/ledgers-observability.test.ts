@@ -75,13 +75,15 @@ const findingsLedger: FindingsLedger = {
 
 const parksLedger: ParksLedger = {
   open: [{ ...parkRecord, workItemTitle: "Make retry behavior observable." }],
-  resolved: [{
-    ...parkRecord,
-    parkRecordId: "park-record-two",
-    resolvedAt: NOW,
-    resolution: "resumed",
-    workItemTitle: "Make retry behavior observable.",
-  }],
+  resolved: [
+    {
+      ...parkRecord,
+      parkRecordId: "park-record-two",
+      resolvedAt: NOW,
+      resolution: "resumed",
+      workItemTitle: "Make retry behavior observable.",
+    },
+  ],
   recordsSince: "2026-08-20",
 };
 
@@ -92,11 +94,11 @@ const oldWorkItem: WorkItem = {
   refinedObjective: null,
   priority: "normal",
   taskType: "standard",
-      projectTarget: { mode: "explicit", projectId: "project-one" },
-      resolvedProjectId: "project-one",
-      parentWorkItemId: null,
-      phase: null,
-      childOrdinal: null,
+  projectTarget: { mode: "explicit", projectId: "project-one" },
+  resolvedProjectId: "project-one",
+  parentWorkItemId: null,
+  phase: null,
+  childOrdinal: null,
   planningTaskId: null,
   pipelineBranch: null,
   baseSha: null,
@@ -151,57 +153,67 @@ const audit: WorkItemAudit = {
 };
 
 test("ledger and observability vocabularies and error codes are pinned", () => {
-  assert.deepEqual([...PARK_CATEGORIES], [
-    "open_question", "planning_run_failed", "design_run_failed", "hazardous_without_pipeline",
-    "plan_rejected_twice", "bright_line", "scope_violation", "stage_cap_exceeded",
-    "task_cap_exceeded", "base_diverged", "child_failed",
-  ]);
+  assert.deepEqual(
+    [...PARK_CATEGORIES],
+    [
+      "open_question",
+      "planning_run_failed",
+      "design_run_failed",
+      "hazardous_without_pipeline",
+      "plan_rejected_twice",
+      "bright_line",
+      "scope_violation",
+      "stage_cap_exceeded",
+      "task_cap_exceeded",
+      "base_diverged",
+      "child_failed",
+    ]
+  );
   assert.deepEqual([...PARK_RESOLUTIONS], ["resumed", "abandoned", "auto_abandoned", "dead_letter"]);
-  assert.deepEqual([...NOTIFICATION_KINDS], [
-    "park_aged",
-    "park_auto_abandoned",
-    "cap_parked",
-    "final_approval_withdrawn",
-    "parent_ready_for_approval",
-    "phase_ready",
-  ]);
-  assert.deepEqual([...GATE_KINDS], [
-    "plan_confirm",
-    "plan_reject",
-    "final_approve",
-    "final_reject",
-    "cancel",
-    "question_answer",
-    "deploy_attest",
-  ]);
-  assert.deepEqual({
-    recordRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_REQUIRED,
-    recordInvalid: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_INVALID,
-    notificationNotFound: TASK_BOARD_ERROR_CODES.TASK_BOARD_NOTIFICATION_NOT_FOUND,
-    boardPauseVersionConflict: TASK_BOARD_ERROR_CODES.TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT,
-    scopeHoldSummaryPrefix: SCOPE_HOLD_SUMMARY_PREFIX,
-  }, {
-    recordRequired: "TASK_BOARD_PARK_RECORD_REQUIRED",
-    recordInvalid: "TASK_BOARD_PARK_RECORD_INVALID",
-    notificationNotFound: "TASK_BOARD_NOTIFICATION_NOT_FOUND",
-    boardPauseVersionConflict: "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT",
-    scopeHoldSummaryPrefix: "scope-hold: ",
-  });
+  assert.deepEqual(
+    [...NOTIFICATION_KINDS],
+    [
+      "park_aged",
+      "park_auto_abandoned",
+      "cap_parked",
+      "final_approval_withdrawn",
+      "parent_ready_for_approval",
+      "phase_ready",
+    ]
+  );
+  assert.deepEqual(
+    [...GATE_KINDS],
+    ["plan_confirm", "plan_reject", "final_approve", "final_reject", "cancel", "question_answer", "deploy_attest"]
+  );
+  assert.deepEqual(
+    {
+      recordRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_REQUIRED,
+      recordInvalid: TASK_BOARD_ERROR_CODES.TASK_BOARD_PARK_RECORD_INVALID,
+      notificationNotFound: TASK_BOARD_ERROR_CODES.TASK_BOARD_NOTIFICATION_NOT_FOUND,
+      boardPauseVersionConflict: TASK_BOARD_ERROR_CODES.TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT,
+      scopeHoldSummaryPrefix: SCOPE_HOLD_SUMMARY_PREFIX,
+    },
+    {
+      recordRequired: "TASK_BOARD_PARK_RECORD_REQUIRED",
+      recordInvalid: "TASK_BOARD_PARK_RECORD_INVALID",
+      notificationNotFound: "TASK_BOARD_NOTIFICATION_NOT_FOUND",
+      boardPauseVersionConflict: "TASK_BOARD_BOARD_PAUSE_VERSION_CONFLICT",
+      scopeHoldSummaryPrefix: "scope-hold: ",
+    }
+  );
 });
 
 test("board pause round-trips strictly and rejects malformed state", () => {
   assert.deepEqual(parseBoardPause(boardPause, "boardPause"), boardPause);
-  assert.throws(
-    () => parseBoardPause({ ...boardPause, additiveField: true }, "boardPause"),
-    ContractValidationError,
-  );
+  assert.throws(() => parseBoardPause({ ...boardPause, additiveField: true }, "boardPause"), ContractValidationError);
   for (const invalid of [
     { ...boardPause, paused: 0 },
     { ...boardPause, reason: 42 },
     { ...boardPause, version: 0 },
     { ...boardPause, updatedAt: "not-a-timestamp" },
     { ...boardPause, updatedBy: null },
-  ]) assert.throws(() => parseBoardPause(invalid, "boardPause"), ContractValidationError);
+  ])
+    assert.throws(() => parseBoardPause(invalid, "boardPause"), ContractValidationError);
 });
 
 test("park records, notifications, and gate actions round-trip strictly", () => {
@@ -216,14 +228,8 @@ test("park records, notifications, and gate actions round-trip strictly", () => 
   assert.deepEqual(parseGateAction(gateAction, "gateAction"), gateAction);
   assert.deepEqual(parseWorkItemAudit(audit, "audit"), audit);
 
-  assert.throws(
-    () => parseParkRecord({ ...parkRecord, additiveField: true }, "parkRecord"),
-    ContractValidationError,
-  );
-  assert.throws(
-    () => parseWorkItemAudit({ ...audit, additiveField: true }, "audit"),
-    ContractValidationError,
-  );
+  assert.throws(() => parseParkRecord({ ...parkRecord, additiveField: true }, "parkRecord"), ContractValidationError);
+  assert.throws(() => parseWorkItemAudit({ ...audit, additiveField: true }, "audit"), ContractValidationError);
 });
 
 test("ledger validators reject unknown enums and enforce text and SHA bounds", () => {
@@ -238,7 +244,8 @@ test("ledger validators reject unknown enums and enforce text and SHA bounds", (
     () => parseGateAction({ ...gateAction, verifiedSha: SHA.toUpperCase() }, "gateAction"),
     () => parseGateAction({ ...gateAction, mergeSha: `${SHA}00` }, "gateAction"),
     () => parseGateAction({ ...gateAction, note: "x".repeat(2_001) }, "gateAction"),
-  ]) assert.throws(invalid, ContractValidationError);
+  ])
+    assert.throws(invalid, ContractValidationError);
 });
 
 test("findings and parks ledger responses round-trip strictly", () => {
@@ -247,34 +254,46 @@ test("findings and parks ledger responses round-trip strictly", () => {
 
   assert.throws(
     () => parseFindingsLedger({ ...findingsLedger, additiveField: true }, "findingsLedger"),
-    ContractValidationError,
+    ContractValidationError
   );
   assert.throws(
-    () => parseFindingsLedger({
-      ...findingsLedger,
-      categories: [{ ...findingsLedger.categories[0], count: 0 }],
-    }, "findingsLedger"),
-    ContractValidationError,
+    () =>
+      parseFindingsLedger(
+        {
+          ...findingsLedger,
+          categories: [{ ...findingsLedger.categories[0], count: 0 }],
+        },
+        "findingsLedger"
+      ),
+    ContractValidationError
   );
   assert.throws(
-    () => parseFindingsLedger({
-      ...findingsLedger,
-      recent: Array.from({ length: 51 }, (_, index) => ({
-        ...findingsLedger.recent[0],
-        findingId: `finding-${index}`,
-      })),
-    }, "findingsLedger"),
-    ContractValidationError,
+    () =>
+      parseFindingsLedger(
+        {
+          ...findingsLedger,
+          recent: Array.from({ length: 51 }, (_, index) => ({
+            ...findingsLedger.recent[0],
+            findingId: `finding-${index}`,
+          })),
+        },
+        "findingsLedger"
+      ),
+    ContractValidationError
   );
   assert.throws(
-    () => parseParksLedger({
-      ...parksLedger,
-      resolved: Array.from({ length: 101 }, (_, index) => ({
-        ...parksLedger.resolved[0],
-        parkRecordId: `park-record-${index}`,
-      })),
-    }, "parksLedger"),
-    ContractValidationError,
+    () =>
+      parseParksLedger(
+        {
+          ...parksLedger,
+          resolved: Array.from({ length: 101 }, (_, index) => ({
+            ...parksLedger.resolved[0],
+            parkRecordId: `park-record-${index}`,
+          })),
+        },
+        "parksLedger"
+      ),
+    ContractValidationError
   );
 });
 
@@ -285,15 +304,21 @@ test("work-item observability fields are optional for old payloads", () => {
   assert.equal("reviewRound" in parsedOld, false);
   assert.equal("heartbeatAt" in parsedOld, false);
 
-  assert.deepEqual(parseWorkItemEntity({
-    ...oldWorkItem,
-    stateSince: NOW,
-    reviewRound: 2,
-    heartbeatAt: null,
-  }, "workItem"), {
-    ...oldWorkItem,
-    stateSince: NOW,
-    reviewRound: 2,
-    heartbeatAt: null,
-  });
+  assert.deepEqual(
+    parseWorkItemEntity(
+      {
+        ...oldWorkItem,
+        stateSince: NOW,
+        reviewRound: 2,
+        heartbeatAt: null,
+      },
+      "workItem"
+    ),
+    {
+      ...oldWorkItem,
+      stateSince: NOW,
+      reviewRound: 2,
+      heartbeatAt: null,
+    }
+  );
 });

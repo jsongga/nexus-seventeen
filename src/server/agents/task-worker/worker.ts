@@ -16,11 +16,7 @@ import {
 import type { RuntimeEvent } from "../runtime/adapter.js";
 import { TaskWorkerJournalStore } from "./journal.js";
 import { InactiveClaimReplayError, RetryableSettlementError } from "./http-board-client.js";
-import {
-  parseAgentRunOutcome,
-  parseBoundedAgentContext,
-  parseTaskWakeClaim,
-} from "./schema.js";
+import { parseAgentRunOutcome, parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
 import {
   POISONED_CLAIM_REASON,
   TASK_WAKE_REASONS,
@@ -49,7 +45,9 @@ class SerialExecutor {
   async run<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.#tail;
     let release: (() => void) | undefined;
-    this.#tail = new Promise<void>((resolve) => { release = resolve; });
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await previous;
     try {
       return await operation();
@@ -58,7 +56,9 @@ class SerialExecutor {
     }
   }
 
-  idle(): Promise<void> { return this.#tail; }
+  idle(): Promise<void> {
+    return this.#tail;
+  }
 }
 
 /** WAKEUP_REASONS additions are intentionally auto-authorized through TASK_WAKE_REASONS. */
@@ -77,24 +77,22 @@ function exactNow(now: () => Date): string {
 const safeDetail = safeErrorDetail;
 
 function defaultLogger(event: Parameters<TaskWorkerLogger>[0]): void {
-  const run = event.type === "run_heartbeat_failed" || event.type === "run_pinning_diverged"
-    ? ` run=${event.runId}`
-    : "";
-  const detail = event.type === "run_pinning_diverged"
-    ? ` replayedPinned=${JSON.stringify(event.replayedPinned)} workerPinned=${JSON.stringify(event.workerPinned)}`
-    : ` error=${JSON.stringify(event.error)}`;
-  process.stderr.write(
-    `[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId}${run}${detail}\n`,
-  );
+  const run =
+    event.type === "run_heartbeat_failed" || event.type === "run_pinning_diverged" ? ` run=${event.runId}` : "";
+  const detail =
+    event.type === "run_pinning_diverged"
+      ? ` replayedPinned=${JSON.stringify(event.replayedPinned)} workerPinned=${JSON.stringify(event.workerPinned)}`
+      : ` error=${JSON.stringify(event.error)}`;
+  process.stderr.write(`[task-fleet] ${event.type} agent=${event.agentId} worker=${event.workerId}${run}${detail}\n`);
 }
 
 function normalizeCarriageReturns<T>(value: T): T {
   if (typeof value === "string") return value.replace(/\r\n?/gu, "\n") as T;
   if (Array.isArray(value)) return Object.freeze(value.map(normalizeCarriageReturns)) as T;
   if (value === null || typeof value !== "object") return value;
-  return Object.freeze(Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, normalizeCarriageReturns(entry)]),
-  )) as T;
+  return Object.freeze(
+    Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, normalizeCarriageReturns(entry)]))
+  ) as T;
 }
 
 function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
@@ -105,8 +103,10 @@ function normalizedOutboundBoard(board: TaskBoardClient): TaskBoardClient {
     claimNextWake: (request, signal) => board.claimNextWake(request, signal),
     ...(board.claimNextWakeWithHold === undefined
       ? {}
-      : { claimNextWakeWithHold: (request: ClaimNextWakeRequest, signal?: AbortSignal) =>
-          board.claimNextWakeWithHold!(request, signal) }),
+      : {
+          claimNextWakeWithHold: (request: ClaimNextWakeRequest, signal?: AbortSignal) =>
+            board.claimNextWakeWithHold!(request, signal),
+        }),
     heartbeatRun: (claim, signal) => board.heartbeatRun(claim, signal),
     waitForRunInterrupt: (claim, signal) => board.waitForRunInterrupt(claim, signal),
     updateTaskEstimate: (request, signal) => board.updateTaskEstimate(normalizeCarriageReturns(request), signal),
@@ -123,7 +123,7 @@ function interruptFailureDetail(reason: string, error: unknown): string {
   const failure = safeDetail(error, "Process-group termination status is unknown");
   return safeDetail(
     `${reason} Process-group termination failed: ${failure}`,
-    "The agent run was interrupted, but process-group termination failed.",
+    "The agent run was interrupted, but process-group termination failed."
   );
 }
 
@@ -132,50 +132,62 @@ function contextDigest(context: BoundedAgentContext): string {
 }
 
 function outputIdempotency(claim: TaskWakeClaim, index: number, output: AgentRunOutcome["outputs"][number]): string {
-  const digest = createHash("sha256").update(JSON.stringify({
-    action: "append_task_worker_output",
-    runId: claim.runId,
-    wakeupId: claim.wakeupId,
-    taskId: claim.taskId,
-    localSequence: index + 1,
-    output,
-  })).digest("hex");
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        action: "append_task_worker_output",
+        runId: claim.runId,
+        wakeupId: claim.wakeupId,
+        taskId: claim.taskId,
+        localSequence: index + 1,
+        output,
+      })
+    )
+    .digest("hex");
   return `twe_${digest}`;
 }
 
 function activityIdempotency(claim: TaskWakeClaim, sequence: number, body: string): string {
-  const digest = createHash("sha256").update(JSON.stringify({
-    action: "append_task_worker_activity",
-    runId: claim.runId,
-    wakeupId: claim.wakeupId,
-    taskId: claim.taskId,
-    sequence,
-    body,
-  })).digest("hex");
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        action: "append_task_worker_activity",
+        runId: claim.runId,
+        wakeupId: claim.wakeupId,
+        taskId: claim.taskId,
+        sequence,
+        body,
+      })
+    )
+    .digest("hex");
   return `twa_${digest}`;
 }
 
 function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome, result: string): string {
-  const digest = createHash("sha256").update(JSON.stringify({
-    action: "settle_task_worker_run",
-    runId: claim.runId,
-    wakeupId: claim.wakeupId,
-    taskId: claim.taskId,
-    outcome: outcome.status,
-    result,
-    ...(outcome.gapReport === undefined ? {} : { gapReport: outcome.gapReport }),
-  })).digest("hex");
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        action: "settle_task_worker_run",
+        runId: claim.runId,
+        wakeupId: claim.wakeupId,
+        taskId: claim.taskId,
+        outcome: outcome.status,
+        result,
+        ...(outcome.gapReport === undefined ? {} : { gapReport: outcome.gapReport }),
+      })
+    )
+    .digest("hex");
   return `tws_${digest}`;
 }
 
 function requestedCursor(messageCursors: Readonly<Record<string, number>>, taskId: string | null): number | null {
-  return taskId === null ? null : messageCursors[taskId] ?? null;
+  return taskId === null ? null : (messageCursors[taskId] ?? null);
 }
 
 function withTaskCursor(
   messageCursors: Readonly<Record<string, number>>,
   taskId: string,
-  cursor: number,
+  cursor: number
 ): Readonly<Record<string, number>> {
   const entries = new Map(Object.entries(messageCursors));
   entries.delete(taskId);
@@ -229,25 +241,34 @@ interface LiveTaskState {
 
 function livePhaseTitle(stage: Exclude<AgentTaskPhase["stage"], "done">): string {
   switch (stage) {
-    case "research": return "Review task";
-    case "planning": return "Plan work";
-    case "execution": return "Execute work";
-    case "testing": return "Test work";
-    case "review": return "Review result";
+    case "research":
+      return "Review task";
+    case "planning":
+      return "Plan work";
+    case "execution":
+      return "Execute work";
+    case "testing":
+      return "Test work";
+    case "review":
+      return "Review result";
   }
 }
 
 function isUnbufferedLauncherLifecycle(event: RuntimeEvent): boolean {
-  return event.type === "tool_call" && (
-    event.name === "container_starting" ||
-    event.name === "container_attached" ||
-    event.name === "container_teardown"
+  return (
+    event.type === "tool_call" &&
+    (event.name === "container_starting" || event.name === "container_attached" || event.name === "container_teardown")
   );
 }
 
 function samePhaseState(phase: AgentTaskPhase, update: AgentTaskPhaseUpdate): boolean {
-  return phase.title === update.title && phase.stage === update.stage && phase.status === update.status &&
-    phase.parallelGroup === update.parallelGroup && phase.orderKey === update.orderKey;
+  return (
+    phase.title === update.title &&
+    phase.stage === update.stage &&
+    phase.status === update.status &&
+    phase.parallelGroup === update.parallelGroup &&
+    phase.orderKey === update.orderKey
+  );
 }
 
 function wakeAuthorizationFailure(claim: TaskWakeClaim, context: BoundedAgentContext): string | null {
@@ -273,7 +294,7 @@ function assertClaimBinding(
   claimed: ClaimedAgentRun,
   agentId: string,
   expectedClaimId: string,
-  messageCursors: Readonly<Record<string, number>>,
+  messageCursors: Readonly<Record<string, number>>
 ): ClaimedAgentRun {
   const claim = parseTaskWakeClaim(claimed.claim);
   const context = claimed.context === null ? null : parseBoundedAgentContext(claimed.context);
@@ -283,12 +304,11 @@ function assertClaimBinding(
     claim.claimId !== expectedClaimId ||
     claim.requestedMessageCursor !== cursor ||
     (claim.taskId === null) !== (context === null) ||
-    (context !== null && (
-      context.projectId !== claim.projectId ||
-      context.agentId !== claim.agentId ||
-      context.taskId !== claim.taskId ||
-      context.messagesSinceCursor !== cursor
-    ))
+    (context !== null &&
+      (context.projectId !== claim.projectId ||
+        context.agentId !== claim.agentId ||
+        context.taskId !== claim.taskId ||
+        context.messagesSinceCursor !== cursor))
   ) {
     throw new Error("Task-board claim context does not match the requested agent, task, or cursor");
   }
@@ -305,18 +325,19 @@ function configuredRunPinning(pinned: TaskWorkerOptions["pinned"]): ClaimedRunPi
 }
 
 function sameRunPinning(left: ClaimedRunPinning, right: ClaimedRunPinning): boolean {
-  return left.runtime === right.runtime &&
+  return (
+    left.runtime === right.runtime &&
     left.runtimeVersion === right.runtimeVersion &&
     left.model === right.model &&
-    left.promptsSha === right.promptsSha;
+    left.promptsSha === right.promptsSha
+  );
 }
 
 function scrubRunPinning(pinned: ClaimedRunPinning): ClaimedRunPinning {
   return Object.freeze({
     runtime: pinned.runtime === null ? null : safeDetail(pinned.runtime, "Invalid runtime pin"),
-    runtimeVersion: pinned.runtimeVersion === null
-      ? null
-      : safeDetail(pinned.runtimeVersion, "Invalid runtime-version pin"),
+    runtimeVersion:
+      pinned.runtimeVersion === null ? null : safeDetail(pinned.runtimeVersion, "Invalid runtime-version pin"),
     model: pinned.model === null ? null : safeDetail(pinned.model, "Invalid model pin"),
     promptsSha: pinned.promptsSha === null ? null : safeDetail(pinned.promptsSha, "Invalid prompts SHA pin"),
   });
@@ -326,7 +347,9 @@ export interface TaskWorkerSnapshot {
   readonly started: boolean;
   readonly dispatchInFlight: boolean;
   readonly activeRunId: string | null;
-  readonly activePhase: TaskWorkerJournal["active"] extends infer _ ? import("./types.js").ActiveRunPhase | null : never;
+  readonly activePhase: TaskWorkerJournal["active"] extends infer _
+    ? import("./types.js").ActiveRunPhase | null
+    : never;
   readonly interruptReason: string | null;
   readonly messageCursors: Readonly<Record<string, number>>;
   readonly completedRuns: number;
@@ -399,10 +422,13 @@ export class TaskWorker {
   }
 
   reportLaneError(detail: string | null, signal?: AbortSignal): Promise<void> {
-    return this.#options.board.reportLaneError({
-      agentId: this.#options.identity.agentId,
-      detail: detail === null ? null : safeDetail(detail, "Task fleet lane failed"),
-    }, signal);
+    return this.#options.board.reportLaneError(
+      {
+        agentId: this.#options.identity.agentId,
+        detail: detail === null ? null : safeDetail(detail, "Task fleet lane failed"),
+      },
+      signal
+    );
   }
 
   async #clearLaneErrorBestEffort(signal?: AbortSignal): Promise<void> {
@@ -426,14 +452,17 @@ export class TaskWorker {
     const result = settlementResult(outcome);
     // Pending outputs are intentionally discarded: quarantine fails the run
     // regardless, and replaying a partial success narrative would be misleading.
-    await this.#options.board.settleAgentRun({
-      claim: active.claim,
-      outcome: "failed",
-      result,
-      handoff: null,
-      workflowPlan: null,
-      idempotencyKey: settlementIdempotency(active.claim, outcome, result),
-    }, signal);
+    await this.#options.board.settleAgentRun(
+      {
+        claim: active.claim,
+        outcome: "failed",
+        result,
+        handoff: null,
+        workflowPlan: null,
+        idempotencyKey: settlementIdempotency(active.claim, outcome, result),
+      },
+      signal
+    );
     await this.#finishQuarantinedClaim(outcome);
   }
 
@@ -446,15 +475,18 @@ export class TaskWorker {
     await this.#serial.run(async () => {
       const current = this.#state.active;
       if (current === null) return;
-      const completed = [...this.#state.completed, Object.freeze({
-        runId: current.claim.runId,
-        wakeId: current.claim.wakeupId,
-        taskId: current.claim.taskId,
-        outcome: "failed" as const,
-        detail: outcome.detail,
-        startedAt: current.claim.claimedAt,
-        endedAt: exactNow(this.#options.now),
-      })].slice(-MAX_HISTORY);
+      const completed = [
+        ...this.#state.completed,
+        Object.freeze({
+          runId: current.claim.runId,
+          wakeId: current.claim.wakeupId,
+          taskId: current.claim.taskId,
+          outcome: "failed" as const,
+          detail: outcome.detail,
+          startedAt: current.claim.claimedAt,
+          endedAt: exactNow(this.#options.now),
+        }),
+      ].slice(-MAX_HISTORY);
       const next: TaskWorkerJournal = { ...this.#state, active: null, completed };
       await this.#saveState(next);
     });
@@ -478,13 +510,16 @@ export class TaskWorker {
       const pending = await this.#ensurePendingClaim();
       let claimed: TaskBoardClaimResult;
       try {
-        claimed = await this.#claimNextWake({
-          agentId: this.#options.identity.agentId,
-          claimId: pending.claimId,
-          messageCursors: pending.messageCursors,
-          longPollMs: this.#options.longPollMs,
-          ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
-        }, signal);
+        claimed = await this.#claimNextWake(
+          {
+            agentId: this.#options.identity.agentId,
+            claimId: pending.claimId,
+            messageCursors: pending.messageCursors,
+            longPollMs: this.#options.longPollMs,
+            ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
+          },
+          signal
+        );
       } catch (error) {
         if (replayingPendingClaim && error instanceof InactiveClaimReplayError) {
           await this.#discardInactiveClaimReplay(error, pending);
@@ -518,7 +553,9 @@ export class TaskWorker {
       await this.#recordClaim(parsed);
       if (parsed.context === null) {
         await this.#clearLaneErrorBestEffort(signal);
-        await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
+        await this.#recordOutcome(
+          failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned.")
+        );
         await this.#flushAndFinish();
       } else {
         await this.#executeActive(parsed.context, signal);
@@ -568,7 +605,8 @@ export class TaskWorker {
   async #recordClaim(claimed: ClaimedAgentRun): Promise<void> {
     await this.#serial.run(async () => {
       if (this.#state.active !== null) throw new Error("Task worker already owns an active run");
-      if (this.#state.pendingClaim?.claimId !== claimed.claim.claimId) throw new Error("Task-board claim intent changed in flight");
+      if (this.#state.pendingClaim?.claimId !== claimed.claim.claimId)
+        throw new Error("Task-board claim intent changed in flight");
       const active = Object.freeze({
         claim: claimed.claim,
         phase: "claimed" as const,
@@ -582,9 +620,10 @@ export class TaskWorker {
       });
       const next: TaskWorkerJournal = {
         ...this.#state,
-        messageCursors: claimed.context === null
-          ? this.#state.messageCursors
-          : withTaskCursor(this.#state.messageCursors, claimed.context.taskId, claimed.context.nextMessageCursor),
+        messageCursors:
+          claimed.context === null
+            ? this.#state.messageCursors
+            : withTaskCursor(this.#state.messageCursors, claimed.context.taskId, claimed.context.nextMessageCursor),
         pendingClaim: null,
         active,
       };
@@ -594,33 +633,37 @@ export class TaskWorker {
 
   async #recordPoisonedClaim(
     claimInput: TaskWakeClaim,
-    pending: NonNullable<TaskWorkerJournal["pendingClaim"]>,
+    pending: NonNullable<TaskWorkerJournal["pendingClaim"]>
   ): Promise<void> {
     const claim = parseTaskWakeClaim({ ...claimInput, reason: POISONED_CLAIM_REASON });
-    const requestedCursor = claim.taskId === null ? null : pending.messageCursors[claim.taskId] ?? null;
+    const requestedCursor = claim.taskId === null ? null : (pending.messageCursors[claim.taskId] ?? null);
     if (
-      claim.agentId !== this.#options.identity.agentId || claim.claimId !== pending.claimId ||
+      claim.agentId !== this.#options.identity.agentId ||
+      claim.claimId !== pending.claimId ||
       claim.requestedMessageCursor !== requestedCursor
     ) {
       return;
     }
-    await this.#recordClaim(Object.freeze({
-      claim,
-      context: null,
-      pinned: configuredRunPinning(undefined),
-    }));
+    await this.#recordClaim(
+      Object.freeze({
+        claim,
+        context: null,
+        pinned: configuredRunPinning(undefined),
+      })
+    );
   }
 
   async #discardInactiveClaimReplay(
     error: InactiveClaimReplayError,
-    pending?: NonNullable<TaskWorkerJournal["pendingClaim"]>,
+    pending?: NonNullable<TaskWorkerJournal["pendingClaim"]>
   ): Promise<void> {
     if (pending !== undefined) await this.#recordPoisonedClaim(error.claim, pending);
     if (
       this.#state.active?.claim.claimId !== error.claim.claimId ||
       this.#state.active.claim.runId !== error.claim.runId ||
       this.#state.active.claim.wakeupId !== error.claim.wakeupId
-    ) throw error;
+    )
+      throw error;
     this.#logger({
       type: "run_heartbeat_failed",
       agentId: this.#options.identity.agentId,
@@ -628,7 +671,7 @@ export class TaskWorker {
       runId: error.claim.runId,
       error: safeDetail(
         `Skipped replay for a run already settled as ${error.status}`,
-        "Skipped an inactive replayed run",
+        "Skipped an inactive replayed run"
       ),
     });
     await this.dropActiveClaim("The task board reported that the replayed run was already settled.");
@@ -644,15 +687,19 @@ export class TaskWorker {
     if (active.phase === "claimed") {
       let replay: TaskBoardClaimResult;
       try {
-        replay = await this.#claimNextWake({
-          agentId: this.#options.identity.agentId,
-          claimId: active.claim.claimId,
-          messageCursors: active.claim.taskId === null || active.claim.requestedMessageCursor === null
-            ? Object.freeze({})
-            : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
-          longPollMs: 0,
-          ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
-        }, signal);
+        replay = await this.#claimNextWake(
+          {
+            agentId: this.#options.identity.agentId,
+            claimId: active.claim.claimId,
+            messageCursors:
+              active.claim.taskId === null || active.claim.requestedMessageCursor === null
+                ? Object.freeze({})
+                : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
+            longPollMs: 0,
+            ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
+          },
+          signal
+        );
       } catch (error) {
         if (error instanceof InactiveClaimReplayError) {
           await this.#discardInactiveClaimReplay(error);
@@ -671,7 +718,7 @@ export class TaskWorker {
         active.claim.claimId,
         active.claim.taskId === null || active.claim.requestedMessageCursor === null
           ? Object.freeze({})
-          : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor }),
+          : Object.freeze({ [active.claim.taskId]: active.claim.requestedMessageCursor })
       );
       if (parsed.claim.runId !== active.claim.runId || parsed.claim.wakeupId !== active.claim.wakeupId) {
         throw new Error("Task board replayed another run for the active claim");
@@ -679,16 +726,22 @@ export class TaskWorker {
       this.#logReplayPinningDivergence(parsed);
       if (parsed.context === null) {
         await this.#clearLaneErrorBestEffort(signal);
-        await this.#recordOutcome(failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned."));
+        await this.#recordOutcome(
+          failedOutcome("A human resume without a task cannot launch an agent process.", "No task was assigned.")
+        );
         await this.#flushAndFinish();
       } else {
         await this.#executeActive(parsed.context, signal);
       }
       return true;
     }
-    const outcome = active.interruptReason === null
-      ? failedOutcome("Worker restarted after the one-shot launch boundary; refusing to launch a duplicate agent process.", "Run recovery failed.")
-      : interruptedOutcome(active.interruptReason);
+    const outcome =
+      active.interruptReason === null
+        ? failedOutcome(
+            "Worker restarted after the one-shot launch boundary; refusing to launch a duplicate agent process.",
+            "Run recovery failed."
+          )
+        : interruptedOutcome(active.interruptReason);
     await this.#closeRecoveredPhases(active.claim, signal);
     await this.#recordOutcome(outcome);
     await this.#flushAndFinish();
@@ -696,17 +749,21 @@ export class TaskWorker {
   }
 
   async #closeRecoveredPhases(claim: TaskWakeClaim, signal?: AbortSignal): Promise<void> {
-    const cursors = claim.taskId === null || claim.requestedMessageCursor === null
-      ? Object.freeze({})
-      : Object.freeze({ [claim.taskId]: claim.requestedMessageCursor });
+    const cursors =
+      claim.taskId === null || claim.requestedMessageCursor === null
+        ? Object.freeze({})
+        : Object.freeze({ [claim.taskId]: claim.requestedMessageCursor });
     try {
-      const replay = await this.#claimNextWake({
-        agentId: this.#options.identity.agentId,
-        claimId: claim.claimId,
-        messageCursors: cursors,
-        longPollMs: 0,
-        ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
-      }, signal);
+      const replay = await this.#claimNextWake(
+        {
+          agentId: this.#options.identity.agentId,
+          claimId: claim.claimId,
+          messageCursors: cursors,
+          longPollMs: 0,
+          ...(this.#options.pinned === undefined ? {} : { pinned: this.#options.pinned }),
+        },
+        signal
+      );
       if (replay === null || isTaskBoardPausedClaim(replay)) return;
       const parsed = assertClaimBinding(replay, this.#options.identity.agentId, claim.claimId, cursors);
       if (parsed.claim.runId !== claim.runId || parsed.claim.wakeupId !== claim.wakeupId) return;
@@ -751,7 +808,7 @@ export class TaskWorker {
       try {
         await this.quarantineActiveClaim(
           `Runtime capability validation failed before launch: ${error.message}`,
-          signal,
+          signal
         );
       } catch {
         // Preserve the capability classification. The fleet sees the still-active
@@ -779,16 +836,18 @@ export class TaskWorker {
           // failure has already been journaled by interrupt().
           this.#reachInterruptTerminal();
           return error;
-        },
+        }
       );
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     this.#startHeartbeat(active.claim);
-    const watch = this.#options.board.waitForRunInterrupt(active.claim, control.signal)
+    const watch = this.#options.board
+      .waitForRunInterrupt(active.claim, control.signal)
       .then(async (interrupt) => {
         if (interrupt === null) return;
         if (
-          interrupt.runId !== active.claim.runId || interrupt.agentId !== active.claim.agentId ||
+          interrupt.runId !== active.claim.runId ||
+          interrupt.agentId !== active.claim.agentId ||
           interrupt.projectId !== active.claim.projectId
         ) {
           throw new Error("Task board returned an interrupt for another active run");
@@ -802,15 +861,14 @@ export class TaskWorker {
     try {
       const authorizationFailure = wakeAuthorizationFailure(active.claim, context);
       if (authorizationFailure !== null) {
-        await this.#recordOutcome(failedOutcome(
-          authorizationFailure,
-          "Wake reason is not authorized.",
-        ));
+        await this.#recordOutcome(failedOutcome(authorizationFailure, "Wake reason is not authorized."));
         await this.#flushAndFinish();
         return;
       }
       if (signal?.aborted || this.#state.active?.interruptReason !== null) {
-        await this.#recordOutcome(interruptedOutcome(this.#state.active?.interruptReason ?? "Task worker shutdown requested"));
+        await this.#recordOutcome(
+          interruptedOutcome(this.#state.active?.interruptReason ?? "Task worker shutdown requested")
+        );
         await this.#flushAndFinish();
         return;
       }
@@ -848,7 +906,8 @@ export class TaskWorker {
         this.#activeHandle = handle;
         await this.#serial.run(async () => {
           const current = this.#state.active;
-          if (current === null || current.claim.runId !== active.claim.runId) throw new Error("Active run changed during launch");
+          if (current === null || current.claim.runId !== active.claim.runId)
+            throw new Error("Active run changed during launch");
           const next: TaskWorkerJournal = { ...this.#state, active: { ...current, phase: "running" } };
           await this.#saveState(next);
         });
@@ -856,7 +915,9 @@ export class TaskWorker {
         const activityForwarding = this.#forwardActivity(active.claim, handle.activity, liveTask).catch(() => null);
 
         let resolveInterrupted!: () => void;
-        const interrupted = new Promise<void>((resolve) => { resolveInterrupted = resolve; });
+        const interrupted = new Promise<void>((resolve) => {
+          resolveInterrupted = resolve;
+        });
         this.#interruptTerminalResolve = resolveInterrupted;
         if (this.#interruptTerminalReached) resolveInterrupted();
         const pendingInterruptReason = this.#state.active?.interruptReason;
@@ -870,12 +931,9 @@ export class TaskWorker {
         }
         const completion = handle.completion.then(
           (value) => ({ type: "completed" as const, value }),
-          (error: unknown) => ({ type: "failed" as const, error }),
+          (error: unknown) => ({ type: "failed" as const, error })
         );
-        const terminal = await Promise.race([
-          completion,
-          interrupted.then(() => ({ type: "interrupted" as const })),
-        ]);
+        const terminal = await Promise.race([completion, interrupted.then(() => ({ type: "interrupted" as const }))]);
         const shutdownError = shutdownInterrupt === null ? null : await shutdownInterrupt;
         // The launcher closes activity with the provider stream. Drain all safe
         // updates before any terminal output or settlement can make the run inactive.
@@ -894,9 +952,10 @@ export class TaskWorker {
           outcome = parseAgentRunOutcome(terminal.value);
         }
       } catch (error) {
-        outcome = this.#state.active?.interruptReason === null && !signal?.aborted
-          ? failedOutcome(error, "The one-shot agent process failed.")
-          : interruptedOutcome(this.#state.active?.interruptReason ?? "Task worker shutdown requested");
+        outcome =
+          this.#state.active?.interruptReason === null && !signal?.aborted
+            ? failedOutcome(error, "The one-shot agent process failed.")
+            : interruptedOutcome(this.#state.active?.interruptReason ?? "Task worker shutdown requested");
       }
       await this.#applyStructuredTaskState(active.claim, context, outcome, liveTask);
       await this.#finishLivePhase(active.claim, liveTask, outcome.status);
@@ -920,19 +979,22 @@ export class TaskWorker {
     const timer = setInterval(() => {
       if (this.#heartbeatInFlightRunId === claim.runId || this.#state.active?.claim.runId !== claim.runId) return;
       this.#heartbeatInFlightRunId = claim.runId;
-      void Promise.resolve().then(() => this.#options.board.heartbeatRun(claim)).catch((error: unknown) => {
-        // Heartbeats are non-lethal by design. Credential revocation remains
-        // owned by the next claim or settlement path, as it was before heartbeats.
-        this.#logger({
-          type: "run_heartbeat_failed",
-          agentId: this.#options.identity.agentId,
-          workerId: this.#options.identity.workerId,
-          runId: claim.runId,
-          error: safeDetail(error, "Run heartbeat failed"),
+      void Promise.resolve()
+        .then(() => this.#options.board.heartbeatRun(claim))
+        .catch((error: unknown) => {
+          // Heartbeats are non-lethal by design. Credential revocation remains
+          // owned by the next claim or settlement path, as it was before heartbeats.
+          this.#logger({
+            type: "run_heartbeat_failed",
+            agentId: this.#options.identity.agentId,
+            workerId: this.#options.identity.workerId,
+            runId: claim.runId,
+            error: safeDetail(error, "Run heartbeat failed"),
+          });
+        })
+        .finally(() => {
+          if (this.#heartbeatInFlightRunId === claim.runId) this.#heartbeatInFlightRunId = null;
         });
-      }).finally(() => {
-        if (this.#heartbeatInFlightRunId === claim.runId) this.#heartbeatInFlightRunId = null;
-      });
     }, HEARTBEAT_INTERVAL_MS);
     timer.unref();
     this.#heartbeatTimer = timer;
@@ -966,7 +1028,7 @@ export class TaskWorker {
   async #advanceLivePhase(
     claim: TaskWakeClaim,
     liveTask: LiveTaskState,
-    stage: Exclude<AgentTaskPhase["stage"], "done">,
+    stage: Exclude<AgentTaskPhase["stage"], "done">
   ): Promise<void> {
     if (!liveTask.phaseTracking || liveTask.phaseSource !== "inferred" || claim.taskId === null) return;
     if (liveTask.currentPhase?.stage === stage && liveTask.currentPhase.status === "in_progress") return;
@@ -998,26 +1060,24 @@ export class TaskWorker {
   async #finishLivePhase(
     claim: TaskWakeClaim,
     liveTask: LiveTaskState,
-    outcome: AgentRunOutcome["status"],
+    outcome: AgentRunOutcome["status"]
   ): Promise<void> {
     const current = liveTask.currentPhase;
     if (claim.taskId === null) return;
-    if (
-      liveTask.phaseTracking && current !== null &&
-      current.status !== "completed" && current.status !== "failed"
-    ) {
+    if (liveTask.phaseTracking && current !== null && current.status !== "completed" && current.status !== "failed") {
       try {
-        liveTask.currentPhase = outcome === "completed"
-          ? await this.#options.board.updateTaskPhase({
-              claim,
-              phase: current,
-              status: "completed",
-            })
-          : await this.#options.board.updateTaskPhase({
-              claim,
-              phase: current,
-              status: outcome === "waiting_for_human" ? "blocked" : "failed",
-            });
+        liveTask.currentPhase =
+          outcome === "completed"
+            ? await this.#options.board.updateTaskPhase({
+                claim,
+                phase: current,
+                status: "completed",
+              })
+            : await this.#options.board.updateTaskPhase({
+                claim,
+                phase: current,
+                status: outcome === "waiting_for_human" ? "blocked" : "failed",
+              });
       } catch {
         liveTask.phaseTracking = false;
       }
@@ -1025,13 +1085,14 @@ export class TaskWorker {
     for (const [key, phase] of liveTask.parallelPhases) {
       if (phase.status === "completed" || phase.status === "failed") continue;
       try {
-        const updated = outcome === "completed"
-          ? await this.#options.board.updateTaskPhase({ claim, phase, status: "completed" })
-          : await this.#options.board.updateTaskPhase({
-              claim,
-              phase,
-              status: outcome === "waiting_for_human" ? "blocked" : "failed",
-            });
+        const updated =
+          outcome === "completed"
+            ? await this.#options.board.updateTaskPhase({ claim, phase, status: "completed" })
+            : await this.#options.board.updateTaskPhase({
+                claim,
+                phase,
+                status: outcome === "waiting_for_human" ? "blocked" : "failed",
+              });
         liveTask.parallelPhases.set(key, updated);
       } catch {
         // The task outcome remains authoritative if phase telemetry conflicts.
@@ -1039,11 +1100,7 @@ export class TaskWorker {
     }
   }
 
-  async #applyLivePhaseSignal(
-    claim: TaskWakeClaim,
-    liveTask: LiveTaskState,
-    signal: LivePhaseSignal,
-  ): Promise<void> {
+  async #applyLivePhaseSignal(claim: TaskWakeClaim, liveTask: LiveTaskState, signal: LivePhaseSignal): Promise<void> {
     if (!liveTask.phaseTracking || claim.taskId === null) return;
     try {
       let phase = liveTask.parallelPhases.get(signal.key);
@@ -1095,7 +1152,7 @@ export class TaskWorker {
     claim: TaskWakeClaim,
     context: BoundedAgentContext,
     outcome: AgentRunOutcome,
-    liveTask: LiveTaskState,
+    liveTask: LiveTaskState
   ): Promise<void> {
     if (claim.taskId === null) return;
     if (
@@ -1137,9 +1194,7 @@ export class TaskWorker {
           if (current.status === "completed" || current.status === "failed") continue;
           phase = current;
         }
-        const desiredStage = desired.stage === "done" && desired.status === "completed"
-          ? phase.stage
-          : desired.stage;
+        const desiredStage = desired.stage === "done" && desired.status === "completed" ? phase.stage : desired.stage;
         if (samePhaseState(phase, { ...desired, stage: desiredStage })) continue;
         phase = await this.#options.board.updateTaskPhase({
           claim,
@@ -1160,11 +1215,14 @@ export class TaskWorker {
       for (const [phaseId, phase] of existing) {
         if (phase.status === "completed" || phase.status === "failed") continue;
         try {
-          existing.set(phaseId, await this.#options.board.updateTaskPhase({
-            claim,
-            phase,
-            status: "completed",
-          }));
+          existing.set(
+            phaseId,
+            await this.#options.board.updateTaskPhase({
+              claim,
+              phase,
+              status: "completed",
+            })
+          );
         } catch {
           // A concurrent phase change cannot invalidate the task's tested result.
         }
@@ -1175,7 +1233,7 @@ export class TaskWorker {
   async #forwardActivity(
     claim: TaskWakeClaim,
     activity: AsyncIterable<RuntimeEvent>,
-    liveTask: LiveTaskState,
+    liveTask: LiveTaskState
   ): Promise<string | null> {
     if (claim.taskId === null) return null;
     let sequence = 0;
@@ -1220,19 +1278,19 @@ export class TaskWorker {
             liveTask.estimateTracking = false;
           }
         }
-        if (!await appendActivity(estimateActivity(estimate))) return runtimeFailureDetail;
+        if (!(await appendActivity(estimateActivity(estimate)))) return runtimeFailureDetail;
       }
       const phaseSignal = phaseSignalFromEvent(event);
       if (phaseSignal !== null) {
         await this.#applyLivePhaseSignal(claim, liveTask, phaseSignal);
-        if (!await appendActivity("Agent updated a task phase.")) return runtimeFailureDetail;
+        if (!(await appendActivity("Agent updated a task phase."))) return runtimeFailureDetail;
       }
       const derivedActivity = activityFromEvent(event);
       if (isUnbufferedLauncherLifecycle(event)) {
-        if (derivedActivity !== null && !await appendActivity(derivedActivity)) return runtimeFailureDetail;
+        if (derivedActivity !== null && !(await appendActivity(derivedActivity))) return runtimeFailureDetail;
       } else {
         const ready = buffer.push(derivedActivity);
-        if (ready !== null && !await appendActivity(ready)) return runtimeFailureDetail;
+        if (ready !== null && !(await appendActivity(ready))) return runtimeFailureDetail;
       }
     }
     const final = buffer.drain();
@@ -1307,38 +1365,41 @@ export class TaskWorker {
     }
     await this.#serial.run(async () => {
       const current = this.#state.active;
-      if (current === null || current.claim.runId !== active!.claim.runId) throw new Error("Active run changed before settlement journal");
-      const completed = [...this.#state.completed, Object.freeze({
-        runId: current.claim.runId,
-        wakeId: current.claim.wakeupId,
-        taskId: current.claim.taskId,
-        outcome: outcome.status,
-        detail: outcome.detail,
-        startedAt: current.claim.claimedAt,
-        endedAt: exactNow(this.#options.now),
-      })].slice(-MAX_HISTORY);
+      if (current === null || current.claim.runId !== active!.claim.runId)
+        throw new Error("Active run changed before settlement journal");
+      const completed = [
+        ...this.#state.completed,
+        Object.freeze({
+          runId: current.claim.runId,
+          wakeId: current.claim.wakeupId,
+          taskId: current.claim.taskId,
+          outcome: outcome.status,
+          detail: outcome.detail,
+          startedAt: current.claim.claimedAt,
+          endedAt: exactNow(this.#options.now),
+        }),
+      ].slice(-MAX_HISTORY);
       const next: TaskWorkerJournal = { ...this.#state, active: null, completed };
       await this.#saveState(next);
     });
   }
 
-  async #handleRejectedSettlement(
-    claim: TaskWakeClaim,
-    rejection: RetryableSettlementError,
-  ): Promise<void> {
+  async #handleRejectedSettlement(claim: TaskWakeClaim, rejection: RetryableSettlementError): Promise<void> {
     let capReached = false;
     await this.#serial.run(async () => {
       const current = this.#state.active;
       if (
-        current === null || current.claim.runId !== claim.runId ||
-        current.phase !== "outputs_pending" || current.outcome === null
+        current === null ||
+        current.claim.runId !== claim.runId ||
+        current.phase !== "outputs_pending" ||
+        current.outcome === null
       ) {
         throw new Error("Active run changed while a correctable settlement was rejected");
       }
       const correctableSettlementRejections = current.correctableSettlementRejections + 1;
       const previousPlanRejectionDetail = safeDetail(
         rejection.detail,
-        "The previous plan was rejected by task-board validation.",
+        "The previous plan was rejected by task-board validation."
       );
       capReached = correctableSettlementRejections >= MAX_CORRECTABLE_SETTLEMENT_REJECTIONS;
       const next: TaskWorkerJournal = {
@@ -1402,7 +1463,7 @@ export class TaskWorker {
       if (additional.length > 0) {
         throw new AggregateError(
           [terminationResult.reason, ...additional],
-          safeDetail(terminationResult.reason, "Process-group termination failed"),
+          safeDetail(terminationResult.reason, "Process-group termination failed")
         );
       }
       throw terminationResult.reason;
@@ -1434,11 +1495,13 @@ export class TaskWorker {
       }
       let settlement!: Promise<void>;
       settlement = attempt.then(
-        () => { this.#reachInterruptTerminal(); },
+        () => {
+          this.#reachInterruptTerminal();
+        },
         (error: unknown) => {
           if (this.#interruptSettlement === settlement) this.#interruptSettlement = null;
           throw error;
-        },
+        }
       );
       this.#interruptSettlement = settlement;
     }

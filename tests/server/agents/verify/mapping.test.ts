@@ -54,7 +54,9 @@ test("first match wins, escalate and unmatched are reported, docs map to nothing
   const h = host([], ["tests/server", "tests/shared"]);
   const sel = mapChangedFiles(
     ["tests/container/x.test.ts", "docs/a.md", "weird.bin", "src/shared/contract.ts"],
-    RULES, "fast", h,
+    RULES,
+    "fast",
+    h
   );
   assert.equal(sel.escalations.length, 1);
   assert.deepEqual(sel.unmatched, ["weird.bin"]);
@@ -63,10 +65,7 @@ test("first match wins, escalate and unmatched are reported, docs map to nothing
 
 test("area tier lifts self and mirror to directories and colocated to the fallback", () => {
   const h = host(["src/web/x.test.tsx"], ["tests/server/x"]);
-  const sel = mapChangedFiles(
-    ["tests/server/x/a.test.ts", "src/server/x/a.ts", "src/web/x.tsx"],
-    RULES, "area", h,
-  );
+  const sel = mapChangedFiles(["tests/server/x/a.test.ts", "src/server/x/a.ts", "src/web/x.tsx"], RULES, "area", h);
   assert.deepEqual(sel.nodeTestFiles, []);
   assert.deepEqual(sel.nodeTestDirs, ["tests/server/x"]);
   assert.deepEqual(sel.vitestTargets, ["src/web"]);

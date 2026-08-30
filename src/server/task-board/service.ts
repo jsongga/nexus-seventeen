@@ -12,16 +12,7 @@ import { normalizeTaskBoardConfig, type TaskBoardConfig, type TaskBoardOptions }
 import { TaskBoardError } from "./errors.js";
 import { listDirectories, listProjectRoots } from "./host.js";
 import { exactNow } from "./persistence/timestamps.js";
-import {
-  applyCors,
-  bearerToken,
-  isHuman,
-  readJsonBody,
-  requireHuman,
-  sendEmpty,
-  sendError,
-  sendJson,
-} from "./http.js";
+import { applyCors, bearerToken, isHuman, readJsonBody, requireHuman, sendEmpty, sendError, sendJson } from "./http.js";
 import {
   parseAgentMessage,
   parseAnswer,
@@ -72,10 +63,16 @@ interface SseStream {
 }
 
 function parseArtifact(value: unknown): CreateProjectArtifactRequest {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TaskBoardError(400, "INVALID_REQUEST", "Artifact request must be an object");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TaskBoardError(400, "INVALID_REQUEST", "Artifact request must be an object");
   const item = value as Record<string, unknown>;
   const expected = ["caption", "contentBase64", "mediaType", "nodeId", "taskId"].sort();
-  if (Object.keys(item).sort().some((key, index) => key !== expected[index]) || Object.keys(item).length !== expected.length) {
+  if (
+    Object.keys(item)
+      .sort()
+      .some((key, index) => key !== expected[index]) ||
+    Object.keys(item).length !== expected.length
+  ) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Artifact request has unexpected or missing fields");
   }
   return item as unknown as CreateProjectArtifactRequest;
@@ -94,11 +91,7 @@ function parseRouteIdentifier(value: string, field: string): string {
   try {
     decoded = decodeURIComponent(value);
   } catch {
-    throw new TaskBoardError(
-      400,
-      TASK_BOARD_ERROR_CODES.INVALID_IDENTIFIER,
-      `${field} has malformed percent-encoding`,
-    );
+    throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.INVALID_IDENTIFIER, `${field} has malformed percent-encoding`);
   }
   return parseIdentifier(decoded, field);
 }
@@ -111,10 +104,10 @@ function workItemListQuery(url: URL): { cursor: string | undefined; includeArchi
   const values = url.searchParams.getAll("cursor");
   const archivedValues = url.searchParams.getAll("includeArchived");
   if (
-    [...url.searchParams.keys()].some((key) => key !== "cursor" && key !== "includeArchived")
-    || values.length > 1
-    || archivedValues.length > 1
-    || (archivedValues[0] !== undefined && archivedValues[0] !== "1")
+    [...url.searchParams.keys()].some((key) => key !== "cursor" && key !== "includeArchived") ||
+    values.length > 1 ||
+    archivedValues.length > 1 ||
+    (archivedValues[0] !== undefined && archivedValues[0] !== "1")
   ) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
   }
@@ -146,7 +139,13 @@ function hostDirectoriesQuery(url: URL): string | undefined {
   return path;
 }
 
-function exactIntegerQuery(url: URL, keys: readonly string[], field: string, fallback: number, maximum: number): number {
+function exactIntegerQuery(
+  url: URL,
+  keys: readonly string[],
+  field: string,
+  fallback: number,
+  maximum: number
+): number {
   if ([...url.searchParams.keys()].some((key) => !keys.includes(key)) || url.searchParams.getAll(field).length > 1) {
     throw new TaskBoardError(400, "INVALID_REQUEST", "Query parameters are invalid");
   }
@@ -154,7 +153,8 @@ function exactIntegerQuery(url: URL, keys: readonly string[], field: string, fal
   if (raw === null) return fallback;
   if (!/^(?:0|[1-9]\d*)$/u.test(raw)) throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value > maximum) throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
+  if (!Number.isSafeInteger(value) || value > maximum)
+    throw new TaskBoardError(400, "INVALID_REQUEST", `${field} is invalid`);
   return value;
 }
 
@@ -194,19 +194,20 @@ export class TaskBoardService {
       }, config.reconcileIntervalSeconds * 1_000);
       this.#reconcileTimer.unref();
     }
-    const verifyIntervalSeconds = config.reconcileIntervalSeconds > 0
-      ? config.reconcileIntervalSeconds
-      : 60;
-    const sweepVerifyAttempts = (): Promise<void> => this.#board.sweepVerifyAttempts().then(
-      () => undefined,
-      (error: unknown) => {
-        console.error("[task-board] machine-verify reconciliation failed", error);
-      },
-    );
+    const verifyIntervalSeconds = config.reconcileIntervalSeconds > 0 ? config.reconcileIntervalSeconds : 60;
+    const sweepVerifyAttempts = (): Promise<void> =>
+      this.#board.sweepVerifyAttempts().then(
+        () => undefined,
+        (error: unknown) => {
+          console.error("[task-board] machine-verify reconciliation failed", error);
+        }
+      );
     this.#startupVerifySweep = sweepVerifyAttempts();
-    void this.#startupVerifySweep.finally(() => {
-      this.#startupVerifySweep = undefined;
-    }).catch(() => undefined);
+    void this.#startupVerifySweep
+      .finally(() => {
+        this.#startupVerifySweep = undefined;
+      })
+      .catch(() => undefined);
     this.#verifyTimer = setInterval(() => void sweepVerifyAttempts(), verifyIntervalSeconds * 1_000);
     this.#verifyTimer.unref();
     this.#parkLifecycleTimer = setInterval(() => {
@@ -235,10 +236,7 @@ export class TaskBoardService {
     this.#baseBranchTimer.unref();
   }
 
-  static async create(
-    options: TaskBoardOptions,
-    dependencies: TaskBoardDependencies = {},
-  ): Promise<TaskBoardService> {
+  static async create(options: TaskBoardOptions, dependencies: TaskBoardDependencies = {}): Promise<TaskBoardService> {
     const config = normalizeTaskBoardConfig(options);
     const board = await TaskBoard.open(config, dependencies);
     return new TaskBoardService(config, board);
@@ -248,7 +246,8 @@ export class TaskBoardService {
     const url = routeUrl(request.url);
     applyCors(request, response, this.config);
     if (request.method === "OPTIONS") {
-      if (request.headers.origin === undefined) throw new TaskBoardError(400, "INVALID_CORS_PREFLIGHT", "Origin is required");
+      if (request.headers.origin === undefined)
+        throw new TaskBoardError(400, "INVALID_CORS_PREFLIGHT", "Origin is required");
       response.statusCode = 204;
       response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key");
@@ -277,10 +276,10 @@ export class TaskBoardService {
         version: requestBody.version,
         actor: this.config.humanPrincipal,
       });
-      this.#board.suspendAllActiveRuns(
-        `board paused: ${requestBody.reason ?? "kill switch"}`,
-        { type: "system", id: "system:kill-switch" },
-      );
+      this.#board.suspendAllActiveRuns(`board paused: ${requestBody.reason ?? "kill switch"}`, {
+        type: "system",
+        id: "system:kill-switch",
+      });
       sendJson(response, 200, pause);
       return;
     }
@@ -323,7 +322,7 @@ export class TaskBoardService {
       const { version } = parseNotificationRead(await readJsonBody(request, this.config.maxBodyBytes));
       const notification = this.#board.markNotificationRead(
         parseRouteIdentifier(notificationReadMatch[1], "notificationId"),
-        version,
+        version
       );
       sendJson(response, 200, { notification });
       return;
@@ -338,7 +337,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const configuration = this.#board.updateAutomationConfiguration(
-        parseUpdateAutomationConfiguration(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseUpdateAutomationConfiguration(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, { configuration });
       return;
@@ -354,7 +353,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const result = this.#board.createWorkItemAndStartPlanning(
         parseCreateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
-        parseIdempotencyKey(request.headers["idempotency-key"]),
+        parseIdempotencyKey(request.headers["idempotency-key"])
       );
       sendJson(response, result.duplicate ? 200 : 201, {
         workItem: this.#board.requireWorkItem(result.workItem.workItemId),
@@ -367,7 +366,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const confirmed = this.#board.confirmWorkflow(
         parseRouteIdentifier(confirmPlanMatch[1], "planRevisionId"),
-        parseConfirmPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseConfirmPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes))
       );
       const { outcome, ...workflow } = confirmed;
       const body: ConfirmPlanRevisionResponse<typeof workflow> = {
@@ -383,7 +382,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const body: RejectPlanRevisionResponse = this.#board.rejectWorkflowPlan(
         parseRouteIdentifier(rejectPlanMatch[1], "planRevisionId"),
-        parseRejectPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseRejectPlanRevisionRequest(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, body);
       return;
@@ -393,9 +392,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, {
-        children: this.#board.listChildren(
-          parseRouteIdentifier(workItemChildrenMatch[1], "workItemId"),
-        ),
+        children: this.#board.listChildren(parseRouteIdentifier(workItemChildrenMatch[1], "workItemId")),
       });
       return;
     }
@@ -404,9 +401,7 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       sendJson(response, 200, {
-        dependencies: this.#board.dependenciesFor(
-          parseRouteIdentifier(workItemDependenciesMatch[1], "workItemId"),
-        ),
+        dependencies: this.#board.dependenciesFor(parseRouteIdentifier(workItemDependenciesMatch[1], "workItemId")),
       });
       return;
     }
@@ -414,19 +409,21 @@ export class TaskBoardService {
     if (attestDeployMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, this.#board.attestDeploy(
-        parseRouteIdentifier(attestDeployMatch[1], "workItemId"),
-        parseAttestDeployRequest(await readJsonBody(request, this.config.maxBodyBytes)),
-      ));
+      sendJson(
+        response,
+        200,
+        this.#board.attestDeploy(
+          parseRouteIdentifier(attestDeployMatch[1], "workItemId"),
+          parseAttestDeployRequest(await readJsonBody(request, this.config.maxBodyBytes))
+        )
+      );
       return;
     }
     const pipelineSummaryMatch = /^\/v1\/work-items\/([^/]+)\/pipeline-summary$/u.exec(url.pathname);
     if (pipelineSummaryMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, this.#board.pipelineSummary(
-        parseRouteIdentifier(pipelineSummaryMatch[1], "workItemId"),
-      ));
+      sendJson(response, 200, this.#board.pipelineSummary(parseRouteIdentifier(pipelineSummaryMatch[1], "workItemId")));
       return;
     }
     const approveMergeMatch = /^\/v1\/work-items\/([^/]+)\/approve-merge$/u.exec(url.pathname);
@@ -435,7 +432,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const workItem = await this.#board.approvePipelineMerge(
         parseRouteIdentifier(approveMergeMatch[1], "workItemId"),
-        parseApprovePipelineMergeRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseApprovePipelineMergeRequest(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, { workItem });
       return;
@@ -446,7 +443,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const workItem = await this.#board.rejectFinalApproval(
         parseRouteIdentifier(rejectFinalMatch[1], "workItemId"),
-        parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseRejectFinalApprovalRequest(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, { workItem });
       return;
@@ -455,25 +452,29 @@ export class TaskBoardService {
     if (resumeWorkItemMatch && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { workItem: this.#board.resumeWorkItem(
-        parseRouteIdentifier(resumeWorkItemMatch[1], "workItemId"),
-      ) });
+      sendJson(response, 200, {
+        workItem: this.#board.resumeWorkItem(parseRouteIdentifier(resumeWorkItemMatch[1], "workItemId")),
+      });
       return;
     }
     const workItemAuditMatch = /^\/v1\/work-items\/([^/]+)\/audit$/u.exec(url.pathname);
     if (workItemAuditMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, parseWorkItemAudit(this.#board.workItemAudit(
-        parseRouteIdentifier(workItemAuditMatch[1], "workItemId"),
-      )));
+      sendJson(
+        response,
+        200,
+        parseWorkItemAudit(this.#board.workItemAudit(parseRouteIdentifier(workItemAuditMatch[1], "workItemId")))
+      );
       return;
     }
     const workItemMatch = /^\/v1\/work-items\/([^/]+)$/u.exec(url.pathname);
     if (workItemMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { workItem: this.#board.requireWorkItem(parseRouteIdentifier(workItemMatch[1], "workItemId")) });
+      sendJson(response, 200, {
+        workItem: this.#board.requireWorkItem(parseRouteIdentifier(workItemMatch[1], "workItemId")),
+      });
       return;
     }
     if (workItemMatch && request.method === "PATCH") {
@@ -481,7 +482,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const workItem = this.#board.updateWorkItem(
         parseRouteIdentifier(workItemMatch[1], "workItemId"),
-        parseUpdateWorkItem(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseUpdateWorkItem(await readJsonBody(request, this.config.maxBodyBytes))
       );
       this.#board.startWorkItemPlanning(workItem.workItemId);
       sendJson(response, 200, { workItem: this.#board.requireWorkItem(workItem.workItemId) });
@@ -508,17 +509,21 @@ export class TaskBoardService {
     if (url.pathname === "/v1/projects" && request.method === "POST") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 201, { project: this.#board.createProject(parseCreateProject(await readJsonBody(request, this.config.maxBodyBytes))) });
+      sendJson(response, 201, {
+        project: this.#board.createProject(parseCreateProject(await readJsonBody(request, this.config.maxBodyBytes))),
+      });
       return;
     }
     const projectMatch = /^\/v1\/projects\/([^/]+)$/u.exec(url.pathname);
     if (projectMatch && request.method === "PATCH") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { project: this.#board.updateProject(
-        parseRouteIdentifier(projectMatch[1], "projectId"),
-        parseUpdateProject(await readJsonBody(request, this.config.maxBodyBytes)),
-      ) });
+      sendJson(response, 200, {
+        project: this.#board.updateProject(
+          parseRouteIdentifier(projectMatch[1], "projectId"),
+          parseUpdateProject(await readJsonBody(request, this.config.maxBodyBytes))
+        ),
+      });
       return;
     }
     const boardMatch = /^\/v1\/projects\/([^/]+)\/board$/u.exec(url.pathname);
@@ -532,7 +537,9 @@ export class TaskBoardService {
     if (workflowMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { workflow: this.#board.projectWorkflow(parseRouteIdentifier(workflowMatch[1], "projectId")) });
+      sendJson(response, 200, {
+        workflow: this.#board.projectWorkflow(parseRouteIdentifier(workflowMatch[1], "projectId")),
+      });
       return;
     }
     const workflowEventsMatch = /^\/v1\/projects\/([^/]+)\/workflow\/events$/u.exec(url.pathname);
@@ -547,7 +554,9 @@ export class TaskBoardService {
     if (artifactsMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      sendJson(response, 200, { artifacts: this.#board.listArtifacts(parseRouteIdentifier(artifactsMatch[1], "projectId")) });
+      sendJson(response, 200, {
+        artifacts: this.#board.listArtifacts(parseRouteIdentifier(artifactsMatch[1], "projectId")),
+      });
       return;
     }
     if (artifactsMatch && request.method === "POST") {
@@ -555,7 +564,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const artifact = await this.#board.createArtifact(
         parseRouteIdentifier(artifactsMatch[1], "projectId"),
-        parseArtifact(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseArtifact(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 201, { artifact });
       return;
@@ -564,7 +573,9 @@ export class TaskBoardService {
     if (artifactMatch && request.method === "GET") {
       noQuery(url);
       requireHuman(request, this.config);
-      const { artifact, bytes } = await this.#board.artifactContent(parseRouteIdentifier(artifactMatch[1], "artifactId"));
+      const { artifact, bytes } = await this.#board.artifactContent(
+        parseRouteIdentifier(artifactMatch[1], "artifactId")
+      );
       response.statusCode = 200;
       response.setHeader("Content-Type", artifact.mediaType);
       response.setHeader("Content-Length", String(bytes.length));
@@ -579,7 +590,10 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const projectId = parseRouteIdentifier(agentCreateMatch[1], "projectId");
-      const agent = this.#board.createAgent(projectId, parseCreateAgent(await readJsonBody(request, this.config.maxBodyBytes)));
+      const agent = this.#board.createAgent(
+        projectId,
+        parseCreateAgent(await readJsonBody(request, this.config.maxBodyBytes))
+      );
       sendJson(response, 201, { agent });
       return;
     }
@@ -597,7 +611,10 @@ export class TaskBoardService {
       noQuery(url);
       requireHuman(request, this.config);
       const projectId = parseRouteIdentifier(taskCreateMatch[1], "projectId");
-      const task = this.#board.createTask(projectId, parseCreateTask(await readJsonBody(request, this.config.maxBodyBytes)));
+      const task = this.#board.createTask(
+        projectId,
+        parseCreateTask(await readJsonBody(request, this.config.maxBodyBytes))
+      );
       sendJson(response, 201, { task });
       return;
     }
@@ -621,7 +638,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const result = this.#board.retryTask(
         parseRouteIdentifier(taskRetryMatch[1], "taskId"),
-        parseRetryTask(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseRetryTask(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, result);
       return;
@@ -632,7 +649,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const result = this.#board.backlogTask(
         parseRouteIdentifier(taskBacklogMatch[1], "taskId"),
-        parseBacklogTask(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseBacklogTask(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 200, result);
       return;
@@ -644,11 +661,7 @@ export class TaskBoardService {
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const requestBody = parseCreateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes));
       this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
-      const phase = this.#board.createTaskPhase(
-        taskId,
-        requestBody,
-        agent.agentId,
-      );
+      const phase = this.#board.createTaskPhase(taskId, requestBody, agent.agentId);
       sendJson(response, 201, { phase });
       return;
     }
@@ -659,11 +672,7 @@ export class TaskBoardService {
       const agent = this.#board.authenticateAgent(bearerToken(request));
       const requestBody = parseUpdateTaskPhase(await readJsonBody(request, this.config.maxBodyBytes));
       this.#board.assertAgentCredentialVersion(agent.agentId, agent.version);
-      const phase = this.#board.updateTaskPhase(
-        phaseId,
-        requestBody,
-        agent.agentId,
-      );
+      const phase = this.#board.updateTaskPhase(phaseId, requestBody, agent.agentId);
       sendJson(response, 200, { phase });
       return;
     }
@@ -711,7 +720,7 @@ export class TaskBoardService {
       requireHuman(request, this.config);
       const result = this.#board.answerQuestion(
         parseRouteIdentifier(answerMatch[1], "questionId"),
-        parseAnswer(await readJsonBody(request, this.config.maxBodyBytes)),
+        parseAnswer(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, result.duplicate ? 200 : 201, result);
       return;
@@ -723,7 +732,7 @@ export class TaskBoardService {
       const result = this.#board.resumeAgent(
         parseRouteIdentifier(resumeMatch[1], "agentId"),
         parseResume(await readJsonBody(request, this.config.maxBodyBytes)),
-        parseIdempotencyKey(request.headers["idempotency-key"]),
+        parseIdempotencyKey(request.headers["idempotency-key"])
       );
       sendJson(response, result.duplicate ? 200 : 201, result);
       return;
@@ -746,7 +755,7 @@ export class TaskBoardService {
       const result = this.#board.interruptAgent(
         parseRouteIdentifier(interruptMatch[1], "agentId"),
         parseInterrupt(await readJsonBody(request, this.config.maxBodyBytes)),
-        parseIdempotencyKey(request.headers["idempotency-key"]),
+        parseIdempotencyKey(request.headers["idempotency-key"])
       );
       sendJson(response, result.duplicate ? 200 : 201, result);
       return;
@@ -768,7 +777,7 @@ export class TaskBoardService {
           claim,
           waitMs,
           AbortSignal.any([abort.signal, this.#closingAbort.signal]),
-          agent.version,
+          agent.version
         );
       } finally {
         request.socket.off("close", onClose);
@@ -816,7 +825,7 @@ export class TaskBoardService {
           after,
           waitMs,
           AbortSignal.any([abort.signal, this.#closingAbort.signal]),
-          agent.version,
+          agent.version
         );
       } finally {
         request.socket.off("close", onClose);
@@ -842,7 +851,10 @@ export class TaskBoardService {
       stream = undefined;
     };
     const unsubscribe = this.#board.subscribeProjectEvents(projectId, (event) => {
-      if (!write(event)) { remove(); response.end(); }
+      if (!write(event)) {
+        remove();
+        response.end();
+      }
     });
     stream = { response, unsubscribe };
     this.#projectStreams.add(stream);
@@ -855,7 +867,11 @@ export class TaskBoardService {
     response.setHeader("X-Accel-Buffering", "no");
     response.flushHeaders();
     for (const event of this.#board.listProjectEvents(projectId, after)) {
-      if (!write(event)) { remove(); response.end(); break; }
+      if (!write(event)) {
+        remove();
+        response.end();
+        break;
+      }
     }
   }
 
@@ -907,7 +923,7 @@ export class TaskBoardService {
     }
     if (this.#started) {
       const stopped = new Promise<void>((resolve, reject) => {
-        this.#server.close((error) => error ? reject(error) : resolve());
+        this.#server.close((error) => (error ? reject(error) : resolve()));
       });
       // Let aborted held requests end their responses, then close the keep-alive
       // sockets they leave behind instead of waiting out keepAliveTimeout.
@@ -934,7 +950,7 @@ export class TaskBoardService {
 
 export function createTaskBoardService(
   options: TaskBoardOptions,
-  dependencies: TaskBoardDependencies = {},
+  dependencies: TaskBoardDependencies = {}
 ): Promise<TaskBoardService> {
   return TaskBoardService.create(options, dependencies);
 }

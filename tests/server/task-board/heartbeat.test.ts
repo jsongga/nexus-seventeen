@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import {
-  TaskBoard,
-  TaskBoardError,
-  createTaskBoardService,
-  normalizeTaskBoardConfig,
-} from "#server/task-board";
+import { TaskBoard, TaskBoardError, createTaskBoardService, normalizeTaskBoardConfig } from "#server/task-board";
 import {
   AGENT_ONE_TOKEN,
   AGENT_TWO_TOKEN,
@@ -26,7 +21,7 @@ function errorIs(status: number, code: string): (error: unknown) => boolean {
 function taskBoardConfig(
   path: string,
   now: () => Date,
-  overrides: { heartbeatTimeoutSeconds?: number; reconcileIntervalSeconds?: number } = {},
+  overrides: { heartbeatTimeoutSeconds?: number; reconcileIntervalSeconds?: number } = {}
 ) {
   return normalizeTaskBoardConfig({
     dbPath: path,
@@ -52,9 +47,14 @@ function runRow(path: string, runId: string): Record<string, unknown> {
 function backdateRun(path: string, runId: string, startedAt: string): void {
   const db = new DatabaseSync(path);
   try {
-    assert.equal(Number(db.prepare(
-      "UPDATE runs SET started_at=?,heartbeat_at=NULL WHERE run_id=? AND status='active'",
-    ).run(startedAt, runId).changes), 1);
+    assert.equal(
+      Number(
+        db
+          .prepare("UPDATE runs SET started_at=?,heartbeat_at=NULL WHERE run_id=? AND status='active'")
+          .run(startedAt, runId).changes
+      ),
+      1
+    );
   } finally {
     db.close();
   }
@@ -74,7 +74,7 @@ async function request(
   path: string,
   method: "GET" | "POST" | "PATCH",
   token: string,
-  body?: unknown,
+  body?: unknown
 ): Promise<Response> {
   return fetch(`${origin}${path}`, {
     method,
@@ -93,16 +93,27 @@ async function stageWorkItemForWorkflow(path: string, workItemId: string): Promi
     const row = db.prepare("SELECT version FROM work_items WHERE work_item_id=? AND state='queued'").get(workItemId);
     assert.ok(row);
     const now = "2026-08-16T12:00:00.000Z";
-    assert.equal(Number(db.prepare(`
+    assert.equal(
+      Number(
+        db
+          .prepare(
+            `
       UPDATE work_items
       SET state='planning',current_stage='planning',version=version+1,updated_at=?
       WHERE work_item_id=? AND state='queued' AND version=?
-    `).run(now, workItemId, Number(row.version)).changes), 1);
-    db.prepare(`
+    `
+          )
+          .run(now, workItemId, Number(row.version)).changes
+      ),
+      1
+    );
+    db.prepare(
+      `
       INSERT INTO work_item_transitions(
         work_item_id,sequence,from_state,to_state,actor_type,actor_id,created_at
       ) VALUES (?,2,'queued','planning','system','system:heartbeat-test',?)
-    `).run(workItemId, now);
+    `
+    ).run(workItemId, now);
     db.exec("COMMIT");
   } catch (error) {
     try {
@@ -130,27 +141,33 @@ test("heartbeat configuration defaults, disables at zero, and stays above two wo
   assert.equal(disabled.reconcileIntervalSeconds, 0);
 
   assert.throws(
-    () => taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
-      heartbeatTimeoutSeconds: 59,
-    }),
-    errorIs(500, "INVALID_CONFIGURATION"),
+    () =>
+      taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+        heartbeatTimeoutSeconds: 59,
+      }),
+    errorIs(500, "INVALID_CONFIGURATION")
   );
-  assert.equal(taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
-    heartbeatTimeoutSeconds: 60,
-  }).heartbeatTimeoutSeconds, 60);
+  assert.equal(
+    taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+      heartbeatTimeoutSeconds: 60,
+    }).heartbeatTimeoutSeconds,
+    60
+  );
 
   for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER]) {
     assert.throws(
-      () => taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
-        heartbeatTimeoutSeconds: value,
-      }),
-      errorIs(500, "INVALID_CONFIGURATION"),
+      () =>
+        taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+          heartbeatTimeoutSeconds: value,
+        }),
+      errorIs(500, "INVALID_CONFIGURATION")
     );
     assert.throws(
-      () => taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
-        reconcileIntervalSeconds: value,
-      }),
-      errorIs(500, "INVALID_CONFIGURATION"),
+      () =>
+        taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z"), {
+          reconcileIntervalSeconds: value,
+        }),
+      errorIs(500, "INVALID_CONFIGURATION")
     );
   }
 });
@@ -170,12 +187,9 @@ test("heartbeat fences run ownership and credential version while changing only 
 
     assert.throws(
       () => fixture.board.heartbeatRun("missing-heartbeat-run", engineerAuth),
-      errorIs(404, "RUN_NOT_FOUND"),
+      errorIs(404, "RUN_NOT_FOUND")
     );
-    assert.throws(
-      () => fixture.board.heartbeatRun(claim.run.runId, managerAuth),
-      errorIs(404, "RUN_NOT_FOUND"),
-    );
+    assert.throws(() => fixture.board.heartbeatRun(claim.run.runId, managerAuth), errorIs(404, "RUN_NOT_FOUND"));
 
     const before = runRow(fixture.path, claim.run.runId);
     const beforeTask = fixture.board.requireTask(task.taskId);
@@ -187,10 +201,7 @@ test("heartbeat fences run ownership and credential version while changing only 
     now = new Date("2026-08-16T12:00:30.000Z");
     const secondHeartbeat = fixture.board.heartbeatRun(claim.run.runId, engineerAuth);
     const after = runRow(fixture.path, claim.run.runId);
-    assert.deepEqual(
-      { ...after, heartbeat_at: before.heartbeat_at },
-      before,
-    );
+    assert.deepEqual({ ...after, heartbeat_at: before.heartbeat_at }, before);
     assert.equal(secondHeartbeat.heartbeatAt, "2026-08-16T12:00:30.000Z");
     assert.equal(after.heartbeat_at, "2026-08-16T12:00:30.000Z");
     assert.equal(fixture.board.requireTask(task.taskId).version, beforeTask.version);
@@ -200,15 +211,15 @@ test("heartbeat fences run ownership and credential version while changing only 
       outcome: "interrupted",
       result: "Settled before the final heartbeat.",
     });
-    assert.throws(
-      () => fixture.board.heartbeatRun(claim.run.runId, engineerAuth),
-      errorIs(409, "RUN_NOT_ACTIVE"),
-    );
+    assert.throws(() => fixture.board.heartbeatRun(claim.run.runId, engineerAuth), errorIs(409, "RUN_NOT_ACTIVE"));
 
-    const nextTask = fixture.board.createTask(fixture.project.projectId, taskRequest({
-      title: "Fence a stale heartbeat credential",
-      requiresReview: false,
-    }));
+    const nextTask = fixture.board.createTask(
+      fixture.project.projectId,
+      taskRequest({
+        title: "Fence a stale heartbeat credential",
+        requiresReview: false,
+      })
+    );
     const nextClaim = fixture.board.claimRun(fixture.engineer.agentId, {
       claimId: "heartbeat-stale-credential-0001",
       messageCursor: null,
@@ -216,15 +227,16 @@ test("heartbeat fences run ownership and credential version while changing only 
     assert.equal(nextClaim?.task?.taskId, nextTask.taskId);
     const db = new DatabaseSync(fixture.path);
     try {
-      assert.equal(Number(db.prepare("UPDATE agents SET version=version+1 WHERE agent_id=?")
-        .run(fixture.engineer.agentId).changes), 1);
+      assert.equal(
+        Number(
+          db.prepare("UPDATE agents SET version=version+1 WHERE agent_id=?").run(fixture.engineer.agentId).changes
+        ),
+        1
+      );
     } finally {
       db.close();
     }
-    assert.throws(
-      () => fixture.board.heartbeatRun(nextClaim!.run.runId, engineerAuth),
-      errorIs(401, "UNAUTHORIZED"),
-    );
+    assert.throws(() => fixture.board.heartbeatRun(nextClaim!.run.runId, engineerAuth), errorIs(401, "UNAUTHORIZED"));
     assert.equal(runRow(fixture.path, nextClaim!.run.runId).heartbeat_at, null);
   } finally {
     fixture.board.close();
@@ -248,7 +260,7 @@ test("heartbeat HTTP route mirrors settle authentication and returns the updated
       description: "Exercise agent heartbeat authentication.",
     });
     assert.equal(projectResponse.status, 201);
-    const projectId = (await projectResponse.json() as { project: { projectId: string } }).project.projectId;
+    const projectId = ((await projectResponse.json()) as { project: { projectId: string } }).project.projectId;
     for (const agent of [
       {
         agentId: "heartbeat-http-engineer",
@@ -267,34 +279,40 @@ test("heartbeat HTTP route mirrors settle authentication and returns the updated
         token: AGENT_TWO_TOKEN,
       },
     ]) {
-      assert.equal((await request(
-        address.url,
-        `/v1/projects/${projectId}/agents`,
-        "POST",
-        HUMAN_TOKEN,
-        agent,
-      )).status, 201);
+      assert.equal(
+        (await request(address.url, `/v1/projects/${projectId}/agents`, "POST", HUMAN_TOKEN, agent)).status,
+        201
+      );
     }
-    const taskResponse = await request(address.url, `/v1/projects/${projectId}/tasks`, "POST", HUMAN_TOKEN, taskRequest({
-      assignedAgentId: "heartbeat-http-engineer",
-      requiresReview: false,
-    }));
+    const taskResponse = await request(
+      address.url,
+      `/v1/projects/${projectId}/tasks`,
+      "POST",
+      HUMAN_TOKEN,
+      taskRequest({
+        assignedAgentId: "heartbeat-http-engineer",
+        requiresReview: false,
+      })
+    );
     assert.equal(taskResponse.status, 201);
     const claimResponse = await request(
       address.url,
       "/v1/agents/heartbeat-http-engineer/runs/claim?waitMs=0",
       "POST",
       AGENT_ONE_TOKEN,
-      { claimId: "heartbeat-http-claim-0001", messageCursor: null },
+      { claimId: "heartbeat-http-claim-0001", messageCursor: null }
     );
     assert.equal(claimResponse.status, 201);
-    const runId = (await claimResponse.json() as { run: { runId: string } }).run.runId;
+    const runId = ((await claimResponse.json()) as { run: { runId: string } }).run.runId;
 
-    assert.equal((await request(address.url, "/v1/runs/missing-heartbeat-run/heartbeat", "POST", AGENT_ONE_TOKEN)).status, 404);
+    assert.equal(
+      (await request(address.url, "/v1/runs/missing-heartbeat-run/heartbeat", "POST", AGENT_ONE_TOKEN)).status,
+      404
+    );
     assert.equal((await request(address.url, `/v1/runs/${runId}/heartbeat`, "POST", AGENT_TWO_TOKEN)).status, 404);
     const heartbeat = await request(address.url, `/v1/runs/${runId}/heartbeat`, "POST", AGENT_ONE_TOKEN);
     assert.equal(heartbeat.status, 200);
-    const heartbeatBody = await heartbeat.json() as { run: Record<string, unknown> };
+    const heartbeatBody = (await heartbeat.json()) as { run: Record<string, unknown> };
     assert.deepEqual(
       {
         runId: heartbeatBody.run.runId,
@@ -313,16 +331,21 @@ test("heartbeat HTTP route mirrors settle authentication and returns the updated
         runtimeVersion: null,
         model: null,
         promptsSha: null,
-      },
+      }
     );
 
-    assert.equal((await request(address.url, `/v1/runs/${runId}/settle`, "POST", AGENT_ONE_TOKEN, {
-      outcome: "interrupted",
-      result: "Settle before retrying the heartbeat route.",
-    })).status, 200);
+    assert.equal(
+      (
+        await request(address.url, `/v1/runs/${runId}/settle`, "POST", AGENT_ONE_TOKEN, {
+          outcome: "interrupted",
+          result: "Settle before retrying the heartbeat route.",
+        })
+      ).status,
+      200
+    );
     const settled = await request(address.url, `/v1/runs/${runId}/heartbeat`, "POST", AGENT_ONE_TOKEN);
     assert.equal(settled.status, 409);
-    assert.equal((await settled.json() as { error: { code: string } }).error.code, "RUN_NOT_ACTIVE");
+    assert.equal(((await settled.json()) as { error: { code: string } }).error.code, "RUN_NOT_ACTIVE");
   } finally {
     await service.close();
   }
@@ -342,11 +365,14 @@ test("stale-run sweep interrupts stale runs, leaves recent heartbeats alive, and
       model: "codex-mini",
       token: AGENT_ONE_TOKEN,
     });
-    const staleTask = board.createTask(project.projectId, taskRequest({
-      title: "Interrupt stale work",
-      assignedAgentId: engineer.agentId,
-      requiresReview: false,
-    }));
+    const staleTask = board.createTask(
+      project.projectId,
+      taskRequest({
+        title: "Interrupt stale work",
+        assignedAgentId: engineer.agentId,
+        requiresReview: false,
+      })
+    );
     const staleClaim = board.claimRun(engineer.agentId, {
       claimId: "stale-sweep-claim-0001",
       messageCursor: null,
@@ -369,18 +395,24 @@ test("stale-run sweep interrupts stale runs, leaves recent heartbeats alive, and
     assert.equal(replay.run.heartbeatAt, null);
     assert.equal(replay.run.endedAt, "2026-08-16T12:00:00.000Z");
     assert.equal(replay.run.result, "run heartbeat lost");
-    assert.ok(snapshot.recentEvents.some((event) => event.taskId === staleTask.taskId
-      && event.eventType === "agent_run_settled"
-      && event.actorType === "system"));
+    assert.ok(
+      snapshot.recentEvents.some(
+        (event) =>
+          event.taskId === staleTask.taskId && event.eventType === "agent_run_settled" && event.actorType === "system"
+      )
+    );
     const afterFirstSweep = board.snapshot(project.projectId);
     assert.equal(board.reconcileStaleRuns(), 0);
     assert.deepEqual(board.snapshot(project.projectId), afterFirstSweep);
 
-    const recentTask = board.createTask(project.projectId, taskRequest({
-      title: "Keep recently heartbeating work active",
-      assignedAgentId: engineer.agentId,
-      requiresReview: false,
-    }));
+    const recentTask = board.createTask(
+      project.projectId,
+      taskRequest({
+        title: "Keep recently heartbeating work active",
+        assignedAgentId: engineer.agentId,
+        requiresReview: false,
+      })
+    );
     const recentClaim = board.claimRun(engineer.agentId, {
       claimId: "recent-heartbeat-claim-0001",
       messageCursor: null,
@@ -390,7 +422,10 @@ test("stale-run sweep interrupts stale runs, leaves recent heartbeats alive, and
     now = new Date("2026-08-16T12:01:00.000Z");
     board.heartbeatRun(recentClaim!.run.runId, board.authenticateAgent(AGENT_ONE_TOKEN, engineer.agentId));
     assert.equal(board.reconcileStaleRuns(), 0);
-    assert.equal(board.snapshot(project.projectId).recentRuns.find((run) => run.runId === recentClaim!.run.runId)?.status, "active");
+    assert.equal(
+      board.snapshot(project.projectId).recentRuns.find((run) => run.runId === recentClaim!.run.runId)?.status,
+      "active"
+    );
   } finally {
     board.close();
   }
@@ -433,25 +468,32 @@ test("sweeping a stale workflow run records the same workflow settlement effects
       model: "codex-mini",
       token: "heartbeat-sweep-verifier-token-0123456789",
     });
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [{
-        agentTypeId: "heartbeat-sweep-verifier",
-        name: "Heartbeat sweep verifier",
-        description: "Executes the stale workflow fixture.",
-        role: "verifier",
-        supplementalInstructions: "Exercise workflow settlement through the sweep.",
-        skillIds: [],
-        evaluatorProfile: "tests",
-        enabled: true,
-      }],
-      stages: automationStages({
-        verification: { kind: "agent_type", agentTypeId: "heartbeat-sweep-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "heartbeat-sweep-verifier",
+            name: "Heartbeat sweep verifier",
+            description: "Executes the stale workflow fixture.",
+            role: "verifier",
+            supplementalInstructions: "Exercise workflow settlement through the sweep.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          verification: { kind: "agent_type", agentTypeId: "heartbeat-sweep-verifier" },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Sweep a stale workflow run through normal settlement.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Sweep a stale workflow run through normal settlement.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "heartbeat-workflow-sweep-0001").workItem;
+      "heartbeat-workflow-sweep-0001"
+    ).workItem;
     await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
@@ -460,14 +502,16 @@ test("sweeping a stale workflow run records the same workflow settlement effects
       assumptions: [],
       acceptanceCriteria: ["The node receives an ordinary failed handoff."],
       skillIds: [],
-      nodes: [{
-        nodeId: "heartbeat-workflow-node",
-        title: "Heartbeat workflow node",
-        objective: "Lose a heartbeat while verification is active.",
-        acceptanceCriteria: ["The workflow settlement is observable."],
-        dependencyNodeIds: [],
-        stageTemplate: ["verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "heartbeat-workflow-node",
+          title: "Heartbeat workflow node",
+          objective: "Lose a heartbeat while verification is active.",
+          acceptanceCriteria: ["The workflow settlement is observable."],
+          dependencyNodeIds: [],
+          stageTemplate: ["verification"],
+        },
+      ],
     });
     fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
     const claim = fixture.board.claimRun(verifier.agentId, {
@@ -484,7 +528,9 @@ test("sweeping a stale workflow run records the same workflow settlement effects
     assert.equal(workflow.handoffs[0]?.taskId, claim.task?.taskId);
     assert.equal(workflow.handoffs[0]?.outcome, "failed");
     assert.equal(workflow.handoffs[0]?.summary, "run heartbeat lost");
-    assert.ok(workflow.events.some((event) => event.taskId === claim.task?.taskId && event.eventType === "stage_failed"));
+    assert.ok(
+      workflow.events.some((event) => event.taskId === claim.task?.taskId && event.eventType === "stage_failed")
+    );
   } finally {
     fixture.board.close();
   }
@@ -502,38 +548,43 @@ test("a swept implementation retries through verification to merged with truthfu
       model: "codex-mini",
       token: "heartbeat-retry-verifier-token-0123456789",
     });
-    fixture.board.updateAutomationConfiguration(automationConfigurationRequest({
-      agentTypes: [
-        {
-          agentTypeId: "heartbeat-retry-implementer",
-          name: "Heartbeat retry implementer",
-          description: "Executes and retries the implementation stage.",
-          role: "engineer",
-          supplementalInstructions: "Complete the bounded implementation.",
-          skillIds: [],
-          evaluatorProfile: "tests",
-          enabled: true,
-        },
-        {
-          agentTypeId: "heartbeat-retry-verifier",
-          name: "Heartbeat retry verifier",
-          description: "Verifies the retried implementation.",
-          role: "verifier",
-          supplementalInstructions: "Verify the implementation independently.",
-          skillIds: [],
-          evaluatorProfile: "tests",
-          enabled: true,
-        },
-      ],
-      stages: automationStages({
-        implementation: { kind: "agent_type", agentTypeId: "heartbeat-retry-implementer" },
-        verification: { kind: "agent_type", agentTypeId: "heartbeat-retry-verifier" },
+    fixture.board.updateAutomationConfiguration(
+      automationConfigurationRequest({
+        agentTypes: [
+          {
+            agentTypeId: "heartbeat-retry-implementer",
+            name: "Heartbeat retry implementer",
+            description: "Executes and retries the implementation stage.",
+            role: "engineer",
+            supplementalInstructions: "Complete the bounded implementation.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+          {
+            agentTypeId: "heartbeat-retry-verifier",
+            name: "Heartbeat retry verifier",
+            description: "Verifies the retried implementation.",
+            role: "verifier",
+            supplementalInstructions: "Verify the implementation independently.",
+            skillIds: [],
+            evaluatorProfile: "tests",
+            enabled: true,
+          },
+        ],
+        stages: automationStages({
+          implementation: { kind: "agent_type", agentTypeId: "heartbeat-retry-implementer" },
+          verification: { kind: "agent_type", agentTypeId: "heartbeat-retry-verifier" },
+        }),
+      })
+    );
+    const workItem = fixture.board.createWorkItem(
+      workItemRequest({
+        originalRequest: "Retry a swept implementation and preserve truthful state history.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
       }),
-    }));
-    const workItem = fixture.board.createWorkItem(workItemRequest({
-      originalRequest: "Retry a swept implementation and preserve truthful state history.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "heartbeat-retry-history-0001").workItem;
+      "heartbeat-retry-history-0001"
+    ).workItem;
     await stageWorkItemForWorkflow(fixture.path, workItem.workItemId);
     const proposed = fixture.board.proposeWorkflow({
       workItemId: workItem.workItemId,
@@ -542,19 +593,23 @@ test("a swept implementation retries through verification to merged with truthfu
       assumptions: [],
       acceptanceCriteria: ["The work item reaches merged with truthful transition history."],
       skillIds: [],
-      nodes: [{
-        nodeId: "heartbeat-retry-history-node",
-        title: "Retry the stale implementation",
-        objective: "Recover the interrupted implementation before verification.",
-        acceptanceCriteria: ["Both stages complete after the retry."],
-        dependencyNodeIds: [],
-        stageTemplate: ["implementation", "verification"],
-      }],
+      nodes: [
+        {
+          nodeId: "heartbeat-retry-history-node",
+          title: "Retry the stale implementation",
+          objective: "Recover the interrupted implementation before verification.",
+          acceptanceCriteria: ["Both stages complete after the retry."],
+          dependencyNodeIds: [],
+          stageTemplate: ["implementation", "verification"],
+        },
+      ],
     });
     fixture.board.confirmWorkflow(proposed.plans[0]!.planRevisionId, { expectedState: "proposed" });
 
-    const transitionPairs = () => fixture.board.requireWorkItem(workItem.workItemId).transitions
-      .map((transition) => [transition.fromState, transition.toState]);
+    const transitionPairs = () =>
+      fixture.board
+        .requireWorkItem(workItem.workItemId)
+        .transitions.map((transition) => [transition.fromState, transition.toState]);
     const implementingHistory = [
       [null, "queued"],
       ["queued", "planning"],
@@ -590,10 +645,7 @@ test("a swept implementation retries through verification to merged with truthfu
       result: "The retried implementation completed successfully.",
     });
     assert.equal(fixture.board.requireWorkItem(workItem.workItemId).state, "reviewing");
-    assert.deepEqual(transitionPairs(), [
-      ...implementingHistory,
-      ["implementing", "reviewing"],
-    ]);
+    assert.deepEqual(transitionPairs(), [...implementingHistory, ["implementing", "reviewing"]]);
 
     const verificationClaim = fixture.board.claimRun(verifier.agentId, {
       claimId: "heartbeat-retry-verification-0001",
@@ -622,10 +674,13 @@ test("cancelling a work item interrupts its active planning run before the stale
   let now = new Date("2026-08-16T12:00:00.000Z");
   const fixture = await boardFixture(undefined, () => now);
   try {
-    const created = fixture.board.createWorkItemAndStartPlanning(workItemRequest({
-      originalRequest: "Cancel intake while its planning worker is still active.",
-      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-    }), "heartbeat-cancelled-planning-0001").workItem;
+    const created = fixture.board.createWorkItemAndStartPlanning(
+      workItemRequest({
+        originalRequest: "Cancel intake while its planning worker is still active.",
+        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
+      }),
+      "heartbeat-cancelled-planning-0001"
+    ).workItem;
     const claim = fixture.board.claimRun(fixture.manager.agentId, {
       claimId: "heartbeat-cancelled-planning-run-0001",
       messageCursor: null,
@@ -638,15 +693,17 @@ test("cancelling a work item interrupts its active planning run before the stale
     });
     assert.equal(cancelled.state, "abandoned");
     assert.equal(fixture.board.requireTask(claim!.task!.taskId).status, "cancelled");
-    const interrupted = fixture.board.snapshot(fixture.project.projectId).recentRuns.find(
-      (item) => item.runId === claim!.run.runId,
-    );
+    const interrupted = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentRuns.find((item) => item.runId === claim!.run.runId);
     assert.equal(interrupted?.status, "interrupted");
     assert.equal(interrupted?.result, "The operator cancelled intake while planning was running.");
 
     now = new Date("2026-08-16T12:10:00.000Z");
     assert.equal(fixture.board.reconcileStaleRuns(), 0);
-    const run = fixture.board.snapshot(fixture.project.projectId).recentRuns.find((item) => item.runId === claim!.run.runId);
+    const run = fixture.board
+      .snapshot(fixture.project.projectId)
+      .recentRuns.find((item) => item.runId === claim!.run.runId);
     assert.equal(run?.status, "interrupted");
     assert.equal(run?.result, "The operator cancelled intake while planning was running.");
     assert.equal(fixture.board.requireWorkItem(created.workItemId).state, "abandoned");
@@ -661,7 +718,10 @@ test("startup sweeps stale runs and the service interval is unrefed and cleared"
   const first = await TaskBoard.open(taskBoardConfig(path, () => new Date("2026-08-16T12:00:00.000Z")));
   let runId = "";
   try {
-    const project = first.createProject({ name: "Startup sweep", description: "Exercise startup and timer ownership." });
+    const project = first.createProject({
+      name: "Startup sweep",
+      description: "Exercise startup and timer ownership.",
+    });
     const engineer = first.createAgent(project.projectId, {
       agentId: "startup-sweep-engineer",
       role: "engineer",
@@ -692,7 +752,11 @@ test("startup sweeps stale runs and the service interval is unrefed and cleared"
   let intervalDelay: number | undefined;
   let unrefed = false;
   let cleared = false;
-  const fakeTimer = { unref: () => { unrefed = true; } } as NodeJS.Timeout;
+  const fakeTimer = {
+    unref: () => {
+      unrefed = true;
+    },
+  } as NodeJS.Timeout;
   globalThis.setInterval = ((callback: () => void, delay?: number) => {
     intervalCallback = callback;
     intervalDelay = delay;

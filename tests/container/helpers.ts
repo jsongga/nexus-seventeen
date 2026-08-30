@@ -8,10 +8,15 @@ import type { BoundedAgentContext } from "#server/agents/task-worker";
 
 export function docker(args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("docker", [...args], { encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(`docker ${args[0]} failed: ${stderr}`));
-      else resolve(stdout);
-    });
+    execFile(
+      "docker",
+      [...args],
+      { encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(`docker ${args[0]} failed: ${stderr}`));
+        else resolve(stdout);
+      }
+    );
   });
 }
 

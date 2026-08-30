@@ -20,7 +20,10 @@ try {
   const result = board.createWorkItemAndStartPlanning(data.request, data.idempotencyKey);
   parentPort?.postMessage({ type: "complete", state: result.workItem.state });
 } catch (error) {
-  parentPort?.postMessage({ type: "error", message: error instanceof Error ? error.stack ?? error.message : String(error) });
+  parentPort?.postMessage({
+    type: "error",
+    message: error instanceof Error ? (error.stack ?? error.message) : String(error),
+  });
 } finally {
   board.close();
   parentPort?.close();

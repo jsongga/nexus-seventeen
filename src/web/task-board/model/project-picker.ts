@@ -1,5 +1,5 @@
-import { parseProjectMetadata } from './project-metadata';
-import type { BoardProject, HostProjectRoot } from '../types';
+import { parseProjectMetadata } from "./project-metadata";
+import type { BoardProject, HostProjectRoot } from "../types";
 
 interface PickerEntry {
   name: string;
@@ -14,7 +14,7 @@ export function addedWorkspacePaths(projects: readonly BoardProject[]): Set<stri
   const paths = new Set<string>();
   for (const project of projects) {
     for (const entry of parseProjectMetadata(project.repoPath).entries) {
-      if (entry.kind === 'workspace') paths.add(entry.value.replace(/[\\/]+$/u, ''));
+      if (entry.kind === "workspace") paths.add(entry.value.replace(/[\\/]+$/u, ""));
     }
   }
   return paths;
@@ -24,7 +24,7 @@ export function pickerEntries(roots: readonly HostProjectRoot[], added: Readonly
   return roots.flatMap((root) =>
     [...root.projects]
       .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs || left.name.localeCompare(right.name))
-      .map((project) => ({ ...project, rootName: root.name, added: added.has(project.path) })),
+      .map((project) => ({ ...project, rootName: root.name, added: added.has(project.path) }))
   );
 }
 
@@ -35,6 +35,6 @@ export function filterPickerEntries(entries: readonly PickerEntry[], query: stri
 }
 
 export function breadcrumbSegments(path: string): { label: string; path: string }[] {
-  const parts = path.split('/').filter((part) => part.length > 0);
-  return parts.map((label, index) => ({ label, path: `/${parts.slice(0, index + 1).join('/')}` }));
+  const parts = path.split("/").filter((part) => part.length > 0);
+  return parts.map((label, index) => ({ label, path: `/${parts.slice(0, index + 1).join("/")}` }));
 }

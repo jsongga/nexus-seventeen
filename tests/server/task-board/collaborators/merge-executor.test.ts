@@ -14,7 +14,7 @@ function git(repo: string, ...arguments_: string[]): string {
 }
 
 async function fixtureRepo(
-  mergeTarget = "main",
+  mergeTarget = "main"
 ): Promise<Readonly<{ root: string; repo: string; baseSha: string; branch: string; mergeTarget: string }>> {
   const root = await mkdtemp(join(tmpdir(), "steward-final-merge-"));
   const repo = join(root, "repo");
@@ -91,13 +91,16 @@ test("mergePipelineBranch reports repo_busy when another task branch is checked 
   git(fixture.repo, "branch", fixture.branch);
   git(fixture.repo, "switch", "-c", "task/operator-work");
 
-  assert.deepEqual(mergePipelineBranch({
-    repoPath: fixture.repo,
-    branch: fixture.branch,
-    branchSha: fixture.baseSha,
-    baseSha: fixture.baseSha,
-    git: runMergeGit,
-  }), { kind: "repo_busy" });
+  assert.deepEqual(
+    mergePipelineBranch({
+      repoPath: fixture.repo,
+      branch: fixture.branch,
+      branchSha: fixture.baseSha,
+      baseSha: fixture.baseSha,
+      git: runMergeGit,
+    }),
+    { kind: "repo_busy" }
+  );
 });
 
 test("mergePipelineBranch reports repo_busy when the default branch worktree is dirty", async (t) => {
@@ -106,13 +109,16 @@ test("mergePipelineBranch reports repo_busy when the default branch worktree is 
   git(fixture.repo, "branch", fixture.branch);
   await writeFile(join(fixture.repo, "shared.txt"), "uncommitted operator work\n");
 
-  assert.deepEqual(mergePipelineBranch({
-    repoPath: fixture.repo,
-    branch: fixture.branch,
-    branchSha: fixture.baseSha,
-    baseSha: fixture.baseSha,
-    git: runMergeGit,
-  }), { kind: "repo_busy" });
+  assert.deepEqual(
+    mergePipelineBranch({
+      repoPath: fixture.repo,
+      branch: fixture.branch,
+      branchSha: fixture.baseSha,
+      baseSha: fixture.baseSha,
+      git: runMergeGit,
+    }),
+    { kind: "repo_busy" }
+  );
 });
 
 test("mergePipelineBranch reports diverged when the pipeline base is not an ancestor of the merge target", async (t) => {
@@ -143,13 +149,16 @@ test("mergePipelineBranch reports an empty pipeline branch without creating a me
   git(fixture.repo, "branch", fixture.branch);
   const before = git(fixture.repo, "rev-parse", "HEAD").trim();
 
-  assert.deepEqual(mergePipelineBranch({
-    repoPath: fixture.repo,
-    branch: fixture.branch,
-    branchSha: fixture.baseSha,
-    baseSha: fixture.baseSha,
-    git: runMergeGit,
-  }), { kind: "empty" });
+  assert.deepEqual(
+    mergePipelineBranch({
+      repoPath: fixture.repo,
+      branch: fixture.branch,
+      branchSha: fixture.baseSha,
+      baseSha: fixture.baseSha,
+      git: runMergeGit,
+    }),
+    { kind: "empty" }
+  );
   assert.equal(git(fixture.repo, "rev-parse", "HEAD").trim(), before);
   assert.equal(git(fixture.repo, "status", "--porcelain", "-z"), "");
 });

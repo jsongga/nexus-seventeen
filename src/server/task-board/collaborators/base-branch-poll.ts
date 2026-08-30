@@ -41,12 +41,14 @@ export class BaseBranchPollCollaborator {
   constructor(
     private readonly runtime: TaskBoardRuntime,
     private readonly projects: ProjectsCollaborator,
-    private readonly git: GitTextRunner = runWorkflowGit,
+    private readonly git: GitTextRunner = runWorkflowGit
   ) {}
 
   sweepBaseBranch(now: string): BaseBranchSweepResult {
     if (!exactIsoTimestamp(now)) throw new Error("TASK_BOARD_CLOCK_INVALID");
-    const rows = this.runtime.store.db.prepare(`
+    const rows = this.runtime.store.db
+      .prepare(
+        `
       SELECT
         item.work_item_id,
         item.version,
@@ -57,7 +59,9 @@ export class BaseBranchPollCollaborator {
       LEFT JOIN projects project ON project.project_id=item.resolved_project_id
       WHERE item.state='final_approval' AND item.pipeline_branch IS NOT NULL
       ORDER BY item.created_at,item.work_item_id
-    `).all() as Row[];
+    `
+      )
+      .all() as Row[];
     let withdrawn = 0;
     let diverged = 0;
     for (const row of rows) {

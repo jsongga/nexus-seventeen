@@ -41,7 +41,9 @@ export const CREDENTIAL_REVOKED_MESSAGE = "lane credential revoked — update th
 
 function defaultLogger(event: TaskFleetEvent): void {
   if (event.type === "lane_credential_revoked") {
-    process.stderr.write(`[task-fleet] ${CREDENTIAL_REVOKED_MESSAGE} agent=${event.agentId} worker=${event.workerId}\n`);
+    process.stderr.write(
+      `[task-fleet] ${CREDENTIAL_REVOKED_MESSAGE} agent=${event.agentId} worker=${event.workerId}\n`
+    );
     return;
   }
   let detail = "";
@@ -52,7 +54,8 @@ function defaultLogger(event: TaskFleetEvent): void {
   } else if (event.type === "claim_dropped") {
     detail = ` error=${JSON.stringify(event.error)} settleError=${JSON.stringify(event.settleError)}`;
   } else if (
-    event.type === "claim_quarantined" || event.type === "claim_drop_failed" ||
+    event.type === "claim_quarantined" ||
+    event.type === "claim_drop_failed" ||
     event.type === "lane_error_report_failed"
   ) {
     detail = ` error=${JSON.stringify(event.error)}`;
@@ -93,7 +96,8 @@ export class TaskFleet {
     if (options.classifyError === undefined && options.isTransient === undefined) {
       throw new Error("Task fleet requires an error classifier");
     }
-    this.#classifyError = options.classifyError ?? ((error) => options.isTransient!(error) ? "TRANSIENT" : "POISONED");
+    this.#classifyError =
+      options.classifyError ?? ((error) => (options.isTransient!(error) ? "TRANSIENT" : "POISONED"));
     this.#logger = options.logger ?? defaultLogger;
     this.#sleeper = options.sleeper ?? abortableSleep;
     this.#random = options.random ?? Math.random;
@@ -103,14 +107,18 @@ export class TaskFleet {
     return Object.freeze({
       started: this.#started,
       stopping: this.#stopping,
-      lanes: Object.freeze(this.#lanes.map((lane) => Object.freeze({
-        agentId: lane.config.agentId,
-        workerId: lane.config.workerId,
-        status: lane.status,
-        restartCount: lane.restartCount,
-        retryDelayMs: lane.retryDelayMs,
-        lastError: lane.lastError,
-      }))),
+      lanes: Object.freeze(
+        this.#lanes.map((lane) =>
+          Object.freeze({
+            agentId: lane.config.agentId,
+            workerId: lane.config.workerId,
+            status: lane.status,
+            restartCount: lane.restartCount,
+            retryDelayMs: lane.retryDelayMs,
+            lastError: lane.lastError,
+          })
+        )
+      ),
     });
   }
 
@@ -124,28 +132,37 @@ export class TaskFleet {
 
   async #run(signal: AbortSignal): Promise<void> {
     try {
-      const created = await Promise.allSettled(this.#config.agents.map(async (config): Promise<Lane> => ({
-        config,
-        worker: await this.#workerFactory(config, this.#config.boardUrl),
-        status: "starting",
-        restartCount: 0,
-        retryDelayMs: null,
-        lastError: null,
-      })));
+      const created = await Promise.allSettled(
+        this.#config.agents.map(
+          async (config): Promise<Lane> => ({
+            config,
+            worker: await this.#workerFactory(config, this.#config.boardUrl),
+            status: "starting",
+            restartCount: 0,
+            retryDelayMs: null,
+            lastError: null,
+          })
+        )
+      );
       const failed = created.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       const workers = created
         .filter((result): result is PromiseFulfilledResult<Lane> => result.status === "fulfilled")
         .map((result) => result.value);
       if (failed.length > 0) {
         await Promise.allSettled(workers.map((lane) => lane.worker.close()));
-        throw new AggregateError(failed.map((result) => result.reason), "Task-fleet worker creation failed");
+        throw new AggregateError(
+          failed.map((result) => result.reason),
+          "Task-fleet worker creation failed"
+        );
       }
       this.#lanes = workers;
       if (signal.aborted || this.#closePromise !== null) {
-        await Promise.allSettled(workers.map(async (lane) => {
-          await lane.worker.close();
-          lane.status = "closed";
-        }));
+        await Promise.allSettled(
+          workers.map(async (lane) => {
+            await lane.worker.close();
+            lane.status = "closed";
+          })
+        );
         return;
       }
       await Promise.all(workers.map((lane) => this.#runLane(lane, signal)));
@@ -216,7 +233,7 @@ export class TaskFleet {
     const ceiling = Math.min(
       MAXIMUM_BACKOFF_MS,
       this.#config.retry.maximumDelayMs,
-      this.#config.retry.initialDelayMs * 2 ** Math.min(30, Math.max(0, attempt - 1)),
+      this.#config.retry.initialDelayMs * 2 ** Math.min(30, Math.max(0, attempt - 1))
     );
     const sampled = this.#random();
     const unit = Number.isFinite(sampled) ? Math.max(0, Math.min(0.999_999_999, sampled)) : 0.5;
@@ -310,11 +327,13 @@ export class TaskFleet {
 
   async #close(): Promise<void> {
     this.#stopping = true;
-    await Promise.allSettled(this.#lanes.map(async (lane) => {
-      await lane.worker.close();
-      lane.status = "closed";
-      lane.retryDelayMs = null;
-      this.#logger({ type: "lane_closed", agentId: lane.config.agentId, workerId: lane.config.workerId });
-    }));
+    await Promise.allSettled(
+      this.#lanes.map(async (lane) => {
+        await lane.worker.close();
+        lane.status = "closed";
+        lane.retryDelayMs = null;
+        this.#logger({ type: "lane_closed", agentId: lane.config.agentId, workerId: lane.config.workerId });
+      })
+    );
   }
 }

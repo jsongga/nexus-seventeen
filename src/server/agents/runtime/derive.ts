@@ -34,14 +34,12 @@ interface ActivityBufferOptions {
 }
 
 function object(value: unknown): JsonObject | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as JsonObject
-    : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : null;
 }
 
 function contractMember<const Values extends readonly string[]>(
   value: unknown,
-  values: Values,
+  values: Values
 ): value is Values[number] {
   return typeof value === "string" && (values as readonly string[]).includes(value);
 }
@@ -52,9 +50,7 @@ function estimateFromText(value: unknown): number | null {
   const raw = matches.at(-1)?.[1];
   if (raw === undefined) return null;
   const minutes = Number(raw);
-  return Number.isSafeInteger(minutes) && minutes >= 15 && minutes <= 10_080 && minutes % 15 === 0
-    ? minutes
-    : null;
+  return Number.isSafeInteger(minutes) && minutes >= 15 && minutes <= 10_080 && minutes % 15 === 0 ? minutes : null;
 }
 
 function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
@@ -71,11 +67,13 @@ function phaseSignalFromText(value: unknown): LivePhaseSignal | null {
   const item = object(parsed);
   if (item === null || Object.keys(item).sort().join(",") !== "key,parallelGroup,stage,status,title") return null;
   if (
-    typeof item.key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.key) ||
-    item.parallelGroup !== null && (typeof item.parallelGroup !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.parallelGroup)) ||
+    typeof item.key !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.key) ||
+    (item.parallelGroup !== null &&
+      (typeof item.parallelGroup !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(item.parallelGroup))) ||
     !contractMember(item.stage, TASK_PHASE_STAGES) ||
     !contractMember(item.status, TASK_PHASE_STATUSES) ||
-    item.stage === "done" && item.status !== "completed"
+    (item.stage === "done" && item.status !== "completed")
   ) {
     return null;
   }
@@ -242,14 +240,17 @@ function positiveInteger(value: number, label: string, minimum: number): number 
 }
 
 /** Defense-in-depth for bounded provider activity and phase telemetry. */
-export function sanitizeActivity(value: string, maximumCharacters = DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS): string | null {
+export function sanitizeActivity(
+  value: string,
+  maximumCharacters = DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS
+): string | null {
   positiveInteger(maximumCharacters, "maximumCharacters", 32);
-  let result = redactRecognizedCredentials(
-    value.replace(/[\u0000-\u001f\u007f]+/gu, " "),
-    ACTIVITY_CREDENTIAL_MARKERS,
-  )
+  let result = redactRecognizedCredentials(value.replace(/[\u0000-\u001f\u007f]+/gu, " "), ACTIVITY_CREDENTIAL_MARKERS)
     .replace(ACTIVITY_LINK_PATTERN, "[link redacted]")
-    .replace(/(^|[\s("'`])\/(?:Users|home|var|tmp|private|opt|srv|workspaces?|repos?|mnt|Volumes)\/[^\s"'`),;]*/gu, "$1[local path]")
+    .replace(
+      /(^|[\s("'`])\/(?:Users|home|var|tmp|private|opt|srv|workspaces?|repos?|mnt|Volumes)\/[^\s"'`),;]*/gu,
+      "$1[local path]"
+    )
     .replace(/\b[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]*/gu, "[local path]")
     .replace(/\s+/gu, " ")
     .trim();
@@ -304,7 +305,11 @@ export class ActivityBuffer {
   constructor(options: ActivityBufferOptions = {}) {
     this.#minimumIntervalMs = positiveInteger(options.minimumIntervalMs ?? 1_500, "minimumIntervalMs", 0);
     this.#dedupeWindowMs = positiveInteger(options.dedupeWindowMs ?? 30_000, "dedupeWindowMs", 0);
-    this.#maximumCharacters = positiveInteger(options.maximumCharacters ?? DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS, "maximumCharacters", 32);
+    this.#maximumCharacters = positiveInteger(
+      options.maximumCharacters ?? DEFAULT_MAXIMUM_ACTIVITY_CHARACTERS,
+      "maximumCharacters",
+      32
+    );
   }
 
   get hasPending(): boolean {
@@ -349,7 +354,8 @@ export class ActivityBuffer {
 
   #observeTime(observedAt: number): void {
     if (!Number.isSafeInteger(observedAt) || observedAt < 0) throw new Error("observedAt is invalid");
-    if (this.#lastObservedAt !== null && observedAt < this.#lastObservedAt) throw new Error("observedAt moved backwards");
+    if (this.#lastObservedAt !== null && observedAt < this.#lastObservedAt)
+      throw new Error("observedAt moved backwards");
     this.#lastObservedAt = observedAt;
   }
 

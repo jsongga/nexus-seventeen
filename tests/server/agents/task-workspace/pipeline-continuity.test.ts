@@ -4,11 +4,7 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
-import type {
-  AgentLauncher,
-  AgentRunHandle,
-  BoundedAgentContext,
-} from "#server/agents/task-worker/types";
+import type { AgentLauncher, AgentRunHandle, BoundedAgentContext } from "#server/agents/task-worker/types";
 import { FakeLauncher, completedOutcome, context, tempRoot } from "../task-worker/helpers.js";
 
 function git(cwd: string, args: readonly string[]): Promise<string> {
@@ -146,15 +142,19 @@ test("two completed launches preserve both commits on one harvested task branch"
       if (launches === 2) {
         assert.equal(await readFile(join(request.workspace.path, "round-1.txt"), "utf8"), "first round\n");
       }
-      commits.push(await commitFile(
-        request.workspace.path,
-        `round-${launches}.txt`,
-        launches === 1 ? "first round\n" : "second round\n",
-        `round ${launches}`,
-      ));
+      commits.push(
+        await commitFile(
+          request.workspace.path,
+          `round-${launches}.txt`,
+          launches === 1 ? "first round\n" : "second round\n",
+          `round ${launches}`
+        )
+      );
       return {
         completion: Promise.resolve(completedOutcome(`round ${launches}`)),
-        activity: (async function* activity() { return; })(),
+        activity: (async function* activity() {
+          return;
+        })(),
         interrupt: () => Promise.resolve(),
       };
     },
@@ -176,7 +176,7 @@ test("two completed launches preserve both commits on one harvested task branch"
   assert.equal(launches, 2);
   assert.deepEqual(
     (await git(repo, ["rev-list", "--reverse", `${baseSha}..task/${workspaceKey}`])).trim().split("\n"),
-    commits,
+    commits
   );
   assert.equal(await git(repo, ["show", `task/${workspaceKey}:round-1.txt`]), "first round\n");
   assert.equal(await git(repo, ["show", `task/${workspaceKey}:round-2.txt`]), "second round\n");
@@ -198,12 +198,17 @@ test("a completed review launch clones the implementation branch without harvest
     assertRole: () => undefined,
     async launch(request): Promise<AgentRunHandle> {
       assert.ok(request.workspace);
-      assert.equal(await readFile(join(request.workspace.path, "implementation.txt"), "utf8"), "implementation result\n");
+      assert.equal(
+        await readFile(join(request.workspace.path, "implementation.txt"), "utf8"),
+        "implementation result\n"
+      );
       assert.equal((await git(request.workspace.path, ["branch", "--show-current"])).trim(), `task/${branchKey}`);
       await commitFile(request.workspace.path, "review-only.txt", "must not harvest\n", "review-only mutation");
       return {
         completion: Promise.resolve(completedOutcome("review complete")),
-        activity: (async function* activity() { return; })(),
+        activity: (async function* activity() {
+          return;
+        })(),
         interrupt: () => Promise.resolve(),
       };
     },

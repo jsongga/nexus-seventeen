@@ -23,20 +23,10 @@ import {
   type WorkItem,
   type WorkNode,
 } from "#shared/task-board-contract";
-import {
-  ContainedCliAgentLauncher,
-  HttpTaskBoardClient,
-  PromptRegistry,
-  TaskWorker,
-} from "#server/agents/task-worker";
+import { ContainedCliAgentLauncher, HttpTaskBoardClient, PromptRegistry, TaskWorker } from "#server/agents/task-worker";
 import { TaskWorkspaceManager, WorkspaceScopedLauncher } from "#server/agents/task-workspace";
 import { VerifyRunner } from "#server/agents/verify";
-import {
-  createTaskBoardService,
-  normalizeTaskBoardConfig,
-  TaskBoard,
-  type TaskBoardService,
-} from "#server/task-board";
+import { createTaskBoardService, normalizeTaskBoardConfig, TaskBoard, type TaskBoardService } from "#server/task-board";
 import { DEFAULT_SUPERVISOR_PATH } from "#server/task-board/collaborators/verify-attempts";
 import { automationConfigurationRequest, automationStages, gateActions } from "./helpers.js";
 
@@ -69,28 +59,34 @@ type PlanTier = "standard" | "hazardous";
 
 const HAZARDOUS_DESIGN_RECORD = {
   states: ["pending", "sent", "committed", "unknown"],
-  transitions: [{
-    from: "pending",
-    to: "sent",
-    durablePrecondition: "Persist the intent and idempotency key before sending.",
-    recovery: "Resume from the durable intent with the same key.",
-  }],
+  transitions: [
+    {
+      from: "pending",
+      to: "sent",
+      durablePrecondition: "Persist the intent and idempotency key before sending.",
+      recovery: "Resume from the durable intent with the same key.",
+    },
+  ],
   failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
     point,
     resultingState: `durable state after ${point}`,
     recovery: `recover ${point} from durable state`,
   })),
-  idempotencyKeys: [{
-    name: "pipeline-delivery-key",
-    generatedAt: "When the durable intent is created.",
-    persistedAt: "In the same transaction as the intent.",
-    reuse: "Reuse verbatim for every retry.",
-  }],
-  faultInjectionCases: [{
-    name: "Crash after commit",
-    scenario: "Terminate after commit and before acknowledgement.",
-    expectation: "Retry observes the committed result without duplicating delivery.",
-  }],
+  idempotencyKeys: [
+    {
+      name: "pipeline-delivery-key",
+      generatedAt: "When the durable intent is created.",
+      persistedAt: "In the same transaction as the intent.",
+      reuse: "Reuse verbatim for every retry.",
+    },
+  ],
+  faultInjectionCases: [
+    {
+      name: "Crash after commit",
+      scenario: "Terminate after commit and before acknowledgement.",
+      expectation: "Retry observes the committed result without duplicating delivery.",
+    },
+  ],
 } satisfies DesignRecordDraft;
 
 interface WorkflowSnapshot {
@@ -174,10 +170,12 @@ interface FixtureOptions {
   readonly verifyPasses: boolean;
   readonly declaredScope?: readonly string[];
   readonly repos?: readonly FixtureRepositoryOptions[];
-  readonly scopeRoutes?: ReadonlyArray<Readonly<{
-    marker: string;
-    declaredScope: readonly string[];
-  }>>;
+  readonly scopeRoutes?: ReadonlyArray<
+    Readonly<{
+      marker: string;
+      declaredScope: readonly string[];
+    }>
+  >;
   readonly twoEngineerLanes?: boolean;
   readonly engineerDelayMs?: number;
   readonly stageCapSeconds?: number;
@@ -199,7 +197,7 @@ async function jsonRequest<T>(
   path: string,
   method: "GET" | "POST" | "PATCH",
   expectedStatus: number,
-  options: Readonly<{ token?: string; body?: unknown; idempotencyKey?: string }> = {},
+  options: Readonly<{ token?: string; body?: unknown; idempotencyKey?: string }> = {}
 ): Promise<T> {
   const response = await fetch(`${origin}${path}`, {
     method,
@@ -238,7 +236,7 @@ function managerCliSource(
     ownProjectId: string;
     providerProjectId: string;
     consumerProjectId: string | null;
-  }>,
+  }>
 ): string {
   return `
 let input = "";
@@ -422,11 +420,10 @@ function engineerCliSource(
     providerProjectId: null,
     providerRepoName: null,
     omitInterfaceOnFirstExpand: false,
-  },
+  }
 ): string {
-  const secondPath = mode === "outside_scope"
-    ? "docs/outside.md"
-    : mode === "merge_conflict" ? "shared.txt" : "src/allowed/second.txt";
+  const secondPath =
+    mode === "outside_scope" ? "docs/outside.md" : mode === "merge_conflict" ? "shared.txt" : "src/allowed/second.txt";
   return `
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -635,19 +632,23 @@ async function fixtureRepository(root: string, name: string, verifyPasses: boole
   await writeFile(join(repo, "shared.txt"), "base shared value\n");
   await writeFile(
     join(repo, "docs", "workflow.md"),
-    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify({
-      version: 1,
-      compile: ["node verify-compile.mjs"],
-      rules: [{ match: "**", action: { kind: "none" } }],
-      full: ["node verify-full.mjs"],
-    }, null, 2)}\n\`\`\`\n`,
+    `# Verify workflow\n\n\`\`\`json\n${JSON.stringify(
+      {
+        version: 1,
+        compile: ["node verify-compile.mjs"],
+        rules: [{ match: "**", action: { kind: "none" } }],
+        full: ["node verify-full.mjs"],
+      },
+      null,
+      2
+    )}\n\`\`\`\n`
   );
   await writeFile(join(repo, "verify-compile.mjs"), 'process.stdout.write("compile marker reached\\n");\n');
   await writeFile(
     join(repo, "verify-full.mjs"),
     verifyPasses
       ? 'process.stdout.write("full verify passed\\n");\n'
-      : 'process.stderr.write("intentional full verify failure\\n"); process.exit(9);\n',
+      : 'process.stderr.write("intentional full verify failure\\n"); process.exit(9);\n'
   );
   await writeFile(join(repo, "criterion-check.mjs"), 'process.stdout.write("criterion passed\\n");\n');
   await git(repo, ["add", "."]);
@@ -658,19 +659,23 @@ async function fixtureRepository(root: string, name: string, verifyPasses: boole
 async function createFixture(options: FixtureOptions): Promise<PipelineFixture> {
   const root = await mkdtemp(join(tmpdir(), `steward-pipeline-e2e-${options.suffix}-`));
   const tier = options.tier ?? "standard";
-  const repositoryOptions = options.repos ?? [{
-    name: "repo",
-    verifyPasses: options.verifyPasses,
-    declaredScope: options.declaredScope,
-    engineerMode: options.engineerMode,
-    reviewerMode: options.reviewerMode,
-  }];
+  const repositoryOptions = options.repos ?? [
+    {
+      name: "repo",
+      verifyPasses: options.verifyPasses,
+      declaredScope: options.declaredScope,
+      engineerMode: options.engineerMode,
+      reviewerMode: options.reviewerMode,
+    },
+  ];
   assert.ok(repositoryOptions.length > 0, "a pipeline fixture needs at least one repository");
-  const repositories = await Promise.all(repositoryOptions.map(async (repository, index) => ({
-    index,
-    options: repository,
-    repo: await fixtureRepository(root, repository.name, repository.verifyPasses),
-  })));
+  const repositories = await Promise.all(
+    repositoryOptions.map(async (repository, index) => ({
+      index,
+      options: repository,
+      repo: await fixtureRepository(root, repository.name, repository.verifyPasses),
+    }))
+  );
   const dbPath = join(root, "board", "task-board.sqlite");
   const verifyWorkspaceRoot = join(root, "verify-workspaces");
   const boardOptions = {
@@ -687,12 +692,14 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
   const service = await createTaskBoardService(boardOptions);
   const address = await service.start();
   const sweepBoard = await TaskBoard.open(normalizeTaskBoardConfig(boardOptions));
-  const projectRows: Array<Readonly<{
-    index: number;
-    options: FixtureRepositoryOptions;
-    repo: string;
-    project: Project;
-  }>> = [];
+  const projectRows: Array<
+    Readonly<{
+      index: number;
+      options: FixtureRepositoryOptions;
+      repo: string;
+      project: Project;
+    }>
+  > = [];
   for (const repository of repositories) {
     const { project } = await jsonRequest<{ project: Project }>(address.url, "/v1/projects", "POST", 201, {
       body: {
@@ -739,15 +746,12 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     const managerId = `pipeline-${options.suffix}${identitySuffix}-manager`;
     const engineerId = `pipeline-${options.suffix}${identitySuffix}-engineer`;
     const verifierId = `pipeline-${options.suffix}${identitySuffix}-verifier`;
-    const managerToken = row.index === 0
-      ? MANAGER_TOKEN
-      : `pipeline-e2e-manager-${row.index + 1}-token-0123456789abcdef`;
-    const engineerToken = row.index === 0
-      ? ENGINEER_TOKEN
-      : `pipeline-e2e-engineer-${row.index + 1}-token-0123456789abcdef`;
-    const verifierToken = row.index === 0
-      ? VERIFIER_TOKEN
-      : `pipeline-e2e-verifier-${row.index + 1}-token-0123456789abcdef`;
+    const managerToken =
+      row.index === 0 ? MANAGER_TOKEN : `pipeline-e2e-manager-${row.index + 1}-token-0123456789abcdef`;
+    const engineerToken =
+      row.index === 0 ? ENGINEER_TOKEN : `pipeline-e2e-engineer-${row.index + 1}-token-0123456789abcdef`;
+    const verifierToken =
+      row.index === 0 ? VERIFIER_TOKEN : `pipeline-e2e-verifier-${row.index + 1}-token-0123456789abcdef`;
     await jsonRequest(address.url, `/v1/projects/${row.project.projectId}/agents`, "POST", 201, {
       body: {
         agentId: managerId,
@@ -787,7 +791,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
         ownProjectId: row.project.projectId,
         providerProjectId: provider.project.projectId,
         consumerProjectId: consumer?.project.projectId ?? null,
-      }),
+      })
     );
     const engineerCli = await fakeCodex(
       root,
@@ -797,12 +801,12 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
         providerProjectId: provider.project.projectId,
         providerRepoName: provider.project.name,
         omitInterfaceOnFirstExpand: row.options.omitInterfaceOnFirstExpand ?? false,
-      }),
+      })
     );
     const verifierCli = await fakeCodex(
       root,
       `verifier${cliLabel}-cli`,
-      verifierCliSource(row.options.reviewerMode ?? options.reviewerMode ?? "passed"),
+      verifierCliSource(row.options.reviewerMode ?? options.reviewerMode ?? "passed")
     );
     const managerWorker = await TaskWorker.create({
       identity: { workerId: `pipeline-${options.suffix}${identitySuffix}-manager-worker`, agentId: managerId },
@@ -843,7 +847,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
           terminationGraceMs: 10,
           groupAbsenceTimeoutMs: 2_000,
         }),
-        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: row.repo }),
+        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: row.repo })
       ),
       pinned: ENGINEER_RUN_PIN,
       longPollMs: 1,
@@ -903,7 +907,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
     const secondEngineerCli = await fakeCodex(
       root,
       "engineer-two-cli",
-      engineerCliSource(options.engineerMode, options.engineerDelayMs),
+      engineerCliSource(options.engineerMode, options.engineerDelayMs)
     );
     const secondEngineerWorker = await TaskWorker.create({
       identity: { workerId: `pipeline-${options.suffix}-engineer-two-worker`, agentId: secondEngineerId },
@@ -924,7 +928,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
           terminationGraceMs: 10,
           groupAbsenceTimeoutMs: 2_000,
         }),
-        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: project.repo }),
+        new TaskWorkspaceManager({ workspaceRoot, repositoryPath: project.repo })
       ),
       pinned: ENGINEER_RUN_PIN,
       longPollMs: 1,
@@ -982,31 +986,34 @@ async function closeFixture(fixture: PipelineFixture): Promise<void> {
   await fixture.service.close();
 }
 
-async function workflow(
-  fixture: PipelineFixture,
-  project: Project = fixture.project,
-): Promise<WorkflowSnapshot> {
-  return (await jsonRequest<{ workflow: WorkflowSnapshot }>(
-    fixture.origin,
-    `/v1/projects/${project.projectId}/workflow`,
-    "GET",
-    200,
-  )).workflow;
+async function workflow(fixture: PipelineFixture, project: Project = fixture.project): Promise<WorkflowSnapshot> {
+  return (
+    await jsonRequest<{ workflow: WorkflowSnapshot }>(
+      fixture.origin,
+      `/v1/projects/${project.projectId}/workflow`,
+      "GET",
+      200
+    )
+  ).workflow;
 }
 
 async function childrenFor(fixture: PipelineFixture, parentWorkItemId: string): Promise<readonly ChildWorkItem[]> {
-  return (await jsonRequest<{ children: readonly ChildWorkItem[] }>(
-    fixture.origin,
-    `/v1/work-items/${parentWorkItemId}/children`,
-    "GET",
-    200,
-  )).children;
+  return (
+    await jsonRequest<{ children: readonly ChildWorkItem[] }>(
+      fixture.origin,
+      `/v1/work-items/${parentWorkItemId}/children`,
+      "GET",
+      200
+    )
+  ).children;
 }
 
 function latestNodeBlock(fixture: PipelineFixture, workItemId: string): string | null {
   const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT event.summary
       FROM project_events event
       JOIN work_nodes node ON node.node_id=event.node_id
@@ -1014,7 +1021,9 @@ function latestNodeBlock(fixture: PipelineFixture, workItemId: string): string |
       WHERE plan.work_item_id=? AND event.event_type='node_blocked'
       ORDER BY event.sequence DESC
       LIMIT 1
-    `).get(workItemId) as { summary?: unknown } | undefined;
+    `
+      )
+      .get(workItemId) as { summary?: unknown } | undefined;
     return row === undefined ? null : String(row.summary);
   } finally {
     db.close();
@@ -1031,40 +1040,31 @@ function singleFinalApproval(fixture: PipelineFixture, workItemId: string, expec
 }
 
 async function currentWorkItem(fixture: PipelineFixture, workItemId = fixture.workItem.workItemId): Promise<WorkItem> {
-  return (await jsonRequest<{ workItem: WorkItem }>(
-    fixture.origin,
-    `/v1/work-items/${workItemId}`,
-    "GET",
-    200,
-  )).workItem;
+  return (await jsonRequest<{ workItem: WorkItem }>(fixture.origin, `/v1/work-items/${workItemId}`, "GET", 200))
+    .workItem;
 }
 
 async function createPipelineWorkItem(
   fixture: PipelineFixture,
   originalRequest: string,
-  idempotencyKey: string,
+  idempotencyKey: string
 ): Promise<WorkItem> {
-  const { workItem } = await jsonRequest<{ workItem: WorkItem }>(
-    fixture.origin,
-    "/v1/work-items",
-    "POST",
-    201,
-    {
-      idempotencyKey,
-      body: {
-        originalRequest,
-        priority: "normal",
-        projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
-      },
+  const { workItem } = await jsonRequest<{ workItem: WorkItem }>(fixture.origin, "/v1/work-items", "POST", 201, {
+    idempotencyKey,
+    body: {
+      originalRequest,
+      priority: "normal",
+      projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
     },
-  );
+  });
   assert.equal(workItem.state, "planning");
   return workItem;
 }
 
 function proposedPlan(snapshot: WorkflowSnapshot, workItemId: string): PlanRevision {
-  const plan = snapshot.plans.find((candidate) =>
-    candidate.workItemId === workItemId && candidate.state === "proposed");
+  const plan = snapshot.plans.find(
+    (candidate) => candidate.workItemId === workItemId && candidate.state === "proposed"
+  );
   assert.ok(plan);
   return plan;
 }
@@ -1075,21 +1075,25 @@ function assertCompletePlan(plan: PlanRevision, declaredScope: readonly string[]
   assert.deepEqual(plan.declaredScope, declaredScope);
   assert.deepEqual(plan.nonGoals, ["Do not change files outside the declared scope."]);
   assert.deepEqual(plan.mechanicalPortions, ["Add two deterministic fixture files."]);
-  assert.deepEqual(plan.blockingQuestions, [{
-    question: "Should the fixture use a published interface?",
-    recommendedDefault: "No; keep the change local to fixture files.",
-  }]);
+  assert.deepEqual(plan.blockingQuestions, [
+    {
+      question: "Should the fixture use a published interface?",
+      recommendedDefault: "No; keep the change local to fixture files.",
+    },
+  ]);
   assert.deepEqual(plan.criterionChecks, [{ criterion: CHECKED_CRITERION, check: "node criterion-check.mjs" }]);
 }
 
 async function proposeAndConfirmDecomposition(
   fixture: PipelineFixture,
   expectedShape: "feature" | "blast_radius",
-  expectedPhases: readonly ("expand" | "migrate" | "contract" | null)[],
-): Promise<Readonly<{
-  plan: PlanRevision;
-  children: readonly ChildWorkItem[];
-}>> {
+  expectedPhases: readonly ("expand" | "migrate" | "contract" | null)[]
+): Promise<
+  Readonly<{
+    plan: PlanRevision;
+    children: readonly ChildWorkItem[];
+  }>
+> {
   assert.equal(await fixture.project.managerWorker.dispatchOnce(), true);
   assert.equal((await currentWorkItem(fixture)).state, "plan_approval");
   const snapshot = await workflow(fixture);
@@ -1097,7 +1101,10 @@ async function proposeAndConfirmDecomposition(
   assert.equal(plan.changeShape, expectedShape);
   assert.equal(plan.tier, "standard");
   assert.equal(plan.children?.length, expectedPhases.length);
-  assert.deepEqual(plan.children?.map((child) => child.phase ?? null), expectedPhases);
+  assert.deepEqual(
+    plan.children?.map((child) => child.phase ?? null),
+    expectedPhases
+  );
   for (const child of plan.children ?? []) {
     assert.ok(child.objective.length > 0);
     assert.ok(child.declaredScope.length > 0);
@@ -1108,7 +1115,7 @@ async function proposeAndConfirmDecomposition(
     `/v1/plans/${plan.planRevisionId}/confirm`,
     "POST",
     200,
-    { body: { expectedState: "proposed" } },
+    { body: { expectedState: "proposed" } }
   );
   const parent = await currentWorkItem(fixture);
   assert.equal(parent.state, "coordinating");
@@ -1116,16 +1123,29 @@ async function proposeAndConfirmDecomposition(
   assert.equal(parent.baseSha, null);
   const children = await childrenFor(fixture, parent.workItemId);
   assert.equal(children.length, expectedPhases.length);
-  assert.deepEqual(children.map((child) => child.phase), expectedPhases);
-  assert.deepEqual(children.map((child) => child.childOrdinal), expectedPhases.map((_, index) => index));
+  assert.deepEqual(
+    children.map((child) => child.phase),
+    expectedPhases
+  );
+  assert.deepEqual(
+    children.map((child) => child.childOrdinal),
+    expectedPhases.map((_, index) => index)
+  );
   const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
   try {
     for (const child of children) {
-      assert.equal(db.prepare(`
+      assert.equal(
+        db
+          .prepare(
+            `
         SELECT to_state
         FROM work_item_transitions
         WHERE work_item_id=? AND sequence=1
-      `).get(child.workItemId)?.to_state, "queued");
+      `
+          )
+          .get(child.workItemId)?.to_state,
+        "queued"
+      );
     }
   } finally {
     db.close();
@@ -1153,7 +1173,7 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
       `/v1/plans/${first.planRevisionId}/reject`,
       "POST",
       200,
-      { body: { note: REJECTION_NOTE, expectedState: "proposed" } },
+      { body: { note: REJECTION_NOTE, expectedState: "proposed" } }
     );
     assert.deepEqual(rejected, { outcome: "revising" });
     const revising = await currentWorkItem(fixture);
@@ -1163,17 +1183,17 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
       fixture.origin,
       `/v1/projects/${fixture.project.projectId}/board`,
       "GET",
-      200,
+      200
     );
     assert.equal(
       board.tasks.find((task) => task.taskId === revising.planningTaskId)?.objective,
-      `Prior plan rejected: ${REJECTION_NOTE}\n\n${RAW_REQUEST}`,
+      `Prior plan rejected: ${REJECTION_NOTE}\n\n${RAW_REQUEST}`
     );
 
     assert.equal(await fixture.managerWorker.dispatchOnce(), true);
     assert.match(
       await readFile(join(fixture.managerScratch, "prompt-2.txt"), "utf8"),
-      new RegExp(`Prior plan rejected: ${REJECTION_NOTE}`, "u"),
+      new RegExp(`Prior plan rejected: ${REJECTION_NOTE}`, "u")
     );
     snapshot = await workflow(fixture);
     selected = proposedPlan(snapshot, fixture.workItem.workItemId);
@@ -1181,7 +1201,10 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
     assert.match(selected.objective, /v2\.$/u);
     assertCompletePlan(selected, fixture.declaredScope, fixture.tier);
     assert.equal(snapshot.plans.find((plan) => plan.planRevisionId === first.planRevisionId)?.state, "rejected");
-    assert.equal(snapshot.plans.find((plan) => plan.planRevisionId === first.planRevisionId)?.rejectedNote, REJECTION_NOTE);
+    assert.equal(
+      snapshot.plans.find((plan) => plan.planRevisionId === first.planRevisionId)?.rejectedNote,
+      REJECTION_NOTE
+    );
   }
 
   assert.equal((await currentWorkItem(fixture)).state, "plan_approval");
@@ -1190,7 +1213,7 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
     `/v1/plans/${selected.planRevisionId}/confirm`,
     "POST",
     200,
-    { body: { expectedState: "proposed" } },
+    { body: { expectedState: "proposed" } }
   );
   const confirmed = await currentWorkItem(fixture);
   if (fixture.tier === "hazardous") {
@@ -1209,7 +1232,7 @@ async function proposeAndConfirm(fixture: PipelineFixture, rejectOnce: boolean):
 async function proposeAndConfirmItem(
   fixture: PipelineFixture,
   workItem: WorkItem,
-  declaredScope: readonly string[],
+  declaredScope: readonly string[]
 ): Promise<PlanRevision> {
   assert.equal(await fixture.managerWorker.dispatchOnce(), true);
   assert.equal((await currentWorkItem(fixture, workItem.workItemId)).state, "plan_approval");
@@ -1226,7 +1249,7 @@ async function proposeAndConfirmItem(
     `/v1/plans/${plan.planRevisionId}/confirm`,
     "POST",
     200,
-    { body: { expectedState: "proposed" } },
+    { body: { expectedState: "proposed" } }
   );
   const confirmed = await currentWorkItem(fixture, workItem.workItemId);
   assert.equal(confirmed.state, "implementing");
@@ -1235,21 +1258,24 @@ async function proposeAndConfirmItem(
   return plan;
 }
 
-async function driveVerify(
-  fixture: PipelineFixture,
-  expectedState: "implementing" | "reviewing",
-): Promise<WorkItem> {
+async function driveVerify(fixture: PipelineFixture, expectedState: "implementing" | "reviewing"): Promise<WorkItem> {
   const startDeadline = Date.now() + 5_000;
   let launchState = "";
   while (Date.now() < startDeadline) {
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      launchState = String(db.prepare(`
+      launchState = String(
+        db
+          .prepare(
+            `
         SELECT state
         FROM verify_attempts
         ORDER BY created_at DESC, verify_attempt_id DESC
         LIMIT 1
-      `).get()?.state ?? "");
+      `
+          )
+          .get()?.state ?? ""
+      );
     } finally {
       db.close();
     }
@@ -1266,14 +1292,14 @@ async function driveVerify(
     await delay(25);
   }
   assert.fail(
-    `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`,
+    `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`
   );
 }
 
 async function driveVerifyItem(
   fixture: PipelineFixture,
   workItemId: string,
-  expectedState: "implementing" | "reviewing",
+  expectedState: "implementing" | "reviewing"
 ): Promise<WorkItem> {
   await waitForServiceVerifyLaunches(fixture, [workItemId]);
   const deadline = Date.now() + 15_000;
@@ -1284,16 +1310,20 @@ async function driveVerifyItem(
     if (item.state === "parked" || item.state === "dead_letter" || item.state === "abandoned") {
       const park = new DatabaseSync(fixture.dbPath, { readOnly: true });
       try {
-        const reason = park.prepare(`
+        const reason = park
+          .prepare(
+            `
           SELECT category,reason
           FROM park_records
           WHERE work_item_id=?
           ORDER BY parked_at DESC,rowid DESC
           LIMIT 1
-        `).get(workItemId) as { category?: unknown; reason?: unknown } | undefined;
+        `
+          )
+          .get(workItemId) as { category?: unknown; reason?: unknown } | undefined;
         assert.fail(
           `verify sweep did not reach ${expectedState}; current=${item.state}` +
-          (reason === undefined ? "" : `; park=${String(reason.category)}: ${String(reason.reason)}`),
+            (reason === undefined ? "" : `; park=${String(reason.category)}: ${String(reason.reason)}`)
         );
       } finally {
         park.close();
@@ -1302,20 +1332,19 @@ async function driveVerifyItem(
     await delay(25);
   }
   assert.fail(
-    `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(workItemId).state}`,
+    `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(workItemId).state}`
   );
 }
 
-async function waitForServiceVerifyLaunches(
-  fixture: PipelineFixture,
-  workItemIds: readonly string[],
-): Promise<void> {
+async function waitForServiceVerifyLaunches(fixture: PipelineFixture, workItemIds: readonly string[]): Promise<void> {
   const deadline = Date.now() + 5_000;
   let states = new Map<string, string>();
   while (Date.now() < deadline) {
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT plan.work_item_id,verify.state
         FROM verify_attempts verify
         JOIN work_nodes node ON node.node_id=verify.node_id
@@ -1326,20 +1355,27 @@ async function waitForServiceVerifyLaunches(
             FROM verify_attempts latest
             WHERE latest.node_id=verify.node_id AND latest.stage=verify.stage
           )
-      `).all(...workItemIds) as unknown as ReadonlyArray<{ work_item_id: string; state: string }>;
+      `
+        )
+        .all(...workItemIds) as unknown as ReadonlyArray<{ work_item_id: string; state: string }>;
       states = new Map(rows.map((row) => [row.work_item_id, row.state]));
     } finally {
       db.close();
     }
-    if (workItemIds.every((workItemId) => {
-      const state = states.get(workItemId);
-      return state !== undefined && state !== "starting";
-    })) return;
+    if (
+      workItemIds.every((workItemId) => {
+        const state = states.get(workItemId);
+        return state !== undefined && state !== "starting";
+      })
+    )
+      return;
     await delay(25);
   }
-  assert.fail(`service-owned verify launch did not finish: ${workItemIds.map(
-    (workItemId) => `${workItemId}=${states.get(workItemId) ?? "missing"}`,
-  ).join(", ")}`);
+  assert.fail(
+    `service-owned verify launch did not finish: ${workItemIds
+      .map((workItemId) => `${workItemId}=${states.get(workItemId) ?? "missing"}`)
+      .join(", ")}`
+  );
 }
 
 async function reviewApproveAndMerge(fixture: PipelineFixture, workItemIds: readonly string[]): Promise<void> {
@@ -1358,7 +1394,7 @@ async function reviewApproveAndMerge(fixture: PipelineFixture, workItemIds: read
       `/v1/work-items/${workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(approved.workItem.state, "merged");
   }
@@ -1366,17 +1402,25 @@ async function reviewApproveAndMerge(fixture: PipelineFixture, workItemIds: read
 
 async function waitForActiveEngineerRuns(
   fixture: PipelineFixture,
-  expectedAgentIds: ReadonlySet<string>,
+  expectedAgentIds: ReadonlySet<string>
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const active = new Set((db.prepare(`
+      const active = new Set(
+        (
+          db
+            .prepare(
+              `
         SELECT DISTINCT agent_id
         FROM runs
         WHERE status='active' AND agent_id IN (${[...expectedAgentIds].map(() => "?").join(",")})
-      `).all(...expectedAgentIds) as unknown as ReadonlyArray<{ agent_id: string }>).map((row) => row.agent_id));
+      `
+            )
+            .all(...expectedAgentIds) as unknown as ReadonlyArray<{ agent_id: string }>
+        ).map((row) => row.agent_id)
+      );
       if (active.size === expectedAgentIds.size && [...expectedAgentIds].every((id) => active.has(id))) return;
     } finally {
       db.close();
@@ -1387,13 +1431,10 @@ async function waitForActiveEngineerRuns(
 }
 
 async function claimImplementationRetry(fixture: PipelineFixture, claimId: string): Promise<ClaimRunResult> {
-  return jsonRequest<ClaimRunResult>(
-    fixture.origin,
-    `/v1/agents/${fixture.engineerId}/runs/claim`,
-    "POST",
-    201,
-    { token: ENGINEER_TOKEN, body: { claimId, messageCursor: null } },
-  );
+  return jsonRequest<ClaimRunResult>(fixture.origin, `/v1/agents/${fixture.engineerId}/runs/claim`, "POST", 201, {
+    token: ENGINEER_TOKEN,
+    body: { claimId, messageCursor: null },
+  });
 }
 
 interface PersistedReviewFinding {
@@ -1409,11 +1450,15 @@ interface PersistedReviewFinding {
 function persistedReviewFindings(fixture: PipelineFixture): readonly PersistedReviewFinding[] {
   const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
   try {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT round,file,category,severity,expected,actual,blocking
       FROM review_findings
       ORDER BY round,created_at,finding_id
-    `).all() as unknown as readonly PersistedReviewFinding[];
+    `
+      )
+      .all() as unknown as readonly PersistedReviewFinding[];
     return rows.map((row) => ({ ...row }));
   } finally {
     db.close();
@@ -1423,12 +1468,18 @@ function persistedReviewFindings(fixture: PipelineFixture): readonly PersistedRe
 function persistedReviewRounds(fixture: PipelineFixture): readonly number[] {
   const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
   try {
-    return (db.prepare(`
+    return (
+      db
+        .prepare(
+          `
       SELECT attempt
       FROM stage_attempts
       WHERE stage='verification'
       ORDER BY attempt
-    `).all() as unknown as ReadonlyArray<{ attempt: number }>).map((row) => row.attempt);
+    `
+        )
+        .all() as unknown as ReadonlyArray<{ attempt: number }>
+    ).map((row) => row.attempt);
   } finally {
     db.close();
   }
@@ -1442,13 +1493,17 @@ interface PersistedRunIdentity {
 function persistedRunIdentity(fixture: PipelineFixture, agentId: string): PersistedRunIdentity {
   const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT runtime,model
       FROM runs
       WHERE agent_id=?
       ORDER BY started_at DESC,run_id DESC
       LIMIT 1
-    `).get(agentId) as unknown as PersistedRunIdentity | undefined;
+    `
+      )
+      .get(agentId) as unknown as PersistedRunIdentity | undefined;
     assert.ok(row, `no persisted run found for ${agentId}`);
     return { ...row };
   } finally {
@@ -1476,25 +1531,30 @@ test("Pipeline v2 exits through reject, revise, implement, machine verify, indep
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/pipeline-summary`,
       "GET",
-      200,
+      200
     );
     assert.equal(summary.commits.length, 2);
-    assert.deepEqual(new Set(summary.commits.map((commit) => commit.subject)), new Set([
-      "pipeline step one",
-      "pipeline step two",
-    ]));
+    assert.deepEqual(
+      new Set(summary.commits.map((commit) => commit.subject)),
+      new Set(["pipeline step one", "pipeline step two"])
+    );
     assert.equal(summary.scopeOk, true);
     assert.deepEqual(summary.filesTouched, ["src/allowed/first.txt", "src/allowed/second.txt"]);
     assert.deepEqual(summary.declaredScope, ["src/allowed"]);
     assert.deepEqual(summary.criteria, [HUMAN_CRITERION]);
     assert.deepEqual(summary.criterionChecks, [{ criterion: CHECKED_CRITERION, check: "node criterion-check.mjs" }]);
-    assert.deepEqual(summary.verify.map((attempt) => ({
-      state: attempt.state,
-      checkResults: attempt.checkResults,
-    })), [{
-      state: "green",
-      checkResults: [{ criterion: CHECKED_CRITERION, check: "node criterion-check.mjs", passed: true }],
-    }]);
+    assert.deepEqual(
+      summary.verify.map((attempt) => ({
+        state: attempt.state,
+        checkResults: attempt.checkResults,
+      })),
+      [
+        {
+          state: "green",
+          checkResults: [{ criterion: CHECKED_CRITERION, check: "node criterion-check.mjs", passed: true }],
+        },
+      ]
+    );
     assert.deepEqual(summary.assumptions, ["The fixture repository stays available."]);
     assert.deepEqual(summary.midRunAssumptions, [MID_RUN_ASSUMPTION]);
     assert.doesNotMatch(summary.midRunAssumptions.join("\n"), /machine verify|Passed:/iu);
@@ -1508,7 +1568,7 @@ test("Pipeline v2 exits through reject, revise, implement, machine verify, indep
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(approved.workItem.state, "merged");
     const mergeParents = (await git(fixture.repo, ["rev-list", "--parents", "-n", "1", "main"])).trim().split(" ");
@@ -1540,30 +1600,35 @@ test("a seeded defect is caught, fixed, re-verified, approved, and merged", asyn
     await driveVerify(fixture, "reviewing");
 
     assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
-    assert.deepEqual({
-      implementation: persistedRunIdentity(fixture, fixture.engineerId),
-      verification: persistedRunIdentity(fixture, fixture.verifierId),
-    }, {
-      implementation: ENGINEER_RUN_PIN,
-      verification: VERIFIER_RUN_PIN,
-    });
+    assert.deepEqual(
+      {
+        implementation: persistedRunIdentity(fixture, fixture.engineerId),
+        verification: persistedRunIdentity(fixture, fixture.verifierId),
+      },
+      {
+        implementation: ENGINEER_RUN_PIN,
+        verification: VERIFIER_RUN_PIN,
+      }
+    );
     const fixing = await currentWorkItem(fixture);
     assert.equal(fixing.state, "fixing");
     assert.equal(fixing.currentStage, "implementation");
     const fixingWorkflow = await workflow(fixture);
     assert.equal(
       fixingWorkflow.handoffs.filter((handoff) => handoff.stage === "verification").at(-1)?.recommendedReturnStage,
-      "implementation",
+      "implementation"
     );
-    assert.deepEqual(persistedReviewFindings(fixture), [{
-      round: 1,
-      file: "src/feature.txt",
-      category: "correctness",
-      severity: "major",
-      expected: "no SEEDED_DEFECT marker",
-      actual: "marker present",
-      blocking: 1,
-    }]);
+    assert.deepEqual(persistedReviewFindings(fixture), [
+      {
+        round: 1,
+        file: "src/feature.txt",
+        category: "correctness",
+        severity: "major",
+        expected: "no SEEDED_DEFECT marker",
+        actual: "marker present",
+        blocking: 1,
+      },
+    ]);
 
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
     const fixPrompt = await readFile(join(fixture.engineerScratch, "prompt-2.txt"), "utf8");
@@ -1575,7 +1640,7 @@ test("a seeded defect is caught, fixed, re-verified, approved, and merged", asyn
     assert.equal((await currentWorkItem(fixture)).state, "verifying");
     assert.equal(
       await git(fixture.repo, ["show", `task/${fixture.workItem.workItemId}:src/feature.txt`]),
-      "fixed scoped change\n",
+      "fixed scoped change\n"
     );
     await driveVerify(fixture, "reviewing");
 
@@ -1584,30 +1649,39 @@ test("a seeded defect is caught, fixed, re-verified, approved, and merged", asyn
     assert.equal(finalApproval.state, "final_approval");
     assert.deepEqual(persistedReviewRounds(fixture), [1, 2]);
     const findingsByRound = [1, 2].map((round) =>
-      persistedReviewFindings(fixture).filter((finding) => finding.round === round));
-    assert.deepEqual(findingsByRound, [[{
-      round: 1,
-      file: "src/feature.txt",
-      category: "correctness",
-      severity: "major",
-      expected: "no SEEDED_DEFECT marker",
-      actual: "marker present",
-      blocking: 1,
-    }], []]);
+      persistedReviewFindings(fixture).filter((finding) => finding.round === round)
+    );
+    assert.deepEqual(findingsByRound, [
+      [
+        {
+          round: 1,
+          file: "src/feature.txt",
+          category: "correctness",
+          severity: "major",
+          expected: "no SEEDED_DEFECT marker",
+          actual: "marker present",
+          blocking: 1,
+        },
+      ],
+      [],
+    ]);
     const summary = await jsonRequest<PipelineSummary>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/pipeline-summary`,
       "GET",
-      200,
+      200
     );
-    assert.deepEqual(summary.verify.map((attempt) => attempt.state), ["green", "green"]);
+    assert.deepEqual(
+      summary.verify.map((attempt) => attempt.state),
+      ["green", "green"]
+    );
 
     const approved = await jsonRequest<{ workItem: WorkItem }>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(approved.workItem.state, "merged");
     const fixed = await readFile(join(fixture.repo, "src", "feature.txt"), "utf8");
@@ -1652,7 +1726,10 @@ test("a fourth blocking review dead-letters after three fix rounds without mergi
 
     assert.deepEqual(persistedReviewRounds(fixture), [1, 2, 3, 4]);
     const findings = persistedReviewFindings(fixture);
-    assert.deepEqual(findings.map((finding) => finding.round), [1, 2, 3, 4]);
+    assert.deepEqual(
+      findings.map((finding) => finding.round),
+      [1, 2, 3, 4]
+    );
     assert.ok(findings.every((finding) => finding.category === "correctness" && finding.blocking === 1));
     assert.equal((await git(fixture.repo, ["rev-parse", "main"])).trim(), mainBefore);
     assert.doesNotMatch(await git(fixture.repo, ["log", "--format=%s", "main"]), /^Merge branch /mu);
@@ -1685,9 +1762,9 @@ test("a hazardous plan completes design before implementation, review, approval,
 
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const persisted = db.prepare(
-        "SELECT payload_json FROM design_records WHERE work_item_id=?",
-      ).get(fixture.workItem.workItemId);
+      const persisted = db
+        .prepare("SELECT payload_json FROM design_records WHERE work_item_id=?")
+        .get(fixture.workItem.workItemId);
       assert.deepEqual(JSON.parse(String(persisted?.payload_json)), HAZARDOUS_DESIGN_RECORD);
     } finally {
       db.close();
@@ -1713,7 +1790,7 @@ test("a hazardous plan completes design before implementation, review, approval,
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(approved.workItem.state, "merged");
   } finally {
@@ -1736,7 +1813,7 @@ test("an engineer commit outside declared scope parks the pipeline and names the
       fixture.origin,
       `/v1/projects/${fixture.project.projectId}/board`,
       "GET",
-      200,
+      200
     );
     assert.ok(board.tasks.some((task) => task.result === "scope violation: docs/outside.md"));
   } finally {
@@ -1790,7 +1867,7 @@ test("an approve-merge conflict returns to implementation with a conflict handof
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: finalApproval.version } },
+      { body: { version: finalApproval.version } }
     );
     assert.equal(response.workItem.state, "implementing");
     assert.equal(response.workItem.currentStage, "implementation");
@@ -1826,27 +1903,35 @@ test("campaign 7 exit: concurrent disjoint pipelines use both engineer lanes and
     const second = await createPipelineWorkItem(
       fixture,
       "Deliver the DISJOINT_SCOPE_B pipeline fixture change.",
-      "pipeline-e2e-exit-disjoint-second",
+      "pipeline-e2e-exit-disjoint-second"
     );
     const secondPlan = await proposeAndConfirmItem(fixture, second, ["src/disjoint/b"]);
     const nodes = (await workflow(fixture)).nodes.filter((node) =>
-      [firstPlan.planRevisionId, secondPlan.planRevisionId].includes(node.planRevisionId));
+      [firstPlan.planRevisionId, secondPlan.planRevisionId].includes(node.planRevisionId)
+    );
     assert.equal(nodes.length, 2);
-    assert.equal(nodes.every((node) => node.state === "active"), true);
+    assert.equal(
+      nodes.every((node) => node.state === "active"),
+      true
+    );
 
-    const dispatches = Promise.all([
-      fixture.engineerWorker.dispatchOnce(),
-      secondEngineer.worker.dispatchOnce(),
-    ]);
+    const dispatches = Promise.all([fixture.engineerWorker.dispatchOnce(), secondEngineer.worker.dispatchOnce()]);
     const engineerIds = new Set([fixture.engineerId, secondEngineer.id]);
     await waitForActiveEngineerRuns(fixture, engineerIds);
     assert.deepEqual(await dispatches, [true, true]);
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const runAgentIds = new Set((db.prepare(`
+      const runAgentIds = new Set(
+        (
+          db
+            .prepare(
+              `
         SELECT DISTINCT agent_id FROM runs WHERE agent_id IN (?,?)
-      `).all(fixture.engineerId, secondEngineer.id) as unknown as ReadonlyArray<{ agent_id: string }>)
-        .map((row) => row.agent_id));
+      `
+            )
+            .all(fixture.engineerId, secondEngineer.id) as unknown as ReadonlyArray<{ agent_id: string }>
+        ).map((row) => row.agent_id)
+      );
       assert.deepEqual(runAgentIds, engineerIds);
     } finally {
       db.close();
@@ -1876,29 +1961,33 @@ test("campaign 7 exit: overlapping pipelines serialize until the older item merg
     const second = await createPipelineWorkItem(
       fixture,
       "Deliver the nested OVERLAP_SCOPE_B pipeline fixture change.",
-      "pipeline-e2e-exit-overlap-second",
+      "pipeline-e2e-exit-overlap-second"
     );
     const secondPlan = await proposeAndConfirmItem(fixture, second, ["src/overlap/b"]);
     let snapshot = await workflow(fixture);
     const heldNode = snapshot.nodes.find((node) => node.planRevisionId === secondPlan.planRevisionId);
     assert.equal(heldNode?.state, "blocked");
-    assert.equal(snapshot.events.filter((event) =>
-      event.nodeId === heldNode?.nodeId && event.eventType === "node_blocked").at(-1)?.summary,
-    `${SCOPE_HOLD_SUMMARY_PREFIX}overlaps ${fixture.workItem.workItemId}`);
+    assert.equal(
+      snapshot.events.filter((event) => event.nodeId === heldNode?.nodeId && event.eventType === "node_blocked").at(-1)
+        ?.summary,
+      `${SCOPE_HOLD_SUMMARY_PREFIX}overlaps ${fixture.workItem.workItemId}`
+    );
 
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
     await driveVerifyItem(fixture, fixture.workItem.workItemId, "reviewing");
     assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
     assert.equal((await currentWorkItem(fixture)).state, "final_approval");
-    assert.equal((await workflow(fixture)).nodes.find(
-      (node) => node.planRevisionId === secondPlan.planRevisionId)?.state, "blocked");
+    assert.equal(
+      (await workflow(fixture)).nodes.find((node) => node.planRevisionId === secondPlan.planRevisionId)?.state,
+      "blocked"
+    );
     const firstFinal = await currentWorkItem(fixture);
     const firstMerged = await jsonRequest<{ workItem: WorkItem }>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: firstFinal.version } },
+      { body: { version: firstFinal.version } }
     );
     assert.equal(firstMerged.workItem.state, "merged");
 
@@ -1933,13 +2022,14 @@ test("campaign 7 exit: a runaway implementation is stage-capped, notified, retri
     });
     assert.ok(claimed);
     assert.equal(claimed.context?.workflow?.stage, "implementation");
-    const node = (await workflow(fixture)).nodes.find((candidate) =>
-      candidate.planRevisionId === plan.planRevisionId);
+    const node = (await workflow(fixture)).nodes.find((candidate) => candidate.planRevisionId === plan.planRevisionId);
     assert.ok(node);
     const capClock = new DatabaseSync(fixture.dbPath);
     try {
       const stageStartedAt = new Date(Date.now() - 62_000).toISOString();
-      const updated = capClock.prepare(`
+      const updated = capClock
+        .prepare(
+          `
         UPDATE project_events
         SET created_at=?
         WHERE sequence=(
@@ -1949,7 +2039,9 @@ test("campaign 7 exit: a runaway implementation is stage-capped, notified, retri
           ORDER BY sequence DESC
           LIMIT 1
         )
-      `).run(stageStartedAt, node.nodeId);
+      `
+        )
+        .run(stageStartedAt, node.nodeId);
       assert.equal(Number(updated.changes), 1);
     } finally {
       capClock.close();
@@ -1961,27 +2053,35 @@ test("campaign 7 exit: a runaway implementation is stage-capped, notified, retri
     assert.equal(parked.currentStage, "implementation");
     const snapshot = await workflow(fixture);
     assert.equal(snapshot.nodes.find((candidate) => candidate.nodeId === node.nodeId)?.state, "blocked");
-    const blockedSummary = snapshot.events.filter((event) =>
-      event.nodeId === node.nodeId && event.eventType === "node_blocked").at(-1)?.summary;
+    const blockedSummary = snapshot.events
+      .filter((event) => event.nodeId === node.nodeId && event.eventType === "node_blocked")
+      .at(-1)?.summary;
     assert.match(blockedSummary ?? "", /^stage cap exceeded: implementation ran \d+s \(cap 60s\)$/u);
     const parks = await jsonRequest<{ open: Array<{ workItemId: string; category: string; reason: string }> }>(
       fixture.origin,
       "/v1/ledgers/parks",
       "GET",
-      200,
+      200
     );
-    assert.ok(parks.open.some((record) =>
-      record.workItemId === fixture.workItem.workItemId &&
-      record.category === "stage_cap_exceeded" &&
-      record.reason === blockedSummary));
+    assert.ok(
+      parks.open.some(
+        (record) =>
+          record.workItemId === fixture.workItem.workItemId &&
+          record.category === "stage_cap_exceeded" &&
+          record.reason === blockedSummary
+      )
+    );
     const notifications = await jsonRequest<{ unread: Array<{ workItemId: string | null; kind: string }> }>(
       fixture.origin,
       "/v1/notifications",
       "GET",
-      200,
+      200
     );
-    assert.ok(notifications.unread.some((notification) =>
-      notification.workItemId === fixture.workItem.workItemId && notification.kind === "cap_parked"));
+    assert.ok(
+      notifications.unread.some(
+        (notification) => notification.workItemId === fixture.workItem.workItemId && notification.kind === "cap_parked"
+      )
+    );
 
     assert.ok(claimed.claim.taskId);
     const suspendedTask = fixture.sweepBoard.requireTask(claimed.claim.taskId);
@@ -1990,7 +2090,7 @@ test("campaign 7 exit: a runaway implementation is stage-capped, notified, retri
       `/v1/tasks/${suspendedTask.taskId}/retry`,
       "POST",
       200,
-      { body: { version: suspendedTask.version } },
+      { body: { version: suspendedTask.version } }
     );
     assert.equal(retried.task.status, "queued");
     assert.equal((await currentWorkItem(fixture)).state, "implementing");
@@ -2026,12 +2126,15 @@ test("campaign 7 exit: the kill switch drains an active run, gates claims, resum
       "/v1/board/pause",
       "POST",
       200,
-      { body: { reason: "Exit criterion maintenance", version: 1 } },
+      { body: { reason: "Exit criterion maintenance", version: 1 } }
     );
-    assert.deepEqual({ paused: paused.paused, reason: paused.reason }, {
-      paused: true,
-      reason: "Exit criterion maintenance",
-    });
+    assert.deepEqual(
+      { paused: paused.paused, reason: paused.reason },
+      {
+        paused: true,
+        reason: "Exit criterion maintenance",
+      }
+    );
     await stub.settleAgentRun({
       claim: claimed.claim,
       outcome: "completed",
@@ -2040,40 +2143,46 @@ test("campaign 7 exit: the kill switch drains an active run, gates claims, resum
     });
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      assert.equal(db.prepare("SELECT status FROM runs WHERE run_id=?").get(claimed.claim.runId)?.status, "interrupted");
+      assert.equal(
+        db.prepare("SELECT status FROM runs WHERE run_id=?").get(claimed.claim.runId)?.status,
+        "interrupted"
+      );
     } finally {
       db.close();
     }
     const suspendedSnapshot = await workflow(fixture);
     const node = suspendedSnapshot.nodes.find((candidate) => candidate.planRevisionId === plan.planRevisionId);
     assert.equal(node?.state, "blocked");
-    assert.equal(suspendedSnapshot.events.filter((event) =>
-      event.nodeId === node?.nodeId && event.eventType === "node_blocked").at(-1)?.summary,
-    "board paused: Exit criterion maintenance");
-
-    const gatedResponse = await fetch(
-      `${fixture.origin}/v1/agents/${fixture.engineerId}/runs/claim?waitMs=0`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${ENGINEER_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ claimId: "pipeline-e2e-exit-kill-switch-gated", messageCursor: null }),
-      },
+    assert.equal(
+      suspendedSnapshot.events
+        .filter((event) => event.nodeId === node?.nodeId && event.eventType === "node_blocked")
+        .at(-1)?.summary,
+      "board paused: Exit criterion maintenance"
     );
+
+    const gatedResponse = await fetch(`${fixture.origin}/v1/agents/${fixture.engineerId}/runs/claim?waitMs=0`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ENGINEER_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ claimId: "pipeline-e2e-exit-kill-switch-gated", messageCursor: null }),
+    });
     assert.equal(gatedResponse.status, 204);
     assert.equal(await gatedResponse.text(), "");
-    assert.equal(await stub.claimNextWake({
-      agentId: fixture.engineerId,
-      claimId: "pipeline-e2e-exit-kill-switch-gated-client",
-      messageCursors: {},
-      longPollMs: 0,
-    }), null);
+    assert.equal(
+      await stub.claimNextWake({
+        agentId: fixture.engineerId,
+        claimId: "pipeline-e2e-exit-kill-switch-gated-client",
+        messageCursors: {},
+        longPollMs: 0,
+      }),
+      null
+    );
 
     const resumed = await jsonRequest<{ paused: boolean; reason: string | null; version: number }>(
       fixture.origin,
       "/v1/board/resume",
       "POST",
       200,
-      { body: { version: paused.version } },
+      { body: { version: paused.version } }
     );
     assert.deepEqual({ paused: resumed.paused, reason: resumed.reason }, { paused: false, reason: null });
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
@@ -2090,16 +2199,19 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     originalRequest: `Deliver the ${BLAST_RADIUS_MARKER} across provider and consumer repositories.`,
     engineerMode: "scoped",
     verifyPasses: true,
-    repos: [{
-      name: "provider",
-      verifyPasses: true,
-      engineerMode: "phased_provider",
-      omitInterfaceOnFirstExpand: true,
-    }, {
-      name: "consumer",
-      verifyPasses: true,
-      engineerMode: "phased_consumer",
-    }],
+    repos: [
+      {
+        name: "provider",
+        verifyPasses: true,
+        engineerMode: "phased_provider",
+        omitInterfaceOnFirstExpand: true,
+      },
+      {
+        name: "consumer",
+        verifyPasses: true,
+        engineerMode: "phased_consumer",
+      },
+    ],
   });
   try {
     const [provider, consumer] = fixture.projects;
@@ -2110,11 +2222,11 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     assert.notEqual(provider.engineerId, consumer.engineerId);
     assert.notEqual(provider.verifierId, consumer.verifierId);
 
-    const decomposition = await proposeAndConfirmDecomposition(
-      fixture,
-      "blast_radius",
-      ["expand", "migrate", "contract"],
-    );
+    const decomposition = await proposeAndConfirmDecomposition(fixture, "blast_radius", [
+      "expand",
+      "migrate",
+      "contract",
+    ]);
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
     assert.ok(migrate);
@@ -2122,7 +2234,10 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     assert.equal(expand.resolvedProjectId, provider.projectId);
     assert.equal(migrate.resolvedProjectId, consumer.projectId);
     assert.equal(contract.resolvedProjectId, provider.projectId);
-    assert.deepEqual(decomposition.plan.children?.map((child) => child.dependsOn ?? []), [[], ["expand"], ["migrate"]]);
+    assert.deepEqual(
+      decomposition.plan.children?.map((child) => child.dependsOn ?? []),
+      [[], ["expand"], ["migrate"]]
+    );
     assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "implementing");
     assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "queued");
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
@@ -2136,14 +2251,19 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     assert.equal(await consumer.engineerWorker.dispatchOnce(), false);
     const publicationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const verificationHandoffs = publicationDb.prepare(`
+      const verificationHandoffs = publicationDb
+        .prepare(
+          `
         SELECT handoff.payload_json
         FROM stage_handoffs handoff
         JOIN work_nodes node ON node.node_id=handoff.node_id
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         WHERE plan.work_item_id=? AND handoff.stage='verification'
         ORDER BY handoff.created_at,handoff.rowid
-      `).all(expand.workItemId).map((row) => JSON.parse(String(row.payload_json))) as Array<{
+      `
+        )
+        .all(expand.workItemId)
+        .map((row) => JSON.parse(String(row.payload_json))) as Array<{
         outcome: string;
         summary: string;
         blockers: string[];
@@ -2152,7 +2272,10 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
       assert.equal(verificationHandoffs[0]?.summary, "Independent verification passed.");
       assert.equal(verificationHandoffs[1]?.outcome, "failed");
       assert.equal(verificationHandoffs[1]?.blockers.at(-1), "publish docs/interface.md (absent)");
-      assert.equal(publicationDb.prepare(`
+      assert.equal(
+        publicationDb
+          .prepare(
+            `
         SELECT event.actor_id
         FROM task_events event
         JOIN stage_handoffs handoff ON handoff.task_id=event.task_id
@@ -2163,8 +2286,15 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
           AND event.event_type='task_created'
         ORDER BY event.created_at DESC,event.rowid DESC
         LIMIT 1
-      `).get(expand.workItemId)?.actor_id, "system:interface-publication");
-      assert.equal(publicationDb.prepare(`
+      `
+          )
+          .get(expand.workItemId)?.actor_id,
+        "system:interface-publication"
+      );
+      assert.equal(
+        publicationDb
+          .prepare(
+            `
         SELECT expected
         FROM review_findings finding
         JOIN work_nodes node ON node.node_id=finding.node_id
@@ -2172,7 +2302,11 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
         WHERE plan.work_item_id=? AND finding.file='docs/interface.md'
         ORDER BY finding.created_at DESC,finding.rowid DESC
         LIMIT 1
-      `).get(expand.workItemId)?.expected, "publish docs/interface.md (absent)");
+      `
+          )
+          .get(expand.workItemId)?.expected,
+        "publish docs/interface.md (absent)"
+      );
     } finally {
       publicationDb.close();
     }
@@ -2184,7 +2318,7 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     const mergedExpand = await currentWorkItem(fixture, expand.workItemId);
     assert.equal(mergedExpand.state, "merged");
     const parentPlanConfirm = gateActions(fixture.dbPath, fixture.workItem.workItemId).find(
-      (action) => action.gate === "plan_confirm",
+      (action) => action.gate === "plan_confirm"
     );
     assert.ok(parentPlanConfirm);
     const expandApproval = singleFinalApproval(fixture, expand.workItemId);
@@ -2203,25 +2337,32 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     assert.equal(migrateApproval.mergeSha, migrateMainSha);
     assert.equal(migrateApproval.actorId, "system:parent-plan-authorization");
     assert.equal(migrateApproval.refId, parentPlanConfirm.gateActionId);
-    assert.equal(await readFile(join(consumer.repo, "src", "consumer", "provider-interface.md"), "utf8"), PUBLISHED_INTERFACE);
+    assert.equal(
+      await readFile(join(consumer.repo, "src", "consumer", "provider-interface.md"), "utf8"),
+      PUBLISHED_INTERFACE
+    );
     assert.equal(
       JSON.parse(await readFile(join(consumer.repo, "src", "consumer", "provider-context.json"), "utf8")).sha,
-      expandApproval.mergeSha,
+      expandApproval.mergeSha
     );
     assert.equal(
       await git(provider.repo, ["show", `${expandApproval.mergeSha}:docs/interface.md`]),
-      PUBLISHED_INTERFACE,
+      PUBLISHED_INTERFACE
     );
 
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
-    assert.equal(latestNodeBlock(fixture, contract.workItemId),
-      `waits for ${expand.workItemId} (expand) deploy attestation`);
+    assert.equal(
+      latestNodeBlock(fixture, contract.workItemId),
+      `waits for ${expand.workItemId} (expand) deploy attestation`
+    );
     await jsonRequest(fixture.origin, `/v1/work-items/${migrate.workItemId}/attest-deploy`, "POST", 200, {
       body: { note: "The consumer migration is deployed." },
     });
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
-    assert.equal(latestNodeBlock(fixture, contract.workItemId),
-      `waits for ${expand.workItemId} (expand) deploy attestation`);
+    assert.equal(
+      latestNodeBlock(fixture, contract.workItemId),
+      `waits for ${expand.workItemId} (expand) deploy attestation`
+    );
     await jsonRequest(fixture.origin, `/v1/work-items/${expand.workItemId}/attest-deploy`, "POST", 200, {
       body: { note: "The additive provider interface is deployed." },
     });
@@ -2239,7 +2380,7 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
       `/v1/work-items/${contract.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: contractFinalApproval.version } },
+      { body: { version: contractFinalApproval.version } }
     );
     assert.equal(contractMerged.workItem.state, "merged");
     assert.equal((await currentWorkItem(fixture)).state, "merged");
@@ -2251,12 +2392,11 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     assert.equal(parentApproval.refId, decomposition.plan.planRevisionId);
     assert.equal(parentApproval.mergeSha, null);
     assert.equal(parentApproval.note, "3 children merged, 0 abandoned");
-    assert.deepEqual(
-      fixture.sweepBoard.parentCompletion(fixture.workItem.workItemId).children,
-      [{ workItemId: expand.workItemId, mergeSha: expandMainSha },
-        { workItemId: migrate.workItemId, mergeSha: migrateMainSha },
-        { workItemId: contract.workItemId, mergeSha: contractMainSha }],
-    );
+    assert.deepEqual(fixture.sweepBoard.parentCompletion(fixture.workItem.workItemId).children, [
+      { workItemId: expand.workItemId, mergeSha: expandMainSha },
+      { workItemId: migrate.workItemId, mergeSha: migrateMainSha },
+      { workItemId: contract.workItemId, mergeSha: contractMainSha },
+    ]);
   } finally {
     await closeFixture(fixture);
   }
@@ -2274,7 +2414,10 @@ test("campaign 10 exit: a same-repository feature split re-verifies after the fi
     const [first, second] = decomposition.children;
     assert.ok(first);
     assert.ok(second);
-    assert.deepEqual(decomposition.plan.children?.map((child) => child.dependsOn ?? []), [[], ["feature-one"]]);
+    assert.deepEqual(
+      decomposition.plan.children?.map((child) => child.dependsOn ?? []),
+      [[], ["feature-one"]]
+    );
     assert.equal((await currentWorkItem(fixture, first.workItemId)).state, "implementing");
     assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "implementing");
 
@@ -2287,7 +2430,7 @@ test("campaign 10 exit: a same-repository feature split re-verifies after the fi
     assert.equal(await fixture.verifierWorker.dispatchOnce(), true);
     assert.deepEqual(
       await Promise.all([first, second].map(async (child) => (await currentWorkItem(fixture, child.workItemId)).state)),
-      ["final_approval", "final_approval"],
+      ["final_approval", "final_approval"]
     );
     const parentApproval = await currentWorkItem(fixture);
     assert.equal(parentApproval.state, "final_approval");
@@ -2295,31 +2438,41 @@ test("campaign 10 exit: a same-repository feature split re-verifies after the fi
       fixture.origin,
       "/v1/notifications",
       "GET",
-      200,
+      200
     );
-    assert.equal(notifications.unread.filter((notification) =>
-      notification.kind === "parent_ready_for_approval" &&
-      notification.workItemId === fixture.workItem.workItemId).length, 1);
+    assert.equal(
+      notifications.unread.filter(
+        (notification) =>
+          notification.kind === "parent_ready_for_approval" && notification.workItemId === fixture.workItem.workItemId
+      ).length,
+      1
+    );
 
     const coordinating = await jsonRequest<{ workItem: WorkItem }>(
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: parentApproval.version } },
+      { body: { version: parentApproval.version } }
     );
     assert.equal(coordinating.workItem.state, "coordinating");
     assert.deepEqual(
       await Promise.all([first, second].map(async (child) => (await currentWorkItem(fixture, child.workItemId)).state)),
-      ["merged", "implementing"],
+      ["merged", "implementing"]
     );
-    assert.ok((await jsonRequest<{ unread: Array<{ kind: string; workItemId: string | null }> }>(
-      fixture.origin,
-      "/v1/notifications",
-      "GET",
-      200,
-    )).unread.some((notification) =>
-      notification.kind === "final_approval_withdrawn" && notification.workItemId === second.workItemId));
+    assert.ok(
+      (
+        await jsonRequest<{ unread: Array<{ kind: string; workItemId: string | null }> }>(
+          fixture.origin,
+          "/v1/notifications",
+          "GET",
+          200
+        )
+      ).unread.some(
+        (notification) =>
+          notification.kind === "final_approval_withdrawn" && notification.workItemId === second.workItemId
+      )
+    );
 
     assert.equal(await fixture.engineerWorker.dispatchOnce(), true);
     await driveVerifyItem(fixture, second.workItemId, "reviewing");
@@ -2332,22 +2485,21 @@ test("campaign 10 exit: a same-repository feature split re-verifies after the fi
       `/v1/work-items/${fixture.workItem.workItemId}/approve-merge`,
       "POST",
       200,
-      { body: { version: secondParentApproval.version } },
+      { body: { version: secondParentApproval.version } }
     );
     assert.equal(merged.workItem.state, "merged");
     assert.equal((await currentWorkItem(fixture, second.workItemId)).state, "merged");
     const [firstApproval, secondApproval] = [first, second].map((child) =>
-      singleFinalApproval(fixture, child.workItemId));
+      singleFinalApproval(fixture, child.workItemId)
+    );
     assert.ok(firstApproval);
     assert.ok(secondApproval);
     assert.equal(firstApproval.actorId, "human:pipeline-reviewer");
     assert.equal(secondApproval.actorId, "human:pipeline-reviewer");
-    assert.equal(await git(fixture.repo, [
-      "merge-base",
-      "--is-ancestor",
-      firstApproval.mergeSha!,
-      secondApproval.mergeSha!,
-    ]), "");
+    assert.equal(
+      await git(fixture.repo, ["merge-base", "--is-ancestor", firstApproval.mergeSha!, secondApproval.mergeSha!]),
+      ""
+    );
     const parentGate = singleFinalApproval(fixture, fixture.workItem.workItemId, false);
     assert.equal(parentGate.refId, decomposition.plan.planRevisionId);
     assert.equal(parentGate.note, "2 children merged, 0 abandoned");
@@ -2362,16 +2514,19 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     originalRequest: `Deliver the ${BLAST_RADIUS_MARKER} with a deliberately rejected migration.`,
     engineerMode: "scoped",
     verifyPasses: true,
-    repos: [{
-      name: "provider",
-      verifyPasses: true,
-      engineerMode: "phased_provider",
-    }, {
-      name: "consumer",
-      verifyPasses: true,
-      engineerMode: "phased_consumer",
-      reviewerMode: "always_blocking",
-    }],
+    repos: [
+      {
+        name: "provider",
+        verifyPasses: true,
+        engineerMode: "phased_provider",
+      },
+      {
+        name: "consumer",
+        verifyPasses: true,
+        engineerMode: "phased_consumer",
+        reviewerMode: "always_blocking",
+      },
+    ],
   });
   let cancellationVerifyRunner: VerifyRunner | null = null;
   let cancellationVerifyRunId: string | null = null;
@@ -2380,11 +2535,11 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     const [provider, consumer] = fixture.projects;
     assert.ok(provider);
     assert.ok(consumer);
-    const decomposition = await proposeAndConfirmDecomposition(
-      fixture,
-      "blast_radius",
-      ["expand", "migrate", "contract"],
-    );
+    const decomposition = await proposeAndConfirmDecomposition(fixture, "blast_radius", [
+      "expand",
+      "migrate",
+      "contract",
+    ]);
     const [expand, migrate, contract] = decomposition.children;
     assert.ok(expand);
     assert.ok(migrate);
@@ -2400,23 +2555,20 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
       assert.equal(await consumer.engineerWorker.dispatchOnce(), true);
       await driveVerifyItem(fixture, migrate.workItemId, "reviewing");
       assert.equal(await consumer.verifierWorker.dispatchOnce(), true);
-      assert.equal(
-        (await currentWorkItem(fixture, migrate.workItemId)).state,
-        round === 4 ? "dead_letter" : "fixing",
-      );
+      assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, round === 4 ? "dead_letter" : "fixing");
     }
     assert.equal((await currentWorkItem(fixture)).state, "parked");
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
-    assert.equal(latestNodeBlock(fixture, contract.workItemId),
-      `blocked: ${migrate.workItemId} (migrate) dead_letter`);
+    assert.equal(latestNodeBlock(fixture, contract.workItemId), `blocked: ${migrate.workItemId} (migrate) dead_letter`);
     const parks = await jsonRequest<{ open: Array<{ workItemId: string; category: string }> }>(
       fixture.origin,
       "/v1/ledgers/parks",
       "GET",
-      200,
+      200
     );
-    assert.ok(parks.open.some((park) =>
-      park.workItemId === fixture.workItem.workItemId && park.category === "child_failed"));
+    assert.ok(
+      parks.open.some((park) => park.workItemId === fixture.workItem.workItemId && park.category === "child_failed")
+    );
 
     const rejectedResumeSideEffects = () => {
       const inspected = new DatabaseSync(fixture.dbPath, { readOnly: true });
@@ -2439,15 +2591,14 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
       fixture.origin,
       `/v1/work-items/${fixture.workItem.workItemId}/resume`,
       "POST",
-      409,
+      409
     );
     assert.equal(rejectedResume.error.code, "PARENT_PHASED_FAILED");
     assert.deepEqual(rejectedResumeSideEffects(), beforeRejectedResume, "a rejected resume must be side-effect-free");
     const parkedParent = await currentWorkItem(fixture);
     assert.equal(parkedParent.state, "parked");
     assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
-    assert.equal(latestNodeBlock(fixture, contract.workItemId),
-      `blocked: ${migrate.workItemId} (migrate) dead_letter`);
+    assert.equal(latestNodeBlock(fixture, contract.workItemId), `blocked: ${migrate.workItemId} (migrate) dead_letter`);
 
     const activeContractTask = fixture.sweepBoard.createTask(provider.projectId, {
       parentTaskId: null,
@@ -2474,23 +2625,17 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     const verifyWorkspacePath = await verifyWorkspaceManager.create(
       verifyWorkspaceKey,
       contract.baseSha ?? undefined,
-      contract.workItemId,
+      contract.workItemId
     );
-    await writeFile(
-      join(verifyWorkspacePath, "verify-full.mjs"),
-      "setTimeout(() => process.exit(0), 60_000);\n",
-    );
+    await writeFile(join(verifyWorkspacePath, "verify-full.mjs"), "setTimeout(() => process.exit(0), 60_000);\n");
     cancellationVerifyRunner = new VerifyRunner({
       repoRoot: verifyWorkspacePath,
       supervisorPath: DEFAULT_SUPERVISOR_PATH,
     });
     cancellationVerifyRunId = await cancellationVerifyRunner.startFull();
-    const verifyStatus = JSON.parse(await readFile(join(
-      verifyWorkspacePath,
-      ".verify-runs",
-      cancellationVerifyRunId,
-      "status.json",
-    ), "utf8")) as { pid?: unknown; state?: unknown };
+    const verifyStatus = JSON.parse(
+      await readFile(join(verifyWorkspacePath, ".verify-runs", cancellationVerifyRunId, "status.json"), "utf8")
+    ) as { pid?: unknown; state?: unknown };
     assert.equal(verifyStatus.state, "running");
     assert.equal(typeof verifyStatus.pid, "number");
     const verifyPid = Number(verifyStatus.pid);
@@ -2500,36 +2645,48 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     let completionEventsBeforeCancel = 0;
     const cancellationSetupDb = new DatabaseSync(fixture.dbPath);
     try {
-      const contractNode = cancellationSetupDb.prepare(`
+      const contractNode = cancellationSetupDb
+        .prepare(
+          `
         SELECT node.node_id
         FROM work_nodes node
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         WHERE plan.work_item_id=? AND plan.state='confirmed'
         LIMIT 1
-      `).get(contract.workItemId);
+      `
+        )
+        .get(contract.workItemId);
       assert.ok(contractNode);
       contractNodeId = String(contractNode.node_id);
-      cancellationSetupDb.prepare(`
+      cancellationSetupDb
+        .prepare(
+          `
         INSERT INTO stage_attempts(attempt_id,node_id,task_id,stage,attempt,skill_digests_json)
         VALUES(?,?,?,'implementation',99,'{}')
-      `).run(`attempt-cancel-${contract.workItemId}`, contractNodeId, activeContractTask.taskId);
-      cancellationSetupDb.prepare(`
+      `
+        )
+        .run(`attempt-cancel-${contract.workItemId}`, contractNodeId, activeContractTask.taskId);
+      cancellationSetupDb
+        .prepare(
+          `
         INSERT INTO verify_attempts(
           verify_attempt_id,node_id,stage,attempt,verify_run_id,workspace_path,state,
           check_results_json,detail,created_at,ended_at
         ) VALUES(?,?,'testing',99,?,?,'running',NULL,NULL,?,NULL)
-      `).run(
-        verifyAttemptId,
-        contractNodeId,
-        cancellationVerifyRunId,
-        verifyWorkspacePath,
-        new Date().toISOString(),
-      );
-      completionEventsBeforeCancel = Number(cancellationSetupDb.prepare(`
+      `
+        )
+        .run(verifyAttemptId, contractNodeId, cancellationVerifyRunId, verifyWorkspacePath, new Date().toISOString());
+      completionEventsBeforeCancel = Number(
+        cancellationSetupDb
+          .prepare(
+            `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='stage_completed'
-      `).get(contractNodeId)?.count);
+      `
+          )
+          .get(contractNodeId)?.count
+      );
     } finally {
       cancellationSetupDb.close();
     }
@@ -2545,7 +2702,7 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
           action: "cancel",
           reason: "Cancel the unsafe phased family after the migration dead-lettered.",
         },
-      },
+      }
     );
     assert.equal(cancelled.workItem.state, "abandoned");
     assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "merged");
@@ -2554,7 +2711,7 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     assert.equal(
       await fixture.sweepBoard.sweepVerifyAttempts(),
       1,
-      "the durable retired verifier seeded by this arc is replayed once",
+      "the durable retired verifier seeded by this arc is replayed once"
     );
     const cleanupDeadline = Date.now() + 5_000;
     while (Date.now() < cleanupDeadline) {
@@ -2580,29 +2737,50 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
     assert.equal(verifyProcessRunning, false, "the retired Contract verifier process must terminate");
     const cancellationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      const retiredAttempt = cancellationDb.prepare(`
+      const retiredAttempt = cancellationDb
+        .prepare(
+          `
         SELECT state,ended_at
         FROM verify_attempts
         WHERE verify_attempt_id=?
-      `).get(verifyAttemptId);
+      `
+        )
+        .get(verifyAttemptId);
       assert.equal(retiredAttempt?.state, "retired");
       assert.equal(retiredAttempt?.ended_at, (await currentWorkItem(fixture, contract.workItemId)).endedAt);
-      const interruptedRun = cancellationDb.prepare(`
+      const interruptedRun = cancellationDb
+        .prepare(
+          `
         SELECT status,ended_at
         FROM runs
         WHERE run_id=?
-      `).get(activeContractRun.run.runId);
+      `
+        )
+        .get(activeContractRun.run.runId);
       assert.equal(interruptedRun?.status, "interrupted");
       assert.equal(interruptedRun?.ended_at, cancelled.workItem.endedAt);
-      assert.equal(cancellationDb.prepare("SELECT status FROM tasks WHERE task_id=?")
-        .get(activeContractTask.taskId)?.status, "cancelled");
-      assert.equal(Number(cancellationDb.prepare(`
+      assert.equal(
+        cancellationDb.prepare("SELECT status FROM tasks WHERE task_id=?").get(activeContractTask.taskId)?.status,
+        "cancelled"
+      );
+      assert.equal(
+        Number(
+          cancellationDb
+            .prepare(
+              `
         SELECT COUNT(*) AS count
         FROM project_events
         WHERE node_id=? AND event_type='stage_completed'
-      `).get(contractNodeId)?.count), completionEventsBeforeCancel);
-      assert.equal(cancellationDb.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?")
-        .get(`handoff_${verifyAttemptId}`), undefined);
+      `
+            )
+            .get(contractNodeId)?.count
+        ),
+        completionEventsBeforeCancel
+      );
+      assert.equal(
+        cancellationDb.prepare("SELECT 1 FROM stage_handoffs WHERE handoff_id=?").get(`handoff_${verifyAttemptId}`),
+        undefined
+      );
     } finally {
       cancellationDb.close();
     }

@@ -36,7 +36,10 @@ test("startup replays verify cleanup before reconciler timers invoke every publi
       reconcileIntervalSeconds: 1,
     });
     assert.equal(intervals.length, 5);
-    assert.equal(intervals.every((interval) => interval.delay === 1_000), true);
+    assert.equal(
+      intervals.every((interval) => interval.delay === 1_000),
+      true
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(verifySweep.mock.callCount(), 1);
 
@@ -61,9 +64,13 @@ test("closing immediately waits for the startup verify sweep before closing the 
   globalThis.setInterval = (() => fakeTimer) as typeof setInterval;
   globalThis.clearInterval = (() => undefined) as typeof clearInterval;
   let releaseSweep!: () => void;
-  const sweepHeld = new Promise<void>((resolve) => { releaseSweep = resolve; });
+  const sweepHeld = new Promise<void>((resolve) => {
+    releaseSweep = resolve;
+  });
   let sweepStarted!: () => void;
-  const started = new Promise<void>((resolve) => { sweepStarted = resolve; });
+  const started = new Promise<void>((resolve) => {
+    sweepStarted = resolve;
+  });
   t.mock.method(TaskBoard.prototype, "sweepVerifyAttempts", async () => {
     sweepStarted();
     await sweepHeld;
@@ -92,7 +99,7 @@ test("closing immediately waits for the startup verify sweep before closing the 
     assert.equal(boardClose.mock.callCount(), 1);
     assert.equal(
       logged.mock.calls.some((call) => call.arguments[0] === "[task-board] machine-verify reconciliation failed"),
-      false,
+      false
     );
   } finally {
     releaseSweep();
@@ -160,8 +167,14 @@ test("verify, park lifecycle, wall clock, and base branch keep 60-second sweeps 
     const reconcileCallsAfterOpen = reconcile.mock.callCount();
 
     assert.equal(intervals.length, 4);
-    assert.equal(intervals.every((interval) => interval.delay === 60_000), true);
-    assert.equal(intervals.every((interval) => interval.unrefed), true);
+    assert.equal(
+      intervals.every((interval) => interval.delay === 60_000),
+      true
+    );
+    assert.equal(
+      intervals.every((interval) => interval.unrefed),
+      true
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(verifySweep.mock.callCount(), 1);
     for (const interval of intervals) interval.callback();
@@ -174,7 +187,10 @@ test("verify, park lifecycle, wall clock, and base branch keep 60-second sweeps 
     assert.equal(reconcile.mock.callCount(), reconcileCallsAfterOpen);
     await service.close();
     service = undefined;
-    assert.equal(intervals.every((interval) => interval.cleared), true);
+    assert.equal(
+      intervals.every((interval) => interval.cleared),
+      true
+    );
   } finally {
     await service?.close();
     globalThis.setInterval = originalSetInterval;
@@ -218,19 +234,24 @@ test("park lifecycle, wall-clock, and base-branch timer failures are logged with
     for (const callback of intervals) assert.doesNotThrow(callback);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(
-      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] park-lifecycle sweep failed"
-        && call.arguments[1] === failure),
-      true,
+      logged.mock.calls.some(
+        (call) => call.arguments[0] === "[task-board] park-lifecycle sweep failed" && call.arguments[1] === failure
+      ),
+      true
     );
     assert.equal(
-      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] wall-clock cap sweep failed"
-        && call.arguments[1] === wallClockFailure),
-      true,
+      logged.mock.calls.some(
+        (call) =>
+          call.arguments[0] === "[task-board] wall-clock cap sweep failed" && call.arguments[1] === wallClockFailure
+      ),
+      true
     );
     assert.equal(
-      logged.mock.calls.some((call) => call.arguments[0] === "[task-board] base-branch sweep failed"
-        && call.arguments[1] === baseBranchFailure),
-      true,
+      logged.mock.calls.some(
+        (call) =>
+          call.arguments[0] === "[task-board] base-branch sweep failed" && call.arguments[1] === baseBranchFailure
+      ),
+      true
     );
   } finally {
     await service?.close();

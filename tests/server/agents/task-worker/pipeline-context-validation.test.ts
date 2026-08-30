@@ -26,7 +26,7 @@ test("onboarding context is optional and accepts only the true discriminator", (
   assert.equal(parseBoundedAgentContext(context({ onboarding: true })).onboarding, true);
   assert.throws(
     () => parseBoundedAgentContext({ ...context(), onboarding: false }),
-    /context\.onboarding must be true when present/u,
+    /context\.onboarding must be true when present/u
   );
 });
 
@@ -40,31 +40,36 @@ test("cross-repo context is optional, bounded, and preserves the published provi
   } as const;
 
   assert.equal(Object.hasOwn(parseBoundedAgentContext(context()), "crossRepoContext"), false);
-  assert.deepEqual(
-    parseBoundedAgentContext(context({ crossRepoContext })).crossRepoContext,
-    crossRepoContext,
-  );
+  assert.deepEqual(parseBoundedAgentContext(context({ crossRepoContext })).crossRepoContext, crossRepoContext);
   for (const markdown of ["# Emoji 😀 interface\n", "# CJK Extension B 𠀀 interface\n"]) {
     assert.equal(
-      parseBoundedAgentContext(context({
-        crossRepoContext: { ...crossRepoContext, markdown },
-      })).crossRepoContext?.markdown,
-      markdown,
+      parseBoundedAgentContext(
+        context({
+          crossRepoContext: { ...crossRepoContext, markdown },
+        })
+      ).crossRepoContext?.markdown,
+      markdown
     );
   }
   for (const markdown of ["NUL \0 control", "ESC \u001b control", "C1 \u0085 control", "lone \ud800 surrogate"]) {
     assert.throws(
-      () => parseBoundedAgentContext(context({
-        crossRepoContext: { ...crossRepoContext, markdown },
-      })),
-      /crossRepoContext\.markdown is invalid/u,
+      () =>
+        parseBoundedAgentContext(
+          context({
+            crossRepoContext: { ...crossRepoContext, markdown },
+          })
+        ),
+      /crossRepoContext\.markdown is invalid/u
     );
   }
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      crossRepoContext: { ...crossRepoContext, markdown: "x".repeat(64 * 1_024 + 1) },
-    })),
-    /crossRepoContext\.markdown exceeds 64 KiB/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          crossRepoContext: { ...crossRepoContext, markdown: "x".repeat(64 * 1_024 + 1) },
+        })
+      ),
+    /crossRepoContext\.markdown exceeds 64 KiB/u
   );
 });
 
@@ -89,17 +94,22 @@ test("pipeline workflow contexts validate and preserve their branch-bound plan r
     assumptions: ["The repository remains local."],
     designRecord: null,
   };
-  const parsed = parseBoundedAgentContext(context({
-    workflow: workflow({ workspaceKey, pipeline }),
-  }));
+  const parsed = parseBoundedAgentContext(
+    context({
+      workflow: workflow({ workspaceKey, pipeline }),
+    })
+  );
 
   assert.equal(parsed.workflow?.workspaceKey, workspaceKey);
   assert.deepEqual(parsed.workflow?.pipeline, pipeline);
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      workflow: workflow({ workspaceKey, pipeline: { ...pipeline, branch: "task/another-item" } }),
-    })),
-    /pipeline identity is invalid/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          workflow: workflow({ workspaceKey, pipeline: { ...pipeline, branch: "task/another-item" } }),
+        })
+      ),
+    /pipeline identity is invalid/u
   );
 });
 
@@ -117,17 +127,21 @@ test("design claims admit their bounded evidence without widening ordinary conte
       resultingState: "sent",
       recovery: "Resume with the persisted key.",
     })),
-    idempotencyKeys: [{
-      name: "send-key",
-      generatedAt: "Before the first send.",
-      persistedAt: "With the durable intent.",
-      reuse: "Reuse verbatim on retry.",
-    }],
-    faultInjectionCases: [{
-      name: "Crash after send",
-      scenario: "Terminate after sending and before receiving the response.",
-      expectation: "Recovery resolves the remote outcome with the same key.",
-    }],
+    idempotencyKeys: [
+      {
+        name: "send-key",
+        generatedAt: "Before the first send.",
+        persistedAt: "With the durable intent.",
+        reuse: "Reuse verbatim on retry.",
+      },
+    ],
+    faultInjectionCases: [
+      {
+        name: "Crash after send",
+        scenario: "Terminate after sending and before receiving the response.",
+        expectation: "Recovery resolves the remote outcome with the same key.",
+      },
+    ],
   };
   const workspaceKey = "work-item-large-design-context";
   const hazardous = context({
@@ -147,42 +161,58 @@ test("design claims admit their bounded evidence without widening ordinary conte
   });
   assert.equal(
     parseBoundedAgentContext(hazardous).workflow?.pipeline?.designRecord?.transitions.length,
-    DESIGN_RECORD_MAX_TRANSITIONS,
+    DESIGN_RECORD_MAX_TRANSITIONS
   );
 
   const oversizedObjective = "x".repeat(270_000);
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      task: { ...context().task, objective: oversizedObjective },
-    })),
-    /Agent context exceeds its byte bound/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          task: { ...context().task, objective: oversizedObjective },
+        })
+      ),
+    /Agent context exceeds its byte bound/u
   );
-  assert.equal(parseBoundedAgentContext(context({
-    design: true,
-    task: { ...context().task, objective: oversizedObjective },
-  })).task.objective, oversizedObjective);
-  assert.equal(parseBoundedAgentContext(context({
-    design: true,
-    task: { ...context().task, objective: oversizedObjective },
-    crossRepoContext: {
-      providerProjectId: "project-provider",
-      providerRepoName: "provider-api",
-      interfacePath: "docs/interface.md",
-      sha: "a".repeat(40),
-      markdown: "# Published interface\n",
-    },
-  })).task.objective, oversizedObjective);
+  assert.equal(
+    parseBoundedAgentContext(
+      context({
+        design: true,
+        task: { ...context().task, objective: oversizedObjective },
+      })
+    ).task.objective,
+    oversizedObjective
+  );
+  assert.equal(
+    parseBoundedAgentContext(
+      context({
+        design: true,
+        task: { ...context().task, objective: oversizedObjective },
+        crossRepoContext: {
+          providerProjectId: "project-provider",
+          providerRepoName: "provider-api",
+          interfacePath: "docs/interface.md",
+          sha: "a".repeat(40),
+          markdown: "# Published interface\n",
+        },
+      })
+    ).task.objective,
+    oversizedObjective
+  );
 
-  assert.equal(parseBoundedAgentContext({
-    ...hazardous,
-    crossRepoContext: {
-      providerProjectId: "project-provider",
-      providerRepoName: "provider-api",
-      interfacePath: "docs/interface.md",
-      sha: "a".repeat(40),
-      markdown: "# Published interface\n",
-    },
-  }).workflow?.pipeline?.designRecord?.transitions.length, DESIGN_RECORD_MAX_TRANSITIONS);
+  assert.equal(
+    parseBoundedAgentContext({
+      ...hazardous,
+      crossRepoContext: {
+        providerProjectId: "project-provider",
+        providerRepoName: "provider-api",
+        interfacePath: "docs/interface.md",
+        sha: "a".repeat(40),
+        markdown: "# Published interface\n",
+      },
+    }).workflow?.pipeline?.designRecord?.transitions.length,
+    DESIGN_RECORD_MAX_TRANSITIONS
+  );
 });
 
 test("pipeline workflow contexts accept implementation, verify, and review workspace keys bound to one task branch", () => {
@@ -202,16 +232,21 @@ test("pipeline workflow contexts accept implementation, verify, and review works
     "work-item-pipeline-context-verify",
     "work-item-pipeline-context-review",
   ]) {
-    const parsed = parseBoundedAgentContext(context({
-      workflow: workflow({ workspaceKey, pipeline }),
-    }));
+    const parsed = parseBoundedAgentContext(
+      context({
+        workflow: workflow({ workspaceKey, pipeline }),
+      })
+    );
     assert.equal(parsed.workflow?.workspaceKey, workspaceKey);
   }
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      workflow: workflow({ workspaceKey: "unrelated-workspace", pipeline }),
-    })),
-    /pipeline identity is invalid/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          workflow: workflow({ workspaceKey: "unrelated-workspace", pipeline }),
+        })
+      ),
+    /pipeline identity is invalid/u
   );
 });
 
@@ -239,16 +274,21 @@ test("review workflow contexts validate and preserve branch inspection evidence"
     priorFindingsTruncated: false,
   } as const;
 
-  const parsed = parseBoundedAgentContext(context({
-    workflow: workflow({ stage: "verification", workspaceKey, pipeline, review }),
-  }));
+  const parsed = parseBoundedAgentContext(
+    context({
+      workflow: workflow({ stage: "verification", workspaceKey, pipeline, review }),
+    })
+  );
 
   assert.deepEqual(parsed.workflow?.review, review);
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      workflow: workflow({ stage: "verification", workspaceKey: "work-item-pipeline-context", pipeline, review }),
-    })),
-    /review identity is invalid/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          workflow: workflow({ stage: "verification", workspaceKey: "work-item-pipeline-context", pipeline, review }),
+        })
+      ),
+    /review identity is invalid/u
   );
 });
 
@@ -265,30 +305,37 @@ test("fix workflow contexts preserve one findings round only during pipeline imp
   } as const;
   const fix = {
     round: 2,
-    findings: [{
-      findingId: "finding-pipeline-context",
-      nodeId: "node-pipeline-context",
-      stage: "verification",
-      round: 2,
-      file: "src/server/fix.ts",
-      line: 12,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry is safe.",
-      actual: "The retry duplicates work.",
-      blocking: true,
-      createdAt: "2026-08-19T12:00:00.000Z",
-    }],
+    findings: [
+      {
+        findingId: "finding-pipeline-context",
+        nodeId: "node-pipeline-context",
+        stage: "verification",
+        round: 2,
+        file: "src/server/fix.ts",
+        line: 12,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry is safe.",
+        actual: "The retry duplicates work.",
+        blocking: true,
+        createdAt: "2026-08-19T12:00:00.000Z",
+      },
+    ],
   } as const;
 
-  const parsed = parseBoundedAgentContext(context({
-    workflow: workflow({ workspaceKey, pipeline, fix }),
-  }));
+  const parsed = parseBoundedAgentContext(
+    context({
+      workflow: workflow({ workspaceKey, pipeline, fix }),
+    })
+  );
   assert.deepEqual(parsed.workflow?.fix, fix);
   assert.throws(
-    () => parseBoundedAgentContext(context({
-      workflow: workflow({ stage: "verification", workspaceKey, pipeline, fix }),
-    })),
-    /fix is only valid during implementation/u,
+    () =>
+      parseBoundedAgentContext(
+        context({
+          workflow: workflow({ stage: "verification", workspaceKey, pipeline, fix }),
+        })
+      ),
+    /fix is only valid during implementation/u
   );
 });

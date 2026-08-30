@@ -1,9 +1,5 @@
 export { TaskWorker } from "./worker.js";
-export {
-  HttpTaskBoardClient,
-  RetryableSettlementError,
-  TaskBoardHttpError,
-} from "./http-board-client.js";
+export { HttpTaskBoardClient, RetryableSettlementError, TaskBoardHttpError } from "./http-board-client.js";
 export { AgentProcessError } from "../runtime/adapter.js";
 export { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
 export { PromptRegistry } from "./prompt-registry.js";

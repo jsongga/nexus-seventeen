@@ -1,39 +1,43 @@
-import {
-  KeyRound,
-  MessageSquareText,
-  Plus,
-  Send,
-} from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { Button, InlineActionErrors, Modal, Pill, cn } from '../../components/ui';
-import { ActivityFeed, type ActivityFeedUpdate } from '../project/ActivityFeed';
-import { agentQueryPromptFromObjective } from '../data/client';
-import type { InterruptRunResult, TaskBoardClient } from '../data/client';
-import { ContextSidebar, type ContextDocument } from '../project/ContextSidebar';
-import { parseProjectMetadata, type ProjectMetadataEntry } from '../model/project-metadata';
-import { ThreadPipelineTable } from '../project/ThreadPipelineTable';
-import type { AgentQueryConversationTurn, BoardAgent, BoardProject, BoardQuestion, BoardSnapshot, ProjectArtifact, RotateAgentTokenResult } from '../types';
-import { WorkspaceHeader } from '../project/WorkspaceHeader';
-import {
-  agentPipelineFocus,
-  type ProjectUpdate,
-  updatesForProject,
-} from '../model/workspace-model';
-import { laneConfigurationState } from '../model/lane-config';
-import { actionErrorContexts, type ActionError, type ActionResult } from '../model/action-errors';
-import { beginArtifactPreviewLoad } from '../model/artifact-previews';
+import { KeyRound, MessageSquareText, Plus, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Button, InlineActionErrors, Modal, Pill, cn } from "../../components/ui";
+import { ActivityFeed, type ActivityFeedUpdate } from "../project/ActivityFeed";
+import { agentQueryPromptFromObjective } from "../data/client";
+import type { InterruptRunResult, TaskBoardClient } from "../data/client";
+import { ContextSidebar, type ContextDocument } from "../project/ContextSidebar";
+import { parseProjectMetadata, type ProjectMetadataEntry } from "../model/project-metadata";
+import { ThreadPipelineTable } from "../project/ThreadPipelineTable";
+import type {
+  AgentQueryConversationTurn,
+  BoardAgent,
+  BoardProject,
+  BoardQuestion,
+  BoardSnapshot,
+  ProjectArtifact,
+  RotateAgentTokenResult,
+} from "../types";
+import { WorkspaceHeader } from "../project/WorkspaceHeader";
+import { agentPipelineFocus, type ProjectUpdate, updatesForProject } from "../model/workspace-model";
+import { laneConfigurationState } from "../model/lane-config";
+import { actionErrorContexts, type ActionError, type ActionResult } from "../model/action-errors";
+import { beginArtifactPreviewLoad } from "../model/artifact-previews";
 
-const dateTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const dateTime = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 function formatTime(value: string | null): string {
-  if (value === null) return 'Not recorded';
+  if (value === null) return "Not recorded";
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed);
 }
 
 function projectLinkLabel(href: string): string {
   const url = new URL(href);
-  const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/u, '');
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/u, "");
   return `${url.host}${path}${url.search}${url.hash}`;
 }
 
@@ -57,29 +61,33 @@ export function activityUpdates(updates: ProjectUpdate[], artifacts: ProjectArti
     const taskTitle = artifact.taskId ? taskTitleById.get(artifact.taskId) : undefined;
     return {
       id: `artifact:${artifact.artifactId}`,
-      author: 'Artifact',
+      author: "Artifact",
       body: taskTitle
         ? `${artifact.caption} was added to ${taskTitle}.`
         : `${artifact.caption} was added to the project.`,
       createdAt: artifact.createdAt,
       createdAtMs: artifact.createdAtMs,
-      artifacts: [{
-        artifactId: artifact.artifactId,
-        caption: artifact.caption,
-        mediaType: artifact.mediaType,
-      }],
+      artifacts: [
+        {
+          artifactId: artifact.artifactId,
+          caption: artifact.caption,
+          mediaType: artifact.mediaType,
+        },
+      ],
     };
   });
 
   return [
-    ...updates.map((update): ActivityFeedUpdate => ({
-      id: update.id,
-      author: update.author,
-      body: update.body,
-      createdAt: update.createdAt,
-      createdAtMs: update.createdAtMs,
-      artifacts: [],
-    })),
+    ...updates.map(
+      (update): ActivityFeedUpdate => ({
+        id: update.id,
+        author: update.author,
+        body: update.body,
+        createdAt: update.createdAt,
+        createdAtMs: update.createdAtMs,
+        artifacts: [],
+      })
+    ),
     ...artifactUpdates,
   ].sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
 }
@@ -93,7 +101,7 @@ interface InterruptAllOutcome {
 
 export function deriveInterruptAllOutcome(
   runIds: readonly string[],
-  results: readonly PromiseSettledResult<InterruptRunResult>[],
+  results: readonly PromiseSettledResult<InterruptRunResult>[]
 ): InterruptAllOutcome {
   const outcome: InterruptAllOutcome = {
     handledRunIds: [],
@@ -102,7 +110,7 @@ export function deriveInterruptAllOutcome(
     failedCount: 0,
   };
   for (const [index, result] of results.entries()) {
-    if (result.status === 'rejected') {
+    if (result.status === "rejected") {
       outcome.failedCount += 1;
       continue;
     }
@@ -134,21 +142,27 @@ export function ProjectPage({
   const [interruptingAll, setInterruptingAll] = useState(false);
   const [interruptConfirmationOpen, setInterruptConfirmationOpen] = useState(false);
   const [handledRunIds, setHandledRunIds] = useState<Set<string>>(() => new Set());
-  const [interruptOutcome, setInterruptOutcome] = useState<Pick<InterruptAllOutcome, 'interruptedCount' | 'alreadyFinishedCount'> | null>(null);
+  const [interruptOutcome, setInterruptOutcome] = useState<Pick<
+    InterruptAllOutcome,
+    "interruptedCount" | "alreadyFinishedCount"
+  > | null>(null);
   const [interruptError, setInterruptError] = useState<string | null>(null);
   const addTaskAnchorRef = useRef<HTMLButtonElement>(null);
   const interruptAllAnchorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    void client.getProjectArtifacts(project.id, controller.signal).then((nextArtifacts) => {
-      setArtifacts((current) => (
-        current.length === nextArtifacts.length &&
-        current.every((artifact, index) => artifact.artifactId === nextArtifacts[index]?.artifactId)
-          ? current
-          : nextArtifacts
-      ));
-    }).catch(() => undefined);
+    void client
+      .getProjectArtifacts(project.id, controller.signal)
+      .then((nextArtifacts) => {
+        setArtifacts((current) =>
+          current.length === nextArtifacts.length &&
+          current.every((artifact, index) => artifact.artifactId === nextArtifacts[index]?.artifactId)
+            ? current
+            : nextArtifacts
+        );
+      })
+      .catch(() => undefined);
     return () => controller.abort();
   }, [client, project.id, snapshot.generatedAt]);
 
@@ -163,23 +177,24 @@ export function ProjectPage({
   }, [artifacts, client]);
 
   const updates = updatesForProject(snapshot, project.id);
-  const metadata = parseProjectMetadata(project.description ?? '');
+  const metadata = parseProjectMetadata(project.description ?? "");
   const tasks = snapshot.tasks
     .filter((task) => task.projectId === project.id)
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   const documents = contextDocuments([
-    { key: 'repository', label: 'Repository', kind: 'workspace', value: project.repoPath, href: null },
+    { key: "repository", label: "Repository", kind: "workspace", value: project.repoPath, href: null },
     ...metadata.entries,
   ]);
   const feedUpdates = activityUpdates(updates, artifacts);
-  const activeRuns = snapshot.runs.filter((run) => (
-    run.projectId === project.id
-      && (run.status === 'running' || run.status === 'queued')
-      && run.interruptRequestedAt === null
-      && !handledRunIds.has(run.id)
-  ));
+  const activeRuns = snapshot.runs.filter(
+    (run) =>
+      run.projectId === project.id &&
+      (run.status === "running" || run.status === "queued") &&
+      run.interruptRequestedAt === null &&
+      !handledRunIds.has(run.id)
+  );
 
   const interruptAllAgents = async () => {
     const runsToInterrupt = activeRuns;
@@ -191,7 +206,10 @@ export function ProjectPage({
     setInterruptOutcome(null);
     setInterruptError(null);
     const results = await Promise.allSettled(runsToInterrupt.map((run) => client.interruptRun(run.id)));
-    const outcome = deriveInterruptAllOutcome(runsToInterrupt.map((run) => run.id), results);
+    const outcome = deriveInterruptAllOutcome(
+      runsToInterrupt.map((run) => run.id),
+      results
+    );
     if (outcome.handledRunIds.length > 0) {
       setHandledRunIds((current) => new Set([...current, ...outcome.handledRunIds]));
       setInterruptOutcome({
@@ -200,7 +218,7 @@ export function ProjectPage({
       });
     }
     if (outcome.failedCount > 0) {
-      setInterruptError('Some active agents could not be interrupted. Refresh and try again.');
+      setInterruptError("Some active agents could not be interrupted. Refresh and try again.");
     }
     setInterruptingAll(false);
     setInterruptConfirmationOpen(false);
@@ -214,91 +232,111 @@ export function ProjectPage({
 
   const openArtifact = (artifactId: string) => {
     const url = artifactUrls[artifactId];
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return (
     <>
       <div className="flex h-[calc(100dvh-3.5rem)] min-w-0 flex-col overflow-hidden bg-canvas lg:h-dvh">
-      <WorkspaceHeader
-        eyebrow="Workspace, Project Overview"
-        title={project.name}
-        actions={(
-          <button
-            ref={addTaskAnchorRef}
-            type="button"
-            className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
-            aria-label="Add task"
-            title="Add task"
-            data-dialog-trigger="task"
-            disabled={!connected}
-            onClick={(event) => onAddTask(addTaskAnchorRef, event.nativeEvent)}
-          >
-            <Plus size={14} strokeWidth={2} aria-hidden="true" />
-          </button>
-        )}
-      />
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">
-        <ContextSidebar
-          intro={metadata.summaries.join('\n\n') || `Project context and reference materials for ${project.name}.`}
-          documents={documents}
-          orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
+        <WorkspaceHeader
+          eyebrow="Workspace, Project Overview"
+          title={project.name}
+          actions={
+            <button
+              ref={addTaskAnchorRef}
+              type="button"
+              className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+              aria-label="Add task"
+              title="Add task"
+              data-dialog-trigger="task"
+              disabled={!connected}
+              onClick={(event) => onAddTask(addTaskAnchorRef, event.nativeEvent)}
+            >
+              <Plus size={14} strokeWidth={2} aria-hidden="true" />
+            </button>
+          }
         />
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">
-          <ThreadPipelineTable tasks={tasks} agentById={agentById} onTask={onTask} />
-          <div className="flex min-h-0 flex-1 flex-col">
-            <ActivityFeed updates={feedUpdates} artifactUrls={artifactUrls} onOpenArtifact={openArtifact} />
-            {interruptOutcome !== null ? (
-              <p className="pt-2 text-right text-[11px] text-success" role="status" aria-live="polite">
-                {`Interrupted ${interruptOutcome.interruptedCount} ${interruptOutcome.interruptedCount === 1 ? 'agent' : 'agents'}${interruptOutcome.alreadyFinishedCount > 0
-                  ? `; ${interruptOutcome.alreadyFinishedCount} had already finished.`
-                  : '.'}`}
-              </p>
-            ) : null}
-            {interruptError ? <p className="pt-2 text-right text-[11px] text-urgent" role="alert">{interruptError}</p> : null}
-            <div className="mt-auto flex justify-end gap-2 pt-4">
-              <Button
-                ref={interruptAllAnchorRef}
-                variant="danger"
-                size="sm"
-                className="!min-h-0 !px-4 !py-2"
-                disabled={!connected || activeRuns.length === 0 || interruptingAll}
-                title={!connected ? 'Reconnect the task board to interrupt agents' : activeRuns.length === 0 ? 'No active agents to interrupt' : undefined}
-                onClick={openInterruptConfirmation}
-              >
-                {interruptingAll ? 'Interrupting…' : 'Interrupt all agents'}
-              </Button>
-              {/* Compile reporting stays disabled because no report endpoint exists. */}
-              <Button
-                variant="primary"
-                size="sm"
-                className="!min-h-0 !border-0 !px-4 !py-2"
-                disabled
-                title="Compile Report is not implemented yet"
-              >
-                Compile Report
-              </Button>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">
+          <ContextSidebar
+            intro={metadata.summaries.join("\n\n") || `Project context and reference materials for ${project.name}.`}
+            documents={documents}
+            orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
+          />
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">
+            <ThreadPipelineTable tasks={tasks} agentById={agentById} onTask={onTask} />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <ActivityFeed updates={feedUpdates} artifactUrls={artifactUrls} onOpenArtifact={openArtifact} />
+              {interruptOutcome !== null ? (
+                <p className="pt-2 text-right text-[11px] text-success" role="status" aria-live="polite">
+                  {`Interrupted ${interruptOutcome.interruptedCount} ${interruptOutcome.interruptedCount === 1 ? "agent" : "agents"}${
+                    interruptOutcome.alreadyFinishedCount > 0
+                      ? `; ${interruptOutcome.alreadyFinishedCount} had already finished.`
+                      : "."
+                  }`}
+                </p>
+              ) : null}
+              {interruptError ? (
+                <p className="pt-2 text-right text-[11px] text-urgent" role="alert">
+                  {interruptError}
+                </p>
+              ) : null}
+              <div className="mt-auto flex justify-end gap-2 pt-4">
+                <Button
+                  ref={interruptAllAnchorRef}
+                  variant="danger"
+                  size="sm"
+                  className="!min-h-0 !px-4 !py-2"
+                  disabled={!connected || activeRuns.length === 0 || interruptingAll}
+                  title={
+                    !connected
+                      ? "Reconnect the task board to interrupt agents"
+                      : activeRuns.length === 0
+                        ? "No active agents to interrupt"
+                        : undefined
+                  }
+                  onClick={openInterruptConfirmation}
+                >
+                  {interruptingAll ? "Interrupting…" : "Interrupt all agents"}
+                </Button>
+                {/* Compile reporting stays disabled because no report endpoint exists. */}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="!min-h-0 !border-0 !px-4 !py-2"
+                  disabled
+                  title="Compile Report is not implemented yet"
+                >
+                  Compile Report
+                </Button>
+              </div>
             </div>
-          </div>
-        </section>
-      </main>
+          </section>
+        </main>
       </div>
       <Modal
         open={interruptConfirmationOpen}
-        onClose={() => { if (!interruptingAll) setInterruptConfirmationOpen(false); }}
+        onClose={() => {
+          if (!interruptingAll) setInterruptConfirmationOpen(false);
+        }}
         variant="anchored"
         anchorRef={interruptAllAnchorRef}
-        title={`Interrupt ${activeRuns.length} ${activeRuns.length === 1 ? 'agent' : 'agents'}?`}
-        description={`This will interrupt ${activeRuns.length} active ${activeRuns.length === 1 ? 'agent' : 'agents'} in ${project.name}.`}
+        title={`Interrupt ${activeRuns.length} ${activeRuns.length === 1 ? "agent" : "agents"}?`}
+        description={`This will interrupt ${activeRuns.length} active ${activeRuns.length === 1 ? "agent" : "agents"} in ${project.name}.`}
       >
         <div className="space-y-4 p-5 sm:p-6">
           <p className="text-sm leading-6 text-muted">
             Interrupted tasks are recoverable via Retry from their task details.
           </p>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button data-dialog-initial-focus disabled={interruptingAll} onClick={() => setInterruptConfirmationOpen(false)}>Cancel</Button>
+            <Button
+              data-dialog-initial-focus
+              disabled={interruptingAll}
+              onClick={() => setInterruptConfirmationOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button variant="danger" disabled={interruptingAll} onClick={() => void interruptAllAgents()}>
-              {interruptingAll ? 'Interrupting…' : 'Interrupt all agents'}
+              {interruptingAll ? "Interrupting…" : "Interrupt all agents"}
             </Button>
           </div>
         </div>
@@ -316,7 +354,12 @@ interface AgentPageProps {
   rotationErrors: readonly ActionError[];
   onDismissActionError: (context: string) => void;
   onTask: (taskId: string) => void;
-  onSend: (prompt: string, workspaceRefs: string[], routingContext?: string, recentConversation?: AgentQueryConversationTurn[]) => Promise<ActionResult>;
+  onSend: (
+    prompt: string,
+    workspaceRefs: string[],
+    routingContext?: string,
+    recentConversation?: AgentQueryConversationTurn[]
+  ) => Promise<ActionResult>;
   onAnswer: (questionId: string, answer: string) => Promise<ActionResult>;
   onRotateToken: () => Promise<RotateAgentTokenResult | null>;
 }
@@ -327,33 +370,39 @@ interface AgentChatEntry {
   body: string;
   createdAt: string;
   createdAtMs: number;
-  sender: 'human' | 'agent' | 'system';
-  contextRole: AgentQueryConversationTurn['role'] | null;
+  sender: "human" | "agent" | "system";
+  contextRole: AgentQueryConversationTurn["role"] | null;
   order: number;
 }
 
 export function orderAgentChatEntries(entries: AgentChatEntry[]): AgentChatEntry[] {
-  return entries.sort((left, right) => left.createdAtMs - right.createdAtMs || left.order - right.order || left.id.localeCompare(right.id));
+  return entries.sort(
+    (left, right) => left.createdAtMs - right.createdAtMs || left.order - right.order || left.id.localeCompare(right.id)
+  );
 }
 
 export function latestByUpdatedAt<T extends { id: string; updatedAtMs: number }>(items: T[]): T | undefined {
-  return items.reduce<T | undefined>((latest, item) => (
-    latest === undefined
-    || item.updatedAtMs > latest.updatedAtMs
-    || (item.updatedAtMs === latest.updatedAtMs && item.id.localeCompare(latest.id) > 0)
-      ? item
-      : latest
-  ), undefined);
+  return items.reduce<T | undefined>(
+    (latest, item) =>
+      latest === undefined ||
+      item.updatedAtMs > latest.updatedAtMs ||
+      (item.updatedAtMs === latest.updatedAtMs && item.id.localeCompare(latest.id) > 0)
+        ? item
+        : latest,
+    undefined
+  );
 }
 
 export function latestByAskedAt<T extends { askedAtMs: number; id: string }>(items: T[]): T | undefined {
-  return items.reduce<T | undefined>((latest, item) => (
-    latest === undefined
-    || item.askedAtMs > latest.askedAtMs
-    || (item.askedAtMs === latest.askedAtMs && item.id.localeCompare(latest.id) > 0)
-      ? item
-      : latest
-  ), undefined);
+  return items.reduce<T | undefined>(
+    (latest, item) =>
+      latest === undefined ||
+      item.askedAtMs > latest.askedAtMs ||
+      (item.askedAtMs === latest.askedAtMs && item.id.localeCompare(latest.id) > 0)
+        ? item
+        : latest,
+    undefined
+  );
 }
 
 export function agentPageUsesPointOfContactMode(isPointOfContact: boolean, explicitPointOfContact: boolean): boolean {
@@ -362,62 +411,69 @@ export function agentPageUsesPointOfContactMode(isPointOfContact: boolean, expli
 
 function agentChatTasks(agent: BoardAgent, snapshot: BoardSnapshot, pointOfContactOnly: boolean) {
   const queryPrefix = `Request for ${agent.id}: `;
-  return snapshot.tasks.filter((task) => (
-    task.assignedAgentId === agent.id
-      && (!pointOfContactOnly || task.title.startsWith(queryPrefix))
-  ));
+  return snapshot.tasks.filter(
+    (task) => task.assignedAgentId === agent.id && (!pointOfContactOnly || task.title.startsWith(queryPrefix))
+  );
 }
 
 function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfContactOnly: boolean): AgentChatEntry[] {
   const chatTasks = agentChatTasks(agent, snapshot, pointOfContactOnly);
   const chatTaskIds = new Set(chatTasks.map((task) => task.id));
-  const promptByTask = new Map(chatTasks.map((task) => (
-    [task.id, agentQueryPromptFromObjective(task.objective)] as const
-  )));
+  const promptByTask = new Map(
+    chatTasks.map((task) => [task.id, agentQueryPromptFromObjective(task.objective)] as const)
+  );
   const messages = snapshot.messages.filter((message) => chatTaskIds.has(message.taskId));
   const questions = snapshot.questions.filter((question) => chatTaskIds.has(question.taskId));
   const questionBodies = new Set(questions.map((question) => `${question.taskId}\u0000${question.prompt.trim()}`));
-  const answerBodies = new Set(questions.flatMap((question) => question.answer === null ? [] : [`${question.taskId}\u0000${question.answer.trim()}`]));
+  const answerBodies = new Set(
+    questions.flatMap((question) =>
+      question.answer === null ? [] : [`${question.taskId}\u0000${question.answer.trim()}`]
+    )
+  );
   const agentNames = new Map(snapshot.agents.map((item) => [item.id, item.name]));
   const entries: AgentChatEntry[] = chatTasks.map((task) => {
-    const systemRequest = task.kind === 'manager_review';
+    const systemRequest = task.kind === "manager_review";
     return {
       id: `query-${task.id}`,
-      author: systemRequest ? 'System' : 'You',
+      author: systemRequest ? "System" : "You",
       body: promptByTask.get(task.id) ?? task.objective,
       createdAt: task.createdAt,
       createdAtMs: task.createdAtMs,
-      sender: systemRequest ? 'system' : 'human',
-      contextRole: systemRequest ? null : 'human',
+      sender: systemRequest ? "system" : "human",
+      contextRole: systemRequest ? null : "human",
       order: 0,
     };
   });
 
   for (const message of messages) {
     const body = message.body.trim();
-    if (message.authorType === 'human' && body === promptByTask.get(message.taskId)) continue;
-    if (message.kind === 'question' && questionBodies.has(`${message.taskId}\u0000${body}`)) continue;
-    if (message.kind === 'answer' && answerBodies.has(`${message.taskId}\u0000${body}`)) continue;
+    if (message.authorType === "human" && body === promptByTask.get(message.taskId)) continue;
+    if (message.kind === "question" && questionBodies.has(`${message.taskId}\u0000${body}`)) continue;
+    if (message.kind === "answer" && answerBodies.has(`${message.taskId}\u0000${body}`)) continue;
     entries.push({
       id: `message-${message.id}`,
-      author: message.authorType === 'human'
-        ? 'You'
-        : message.authorType === 'system'
-          ? 'System'
-          : agentNames.get(message.authorId ?? '') ?? agent.name,
+      author:
+        message.authorType === "human"
+          ? "You"
+          : message.authorType === "system"
+            ? "System"
+            : (agentNames.get(message.authorId ?? "") ?? agent.name),
       body: message.body,
       createdAt: message.createdAt,
       createdAtMs: message.createdAtMs,
       sender: message.authorType,
-      contextRole: message.authorType === 'system'
-        ? null
-        : message.kind === 'question'
-          ? 'agent'
-          : message.kind === 'answer'
-            ? 'human'
-            : message.kind === 'result'
-              ? message.authorType === 'human' ? 'human' : 'agent'
-              : null,
+      contextRole:
+        message.authorType === "system"
+          ? null
+          : message.kind === "question"
+            ? "agent"
+            : message.kind === "answer"
+              ? "human"
+              : message.kind === "result"
+                ? message.authorType === "human"
+                  ? "human"
+                  : "agent"
+                : null,
       order: 1,
     });
   }
@@ -429,19 +485,19 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
       body: question.prompt,
       createdAt: question.askedAt,
       createdAtMs: question.askedAtMs,
-      sender: 'agent',
-      contextRole: 'agent',
+      sender: "agent",
+      contextRole: "agent",
       order: 2,
     });
     if (question.answer !== null) {
       entries.push({
         id: `answer-${question.id}`,
-        author: 'You',
+        author: "You",
         body: question.answer,
         createdAt: question.answeredAt ?? question.askedAt,
         createdAtMs: question.answeredAtMs ?? question.askedAtMs,
-        sender: 'human',
-        contextRole: 'human',
+        sender: "human",
+        contextRole: "human",
         order: 3,
       });
     }
@@ -456,8 +512,8 @@ function agentChatHistory(agent: BoardAgent, snapshot: BoardSnapshot, pointOfCon
       body: result,
       createdAt: task.endedAt ?? task.updatedAt,
       createdAtMs: task.endedAtMs ?? task.updatedAtMs,
-      sender: 'agent',
-      contextRole: 'agent',
+      sender: "agent",
+      contextRole: "agent",
       order: 4,
     });
   }
@@ -476,48 +532,82 @@ function AgentChat({
   onRotateToken,
   rotationErrors,
   onDismissActionError,
-}: Pick<AgentPageProps, 'agent' | 'snapshot' | 'isPointOfContact' | 'busy' | 'onTask' | 'onSend' | 'onAnswer' | 'onRotateToken' | 'rotationErrors' | 'onDismissActionError'>) {
-  const [draft, setDraft] = useState('');
+}: Pick<
+  AgentPageProps,
+  | "agent"
+  | "snapshot"
+  | "isPointOfContact"
+  | "busy"
+  | "onTask"
+  | "onSend"
+  | "onAnswer"
+  | "onRotateToken"
+  | "rotationErrors"
+  | "onDismissActionError"
+>) {
+  const [draft, setDraft] = useState("");
   const [visibleLaneToken, setVisibleLaneToken] = useState<string | null>(null);
   const [confirmRotation, setConfirmRotation] = useState(false);
   const [rotating, setRotating] = useState(false);
   const rotationContext = actionErrorContexts.agentRotateToken(agent.id);
   const historyEndRef = useRef<HTMLDivElement>(null);
   const rotationAnchorRef = useRef<HTMLButtonElement>(null);
-  const history = useMemo(() => agentChatHistory(agent, snapshot, isPointOfContact), [agent, isPointOfContact, snapshot]);
-  const focus = useMemo(() => agentPipelineFocus(agent, snapshot.tasks), [agent, snapshot.tasks]);
-  const recentConversation = useMemo(() => history.flatMap((entry): AgentQueryConversationTurn[] => (
-    entry.contextRole === null ? [] : [{ role: entry.contextRole, body: entry.body }]
-  )), [history]);
-  const laneConfiguration = useMemo(
-    () => laneConfigurationState(agent, visibleLaneToken),
-    [agent, visibleLaneToken],
+  const history = useMemo(
+    () => agentChatHistory(agent, snapshot, isPointOfContact),
+    [agent, isPointOfContact, snapshot]
   );
+  const focus = useMemo(() => agentPipelineFocus(agent, snapshot.tasks), [agent, snapshot.tasks]);
+  const recentConversation = useMemo(
+    () =>
+      history.flatMap((entry): AgentQueryConversationTurn[] =>
+        entry.contextRole === null ? [] : [{ role: entry.contextRole, body: entry.body }]
+      ),
+    [history]
+  );
+  const laneConfiguration = useMemo(() => laneConfigurationState(agent, visibleLaneToken), [agent, visibleLaneToken]);
   const currentOpenQuestion = useMemo(() => {
     const chatTasks = agentChatTasks(agent, snapshot, isPointOfContact);
-    const currentQuery = chatTasks.find((task) => task.id === agent.currentTaskId)
-      ?? latestByUpdatedAt(chatTasks.filter((task) => (
-        task.status === 'waiting_for_human'
-          || task.status === 'running'
-          || task.status === 'blocked'
-          || task.status === 'queued'
-      )));
+    const currentQuery =
+      chatTasks.find((task) => task.id === agent.currentTaskId) ??
+      latestByUpdatedAt(
+        chatTasks.filter(
+          (task) =>
+            task.status === "waiting_for_human" ||
+            task.status === "running" ||
+            task.status === "blocked" ||
+            task.status === "queued"
+        )
+      );
     if (!currentQuery) return null;
-    return latestByAskedAt(snapshot.questions.filter((question): question is BoardQuestion => (
-      question.taskId === currentQuery.id && question.status === 'open'
-    ))) ?? null;
+    return (
+      latestByAskedAt(
+        snapshot.questions.filter(
+          (question): question is BoardQuestion => question.taskId === currentQuery.id && question.status === "open"
+        )
+      ) ?? null
+    );
   }, [agent, isPointOfContact, snapshot]);
-  const routingMap = useMemo(() => !isPointOfContact ? '' : snapshot.projects.slice(0, 20).map((project) => {
-    const owners = snapshot.agents
-      .filter((owner) => owner.projectId === project.id)
-      .slice(0, 8)
-      .map((owner) => `${owner.name} (${owner.role}, ${owner.area})`)
-      .join(', ');
-    return `- ${project.name}: ${owners || 'no agents yet'}`;
-  }).join('\n').slice(0, 2_000), [isPointOfContact, snapshot.agents, snapshot.projects]);
+  const routingMap = useMemo(
+    () =>
+      !isPointOfContact
+        ? ""
+        : snapshot.projects
+            .slice(0, 20)
+            .map((project) => {
+              const owners = snapshot.agents
+                .filter((owner) => owner.projectId === project.id)
+                .slice(0, 8)
+                .map((owner) => `${owner.name} (${owner.role}, ${owner.area})`)
+                .join(", ");
+              return `- ${project.name}: ${owners || "no agents yet"}`;
+            })
+            .join("\n")
+            .slice(0, 2_000),
+    [isPointOfContact, snapshot.agents, snapshot.projects]
+  );
 
   useEffect(() => {
-    historyEndRef.current?.scrollIntoView?.({ block: 'end' });
+    historyEndRef.current?.scrollIntoView?.({ block: "end" });
   }, [history.length]);
 
   async function send() {
@@ -525,8 +615,13 @@ function AgentChat({
     if (!prompt) return;
     const sent = currentOpenQuestion
       ? await onAnswer(currentOpenQuestion.id, prompt)
-      : await onSend(prompt, isPointOfContact ? [] : focus.task?.workspaceRefs ?? [], routingMap || undefined, recentConversation);
-    if (sent.ok) setDraft('');
+      : await onSend(
+          prompt,
+          isPointOfContact ? [] : (focus.task?.workspaceRefs ?? []),
+          routingMap || undefined,
+          recentConversation
+        );
+    if (sent.ok) setDraft("");
   }
 
   async function rotateToken() {
@@ -552,115 +647,196 @@ function AgentChat({
   return (
     <>
       <main className="h-[calc(100dvh-4rem)] overflow-hidden bg-canvas lg:h-dvh">
-        <section aria-labelledby="agent-chat-heading" className="mx-auto flex h-full w-full max-w-4xl flex-col px-4 sm:px-8 lg:px-10">
+        <section
+          aria-labelledby="agent-chat-heading"
+          className="mx-auto flex h-full w-full max-w-4xl flex-col px-4 sm:px-8 lg:px-10"
+        >
           {isPointOfContact ? (
             <header className="shrink-0 border-b border-line py-4 sm:py-5 lg:py-7">
               <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">Point of contact</p>
-              <h1 id="agent-chat-heading" data-page-heading tabIndex={-1} className="mt-1.5 font-display text-2xl font-light tracking-[0.01em] text-ink sm:text-[28px]">Chat with {agent.name}</h1>
+              <h1
+                id="agent-chat-heading"
+                data-page-heading
+                tabIndex={-1}
+                className="mt-1.5 font-display text-2xl font-light tracking-[0.01em] text-ink sm:text-[28px]"
+              >
+                Chat with {agent.name}
+              </h1>
             </header>
           ) : (
-            <header aria-label={`${agent.name} current focus`} className="shrink-0 border-b border-line py-4 sm:py-5 lg:py-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
-              <div className="min-w-0">
-                <h1 id="agent-chat-heading" data-page-heading tabIndex={-1} className="font-display text-xl font-light tracking-[0.01em] text-ink sm:text-2xl">{agent.name}</h1>
-                <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Current focus</p>
-                {focus.task ? (
-                  <button
-                    type="button"
-                    className="mt-1 max-w-full rounded-[8px] text-left text-sm font-medium leading-5 text-ink underline decoration-transparent underline-offset-4 transition-[color,text-decoration-color,transform] duration-150 ease-out hover:text-teal-700 hover:decoration-current motion-safe:active:scale-[0.99]"
-                    onClick={() => onTask(focus.task!.id)}
+            <header
+              aria-label={`${agent.name} current focus`}
+              className="shrink-0 border-b border-line py-4 sm:py-5 lg:py-6"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
+                <div className="min-w-0">
+                  <h1
+                    id="agent-chat-heading"
+                    data-page-heading
+                    tabIndex={-1}
+                    className="font-display text-xl font-light tracking-[0.01em] text-ink sm:text-2xl"
                   >
-                    {focus.task.title}
-                  </button>
-                ) : <p className="mt-1 text-sm leading-5 text-muted">No current task</p>}
+                    {agent.name}
+                  </h1>
+                  <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">Current focus</p>
+                  {focus.task ? (
+                    <button
+                      type="button"
+                      className="mt-1 max-w-full rounded-[8px] text-left text-sm font-medium leading-5 text-ink underline decoration-transparent underline-offset-4 transition-[color,text-decoration-color,transform] duration-150 ease-out hover:text-teal-700 hover:decoration-current motion-safe:active:scale-[0.99]"
+                      onClick={() => onTask(focus.task!.id)}
+                    >
+                      {focus.task.title}
+                    </button>
+                  ) : (
+                    <p className="mt-1 text-sm leading-5 text-muted">No current task</p>
+                  )}
+                </div>
+                <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:justify-end">
+                  {focus.stage ? (
+                    <Pill tone={focus.stage === "Reviewing" ? "amber" : "green"} dot>
+                      {focus.stage}
+                    </Pill>
+                  ) : null}
+                  <Pill className="max-w-full" tone="neutral">
+                    <span className="block max-w-[18rem] truncate">
+                      {focus.phase
+                        ? `Phase · ${focus.phase.title}`
+                        : focus.task
+                          ? "Phase not reported"
+                          : "No active phase"}
+                    </span>
+                  </Pill>
+                  {focus.loop ? <Pill tone="blue">Loop {focus.loop}</Pill> : null}
+                </div>
               </div>
-              <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:justify-end">
-                {focus.stage ? <Pill tone={focus.stage === 'Reviewing' ? 'amber' : 'green'} dot>{focus.stage}</Pill> : null}
-                <Pill className="max-w-full" tone="neutral">
-                  <span className="block max-w-[18rem] truncate">{focus.phase ? `Phase · ${focus.phase.title}` : focus.task ? 'Phase not reported' : 'No active phase'}</span>
-                </Pill>
-                {focus.loop ? <Pill tone="blue">Loop {focus.loop}</Pill> : null}
-              </div>
-            </div>
             </header>
           )}
 
           <section aria-labelledby="lane-configuration-heading" className="shrink-0 border-b border-line py-4 sm:py-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <KeyRound size={15} strokeWidth={1.6} aria-hidden="true" />
-                <h2 id="lane-configuration-heading" className="text-sm font-medium text-ink">Lane configuration</h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <KeyRound size={15} strokeWidth={1.6} aria-hidden="true" />
+                  <h2 id="lane-configuration-heading" className="text-sm font-medium text-ink">
+                    Lane configuration
+                  </h2>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Paste this agent object into the fleet config’s <code>agents</code> array and replace the
+                  working-directory and provider placeholders.
+                </p>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Paste this agent object into the fleet config’s <code>agents</code> array and replace the working-directory and provider placeholders.
-              </p>
+              <Button
+                ref={rotationAnchorRef}
+                className="shrink-0"
+                size="sm"
+                disabled={busy || rotating}
+                onClick={openRotationDialog}
+              >
+                {rotating ? "Rotating…" : laneConfiguration.tokenVisible ? "Rotate again" : "Rotate token"}
+              </Button>
             </div>
-            <Button
-              ref={rotationAnchorRef}
-              className="shrink-0"
-              size="sm"
-              disabled={busy || rotating}
-              onClick={openRotationDialog}
+            <pre
+              aria-label={`Fleet lane configuration for ${agent.name}`}
+              className="mt-3 max-h-48 overflow-auto rounded-xl border border-line bg-muted-surface p-3 font-mono text-[11px] leading-5 text-ink"
             >
-              {rotating ? 'Rotating…' : laneConfiguration.tokenVisible ? 'Rotate again' : 'Rotate token'}
-            </Button>
-          </div>
-          <pre
-            aria-label={`Fleet lane configuration for ${agent.name}`}
-            className="mt-3 max-h-48 overflow-auto rounded-xl border border-line bg-muted-surface p-3 font-mono text-[11px] leading-5 text-ink"
-          >{laneConfiguration.snippet}</pre>
-          <p className="mt-2 text-[11px] leading-4 text-muted" role={laneConfiguration.tokenVisible ? 'status' : undefined}>
-            {laneConfiguration.tokenVisible
-              ? 'Token visible for this page session only. It will be masked after you leave or reload.'
-              : 'No token is stored in the board snapshot. Rotate it to reveal a new value once.'}
-          </p>
+              {laneConfiguration.snippet}
+            </pre>
+            <p
+              className="mt-2 text-[11px] leading-4 text-muted"
+              role={laneConfiguration.tokenVisible ? "status" : undefined}
+            >
+              {laneConfiguration.tokenVisible
+                ? "Token visible for this page session only. It will be masked after you leave or reload."
+                : "No token is stored in the board snapshot. Rotate it to reveal a new value once."}
+            </p>
           </section>
 
-          <div role="log" aria-label={`Chat history with ${agent.name}`} aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-5 sm:py-7">
-          {history.length > 0 ? (
-            <ol className="space-y-4">
-              {history.map((entry) => (
-                <li key={entry.id} className={cn('flex', entry.sender === 'human' ? 'justify-end' : entry.sender === 'system' ? 'justify-center' : 'justify-start')}>
-                  <article className={cn(
-                    'max-w-[88%] rounded-[18px] px-4 py-3 text-sm leading-6 shadow-none sm:max-w-[76%]',
-                    entry.sender === 'human'
-                      ? 'rounded-br-[6px] bg-taupe text-white'
-                      : entry.sender === 'system'
-                        ? 'bg-muted-surface text-muted'
-                        : 'rounded-bl-[6px] border border-line bg-muted-surface text-ink',
-                  )}>
-                    <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[10px] leading-4 opacity-70">
-                      <span className="font-medium">{entry.author}</span>
-                      <time dateTime={entry.createdAt}>{formatTime(entry.createdAt)}</time>
-                    </div>
-                    <p className="whitespace-pre-wrap break-words">{entry.body}</p>
-                  </article>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <div className="flex h-full min-h-44 flex-col items-center justify-center text-center text-muted">
-              <span className="flex size-10 items-center justify-center rounded-full bg-muted-surface"><MessageSquareText size={17} strokeWidth={1.5} /></span>
-              <p className="mt-3 text-sm">No messages yet.</p>
-            </div>
-          )}
-          <div ref={historyEndRef} aria-hidden="true" />
+          <div
+            role="log"
+            aria-label={`Chat history with ${agent.name}`}
+            aria-live="polite"
+            aria-relevant="additions"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-5 sm:py-7"
+          >
+            {history.length > 0 ? (
+              <ol className="space-y-4">
+                {history.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className={cn(
+                      "flex",
+                      entry.sender === "human"
+                        ? "justify-end"
+                        : entry.sender === "system"
+                          ? "justify-center"
+                          : "justify-start"
+                    )}
+                  >
+                    <article
+                      className={cn(
+                        "max-w-[88%] rounded-[18px] px-4 py-3 text-sm leading-6 shadow-none sm:max-w-[76%]",
+                        entry.sender === "human"
+                          ? "rounded-br-[6px] bg-taupe text-white"
+                          : entry.sender === "system"
+                            ? "bg-muted-surface text-muted"
+                            : "rounded-bl-[6px] border border-line bg-muted-surface text-ink"
+                      )}
+                    >
+                      <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[10px] leading-4 opacity-70">
+                        <span className="font-medium">{entry.author}</span>
+                        <time dateTime={entry.createdAt}>{formatTime(entry.createdAt)}</time>
+                      </div>
+                      <p className="whitespace-pre-wrap break-words">{entry.body}</p>
+                    </article>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="flex h-full min-h-44 flex-col items-center justify-center text-center text-muted">
+                <span className="flex size-10 items-center justify-center rounded-full bg-muted-surface">
+                  <MessageSquareText size={17} strokeWidth={1.5} />
+                </span>
+                <p className="mt-3 text-sm">No messages yet.</p>
+              </div>
+            )}
+            <div ref={historyEndRef} aria-hidden="true" />
           </div>
 
-          <form className="shrink-0 border-t border-line bg-canvas py-4 sm:py-5" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-          <label htmlFor={`agent-message-${agent.id}`} className="sr-only">Message {agent.name}</label>
-          <div className="flex items-end gap-2 rounded-[18px] border border-line bg-surface p-2 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-taupe-hover focus-within:shadow-[0_0_0_3px_rgba(213,200,186,.2)]">
-            <textarea
-              id={`agent-message-${agent.id}`}
-              className="min-h-11 max-h-40 flex-1 resize-y bg-transparent px-2 py-2 text-sm leading-6 text-ink outline-none placeholder:text-muted"
-              maxLength={8_000}
-              placeholder={currentOpenQuestion ? 'Reply to the agent’s question…' : isPointOfContact ? 'Ask a question or describe what you need…' : `Message ${agent.name}…`}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <Button className="size-11 min-h-0 shrink-0 rounded-full p-0" variant="primary" type="submit" icon={<Send size={16} />} aria-label="Send message" disabled={busy || draft.trim().length === 0} />
-          </div>
+          <form
+            className="shrink-0 border-t border-line bg-canvas py-4 sm:py-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void send();
+            }}
+          >
+            <label htmlFor={`agent-message-${agent.id}`} className="sr-only">
+              Message {agent.name}
+            </label>
+            <div className="flex items-end gap-2 rounded-[18px] border border-line bg-surface p-2 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-taupe-hover focus-within:shadow-[0_0_0_3px_rgba(213,200,186,.2)]">
+              <textarea
+                id={`agent-message-${agent.id}`}
+                className="min-h-11 max-h-40 flex-1 resize-y bg-transparent px-2 py-2 text-sm leading-6 text-ink outline-none placeholder:text-muted"
+                maxLength={8_000}
+                placeholder={
+                  currentOpenQuestion
+                    ? "Reply to the agent’s question…"
+                    : isPointOfContact
+                      ? "Ask a question or describe what you need…"
+                      : `Message ${agent.name}…`
+                }
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+              />
+              <Button
+                className="size-11 min-h-0 shrink-0 rounded-full p-0"
+                variant="primary"
+                type="submit"
+                icon={<Send size={16} />}
+                aria-label="Send message"
+                disabled={busy || draft.trim().length === 0}
+              />
+            </div>
           </form>
         </section>
       </main>
@@ -674,12 +850,17 @@ function AgentChat({
       >
         <div className="space-y-4 p-5 sm:p-6">
           <p className="text-sm leading-6 text-muted">
-            The old token will stop authenticating as soon as rotation succeeds. Update the fleet lane with the new token before reconnecting it.
+            The old token will stop authenticating as soon as rotation succeeds. Update the fleet lane with the new
+            token before reconnecting it.
           </p>
           <InlineActionErrors errors={rotationErrors} onDismiss={onDismissActionError} />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button disabled={rotating} onClick={closeRotationDialog}>Cancel</Button>
-            <Button variant="danger" disabled={rotating} onClick={() => void rotateToken()}>Rotate token</Button>
+            <Button disabled={rotating} onClick={closeRotationDialog}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={rotating} onClick={() => void rotateToken()}>
+              Rotate token
+            </Button>
           </div>
         </div>
       </Modal>
@@ -689,5 +870,18 @@ function AgentChat({
 
 export function AgentPage(props: AgentPageProps) {
   const pointOfContactMode = agentPageUsesPointOfContactMode(props.isPointOfContact, props.explicitPointOfContact);
-  return <AgentChat agent={props.agent} snapshot={props.snapshot} isPointOfContact={pointOfContactMode} busy={props.busy} rotationErrors={props.rotationErrors} onDismissActionError={props.onDismissActionError} onTask={props.onTask} onSend={props.onSend} onAnswer={props.onAnswer} onRotateToken={props.onRotateToken} />;
+  return (
+    <AgentChat
+      agent={props.agent}
+      snapshot={props.snapshot}
+      isPointOfContact={pointOfContactMode}
+      busy={props.busy}
+      rotationErrors={props.rotationErrors}
+      onDismissActionError={props.onDismissActionError}
+      onTask={props.onTask}
+      onSend={props.onSend}
+      onAnswer={props.onAnswer}
+      onRotateToken={props.onRotateToken}
+    />
+  );
 }

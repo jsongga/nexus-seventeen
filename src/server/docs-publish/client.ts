@@ -2,7 +2,7 @@ export class OutlineHttpError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code?: string,
+    readonly code?: string
   ) {
     super(message);
     this.name = "OutlineHttpError";
@@ -28,8 +28,12 @@ function checkedUrl(value: string, allowInsecureBaseUrl: boolean): string {
     throw new Error("Outline URL is invalid");
   }
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
-    url.search || url.hash || url.pathname !== "/"
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
   ) {
     throw new Error("Outline URL must be an HTTP(S) origin without path, credentials, query, or fragment");
   }
@@ -40,22 +44,13 @@ function checkedUrl(value: string, allowInsecureBaseUrl: boolean): string {
 }
 
 function checkedToken(value: string): string {
-  if (
-    value.length < 1 || value.length > 512 || value.trim() !== value ||
-    CONTROL_CHARACTER.test(value)
-  ) {
+  if (value.length < 1 || value.length > 512 || value.trim() !== value || CONTROL_CHARACTER.test(value)) {
     throw new Error("Outline API token is invalid");
   }
   return value;
 }
 
-function integer(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-  label: string,
-): number {
+function integer(value: number | undefined, fallback: number, minimum: number, maximum: number, label: string): number {
   const parsed = value ?? fallback;
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new Error(`${label} is invalid`);
@@ -65,7 +60,7 @@ function integer(
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -130,13 +125,7 @@ export class OutlineClient {
     this.#baseUrl = checkedUrl(options.baseUrl, options.allowInsecureBaseUrl === true);
     this.#token = checkedToken(options.token);
     this.#timeoutMs = integer(options.timeoutMs, 10_000, 1, 60_000, "timeoutMs");
-    this.#maximum = integer(
-      options.maxResponseBytes,
-      1024 * 1024,
-      1,
-      16 * 1024 * 1024,
-      "maxResponseBytes",
-    );
+    this.#maximum = integer(options.maxResponseBytes, 1024 * 1024, 1, 16 * 1024 * 1024, "maxResponseBytes");
     this.#fetch = options.fetchImplementation ?? globalThis.fetch;
   }
 
@@ -161,11 +150,7 @@ export class OutlineClient {
       const parsed = await boundedJson(response, this.#maximum);
       if (!response.ok) {
         const code = errorCode(parsed);
-        throw new OutlineHttpError(
-          `Outline request failed with HTTP ${response.status}`,
-          response.status,
-          code,
-        );
+        throw new OutlineHttpError(`Outline request failed with HTTP ${response.status}`, response.status, code);
       }
       return parsed;
     } finally {
@@ -173,4 +158,3 @@ export class OutlineClient {
     }
   }
 }
-

@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,7 +31,7 @@ async function writeWorkflow(root: string, options: WorkflowOptions): Promise<vo
   await writePath(
     root,
     "docs/workflow.md",
-    `# Test workflow\n\n\`\`\`json\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n`,
+    `# Test workflow\n\n\`\`\`json\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n`
   );
 }
 
@@ -50,8 +42,12 @@ async function command(command: string, args: readonly string[], cwd: string): P
     let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
     child.once("error", reject);
     child.once("close", (code) => {
       if (code === 0) resolve();
@@ -71,10 +67,7 @@ async function deadProcessPid(): Promise<number> {
   return pid;
 }
 
-async function foregroundRepo(
-  files: Readonly<Record<string, string>>,
-  options: WorkflowOptions,
-): Promise<string> {
+async function foregroundRepo(files: Readonly<Record<string, string>>, options: WorkflowOptions): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "verify-foreground-"));
   await writeWorkflow(root, options);
   await writePath(root, ".gitignore", ".test-dist/\n.verify-runs/\n.test-helpers/\n");
@@ -90,7 +83,7 @@ async function foregroundRepo(
 async function pollStatus(
   runner: VerifyRunner,
   id: string,
-  predicate: (status: VerifyRunStatus) => boolean,
+  predicate: (status: VerifyRunStatus) => boolean
 ): Promise<VerifyRunStatus> {
   const deadline = Date.now() + 5_000;
   let latest = await runner.status(id);
@@ -108,26 +101,14 @@ async function backgroundRepo(full: readonly string[]): Promise<string> {
     rules: [{ match: "docs/**", action: { kind: "none" } }],
     full,
   });
-  await writePath(
-    root,
-    ".test-helpers/exit0.mjs",
-    'process.stdout.write("successful-child-output\\n");\n',
-  );
+  await writePath(root, ".test-helpers/exit0.mjs", 'process.stdout.write("successful-child-output\\n");\n');
   await writePath(
     root,
     ".test-helpers/delayed-exit0.mjs",
-    'process.stdout.write("successful-child-output\\n"); setTimeout(() => process.exit(0), 300);\n',
+    'process.stdout.write("successful-child-output\\n"); setTimeout(() => process.exit(0), 300);\n'
   );
-  await writePath(
-    root,
-    ".test-helpers/fail.mjs",
-    'process.stderr.write("intentional-failure\\n"); process.exit(7);\n',
-  );
-  await writePath(
-    root,
-    ".test-helpers/never-reached.mjs",
-    'process.stdout.write("NEVER_REACHED\\n");\n',
-  );
+  await writePath(root, ".test-helpers/fail.mjs", 'process.stderr.write("intentional-failure\\n"); process.exit(7);\n');
+  await writePath(root, ".test-helpers/never-reached.mjs", 'process.stdout.write("NEVER_REACHED\\n");\n');
   await writePath(root, ".test-helpers/sleep.mjs", "setTimeout(() => process.exit(0), 5000);\n");
 
   const relativeSupervisor = "build/server/agents/verify/supervisor.js";
@@ -139,7 +120,7 @@ async function backgroundRepo(full: readonly string[]): Promise<string> {
 test("docs-only change is green, prints nothing to verify, and executes no commands", async (t) => {
   const root = await foregroundRepo(
     { "docs/guide.md": "before\n" },
-    { rules: [{ match: "docs/**", action: { kind: "none" } }] },
+    { rules: [{ match: "docs/**", action: { kind: "none" } }] }
   );
   await writePath(root, "docs/guide.md", "after\n");
   const executions: readonly string[][] = [];
@@ -155,13 +136,16 @@ test("docs-only change is green, prints nothing to verify, and executes no comma
   assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/guide.md"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
   assert.deepEqual(executions, []);
-  assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+  assert.deepEqual(
+    log.mock.calls.map((call) => call.arguments),
+    [["nothing to verify"]]
+  );
 });
 
 test("an untracked source inside a new directory is listed as a file and maps normally", async () => {
   const root = await foregroundRepo(
     { "tests/server/new-area/widget.test.ts": "export {};\n" },
-    { rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }] },
+    { rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }] }
   );
   await writePath(root, "src/server/new-area/widget.ts", "export const value = 1;\n");
   const executions: string[][] = [];
@@ -178,17 +162,11 @@ test("an untracked source inside a new directory is listed as a file and maps no
 
   assert.deepEqual(await runner.changedFiles("HEAD"), ["src/server/new-area/widget.ts"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
-  assert.deepEqual(executions, [
-    ["compile"],
-    ["node", "--test", ".test-dist/tests/server/new-area/widget.test.js"],
-  ]);
+  assert.deepEqual(executions, [["compile"], ["node", "--test", ".test-dist/tests/server/new-area/widget.test.js"]]);
 });
 
 test("an untracked docs file with a space in its name maps to none", async (t) => {
-  const root = await foregroundRepo(
-    {},
-    { rules: [{ match: "docs/**", action: { kind: "none" } }] },
-  );
+  const root = await foregroundRepo({}, { rules: [{ match: "docs/**", action: { kind: "none" } }] });
   await writePath(root, "docs/design note.md", "documentation\n");
   const executions: string[][] = [];
   const log = t.mock.method(console, "log", () => undefined);
@@ -203,13 +181,16 @@ test("an untracked docs file with a space in its name maps to none", async (t) =
   assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/design note.md"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
   assert.deepEqual(executions, []);
-  assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+  assert.deepEqual(
+    log.mock.calls.map((call) => call.arguments),
+    [["nothing to verify"]]
+  );
 });
 
 test("an escalating container-test change returns the rule reason and executes no commands", async () => {
   const root = await foregroundRepo(
     { "tests/container/image.test.ts": "before\n" },
-    { rules: [{ match: "tests/container/**", action: { kind: "escalate" } }] },
+    { rules: [{ match: "tests/container/**", action: { kind: "escalate" } }] }
   );
   await writePath(root, "tests/container/image.test.ts", "after\n");
   const executions: string[][] = [];
@@ -237,7 +218,7 @@ test("a mapped runtime change compiles twice and runs exactly its compiled node 
     {
       compile: ["compile-one --fast", "compile-two --tests"],
       rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }],
-    },
+    }
   );
   await writePath(root, "src/server/widget.ts", "export const value = 2;\n");
   const executions: string[][] = [];
@@ -268,11 +249,13 @@ test("a failing node-test step is named and prevents the later vitest step", asy
     },
     {
       compile: ["compile-one", "compile-two"],
-      rules: [{
-        match: "src/shared/**",
-        action: { kind: "fixed", nodeTestDirs: ["tests/server"], vitest: ["src/web"] },
-      }],
-    },
+      rules: [
+        {
+          match: "src/shared/**",
+          action: { kind: "fixed", nodeTestDirs: ["tests/server"], vitest: ["src/web"] },
+        },
+      ],
+    }
   );
   await writePath(root, "src/shared/value.ts", "export const value = 2;\n");
   const executions: string[][] = [];
@@ -308,7 +291,7 @@ test("a selected compiled test missing after compile fails as a mapping bug", as
     {
       compile: ["compile-one", "compile-two"],
       rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }],
-    },
+    }
   );
   await writePath(root, "src/server/missing.ts", "export const value = 2;\n");
   const executions: string[][] = [];
@@ -337,7 +320,7 @@ test("a selected mirror directory with no compiled tests fails as a mapping bug"
     },
     {
       rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }],
-    },
+    }
   );
   await writePath(root, "src/server/empty/widget.ts", "export const value = 2;\n");
   const executions: string[][] = [];
@@ -365,7 +348,7 @@ test("a deleted committed file escalates before incremental compilation", async 
     {
       compile: ["compile-one", "compile-two"],
       rules: [{ match: "src/server/**/*.ts", action: { kind: "mirror" } }],
-    },
+    }
   );
   await rm(join(root, "src/server/deleted.ts"));
   const executions: string[][] = [];
@@ -380,9 +363,7 @@ test("a deleted committed file escalates before incremental compilation", async 
   assert.deepEqual(await runner.changedFiles("HEAD"), ["src/server/deleted.ts"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), {
     outcome: "escalate",
-    reasons: [
-      "src/server/deleted.ts (deleted or renamed — stale compiled outputs; run a clean tier)",
-    ],
+    reasons: ["src/server/deleted.ts (deleted or renamed — stale compiled outputs; run a clean tier)"],
   });
   assert.deepEqual(executions, []);
 });
@@ -398,7 +379,7 @@ test("a committed source renamed to docs escalates with the deleted source path"
         { match: "src/server/**/*.ts", action: { kind: "mirror" } },
         { match: "docs/**", action: { kind: "none" } },
       ],
-    },
+    }
   );
   await mkdir(join(root, "docs"), { recursive: true });
   await command("git", ["mv", "src/server/renamed.ts", "docs/renamed.md"], root);
@@ -414,9 +395,7 @@ test("a committed source renamed to docs escalates with the deleted source path"
   assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/renamed.md", "src/server/renamed.ts"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), {
     outcome: "escalate",
-    reasons: [
-      "src/server/renamed.ts (deleted or renamed — stale compiled outputs; run a clean tier)",
-    ],
+    reasons: ["src/server/renamed.ts (deleted or renamed — stale compiled outputs; run a clean tier)"],
   });
   assert.deepEqual(executions, []);
 });
@@ -424,7 +403,7 @@ test("a committed source renamed to docs escalates with the deleted source path"
 test("a deleted markdown file mapped to none is green without compiling", async (t) => {
   const root = await foregroundRepo(
     { "docs/deleted.md": "documentation\n" },
-    { rules: [{ match: "**/*.md", action: { kind: "none" } }] },
+    { rules: [{ match: "**/*.md", action: { kind: "none" } }] }
   );
   await rm(join(root, "docs/deleted.md"));
   const executions: string[][] = [];
@@ -440,7 +419,10 @@ test("a deleted markdown file mapped to none is green without compiling", async 
   assert.deepEqual(await runner.changedFiles("HEAD"), ["docs/deleted.md"]);
   assert.deepEqual(await runner.runForeground("fast", "HEAD"), { outcome: "green" });
   assert.deepEqual(executions, []);
-  assert.deepEqual(log.mock.calls.map((call) => call.arguments), [["nothing to verify"]]);
+  assert.deepEqual(
+    log.mock.calls.map((call) => call.arguments),
+    [["nothing to verify"]]
+  );
 });
 
 test("a background full run progresses from running to green and tail reads only final bytes", async () => {
@@ -450,9 +432,9 @@ test("a background full run progresses from running to green and tail reads only
 
   const id = await runner.startFull();
   assert.match(id, /^\d{8}-\d{6}-[0-9a-f]{4}$/u);
-  const storedInitial = JSON.parse(
-    await readFile(join(root, ".verify-runs", id, "status.json"), "utf8"),
-  ) as { pid?: unknown };
+  const storedInitial = JSON.parse(await readFile(join(root, ".verify-runs", id, "status.json"), "utf8")) as {
+    pid?: unknown;
+  };
   assert.equal(typeof storedInitial.pid, "number");
   const initial = await runner.status(id);
   assert.deepEqual(initial, {
@@ -491,11 +473,7 @@ test("a background full run can use an orchestrator supervisor outside the targe
 });
 
 test("a background full run stops at its failing step and records that step", async () => {
-  const full = [
-    "node .test-helpers/exit0.mjs",
-    "node .test-helpers/fail.mjs",
-    "node .test-helpers/never-reached.mjs",
-  ];
+  const full = ["node .test-helpers/exit0.mjs", "node .test-helpers/fail.mjs", "node .test-helpers/never-reached.mjs"];
   const root = await backgroundRepo(full);
   const runner = new VerifyRunner({ repoRoot: root });
 
@@ -560,12 +538,16 @@ test("status reports a persisted running dead pid as died but leaves terminal st
     command: "node -e",
   });
 
-  await writeFile(statusPath, `${JSON.stringify({
-    ...running,
-    state: "green",
-    endedAt: "2026-08-18T12:00:01.000Z",
-    exitCode: 0,
-  })}\n`, "utf8");
+  await writeFile(
+    statusPath,
+    `${JSON.stringify({
+      ...running,
+      state: "green",
+      endedAt: "2026-08-18T12:00:01.000Z",
+      exitCode: 0,
+    })}\n`,
+    "utf8"
+  );
   assert.deepEqual(await runner.status(id), {
     id,
     state: "green",
@@ -601,14 +583,16 @@ test("list skips a run directory with no status alongside a valid run", async ()
   await writePath(root, `.verify-runs/${validId}/status.json`, `${JSON.stringify(validStatus)}\n`);
   await mkdir(join(root, ".verify-runs", unreadableId));
 
-  assert.deepEqual(await runner.list(), [{
-    id: validId,
-    state: "green",
-    startedAt,
-    endedAt: "2026-08-18T12:00:02.000Z",
-    exitCode: 0,
-    command: "npm test",
-  }]);
+  assert.deepEqual(await runner.list(), [
+    {
+      id: validId,
+      state: "green",
+      startedAt,
+      endedAt: "2026-08-18T12:00:02.000Z",
+      exitCode: 0,
+      command: "npm test",
+    },
+  ]);
 });
 
 test("keepRuns two prunes the oldest run when a third full run starts", async () => {

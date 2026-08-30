@@ -6,14 +6,19 @@ import { startEgressProxy } from "#server/agents/egress-proxy/proxy";
 function tcpEcho(): Promise<{ port: number; close: () => void }> {
   return new Promise((resolve) => {
     const server = createTcpServer((socket) => socket.pipe(socket));
-    server.listen(0, "127.0.0.1", () => resolve({
-      port: (server.address() as AddressInfo).port,
-      close: () => server.close(),
-    }));
+    server.listen(0, "127.0.0.1", () =>
+      resolve({
+        port: (server.address() as AddressInfo).port,
+        close: () => server.close(),
+      })
+    );
   });
 }
 
-function connectThrough(proxyPort: number, target: string): Promise<{ head: string; socket: ReturnType<typeof connect> }> {
+function connectThrough(
+  proxyPort: number,
+  target: string
+): Promise<{ head: string; socket: ReturnType<typeof connect> }> {
   return new Promise((resolve, reject) => {
     const socket = connect(proxyPort, "127.0.0.1", () => {
       socket.write(`CONNECT ${target} HTTP/1.1\r\nhost: ${target}\r\n\r\n`);
@@ -26,7 +31,7 @@ function connectThrough(proxyPort: number, target: string): Promise<{ head: stri
 function connectThroughWithPayload(
   proxyPort: number,
   target: string,
-  payload: string,
+  payload: string
 ): Promise<{ head: string; payload: string; socket: ReturnType<typeof connect> }> {
   return new Promise((resolve, reject) => {
     const socket = connect(proxyPort, "127.0.0.1", () => {
@@ -52,7 +57,12 @@ function connectThroughWithPayload(
 
 test("allows CONNECT to an allowlisted host:port and relays bytes", async () => {
   const echo = await tcpEcho();
-  const proxy = await startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["localhost"], allowedPorts: [echo.port] });
+  const proxy = await startEgressProxy({
+    host: "127.0.0.1",
+    port: 0,
+    allowedHosts: ["localhost"],
+    allowedPorts: [echo.port],
+  });
   try {
     const { head, socket } = await connectThrough(proxy.port, `localhost:${echo.port}`);
     assert.match(head, /^HTTP\/1\.1 200/u);
@@ -70,7 +80,12 @@ test("allows CONNECT to an allowlisted host:port and relays bytes", async () => 
 
 test("refuses non-allowlisted hosts, non-allowlisted ports, and non-CONNECT requests", async () => {
   const echo = await tcpEcho();
-  const proxy = await startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["localhost"], allowedPorts: [echo.port] });
+  const proxy = await startEgressProxy({
+    host: "127.0.0.1",
+    port: 0,
+    allowedHosts: ["localhost"],
+    allowedPorts: [echo.port],
+  });
   try {
     assert.match((await connectThrough(proxy.port, "evil.example:443")).head, /^HTTP\/1\.1 403/u);
     assert.match((await connectThrough(proxy.port, `localhost:${echo.port + 1}`)).head, /^HTTP\/1\.1 403/u);
@@ -85,24 +100,29 @@ test("refuses non-allowlisted hosts, non-allowlisted ports, and non-CONNECT requ
 test("rejects an invalid allowlist entry at startup", async () => {
   await assert.rejects(
     startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["Bad Host!"] }),
-    /allowlist entry is invalid/u,
+    /allowlist entry is invalid/u
   );
 });
 
 test("rejects out-of-range allowed ports at startup", async () => {
   await assert.rejects(
     startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["localhost"], allowedPorts: [65_536] }),
-    /allowed port is invalid: 65536/u,
+    /allowed port is invalid: 65536/u
   );
   await assert.rejects(
     startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["localhost"], allowedPorts: [0] }),
-    /allowed port is invalid: 0/u,
+    /allowed port is invalid: 0/u
   );
 });
 
 test("relays payload coalesced with the CONNECT request", async () => {
   const echo = await tcpEcho();
-  const proxy = await startEgressProxy({ host: "127.0.0.1", port: 0, allowedHosts: ["localhost"], allowedPorts: [echo.port] });
+  const proxy = await startEgressProxy({
+    host: "127.0.0.1",
+    port: 0,
+    allowedHosts: ["localhost"],
+    allowedPorts: [echo.port],
+  });
   try {
     const tunnel = await connectThroughWithPayload(proxy.port, `localhost:${echo.port}`, "ping");
     assert.match(tunnel.head, /^HTTP\/1\.1 200/u);

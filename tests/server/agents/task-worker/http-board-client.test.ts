@@ -114,10 +114,11 @@ test("claim responses expose immutable run pinning and preserve the onboarding d
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,
-      fetchImplementation: (async () => new Response(JSON.stringify(onboardingReplay), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(JSON.stringify(onboardingReplay), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
 
     const claimed = await client.claimNextWake({
@@ -150,18 +151,22 @@ test("a typed paused claim response maps to the worker hold value instead of idl
   const client = new HttpTaskBoardClient({
     baseUrl: "http://127.0.0.1:4318",
     token: TOKEN,
-    fetchImplementation: (async () => new Response(JSON.stringify({ paused: true }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    })) as typeof fetch,
+    fetchImplementation: (async () =>
+      new Response(JSON.stringify({ paused: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
   });
 
-  assert.equal(await client.claimNextWakeWithHold({
-    agentId: "engineer-one",
-    claimId: "claim-paused-hold",
-    messageCursors: {},
-    longPollMs: 0,
-  }), TASK_BOARD_PAUSED_CLAIM);
+  assert.equal(
+    await client.claimNextWakeWithHold({
+      agentId: "engineer-one",
+      claimId: "claim-paused-hold",
+      messageCursors: {},
+      longPollMs: 0,
+    }),
+    TASK_BOARD_PAUSED_CLAIM
+  );
 });
 
 test("a settled claim replay is reported as inactive before worker launch", async () => {
@@ -186,10 +191,11 @@ test("a settled claim replay is reported as inactive before worker launch", asyn
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,
-      fetchImplementation: (async () => new Response(JSON.stringify(replay), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(JSON.stringify(replay), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
 
     await assert.rejects(
@@ -199,12 +205,11 @@ test("a settled claim replay is reported as inactive before worker launch", asyn
         messageCursors: {},
         longPollMs: 0,
       }),
-      (error: unknown) => (
+      (error: unknown) =>
         error instanceof InactiveClaimReplayError &&
         error.claim.runId === first.run.runId &&
         error.status === "interrupted" &&
         error.endedAt === endedAt
-      ),
     );
   } finally {
     fixture.board.close();
@@ -249,10 +254,11 @@ test("claim validation errors retain a minimally validated handle without journa
   const client = new HttpTaskBoardClient({
     baseUrl: "http://127.0.0.1:4318",
     token: TOKEN,
-    fetchImplementation: (async () => new Response(JSON.stringify(body), {
-      status: 201,
-      headers: { "content-type": "application/json" },
-    })) as typeof fetch,
+    fetchImplementation: (async () =>
+      new Response(JSON.stringify(body), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
   });
 
   await assert.rejects(
@@ -270,7 +276,7 @@ test("claim validation errors retain a minimally validated handle without journa
       assert.equal(error.claim?.reason, "poisoned_claim");
       assert.doesNotMatch(JSON.stringify(error.claim), /sk-proj-board-secret/u);
       return true;
-    },
+    }
   );
 });
 
@@ -285,18 +291,21 @@ test("settlement accepts the server-redacted result while sending the original r
     token: TOKEN,
     fetchImplementation: (async (_input, init = {}) => {
       sentBody = JSON.parse(String(init.body));
-      return new Response(JSON.stringify({
-        run: {
-          runId: "run-redacted-settlement",
-          agentId: "engineer-one",
-          status: "failed",
-          result: "Agent stopped after Authorization: [redacted:bearer]",
-        },
-        duplicate: false,
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          run: {
+            runId: "run-redacted-settlement",
+            agentId: "engineer-one",
+            status: "failed",
+            result: "Agent stopped after Authorization: [redacted:bearer]",
+          },
+          duplicate: false,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
     }) as typeof fetch,
   });
 
@@ -328,32 +337,40 @@ test("typed correctable settle 400s are distinguished from poisoned HTTP failure
     const client = new HttpTaskBoardClient({
       baseUrl: "http://127.0.0.1:4318",
       token: TOKEN,
-      fetchImplementation: (async () => new Response(JSON.stringify({
-        error: { code, message: "The model result needs correction. Bearer correction-secret" },
-      }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch,
+      fetchImplementation: (async () =>
+        new Response(
+          JSON.stringify({
+            error: { code, message: "The model result needs correction. Bearer correction-secret" },
+          }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }
+        )) as typeof fetch,
     });
 
-    await assert.rejects(client.settleAgentRun({
-      claim: {
-        apiVersion: 1,
-        claimId: `claim-${code.toLowerCase()}`,
-        runId: `run-${code.toLowerCase()}`,
-        wakeupId: `wake-${code.toLowerCase()}`,
-        projectId: "project-one",
-        agentId: "engineer-one",
-        taskId: "task-one",
-        reason: "human_assignment",
-        requestedMessageCursor: null,
-        claimedAt: "2026-08-09T20:00:00.000Z",
-      },
-      idempotencyKey: `settle-${code.toLowerCase()}`,
-      outcome: "completed",
-      result: "The first result needs correction.",
-    }), (error: unknown) => error instanceof RetryableSettlementError
-      && error.code === code
-      && error.detail === "The model result needs correction. [redacted:bearer]");
+    await assert.rejects(
+      client.settleAgentRun({
+        claim: {
+          apiVersion: 1,
+          claimId: `claim-${code.toLowerCase()}`,
+          runId: `run-${code.toLowerCase()}`,
+          wakeupId: `wake-${code.toLowerCase()}`,
+          projectId: "project-one",
+          agentId: "engineer-one",
+          taskId: "task-one",
+          reason: "human_assignment",
+          requestedMessageCursor: null,
+          claimedAt: "2026-08-09T20:00:00.000Z",
+        },
+        idempotencyKey: `settle-${code.toLowerCase()}`,
+        outcome: "completed",
+        result: "The first result needs correction.",
+      }),
+      (error: unknown) =>
+        error instanceof RetryableSettlementError &&
+        error.code === code &&
+        error.detail === "The model result needs correction. [redacted:bearer]"
+    );
   }
 });

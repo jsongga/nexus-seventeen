@@ -1,1 +1,1 @@
-export { BoardApp } from './BoardApp';
+export { BoardApp } from "./BoardApp";

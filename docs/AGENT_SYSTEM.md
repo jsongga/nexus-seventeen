@@ -8,16 +8,16 @@ Cicada Steward gives a human one place to submit work, then uses short-lived age
 
 The checked-in catalog at [`config/company-bootstrap.json`](../config/company-bootstrap.json) defines six product-level projects, 18 fixed authority profiles, 16 reusable agent types, and the safe linear portion of the pipeline. [`scripts/reconcile-bootstrap.mjs`](../scripts/reconcile-bootstrap.mjs) applies it without duplicating existing records and stores one-time agent credentials in macOS Keychain.
 
-Dormant automation configuration persists atomically without creating executable work ([`board.test.ts`](../tests/server/task-board/board.test.ts#L5052)). The active pipeline rejects unavailable executors during planning, then starts machine verification or selects a compatible agent from an enabled type during activation ([`runs.ts`](../src/server/task-board/collaborators/runs.ts#L1329-L1336), [`projects.ts`](../src/server/task-board/collaborators/projects.ts#L2073-L2205)).
+Dormant automation configuration persists atomically without creating executable work (the regression `dormant automation configuration persists atomically without creating executable work` in [`board.test.ts`](../tests/server/task-board/board.test.ts)). The active pipeline rejects unavailable executors during planning, then starts machine verification or selects a compatible agent from an enabled type during activation (the `RunsCollaborator.settleActiveRunInTransaction` executor check in [`runs.ts`](../src/server/task-board/collaborators/runs.ts) and `ProjectsCollaborator.activateWorkflowNode` in [`projects.ts`](../src/server/task-board/collaborators/projects.ts)).
 
 ## The four records
 
-| Record | Durable contents | What it must not become |
-|---|---|---|
-| Project | Repositories, workspaces, links, conventions, architecture, decisions, completed work | One project per repo or one giant prompt transcript |
-| Agent type | Stage objective, fixed authority role, instructions, eligible skills, evaluator profile | A long-lived model session |
-| Pipeline | Allowed transitions, gates, retry budget, human boundaries | Free-form agents waking one another |
-| Agent run | Exact task inputs, artifact references, versions, outcome, cost, timestamps | Durable project memory |
+| Record     | Durable contents                                                                        | What it must not become                             |
+| ---------- | --------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Project    | Repositories, workspaces, links, conventions, architecture, decisions, completed work   | One project per repo or one giant prompt transcript |
+| Agent type | Stage objective, fixed authority role, instructions, eligible skills, evaluator profile | A long-lived model session                          |
+| Pipeline   | Allowed transitions, gates, retry budget, human boundaries                              | Free-form agents waking one another                 |
+| Agent run  | Exact task inputs, artifact references, versions, outcome, cost, timestamps             | Durable project memory                              |
 
 This separation follows the composable workflow patterns in Anthropic's [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) and its progressively loaded [Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills). OpenAI describes the same practical foundation as model, tools, and instructions, with orchestration and guardrails outside the prompt in its [practical guide to agents](https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/).
 
@@ -25,14 +25,14 @@ This separation follows the composable workflow patterns in Anthropic's [Buildin
 
 **Product boundaries, not repository boundaries** — the catalog groups repositories where users and operations experience one product.
 
-| Project | Boundary |
-|---|---|
-| Cicada Sense / HomeDots | One connected-care system across caregiver apps, Fleet, backend services, and DotAI |
-| Cicada Ethos | Independent health-research product and deployment stack |
-| Cicada Steward | Internal task board and agent-control plane |
-| Cicada Website | Shared company and marketing surface |
-| Cicada Prism | Standalone experimental side project |
-| Cicada Platform / Operations | Cross-product architecture and operations documentation |
+| Project                      | Boundary                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| Cicada Sense / HomeDots      | One connected-care system across caregiver apps, Fleet, backend services, and DotAI |
+| Cicada Ethos                 | Independent health-research product and deployment stack                            |
+| Cicada Steward               | Internal task board and agent-control plane                                         |
+| Cicada Website               | Shared company and marketing surface                                                |
+| Cicada Prism                 | Standalone experimental side project                                                |
+| Cicada Platform / Operations | Cross-product architecture and operations documentation                             |
 
 Cicada Sense has several workspace roots by design. Intake must resolve the responsible repository from evidence instead of treating the primary root as the only writable repository. Archived `HDotsFrontend`, generated certificates, and unverified Intelligent Dots sources are not catalog projects.
 

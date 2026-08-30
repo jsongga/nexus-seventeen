@@ -38,10 +38,7 @@ import {
   validateWorkflowPlanChildren,
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
-import {
-  claimContextInputForDigest,
-  projectClaimContext,
-} from "../../shared/claim-context.js";
+import { claimContextInputForDigest, projectClaimContext } from "../../shared/claim-context.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import {
@@ -49,11 +46,7 @@ import {
   RETIRED_WAKEUP_EVENT_PREFIX,
   type ExpandInterfacePublicationFailure,
 } from "../persistence/workflow.js";
-import {
-  claimMessageCursor,
-  claimRequestHash,
-  legacyClaimRequestHash,
-} from "../persistence/run-claims.js";
+import { claimMessageCursor, claimRequestHash, legacyClaimRequestHash } from "../persistence/run-claims.js";
 import {
   interruptFromRow,
   messageFromRow,
@@ -76,10 +69,7 @@ import {
   publishedInterfaceFailureLabel,
   publishedInterfaceReasonSummary,
 } from "./decomposition-readiness.js";
-import {
-  PUBLISHED_INTERFACE_PATH,
-  readPublishedInterface,
-} from "./interface-context.js";
+import { PUBLISHED_INTERFACE_PATH, readPublishedInterface } from "./interface-context.js";
 import { onboardingDeliverablesCheck } from "./onboarding-check.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { Actor, TaskBoardRuntime } from "./runtime.js";
@@ -91,7 +81,7 @@ class MigrateInterfaceClaimError extends Error {
     readonly contextDigest: string | null,
     readonly reason: PublishedInterfaceFailureReason,
     readonly repoPath: string | null = null,
-    options?: ErrorOptions,
+    options?: ErrorOptions
   ) {
     super(summary, options);
     this.name = "MigrateInterfaceClaimError";
@@ -154,10 +144,7 @@ function onboardingMissingDetail(missing: readonly string[]): string {
   return redactForPersistence(`Onboarding deliverables are missing: ${boundedItems.join("; ")}`, 2_000);
 }
 
-function attemptSettlementResult(
-  request: SettleRunRequest,
-  scopeCheck: AttemptScopeCheckResult | null,
-): string {
+function attemptSettlementResult(request: SettleRunRequest, scopeCheck: AttemptScopeCheckResult | null): string {
   if (request.outcome === "failed") {
     if (request.result.startsWith("BRIGHT_LINE:")) return request.result;
     if (request.handoff?.summary.startsWith("BRIGHT_LINE:") === true) return request.handoff.summary;
@@ -179,14 +166,19 @@ export class RunsCollaborator {
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
     git: GitRunner | GitTextRunner = runDeclaredScopeGit,
-    private readonly boardPause: BoardPauseCollaborator = new BoardPauseCollaborator(runtime),
+    private readonly boardPause: BoardPauseCollaborator = new BoardPauseCollaborator(runtime)
   ) {
     this.#git = withGitBytes(git);
   }
 
-  private scopeCheckForSettlement(taskId: string, outcome: SettleRunRequest["outcome"]): AttemptScopeCheckResult | null {
+  private scopeCheckForSettlement(
+    taskId: string,
+    outcome: SettleRunRequest["outcome"]
+  ): AttemptScopeCheckResult | null {
     if (outcome !== "completed") return null;
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT
         attempt.stage,
         project.repo_path,
@@ -199,13 +191,18 @@ export class RunsCollaborator {
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE attempt.task_id=?
-    `).get(taskId);
+    `
+      )
+      .get(taskId);
     if (row === undefined || row.stage !== "implementation") return null;
     if (row.pipeline_branch === null && row.base_sha === null) return null;
     if (
-      typeof row.repo_path !== "string" || typeof row.base_sha !== "string" ||
-      typeof row.pipeline_branch !== "string" || typeof row.declared_scope_json !== "string"
-    ) return Object.freeze({ ok: false, error: "scope check failed" });
+      typeof row.repo_path !== "string" ||
+      typeof row.base_sha !== "string" ||
+      typeof row.pipeline_branch !== "string" ||
+      typeof row.declared_scope_json !== "string"
+    )
+      return Object.freeze({ ok: false, error: "scope check failed" });
     let declaredScope: unknown;
     try {
       declaredScope = JSON.parse(row.declared_scope_json);
@@ -231,10 +228,12 @@ export class RunsCollaborator {
   private onboardingCheckForSettlement(
     taskId: string,
     outcome: SettleRunRequest["outcome"],
-    gapReport: string | undefined,
+    gapReport: string | undefined
   ): OnboardingSettlementContext | null {
     if (outcome !== "completed") return null;
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT
         item.work_item_id,
         project.project_id,
@@ -248,7 +247,9 @@ export class RunsCollaborator {
       JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=item.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE attempt.task_id=? AND attempt.stage='implementation'
-    `).get(taskId);
+    `
+      )
+      .get(taskId);
     if (row === undefined) return null;
     const repoPath = typeof row.repo_path === "string" ? row.repo_path : "";
     const branch = typeof row.pipeline_branch === "string" ? row.pipeline_branch : "";
@@ -257,17 +258,19 @@ export class RunsCollaborator {
       throw new TaskBoardError(
         400,
         TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
-        onboardingMissingDetail(check.missing),
+        onboardingMissingDetail(check.missing)
       );
     }
     if (
-      typeof row.work_item_id !== "string" || typeof row.project_id !== "string" || typeof row.node_id !== "string" ||
+      typeof row.work_item_id !== "string" ||
+      typeof row.project_id !== "string" ||
+      typeof row.node_id !== "string" ||
       typeof gapReport !== "string"
     ) {
       throw new TaskBoardError(
         400,
         TASK_BOARD_ERROR_CODES.ONBOARDING_DELIVERABLES_MISSING,
-        onboardingMissingDetail(["settlement linkage is invalid"]),
+        onboardingMissingDetail(["settlement linkage is invalid"])
       );
     }
     return Object.freeze({
@@ -281,10 +284,12 @@ export class RunsCollaborator {
 
   private expandInterfacePublicationFailure(
     current: AgentRun,
-    request: SettleRunRequest,
+    request: SettleRunRequest
   ): ExpandInterfacePublicationFailure | null {
     if (current.status !== "active" || current.taskId === null || request.outcome !== "completed") return null;
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT project.repo_path,
         (
           SELECT verify.detail
@@ -299,10 +304,14 @@ export class RunsCollaborator {
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=item.resolved_project_id
       WHERE attempt.task_id=? AND attempt.stage='verification' AND item.phase='expand'
-    `).get(current.taskId) as Readonly<{
-      repo_path: string;
-      verified_detail: string | null;
-    }> | undefined;
+    `
+      )
+      .get(current.taskId) as
+      | Readonly<{
+          repo_path: string;
+          verified_detail: string | null;
+        }>
+      | undefined;
     if (row === undefined) return null;
     const match = row.verified_detail === null ? null : /^verified-sha:([0-9a-f]{40})$/u.exec(row.verified_detail);
     if (match?.[1] === undefined) {
@@ -314,7 +323,7 @@ export class RunsCollaborator {
       throw new TaskBoardError(
         409,
         TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
-        `Could not verify ${PUBLISHED_INTERFACE_PATH} at ${match[1]}`,
+        `Could not verify ${PUBLISHED_INTERFACE_PATH} at ${match[1]}`
       );
     }
     return Object.freeze({
@@ -325,7 +334,10 @@ export class RunsCollaborator {
 
   private wasInterruptedBySystem(current: AgentRun): boolean {
     if (current.status !== "interrupted") return false;
-    return this.runtime.store.db.prepare(`
+    return (
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT 1
       FROM task_events
       WHERE event_type='agent_run_settled'
@@ -333,12 +345,18 @@ export class RunsCollaborator {
         AND json_extract(data_json,'$.runId')=?
         AND json_extract(data_json,'$.outcome')='interrupted'
       LIMIT 1
-    `).get(current.runId) !== undefined;
+    `
+        )
+        .get(current.runId) !== undefined
+    );
   }
 
   private wasInterruptedBeforeWorkItemCancellation(current: AgentRun): boolean {
     if (current.taskId === null) return false;
-    return this.runtime.store.db.prepare(`
+    return (
+      this.runtime.store.db
+        .prepare(
+          `
       WITH linked_work_item(work_item_id) AS (
         SELECT work_item_id
         FROM work_item_planning_tasks
@@ -363,11 +381,17 @@ export class RunsCollaborator {
         AND item.ended_at IS NOT NULL
         AND item.cancelled_reason IS NOT NULL
       LIMIT 1
-    `).get(current.taskId, current.taskId, current.taskId, current.runId, current.runId) !== undefined;
+    `
+        )
+        .get(current.taskId, current.taskId, current.taskId, current.runId, current.runId) !== undefined
+    );
   }
 
   private wasSettledByAgent(current: AgentRun, agentId: string, outcome: SettleRunRequest["outcome"]): boolean {
-    return this.runtime.store.db.prepare(`
+    return (
+      this.runtime.store.db
+        .prepare(
+          `
       SELECT 1
       FROM task_events
       WHERE event_type='agent_run_settled'
@@ -376,28 +400,37 @@ export class RunsCollaborator {
         AND json_extract(data_json,'$.runId')=?
         AND json_extract(data_json,'$.outcome')=?
       LIMIT 1
-    `).get(agentId, current.runId, outcome) !== undefined;
+    `
+        )
+        .get(agentId, current.runId, outcome) !== undefined
+    );
   }
 
-  resumeAgent(agentId: string, request: ResumeAgentRequest, idempotencyKey: string): { wakeup: Wakeup; duplicate: boolean } {
+  resumeAgent(
+    agentId: string,
+    request: ResumeAgentRequest,
+    idempotencyKey: string
+  ): { wakeup: Wakeup; duplicate: boolean } {
     const agent = this.runtime.requireAgent(agentId);
     let requestedTask: BoardTask | null = null;
     if (request.taskId !== null) {
       const task = this.runtime.requireTask(request.taskId);
-      if (task.projectId !== agent.projectId) throw conflict("TASK_PROJECT_MISMATCH", "Resume task belongs to another project");
+      if (task.projectId !== agent.projectId)
+        throw conflict("TASK_PROJECT_MISMATCH", "Resume task belongs to another project");
       if (isHardTerminalTaskStatus(task.status)) {
         throw conflict(TASK_BOARD_ERROR_CODES.TASK_TERMINAL, "Completed and cancelled tasks cannot be resumed");
       }
-      if (task.kind === "human_check") throw conflict("HUMAN_CHECK_NOT_ASSIGNABLE", "Human checks cannot wake an agent");
+      if (task.kind === "human_check")
+        throw conflict("HUMAN_CHECK_NOT_ASSIGNABLE", "Human checks cannot wake an agent");
       if (task.requiredRole !== null && task.requiredRole !== agent.role) {
         throw conflict("TASK_REQUIRED_ROLE_MISMATCH", `This task requires the ${task.requiredRole} role`);
       }
       requestedTask = task;
     }
     const sourceKey = `${agentId}:${idempotencyKey}`;
-    const prior = this.runtime.store.db.prepare(
-      "SELECT * FROM wakeups WHERE reason IN ('human_resume', 'resumed') AND source_key = ?",
-    ).get(sourceKey);
+    const prior = this.runtime.store.db
+      .prepare("SELECT * FROM wakeups WHERE reason IN ('human_resume', 'resumed') AND source_key = ?")
+      .get(sourceKey);
     if (prior) {
       if (stringValue(prior, "detail") !== request.reason || nullableString(prior, "task_id") !== request.taskId) {
         throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another resume");
@@ -422,30 +455,45 @@ export class RunsCollaborator {
         request.taskId,
         null,
         request.reason,
-        now,
+        now
       );
-      this.runtime.insertEvent(agent.projectId, request.taskId, { type: "human", id: this.runtime.config.humanPrincipal }, "agent_resumed", {
-        agentId,
-        wakeupId,
-      }, now);
+      this.runtime.insertEvent(
+        agent.projectId,
+        request.taskId,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "agent_resumed",
+        {
+          agentId,
+          wakeupId,
+        },
+        now
+      );
     });
     this.runtime.wakeupEvents.emit(agentId);
-    return { wakeup: wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(wakeupId)!), duplicate: false };
+    return {
+      wakeup: wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(wakeupId)!),
+      duplicate: false,
+    };
   }
 
   interruptAgent(
     agentId: string,
     request: InterruptAgentRequest,
-    idempotencyKey: string,
+    idempotencyKey: string
   ): { interrupt: AgentInterrupt; duplicate: boolean } {
     const agent = this.runtime.requireAgent(agentId);
     const hash = sha256({ action: "interrupt_agent", agentId, request });
-    const prior = this.runtime.store.db.prepare("SELECT * FROM interrupts WHERE agent_id = ? AND idempotency_key = ?").get(agentId, idempotencyKey);
+    const prior = this.runtime.store.db
+      .prepare("SELECT * FROM interrupts WHERE agent_id = ? AND idempotency_key = ?")
+      .get(agentId, idempotencyKey);
     if (prior) {
-      if (stringValue(prior, "request_hash") !== hash) throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another interrupt");
+      if (stringValue(prior, "request_hash") !== hash)
+        throw conflict("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another interrupt");
       return { interrupt: interruptFromRow(prior), duplicate: true };
     }
-    const active = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+    const active = this.runtime.store.db
+      .prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'")
+      .get(agentId);
     const runId = active ? stringValue(active, "run_id") : null;
     const now = exactNow(this.runtime.config.now);
     let interrupt!: AgentInterrupt;
@@ -458,7 +506,7 @@ export class RunsCollaborator {
         hash,
         request.reason,
         now,
-        { type: "human", id: this.runtime.config.humanPrincipal },
+        { type: "human", id: this.runtime.config.humanPrincipal }
       );
     });
     if (runId !== null) this.runtime.interruptEvents.emit(runId);
@@ -467,31 +515,25 @@ export class RunsCollaborator {
 
   interruptActiveRunForTokenRotationInTransaction(agentId: string, version: number): void {
     const agent = this.runtime.requireAgent(agentId);
-    const active = this.runtime.store.db.prepare(
-      "SELECT * FROM runs WHERE agent_id = ? AND status = 'active'",
-    ).get(agentId);
+    const active = this.runtime.store.db
+      .prepare("SELECT * FROM runs WHERE agent_id = ? AND status = 'active'")
+      .get(agentId);
     if (active === undefined) return;
     const current = runFromRow(active);
     const now = exactNow(this.runtime.config.now);
     const idempotencyKey = `token-rotation:${version}`;
     const reason = TOKEN_ROTATION_INTERRUPT_REASON;
     const hash = sha256({ action: "token_rotation_interrupt", agentId, version, reason });
-    this.insertInterruptInTransaction(
-      agent.projectId,
-      agentId,
-      current.runId,
-      idempotencyKey,
-      hash,
-      reason,
-      now,
-      { type: "human", id: this.runtime.config.humanPrincipal },
-    );
+    this.insertInterruptInTransaction(agent.projectId, agentId, current.runId, idempotencyKey, hash, reason, now, {
+      type: "human",
+      id: this.runtime.config.humanPrincipal,
+    });
     const effects = this.settleActiveRunInTransaction(
       current,
       agentId,
       { outcome: "interrupted", result: reason },
       now,
-      { type: "human", id: this.runtime.config.humanPrincipal },
+      { type: "human", id: this.runtime.config.humanPrincipal }
     );
     this.runtime.store.afterCommit(() => {
       this.runtime.interruptEvents.emit(current.runId);
@@ -509,21 +551,34 @@ export class RunsCollaborator {
     hash: string,
     reason: string,
     now: string,
-    actor: SettlementActor,
+    actor: SettlementActor
   ): AgentInterrupt {
     const interruptId = randomUUID();
-    this.runtime.store.db.prepare(`
+    this.runtime.store.db
+      .prepare(
+        `
       INSERT INTO interrupts(
         interrupt_id, project_id, agent_id, run_id, idempotency_key, request_hash, reason, requested_by, requested_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(interruptId, projectId, agentId, runId, idempotencyKey, hash, reason, actor.id, now);
-    this.runtime.insertEvent(projectId, null, actor, "agent_interrupt_requested", {
-      interruptId,
-      agentId,
-      runId,
-      reason,
-    }, now);
-    return interruptFromRow(this.runtime.store.db.prepare("SELECT * FROM interrupts WHERE interrupt_id = ?").get(interruptId)!);
+    `
+      )
+      .run(interruptId, projectId, agentId, runId, idempotencyKey, hash, reason, actor.id, now);
+    this.runtime.insertEvent(
+      projectId,
+      null,
+      actor,
+      "agent_interrupt_requested",
+      {
+        interruptId,
+        agentId,
+        runId,
+        reason,
+      },
+      now
+    );
+    return interruptFromRow(
+      this.runtime.store.db.prepare("SELECT * FROM interrupts WHERE interrupt_id = ?").get(interruptId)!
+    );
   }
 
   async waitForRunInterrupts(
@@ -532,7 +587,7 @@ export class RunsCollaborator {
     after: number,
     waitMs: number,
     signal: AbortSignal,
-    credentialVersion?: number,
+    credentialVersion?: number
   ): Promise<RunInterruptBatch | null> {
     this.requireCredentialVersion(agentId, credentialVersion);
     this.runtime.requireRun(runId, agentId, null, false);
@@ -569,43 +624,53 @@ export class RunsCollaborator {
 
   claimRun(agentId: string, request: ClaimRunRequest, credentialVersion?: number): ClaimRunResponse | null {
     this.requireCredentialVersion(agentId, credentialVersion);
-    const prior = this.runtime.store.db.prepare("SELECT * FROM runs WHERE agent_id = ? AND claim_id = ?").get(agentId, request.claimId);
+    const prior = this.runtime.store.db
+      .prepare("SELECT * FROM runs WHERE agent_id = ? AND claim_id = ?")
+      .get(agentId, request.claimId);
     if (prior) {
       if (this.boardPause.isBoardPaused()) return PAUSED_CLAIM_RESULT;
       const priorRun = runFromRow(prior);
       const requestHash = claimRequestHash(agentId, request, priorRun.taskId);
       const storedHash = stringValue(prior, "claim_request_hash");
       const selectedCursor = claimMessageCursor(request, priorRun.taskId);
-      if (storedHash !== requestHash && storedHash !== legacyClaimRequestHash(agentId, request.claimId, selectedCursor)) {
+      if (
+        storedHash !== requestHash &&
+        storedHash !== legacyClaimRequestHash(agentId, request.claimId, selectedCursor)
+      ) {
         throw conflict("CLAIM_ID_CONFLICT", "claimId was used with another cursor");
       }
       const persistedResult = nullableString(prior, "claim_result_json");
       if (persistedResult !== null) return this.claimResultFromJson(persistedResult);
       // Legacy runs created before claim-result persistence have NULL here; rebuild them while their source data remains valid.
-      const reviewInspection = priorRun.taskId === null
-        ? null
-        : this.projects.prepareClaimContext(priorRun.taskId);
-      const crossRepoContext = priorRun.taskId === null
-        ? null
-        : (() => {
-            try {
-              return this.prepareCrossRepoContext(priorRun.taskId);
-            } catch (error) {
-              if (error instanceof MigrateInterfaceClaimError) this.throwTypedMigrateInterfaceError(error);
-              throw error;
-            }
-          })();
+      const reviewInspection = priorRun.taskId === null ? null : this.projects.prepareClaimContext(priorRun.taskId);
+      const crossRepoContext =
+        priorRun.taskId === null
+          ? null
+          : (() => {
+              try {
+                return this.prepareCrossRepoContext(priorRun.taskId);
+              } catch (error) {
+                if (error instanceof MigrateInterfaceClaimError) this.throwTypedMigrateInterfaceError(error);
+                throw error;
+              }
+            })();
       return this.claimResult(priorRun, selectedCursor ?? 0, reviewInspection, crossRepoContext);
     }
-    const existing = this.runtime.store.db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+    const existing = this.runtime.store.db
+      .prepare("SELECT run_id FROM runs WHERE agent_id = ? AND status = 'active'")
+      .get(agentId);
     if (existing) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
     const candidate = this.runtime.store.transaction(() => {
       if (this.boardPause.isBoardPaused()) return null;
       this.requireCredentialVersion(agentId, credentialVersion);
-      const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
+      const activeInside = this.runtime.store.db
+        .prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'")
+        .get(agentId);
       if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
       this.runtime.retireStaleWakeupsForAgent(agentId, exactNow(this.runtime.config.now));
-      const wakeupRow = this.runtime.store.db.prepare(`
+      const wakeupRow = this.runtime.store.db
+        .prepare(
+          `
         SELECT wakeup.*
         FROM wakeups AS wakeup
         LEFT JOIN tasks AS ordered_task ON ordered_task.task_id = wakeup.task_id
@@ -618,21 +683,19 @@ export class RunsCollaborator {
           wakeup.created_at,
           wakeup.rowid
         LIMIT 1
-      `).get(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
+      `
+        )
+        .get(agentId, RETIRED_WAKEUP_EVENT_PREFIX);
       return wakeupRow === undefined ? null : wakeupFromRow(wakeupRow);
     });
     if (candidate === null) return null;
 
     // Review Git inspection may spawn several bounded subprocesses. It must run
     // after candidate resolution and before the write transaction below.
-    const reviewInspection = candidate.taskId === null
-      ? null
-      : this.projects.prepareClaimContext(candidate.taskId);
+    const reviewInspection = candidate.taskId === null ? null : this.projects.prepareClaimContext(candidate.taskId);
     let crossRepoContext: CrossRepoContext | null;
     try {
-      crossRepoContext = candidate.taskId === null
-        ? null
-        : this.prepareCrossRepoContext(candidate.taskId);
+      crossRepoContext = candidate.taskId === null ? null : this.prepareCrossRepoContext(candidate.taskId);
     } catch (error) {
       if (error instanceof MigrateInterfaceClaimError && candidate.taskId !== null) {
         this.rejectMigrateInterfaceClaim(candidate.taskId, error);
@@ -644,21 +707,29 @@ export class RunsCollaborator {
     let claimed: ClaimRunResponse | null;
     try {
       claimed = this.runtime.store.transaction(() => {
-      if (this.boardPause.isBoardPaused()) return null;
-      const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
-      const activeInside = this.runtime.store.db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'").get(agentId);
-      if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
-      const wakeupRow = this.runtime.store.db.prepare(`
+        if (this.boardPause.isBoardPaused()) return null;
+        const currentAgent = this.requireCredentialVersion(agentId, credentialVersion);
+        const activeInside = this.runtime.store.db
+          .prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status = 'active'")
+          .get(agentId);
+        if (activeInside) throw conflict("AGENT_RUN_ACTIVE", "Agent already has an active run");
+        const wakeupRow = this.runtime.store.db
+          .prepare(
+            `
         SELECT wakeup.*
         FROM wakeups AS wakeup
         WHERE wakeup.wakeup_id = ?
           AND wakeup.agent_id = ?
           AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
-      `).get(candidate.wakeupId, agentId, RETIRED_WAKEUP_EVENT_PREFIX);
-      if (wakeupRow === undefined) return null;
-      const wakeup = wakeupFromRow(wakeupRow);
-      if (wakeup.taskId !== null) {
-        const conflictRow = this.runtime.store.db.prepare(`
+      `
+          )
+          .get(candidate.wakeupId, agentId, RETIRED_WAKEUP_EVENT_PREFIX);
+        if (wakeupRow === undefined) return null;
+        const wakeup = wakeupFromRow(wakeupRow);
+        if (wakeup.taskId !== null) {
+          const conflictRow = this.runtime.store.db
+            .prepare(
+              `
           WITH claimed AS (
             SELECT attempt.node_id,node.project_id
             FROM stage_attempts attempt
@@ -688,124 +759,156 @@ export class RunsCollaborator {
           SELECT claimed.node_id,claimed.project_id,latest_run.runtime,latest_run.model
           FROM claimed
           LEFT JOIN latest_run ON 1=1
-        `).get(wakeup.taskId);
-        const reviewRuntime = request.pinned?.runtime ?? null;
-        const reviewModel = request.pinned?.model ?? null;
-        const implementationRuntime = conflictRow?.runtime ?? null;
-        const implementationModel = conflictRow?.model ?? null;
-        if (
-          conflictRow !== undefined &&
-          typeof reviewRuntime === "string" && typeof reviewModel === "string" &&
-          typeof implementationRuntime === "string" && typeof implementationModel === "string" &&
-          reviewRuntime === implementationRuntime && reviewModel === implementationModel
-        ) {
-          const message = `review runtime matches implement runtime (${reviewRuntime}/${reviewModel}) — configure a different reviewer lane`;
-          this.projects.recordReviewRuntimeConflictInTransaction(
-            String(conflictRow.project_id),
-            String(conflictRow.node_id),
-            wakeup.taskId,
-            message,
-          );
-          reviewRuntimeConflict = new TaskBoardError(
-            409,
-            TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_RUNTIME_CONFLICT,
-            message,
-          );
-          return null;
+        `
+            )
+            .get(wakeup.taskId);
+          const reviewRuntime = request.pinned?.runtime ?? null;
+          const reviewModel = request.pinned?.model ?? null;
+          const implementationRuntime = conflictRow?.runtime ?? null;
+          const implementationModel = conflictRow?.model ?? null;
+          if (
+            conflictRow !== undefined &&
+            typeof reviewRuntime === "string" &&
+            typeof reviewModel === "string" &&
+            typeof implementationRuntime === "string" &&
+            typeof implementationModel === "string" &&
+            reviewRuntime === implementationRuntime &&
+            reviewModel === implementationModel
+          ) {
+            const message = `review runtime matches implement runtime (${reviewRuntime}/${reviewModel}) — configure a different reviewer lane`;
+            this.projects.recordReviewRuntimeConflictInTransaction(
+              String(conflictRow.project_id),
+              String(conflictRow.node_id),
+              wakeup.taskId,
+              message
+            );
+            reviewRuntimeConflict = new TaskBoardError(
+              409,
+              TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_RUNTIME_CONFLICT,
+              message
+            );
+            return null;
+          }
         }
-      }
-      const requestHash = claimRequestHash(agentId, request, wakeup.taskId);
-      const runId = randomUUID();
-      this.runtime.store.db.prepare(`
+        const requestHash = claimRequestHash(agentId, request, wakeup.taskId);
+        const runId = randomUUID();
+        this.runtime.store.db
+          .prepare(
+            `
         INSERT INTO runs(
           run_id, claim_id, claim_request_hash, project_id, agent_id, wakeup_id, task_id, status, started_at,
           heartbeat_at, ended_at, result, runtime, runtime_version, model, prompts_sha
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, NULL, ?, ?, ?, ?)
-      `).run(
-        runId,
-        request.claimId,
-        requestHash,
-        currentAgent.projectId,
-        agentId,
-        wakeup.wakeupId,
-        wakeup.taskId,
-        now,
-        request.pinned?.runtime ?? null,
-        request.pinned?.runtimeVersion ?? null,
-        request.pinned?.model ?? null,
-        request.pinned?.promptsSha ?? null,
-      );
-      const claim = this.runtime.store.db.prepare(`
+      `
+          )
+          .run(
+            runId,
+            request.claimId,
+            requestHash,
+            currentAgent.projectId,
+            agentId,
+            wakeup.wakeupId,
+            wakeup.taskId,
+            now,
+            request.pinned?.runtime ?? null,
+            request.pinned?.runtimeVersion ?? null,
+            request.pinned?.model ?? null,
+            request.pinned?.promptsSha ?? null
+          );
+        const claim = this.runtime.store.db
+          .prepare(
+            `
         UPDATE wakeups SET claimed_at = ?, run_id = ? WHERE wakeup_id = ? AND claimed_at IS NULL
-      `).run(now, runId, wakeup.wakeupId);
-      if (Number(claim.changes) !== 1) throw conflict("WAKEUP_ALREADY_CLAIMED", "Wakeup was already claimed");
-      if (wakeup.taskId !== null) {
-        const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(wakeup.taskId);
-        if (!taskRow) throw new Error("TASK_BOARD_DATABASE_CORRUPT:wakeup_task");
-        const task = this.runtime.requireTask(wakeup.taskId);
-        if (task.assignedAgentId !== agentId) {
-          throw conflict("WAKEUP_TASK_NOT_ASSIGNED", "Wakeup task is no longer assigned to this agent");
-        }
-        if (task.endedAt !== null) throw conflict("WAKEUP_TASK_TERMINAL", "Wakeup task is already terminal");
-        if (task.status === "queued" || task.status === "blocked") {
-          const started = this.runtime.store.db.prepare(`
+      `
+          )
+          .run(now, runId, wakeup.wakeupId);
+        if (Number(claim.changes) !== 1) throw conflict("WAKEUP_ALREADY_CLAIMED", "Wakeup was already claimed");
+        if (wakeup.taskId !== null) {
+          const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(wakeup.taskId);
+          if (!taskRow) throw new Error("TASK_BOARD_DATABASE_CORRUPT:wakeup_task");
+          const task = this.runtime.requireTask(wakeup.taskId);
+          if (task.assignedAgentId !== agentId) {
+            throw conflict("WAKEUP_TASK_NOT_ASSIGNED", "Wakeup task is no longer assigned to this agent");
+          }
+          if (task.endedAt !== null) throw conflict("WAKEUP_TASK_TERMINAL", "Wakeup task is already terminal");
+          if (task.status === "queued" || task.status === "blocked") {
+            const started = this.runtime.store.db
+              .prepare(
+                `
             UPDATE tasks
             SET status = 'in_progress', started_at = COALESCE(started_at, ?), version = version + 1, updated_at = ?
             WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND status IN ('queued', 'blocked') AND ended_at IS NULL
-          `).run(now, now, task.taskId, agentId, task.version);
-          if (Number(started.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was starting");
-          this.runtime.insertEvent(task.projectId, task.taskId, { type: "agent", id: agentId }, "task_run_started", {
-            kind: task.kind,
-            requiredRole: task.requiredRole,
+          `
+              )
+              .run(now, now, task.taskId, agentId, task.version);
+            if (Number(started.changes) !== 1)
+              throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was starting");
+            this.runtime.insertEvent(
+              task.projectId,
+              task.taskId,
+              { type: "agent", id: agentId },
+              "task_run_started",
+              {
+                kind: task.kind,
+                requiredRole: task.requiredRole,
+                runId,
+                previousStatus: task.status,
+                status: "in_progress",
+                version: task.version + 1,
+              },
+              now
+            );
+          }
+        }
+        this.runtime.insertEvent(
+          currentAgent.projectId,
+          wakeup.taskId,
+          { type: "agent", id: agentId },
+          "agent_run_claimed",
+          {
             runId,
-            previousStatus: task.status,
-            status: "in_progress",
-            version: task.version + 1,
-          }, now);
+            claimId: request.claimId,
+            wakeupId: wakeup.wakeupId,
+            wakeReason: wakeup.reason,
+            messageCursor: claimMessageCursor(request, wakeup.taskId),
+          },
+          now
+        );
+        const result = this.claimResult(
+          runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
+          claimMessageCursor(request, wakeup.taskId) ?? 0,
+          reviewInspection,
+          crossRepoContext
+        );
+        if (crossRepoContext !== null) {
+          const projectedContext = projectClaimContext(result, claimMessageCursor(request, wakeup.taskId));
+          try {
+            if (projectedContext === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_taskless_claim");
+            parseWorkerAgentContext(projectedContext);
+          } catch (error) {
+            const reason = publishedInterfaceValidationReason(error);
+            if (reason === null || projectedContext === null) throw error;
+            const usage = workerAgentContextUsage(projectedContext);
+            const providerRow = this.runtime.store.db
+              .prepare("SELECT repo_path FROM projects WHERE project_id=?")
+              .get(crossRepoContext.providerProjectId) as Readonly<{ repo_path?: unknown }> | undefined;
+            const providerRepoPath = typeof providerRow?.repo_path === "string" ? providerRow.repo_path : null;
+            throw new MigrateInterfaceClaimError(
+              publishedInterfaceReasonSummary(reason, crossRepoContext.sha, usage.bytes, usage.budget),
+              crossRepoContext.sha,
+              sha256(claimContextInputForDigest(projectedContext)),
+              reason,
+              providerRepoPath,
+              { cause: error }
+            );
+          }
         }
-      }
-      this.runtime.insertEvent(currentAgent.projectId, wakeup.taskId, { type: "agent", id: agentId }, "agent_run_claimed", {
-        runId,
-        claimId: request.claimId,
-        wakeupId: wakeup.wakeupId,
-        wakeReason: wakeup.reason,
-        messageCursor: claimMessageCursor(request, wakeup.taskId),
-      }, now);
-      const result = this.claimResult(
-        runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
-        claimMessageCursor(request, wakeup.taskId) ?? 0,
-        reviewInspection,
-        crossRepoContext,
-      );
-      if (crossRepoContext !== null) {
-        const projectedContext = projectClaimContext(result, claimMessageCursor(request, wakeup.taskId));
-        try {
-          if (projectedContext === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_taskless_claim");
-          parseWorkerAgentContext(projectedContext);
-        } catch (error) {
-          const reason = publishedInterfaceValidationReason(error);
-          if (reason === null || projectedContext === null) throw error;
-          const usage = workerAgentContextUsage(projectedContext);
-          const providerRow = this.runtime.store.db.prepare(
-            "SELECT repo_path FROM projects WHERE project_id=?",
-          ).get(crossRepoContext.providerProjectId) as Readonly<{ repo_path?: unknown }> | undefined;
-          const providerRepoPath = typeof providerRow?.repo_path === "string" ? providerRow.repo_path : null;
-          throw new MigrateInterfaceClaimError(
-            publishedInterfaceReasonSummary(reason, crossRepoContext.sha, usage.bytes, usage.budget),
-            crossRepoContext.sha,
-            sha256(claimContextInputForDigest(projectedContext)),
-            reason,
-            providerRepoPath,
-            { cause: error },
-          );
-        }
-      }
-      const persisted = this.runtime.store.db.prepare(
-        "UPDATE runs SET claim_result_json = ? WHERE run_id = ? AND claim_result_json IS NULL",
-      ).run(JSON.stringify(result), runId);
-      if (Number(persisted.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
-      return result;
+        const persisted = this.runtime.store.db
+          .prepare("UPDATE runs SET claim_result_json = ? WHERE run_id = ? AND claim_result_json IS NULL")
+          .run(JSON.stringify(result), runId);
+        if (Number(persisted.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+        return result;
       });
     } catch (error) {
       if (error instanceof MigrateInterfaceClaimError && candidate.taskId !== null) {
@@ -822,7 +925,7 @@ export class RunsCollaborator {
     request: ClaimRunRequest,
     waitMs: number,
     signal: AbortSignal,
-    credentialVersion?: number,
+    credentialVersion?: number
   ): Promise<ClaimRunResponse | null> {
     if (signal.aborted) {
       this.runtime.requireAgent(agentId);
@@ -859,16 +962,20 @@ export class RunsCollaborator {
   heartbeatRun(runId: string, agentId: string, credentialVersion: number): AgentRun {
     return this.runtime.store.transaction(() => {
       this.runtime.requireAgentCredentialVersion(agentId, credentialVersion);
-      const row = this.runtime.store.db.prepare(
-        "SELECT * FROM runs WHERE run_id = ? AND agent_id = ?",
-      ).get(runId, agentId);
+      const row = this.runtime.store.db
+        .prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?")
+        .get(runId, agentId);
       if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
       const current = runFromRow(row);
       if (current.status !== "active") throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
       const heartbeatAt = exactNow(this.runtime.config.now);
-      const update = this.runtime.store.db.prepare(`
+      const update = this.runtime.store.db
+        .prepare(
+          `
         UPDATE runs SET heartbeat_at = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
-      `).run(heartbeatAt, runId, agentId);
+      `
+        )
+        .run(heartbeatAt, runId, agentId);
       if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
       return runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!);
     });
@@ -877,30 +984,42 @@ export class RunsCollaborator {
   reconcileStaleRuns(): number {
     const timeoutSeconds = this.runtime.config.heartbeatTimeoutSeconds;
     if (timeoutSeconds === 0) return 0;
-    const runColumns = new Set(this.runtime.store.db.prepare(
-      "SELECT name FROM pragma_table_info('runs')",
-    ).all().map((row) => stringValue(row, "name")));
+    const runColumns = new Set(
+      this.runtime.store.db
+        .prepare("SELECT name FROM pragma_table_info('runs')")
+        .all()
+        .map((row) => stringValue(row, "name"))
+    );
     if (!["run_id", "agent_id", "status", "started_at", "heartbeat_at"].every((column) => runColumns.has(column))) {
       return 0;
     }
     const sweepStartedAt = exactNow(this.runtime.config.now);
     const cutoff = new Date(Date.parse(sweepStartedAt) - timeoutSeconds * 1_000).toISOString();
-    const candidates = this.runtime.store.db.prepare(`
+    const candidates = this.runtime.store.db
+      .prepare(
+        `
       SELECT run_id
       FROM runs
       WHERE status = 'active' AND COALESCE(heartbeat_at, started_at) < ?
       ORDER BY run_id
-    `).all(cutoff).map((row) => stringValue(row, "run_id"));
+    `
+      )
+      .all(cutoff)
+      .map((row) => stringValue(row, "run_id"));
     let settledCount = 0;
     for (const runId of candidates) {
       const settlement = this.runtime.store.transaction(() => {
-        const row = this.runtime.store.db.prepare(`
+        const row = this.runtime.store.db
+          .prepare(
+            `
           SELECT *
           FROM runs
           WHERE run_id = ?
             AND status = 'active'
             AND COALESCE(heartbeat_at, started_at) < ?
-        `).get(runId, cutoff);
+        `
+          )
+          .get(runId, cutoff);
         if (row === undefined) return null;
         const current = runFromRow(row);
         const effects = this.settleActiveRunInTransaction(
@@ -908,7 +1027,7 @@ export class RunsCollaborator {
           current.agentId,
           { outcome: "interrupted", result: "run heartbeat lost" },
           exactNow(this.runtime.config.now),
-          { type: "system", id: "system:stale-run-sweep" },
+          { type: "system", id: "system:stale-run-sweep" }
         );
         return Object.freeze({ current, effects });
       });
@@ -928,31 +1047,36 @@ export class RunsCollaborator {
     reason: string,
     actor: SettlementActor,
     nowOverride?: string,
-    options: Readonly<{ skipAttemptNodeSuspension?: boolean }> = {},
+    options: Readonly<{ skipAttemptNodeSuspension?: boolean }> = {}
   ): {
     workItemId: string | null;
     projectId: string;
     attemptNodeSuspensionFailed: boolean;
   } | null {
-    const row = this.runtime.store.db.prepare(
-      "SELECT * FROM runs WHERE run_id=? AND status='active'",
-    ).get(runId);
+    const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id=? AND status='active'").get(runId);
     if (row === undefined) return null;
     const current = runFromRow(row);
     const persistedReason = redactForPersistence(reason);
     const now = nowOverride ?? exactNow(this.runtime.config.now);
-    const workItem = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+    const workItem =
+      current.taskId === null
+        ? undefined
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT plan.work_item_id
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       WHERE attempt.task_id=?
-    `).get(current.taskId);
+    `
+            )
+            .get(current.taskId);
     const idempotencyKey = `suspend:${current.runId}`;
     const requestHash = sha256({ action: "suspend_run", runId: current.runId, reason: persistedReason, actor });
-    const priorInterrupt = this.runtime.store.db.prepare(
-      "SELECT request_hash FROM interrupts WHERE agent_id=? AND idempotency_key=?",
-    ).get(current.agentId, idempotencyKey);
+    const priorInterrupt = this.runtime.store.db
+      .prepare("SELECT request_hash FROM interrupts WHERE agent_id=? AND idempotency_key=?")
+      .get(current.agentId, idempotencyKey);
     if (priorInterrupt === undefined) {
       this.insertInterruptInTransaction(
         current.projectId,
@@ -962,7 +1086,7 @@ export class RunsCollaborator {
         requestHash,
         persistedReason,
         now,
-        actor,
+        actor
       );
     } else if (stringValue(priorInterrupt, "request_hash") !== requestHash) {
       throw conflict("IDEMPOTENCY_CONFLICT", "Run suspension was retried with different input");
@@ -978,7 +1102,7 @@ export class RunsCollaborator {
       {
         suspendAttempt: true,
         skipAttemptNodeSuspension: options.skipAttemptNodeSuspension,
-      },
+      }
     );
     return Object.freeze({
       workItemId: workItem === undefined ? null : stringValue(workItem, "work_item_id"),
@@ -991,7 +1115,9 @@ export class RunsCollaborator {
     // Planning and design runs are deliberately excluded from the board pause: they
     // are short-lived, and Task 5's started_at cap sweep suspends them individually
     // before applying its own cap-specific park transition.
-    const runIds = this.runtime.store.db.prepare(`
+    const runIds = this.runtime.store.db
+      .prepare(
+        `
       SELECT run.run_id
       FROM runs run
       JOIN stage_attempts attempt ON attempt.task_id=run.task_id
@@ -1000,13 +1126,15 @@ export class RunsCollaborator {
       JOIN work_items item ON item.work_item_id=plan.work_item_id
       WHERE run.status='active' AND item.pipeline_branch IS NOT NULL
       ORDER BY run.started_at,run.run_id
-    `).all().map((row) => stringValue(row, "run_id"));
+    `
+      )
+      .all()
+      .map((row) => stringValue(row, "run_id"));
     let suspended = 0;
     let failed = 0;
     for (const runId of runIds) {
       try {
-        const result = this.runtime.store.transaction(() =>
-          this.suspendActiveRunInTransaction(runId, reason, actor));
+        const result = this.runtime.store.transaction(() => this.suspendActiveRunInTransaction(runId, reason, actor));
         if (result?.attemptNodeSuspensionFailed === true) failed += 1;
         else if (result !== null) suspended += 1;
       } catch (error) {
@@ -1018,30 +1146,39 @@ export class RunsCollaborator {
   }
 
   settleRun(runId: string, agentId: string, request: SettleRunRequest): { run: AgentRun; duplicate: boolean } {
-    const row = this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?").get(runId, agentId);
+    const row = this.runtime.store.db
+      .prepare("SELECT * FROM runs WHERE run_id = ? AND agent_id = ?")
+      .get(runId, agentId);
     if (!row) throw new TaskBoardError(404, "RUN_NOT_FOUND", "Run was not found");
     const current = runFromRow(row);
     const persistedResult = redactForPersistence(request.result);
-    const interruptedBeforeCancellation = current.status !== "active"
-      && this.wasInterruptedBeforeWorkItemCancellation(current);
+    const interruptedBeforeCancellation =
+      current.status !== "active" && this.wasInterruptedBeforeWorkItemCancellation(current);
     if (current.status !== "active" && !interruptedBeforeCancellation && this.wasInterruptedBySystem(current)) {
       return { run: current, duplicate: true };
     }
     const design = this.designSettlement(current.taskId, request);
     if (request.reviewFindings !== undefined) {
-      const pipelineReview = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+      const pipelineReview =
+        current.taskId === null
+          ? undefined
+          : this.runtime.store.db
+              .prepare(
+                `
         SELECT 1
         FROM stage_attempts attempt
         JOIN work_nodes node ON node.node_id=attempt.node_id
         JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
         JOIN work_items item ON item.work_item_id=plan.work_item_id
         WHERE attempt.task_id=? AND attempt.stage='verification' AND item.pipeline_branch IS NOT NULL
-      `).get(current.taskId);
+      `
+              )
+              .get(current.taskId);
       if (pipelineReview === undefined) {
         throw new TaskBoardError(
           400,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
-          "Review findings are only allowed for pipeline verification",
+          "Review findings are only allowed for pipeline verification"
         );
       }
     }
@@ -1065,7 +1202,7 @@ export class RunsCollaborator {
                 settlementResult,
                 request.handoff,
                 request.reviewFindings,
-                scopeCheck,
+                scopeCheck
               );
               if (onboarding !== null && scopeCheck?.ok === true) {
                 this.recordOnboardingGapReportInTransaction(onboarding, agentId);
@@ -1083,9 +1220,10 @@ export class RunsCollaborator {
     const scopeCheck = current.taskId === null ? null : this.scopeCheckForSettlement(current.taskId, request.outcome);
     let onboarding: OnboardingSettlementContext | null;
     try {
-      onboarding = current.taskId === null
-        ? null
-        : this.onboardingCheckForSettlement(current.taskId, request.outcome, request.gapReport);
+      onboarding =
+        current.taskId === null
+          ? null
+          : this.onboardingCheckForSettlement(current.taskId, request.outcome, request.gapReport);
     } catch (error) {
       this.recordCorrectableSettlementRejectionBestEffort(current, agentId, error);
       throw error;
@@ -1099,14 +1237,16 @@ export class RunsCollaborator {
     const now = exactNow(this.runtime.config.now);
     let effects: SettlementEffects;
     try {
-      effects = this.runtime.store.transaction(() => this.settleActiveRunInTransaction(
-        current,
-        agentId,
-        request,
-        now,
-        { type: "agent", id: agentId },
-        attemptPrecheck,
-      ));
+      effects = this.runtime.store.transaction(() =>
+        this.settleActiveRunInTransaction(
+          current,
+          agentId,
+          request,
+          now,
+          { type: "agent", id: agentId },
+          attemptPrecheck
+        )
+      );
     } catch (error) {
       this.recordCorrectableSettlementRejectionBestEffort(current, agentId, error);
       throw error;
@@ -1114,7 +1254,10 @@ export class RunsCollaborator {
     if (effects.workflowWakeAgentId !== null) this.runtime.wakeupEvents.emit(effects.workflowWakeAgentId);
     this.projects.activateWorkflowNodes(effects.settledWorkflowNodes);
     this.projects.reconcileWorkflowsBestEffort(current.projectId);
-    return { run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!), duplicate: false };
+    return {
+      run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId)!),
+      duplicate: false,
+    };
   }
 
   private absorbSettlementAfterWorkItemCancellation(
@@ -1122,22 +1265,30 @@ export class RunsCollaborator {
     agentId: string,
     request: SettleRunRequest,
     persistedResult: string,
-    design: ReturnType<RunsCollaborator["designSettlement"]>,
+    design: ReturnType<RunsCollaborator["designSettlement"]>
   ): { run: AgentRun; duplicate: boolean } {
     if (
-      current.status === request.outcome && current.result === persistedResult
-      && this.wasSettledByAgent(current, agentId, request.outcome)
+      current.status === request.outcome &&
+      current.result === persistedResult &&
+      this.wasSettledByAgent(current, agentId, request.outcome)
     ) {
       return { run: current, duplicate: true };
     }
     if (current.status !== "interrupted") throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
 
-    const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+    const planning =
+      current.taskId === null
+        ? undefined
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT item.*
       FROM work_item_planning_tasks link
       JOIN work_items item ON item.work_item_id=link.work_item_id
       WHERE link.task_id=?
-    `).get(current.taskId);
+    `
+            )
+            .get(current.taskId);
     if (planning !== undefined && request.outcome === "completed") {
       if (request.workflowPlan === undefined || request.workflowPlan === null) {
         throw new TaskBoardError(400, "WORKFLOW_PLAN_REQUIRED", "Planning tasks must return a workflow plan");
@@ -1146,7 +1297,7 @@ export class RunsCollaborator {
         validateWorkflowPlanChildren(
           request.workflowPlan,
           planning.resolved_project_id === null ? undefined : String(planning.resolved_project_id),
-          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id),
+          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id)
         );
       } catch (error) {
         if (error instanceof ContractValidationError) {
@@ -1159,20 +1310,28 @@ export class RunsCollaborator {
         throw new TaskBoardError(
           400,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
-          "pipeline plans must end in a verification stage (template [\"implementation\",\"testing\",\"verification\"])",
+          'pipeline plans must end in a verification stage (template ["implementation","testing","verification"])'
         );
       }
     } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
-      throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
+      throw new TaskBoardError(
+        400,
+        "WORKFLOW_PLAN_NOT_ALLOWED",
+        "Only completed planning tasks can return a workflow plan"
+      );
     }
 
     const now = exactNow(this.runtime.config.now);
     this.runtime.store.transaction(() => {
-      const update = this.runtime.store.db.prepare(`
+      const update = this.runtime.store.db
+        .prepare(
+          `
         UPDATE runs
         SET status=?,ended_at=?,result=?
         WHERE run_id=? AND agent_id=? AND status='interrupted'
-      `).run(request.outcome, now, persistedResult, current.runId, agentId);
+      `
+        )
+        .run(request.outcome, now, persistedResult, current.runId, agentId);
       if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
       if (planning !== undefined) {
         this.runtime.insertEvent(
@@ -1181,7 +1340,7 @@ export class RunsCollaborator {
           { type: "agent", id: agentId },
           "work_item_plan_discarded",
           { workItemId: String(planning.work_item_id), runId: current.runId, reason: "work_item_ended" },
-          now,
+          now
         );
       }
       if (design.row !== undefined && design.record !== null) {
@@ -1191,13 +1350,20 @@ export class RunsCollaborator {
           { type: "agent", id: agentId },
           "work_item_design_discarded",
           { workItemId: String(design.row.work_item_id), runId: current.runId, reason: "work_item_ended" },
-          now,
+          now
         );
       }
-      this.runtime.insertEvent(current.projectId, current.taskId, { type: "agent", id: agentId }, "agent_run_settled", {
-        runId: current.runId,
-        outcome: request.outcome,
-      }, now);
+      this.runtime.insertEvent(
+        current.projectId,
+        current.taskId,
+        { type: "agent", id: agentId },
+        "agent_run_settled",
+        {
+          runId: current.runId,
+          outcome: request.outcome,
+        },
+        now
+      );
     });
     return {
       run: runFromRow(this.runtime.store.db.prepare("SELECT * FROM runs WHERE run_id=?").get(current.runId)!),
@@ -1205,50 +1371,57 @@ export class RunsCollaborator {
     };
   }
 
-  private recordCorrectableSettlementRejection(
-    current: AgentRun,
-    agentId: string,
-    error: unknown,
-  ): void {
+  private recordCorrectableSettlementRejection(current: AgentRun, agentId: string, error: unknown): void {
     if (
-      current.status !== "active" || !(error instanceof TaskBoardError) || error.status !== 400 ||
+      current.status !== "active" ||
+      !(error instanceof TaskBoardError) ||
+      error.status !== 400 ||
       !CORRECTABLE_SETTLEMENT_ERROR_CODES.has(error.code)
-    ) return;
+    )
+      return;
     const detail = redactForPersistence(error.message, 2_000);
     const now = exactNow(this.runtime.config.now);
     this.runtime.store.transaction(() => {
-      const terminalMessages = this.runtime.store.db.prepare(`
+      const terminalMessages = this.runtime.store.db
+        .prepare(
+          `
         SELECT message_id
         FROM task_messages
         WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
-      `).all(current.runId, agentId) as ReadonlyArray<Record<string, unknown>>;
+      `
+        )
+        .all(current.runId, agentId) as ReadonlyArray<Record<string, unknown>>;
       for (const row of terminalMessages) {
         const messageId = String(row.message_id);
-        this.runtime.store.db.prepare(`
+        this.runtime.store.db
+          .prepare(
+            `
           DELETE FROM task_events
           WHERE event_type='task_message_appended' AND json_extract(data_json,'$.messageId')=?
-        `).run(messageId);
+        `
+          )
+          .run(messageId);
       }
-      this.runtime.store.db.prepare(`
+      this.runtime.store.db
+        .prepare(
+          `
         DELETE FROM task_messages
         WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
-      `).run(current.runId, agentId);
+      `
+        )
+        .run(current.runId, agentId);
       this.runtime.insertEvent(
         current.projectId,
         current.taskId,
         { type: "agent", id: agentId },
         "settlement_rejected",
         { runId: current.runId, code: error.code, detail, retractedOutputCount: terminalMessages.length },
-        now,
+        now
       );
     });
   }
 
-  private recordCorrectableSettlementRejectionBestEffort(
-    current: AgentRun,
-    agentId: string,
-    error: unknown,
-  ): void {
+  private recordCorrectableSettlementRejectionBestEffort(current: AgentRun, agentId: string, error: unknown): void {
     try {
       this.recordCorrectableSettlementRejection(current, agentId, error);
     } catch (recordingError) {
@@ -1267,7 +1440,7 @@ export class RunsCollaborator {
     now: string,
     actor: SettlementActor,
     attemptPrecheck?: AttemptSettlementPrecheck,
-    options: SettleActiveRunOptions = {},
+    options: SettleActiveRunOptions = {}
   ): SettlementEffects {
     let workflowWakeAgentId: string | null = null;
     let settledWorkflowNodes: readonly WorkNode[] = Object.freeze([]);
@@ -1275,11 +1448,18 @@ export class RunsCollaborator {
     const persistedResult = redactForPersistence(request.result);
     const attemptResult = redactForPersistence(attemptPrecheck?.result ?? request.result);
     // Keep this planning snapshot: its work-item state is reused after task and workflow settlement below.
-    const planning = current.taskId === null ? undefined : this.runtime.store.db.prepare(`
+    const planning =
+      current.taskId === null
+        ? undefined
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT w.* FROM work_item_planning_tasks link
       JOIN work_items w ON w.work_item_id=link.work_item_id
       WHERE link.task_id=?
-    `).get(current.taskId);
+    `
+            )
+            .get(current.taskId);
     const design = this.designSettlement(current.taskId, request);
     let workflowProposal: CreatePlanRevisionRequest | null = null;
     if (planning && request.outcome === "completed") {
@@ -1290,7 +1470,7 @@ export class RunsCollaborator {
         validateWorkflowPlanChildren(
           request.workflowPlan,
           planning.resolved_project_id === null ? undefined : String(planning.resolved_project_id),
-          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id),
+          planning.parent_work_item_id === null ? null : String(planning.parent_work_item_id)
         );
       } catch (error) {
         if (error instanceof ContractValidationError) {
@@ -1304,7 +1484,7 @@ export class RunsCollaborator {
         throw new TaskBoardError(
           400,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_PLAN_INCOMPLETE,
-          "pipeline plans must end in a verification stage (template [\"implementation\",\"testing\",\"verification\"])",
+          'pipeline plans must end in a verification stage (template ["implementation","testing","verification"])'
         );
       }
       const workItemId = String(planning.work_item_id);
@@ -1315,41 +1495,60 @@ export class RunsCollaborator {
           actor,
           "work_item_plan_discarded",
           { workItemId, runId: current.runId, reason: "work_item_ended" },
-          now,
+          now
         );
       } else {
-        const existingPlan = this.runtime.store.db.prepare(
-          "SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')",
-        ).get(workItemId);
+        const existingPlan = this.runtime.store.db
+          .prepare("SELECT 1 FROM plan_revisions WHERE work_item_id=? AND state IN ('proposed','confirmed')")
+          .get(workItemId);
         if (!existingPlan) {
           const configured = this.automation.getConfiguration();
           const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
           for (const stage of requiredStages) {
             const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
             if (executor?.kind === "machine_verify") continue;
-            const agentType = executor?.kind === "agent_type"
-              ? configured.agentTypes.find((candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled)
-              : undefined;
+            const agentType =
+              executor?.kind === "agent_type"
+                ? configured.agentTypes.find(
+                    (candidate) => candidate.agentTypeId === executor.agentTypeId && candidate.enabled
+                  )
+                : undefined;
             if (agentType === undefined) {
-              throw new TaskBoardError(409, "WORKFLOW_EXECUTOR_UNAVAILABLE", `No enabled executor is configured for ${stage}`);
+              throw new TaskBoardError(
+                409,
+                "WORKFLOW_EXECUTOR_UNAVAILABLE",
+                `No enabled executor is configured for ${stage}`
+              );
             }
           }
-          const executorTypeIds = new Set(configured.stages.flatMap((stage) =>
-            requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type" ? [stage.executor.agentTypeId] : []));
-          const skillIds = [...new Set(configured.agentTypes.flatMap((agentType) =>
-            agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []))];
+          const executorTypeIds = new Set(
+            configured.stages.flatMap((stage) =>
+              requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type"
+                ? [stage.executor.agentTypeId]
+                : []
+            )
+          );
+          const skillIds = [
+            ...new Set(
+              configured.agentTypes.flatMap((agentType) =>
+                agentType.enabled && executorTypeIds.has(agentType.agentTypeId) ? agentType.skillIds : []
+              )
+            ),
+          ];
           workflowProposal = {
             ...request.workflowPlan,
             workItemId,
-            projectId: planning.resolved_project_id === null
-              ? current.projectId
-              : String(planning.resolved_project_id),
+            projectId: planning.resolved_project_id === null ? current.projectId : String(planning.resolved_project_id),
             skillIds,
           };
         }
       }
     } else if (request.workflowPlan !== undefined && request.workflowPlan !== null) {
-      throw new TaskBoardError(400, "WORKFLOW_PLAN_NOT_ALLOWED", "Only completed planning tasks can return a workflow plan");
+      throw new TaskBoardError(
+        400,
+        "WORKFLOW_PLAN_NOT_ALLOWED",
+        "Only completed planning tasks can return a workflow plan"
+      );
     }
     if (current.taskId !== null && design.row !== undefined && design.record !== null) {
       const workItemId = String(design.row.work_item_id);
@@ -1360,22 +1559,19 @@ export class RunsCollaborator {
           actor,
           "work_item_design_discarded",
           { workItemId, runId: current.runId, reason: "work_item_ended" },
-          now,
+          now
         );
       } else {
         settledWorkflowNodes = this.projects.settleDesignInTransaction(
           current.taskId,
           persistedResult,
           design.record,
-          agentId,
+          agentId
         );
       }
     } else if (current.taskId !== null && options.suspendAttempt === true) {
       if (options.skipAttemptNodeSuspension !== true) {
-        attemptNodeSuspensionFailed = !this.projects.suspendAttemptNodeInTransaction(
-          current.taskId,
-          attemptResult,
-        );
+        attemptNodeSuspensionFailed = !this.projects.suspendAttemptNodeInTransaction(current.taskId, attemptResult);
       }
     } else if (current.taskId !== null) {
       settledWorkflowNodes = this.projects.settleAttemptInTransaction(
@@ -1384,21 +1580,25 @@ export class RunsCollaborator {
         attemptResult,
         request.handoff,
         request.reviewFindings,
-        attemptPrecheck?.scopeCheck ?? null,
+        attemptPrecheck?.scopeCheck ?? null
       );
       if (attemptPrecheck?.publicationFailure !== null && attemptPrecheck?.publicationFailure !== undefined) {
         settledWorkflowNodes = this.projects.recordExpandInterfacePublicationFailureInTransaction(
           current.taskId,
-          attemptPrecheck.publicationFailure,
+          attemptPrecheck.publicationFailure
         );
       }
     }
     if (workflowProposal !== null) {
       this.projects.proposeWorkflowForAgentInTransaction(workflowProposal, agentId);
     }
-    const update = this.runtime.store.db.prepare(`
+    const update = this.runtime.store.db
+      .prepare(
+        `
       UPDATE runs SET status = ?, ended_at = ?, result = ? WHERE run_id = ? AND agent_id = ? AND status = 'active'
-    `).run(request.outcome, now, persistedResult, current.runId, agentId);
+    `
+      )
+      .run(request.outcome, now, persistedResult, current.runId, agentId);
     if (Number(update.changes) !== 1) throw conflict("RUN_NOT_ACTIVE", "Run is already settled");
     if (current.taskId !== null) {
       const taskRow = this.runtime.store.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(current.taskId);
@@ -1407,27 +1607,44 @@ export class RunsCollaborator {
       if (task.assignedAgentId === agentId && task.endedAt === null) {
         const nextStatus: TaskStatus = request.outcome;
         if (task.status !== nextStatus || request.outcome === "completed") {
-          const lifecycle = request.outcome === "completed"
-            ? this.runtime.store.db.prepare(`
+          const lifecycle =
+            request.outcome === "completed"
+              ? this.runtime.store.db
+                  .prepare(
+                    `
                 UPDATE tasks
                 SET status = 'completed', ended_at = ?, result = ?, version = version + 1, updated_at = ?
                 WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-              `).run(now, attemptResult, now, task.taskId, agentId, task.version)
-            : this.runtime.store.db.prepare(`
+              `
+                  )
+                  .run(now, attemptResult, now, task.taskId, agentId, task.version)
+              : this.runtime.store.db
+                  .prepare(
+                    `
                 UPDATE tasks
                 SET status = ?, ended_at = ?, result = ?, version = version + 1, updated_at = ?
                 WHERE task_id = ? AND assigned_agent_id = ? AND version = ? AND ended_at IS NULL
-              `).run(request.outcome, now, attemptResult, now, task.taskId, agentId, task.version);
-          if (Number(lifecycle.changes) !== 1) throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
-          this.runtime.insertEvent(task.projectId, task.taskId, actor, "task_run_settled", {
-            kind: task.kind,
-            requiredRole: task.requiredRole,
-            runId: current.runId,
-            outcome: request.outcome,
-            previousStatus: task.status,
-            status: nextStatus,
-            version: task.version + 1,
-          }, now);
+              `
+                  )
+                  .run(request.outcome, now, attemptResult, now, task.taskId, agentId, task.version);
+          if (Number(lifecycle.changes) !== 1)
+            throw conflict("TASK_VERSION_CONFLICT", "Task changed while its run was settling");
+          this.runtime.insertEvent(
+            task.projectId,
+            task.taskId,
+            actor,
+            "task_run_settled",
+            {
+              kind: task.kind,
+              requiredRole: task.requiredRole,
+              runId: current.runId,
+              outcome: request.outcome,
+              previousStatus: task.status,
+              status: nextStatus,
+              version: task.version + 1,
+            },
+            now
+          );
           if (options.suspendAttempt === true) {
             this.runtime.reconcileTaskPhasesForTerminal(task, "interrupted", actor, now);
           } else if (request.outcome === "completed") {
@@ -1438,7 +1655,7 @@ export class RunsCollaborator {
           this.runtime.retirePendingWakeupsForTask(
             task.taskId,
             request.outcome === "completed" ? "task_terminal" : "task_recovery_required",
-            now,
+            now
           );
         }
       }
@@ -1452,7 +1669,7 @@ export class RunsCollaborator {
           actor,
           "work_item_plan_discarded",
           { workItemId, runId: current.runId, reason: "work_item_ended" },
-          now,
+          now
         );
       } else {
         transitionWorkItemInTransaction(this.runtime.store, {
@@ -1486,26 +1703,38 @@ export class RunsCollaborator {
         });
       }
     }
-    this.runtime.insertEvent(current.projectId, current.taskId, actor, "agent_run_settled", {
-      runId: current.runId,
-      outcome: request.outcome,
-    }, now);
-    if (attemptPrecheck?.onboarding !== null && attemptPrecheck?.onboarding !== undefined && attemptPrecheck.scopeCheck?.ok === true) {
+    this.runtime.insertEvent(
+      current.projectId,
+      current.taskId,
+      actor,
+      "agent_run_settled",
+      {
+        runId: current.runId,
+        outcome: request.outcome,
+      },
+      now
+    );
+    if (
+      attemptPrecheck?.onboarding !== null &&
+      attemptPrecheck?.onboarding !== undefined &&
+      attemptPrecheck.scopeCheck?.ok === true
+    ) {
       this.recordOnboardingGapReportInTransaction(attemptPrecheck.onboarding, agentId);
     }
     return Object.freeze({ workflowWakeAgentId, settledWorkflowNodes, attemptNodeSuspensionFailed });
   }
 
-  private recordOnboardingGapReportInTransaction(
-    onboarding: OnboardingSettlementContext,
-    agentId: string,
-  ): void {
-    const link = this.runtime.store.db.prepare(`
+  private recordOnboardingGapReportInTransaction(onboarding: OnboardingSettlementContext, agentId: string): void {
+    const link = this.runtime.store.db
+      .prepare(
+        `
       SELECT onboarding.gap_report_artifact_id, artifact.task_id AS gap_report_task_id
       FROM work_item_onboarding_tasks onboarding
       LEFT JOIN artifacts artifact ON artifact.artifact_id=onboarding.gap_report_artifact_id
       WHERE work_item_id=?
-    `).get(onboarding.workItemId);
+    `
+      )
+      .get(onboarding.workItemId);
     if (link === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_link");
     if (link.gap_report_artifact_id !== null && link.gap_report_task_id === onboarding.taskId) return;
     const artifact = this.projects.recordOnboardingGapReportInTransaction({
@@ -1516,30 +1745,41 @@ export class RunsCollaborator {
       caption: ONBOARDING_GAP_REPORT_CAPTION,
       actorId: agentId,
     });
-    const update = this.runtime.store.db.prepare(`
+    const update = this.runtime.store.db
+      .prepare(
+        `
       UPDATE work_item_onboarding_tasks
       SET gap_report_artifact_id=?
       WHERE work_item_id=? AND gap_report_artifact_id IS ?
-    `).run(artifact.artifactId, onboarding.workItemId, link.gap_report_artifact_id);
+    `
+      )
+      .run(artifact.artifactId, onboarding.workItemId, link.gap_report_artifact_id);
     if (Number(update.changes) !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:onboarding_gap_report_identity");
   }
 
   private designSettlement(
     taskId: string | null,
-    request: SettleRunRequest,
+    request: SettleRunRequest
   ): Readonly<{ row: Record<string, unknown> | undefined; record: DesignRecordDraft | null }> {
-    const row = taskId === null ? undefined : this.runtime.store.db.prepare(`
+    const row =
+      taskId === null
+        ? undefined
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT item.*
       FROM work_item_design_tasks link
       JOIN work_items item ON item.work_item_id=link.work_item_id
       WHERE link.task_id=?
-    `).get(taskId);
+    `
+            )
+            .get(taskId);
     if (row === undefined) {
       if (request.designRecord !== undefined) {
         throw new TaskBoardError(
           400,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
-          "Design records are only allowed for design tasks",
+          "Design records are only allowed for design tasks"
         );
       }
       return Object.freeze({ row: undefined, record: null });
@@ -1549,7 +1789,7 @@ export class RunsCollaborator {
         throw new TaskBoardError(
           400,
           TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
-          "Only completed design tasks can return a design record",
+          "Only completed design tasks can return a design record"
         );
       }
       return Object.freeze({ row, record: null });
@@ -1558,19 +1798,16 @@ export class RunsCollaborator {
       throw new TaskBoardError(
         400,
         TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
-        "Completed design tasks must return a design record",
+        "Completed design tasks must return a design record"
       );
     }
     try {
       return Object.freeze({ row, record: parseDesignRecordDraft(request.designRecord) });
     } catch (error) {
       if (error instanceof ContractValidationError) {
-        throw new TaskBoardError(
-          400,
-          TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
-          error.message,
-          { cause: error },
-        );
+        throw new TaskBoardError(400, TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED, error.message, {
+          cause: error,
+        });
       }
       throw error;
     }
@@ -1580,29 +1817,44 @@ export class RunsCollaborator {
     run: AgentRun,
     cursor: number,
     reviewInspection: ReturnType<ProjectsCollaborator["prepareClaimContext"]>,
-    crossRepoContext: CrossRepoContext | null,
+    crossRepoContext: CrossRepoContext | null
   ): ClaimRunResult {
-    const wakeup = wakeupFromRow(this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(run.wakeupId)!);
-    const taskProjection = wakeup.taskId === null
-      ? null
-      : claimTaskProjectionInputs(this.runtime, wakeup.taskId, cursor);
+    const wakeup = wakeupFromRow(
+      this.runtime.store.db.prepare("SELECT * FROM wakeups WHERE wakeup_id = ?").get(run.wakeupId)!
+    );
+    const taskProjection =
+      wakeup.taskId === null ? null : claimTaskProjectionInputs(this.runtime, wakeup.taskId, cursor);
     const task = taskProjection?.task ?? null;
     const messages = taskProjection?.messages ?? Object.freeze([]);
     const messageCursor = taskProjection?.messageCursor ?? cursor;
-    const triggerQuestion = wakeup.questionId === null
-      ? null
-      : questionFromRow(this.runtime.store.db.prepare("SELECT * FROM questions WHERE question_id = ?").get(wakeup.questionId)!);
+    const triggerQuestion =
+      wakeup.questionId === null
+        ? null
+        : questionFromRow(
+            this.runtime.store.db.prepare("SELECT * FROM questions WHERE question_id = ?").get(wakeup.questionId)!
+          );
     const parentTask = task?.parentTaskId ? this.runtime.requireTask(task.parentTaskId) : null;
-    const parentMessages = parentTask === null ? [] : this.runtime.store.db.prepare(`
+    const parentMessages =
+      parentTask === null
+        ? []
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT * FROM (
         SELECT * FROM task_messages WHERE task_id = ? ORDER BY sequence DESC LIMIT 12
       ) ORDER BY sequence
-    `).all(parentTask.taskId).map(messageFromRow);
+    `
+            )
+            .all(parentTask.taskId)
+            .map(messageFromRow);
     const workflow = task === null ? null : this.projects.claimContext(task.taskId, reviewInspection);
     const phase = task === null ? null : this.claimWorkItemPhase(task.taskId);
-    const areaMemory = workflow?.pipeline !== null && workflow?.pipeline !== undefined
-      ? []
-      : this.runtime.store.db.prepare(`
+    const areaMemory =
+      workflow?.pipeline !== null && workflow?.pipeline !== undefined
+        ? []
+        : this.runtime.store.db
+            .prepare(
+              `
       SELECT task_id, title, substr(result, 1, 1000) AS result, ended_at
       FROM tasks
       WHERE project_id = ?
@@ -1613,12 +1865,17 @@ export class RunsCollaborator {
         AND (? IS NULL OR task_id <> ?)
       ORDER BY ended_at DESC, task_id DESC
       LIMIT 8
-      `).all(run.projectId, run.agentId, run.taskId, run.taskId).map((row) => Object.freeze({
-        taskId: stringValue(row, "task_id"),
-        title: stringValue(row, "title"),
-        result: stringValue(row, "result"),
-        endedAt: stringValue(row, "ended_at"),
-      }));
+      `
+            )
+            .all(run.projectId, run.agentId, run.taskId, run.taskId)
+            .map((row) =>
+              Object.freeze({
+                taskId: stringValue(row, "task_id"),
+                title: stringValue(row, "title"),
+                result: stringValue(row, "result"),
+                endedAt: stringValue(row, "ended_at"),
+              })
+            );
     const project = this.runtime.requireProject(run.projectId);
     const intake = taskProjection?.intake ?? false;
     return Object.freeze({
@@ -1629,7 +1886,10 @@ export class RunsCollaborator {
       context: Object.freeze({
         intake,
         ...(intake ? { boardProjects: this.boardProjectContexts(run.projectId) } : {}),
-        ...(task !== null && this.runtime.store.db.prepare(`
+        ...(task !== null &&
+        this.runtime.store.db
+          .prepare(
+            `
           SELECT 1
           FROM work_item_onboarding_tasks onboarding
           WHERE onboarding.task_id = ?
@@ -1641,12 +1901,21 @@ export class RunsCollaborator {
                WHERE attempt.task_id=?
              )
           LIMIT 1
-        `).get(task.taskId, task.taskId) !== undefined ? { onboarding: true as const } : {}),
-        design: task !== null && this.runtime.store.db.prepare(
-          "SELECT 1 FROM work_item_design_tasks WHERE task_id = ?",
-        ).get(task.taskId) !== undefined,
+        `
+          )
+          .get(task.taskId, task.taskId) !== undefined
+          ? { onboarding: true as const }
+          : {}),
+        design:
+          task !== null &&
+          this.runtime.store.db.prepare("SELECT 1 FROM work_item_design_tasks WHERE task_id = ?").get(task.taskId) !==
+            undefined,
         agent: this.runtime.requireAgent(run.agentId),
-        projectMemory: Object.freeze({ projectId: project.projectId, name: project.name, description: project.description }),
+        projectMemory: Object.freeze({
+          projectId: project.projectId,
+          name: project.name,
+          description: project.description,
+        }),
         areaMemory: Object.freeze(areaMemory),
         parentTask,
         parentMessages: Object.freeze(parentMessages),
@@ -1657,29 +1926,48 @@ export class RunsCollaborator {
         messageCursor,
         messages: Object.freeze(messages),
         triggerQuestion,
-        openQuestions: Object.freeze(this.runtime.store.db.prepare(`
+        openQuestions: Object.freeze(
+          this.runtime.store.db
+            .prepare(
+              `
           SELECT * FROM questions WHERE agent_id = ? AND status = 'open' ORDER BY asked_at, question_id LIMIT 50
-        `).all(run.agentId).map(questionFromRow)),
+        `
+            )
+            .all(run.agentId)
+            .map(questionFromRow)
+        ),
         workflow,
       }),
     });
   }
 
   private boardProjectContexts(parentProjectId: string): NonNullable<ClaimRunResult["context"]["boardProjects"]> {
-    return Object.freeze((this.runtime.store.db.prepare(`
+    return Object.freeze(
+      (
+        this.runtime.store.db
+          .prepare(
+            `
       SELECT project_id,name,repo_path
       FROM projects
       ORDER BY CASE WHEN project_id=? THEN 0 ELSE 1 END,created_at,project_id
       LIMIT 64
-    `).all(parentProjectId) as Row[]).map((row) => Object.freeze({
-      projectId: stringValue(row, "project_id"),
-      name: stringValue(row, "name"),
-      repoName: basename(stringValue(row, "repo_path")),
-    })));
+    `
+          )
+          .all(parentProjectId) as Row[]
+      ).map((row) =>
+        Object.freeze({
+          projectId: stringValue(row, "project_id"),
+          name: stringValue(row, "name"),
+          repoName: basename(stringValue(row, "repo_path")),
+        })
+      )
+    );
   }
 
   private claimWorkItemPhase(taskId: string): WorkItemPhase | null {
-    const row = this.runtime.store.db.prepare(`
+    const row = this.runtime.store.db
+      .prepare(
+        `
       SELECT item.phase
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
@@ -1688,7 +1976,9 @@ export class RunsCollaborator {
       WHERE attempt.task_id=?
       ORDER BY attempt.attempt DESC
       LIMIT 1
-    `).get(taskId) as Readonly<{ phase: string | null }> | undefined;
+    `
+      )
+      .get(taskId) as Readonly<{ phase: string | null }> | undefined;
     if (row === undefined || row.phase === null) return null;
     if (!(WORK_ITEM_PHASES as readonly string[]).includes(row.phase)) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:work_item_phase");
@@ -1697,7 +1987,9 @@ export class RunsCollaborator {
   }
 
   private prepareCrossRepoContext(taskId: string): CrossRepoContext | null {
-    const owner = this.runtime.store.db.prepare(`
+    const owner = this.runtime.store.db
+      .prepare(
+        `
       SELECT item.work_item_id,item.phase,attempt.stage,task.assigned_role
       FROM stage_attempts attempt
       JOIN tasks task ON task.task_id=attempt.task_id
@@ -1707,33 +1999,30 @@ export class RunsCollaborator {
       WHERE attempt.task_id=?
       ORDER BY attempt.attempt DESC
       LIMIT 1
-    `).get(taskId) as Readonly<{
-      work_item_id: string;
-      phase: string | null;
-      stage: string;
-      assigned_role: string | null;
-    }> | undefined;
+    `
+      )
+      .get(taskId) as
+      | Readonly<{
+          work_item_id: string;
+          phase: string | null;
+          stage: string;
+          assigned_role: string | null;
+        }>
+      | undefined;
     if (
-      owner === undefined
-      || owner.phase !== "migrate"
-      || !migrateTaskCarriesCrossRepoContext(owner.stage, owner.assigned_role)
-    ) return null;
+      owner === undefined ||
+      owner.phase !== "migrate" ||
+      !migrateTaskCarriesCrossRepoContext(owner.stage, owner.assigned_role)
+    )
+      return null;
     const provider = migrateInterfaceProvider(this.runtime.store.db, owner.work_item_id);
     if (provider === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_provider_merge_missing");
-    const readiness = migrateInterfaceReadiness(
-      this.runtime.store.db,
-      owner.work_item_id,
-      (repoPath, sha, path) => readPublishedInterface(repoPath, sha, path, this.#git),
+    const readiness = migrateInterfaceReadiness(this.runtime.store.db, owner.work_item_id, (repoPath, sha, path) =>
+      readPublishedInterface(repoPath, sha, path, this.#git)
     );
     if (readiness === null) throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_provider_merge_missing");
     if (readiness.kind === "blocked") {
-      throw new MigrateInterfaceClaimError(
-        readiness.summary,
-        readiness.sha,
-        null,
-        readiness.reason,
-        provider.repoPath,
-      );
+      throw new MigrateInterfaceClaimError(readiness.summary, readiness.sha, null, readiness.reason, provider.repoPath);
     }
     return readiness.context;
   }
@@ -1742,20 +2031,23 @@ export class RunsCollaborator {
     if (error.repoPath !== null) {
       this.projects.evictPublishedInterface(error.repoPath, error.sha);
     }
-    this.projects.blockMigrateInterfaceClaim(taskId, error.summary, error.contextDigest === null ? null : {
-      expandSha: error.sha,
-      contextDigest: error.contextDigest,
-    });
+    this.projects.blockMigrateInterfaceClaim(
+      taskId,
+      error.summary,
+      error.contextDigest === null
+        ? null
+        : {
+            expandSha: error.sha,
+            contextDigest: error.contextDigest,
+          }
+    );
     this.throwTypedMigrateInterfaceError(error);
   }
 
   private throwTypedMigrateInterfaceError(error: MigrateInterfaceClaimError): never {
-    throw new TaskBoardError(
-      409,
-      TASK_BOARD_ERROR_CODES.TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE,
-      error.summary,
-      { cause: error },
-    );
+    throw new TaskBoardError(409, TASK_BOARD_ERROR_CODES.TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE, error.summary, {
+      cause: error,
+    });
   }
 
   private claimResultFromJson(value: string): ClaimRunResult {
@@ -1769,7 +2061,8 @@ export class RunsCollaborator {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
     }
     const envelope = result as { apiVersion?: unknown; run?: unknown; context?: unknown };
-    if (envelope.apiVersion !== TASK_BOARD_API_VERSION) throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
+    if (envelope.apiVersion !== TASK_BOARD_API_VERSION)
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:claim_result_json");
     let currentRun: AgentRun | null = null;
     if (envelope.run !== null && typeof envelope.run === "object" && !Array.isArray(envelope.run)) {
       const run = envelope.run as Record<string, unknown>;
@@ -1788,8 +2081,11 @@ export class RunsCollaborator {
     if (envelope.context !== null && typeof envelope.context === "object" && !Array.isArray(envelope.context)) {
       const context = envelope.context as Record<string, unknown>;
       if (!Object.hasOwn(context, "intake")) {
-        context.intake = currentRun?.taskId !== null && currentRun?.taskId !== undefined &&
-          this.runtime.store.db.prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
+        context.intake =
+          currentRun?.taskId !== null &&
+          currentRun?.taskId !== undefined &&
+          this.runtime.store.db
+            .prepare("SELECT 1 FROM work_item_planning_tasks WHERE task_id = ?")
             .get(currentRun.taskId) !== undefined;
       }
       if (context.intake === true && !Object.hasOwn(context, "boardProjects") && currentRun !== null) {
@@ -1797,9 +2093,10 @@ export class RunsCollaborator {
       }
       if (!Object.hasOwn(context, "design")) context.design = false;
       if (!Object.hasOwn(context, "phase")) {
-        context.phase = currentRun?.taskId === null || currentRun?.taskId === undefined
-          ? null
-          : this.claimWorkItemPhase(currentRun.taskId);
+        context.phase =
+          currentRun?.taskId === null || currentRun?.taskId === undefined
+            ? null
+            : this.claimWorkItemPhase(currentRun.taskId);
       }
       if (context.workflow !== null && typeof context.workflow === "object" && !Array.isArray(context.workflow)) {
         const workflow = context.workflow as Record<string, unknown>;
@@ -1816,9 +2113,14 @@ export class RunsCollaborator {
   }
 
   private interruptBatch(runId: string, after: number): RunInterruptBatch {
-    const items = this.runtime.store.db.prepare(`
+    const items = this.runtime.store.db
+      .prepare(
+        `
       SELECT * FROM interrupts WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT 100
-    `).all(runId, after).map(interruptFromRow);
+    `
+      )
+      .all(runId, after)
+      .map(interruptFromRow);
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       items: Object.freeze(items),

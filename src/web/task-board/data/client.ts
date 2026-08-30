@@ -1,4 +1,4 @@
-import type { PipelineSummary, RejectPlanRevisionResponse } from '@shared/task-board-contract';
+import type { PipelineSummary, RejectPlanRevisionResponse } from "@shared/task-board-contract";
 import type {
   AgentQueryConversationTurn,
   AgentRole,
@@ -22,7 +22,7 @@ import type {
   SaveAutomationConfigurationInput,
   TaskKind,
   WorkflowEvent,
-} from '../types';
+} from "../types";
 import {
   array,
   automationAgentTypeWire,
@@ -70,33 +70,28 @@ import {
   type RawTask,
   type RawWorkItemAudit,
   type RawWorkItem,
-} from './parse';
-import {
-  childWorkItemProjection,
-  normalize,
-  projectProjection,
-  workItemDetailProjection,
-} from '../model/project';
-import { taskMessagePageSize, workItemPageSize } from './wire';
-import { SseFrameParser } from './sse';
+} from "./parse";
+import { childWorkItemProjection, normalize, projectProjection, workItemDetailProjection } from "../model/project";
+import { taskMessagePageSize, workItemPageSize } from "./wire";
+import { SseFrameParser } from "./sse";
 
 export function randomUuid(): string {
   const source = globalThis.crypto;
-  if (typeof source?.randomUUID === 'function') return source.randomUUID();
-  if (typeof source?.getRandomValues !== 'function') {
-    throw new Error('This browser cannot generate secure random identifiers');
+  if (typeof source?.randomUUID === "function") return source.randomUUID();
+  if (typeof source?.getRandomValues !== "function") {
+    throw new Error("This browser cannot generate secure random identifiers");
   }
   const bytes = source.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
-  operation: (value: T) => Promise<R>,
+  operation: (value: T) => Promise<R>
 ): Promise<R[]> {
   const result = new Array<R>(values.length);
   let nextIndex = 0;
@@ -121,8 +116,10 @@ function taskCommandVersion(value: unknown, path: string): number {
   return version;
 }
 
-export const agentQueryConversationContextMarker = '\n\nRecent POC conversation (context only; newest request is above):\n';
-export const agentQueryRoutingContextMarker = '\n\nCompany routing map (use this only to identify the best project or agent):\n';
+export const agentQueryConversationContextMarker =
+  "\n\nRecent POC conversation (context only; newest request is above):\n";
+export const agentQueryRoutingContextMarker =
+  "\n\nCompany routing map (use this only to identify the best project or agent):\n";
 
 /** Parses the task-board's authoritative single-project snapshot into the frontend projection. */
 export function parseBoardSnapshot(value: unknown): BoardSnapshot {
@@ -140,19 +137,16 @@ export function agentQueryPromptFromObjective(objective: string): string {
 }
 
 function compactAgentQueryText(value: string): string {
-  return value.replace(/\s+/gu, ' ').trim();
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 function truncateAgentQueryText(value: string, maximumCharacters: number): string {
   if (value.length <= maximumCharacters) return value;
-  if (maximumCharacters <= 1) return '…'.slice(0, maximumCharacters);
+  if (maximumCharacters <= 1) return "…".slice(0, maximumCharacters);
   return `${value.slice(0, maximumCharacters - 1).trimEnd()}…`;
 }
 
-function recentAgentQueryConversation(
-  turns: AgentQueryConversationTurn[],
-  newestPrompt: string,
-): string {
+function recentAgentQueryConversation(turns: AgentQueryConversationTurn[], newestPrompt: string): string {
   const newestPromptKey = compactAgentQueryText(newestPrompt);
   const selected: string[] = [];
   const seen = new Set<string>();
@@ -162,12 +156,12 @@ function recentAgentQueryConversation(
     const turn = turns[index];
     if (!turn) continue;
     const body = compactAgentQueryText(turn.body);
-    if (!body || (turn.role === 'human' && body === newestPromptKey)) continue;
+    if (!body || (turn.role === "human" && body === newestPromptKey)) continue;
     const key = `${turn.role}\u0000${body}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const label = turn.role === 'human' ? 'Human' : 'Agent';
+    const label = turn.role === "human" ? "Human" : "Agent";
     const line = `${label}: ${truncateAgentQueryText(body, maximumAgentQueryTurnCharacters)}`;
     const separatorCharacters = selected.length > 0 ? 1 : 0;
     if (characters + separatorCharacters + line.length > maximumAgentQueryConversationCharacters) break;
@@ -175,7 +169,7 @@ function recentAgentQueryConversation(
     characters += separatorCharacters + line.length;
   }
 
-  return selected.join('\n');
+  return selected.join("\n");
 }
 
 function appendAgentQuerySection(objective: string, marker: string, content: string): string {
@@ -186,18 +180,22 @@ function appendAgentQuerySection(objective: string, marker: string, content: str
 }
 
 function automationConfigurationFromEnvelope(value: unknown, path: string): AutomationConfiguration {
-  const envelope = exactRecord(value, path, ['configuration']);
+  const envelope = exactRecord(value, path, ["configuration"]);
   return parseAutomationConfiguration(envelope.configuration, `${path}.configuration`);
 }
 
 function automationConfigurationUpdateBody(input: SaveAutomationConfigurationInput): JsonRecord {
-  const version = integer(input.version, 'automation configuration update.version', 1);
+  const version = integer(input.version, "automation configuration update.version", 1);
   const rawAgentTypes = input.agentTypes.map(automationAgentTypeWire);
-  const agentTypes = rawAgentTypes.map((agentType, index) => parseAutomationAgentType(agentType, `automation configuration update.agentTypes[${index}]`));
+  const agentTypes = rawAgentTypes.map((agentType, index) =>
+    parseAutomationAgentType(agentType, `automation configuration update.agentTypes[${index}]`)
+  );
   const rawStages = input.stages.map(automationStageWire);
-  const stages = rawStages.map((entry, index) => parseAutomationStage(entry, `automation configuration update.stages[${index}]`));
-  validateAutomationParts(agentTypes, stages, 'automation configuration update');
-  validateAutomationPayloadSize(agentTypes, stages, 'automation configuration update');
+  const stages = rawStages.map((entry, index) =>
+    parseAutomationStage(entry, `automation configuration update.stages[${index}]`)
+  );
+  validateAutomationParts(agentTypes, stages, "automation configuration update");
+  validateAutomationPayloadSize(agentTypes, stages, "automation configuration update");
   return { version, agentTypes: rawAgentTypes, stages: rawStages };
 }
 
@@ -209,8 +207,14 @@ function projectFromEnvelope(value: unknown, path: string): BoardProject {
 function parseHostProjectEntry(value: unknown, path: string): HostProjectEntry {
   const item = record(value, path);
   const modifiedAtMs = item.modifiedAtMs;
-  if (typeof modifiedAtMs !== 'number' || !Number.isFinite(modifiedAtMs)) throw new Error(`${path}.modifiedAtMs must be a finite number`);
-  return { name: string(item.name, `${path}.name`), path: string(item.path, `${path}.path`), hasGit: boolean(item.hasGit, `${path}.hasGit`), modifiedAtMs };
+  if (typeof modifiedAtMs !== "number" || !Number.isFinite(modifiedAtMs))
+    throw new Error(`${path}.modifiedAtMs must be a finite number`);
+  return {
+    name: string(item.name, `${path}.name`),
+    path: string(item.path, `${path}.path`),
+    hasGit: boolean(item.hasGit, `${path}.hasGit`),
+    modifiedAtMs,
+  };
 }
 
 function parseHostProjectRoot(value: unknown, path: string): HostProjectRoot {
@@ -226,13 +230,17 @@ function parseHostProjectRoot(value: unknown, path: string): HostProjectRoot {
 function parseHostDirectoryListing(value: unknown, path: string): HostDirectoryListing {
   const item = record(value, path);
   const parent = item.parent;
-  if (parent !== null && typeof parent !== 'string') throw new Error(`${path}.parent must be a string or null`);
+  if (parent !== null && typeof parent !== "string") throw new Error(`${path}.parent must be a string or null`);
   return {
     path: string(item.path, `${path}.path`),
     parent,
     entries: array(item.entries, `${path}.entries`, (entry, entryPath) => {
       const node = record(entry, entryPath);
-      return { name: string(node.name, `${entryPath}.name`), path: string(node.path, `${entryPath}.path`), hasGit: boolean(node.hasGit, `${entryPath}.hasGit`) };
+      return {
+        name: string(node.name, `${entryPath}.name`),
+        path: string(node.path, `${entryPath}.path`),
+        hasGit: boolean(node.hasGit, `${entryPath}.hasGit`),
+      };
     }),
     truncated: boolean(item.truncated, `${path}.truncated`),
   };
@@ -254,7 +262,7 @@ function dependenciesFromEnvelope(value: unknown, path: string): BoardWorkItemDe
 }
 
 function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTokenResult {
-  const envelope = exactRecord(value, path, ['agent', 'token']);
+  const envelope = exactRecord(value, path, ["agent", "token"]);
   const agent = parseAgent(envelope.agent, `${path}.agent`);
   const token = boundedText(envelope.token, `${path}.token`, 512);
   if (token.length < 32) throw new Error(`${path}.token must contain at least 32 characters`);
@@ -273,14 +281,17 @@ function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
 }
 
 function planRejectionFromEnvelope(value: unknown, path: string): RejectPlanRevisionResponse {
-  const envelope = exactRecord(value, path, ['outcome']);
-  if (envelope.outcome !== 'revising' && envelope.outcome !== 'parked') {
+  const envelope = exactRecord(value, path, ["outcome"]);
+  if (envelope.outcome !== "revising" && envelope.outcome !== "parked") {
     throw new Error(`${path}.outcome must be revising or parked`);
   }
   return { outcome: envelope.outcome };
 }
 
-function workItemPageFromEnvelope(value: unknown, path: string): {
+function workItemPageFromEnvelope(
+  value: unknown,
+  path: string
+): {
   workItems: RawWorkItem[];
   nextCursor: string | null;
 } {
@@ -290,13 +301,12 @@ function workItemPageFromEnvelope(value: unknown, path: string): {
     throw new Error(`${path}.workItems cannot contain more than ${workItemPageSize} records`);
   }
   const workItems = envelope.workItems.map((item, index) => parseWorkItem(item, `${path}.workItems[${index}]`));
-  if (!('nextCursor' in envelope)) return { workItems, nextCursor: null };
+  if (!("nextCursor" in envelope)) return { workItems, nextCursor: null };
   const nextCursor = string(envelope.nextCursor, `${path}.nextCursor`);
-  if (
-    nextCursor.length === 0
-    || new TextEncoder().encode(nextCursor).byteLength > maximumWorkItemCursorBytes
-  ) {
-    throw new Error(`${path}.nextCursor must be a nonempty string no larger than ${maximumWorkItemCursorBytes} UTF-8 bytes`);
+  if (nextCursor.length === 0 || new TextEncoder().encode(nextCursor).byteLength > maximumWorkItemCursorBytes) {
+    throw new Error(
+      `${path}.nextCursor must be a nonempty string no larger than ${maximumWorkItemCursorBytes} UTF-8 bytes`
+    );
   }
   return { workItems, nextCursor };
 }
@@ -305,10 +315,10 @@ export class BoardApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code: string | null = null,
+    readonly code: string | null = null
   ) {
     super(message);
-    this.name = 'BoardApiError';
+    this.name = "BoardApiError";
   }
 }
 
@@ -322,7 +332,7 @@ export interface BoardNotifications {
 }
 
 export interface TaskBoardClient {
-  getSnapshot(signal?: AbortSignal, requestMarker?: 'foreground' | 'poll' | 'mutation'): Promise<BoardSnapshot>;
+  getSnapshot(signal?: AbortSignal, requestMarker?: "foreground" | "poll" | "mutation"): Promise<BoardSnapshot>;
   getBoardPause(signal?: AbortSignal): Promise<RawBoardPause>;
   setBoardPause(input: { reason: string | null; version: number }): Promise<RawBoardPause>;
   resumeBoard(input: { version: number }): Promise<RawBoardPause>;
@@ -362,7 +372,10 @@ export interface TaskBoardClient {
   addMessage(taskId: string, input: { body: string; version: number }): Promise<void>;
   answerQuestion(questionId: string, input: { answer: string }): Promise<void>;
   resumeTask(taskId: string, input: { version: number }): Promise<void>;
-  decideHumanCheck(taskId: string, input: { version: number; status: 'completed' | 'failed'; result: string }): Promise<void>;
+  decideHumanCheck(
+    taskId: string,
+    input: { version: number; status: "completed" | "failed"; result: string }
+  ): Promise<void>;
   interruptRun(runId: string): Promise<InterruptRunResult>;
   getProjectWorkflow(projectId: string, signal?: AbortSignal): Promise<ProjectWorkflow>;
   getPipelineSummary(workItemId: string, signal?: AbortSignal): Promise<PipelineSummary>;
@@ -385,11 +398,11 @@ export interface TaskBoardClient {
 async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;
   try {
-    const value = record(await response.json(), 'error response');
-    const error = record(value.error, 'error response.error');
+    const value = record(await response.json(), "error response");
+    const error = record(value.error, "error response.error");
     return {
-      message: typeof error.message === 'string' && error.message.length > 0 ? error.message : fallback,
-      code: typeof error.code === 'string' && error.code.length > 0 ? error.code : null,
+      message: typeof error.message === "string" && error.message.length > 0 ? error.message : fallback,
+      code: typeof error.code === "string" && error.code.length > 0 ? error.code : null,
     };
   } catch {
     return { message: fallback, code: null };
@@ -401,27 +414,33 @@ function clientEventId(): string {
 }
 
 function safeBaseUrl(value: string): string {
-  const trimmed = value.replace(/\/$/, '');
-  if (trimmed === '' || (trimmed.startsWith('/') && !trimmed.startsWith('//'))) return trimmed;
+  const trimmed = value.replace(/\/$/, "");
+  if (trimmed === "" || (trimmed.startsWith("/") && !trimmed.startsWith("//"))) return trimmed;
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new Error('Task board URL is invalid');
+    throw new Error("Task board URL is invalid");
   }
-  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
-  if (parsed.username || parsed.password || (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback))) {
-    throw new Error('Task board URL requires HTTPS or a loopback host');
+  const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+  if (
+    parsed.username ||
+    parsed.password ||
+    (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))
+  ) {
+    throw new Error("Task board URL requires HTTPS or a loopback host");
   }
-  if (parsed.search || parsed.hash) throw new Error('Task board URL cannot include a query or fragment');
+  if (parsed.search || parsed.hash) throw new Error("Task board URL cannot include a query or fragment");
   return trimmed;
 }
 
-export function createTaskBoardClient(options: {
-  baseUrl?: string;
-  fetch?: typeof fetch;
-} = {}): TaskBoardClient {
-  const baseUrl = safeBaseUrl(options.baseUrl ?? '');
+export function createTaskBoardClient(
+  options: {
+    baseUrl?: string;
+    fetch?: typeof fetch;
+  } = {}
+): TaskBoardClient {
+  const baseUrl = safeBaseUrl(options.baseUrl ?? "");
   const requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const agentRoles = new Map<string, AgentRole>();
   const questionVersions = new Map<string, number>();
@@ -432,12 +451,12 @@ export function createTaskBoardClient(options: {
   async function request(path: string, init?: RequestInit): Promise<Response> {
     const response = await requestFetch(`${baseUrl}${path}`, {
       ...init,
-      cache: 'no-store',
-      credentials: 'omit',
-      redirect: 'error',
-      referrerPolicy: 'no-referrer',
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
       headers: {
-        ...(init?.body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
         ...init?.headers,
       },
     });
@@ -454,9 +473,9 @@ export function createTaskBoardClient(options: {
 
   async function post(path: string, body: unknown, idempotencyKey?: string): Promise<void> {
     await request(path, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(body),
-      headers: idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined,
+      headers: idempotencyKey ? { "idempotency-key": idempotencyKey } : undefined,
     });
   }
 
@@ -466,27 +485,27 @@ export function createTaskBoardClient(options: {
     while (true) {
       const envelope = record(
         await json(`/v1/tasks/${encodeURIComponent(task.taskId)}/messages?after=${after}`, { signal }),
-        'messages response',
+        "messages response"
       );
-      const page = array(envelope.messages, 'messages response.messages', parseMessage);
-      const cursor = integer(envelope.cursor, 'messages response.cursor');
-      if (page.length > taskMessagePageSize) throw new Error('messages response exceeded the page size limit');
-      if (cursor < after) throw new Error('messages response cursor moved backwards');
+      const page = array(envelope.messages, "messages response.messages", parseMessage);
+      const cursor = integer(envelope.cursor, "messages response.cursor");
+      if (page.length > taskMessagePageSize) throw new Error("messages response exceeded the page size limit");
+      if (cursor < after) throw new Error("messages response cursor moved backwards");
       if (page.length === 0) {
-        if (cursor !== after) throw new Error('messages response cursor advanced without messages');
+        if (cursor !== after) throw new Error("messages response cursor advanced without messages");
         return messages;
       }
-      if (cursor === after) throw new Error('messages response cursor did not advance');
+      if (cursor === after) throw new Error("messages response cursor did not advance");
 
       let previousSequence = after;
       for (const message of page) {
         if (message.taskId !== task.taskId || message.projectId !== task.projectId) {
-          throw new Error('messages response belongs to another task or project');
+          throw new Error("messages response belongs to another task or project");
         }
-        if (message.sequence <= previousSequence) throw new Error('messages response is not in chronological order');
+        if (message.sequence <= previousSequence) throw new Error("messages response is not in chronological order");
         previousSequence = message.sequence;
       }
-      if (cursor !== previousSequence) throw new Error('messages response cursor does not match its final message');
+      if (cursor !== previousSequence) throw new Error("messages response cursor does not match its final message");
       if (messages.length + page.length > maximumTaskMessages) {
         throw new Error(`messages response exceeded the ${maximumTaskMessages}-message task limit`);
       }
@@ -509,7 +528,9 @@ export function createTaskBoardClient(options: {
       const page = workItemPageFromEnvelope(value, `work items response page ${pages}`);
       rawRows += page.workItems.length;
       if (rawRows > maximumRawWorkItems) {
-        throw new Error(`work items response exceeded the ${maximumRawWorkItems.toLocaleString()}-record raw pagination limit`);
+        throw new Error(
+          `work items response exceeded the ${maximumRawWorkItems.toLocaleString()}-record raw pagination limit`
+        );
       }
       for (const workItem of page.workItems) {
         const position = positionsById.get(workItem.workItemId);
@@ -523,10 +544,12 @@ export function createTaskBoardClient(options: {
 
       const cursor = page.nextCursor;
       if (cursor === null) return merged;
-      if (seenCursors.has(cursor)) throw new Error('work items response repeated a pagination cursor');
+      if (seenCursors.has(cursor)) throw new Error("work items response repeated a pagination cursor");
       seenCursors.add(cursor);
       if (pages >= maximumWorkItemPages || rawRows >= maximumRawWorkItems) {
-        throw new Error(`work items response exceeded the ${maximumWorkItemPages}-page or ${maximumRawWorkItems.toLocaleString()}-record pagination limit`);
+        throw new Error(
+          `work items response exceeded the ${maximumWorkItemPages}-page or ${maximumRawWorkItems.toLocaleString()}-record pagination limit`
+        );
       }
       value = await json(`/v1/work-items?cursor=${encodeURIComponent(cursor)}`, { signal });
     }
@@ -534,181 +557,178 @@ export function createTaskBoardClient(options: {
 
   return {
     async getBoardPause(signal) {
-      return parseBoardPause(
-        await json('/v1/board/pause', { signal }),
-        'board pause response',
-      );
+      return parseBoardPause(await json("/v1/board/pause", { signal }), "board pause response");
     },
     async setBoardPause(input) {
-      const reason = input.reason === null
-        ? null
-        : boundedText(input.reason.trim(), 'board pause reason', 500);
+      const reason = input.reason === null ? null : boundedText(input.reason.trim(), "board pause reason", 500);
       return parseBoardPause(
-        await json('/v1/board/pause', {
-          method: 'POST',
+        await json("/v1/board/pause", {
+          method: "POST",
           body: JSON.stringify({
             reason,
-            version: integer(input.version, 'board pause.version', 1),
+            version: integer(input.version, "board pause.version", 1),
           }),
         }),
-        'board pause response',
+        "board pause response"
       );
     },
     async resumeBoard(input) {
       return parseBoardPause(
-        await json('/v1/board/resume', {
-          method: 'POST',
-          body: JSON.stringify({ version: integer(input.version, 'board resume.version', 1) }),
+        await json("/v1/board/resume", {
+          method: "POST",
+          body: JSON.stringify({ version: integer(input.version, "board resume.version", 1) }),
         }),
-        'board resume response',
+        "board resume response"
       );
     },
     async getFindingsLedger(projectId, signal) {
-      const query = projectId === undefined ? '' : `?projectId=${encodeURIComponent(projectId)}`;
-      return parseFindingsLedger(
-        await json(`/v1/ledgers/findings${query}`, { signal }),
-        'findings ledger response',
-      );
+      const query = projectId === undefined ? "" : `?projectId=${encodeURIComponent(projectId)}`;
+      return parseFindingsLedger(await json(`/v1/ledgers/findings${query}`, { signal }), "findings ledger response");
     },
     async getParksLedger(signal) {
-      return parseParksLedger(
-        await json('/v1/ledgers/parks', { signal }),
-        'parks ledger response',
-      );
+      return parseParksLedger(await json("/v1/ledgers/parks", { signal }), "parks ledger response");
     },
     async getNotifications(signal) {
-      const envelope = record(await json('/v1/notifications', { signal }), 'notifications response');
-      const unread = array(envelope.unread, 'notifications response.unread', parseBoardNotification);
-      const recentRead = array(envelope.recentRead, 'notifications response.recentRead', parseBoardNotification);
-      if (unread.length > 100) throw new Error('notifications response.unread cannot contain more than 100 records');
-      if (recentRead.length > 50) throw new Error('notifications response.recentRead cannot contain more than 50 records');
+      const envelope = record(await json("/v1/notifications", { signal }), "notifications response");
+      const unread = array(envelope.unread, "notifications response.unread", parseBoardNotification);
+      const recentRead = array(envelope.recentRead, "notifications response.recentRead", parseBoardNotification);
+      if (unread.length > 100) throw new Error("notifications response.unread cannot contain more than 100 records");
+      if (recentRead.length > 50)
+        throw new Error("notifications response.recentRead cannot contain more than 50 records");
       return { unread, recentRead };
     },
     async markNotificationRead(notificationId, version) {
       const envelope = record(
         await json(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
-          method: 'POST',
-          body: JSON.stringify({ version: integer(version, 'notification read.version', 1) }),
+          method: "POST",
+          body: JSON.stringify({ version: integer(version, "notification read.version", 1) }),
         }),
-        'notification read response',
+        "notification read response"
       );
-      return parseBoardNotification(envelope.notification, 'notification read response.notification');
+      return parseBoardNotification(envelope.notification, "notification read response.notification");
     },
     async getWorkItemAudit(workItemId, signal) {
       return parseWorkItemAudit(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/audit`, { signal }),
-        'work item audit response',
+        "work item audit response"
       );
     },
     async getWorkItem(workItemId, signal) {
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, { signal }),
-        'work item detail response',
+        "work item detail response"
       );
     },
     async getWorkItemChildren(parentWorkItemId, signal) {
       return childrenFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(parentWorkItemId)}/children`, { signal }),
-        'work item children response',
+        "work item children response"
       );
     },
     async getWorkItemDependencies(workItemId, signal) {
       return dependenciesFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/dependencies`, { signal }),
-        'work item dependencies response',
+        "work item dependencies response"
       );
     },
     async getPipelineSummary(workItemId, signal) {
       return parsePipelineSummary(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/pipeline-summary`, { signal }),
-        'pipeline summary response',
+        "pipeline summary response"
       );
     },
     async approvePipelineMerge(workItemId, input) {
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/approve-merge`, {
-          method: 'POST',
-          body: JSON.stringify({ version: integer(input.version, 'pipeline merge approval.version', 1) }),
+          method: "POST",
+          body: JSON.stringify({ version: integer(input.version, "pipeline merge approval.version", 1) }),
         }),
-        'approve pipeline merge response',
+        "approve pipeline merge response"
       );
     },
     async rejectFinalApproval(workItemId, input) {
-      const note = boundedText(input.note.trim(), 'final approval rejection note', 2_000);
+      const note = boundedText(input.note.trim(), "final approval rejection note", 2_000);
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/reject-final`, {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify({
-            version: integer(input.version, 'final approval rejection.version', 1),
+            version: integer(input.version, "final approval rejection.version", 1),
             note,
           }),
         }),
-        'reject final approval response',
+        "reject final approval response"
       );
     },
     async attestDeployment(workItemId, input) {
-      const note = input.note?.trim() ?? '';
+      const note = input.note?.trim() ?? "";
       return parseDeployAttestationResult(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}/attest-deploy`, {
-          method: 'POST',
-          body: JSON.stringify(note.length === 0 ? {} : {
-            note: boundedText(note, 'deployment attestation note', 2_000),
-          }),
+          method: "POST",
+          body: JSON.stringify(
+            note.length === 0
+              ? {}
+              : {
+                  note: boundedText(note, "deployment attestation note", 2_000),
+                }
+          ),
         }),
-        'deploy attestation response',
+        "deploy attestation response"
       );
     },
     async resumeWorkItem(workItemId) {
       return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/resume`, { method: 'POST' }),
-        'resume work item response',
+        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/resume`, { method: "POST" }),
+        "resume work item response"
       );
     },
     async getProjectWorkflow(projectId, signal) {
       return workflowFromEnvelope(
         await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }),
-        'workflow response',
+        "workflow response"
       );
     },
     async getProjectArtifacts(projectId, signal) {
-      const envelope = record(await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }), 'artifacts response');
-      return array(envelope.artifacts, 'artifacts response.artifacts', parseProjectArtifact);
+      const envelope = record(
+        await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }),
+        "artifacts response"
+      );
+      return array(envelope.artifacts, "artifacts response.artifacts", parseProjectArtifact);
     },
     async confirmWorkflow(planRevisionId) {
       return workflowFromEnvelope(
         await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/confirm`, {
-          method: 'POST',
-          body: JSON.stringify({ expectedState: 'proposed' }),
+          method: "POST",
+          body: JSON.stringify({ expectedState: "proposed" }),
         }),
-        'confirm workflow response',
+        "confirm workflow response"
       );
     },
     async rejectWorkflowPlan(planRevisionId, note) {
-      const parsedNote = boundedText(note, 'plan rejection note', 2_000);
+      const parsedNote = boundedText(note, "plan rejection note", 2_000);
       return planRejectionFromEnvelope(
         await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/reject`, {
-          method: 'POST',
-          body: JSON.stringify({ note: parsedNote, expectedState: 'proposed' }),
+          method: "POST",
+          body: JSON.stringify({ note: parsedNote, expectedState: "proposed" }),
         }),
-        'reject workflow plan response',
+        "reject workflow plan response"
       );
     },
     async subscribeProjectEvents(input) {
       const response = await request(
         `/v1/projects/${encodeURIComponent(input.projectId)}/workflow/events?after=${input.after}`,
-        { signal: input.signal, headers: { accept: 'text/event-stream' } },
+        { signal: input.signal, headers: { accept: "text/event-stream" } }
       );
-      if (!response.body) throw new Error('The workflow event stream returned no body');
+      if (!response.body) throw new Error("The workflow event stream returned no body");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       const parser = new SseFrameParser({
         maximumFrameLength: 64 * 1_024,
         onEvent: (event) => {
           if (!event.data) return;
-          const envelope = record(JSON.parse(event.data) as unknown, 'workflow event');
-          input.onEvent(parseWorkflowEvent(envelope.event, 'workflow event.event'));
+          const envelope = record(JSON.parse(event.data) as unknown, "workflow event");
+          input.onEvent(parseWorkflowEvent(envelope.event, "workflow event.event"));
         },
-        sizeLimitError: () => new Error('A workflow event exceeded the size limit'),
+        sizeLimitError: () => new Error("A workflow event exceeded the size limit"),
       });
       try {
         while (true) {
@@ -727,15 +747,13 @@ export function createTaskBoardClient(options: {
       return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
     },
     async getSnapshot(signal, requestMarker) {
-      const markerHeaders = requestMarker === undefined
-        ? undefined
-        : { 'x-nexus-refresh-kind': requestMarker };
+      const markerHeaders = requestMarker === undefined ? undefined : { "x-nexus-refresh-kind": requestMarker };
       const [projectsValue, workItemsValue] = await Promise.all([
-        json('/v1/projects', { signal, headers: markerHeaders }),
-        json('/v1/work-items', { signal, headers: markerHeaders }),
+        json("/v1/projects", { signal, headers: markerHeaders }),
+        json("/v1/work-items", { signal, headers: markerHeaders }),
       ]);
-      const projectsEnvelope = record(projectsValue, 'projects response');
-      const projects = array(projectsEnvelope.projects, 'projects response.projects', parseProject);
+      const projectsEnvelope = record(projectsValue, "projects response");
+      const projects = array(projectsEnvelope.projects, "projects response.projects", parseProject);
       const workItems = await paginatedWorkItems(workItemsValue, signal);
       const boards = await mapWithConcurrency(projects, 6, async (project) => {
         return parseRawBoard(await json(`/v1/projects/${encodeURIComponent(project.projectId)}/board`, { signal }));
@@ -761,105 +779,105 @@ export function createTaskBoardClient(options: {
     },
     async getAutomationConfiguration(signal) {
       return automationConfigurationFromEnvelope(
-        await json('/v1/automation-configuration', { signal }),
-        'automation configuration response',
+        await json("/v1/automation-configuration", { signal }),
+        "automation configuration response"
       );
     },
     async saveAutomationConfiguration(input) {
       return automationConfigurationFromEnvelope(
-        await json('/v1/automation-configuration', {
-          method: 'PATCH',
+        await json("/v1/automation-configuration", {
+          method: "PATCH",
           body: JSON.stringify(automationConfigurationUpdateBody(input)),
         }),
-        'save automation configuration response',
+        "save automation configuration response"
       );
     },
     async createProject(input) {
       return projectFromEnvelope(
-        await json('/v1/projects', {
-          method: 'POST',
+        await json("/v1/projects", {
+          method: "POST",
           body: JSON.stringify(input),
         }),
-        'create project response',
+        "create project response"
       );
     },
     async updateProject(projectId, input) {
       return projectFromEnvelope(
         await json(`/v1/projects/${encodeURIComponent(projectId)}`, {
-          method: 'PATCH',
+          method: "PATCH",
           body: JSON.stringify(input),
         }),
-        'update project response',
+        "update project response"
       );
     },
     async getHostProjectRoots(signal) {
-      const envelope = record(await json('/v1/host/project-roots', { signal }), 'host roots response');
-      return array(envelope.roots, 'host roots response.roots', parseHostProjectRoot);
+      const envelope = record(await json("/v1/host/project-roots", { signal }), "host roots response");
+      return array(envelope.roots, "host roots response.roots", parseHostProjectRoot);
     },
     async getHostDirectories(path, signal) {
-      const query = path === undefined ? '' : `?path=${encodeURIComponent(path)}`;
-      const envelope = record(await json(`/v1/host/directories${query}`, { signal }), 'host directories response');
-      return parseHostDirectoryListing(envelope.listing, 'host directories response.listing');
+      const query = path === undefined ? "" : `?path=${encodeURIComponent(path)}`;
+      const envelope = record(await json(`/v1/host/directories${query}`, { signal }), "host directories response");
+      return parseHostDirectoryListing(envelope.listing, "host directories response.listing");
     },
     async createWorkItem(input) {
       const originalRequest = input.originalRequest.trim();
-      if (originalRequest.length === 0) throw new Error('Enter a task');
-      if (originalRequest.length > 16_000) throw new Error('Tasks cannot exceed 16,000 characters');
+      if (originalRequest.length === 0) throw new Error("Enter a task");
+      if (originalRequest.length > 16_000) throw new Error("Tasks cannot exceed 16,000 characters");
       const idempotencyKey = input.idempotencyKey.trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(idempotencyKey)) {
-        throw new Error('Task submission has an invalid idempotency key');
+        throw new Error("Task submission has an invalid idempotency key");
       }
       const projectId = input.projectId.trim();
-      if (projectId.length === 0) throw new Error('Choose a project');
+      if (projectId.length === 0) throw new Error("Choose a project");
       return workItemFromEnvelope(
-        await json('/v1/work-items', {
-          method: 'POST',
+        await json("/v1/work-items", {
+          method: "POST",
           body: JSON.stringify({
             originalRequest,
             priority: input.priority,
             taskType: input.taskType,
-            projectTarget: { mode: 'explicit', projectId },
+            projectTarget: { mode: "explicit", projectId },
           }),
-          headers: { 'idempotency-key': idempotencyKey },
+          headers: { "idempotency-key": idempotencyKey },
         }),
-        'create work item response',
+        "create work item response"
       );
     },
     async cancelWorkItem(workItemId, input) {
       const reason = input.reason.trim();
-      if (reason.length === 0) throw new Error('A cancellation reason is required');
-      if (reason.length > 16_000) throw new Error('Cancellation reasons cannot exceed 16,000 characters');
+      if (reason.length === 0) throw new Error("A cancellation reason is required");
+      if (reason.length > 16_000) throw new Error("Cancellation reasons cannot exceed 16,000 characters");
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
-          method: 'PATCH',
+          method: "PATCH",
           body: JSON.stringify({
-            version: integer(input.version, 'work item cancellation.version', 1),
-            action: 'cancel',
+            version: integer(input.version, "work item cancellation.version", 1),
+            action: "cancel",
             reason,
           }),
         }),
-        'cancel work item response',
+        "cancel work item response"
       );
     },
     async archiveWorkItem(workItemId, input) {
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
-          method: 'PATCH',
+          method: "PATCH",
           body: JSON.stringify({
-            version: integer(input.version, 'work item archive.version', 1),
-            action: 'archive',
+            version: integer(input.version, "work item archive.version", 1),
+            action: "archive",
           }),
         }),
-        'archive work item response',
+        "archive work item response"
       );
     },
     async rotateAgentToken(agentId, input) {
       return tokenRotationFromEnvelope(
         await json(`/v1/agents/${encodeURIComponent(agentId)}/rotate-token`, {
-          method: 'POST',
-          body: JSON.stringify({ version: integer(input.version, 'agent token rotation.version', 1) }),
+          method: "POST",
+          body: JSON.stringify({ version: integer(input.version, "agent token rotation.version", 1) }),
         }),
-        'agent token rotation response',
+        "agent token rotation response"
       );
     },
     async createTask(input) {
@@ -872,28 +890,30 @@ export function createTaskBoardClient(options: {
     },
     async createAgentQuery(input) {
       const prompt = input.prompt.trim();
-      if (prompt.length === 0) throw new Error('Enter a question or request for this agent');
-      if (prompt.length > maximumAgentQueryObjectiveCharacters) throw new Error('Agent questions and requests cannot exceed 8,000 characters');
+      if (prompt.length === 0) throw new Error("Enter a question or request for this agent");
+      if (prompt.length > maximumAgentQueryObjectiveCharacters)
+        throw new Error("Agent questions and requests cannot exceed 8,000 characters");
       const recentConversation = recentAgentQueryConversation(input.recentConversation ?? [], prompt);
       const routingContext = input.routingContext?.trim();
       const objectiveWithConversation = appendAgentQuerySection(
         prompt,
         agentQueryConversationContextMarker,
-        recentConversation,
+        recentConversation
       );
       const objective = appendAgentQuerySection(
         objectiveWithConversation,
         agentQueryRoutingContextMarker,
-        routingContext ?? '',
+        routingContext ?? ""
       );
       const workspaceRefs = [...new Set(input.workspaceRefs)].slice(0, 32);
       const titlePrefix = `Request for ${input.agentId}: `;
-      const titleSummary = prompt.replace(/\s+/gu, ' ');
+      const titleSummary = prompt.replace(/\s+/gu, " ");
       await post(`/v1/projects/${encodeURIComponent(input.projectId)}/tasks`, {
         parentTaskId: null,
         title: `${titlePrefix}${titleSummary}`.slice(0, 240).trimEnd(),
         objective,
-        acceptanceCriteria: 'Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.',
+        acceptanceCriteria:
+          "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
         workspaceRefs,
         assignedAgentId: input.agentId,
         assignedRole: input.assignedRole,
@@ -902,52 +922,50 @@ export function createTaskBoardClient(options: {
     },
     async assignTask(taskId, input) {
       const role = agentRoles.get(input.agentId);
-      if (!role) throw new Error('Refresh the board before assigning this agent');
+      if (!role) throw new Error("Refresh the board before assigning this agent");
       const policy = taskPolicies.get(taskId);
-      if (!policy) throw new Error('Refresh the board before assigning this task');
-      if (policy.kind === 'human_check') throw new Error('Human checks cannot be assigned to agents');
+      if (!policy) throw new Error("Refresh the board before assigning this task");
+      if (policy.kind === "human_check") throw new Error("Human checks cannot be assigned to agents");
       if (policy.requiredRole !== null && role !== policy.requiredRole) {
         throw new Error(`This task requires a ${policy.requiredRole} agent`);
       }
       await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify({
           version: input.version,
           assignedAgentId: input.agentId,
           assignedRole: role,
-          status: 'queued',
+          status: "queued",
         }),
       });
     },
     async retryTask(taskId, version) {
-      await post(
-        `/v1/tasks/${encodeURIComponent(taskId)}/retry`,
-        { version: taskCommandVersion(version, 'task retry.version') },
-      );
+      await post(`/v1/tasks/${encodeURIComponent(taskId)}/retry`, {
+        version: taskCommandVersion(version, "task retry.version"),
+      });
     },
     async backlogTask(taskId, version) {
-      await post(
-        `/v1/tasks/${encodeURIComponent(taskId)}/backlog`,
-        { version: taskCommandVersion(version, 'task backlog.version') },
-      );
+      await post(`/v1/tasks/${encodeURIComponent(taskId)}/backlog`, {
+        version: taskCommandVersion(version, "task backlog.version"),
+      });
     },
     async reorderTask(taskId, input) {
       if (!Number.isSafeInteger(input.orderKey) || input.orderKey < 0) {
-        throw new Error('Task order must be a non-negative safe integer');
+        throw new Error("Task order must be a non-negative safe integer");
       }
       await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify({ version: input.version, orderKey: input.orderKey }),
       });
     },
     async returnTaskToBacklog(taskId, input) {
       await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify({
           version: input.version,
           assignedAgentId: null,
           assignedRole: null,
-          status: 'backlog',
+          status: "backlog",
         }),
       });
     },
@@ -955,44 +973,45 @@ export function createTaskBoardClient(options: {
       void input.version;
       await post(`/v1/tasks/${encodeURIComponent(taskId)}/messages`, {
         clientEventId: clientEventId(),
-        kind: 'note',
+        kind: "note",
         body: input.body,
       });
     },
     async answerQuestion(questionId, input) {
       const version = questionVersions.get(questionId);
-      if (!version) throw new Error('Refresh the board before answering this question');
+      if (!version) throw new Error("Refresh the board before answering this question");
       await post(`/v1/questions/${encodeURIComponent(questionId)}/answer`, { answer: input.answer, version });
     },
     async resumeTask(taskId, input) {
-      if (taskPolicies.get(taskId)?.kind === 'human_check') throw new Error('Human checks cannot wake an agent');
+      if (taskPolicies.get(taskId)?.kind === "human_check") throw new Error("Human checks cannot wake an agent");
       const agentId = taskAgents.get(taskId);
-      if (!agentId) throw new Error('This task has no assigned agent to resume');
+      if (!agentId) throw new Error("This task has no assigned agent to resume");
       await post(
         `/v1/agents/${encodeURIComponent(agentId)}/resume`,
-        { reason: 'Human explicitly resumed this task', taskId },
-        `resume:${taskId}:${input.version}`,
+        { reason: "Human explicitly resumed this task", taskId },
+        `resume:${taskId}:${input.version}`
       );
     },
     async decideHumanCheck(taskId, input) {
-      if (taskPolicies.get(taskId)?.kind !== 'human_check') throw new Error('Only human checks accept a human release decision');
+      if (taskPolicies.get(taskId)?.kind !== "human_check")
+        throw new Error("Only human checks accept a human release decision");
       const result = input.result.trim();
-      if (result.length === 0) throw new Error('A human decision rationale is required');
+      if (result.length === 0) throw new Error("A human decision rationale is required");
       await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify({ version: input.version, status: input.status, result }),
       });
     },
     async interruptRun(runId) {
       const agentId = runAgents.get(runId);
-      if (!agentId) throw new Error('Refresh the board before interrupting this run');
+      if (!agentId) throw new Error("Refresh the board before interrupting this run");
       return interruptRunFromEnvelope(
         await json(`/v1/agents/${encodeURIComponent(agentId)}/interrupt`, {
-          method: 'POST',
-          body: JSON.stringify({ reason: 'Human interrupted this agent from the task board' }),
-          headers: { 'idempotency-key': `interrupt:${runId}` },
+          method: "POST",
+          body: JSON.stringify({ reason: "Human interrupted this agent from the task board" }),
+          headers: { "idempotency-key": `interrupt:${runId}` },
         }),
-        'interrupt response',
+        "interrupt response"
       );
     },
   };

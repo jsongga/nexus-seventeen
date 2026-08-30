@@ -18,9 +18,19 @@ const version = (pkg) => execFileSync("npm", ["view", pkg, "version"], { encodin
 const codexVersion = version("@openai/codex");
 const claudeVersion = version("@anthropic-ai/claude-code");
 console.log(`building ${image} (codex ${codexVersion}, claude ${claudeVersion})`);
-execFileSync("docker", [
-  "build", "--target", "agent",
-  "--build-arg", `CODEX_CLI_VERSION=${codexVersion}`,
-  "--build-arg", `CLAUDE_CLI_VERSION=${claudeVersion}`,
-  "-t", image, root,
-], { stdio: "inherit" });
+execFileSync(
+  "docker",
+  [
+    "build",
+    "--target",
+    "agent",
+    "--build-arg",
+    `CODEX_CLI_VERSION=${codexVersion}`,
+    "--build-arg",
+    `CLAUDE_CLI_VERSION=${claudeVersion}`,
+    "-t",
+    image,
+    root,
+  ],
+  { stdio: "inherit" }
+);

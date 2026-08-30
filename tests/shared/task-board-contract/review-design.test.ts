@@ -31,53 +31,63 @@ const NOW = "2026-08-19T12:00:00.000Z";
 function designRecordDraft(): Record<string, unknown> {
   return {
     states: ["pending", "sent", "committed"],
-    transitions: [{
-      from: "pending",
-      to: "sent",
-      durablePrecondition: "The idempotency key is persisted.",
-      recovery: "Resume with the persisted key.",
-    }],
+    transitions: [
+      {
+        from: "pending",
+        to: "sent",
+        durablePrecondition: "The idempotency key is persisted.",
+        recovery: "Resume with the persisted key.",
+      },
+    ],
     failurePoints: DESIGN_FAILURE_POINTS.map((point) => ({
       point,
       resultingState: `durable state after ${point}`,
       recovery: `recovery for ${point}`,
     })),
-    idempotencyKeys: [{
-      name: "settle-key",
-      generatedAt: "Before the first send.",
-      persistedAt: "In the same transaction as the attempt.",
-      reuse: "Reuse for every delivery of the same logical settlement.",
-    }],
-    faultInjectionCases: [{
-      name: "Crash after commit",
-      scenario: "Terminate after the durable commit and before acknowledgement.",
-      expectation: "A retry observes the committed outcome without duplicating it.",
-    }],
+    idempotencyKeys: [
+      {
+        name: "settle-key",
+        generatedAt: "Before the first send.",
+        persistedAt: "In the same transaction as the attempt.",
+        reuse: "Reuse for every delivery of the same logical settlement.",
+      },
+    ],
+    faultInjectionCases: [
+      {
+        name: "Crash after commit",
+        scenario: "Terminate after the durable commit and before acknowledgement.",
+        expectation: "A retry observes the committed outcome without duplicating it.",
+      },
+    ],
   };
 }
 
 test("review finding contract pins vocabularies, blocking derivation, and stable error codes", () => {
-  assert.deepEqual([...REVIEW_FINDING_CATEGORIES], [
-    "correctness", "security", "plan_deviation", "test_modification", "docs", "style", "other",
-  ]);
+  assert.deepEqual(
+    [...REVIEW_FINDING_CATEGORIES],
+    ["correctness", "security", "plan_deviation", "test_modification", "docs", "style", "other"]
+  );
   assert.deepEqual([...REVIEW_FINDING_SEVERITIES], ["minor", "major", "critical"]);
   assert.deepEqual([...BLOCKING_REVIEW_FINDING_CATEGORIES], ["correctness", "security", "plan_deviation"]);
   assert.deepEqual(REVIEW_FINDING_CATEGORIES.map(reviewFindingBlocks), [true, true, true, false, false, false, false]);
-  assert.deepEqual({
-    findingsNotAllowed: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
-    findingsRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED,
-    outcomeMismatch: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
-    runtimeConflict: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_RUNTIME_CONFLICT,
-    designRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
-    designNotAllowed: TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
-  }, {
-    findingsNotAllowed: "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
-    findingsRequired: "TASK_BOARD_REVIEW_FINDINGS_REQUIRED",
-    outcomeMismatch: "TASK_BOARD_REVIEW_OUTCOME_MISMATCH",
-    runtimeConflict: "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
-    designRequired: "TASK_BOARD_DESIGN_RECORD_REQUIRED",
-    designNotAllowed: "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
-  });
+  assert.deepEqual(
+    {
+      findingsNotAllowed: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED,
+      findingsRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_FINDINGS_REQUIRED,
+      outcomeMismatch: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_OUTCOME_MISMATCH,
+      runtimeConflict: TASK_BOARD_ERROR_CODES.TASK_BOARD_REVIEW_RUNTIME_CONFLICT,
+      designRequired: TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED,
+      designNotAllowed: TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED,
+    },
+    {
+      findingsNotAllowed: "TASK_BOARD_REVIEW_FINDINGS_NOT_ALLOWED",
+      findingsRequired: "TASK_BOARD_REVIEW_FINDINGS_REQUIRED",
+      outcomeMismatch: "TASK_BOARD_REVIEW_OUTCOME_MISMATCH",
+      runtimeConflict: "TASK_BOARD_REVIEW_RUNTIME_CONFLICT",
+      designRequired: "TASK_BOARD_DESIGN_RECORD_REQUIRED",
+      designNotAllowed: "TASK_BOARD_DESIGN_RECORD_NOT_ALLOWED",
+    }
+  );
 });
 
 test("review finding drafts round-trip while server-derived fields remain forbidden", () => {
@@ -90,17 +100,20 @@ test("review finding drafts round-trip while server-derived fields remain forbid
     actual: "A retry can duplicate the settlement.",
   } as const;
   assert.deepEqual(parseReviewFindingDraft(draft), draft);
-  assert.deepEqual(parseReviewFindingDraft({
-    category: "docs",
-    severity: "minor",
-    expected: "Document the recovery path.",
-    actual: "The recovery path is absent.",
-  }), {
-    category: "docs",
-    severity: "minor",
-    expected: "Document the recovery path.",
-    actual: "The recovery path is absent.",
-  });
+  assert.deepEqual(
+    parseReviewFindingDraft({
+      category: "docs",
+      severity: "minor",
+      expected: "Document the recovery path.",
+      actual: "The recovery path is absent.",
+    }),
+    {
+      category: "docs",
+      severity: "minor",
+      expected: "Document the recovery path.",
+      actual: "The recovery path is absent.",
+    }
+  );
 
   for (const invalid of [
     { ...draft, category: "future_category" },
@@ -143,20 +156,22 @@ test("pipeline summaries strictly round-trip findings and the design record", ()
     verify: [],
     criteria: [],
     criterionChecks: [],
-    findings: [{
-      findingId: "finding-one",
-      nodeId: "node-one",
-      stage: "verification",
-      round: 1,
-      file: "src/change.ts",
-      line: 4,
-      category: "correctness",
-      severity: "major",
-      expected: "The retry is idempotent.",
-      actual: "The retry duplicates the write.",
-      blocking: true,
-      createdAt: NOW,
-    }],
+    findings: [
+      {
+        findingId: "finding-one",
+        nodeId: "node-one",
+        stage: "verification",
+        round: 1,
+        file: "src/change.ts",
+        line: 4,
+        category: "correctness",
+        severity: "major",
+        expected: "The retry is idempotent.",
+        actual: "The retry duplicates the write.",
+        blocking: true,
+        createdAt: NOW,
+      },
+    ],
     designRecord: designRecordDraft(),
   } as const;
 
@@ -169,23 +184,28 @@ test("pipeline summaries strictly round-trip findings and the design record", ()
 
 test("board settlements preserve valid design records and use the required-record code for invalid drafts", () => {
   const draft = designRecordDraft();
-  assert.deepEqual(parseBoardSettle({
-    outcome: "completed",
-    result: "Design complete.",
-    designRecord: draft,
-  }).designRecord, draft);
-  assert.throws(
-    () => parseBoardSettle({
+  assert.deepEqual(
+    parseBoardSettle({
       outcome: "completed",
-      result: "Design incomplete.",
-      designRecord: {
-        ...draft,
-        failurePoints: (draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
-      },
-    }),
-    (error: unknown) => error instanceof ContractValidationError &&
+      result: "Design complete.",
+      designRecord: draft,
+    }).designRecord,
+    draft
+  );
+  assert.throws(
+    () =>
+      parseBoardSettle({
+        outcome: "completed",
+        result: "Design incomplete.",
+        designRecord: {
+          ...draft,
+          failurePoints: (draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ContractValidationError &&
       error.code === TASK_BOARD_ERROR_CODES.TASK_BOARD_DESIGN_RECORD_REQUIRED &&
-      error.message === "design record missing failure point: concurrent_invocation",
+      error.message === "design record missing failure point: concurrent_invocation"
   );
 });
 
@@ -243,55 +263,60 @@ test("the maximally sized design settlement fits the 64 KiB outcome and HTTP bud
 test("design record drafts enforce failure coverage, array bounds, and bounded text", () => {
   const draft = designRecordDraft();
   assert.throws(
-    () => parseDesignRecordDraft({
-      ...draft,
-      failurePoints: (draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
-    }),
-    (error: unknown) => error instanceof ContractValidationError &&
-      error.message === "design record missing failure point: concurrent_invocation",
+    () =>
+      parseDesignRecordDraft({
+        ...draft,
+        failurePoints: (draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
+      }),
+    (error: unknown) =>
+      error instanceof ContractValidationError &&
+      error.message === "design record missing failure point: concurrent_invocation"
   );
   assert.throws(
-    () => parseDesignRecordDraft({
-      ...draft,
-      states: Array.from({ length: DESIGN_RECORD_MAX_STATES + 1 }, (_, index) => `state-${index}`),
-    }),
-    ContractValidationError,
+    () =>
+      parseDesignRecordDraft({
+        ...draft,
+        states: Array.from({ length: DESIGN_RECORD_MAX_STATES + 1 }, (_, index) => `state-${index}`),
+      }),
+    ContractValidationError
   );
   assert.throws(
-    () => parseDesignRecordDraft({
-      ...draft,
-      transitions: Array.from(
-        { length: DESIGN_RECORD_MAX_TRANSITIONS + 1 },
-        () => (draft.transitions as Array<Record<string, unknown>>)[0],
-      ),
-    }),
-    ContractValidationError,
+    () =>
+      parseDesignRecordDraft({
+        ...draft,
+        transitions: Array.from(
+          { length: DESIGN_RECORD_MAX_TRANSITIONS + 1 },
+          () => (draft.transitions as Array<Record<string, unknown>>)[0]
+        ),
+      }),
+    ContractValidationError
   );
   assert.throws(
-    () => parseDesignRecordDraft({
-      ...draft,
-      transitions: [{
-        ...(draft.transitions as Array<Record<string, unknown>>)[0],
-        recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH + 1),
-      }],
-    }),
-    ContractValidationError,
+    () =>
+      parseDesignRecordDraft({
+        ...draft,
+        transitions: [
+          {
+            ...(draft.transitions as Array<Record<string, unknown>>)[0],
+            recovery: "r".repeat(DESIGN_RECORD_DETAIL_MAX_LENGTH + 1),
+          },
+        ],
+      }),
+    ContractValidationError
   );
+  assert.throws(() => parseDesignRecordDraft({ ...draft, states: ["pending\u0007"] }), ContractValidationError);
   assert.throws(
-    () => parseDesignRecordDraft({ ...draft, states: ["pending\u0007"] }),
-    ContractValidationError,
-  );
-  assert.throws(
-    () => parseDesignRecordDraft({
-      ...draft,
-      failurePoints: [
-        ...(draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
-        {
-          ...(draft.failurePoints as Array<Record<string, unknown>>).at(-1),
-          point: "future_failure_point",
-        },
-      ],
-    }),
-    ContractValidationError,
+    () =>
+      parseDesignRecordDraft({
+        ...draft,
+        failurePoints: [
+          ...(draft.failurePoints as Array<Record<string, unknown>>).slice(0, -1),
+          {
+            ...(draft.failurePoints as Array<Record<string, unknown>>).at(-1),
+            point: "future_failure_point",
+          },
+        ],
+      }),
+    ContractValidationError
   );
 });

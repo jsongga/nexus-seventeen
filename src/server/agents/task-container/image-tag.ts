@@ -6,10 +6,12 @@ export const AGENT_IMAGE_REPOSITORY = "steward-agent";
 
 async function listFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
-  const files = await Promise.all(entries.map((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? listFiles(path) : entry.isFile() ? [path] : [];
-  }));
+  const files = await Promise.all(
+    entries.map((entry) => {
+      const path = join(directory, entry.name);
+      return entry.isDirectory() ? listFiles(path) : entry.isFile() ? [path] : [];
+    })
+  );
   return files.flat();
 }
 

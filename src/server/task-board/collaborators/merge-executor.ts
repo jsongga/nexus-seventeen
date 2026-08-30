@@ -7,31 +7,36 @@ const GIT_MAX_BYTES = 1024 * 1024;
 const SUMMARY_LIMIT = 2_000;
 
 const neutralized = (repoPath: string, arguments_: readonly string[]): readonly string[] => [
-  "-c", "core.fsmonitor=",
-  "-c", "core.hooksPath=",
-  "-C", repoPath,
+  "-c",
+  "core.fsmonitor=",
+  "-c",
+  "core.hooksPath=",
+  "-C",
+  repoPath,
   ...arguments_,
 ];
 
 export const runMergeGit: GitTextRunner = Object.assign(
-  (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-    encoding: "utf8",
-    timeout: GIT_TIMEOUT_MS,
-    maxBuffer: GIT_MAX_BYTES,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  }),
-  {
-    bytes: (arguments_: readonly string[]) => execFileSync("git", [...arguments_], {
-      encoding: "buffer",
+  (arguments_: readonly string[]) =>
+    execFileSync("git", [...arguments_], {
+      encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BYTES,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     }),
-  },
+  {
+    bytes: (arguments_: readonly string[]) =>
+      execFileSync("git", [...arguments_], {
+        encoding: "buffer",
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: GIT_MAX_BYTES,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }),
+  }
 );
 
 export type MergePipelineResult =
@@ -41,9 +46,7 @@ export type MergePipelineResult =
   | Readonly<{ kind: "empty" }>
   | Readonly<{ kind: "repo_busy" }>;
 
-type PipelineMergeTarget =
-  | Readonly<{ kind: "ready"; branch: string; head: string }>
-  | Readonly<{ kind: "repo_busy" }>;
+type PipelineMergeTarget = Readonly<{ kind: "ready"; branch: string; head: string }> | Readonly<{ kind: "repo_busy" }>;
 
 export type PipelineBaseAdvanceInspection =
   | Readonly<{ kind: "repo_busy" }>
@@ -51,11 +54,13 @@ export type PipelineBaseAdvanceInspection =
   | Readonly<{ kind: "advanced"; head: string }>
   | Readonly<{ kind: "diverged"; head: string }>;
 
-export function inspectPipelineMergeTarget(request: Readonly<{
-  repoPath: string;
-  branch: string;
-  git: GitTextRunner;
-}>): PipelineMergeTarget {
+export function inspectPipelineMergeTarget(
+  request: Readonly<{
+    repoPath: string;
+    branch: string;
+    git: GitTextRunner;
+  }>
+): PipelineMergeTarget {
   let currentBranch: string;
   let dirty: string;
   try {
@@ -69,23 +74,24 @@ export function inspectPipelineMergeTarget(request: Readonly<{
     currentBranch === "HEAD" ||
     currentBranch === request.branch ||
     currentBranch.startsWith("task/")
-  ) return Object.freeze({ kind: "repo_busy" });
+  )
+    return Object.freeze({ kind: "repo_busy" });
 
   const head = request.git(neutralized(request.repoPath, ["rev-parse", "HEAD"])).trim();
   if (!GIT_OBJECT_ID_PATTERN.test(head)) throw new Error("git returned an invalid merge target object id");
   return Object.freeze({ kind: "ready", branch: currentBranch, head });
 }
 
-export function isPipelineBaseAncestor(request: Readonly<{
-  repoPath: string;
-  baseSha: string;
-  target: string;
-  git: GitTextRunner;
-}>): boolean {
+export function isPipelineBaseAncestor(
+  request: Readonly<{
+    repoPath: string;
+    baseSha: string;
+    target: string;
+    git: GitTextRunner;
+  }>
+): boolean {
   try {
-    request.git(neutralized(request.repoPath, [
-      "merge-base", "--is-ancestor", request.baseSha, request.target,
-    ]));
+    request.git(neutralized(request.repoPath, ["merge-base", "--is-ancestor", request.baseSha, request.target]));
     return true;
   } catch (error) {
     if (
@@ -93,17 +99,20 @@ export function isPipelineBaseAncestor(request: Readonly<{
       error !== null &&
       "status" in error &&
       (error as { status?: unknown }).status === 1
-    ) return false;
+    )
+      return false;
     throw error;
   }
 }
 
-export function inspectPipelineBaseAdvance(request: Readonly<{
-  repoPath: string;
-  branch: string;
-  baseSha: string;
-  git: GitTextRunner;
-}>): PipelineBaseAdvanceInspection {
+export function inspectPipelineBaseAdvance(
+  request: Readonly<{
+    repoPath: string;
+    branch: string;
+    baseSha: string;
+    git: GitTextRunner;
+  }>
+): PipelineBaseAdvanceInspection {
   const target = inspectPipelineMergeTarget(request);
   if (target.kind === "repo_busy") return target;
   if (target.head === request.baseSha) {
@@ -115,19 +124,23 @@ export function inspectPipelineBaseAdvance(request: Readonly<{
       baseSha: request.baseSha,
       target: target.head,
       git: request.git,
-    }) ? "advanced" : "diverged",
+    })
+      ? "advanced"
+      : "diverged",
     head: target.head,
   });
 }
 
-export function resolvePipelineBranchTip(request: Readonly<{
-  repoPath: string;
-  branch: string;
-  git: GitTextRunner;
-}>): string {
-  const sha = request.git(neutralized(request.repoPath, [
-    "rev-parse", "--verify", `${request.branch}^{commit}`,
-  ])).trim();
+export function resolvePipelineBranchTip(
+  request: Readonly<{
+    repoPath: string;
+    branch: string;
+    git: GitTextRunner;
+  }>
+): string {
+  const sha = request
+    .git(neutralized(request.repoPath, ["rev-parse", "--verify", `${request.branch}^{commit}`]))
+    .trim();
   if (!GIT_OBJECT_ID_PATTERN.test(sha)) throw new Error("git returned an invalid branch object id");
   return sha;
 }
@@ -144,19 +157,21 @@ function mergeErrorDetail(error: unknown): string {
   if (typeof error !== "object" || error === null) return String(error).slice(0, SUMMARY_LIMIT);
   const candidate = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
   const values = [candidate.stderr, candidate.stdout, candidate.message]
-    .map((value) => Buffer.isBuffer(value) ? value.toString("utf8") : typeof value === "string" ? value : "")
+    .map((value) => (Buffer.isBuffer(value) ? value.toString("utf8") : typeof value === "string" ? value : ""))
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
   return (values[0] ?? "Git could not merge the pipeline branch.").slice(0, SUMMARY_LIMIT);
 }
 
-export function mergePipelineBranch(request: Readonly<{
-  repoPath: string;
-  branch: string;
-  branchSha: string;
-  baseSha: string;
-  git: GitTextRunner;
-}>): MergePipelineResult {
+export function mergePipelineBranch(
+  request: Readonly<{
+    repoPath: string;
+    branch: string;
+    branchSha: string;
+    baseSha: string;
+    git: GitTextRunner;
+  }>
+): MergePipelineResult {
   if (!GIT_OBJECT_ID_PATTERN.test(request.branchSha)) {
     throw new Error("pipeline branch object id is invalid");
   }
@@ -180,15 +195,22 @@ export function mergePipelineBranch(request: Readonly<{
       detail: `Pipeline base ${request.baseSha} is not an ancestor of merge target ${target.branch} at ${target.head}.`,
     });
   }
-  const commitCount = request.git(neutralized(request.repoPath, [
-    "rev-list", "--count", `${request.baseSha}..${request.branchSha}`,
-  ])).trim();
+  const commitCount = request
+    .git(neutralized(request.repoPath, ["rev-list", "--count", `${request.baseSha}..${request.branchSha}`]))
+    .trim();
   if (commitCount === "0") return Object.freeze({ kind: "empty" });
   if (!/^\d+$/u.test(commitCount)) throw new Error("git returned an invalid pipeline commit count");
   try {
-    request.git(neutralized(request.repoPath, [
-      "merge", "--no-ff", "--no-edit", "-m", `Merge branch '${request.branch}'`, request.branchSha,
-    ]));
+    request.git(
+      neutralized(request.repoPath, [
+        "merge",
+        "--no-ff",
+        "--no-edit",
+        "-m",
+        `Merge branch '${request.branch}'`,
+        request.branchSha,
+      ])
+    );
   } catch (error) {
     const mergeHead = optionalGit(request.git, neutralized(request.repoPath, ["rev-parse", "--verify", "MERGE_HEAD"]));
     if (mergeHead === null) throw error;

@@ -5,9 +5,7 @@ import { TaskBoardError } from "#server/task-board/errors";
 import { databasePath, HUMAN_TOKEN } from "./helpers.js";
 
 function isInvalidConfiguration(error: unknown): boolean {
-  return error instanceof TaskBoardError
-    && error.status === 500
-    && error.code === "INVALID_CONFIGURATION";
+  return error instanceof TaskBoardError && error.status === 500 && error.code === "INVALID_CONFIGURATION";
 }
 
 test("stage and task cap configuration defaults, disables at zero, and accepts the non-zero floor", async () => {
@@ -61,7 +59,8 @@ test("stage and task caps reject unsafe values and enforce enabled-cap ordering"
     { taskCapSeconds: 60.5 },
     { taskCapSeconds: Number.MAX_SAFE_INTEGER },
     { stageCapSeconds: 121, taskCapSeconds: 120 },
-  ]) assert.throws(() => config(caps), isInvalidConfiguration);
+  ])
+    assert.throws(() => config(caps), isInvalidConfiguration);
 
   assert.equal(config({ stageCapSeconds: 120, taskCapSeconds: 0 }).taskCapSeconds, 0);
   assert.equal(config({ stageCapSeconds: 0, taskCapSeconds: 60 }).stageCapSeconds, 0);
