@@ -1,3 +1,4 @@
+import { runGit } from "../../shared/git.js";
 import { parseVerifyContract } from "../../agents/verify/contract.js";
 import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
 const REQUIRED_FILES = Object.freeze([
@@ -13,13 +14,9 @@ interface OnboardingCheckResult {
   readonly missing: readonly string[];
 }
 
-function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
-}
-
 function branchFile(runner: GitTextRunner, repoPath: string, branch: string, path: string): string | null {
   try {
-    return git(runner, repoPath, ["show", `${branch}:${path}`]);
+    return runGit(runner, repoPath, ["show", `${branch}:${path}`]);
   } catch {
     return null;
   }
@@ -62,7 +59,7 @@ export function onboardingDeliverablesCheck(
   }
 
   try {
-    const decisions = git(runner, repoPath, ["ls-tree", "-r", "--name-only", branch, "--", "docs/decisions"]);
+    const decisions = runGit(runner, repoPath, ["ls-tree", "-r", "--name-only", branch, "--", "docs/decisions"]);
     if (decisions.trim().length === 0) missing.push("docs/decisions/ is missing or empty");
   } catch {
     missing.push("docs/decisions/ is missing or empty");

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { GIT_POLICY_FLAGS } from "../../shared/git.js";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const RETAINED_TIMESTAMP_PATTERN = /-([0-9]+)$/u;
@@ -28,7 +29,7 @@ function git(cwd: string | null, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
-      ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", ...args],
+      [...GIT_POLICY_FLAGS, ...args],
       {
         ...(cwd === null ? {} : { cwd }),
         encoding: "utf8",

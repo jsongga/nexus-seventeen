@@ -3,7 +3,7 @@ import { OutlineHttpError } from "./client.js";
 import type { DocsPublishRepo } from "./config.js";
 import { enumerateDocs } from "./enumerate.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "./sink.js";
-import { runDeclaredScopeGit, type GitTextRunner } from "../task-board/collaborators/scope-check.js";
+import { defaultGitRunner, runGit, type GitTextRunner } from "../shared/git.js";
 
 export interface PublishReport {
   readonly repo: string;
@@ -15,10 +15,6 @@ export interface PublishReport {
 }
 
 const SOURCE_BANNER_PATTERN = /^> \*\*Read-only mirror\.\*\* Source: `.*? @ blob ([0-9a-f]{12})\./su;
-
-function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
-}
 
 function errorDetail(error: unknown): string {
   if (error instanceof OutlineHttpError && error.code !== undefined) {
@@ -60,11 +56,11 @@ function sourceBlobPrefix(text: string): string | undefined {
 export async function publishRepo(
   entry: DocsPublishRepo,
   sink: DocsSink,
-  runner: GitTextRunner = runDeclaredScopeGit
+  runner: GitTextRunner = defaultGitRunner
 ): Promise<PublishReport> {
   let sources: ReturnType<typeof enumerateDocs>;
   try {
-    const resolvedSha = git(runner, entry.path, ["rev-parse", entry.ref]).trim();
+    const resolvedSha = runGit(runner, entry.path, ["rev-parse", entry.ref]).trim();
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(resolvedSha)) {
       throw new Error(`git returned an invalid full SHA for ${entry.ref}`);
     }

@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { GIT_POLICY_FLAGS } from "../../shared/git.js";
 import {
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
@@ -314,16 +315,7 @@ function pipelineExecutorDrift(): TaskBoardError {
 
 function pipelineBaseSha(repositoryPath: string, projectName: string, git: GitTextRunner): string {
   try {
-    const output = git([
-      "-c",
-      "core.fsmonitor=",
-      "-c",
-      "core.hooksPath=",
-      "-C",
-      repositoryPath,
-      "rev-parse",
-      "HEAD",
-    ]).trim();
+    const output = git([...GIT_POLICY_FLAGS, "-C", repositoryPath, "rev-parse", "HEAD"]).trim();
     if (!GIT_OBJECT_ID_PATTERN.test(output)) throw new Error("git returned an invalid object id");
     return output;
   } catch (error) {

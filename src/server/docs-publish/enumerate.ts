@@ -1,4 +1,4 @@
-import { runDeclaredScopeGit, type GitTextRunner } from "../task-board/collaborators/scope-check.js";
+import { defaultGitRunner, parseGitTreeEntry, runGit, type GitTextRunner } from "../shared/git.js";
 import { validateExcludePattern } from "./exclude.js";
 
 export interface DocSource {
@@ -18,10 +18,6 @@ interface TreeEntry {
 
 const TREE_ENTRY_PREVIEW_CHARACTERS = 120;
 
-function git(runner: GitTextRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner(["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_]);
-}
-
 function excludePrefixes(patterns: readonly string[]): readonly string[] {
   return patterns.map((pattern, index) => validateExcludePattern(pattern, `exclude[${index}]`).slice(0, -3));
 }
@@ -37,35 +33,22 @@ function malformedTreeEntry(entry: string): Error {
 }
 
 function parseTreeEntry(entry: string): TreeEntry | undefined {
-  const modeEnd = entry.indexOf(" ");
-  const typeEnd = modeEnd < 0 ? -1 : entry.indexOf(" ", modeEnd + 1);
-  const shaEnd = typeEnd < 0 ? -1 : entry.indexOf("\t", typeEnd + 1);
-  if (modeEnd < 0 || typeEnd < 0 || shaEnd < 0) throw malformedTreeEntry(entry);
-
-  const mode = entry.slice(0, modeEnd);
-  const type = entry.slice(modeEnd + 1, typeEnd);
-  const blobSha = entry.slice(typeEnd + 1, shaEnd);
-  const path = entry.slice(shaEnd + 1);
-  if (
-    !/^[0-7]{6}$/u.test(mode) ||
-    !/^[a-z]+$/u.test(type) ||
-    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(blobSha) ||
-    path.length === 0
-  ) {
-    throw malformedTreeEntry(entry);
-  }
-  if (type !== "blob") return undefined;
-  return Object.freeze({ blobSha, path });
+  // The grammar is shared; the policy is not. A record this publisher cannot
+  // parse is a bug in its own invocation, so it throws rather than skipping.
+  const parsed = parseGitTreeEntry(entry);
+  if (parsed === null) throw malformedTreeEntry(entry);
+  if (parsed.type !== "blob") return undefined;
+  return Object.freeze({ blobSha: parsed.sha, path: parsed.path });
 }
 
 export function enumerateDocs(
   repoPath: string,
   ref: string,
   options: EnumerateOptions = {},
-  runner: GitTextRunner = runDeclaredScopeGit
+  runner: GitTextRunner = defaultGitRunner
 ): readonly DocSource[] {
   const prefixes = excludePrefixes(options.exclude ?? []);
-  const output = git(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--", "README.md", "docs"]);
+  const output = runGit(runner, repoPath, ["ls-tree", "-r", "-z", ref, "--", "README.md", "docs"]);
   const entries = output
     .split("\0")
     .filter((entry) => entry.length > 0)
@@ -79,7 +62,7 @@ export function enumerateDocs(
       Object.freeze({
         path,
         title: path,
-        markdown: git(runner, repoPath, ["show", `${ref}:${path}`]),
+        markdown: runGit(runner, repoPath, ["show", `${ref}:${path}`]),
         blobSha,
       })
     )

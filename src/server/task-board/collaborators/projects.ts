@@ -3,8 +3,8 @@
 /* —— Imports —— */
 
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { defaultGitRunner } from "../../shared/git.js";
 import {
   SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
@@ -90,32 +90,9 @@ import {
 /* —— Git boundary —— */
 
 const WORKFLOW_RECONCILIATION_BATCH_SIZE = 500;
-const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_BYTES = 1024 * 1024;
 const VERIFIED_SHA_DETAIL = /^verified-sha:([0-9a-f]{40})$/u;
 
-export const runWorkflowGit: WorkflowGitRunner = Object.assign(
-  (arguments_: readonly string[]) =>
-    execFileSync("git", [...arguments_], {
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BYTES,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    }),
-  {
-    bytes: (arguments_: readonly string[]) =>
-      execFileSync("git", [...arguments_], {
-        encoding: "buffer",
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BYTES,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      }),
-  }
-);
+export const runWorkflowGit: WorkflowGitRunner = defaultGitRunner;
 
 /* —— Collaborator contracts —— */
 

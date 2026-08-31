@@ -5,6 +5,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { GIT_POLICY_FLAGS } from "../../shared/git.js";
 import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify";
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager, removeRecordedTaskWorkspace } from "#server/agents/task-workspace";
@@ -807,16 +808,7 @@ export class VerifyAttemptsCollaborator {
       let verifiedSha: string;
       try {
         if (current.workspacePath === null) throw new Error("verify workspace path is unavailable");
-        verifiedSha = this.#git([
-          "-c",
-          "core.fsmonitor=",
-          "-c",
-          "core.hooksPath=",
-          "-C",
-          current.workspacePath,
-          "rev-parse",
-          "HEAD",
-        ]).trim();
+        verifiedSha = this.#git([...GIT_POLICY_FLAGS, "-C", current.workspacePath, "rev-parse", "HEAD"]).trim();
         if (!GIT_OBJECT_ID_PATTERN.test(verifiedSha) || verifiedSha.length !== 40) {
           throw new Error("git returned an invalid verified object id");
         }

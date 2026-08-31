@@ -1,43 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
+import { defaultGitRunner, gitArguments, type GitRunner } from "../../shared/git.js";
 import type { GitTextRunner } from "./scope-check.js";
 
-const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_BYTES = 1024 * 1024;
 const SUMMARY_LIMIT = 2_000;
 
-const neutralized = (repoPath: string, arguments_: readonly string[]): readonly string[] => [
-  "-c",
-  "core.fsmonitor=",
-  "-c",
-  "core.hooksPath=",
-  "-C",
-  repoPath,
-  ...arguments_,
-];
+export const runMergeGit: GitRunner = defaultGitRunner;
 
-export const runMergeGit: GitTextRunner = Object.assign(
-  (arguments_: readonly string[]) =>
-    execFileSync("git", [...arguments_], {
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BYTES,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    }),
-  {
-    bytes: (arguments_: readonly string[]) =>
-      execFileSync("git", [...arguments_], {
-        encoding: "buffer",
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BYTES,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      }),
-  }
-);
+// Kept as a local alias so the many call sites below read unchanged; the
+// prelude itself now lives in server/shared/git.ts.
+const neutralized = gitArguments;
 
 export type MergePipelineResult =
   | Readonly<{ kind: "merged"; mergeSha: string }>

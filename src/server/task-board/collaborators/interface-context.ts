@@ -3,7 +3,15 @@ import {
   isValidCrossRepoMarkdown,
   type PublishedInterfaceFailureReason,
 } from "#shared/task-board-contract";
-import { runDeclaredScopeGit, type GitRunner } from "./scope-check.js";
+import {
+  defaultGitRunner,
+  isRegularFileMode,
+  parseGitTreeEntry,
+  runGit,
+  runGitBytes,
+  splitGitTreeOutput,
+  type GitRunner,
+} from "../../shared/git.js";
 
 export const PUBLISHED_INTERFACE_MAX_BYTES = 64 * 1_024;
 export const PUBLISHED_INTERFACE_CACHE_MAX_ENTRIES = 128;
@@ -24,29 +32,16 @@ export type PublishedInterfaceReadResult =
       reason: Exclude<PublishedInterfaceFailureReason, "over_budget" | "invalid_markdown" | "empty">;
     }>;
 
-function gitArguments(repoPath: string, arguments_: readonly string[]): readonly string[] {
-  return ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", repoPath, ...arguments_];
-}
-
-function git(runner: GitRunner, repoPath: string, arguments_: readonly string[]): string {
-  return runner(gitArguments(repoPath, arguments_));
-}
-
-function gitBytes(runner: GitRunner, repoPath: string, arguments_: readonly string[]): Buffer {
-  return runner.bytes(gitArguments(repoPath, arguments_));
-}
-
 function publishedTreeEntry(tree: string, path: string): "absent" | "blob" | "not_file" | "read_error" {
-  const entries = tree.split("\0").filter((entry) => entry.length > 0);
+  const entries = splitGitTreeOutput(tree);
   if (entries.length === 0) return "absent";
   if (entries.length !== 1) return "read_error";
-  const match = /^(?<mode>[0-7]{6}) (?<type>[a-z]+) (?:[0-9a-f]{40}|[0-9a-f]{64})\t(?<path>[\s\S]+)$/u.exec(
-    entries[0]!
-  );
-  if (match?.groups?.path !== path) return "read_error";
-  return match.groups.type === "blob" && (match.groups.mode === "100644" || match.groups.mode === "100755")
-    ? "blob"
-    : "not_file";
+  const parsed = parseGitTreeEntry(entries[0]!);
+  if (parsed === null || parsed.path !== path) return "read_error";
+  // A symlink reports type `blob` with mode 120000, so the type alone is not
+  // enough: only a regular-file mode is an interface the consumer may read.
+  // (A gitlink reports type `commit`, which the type check already rejects.)
+  return parsed.type === "blob" && isRegularFileMode(parsed.mode) ? "blob" : "not_file";
 }
 
 function blocked(
@@ -91,12 +86,12 @@ export function readPublishedInterface(
   repoPath: string,
   sha: string,
   path = PUBLISHED_INTERFACE_PATH,
-  runner: GitRunner = runDeclaredScopeGit
+  runner: GitRunner = defaultGitRunner
 ): PublishedInterfaceReadResult {
   assertReadTarget(repoPath, sha, path);
   let tree: string;
   try {
-    tree = git(runner, repoPath, ["ls-tree", "-z", sha, "--", path]);
+    tree = runGit(runner, repoPath, ["ls-tree", "-z", sha, "--", path]);
   } catch {
     return blocked("read_error");
   }
@@ -105,7 +100,7 @@ export function readPublishedInterface(
   if (entry !== "blob") return blocked(entry);
   let sizeOutput: string;
   try {
-    sizeOutput = git(runner, repoPath, ["cat-file", "-s", `${sha}:${path}`]);
+    sizeOutput = runGit(runner, repoPath, ["cat-file", "-s", `${sha}:${path}`]);
   } catch (error) {
     return blocked(isNoBufferSpace(error) ? "too_large" : "read_error");
   }
@@ -114,7 +109,7 @@ export function readPublishedInterface(
   if (Number(size) > PUBLISHED_INTERFACE_MAX_BYTES) return blocked("too_large");
   let blob: Buffer;
   try {
-    blob = gitBytes(runner, repoPath, ["show", `${sha}:${path}`]);
+    blob = runGitBytes(runner, repoPath, ["show", `${sha}:${path}`]);
   } catch (error) {
     return blocked(isNoBufferSpace(error) ? "too_large" : "read_error");
   }
@@ -134,7 +129,7 @@ export function readPublishedInterface(
 export class PublishedInterfaceCache {
   readonly #entries = new Map<string, PublishedInterfaceReadResult>();
 
-  constructor(private readonly runner: GitRunner = runDeclaredScopeGit) {}
+  constructor(private readonly runner: GitRunner = defaultGitRunner) {}
 
   read(repoPath: string, sha: string, path = PUBLISHED_INTERFACE_PATH): PublishedInterfaceReadResult {
     const key = `${repoPath}\0${sha}\0${path}`;

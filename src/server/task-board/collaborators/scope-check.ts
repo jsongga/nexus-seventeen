@@ -1,49 +1,17 @@
-import { execFileSync } from "node:child_process";
+import { defaultGitRunner, type GitRunner, type GitTextRunner, GIT_POLICY_FLAGS } from "../../shared/git.js";
 import { normalizeDeclaredScope } from "#shared/task-board-contract";
 export { declaredScopesOverlap } from "#shared/task-board-contract";
 
-const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_BYTES = 1024 * 1024;
 const SETTLEMENT_RESULT_LIMIT = 2_000;
 
-export type GitTextRunner = (arguments_: readonly string[]) => string;
-
-export type GitRunner = GitTextRunner &
-  Readonly<{
-    bytes: (arguments_: readonly string[]) => Buffer;
-  }>;
-
-export function withGitBytes(runner: GitTextRunner): GitRunner {
-  if ("bytes" in runner && typeof runner.bytes === "function") return runner as GitRunner;
-  return Object.assign((arguments_: readonly string[]) => runner(arguments_), {
-    bytes: (arguments_: readonly string[]) => Buffer.from(runner(arguments_), "utf8"),
-  });
-}
+// The git plumbing lives in server/shared/git.ts so every caller shares one
+// timeout, buffer bound and prelude. These re-exports keep existing importers
+// working; new code should import ../../shared/git.js directly.
+export type { GitRunner, GitTextRunner } from "../../shared/git.js";
+export { withGitBytes } from "../../shared/git.js";
+export const runDeclaredScopeGit: GitRunner = defaultGitRunner;
 
 export type DeclaredScopeCheckResult = Readonly<{ ok: true }> | Readonly<{ ok: false; files: readonly string[] }>;
-
-export const runDeclaredScopeGit: GitRunner = Object.assign(
-  (arguments_: readonly string[]) =>
-    execFileSync("git", [...arguments_], {
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BYTES,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    }),
-  {
-    bytes: (arguments_: readonly string[]) =>
-      execFileSync("git", [...arguments_], {
-        encoding: "buffer",
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BYTES,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      }),
-  }
-);
 
 export function scopeViolationResult(files: readonly string[]): string {
   return `scope violation: ${files.join(", ")}`.slice(0, SETTLEMENT_RESULT_LIMIT);
@@ -60,10 +28,7 @@ export function checkDeclaredScope(
 ): DeclaredScopeCheckResult {
   const normalizedScope = normalizeDeclaredScope(request.declaredScope);
   const output = request.git([
-    "-c",
-    "core.fsmonitor=",
-    "-c",
-    "core.hooksPath=",
+    ...GIT_POLICY_FLAGS,
     "-C",
     request.repoPath,
     "diff",

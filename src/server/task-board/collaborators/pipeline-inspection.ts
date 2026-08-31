@@ -1,33 +1,10 @@
-import { execFileSync } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
+import { defaultGitRunner, type GitRunner, GIT_POLICY_FLAGS } from "../../shared/git.js";
 import { checkDeclaredScopePaths, type GitTextRunner } from "./scope-check.js";
 
-const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_BYTES = 1024 * 1024;
 const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
 
-const runPipelineInspectionGit: GitTextRunner = Object.assign(
-  (arguments_: readonly string[]) =>
-    execFileSync("git", [...arguments_], {
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BYTES,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    }),
-  {
-    bytes: (arguments_: readonly string[]) =>
-      execFileSync("git", [...arguments_], {
-        encoding: "buffer",
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BYTES,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      }),
-  }
-);
+const runPipelineInspectionGit: GitRunner = defaultGitRunner;
 
 type Row = Record<string, unknown>;
 
@@ -52,19 +29,7 @@ interface PipelineInspectionOptions {
 export function inspectPipelineBranchSync(options: PipelineInspectionOptions): PipelineInspection {
   const git = options.git ?? runPipelineInspectionGit;
   const range = `${options.baseSha}..${options.branch}`;
-  const fields = git([
-    "-c",
-    "core.fsmonitor=",
-    "-c",
-    "core.hooksPath=",
-    "-C",
-    options.repoPath,
-    "log",
-    "--format=%H%x00%s",
-    "-z",
-    range,
-    "--",
-  ])
+  const fields = git([...GIT_POLICY_FLAGS, "-C", options.repoPath, "log", "--format=%H%x00%s", "-z", range, "--"])
     .split("\0")
     .filter((field) => field.length > 0);
   if (fields.length % 2 !== 0) throw new Error("git returned an invalid commit list");
@@ -72,23 +37,9 @@ export function inspectPipelineBranchSync(options: PipelineInspectionOptions): P
   for (let index = 0; index < fields.length; index += 2) {
     commits.push({ sha: fields[index]!, subject: fields[index + 1]! });
   }
-  const diffstat = git([
-    "-c",
-    "core.fsmonitor=",
-    "-c",
-    "core.hooksPath=",
-    "-C",
-    options.repoPath,
-    "diff",
-    "--stat",
-    range,
-    "--",
-  ]);
+  const diffstat = git([...GIT_POLICY_FLAGS, "-C", options.repoPath, "diff", "--stat", range, "--"]);
   const nameStatusFields = git([
-    "-c",
-    "core.fsmonitor=",
-    "-c",
-    "core.hooksPath=",
+    ...GIT_POLICY_FLAGS,
     "-C",
     options.repoPath,
     "diff",
