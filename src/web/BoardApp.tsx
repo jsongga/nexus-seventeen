@@ -10,11 +10,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Button, Card, cn } from "../components/ui";
-import { markDialogSwitchEvent } from "../components/dialog-stack";
+import { markDialogSwitchEvent } from "./components/dialog-stack";
+import { Button, Card, cn } from "./components/ui";
 import { AutomationPage } from "./views/AutomationPage";
 import { emptyAutomationEditorState } from "./model/automation-model";
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from "./data/client";
+import { formatShortDateTime } from "./data/date-format";
 import type { RawBoardNotification, RawBoardPause } from "./data/parse";
 import { missingRouteFallback, pageToHash } from "./routing/routing";
 import { useHashRoute } from "./routing/useHashRoute";
@@ -56,13 +57,6 @@ import type {
   CreateProjectInput,
   CreateWorkItemInput,
 } from "./types";
-
-const notificationDateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 type DialogOpenOptions = Readonly<{
   anchor?: RefObject<HTMLElement | null>;
@@ -150,7 +144,6 @@ export function NotificationsBlock({
       ) : (
         <ol className="divide-y divide-line rounded-md border border-line bg-card">
           {unread.map((notification) => {
-            const parsed = new Date(notification.createdAt);
             return (
               <li
                 key={notification.notificationId}
@@ -170,9 +163,7 @@ export function NotificationsBlock({
                   )}
                   <p className="mt-1 text-[11px] text-muted">
                     {notificationKindLabel[notification.kind]} ·{" "}
-                    <time dateTime={notification.createdAt}>
-                      {Number.isNaN(parsed.valueOf()) ? notification.createdAt : notificationDateTime.format(parsed)}
-                    </time>
+                    <time dateTime={notification.createdAt}>{formatShortDateTime(notification.createdAt)}</time>
                   </p>
                 </div>
                 <Button size="sm" disabled={markingId !== null} onClick={() => onMarkRead(notification)}>

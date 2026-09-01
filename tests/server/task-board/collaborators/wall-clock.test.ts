@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { withGitBytes } from "#server/task-board/collaborators/scope-check";
+import { withGitBytes } from "#server/shared/git";
 import type { BoardNotification, WorkflowPlanDraft } from "#shared/task-board-contract";
 import { TaskBoard, normalizeTaskBoardConfig, type NotificationDeliveryAdapter } from "#server/task-board";
 import { stageElapsedSeconds, taskActiveSeconds } from "#server/task-board/collaborators/wall-clock";

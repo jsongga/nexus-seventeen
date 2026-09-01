@@ -38,6 +38,8 @@ import {
   validateWorkflowPlanChildren,
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence, redactMultilineForPersistence } from "../../shared/redact.js";
+import { defaultGitRunner, type GitRunner, type GitTextRunner, withGitBytes } from "../../shared/git.js";
+import { checkDeclaredScope, scopeViolationResult } from "../../shared/scope-check.js";
 import { claimContextInputForDigest, projectClaimContext } from "../../shared/claim-context.js";
 import { sha256 } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
@@ -87,14 +89,6 @@ class MigrateInterfaceClaimError extends Error {
     this.name = "MigrateInterfaceClaimError";
   }
 }
-import {
-  checkDeclaredScope,
-  runDeclaredScopeGit,
-  scopeViolationResult,
-  type GitRunner,
-  type GitTextRunner,
-  withGitBytes,
-} from "./scope-check.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
 
@@ -165,7 +159,7 @@ export class RunsCollaborator {
     private readonly automation: AutomationCollaborator,
     private readonly projects: ProjectsCollaborator,
     private readonly tasks: TasksCollaborator,
-    git: GitRunner | GitTextRunner = runDeclaredScopeGit,
+    git: GitRunner | GitTextRunner = defaultGitRunner,
     private readonly boardPause: BoardPauseCollaborator = new BoardPauseCollaborator(runtime)
   ) {
     this.#git = withGitBytes(git);

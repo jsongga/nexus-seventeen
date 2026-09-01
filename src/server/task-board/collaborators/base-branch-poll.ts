@@ -1,7 +1,7 @@
 import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
+import type { GitTextRunner } from "../../shared/git.js";
 import type { TaskBoardRuntime } from "./runtime.js";
-import type { GitTextRunner } from "./scope-check.js";
 import { inspectPipelineBaseAdvance } from "./merge-executor.js";
 import { ProjectsCollaborator, runWorkflowGit } from "./projects.js";
 

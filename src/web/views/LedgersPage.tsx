@@ -1,19 +1,12 @@
 import { CircleAlert, CirclePause, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, Card, Pill } from "../../components/ui";
+import { Button, Card, Pill } from "../components/ui";
 import type { TaskBoardClient } from "../data/client";
+import { formatYearDateTime } from "../data/date-format";
 import type { RawFindingsLedger, RawParksLedger } from "../data/parse";
 import { elapsedMilliseconds, formatElapsedDuration } from "../model/observability";
 import { parkCategoryLabel, prettyStatus } from "../model/work-item-labels";
 import { pageToHash } from "../routing/routing";
-
-const dateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 function displayLabel(value: string): string {
   const label = prettyStatus(value);
@@ -25,8 +18,7 @@ function workItemHref(workItemId: string): string {
 }
 
 function Timestamp({ value }: { value: string }) {
-  const parsed = new Date(value);
-  return <time dateTime={value}>{Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed)}</time>;
+  return <time dateTime={value}>{formatYearDateTime(value)}</time>;
 }
 
 interface FindingCategoryCounts {

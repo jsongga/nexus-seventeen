@@ -1,6 +1,5 @@
-import { runGit } from "../../shared/git.js";
+import { defaultGitRunner, runGit, type GitTextRunner } from "../../shared/git.js";
 import { parseVerifyContract } from "../../agents/verify/contract.js";
-import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
 const REQUIRED_FILES = Object.freeze([
   "README.md",
   "docs/architecture.md",
@@ -26,7 +25,7 @@ export function onboardingDeliverablesCheck(
   repoPath: string,
   branch: string,
   gapReport: string | undefined,
-  runner: GitTextRunner = runDeclaredScopeGit
+  runner: GitTextRunner = defaultGitRunner
 ): OnboardingCheckResult {
   const missing: string[] = [];
   if (typeof repoPath !== "string" || repoPath.trim().length === 0) {

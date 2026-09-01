@@ -1,6 +1,6 @@
 import { Activity, ArrowLeft, CheckCircle2, CircleAlert, HelpCircle, Send, Square, UserRoundCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type Dispatch } from "react";
-import { Button, Card, FieldLabel, InlineActionErrors, Pill, cn, inputClass } from "../../components/ui";
+import { Button, Card, FieldLabel, InlineActionErrors, Pill, cn, inputClass } from "../components/ui";
 import { actionErrorContexts, useActionErrors, type ActionResult } from "../model/action-errors";
 import { assignmentAgentOptionLabel } from "../model/workspace-model";
 import {

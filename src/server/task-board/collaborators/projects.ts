@@ -4,12 +4,13 @@
 
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { defaultGitRunner } from "../../shared/git.js";
+import { defaultGitRunner, type GitTextRunner, withGitBytes } from "../../shared/git.js";
 import {
   SCOPE_HOLD_SUMMARY_PREFIX,
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
   pipelineTemplateShape,
+  declaredScopesOverlap,
   type ApprovePipelineMergeRequest,
   type ClaimRunResult,
   type ConfirmPlanRevisionRequest,
@@ -70,7 +71,6 @@ import {
   type MergePipelineResult,
 } from "./merge-executor.js";
 import { TaskBoardError } from "../errors.js";
-import { declaredScopesOverlap, withGitBytes, type GitTextRunner } from "./scope-check.js";
 import {
   decompositionFamilyTouchesProjectSql,
   decompositionReadinessBlocker,

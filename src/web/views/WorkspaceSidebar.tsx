@@ -1,7 +1,7 @@
 import { ChevronDown, CircleAlert, CirclePause, CirclePlay, CircleX, Menu, Plus, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Popover } from "../../components/popover";
-import { Button, cn } from "../../components/ui";
+import { Popover } from "../components/popover";
+import { Button, cn } from "../components/ui";
 import type { BoardAgent, BoardSnapshot } from "../types";
 import type { RawBoardPause } from "../data/parse";
 import { agentWorkLabel, taskNeedsHumanAction } from "../model/workspace-model";

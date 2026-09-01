@@ -10,7 +10,7 @@ import {
   PublishedInterfaceCache,
   readPublishedInterface,
 } from "#server/task-board/collaborators/interface-context";
-import type { GitRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitRunner } from "#server/shared/git";
 
 const execFileAsync = promisify(execFile);
 const FIRST_INTERFACE = "# Provider interface\n\n- `GET /v1/first`\n";

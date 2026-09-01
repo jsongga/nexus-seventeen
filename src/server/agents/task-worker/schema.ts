@@ -4,7 +4,6 @@ import {
   integer,
   parseWorkerAgentContext,
   parseWorkerAgentRunOutcome,
-  parseWorkerAgentRunOutput,
   parseWorkerTaskWakeClaim,
   prose,
   record,
@@ -12,7 +11,6 @@ import {
 } from "#shared/task-board-contract/validate";
 import type {
   AgentRunOutcome,
-  AgentRunOutput,
   BoundedAgentContext,
   CompletedRunJournalEntry,
   TaskWakeClaim,
@@ -36,10 +34,6 @@ export function parseTaskWakeClaim(value: unknown): TaskWakeClaim {
 
 export function parseBoundedAgentContext(value: unknown): BoundedAgentContext {
   return parseWorkerAgentContext(value);
-}
-
-export function parseAgentRunOutput(value: unknown): AgentRunOutput {
-  return parseWorkerAgentRunOutput(value);
 }
 
 export function parseAgentRunOutcome(value: unknown): AgentRunOutcome {

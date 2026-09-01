@@ -10,7 +10,7 @@ import {
   type FormEvent,
   type SetStateAction,
 } from "react";
-import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from "../../components/ui";
+import { Button, Card, FieldLabel, Modal, Pill, cn, inputClass } from "../components/ui";
 import {
   acceptRemoteAutomationConfiguration,
   automationEditorFromConfiguration,
@@ -21,6 +21,7 @@ import {
   type AutomationEditorState,
 } from "../model/automation-model";
 import { BoardApiError, type TaskBoardClient } from "../data/client";
+import { formatShortDateTime } from "../data/date-format";
 import { identifierPattern } from "../data/wire";
 import {
   AUTOMATION_STAGE_ALLOWED_ROLES,
@@ -35,12 +36,6 @@ import {
 
 const skillIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 const machineVerifyExecutorValue = "__machine_verify__";
-const updatedDateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 const stageLabels: Record<WorkItemStage, string> = {
   refinement: "Refinement",
@@ -96,8 +91,7 @@ function authorityForRole(role: AgentRole): { label: string; detail: string } {
 }
 
 function formatUpdatedAt(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : updatedDateTime.format(parsed);
+  return formatShortDateTime(value);
 }
 
 function eligibleAgentTypes(stage: WorkItemStage, agentTypes: AutomationAgentType[]): AutomationAgentType[] {

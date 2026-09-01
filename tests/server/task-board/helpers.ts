@@ -19,7 +19,7 @@ import {
   type TaskBoardConfig,
   type TaskBoardDependencies,
 } from "#server/task-board";
-import type { GitRunner, GitTextRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitRunner, GitTextRunner } from "#server/shared/git";
 
 type FixtureTaskBoardDependencies = Omit<TaskBoardDependencies, "git"> &
   Readonly<{

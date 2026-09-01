@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BoardApp } from "./task-board";
+import { BoardApp } from "./BoardApp";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(

@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { WorkflowPlanDraft } from "#shared/task-board-contract";
-import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/shared/git";
 import {
   automationConfigurationRequest,
   automationStages,

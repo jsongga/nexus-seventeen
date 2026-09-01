@@ -1,12 +1,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Modal } from "../../components/ui";
+import { Modal } from "../components/ui";
 import type { TaskBoardClient } from "../data/client";
 import type { BoardAgent, BoardProject, BoardSnapshot } from "../types";
 
-vi.mock("../../components/ui", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../components/ui")>();
+vi.mock("../components/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/ui")>();
   return { ...actual, Modal: vi.fn(() => null) };
 });
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { inspectPipelineBranch, type PipelineInspection } from "#server/task-board/collaborators/pipeline-inspection";
-import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/shared/git";
 
 const SHA = "a".repeat(40);
 const SAFE_PREFIX = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", "/repo"] as const;

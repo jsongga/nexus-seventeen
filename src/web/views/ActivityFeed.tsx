@@ -1,4 +1,5 @@
 import { FileText } from "lucide-react";
+import { formatShortDateTime } from "../data/date-format";
 
 interface ActivityArtifact {
   artifactId: string;
@@ -13,18 +14,6 @@ export interface ActivityFeedUpdate {
   createdAt: string;
   createdAtMs: number;
   artifacts: ActivityArtifact[];
-}
-
-const activityTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-function timeLabel(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : activityTime.format(parsed);
 }
 
 export function ActivityFeed({
@@ -53,7 +42,7 @@ export function ActivityFeed({
               className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)] sm:gap-4"
             >
               <time dateTime={update.createdAt} className="pt-0.5 text-[11px] leading-tight text-muted">
-                {timeLabel(update.createdAt)}
+                {formatShortDateTime(update.createdAt)}
               </time>
               <div className="flex min-w-0 flex-col gap-2">
                 <p className="whitespace-pre-wrap break-words leading-[1.5] text-ink">

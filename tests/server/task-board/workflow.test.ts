@@ -8,7 +8,7 @@ import test from "node:test";
 import type { AgentRole, ClaimRunPinning, WorkflowPlanDraft } from "#shared/task-board-contract";
 import { HttpTaskBoardClient } from "#server/agents/task-worker/http-board-client";
 import { TaskBoardError } from "#server/task-board";
-import type { GitTextRunner } from "#server/task-board/collaborators/scope-check";
+import type { GitTextRunner } from "#server/shared/git";
 import {
   automationConfigurationRequest,
   automationStages,

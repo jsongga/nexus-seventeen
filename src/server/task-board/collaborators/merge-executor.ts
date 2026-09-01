@@ -1,6 +1,5 @@
 import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
-import { defaultGitRunner, gitArguments, type GitRunner } from "../../shared/git.js";
-import type { GitTextRunner } from "./scope-check.js";
+import { defaultGitRunner, gitArguments, type GitRunner, type GitTextRunner } from "../../shared/git.js";
 
 const SUMMARY_LIMIT = 2_000;
 

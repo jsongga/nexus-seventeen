@@ -1,12 +1,13 @@
 import { KeyRound, MessageSquareText, Plus, Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Button, InlineActionErrors, Modal, Pill, cn } from "../../components/ui";
-import { ActivityFeed, type ActivityFeedUpdate } from "../project/ActivityFeed";
+import { Button, InlineActionErrors, Modal, Pill, cn } from "../components/ui";
+import { ActivityFeed, type ActivityFeedUpdate } from "./ActivityFeed";
 import { agentQueryPromptFromObjective } from "../data/client";
 import type { InterruptRunResult, TaskBoardClient } from "../data/client";
-import { ContextSidebar, type ContextDocument } from "../project/ContextSidebar";
+import { formatShortDateTime } from "../data/date-format";
+import { ContextSidebar, type ContextDocument } from "./ContextSidebar";
 import { parseProjectMetadata, type ProjectMetadataEntry } from "../model/project-metadata";
-import { ThreadPipelineTable } from "../project/ThreadPipelineTable";
+import { ThreadPipelineTable } from "./ThreadPipelineTable";
 import type {
   AgentQueryConversationTurn,
   BoardAgent,
@@ -16,23 +17,15 @@ import type {
   ProjectArtifact,
   RotateAgentTokenResult,
 } from "../types";
-import { WorkspaceHeader } from "../project/WorkspaceHeader";
+import { WorkspaceHeader } from "./WorkspaceHeader";
 import { agentPipelineFocus, type ProjectUpdate, updatesForProject } from "../model/workspace-model";
 import { laneConfigurationState } from "../model/lane-config";
 import { actionErrorContexts, type ActionError, type ActionResult } from "../model/action-errors";
 import { beginArtifactPreviewLoad } from "../model/artifact-previews";
 
-const dateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
 function formatTime(value: string | null): string {
   if (value === null) return "Not recorded";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed);
+  return formatShortDateTime(value);
 }
 
 function projectLinkLabel(href: string): string {

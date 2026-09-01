@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { GIT_POLICY_FLAGS } from "../../shared/git.js";
+import { defaultGitRunner, GIT_POLICY_FLAGS, type GitTextRunner } from "../../shared/git.js";
 import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify";
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager, removeRecordedTaskWorkspace } from "#server/agents/task-workspace";
@@ -16,7 +16,6 @@ import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
-import { runDeclaredScopeGit, type GitTextRunner } from "./scope-check.js";
 
 /* —— Process bounds and retirement signals —— */
 
@@ -344,7 +343,7 @@ export class VerifyAttemptsCollaborator {
         }));
     this.#runnerFactory = dependencies.runnerFactory ?? ((options) => new VerifyRunner(options));
     this.#executeCheck = dependencies.executeCheck ?? executeCriterionCheck;
-    this.#git = dependencies.git ?? runDeclaredScopeGit;
+    this.#git = dependencies.git ?? defaultGitRunner;
     this.#boardPause = new BoardPauseCollaborator(runtime);
     this.#unregisterRetirementListener = registerRetirementListener(runtime, (retirement) => {
       if (this.#closed) return;

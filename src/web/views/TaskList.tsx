@@ -1,6 +1,7 @@
 import { Activity, Check, ChevronRight, CircleAlert, HelpCircle } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
-import { Button, Card, Pill, Toast, cn } from "../../components/ui";
+import { Button, Card, Pill, Toast, cn } from "../components/ui";
+import { formatShortDateTime } from "../data/date-format";
 import type { ActionError } from "../model/action-errors";
 import { elapsedMilliseconds, formatElapsedDuration } from "../model/observability";
 import type { WorkItemTreeRow } from "../model/work-item-tree";
@@ -13,13 +14,6 @@ import {
   workItemStatusLabel,
 } from "../model/work-item-labels";
 import type { BoardAgent, BoardSnapshot, BoardTask, BoardWorkItem, TaskKind, WorkItemPriority } from "../types";
-
-const dateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 const workItemPriorityTone: Record<WorkItemPriority, "neutral" | "amber" | "red" | "blue" | "purple"> = {
   urgent: "red",
@@ -37,8 +31,7 @@ const taskKindLabel: Record<TaskKind, string> = {
 
 function formatTime(value: string | null): string {
   if (value === null) return "Not recorded";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : dateTime.format(parsed);
+  return formatShortDateTime(value);
 }
 
 function taskStatusLabel(task: BoardTask): string {

@@ -4,12 +4,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { defaultGitRunner } from "../../../src/server/shared/git.js";
 import {
   checkDeclaredScope,
   declaredScopesOverlap,
-  runDeclaredScopeGit,
   scopeViolationResult,
-} from "#server/task-board/collaborators/scope-check";
+} from "../../../src/server/shared/scope-check.js";
 import { ContractValidationError } from "#shared/task-board-contract/validate";
 
 const BASE_SHA = "a".repeat(40);
@@ -161,7 +161,7 @@ test("NUL-delimited scope checks preserve spaces and non-ASCII path characters",
       baseSha: repository.head,
       branch,
       declaredScope: ["src"],
-      git: runDeclaredScopeGit,
+      git: defaultGitRunner,
     }),
     { ok: true }
   );
@@ -187,7 +187,7 @@ test("renaming an outside file into declared scope still reports the deleted sou
       baseSha,
       branch,
       declaredScope: ["src"],
-      git: runDeclaredScopeGit,
+      git: defaultGitRunner,
     }),
     { ok: false, files: ["docs/outside.md"] }
   );

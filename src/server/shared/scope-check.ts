@@ -1,15 +1,10 @@
-import { defaultGitRunner, type GitRunner, type GitTextRunner, GIT_POLICY_FLAGS } from "../../shared/git.js";
+/** Checks a task branch's changed files against the scope the task declared. */
+
+import { GIT_POLICY_FLAGS, type GitTextRunner } from "./git.js";
 import { normalizeDeclaredScope } from "#shared/task-board-contract";
 export { declaredScopesOverlap } from "#shared/task-board-contract";
 
 const SETTLEMENT_RESULT_LIMIT = 2_000;
-
-// The git plumbing lives in server/shared/git.ts so every caller shares one
-// timeout, buffer bound and prelude. These re-exports keep existing importers
-// working; new code should import ../../shared/git.js directly.
-export type { GitRunner, GitTextRunner } from "../../shared/git.js";
-export { withGitBytes } from "../../shared/git.js";
-export const runDeclaredScopeGit: GitRunner = defaultGitRunner;
 
 export type DeclaredScopeCheckResult = Readonly<{ ok: true }> | Readonly<{ ok: false; files: readonly string[] }>;
 

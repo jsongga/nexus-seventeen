@@ -1,8 +1,9 @@
 import { Archive, ArrowRight, Check, CircleAlert, CirclePause, HelpCircle, RefreshCw, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { DesignRecordDraft, PipelineSummary, ReviewFinding } from "@shared/task-board-contract";
-import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from "../../components/ui";
-import { fieldsAreDirty } from "../../components/dialog-stack";
+import { fieldsAreDirty } from "../components/dialog-stack";
+import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from "../components/ui";
+import { formatAuditDateTime } from "../data/date-format";
 import { BoardApiError, type TaskBoardClient } from "../data/client";
 import type { RawWorkItemAudit } from "../data/parse";
 import {
@@ -161,18 +162,8 @@ export function ParentWorkItemLink({
   );
 }
 
-const auditDateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  second: "2-digit",
-});
-
 function AuditTimestamp({ value }: { value: string }) {
-  const parsed = new Date(value);
-  return <time dateTime={value}>{Number.isNaN(parsed.valueOf()) ? value : auditDateTime.format(parsed)}</time>;
+  return <time dateTime={value}>{formatAuditDateTime(value)}</time>;
 }
 
 export function StatusTimeline({

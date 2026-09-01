@@ -510,14 +510,6 @@ function entity(
   return item;
 }
 
-export function versionedRecord(value: unknown, label: string): JsonRecord {
-  const item = record(value, label);
-  if (item.apiVersion !== TASK_BOARD_API_VERSION) {
-    throw new ContractValidationError(`${label}.apiVersion is incompatible`);
-  }
-  return item;
-}
-
 function shapeIdentifier(value: unknown, label: string, options: ShapeParserOptions): string {
   return options.identifiers === "string"
     ? stringValue(value, label)

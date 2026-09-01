@@ -4,7 +4,8 @@
 
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { GIT_POLICY_FLAGS } from "../../shared/git.js";
+import { GIT_POLICY_FLAGS, type GitTextRunner } from "../../shared/git.js";
+import { scopeViolationResult, type DeclaredScopeCheckResult } from "../../shared/scope-check.js";
 import {
   GIT_OBJECT_ID_PATTERN,
   IDENTIFIER_PATTERN,
@@ -58,11 +59,6 @@ import {
   workItemTransitionStoreForDatabase,
 } from "../collaborators/work-item-transitions.js";
 import {
-  scopeViolationResult,
-  type DeclaredScopeCheckResult,
-  type GitTextRunner,
-} from "../collaborators/scope-check.js";
-import {
   inspectPipelineBranchSync,
   pipelineMidRunAssumptions,
   type PipelineInspection,
@@ -100,7 +96,7 @@ export const PENDING_LIVE_WAKEUP_PREDICATE_SQL = `
   )
 `;
 
-export type { GitRunner as WorkflowGitRunner } from "../collaborators/scope-check.js";
+export type { GitRunner as WorkflowGitRunner } from "../../shared/git.js";
 export type AttemptScopeCheckResult =
   | DeclaredScopeCheckResult
   | Readonly<{

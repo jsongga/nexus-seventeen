@@ -6,7 +6,7 @@ import { OutlineHttpError } from "../../../src/server/docs-publish/client.js";
 import type { DocsPublishRepo } from "../../../src/server/docs-publish/config.js";
 import { publishRepo } from "../../../src/server/docs-publish/publish.js";
 import type { DocsSink, SinkCollection, SinkDocument } from "../../../src/server/docs-publish/sink.js";
-import type { GitTextRunner } from "../../../src/server/task-board/collaborators/scope-check.js";
+import type { GitTextRunner } from "../../../src/server/shared/git.js";
 
 const ENTRY: DocsPublishRepo = Object.freeze({ name: "sample", path: "/repo", ref: "main" });
 const COLLECTION: SinkCollection = Object.freeze({ id: "collection-1", name: "sample docs" });

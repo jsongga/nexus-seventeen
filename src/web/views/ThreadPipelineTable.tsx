@@ -1,4 +1,5 @@
-import { Pill } from "../../components/ui";
+import { Pill } from "../components/ui";
+import { formatShortDateTime } from "../data/date-format";
 import type { BoardAgent, BoardTask, TaskStatus } from "../types";
 import { prettyStatus, taskStatusTone, unknownStateLabel, type WorkItemTone } from "../model/work-item-labels";
 
@@ -6,13 +7,6 @@ type PipelineStage = {
   label: string;
   tone: WorkItemTone;
 };
-
-const updatedDateTime = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 export function pipelineStageForStatus(status: TaskStatus): PipelineStage {
   return {
@@ -23,8 +17,7 @@ export function pipelineStageForStatus(status: TaskStatus): PipelineStage {
 
 export function updatedLabel(value: string | null): string {
   if (!value) return "-";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : updatedDateTime.format(parsed);
+  return formatShortDateTime(value);
 }
 
 export function ThreadPipelineTable({

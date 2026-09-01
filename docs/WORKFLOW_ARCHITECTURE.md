@@ -103,7 +103,7 @@ This example follows the implemented publication check, merge-SHA interface look
 - **One level** — validation rejects a child plan that declares children (`validateWorkflowPlanChildren` in [`validate.ts`](../src/shared/task-board-contract/validate.ts)).
 - **One repository per Project** — every child targets one board Project, and every Project has one `repo_path`. A product grouped into one Project but spanning several repositories, including Cicada Sense/HomeDots, cannot be decomposed across those repositories until repository identity is modeled separately from the product Project ([roadmap item 9.9](../orchestrator-roadmap.md#99-repository-identity-separate-from-the-product-project)).
 - **No re-merge** — unphased fan-out skips merged children, and phased auto-merge considers only children in `final_approval`. Expand publication is enforced during verification before merge; a merged Expand is not reopened for that check (`ProjectsCollaborator.approveUnphasedParent` and `ProjectsCollaborator.reconcileDecompositionParent` in [`projects.ts`](../src/server/task-board/collaborators/projects.ts), and `RunsCollaborator.expandInterfacePublicationFailure` in [`runs.ts`](../src/server/task-board/collaborators/runs.ts)).
-- **Phased failure has one exit** — an abandoned or dead-lettered Expand/Migrate keeps Contract blocked. Cancelling the parent is the only exit from that family (`decompositionReadinessBlocker` in [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts) and `deriveDecompositionAffordances` in [`work-item-detail.ts`](../src/web/task-board/model/work-item-detail.ts)).
+- **Phased failure has one exit** — an abandoned or dead-lettered Expand/Migrate keeps Contract blocked. Cancelling the parent is the only exit from that family (`decompositionReadinessBlocker` in [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts) and `deriveDecompositionAffordances` in [`work-item-detail.ts`](../src/web/model/work-item-detail.ts)).
 
 ### Declaration and materialization
 
@@ -259,7 +259,7 @@ Catalog paths are container paths under `/var/lib/steward/repos`. Operators must
 | Readiness, merge policy, and attestation        | [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts), [`projects.ts`](../src/server/task-board/collaborators/projects.ts)                                    |
 | Published-interface reads and claim context     | [`interface-context.ts`](../src/server/task-board/collaborators/interface-context.ts), [`runs.ts`](../src/server/task-board/collaborators/runs.ts)                                                        |
 | Recovery, cancellation, and request diagnostics | [`work-items.ts`](../src/server/task-board/collaborators/work-items.ts), [`verify-attempts.ts`](../src/server/task-board/collaborators/verify-attempts.ts), [`http.ts`](../src/server/task-board/http.ts) |
-| Parent/child operator controls                  | [`WorkItemDetail.tsx`](../src/web/task-board/views/WorkItemDetail.tsx), [`work-item-detail.ts`](../src/web/task-board/model/work-item-detail.ts)                                                          |
+| Parent/child operator controls                  | [`WorkItemDetail.tsx`](../src/web/views/WorkItemDetail.tsx), [`work-item-detail.ts`](../src/web/model/work-item-detail.ts)                                                                                |
 
 ## Editable skills
 
