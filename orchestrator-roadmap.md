@@ -229,17 +229,29 @@ view projection, not data. Not done here: the persistence/collaborators cycle
 (12), web feature seams (13), renames (9.7), the credential filter's remaining
 prose false positive (9.10).
 
-**12. Layering — workflow orchestration out of persistence** _(proposed
-2026-08-29)_ — break the `persistence/` ↔ `collaborators/` cycle (workflow.ts
-imports three collaborators; 18 of 24 import back), split `ProjectsCollaborator`
-and `validate.ts` behind unchanged façades. Exit: a dependency-direction test
-that fails on a back-import.
+**12. Layering and file size** _(specced 2026-08-31; proposed 2026-08-29; spec
+`docs/superpowers/specs/2026-08-31-layering-and-file-size.md`)_ — the
+`persistence/` ↔ `collaborators/` cycle is **two import statements**, not the
+three the audit measured: campaign 11 removed one when `scope-check.ts` moved to
+`server/shared/`, and both survivors point at misfiled modules —
+`work-item-transitions.ts` is a transaction state machine (persistence) and
+`pipeline-inspection.ts` is a leaf over git. Two moves make the rule true; a
+tooling test that resolves specifiers to real files, and is proven to fail on a
+planted back-import, keeps it true. Then `validate.ts` (5,068 lines, the largest
+file in the repository) splits at its existing banner boundaries into six modules
+behind an unchanged façade — zero caller edits — after relocating the one
+function that makes the group graph cyclic. Exit: `persistence → collaborators`
+is 0 edges, the planted violation fails the checker, and the symbol set of the
+split file is unchanged. Deferred to its own campaign: `collaborators/projects.ts`
+(2,451 lines under one banner — its seams are not drawn, and drawing them is
+design work).
 
-**13. Web feature seams** _(proposed 2026-08-29)_ — flatten
-`src/web/task-board/*` → `src/web/*` (21 import lines), move `BoardPage` to
-routing ownership, split `WorkItemDetail.tsx` along the seam its five test files
-already use, then slice model/views into feature folders. Exit: no file over
-~600 lines in `src/web`.
+**13. Web feature seams** _(proposed 2026-08-29; revised 2026-08-31)_ — the
+flatten this item opened with shipped in campaign 11 (`src/web/task-board/*` →
+`src/web/*`, `project/` → `views/`). What remains: move `BoardPage` to routing
+ownership, split `WorkItemDetail.tsx` (2,544 lines) along the seam its five test
+files already use, split `BoardApp.tsx` (1,551), then slice model/views into
+feature folders. Exit: no file over ~600 lines in `src/web`.
 
 ## Migration risks
 
