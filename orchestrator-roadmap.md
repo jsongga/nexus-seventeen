@@ -208,14 +208,26 @@ board (claims now carry `phase` + `crossRepoContext`). Limits: one level of
 decomposition; one repository per Project (→ 9.9); an abandoned Expand/Migrate
 leaves cancel as the only exit.
 
-**11. Codebase health — formatting, comments, shared plumbing** _(proposed
-2026-08-29; spec `docs/superpowers/specs/2026-08-29-codebase-health-audit.md`)_ —
-prettier as one whitespace-only commit, then the adopted comment convention
+**11. Codebase health — formatting, comments, shared plumbing** _(shipped
+2026-08-31; proposed 2026-08-29; spec
+`docs/superpowers/specs/2026-08-29-codebase-health-audit.md`)_ — prettier at
+printWidth 120 as one formatter-only commit, then the adopted comment convention
 (`/** header */` + `/* —— Section —— */` banners, ratcheted by a tooling test,
-not eslint) over the nine highest-value files; one `server/shared/git.ts` for
-four byte-identical git factories; single-source credential recognition and the
-automation stage→role table; five cheap moves that delete redundant levels; two
-dead exports. Exit: the style test is green with an allowlist that only shrinks.
+not eslint — the repository has no eslint, which also answers 9.7's D2); one
+`server/shared/git.ts` replacing four byte-identical git factories, the
+`core.fsmonitor=`/`core.hooksPath=` prelude at twelve sites and two rival
+`ls-tree` parsers, with credential-safe failures; one credential vocabulary
+under two policies (redaction over-matches, the agent boundary rejects
+fail-closed with prose-safe narrowings) and one exported stage→role table; the
+web tree flattened out of `src/web/task-board/`, declared-scope checking moved
+beside its git runner, one date formatter for eight, one dead barrel and two
+dead exports. Exit met: `code-style.test.mjs` green, allowlist 125 → 120 and
+only ever shrinking, one `execFileSync("git")` site in `src/`. Corrections to
+the audit found during implementation: `task-fleet/index.ts` is not a dead
+barrel (`#server/agents/task-fleet` publishes it), and `model/project.ts` is
+view projection, not data. Not done here: the persistence/collaborators cycle
+(12), web feature seams (13), renames (9.7), the credential filter's remaining
+prose false positive (9.10).
 
 **12. Layering — workflow orchestration out of persistence** _(proposed
 2026-08-29)_ — break the `persistence/` ↔ `collaborators/` cycle (workflow.ts
