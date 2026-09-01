@@ -24,7 +24,7 @@ import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { parseBoundedAgentContext } from "#server/agents/task-worker/schema";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { DEFAULT_SUPERVISOR_PATH } from "#server/task-board/collaborators/verify-attempts";
-import { transitionWorkItemInTransaction } from "#server/task-board/collaborators/work-item-transitions";
+import { transitionWorkItemInTransaction } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { parseClaimRunResult } from "#shared/task-board-contract/validate";
 import {

@@ -52,7 +52,7 @@ import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
   type WorkItemTransitionRequest,
-} from "./work-item-transitions.js";
+} from "../persistence/work-item-transitions.js";
 
 /* —— Runtime state —— */
 

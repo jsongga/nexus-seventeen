@@ -13,7 +13,7 @@ import { ProjectsCollaborator } from "#server/task-board/collaborators/projects"
 import { RunsCollaborator } from "#server/task-board/collaborators/runs";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
-import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
+import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import {
   automationConfigurationRequest,

@@ -57,12 +57,12 @@ import {
   workItemStateForStage,
   workItemStateForNodeStage,
   workItemTransitionStoreForDatabase,
-} from "../collaborators/work-item-transitions.js";
+} from "./work-item-transitions.js";
 import {
   inspectPipelineBranchSync,
   pipelineMidRunAssumptions,
   type PipelineInspection,
-} from "../collaborators/pipeline-inspection.js";
+} from "../pipeline-inspection.js";
 import { reviewFindingFromRow, type Row } from "./rows.js";
 
 /* —— Wakeup and review constraints —— */

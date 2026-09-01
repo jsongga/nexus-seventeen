@@ -18,7 +18,7 @@ import {
 } from "#server/task-board/collaborators/verify-attempts";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
-import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
+import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { TransparentWorkflow, type MachineVerifyEvidence } from "#server/task-board/persistence/workflow";
 import { SkillRegistry } from "#server/task-board/skills";

@@ -5,7 +5,7 @@ import { AutomationCollaborator } from "#server/task-board/collaborators/automat
 import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
 import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
-import { registerParentTerminationCascade } from "#server/task-board/collaborators/work-item-transitions";
+import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { automationConfigurationRequest, automationStages, boardFixture, config, workItemRequest } from "./helpers.js";
 

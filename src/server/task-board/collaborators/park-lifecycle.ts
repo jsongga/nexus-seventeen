@@ -3,7 +3,7 @@ import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 import type { NotificationsCollaborator } from "./notifications.js";
-import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
+import { transitionWorkItemInTransaction } from "../persistence/work-item-transitions.js";
 import type { WorkItemsCollaborator } from "./work-items.js";
 
 interface OpenParkRecord {

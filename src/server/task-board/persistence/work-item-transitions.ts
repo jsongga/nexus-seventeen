@@ -1,3 +1,5 @@
+/** Moves a work item between states inside the caller's transaction, cascading parent termination. */
+
 import { randomUUID } from "node:crypto";
 import {
   PARK_CATEGORIES,
@@ -10,7 +12,7 @@ import {
 } from "#shared/task-board-contract";
 import { redactForPersistence } from "../../shared/redact.js";
 import { conflict, TaskBoardError } from "../errors.js";
-import type { TaskBoardStore } from "../persistence/store.js";
+import type { TaskBoardStore } from "./store.js";
 
 const STORES_BY_DATABASE = new WeakMap<TaskBoardStore["db"], TaskBoardStore>();
 type ParentTerminationCascade = (

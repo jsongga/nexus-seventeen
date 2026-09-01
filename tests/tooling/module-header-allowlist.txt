@@ -63,11 +63,9 @@ src/server/task-board/collaborators/messages.ts
 src/server/task-board/collaborators/notifications.ts
 src/server/task-board/collaborators/onboarding-check.ts
 src/server/task-board/collaborators/park-lifecycle.ts
-src/server/task-board/collaborators/pipeline-inspection.ts
 src/server/task-board/collaborators/runs.ts
 src/server/task-board/collaborators/tasks.ts
 src/server/task-board/collaborators/wall-clock.ts
-src/server/task-board/collaborators/work-item-transitions.ts
 src/server/task-board/collaborators/work-items.ts
 src/server/task-board/config.ts
 src/server/task-board/errors.ts

@@ -42,7 +42,7 @@ import {
   recordInitialWorkItemTransitionInTransaction,
   registerParentTerminationCascade,
   transitionWorkItemInTransaction,
-} from "./work-item-transitions.js";
+} from "../persistence/work-item-transitions.js";
 
 export type CreateWorkItemResult = Readonly<{ workItem: WorkItem; duplicate: boolean }>;
 export type WorkItemDetail = WorkItem &

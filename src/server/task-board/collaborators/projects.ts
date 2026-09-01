@@ -63,7 +63,7 @@ import {
   inspectPipelineBranchSync,
   pipelineMidRunAssumptions,
   type PipelineInspection,
-} from "./pipeline-inspection.js";
+} from "../pipeline-inspection.js";
 import {
   inspectPipelineBaseAdvance,
   mergePipelineBranch,
@@ -85,7 +85,7 @@ import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
   workItemStateOwnsWorkflowExecution,
-} from "./work-item-transitions.js";
+} from "../persistence/work-item-transitions.js";
 
 /* —— Git boundary —— */
 

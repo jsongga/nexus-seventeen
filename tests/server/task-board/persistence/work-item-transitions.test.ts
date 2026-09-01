@@ -10,7 +10,7 @@ import {
   transitionWorkItemInTransaction,
   workItemStateForNodeStage,
   workItemStateForStage,
-} from "#server/task-board/collaborators/work-item-transitions";
+} from "#server/task-board/persistence/work-item-transitions";
 import { databasePath } from "../helpers.js";
 
 const CREATED_AT = "2026-08-15T12:00:00.000Z";

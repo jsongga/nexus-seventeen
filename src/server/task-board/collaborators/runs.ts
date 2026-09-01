@@ -90,7 +90,7 @@ class MigrateInterfaceClaimError extends Error {
   }
 }
 import type { TasksCollaborator } from "./tasks.js";
-import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
+import { transitionWorkItemInTransaction } from "../persistence/work-item-transitions.js";
 
 type SettlementEffects = Readonly<{
   workflowWakeAgentId: string | null;

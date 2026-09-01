@@ -14,7 +14,7 @@ import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
 import {
   registerParentTerminationCascade,
   registerWorkItemTransitionStore,
-} from "#server/task-board/collaborators/work-item-transitions";
+} from "#server/task-board/persistence/work-item-transitions";
 import {
   AGENT_ONE_TOKEN,
   automationConfigurationRequest,

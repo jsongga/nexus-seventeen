@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { inspectPipelineBranch, type PipelineInspection } from "#server/task-board/collaborators/pipeline-inspection";
+import { inspectPipelineBranch, type PipelineInspection } from "#server/task-board/pipeline-inspection";
 import type { GitTextRunner } from "#server/shared/git";
 
 const SHA = "a".repeat(40);

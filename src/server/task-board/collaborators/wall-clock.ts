@@ -5,7 +5,7 @@ import type { TaskBoardStore } from "../persistence/store.js";
 import type { NotificationsCollaborator } from "./notifications.js";
 import type { RunsCollaborator } from "./runs.js";
 import type { TaskBoardRuntime } from "./runtime.js";
-import { transitionWorkItemInTransaction } from "./work-item-transitions.js";
+import { transitionWorkItemInTransaction } from "../persistence/work-item-transitions.js";
 
 interface WallClockCandidate {
   readonly runId: string;

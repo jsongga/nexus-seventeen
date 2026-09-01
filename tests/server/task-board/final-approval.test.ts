@@ -20,7 +20,7 @@ import {
   registerParentTerminationCascade,
   registerWorkItemTransitionStore,
   transitionWorkItemInTransaction,
-} from "#server/task-board/collaborators/work-item-transitions";
+} from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { TransparentWorkflow } from "#server/task-board/persistence/workflow";
 import {

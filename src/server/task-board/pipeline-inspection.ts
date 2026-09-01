@@ -1,6 +1,8 @@
+/** Reads a pipeline branch's committed state and checks it against the task's declared scope. */
+
 import type { DatabaseSync } from "node:sqlite";
-import { defaultGitRunner, type GitRunner, type GitTextRunner, GIT_POLICY_FLAGS } from "../../shared/git.js";
-import { checkDeclaredScopePaths } from "../../shared/scope-check.js";
+import { defaultGitRunner, type GitRunner, type GitTextRunner, GIT_POLICY_FLAGS } from "../shared/git.js";
+import { checkDeclaredScopePaths } from "../shared/scope-check.js";
 
 const MID_RUN_ASSUMPTION_PREFIX = "ASSUMPTION: ";
 
