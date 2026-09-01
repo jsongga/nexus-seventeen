@@ -229,22 +229,25 @@ view projection, not data. Not done here: the persistence/collaborators cycle
 (12), web feature seams (13), renames (9.7), the credential filter's remaining
 prose false positive (9.10).
 
-**12. Layering and file size** _(specced 2026-08-31; proposed 2026-08-29; spec
+**12. Layering and file size** _(shipped 2026-09-01; spec
 `docs/superpowers/specs/2026-08-31-layering-and-file-size.md`)_ — the
-`persistence/` ↔ `collaborators/` cycle is **two import statements**, not the
-three the audit measured: campaign 11 removed one when `scope-check.ts` moved to
-`server/shared/`, and both survivors point at misfiled modules —
-`work-item-transitions.ts` is a transaction state machine (persistence) and
-`pipeline-inspection.ts` is a leaf over git. Two moves make the rule true; a
-tooling test that resolves specifiers to real files, and is proven to fail on a
-planted back-import, keeps it true. Then `validate.ts` (5,068 lines, the largest
-file in the repository) splits at its existing banner boundaries into six modules
-behind an unchanged façade — zero caller edits — after relocating the one
-function that makes the group graph cyclic. Exit: `persistence → collaborators`
-is 0 edges, the planted violation fails the checker, and the symbol set of the
-split file is unchanged. Deferred to its own campaign: `collaborators/projects.ts`
-(2,451 lines under one banner — its seams are not drawn, and drawing them is
-design work).
+`persistence/` ↔ `collaborators/` cycle was two import statements, both pointing
+at misfiled modules: `work-item-transitions.ts` (a transaction state machine) moved
+to `persistence/`, `pipeline-inspection.ts` (a leaf over git) to the task-board
+root. `persistence → collaborators` is **0 edges**, held by
+`tests/tooling/layer-direction.test.mjs`, which resolves specifiers to real files,
+counts subpath imports (`#server/task-board/*` — both reviewers found that hole
+independently), follows re-exports transitively across `src/`, and reports rather
+than throws on an unresolvable specifier. Then `validate.ts` — 5,068 lines, the
+largest file in the repository — split at its banner boundaries into six modules
+behind a façade that re-exports the same 112 names, so **zero callers changed**;
+generated rather than typed, and held to declaration-level identity (234 before,
+234 after, zero body text changed, 29 `export` prefixes). Exit met on both counts.
+Follow-ups it named rather than did: `validate/entities.ts` is still 2,163 lines
+and wants an `entities/` package around its shared `shape`/`entity` core — the same
+mechanical shape as this task; `persistence/workflow.ts` (3,040) is now the
+largest file in the repository; and `collaborators/projects.ts` (2,451) still has
+undrawn seams.
 
 **13. Web feature seams** _(proposed 2026-08-29; revised 2026-08-31)_ — the
 flatten this item opened with shipped in campaign 11 (`src/web/task-board/*` →
