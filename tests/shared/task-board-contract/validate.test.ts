@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
+  AUTOMATION_STAGE_ALLOWED_ROLES,
   EVALUATOR_PROFILES,
   GATE_KINDS,
   IDENTIFIER_PATTERN,
@@ -719,6 +720,55 @@ test("board request shapes accept exactly the shared contract enum members", () 
       () => parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: invalidMachineVerifyStages }),
       new RegExp(`${stage} cannot use the machine_verify executor`, "u")
     );
+  }
+});
+
+test("automation role authorization follows the shared stage table", () => {
+  assert.equal(Object.isFrozen(AUTOMATION_STAGE_ALLOWED_ROLES), true);
+
+  for (const stage of WORK_ITEM_STAGES) {
+    const allowedRoles: readonly string[] = AUTOMATION_STAGE_ALLOWED_ROLES[stage];
+    assert.equal(Object.isFrozen(allowedRoles), true);
+    for (const role of AGENT_ROLES) {
+      const configuredStages = stages();
+      configuredStages[WORK_ITEM_STAGES.indexOf(stage)] = {
+        stage,
+        executor: { kind: "agent_type", agentTypeId: "type-one" },
+      } as never;
+      const parse = () =>
+        parseBoardAutomationUpdate({
+          version: 1,
+          agentTypes: [
+            {
+              agentTypeId: "type-one",
+              name: "Type one",
+              description: "Exercises the shared stage-role policy.",
+              role,
+              supplementalInstructions: "Follow the assigned stage policy.",
+              skillIds: [],
+              evaluatorProfile: "tests",
+              enabled: true,
+            },
+          ],
+          stages: configuredStages,
+        });
+
+      if (allowedRoles.includes(role)) {
+        assert.doesNotThrow(parse, `${stage} should allow ${role}`);
+        continue;
+      }
+      // The human-owned and disabled stages reject an agent executor before the
+      // role table is consulted, so only the automated stages pin the role text.
+      // A bare string second argument here would be Node's assertion message,
+      // not a matcher, and would pass on any throw at all.
+      const expected =
+        stage === "human_review"
+          ? /human_review must use the human executor/u
+          : stage === "deployment"
+            ? /deployment must remain disabled/u
+            : new RegExp(`${stage} cannot use an agent type with the ${role} role`, "u");
+      assert.throws(parse, expected, `${stage} should reject ${role}`);
+    }
   }
 });
 

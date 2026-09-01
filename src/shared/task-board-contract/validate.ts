@@ -8,6 +8,7 @@ import {
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  AUTOMATION_STAGE_ALLOWED_ROLES,
   ContractValidationError,
   DESIGN_FAILURE_POINTS,
   DESIGN_RECORD_DETAIL_MAX_LENGTH,
@@ -2436,16 +2437,6 @@ export function parseProjectArtifactEntity(
 
 /* —— Automation configuration —— */
 
-const AUTOMATION_STAGE_ROLES = Object.freeze({
-  refinement: Object.freeze(["manager"] as const),
-  project_resolution: Object.freeze(["manager"] as const),
-  research: Object.freeze(["engineer", "verifier"] as const),
-  planning: Object.freeze(["engineer"] as const),
-  implementation: Object.freeze(["engineer"] as const),
-  testing: Object.freeze(["engineer", "verifier"] as const),
-  verification: Object.freeze(["verifier"] as const),
-});
-
 export function skillIdentifier(value: unknown, label: string, scalarMessages?: ScalarMessageProfile): string {
   if (typeof value !== "string") {
     throw new ContractValidationError(
@@ -2586,7 +2577,7 @@ export function validateAutomationConfigurationParts(
       throw new ContractValidationError(`${label}.stages ${entry.stage} references an unknown agent type`);
     if (!agentType.enabled)
       throw new ContractValidationError(`${label}.stages ${entry.stage} references a disabled agent type`);
-    const roles: readonly (typeof AGENT_ROLES)[number][] = AUTOMATION_STAGE_ROLES[entry.stage];
+    const roles: readonly (typeof AGENT_ROLES)[number][] = AUTOMATION_STAGE_ALLOWED_ROLES[entry.stage];
     if (!roles.includes(agentType.role)) {
       const rolesLabel = roles.join(" or ");
       throw new ContractValidationError(
@@ -4704,7 +4695,7 @@ function parseBoardAutomationStages(
     const agentType = types.get(entry.executor.agentTypeId);
     if (agentType === undefined) boardFailure(`${entry.stage} references an unknown agent type`);
     if (!agentType.enabled) boardFailure(`${entry.stage} references a disabled agent type`);
-    const roles: readonly AgentRole[] = AUTOMATION_STAGE_ROLES[entry.stage];
+    const roles: readonly AgentRole[] = AUTOMATION_STAGE_ALLOWED_ROLES[entry.stage];
     if (!roles.includes(agentType.role))
       boardFailure(`${entry.stage} cannot use an agent type with the ${agentType.role} role`);
   }

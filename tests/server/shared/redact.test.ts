@@ -1,6 +1,73 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { redactForPersistence } from "../../../src/server/shared/redact.js";
+import {
+  CREDENTIAL_PATTERNS,
+  CREDENTIAL_REJECTION_PATTERNS,
+  redactForPersistence,
+} from "../../../src/server/shared/redact.js";
+
+const CREDENTIAL_SHAPES = ["privateKey", "urlCredential", "bearer", "prefixedToken", "awsAccessKey"] as const;
+
+test("credential patterns are exported as one immutable named set", () => {
+  assert.deepEqual(Object.keys(CREDENTIAL_PATTERNS), [...CREDENTIAL_SHAPES]);
+  assert.equal(Object.isFrozen(CREDENTIAL_PATTERNS), true);
+});
+
+test("the rejection set covers the same shapes and narrows only where documented", () => {
+  assert.deepEqual(Object.keys(CREDENTIAL_REJECTION_PATTERNS), [...CREDENTIAL_SHAPES]);
+  assert.equal(Object.isFrozen(CREDENTIAL_REJECTION_PATTERNS), true);
+
+  // Only `bearer` and `prefixedToken` are allowed to differ. Every other shape
+  // is the redaction pattern with `g` removed, so a change to the PEM, URL or
+  // AWS vocabulary cannot reach one policy and miss the other.
+  const narrowed: readonly string[] = ["bearer", "prefixedToken"];
+  for (const shape of CREDENTIAL_SHAPES) {
+    const rejection = CREDENTIAL_REJECTION_PATTERNS[shape];
+    // Rejection is `test`-only. A global pattern would carry `lastIndex` from
+    // one call into the next and start matching mid-string.
+    assert.equal(rejection.global, false, `${shape} must not be global`);
+    const redaction = CREDENTIAL_PATTERNS[shape];
+    if (narrowed.includes(shape)) assert.notEqual(rejection.source, redaction.source, `${shape} carries a narrowing`);
+    else assert.equal(rejection.source, redaction.source, `${shape} must reuse the redaction shape`);
+  }
+});
+
+test("rejection narrows exactly three axes, and redaction still covers all of them", () => {
+  // Tested through non-global clones so these assertions cannot leave
+  // `lastIndex` behind on a pattern the redaction path shares.
+  const matches = (pattern: RegExp, value: string) =>
+    new RegExp(pattern.source, pattern.flags.replace("g", "")).test(value);
+
+  const narrowings = [
+    // A length floor: prose is short after the marker word, a real token is not.
+    ["bearer floor", "bearer", "Bearer abc._~+/="],
+    ["prefixed-token floor", "prefixedToken", "sk-ant-key"],
+    // A character class: with `~ + /` a path clears any floor by crossing `/`.
+    ["path punctuation", "prefixedToken", "packages/sk-utils/index.ts"],
+    // Weak prefixes: `sk_`/`xox_` with no vendor infix is ordinary snake_case.
+    ["weak sk_ prefix", "prefixedToken", "sk_buff_alloc"],
+    ["weak xox_ prefix", "prefixedToken", "xox_handler_state"],
+  ] as const;
+
+  for (const [name, shape, value] of narrowings) {
+    assert.equal(matches(CREDENTIAL_PATTERNS[shape], value), true, `${name}: redaction must still cover it`);
+    assert.equal(matches(CREDENTIAL_REJECTION_PATTERNS[shape], value), false, `${name}: rejection must let it pass`);
+  }
+
+  // The narrowings must not open a hole: the vendor forms of the same shapes
+  // stay rejected.
+  for (const [name, credential] of [
+    ["Stripe", "sk_live_51H8examplekey0123"],
+    ["Slack", "xoxb-1234-5678-abcdefghijkl"],
+    ["GitHub", "ghp_abcdefghijklmnop"],
+  ] as const) {
+    assert.equal(
+      matches(CREDENTIAL_REJECTION_PATTERNS.prefixedToken, credential),
+      true,
+      `${name} keys must stay rejected`
+    );
+  }
+});
 
 const cases = [
   {

@@ -1,5 +1,10 @@
+/** Defines browser-facing task-board projections and mutation inputs for the web app. */
+
+/* —— Imports —— */
+
 import {
   agentRoleValues,
+  automationStageAllowedRoles,
   evaluatorProfileValues,
   gateKindValues,
   planRevisionStateValues,
@@ -21,6 +26,8 @@ import {
   type WorkflowStage,
 } from "./data/wire";
 import type { TolerantDeclaredChild } from "@shared/task-board-contract/validate";
+
+/* —— View vocabulary and automation policy —— */
 
 export type { ParkCategory, WorkflowStage };
 
@@ -60,17 +67,7 @@ export type WorkItemStage = (typeof workItemStageValues)[number];
 export type WorkItemTaskType = (typeof workItemTaskTypeValues)[number];
 export type GateKind = (typeof gateKindValues)[number] | typeof unrecognizedState;
 export const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = workItemStageValues;
-export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = {
-  refinement: ["manager"],
-  project_resolution: ["manager"],
-  research: ["engineer", "verifier"],
-  planning: ["engineer"],
-  implementation: ["engineer"],
-  testing: ["engineer", "verifier"],
-  verification: ["verifier"],
-  human_review: [],
-  deployment: [],
-};
+export const AUTOMATION_STAGE_ALLOWED_ROLES = automationStageAllowedRoles;
 export type WorkItemProjectTarget = { mode: "auto" } | { mode: "explicit"; projectId: string };
 
 export type AutomationEvaluatorProfile = (typeof evaluatorProfileValues)[number];
@@ -114,6 +111,8 @@ export interface SaveAutomationConfigurationInput {
   agentTypes: AutomationAgentType[];
   stages: AutomationStageConfiguration[];
 }
+
+/* —— Board projections —— */
 
 export interface BoardWorkItem {
   id: string;
@@ -336,6 +335,8 @@ export interface BoardSnapshot {
   runs: BoardRun[];
 }
 
+/* —— Workflow and project projections —— */
+
 export interface WorkflowPlan {
   planRevisionId: string;
   workItemId: string;
@@ -436,6 +437,8 @@ export interface HostDirectoryListing {
   entries: HostDirectoryEntry[];
   truncated: boolean;
 }
+
+/* —— Mutation inputs —— */
 
 export interface CreateProjectInput {
   name: string;

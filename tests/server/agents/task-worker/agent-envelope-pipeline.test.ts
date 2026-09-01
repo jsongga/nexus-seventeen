@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { agentPrompt } from "#server/agents/task-worker/agent-envelope";
+import { agentPrompt, assertCredentialSafe } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { context } from "./helpers.js";
 
@@ -43,6 +43,62 @@ const CROSS_REPO_CONTEXT = {
   sha: "c".repeat(40),
   markdown: "# Published provider interface 😀 𠀀\n\n- `GET /v1/orders`\n",
 } as const;
+
+test("credential-safety rejects the shared recognition shapes without weakening AWS detection", () => {
+  const credentials = [
+    ["Stripe secret key", "sk_live_51H8examplekey0123"],
+    ["Anthropic key", "sk-ant-api03-examplekey0123"],
+    ["GitHub token", "ghp_abcdefghijklmnop"],
+    ["generic Slack prefix", "xoxz-examplekey0123"],
+    ["Bearer token", "Bearer abc._~+/=abcdefgh"],
+    ["multiline PEM", "-----BEGIN pkcs8 PRIVATE KEY-----\nlowercase material\n-----END pkcs8 PRIVATE KEY-----"],
+    ["AWS access key", "AKIA1234567890ABCDEF"],
+    ["URL credential", "https://user:supersecret@example.com/repo.git"],
+  ] as const;
+
+  for (const [name, credential] of credentials) {
+    assert.throws(
+      () => assertCredentialSafe(`Prompt containing ${credential}`, "Agent prompt"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === "Agent prompt failed the credential-safety filter" &&
+        error.name === "AgentProcessError",
+      name
+    );
+  }
+});
+
+// This filter is handed JSON.stringify(request.context), which carries the work
+// item's own words and, in workspaceRefs, a list of repository paths. Rejection
+// kills the run before any work happens, so prose and paths that merely look
+// credential-adjacent must survive it. Every narrowing in the rejection set
+// exists for one of these lines.
+test("credential-safety passes prose and paths that merely look credential-adjacent", () => {
+  for (const value of [
+    "Add Bearer auth to the orders API",
+    "The client sends a Bearer token on every request",
+    "Document the sk-ant- prefixed keys in the runbook",
+    "Rotate the AKIA prefix documentation",
+    "Publish npm_ scoped packages",
+    "Fix sk_buff_alloc handling in the packet path",
+    "Rename sk_stream_wait_memory in the driver",
+    "locales/sk-SK/messages.json",
+    "packages/sk-utils/index.ts",
+    "tools/sk-lint/config.json",
+    "Docs live at https://cdn.example.com/sk-SK/guide.html",
+  ]) {
+    assert.doesNotThrow(() => assertCredentialSafe(value, "Agent context"), value);
+  }
+});
+
+// Detection must not carry state between calls: a global pattern would resume
+// at the previous match offset and let the next value through.
+test("credential-safety gives the same answer on repeated calls", () => {
+  const value = "context with ghp_abcdefghijklmnop inside";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    assert.throws(() => assertCredentialSafe(value, "Agent context"), `attempt ${attempt}`);
+  }
+});
 
 function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {
   return {

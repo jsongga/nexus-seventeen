@@ -328,6 +328,20 @@ export const WORK_ITEM_STAGES = [
 ] as const;
 export type WorkItemStage = (typeof WORK_ITEM_STAGES)[number];
 
+// This authorization table is part of the stage vocabulary: adding a stage must
+// define its eligible agent roles here before the contract can typecheck.
+export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, readonly AgentRole[]>> = Object.freeze({
+  refinement: Object.freeze(["manager"] as const),
+  project_resolution: Object.freeze(["manager"] as const),
+  research: Object.freeze(["engineer", "verifier"] as const),
+  planning: Object.freeze(["engineer"] as const),
+  implementation: Object.freeze(["engineer"] as const),
+  testing: Object.freeze(["engineer", "verifier"] as const),
+  verification: Object.freeze(["verifier"] as const),
+  human_review: Object.freeze([] as const),
+  deployment: Object.freeze([] as const),
+} satisfies Record<WorkItemStage, readonly AgentRole[]>);
+
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 

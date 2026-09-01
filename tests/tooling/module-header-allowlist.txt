@@ -17,7 +17,6 @@ src/server/agents/task-fleet/index.ts
 src/server/agents/task-fleet/main.ts
 src/server/agents/task-fleet/runtime.ts
 src/server/agents/task-fleet/types.ts
-src/server/agents/task-worker/agent-envelope.ts
 src/server/agents/task-worker/contained-cli-launcher.ts
 src/server/agents/task-worker/http-board-client.ts
 src/server/agents/task-worker/index.ts
@@ -47,7 +46,6 @@ src/server/docs-publish/publish.ts
 src/server/docs-publish/retry.ts
 src/server/docs-publish/sink.ts
 src/server/shared/claim-context.ts
-src/server/shared/redact.ts
 src/server/shared/sections.ts
 src/server/task-board/board.ts
 src/server/task-board/canonical.ts
@@ -114,7 +112,6 @@ src/web/task-board/project/ThreadPipelineTable.tsx
 src/web/task-board/project/WorkspaceHeader.tsx
 src/web/task-board/routing/routing.ts
 src/web/task-board/routing/useHashRoute.ts
-src/web/task-board/types.ts
 src/web/task-board/views/AutomationPage.tsx
 src/web/task-board/views/CreateDialogs.tsx
 src/web/task-board/views/LedgersPage.tsx

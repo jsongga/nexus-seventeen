@@ -1,3 +1,7 @@
+/** Builds bounded agent prompts and validates provider output at the task-worker boundary. */
+
+/* —— Imports —— */
+
 import {
   AGENT_GAP_REPORT_MAX_CHARACTERS,
   AGENT_ROLES,
@@ -24,9 +28,12 @@ import {
   type AgentRole,
 } from "#shared/task-board-contract";
 import { AgentProcessError, type RuntimeEvent } from "../runtime/adapter.js";
+import { CREDENTIAL_REJECTION_PATTERNS } from "../../shared/redact.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";
+
+/* —— Structured result schema —— */
 
 const MAX_QUEUED_ACTIVITY = 64;
 
@@ -368,13 +375,7 @@ export const RESULT_SCHEMA = Object.freeze({
   ],
 } as const);
 
-const SECRET_PATTERNS = Object.freeze([
-  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/iu,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/iu,
-  /\b(?:sk-(?:proj-|ant-)?|github_pat_|gh[pousr]_|glpat-|npm_|xox[baprs]-)[A-Za-z0-9._-]{8,}/u,
-  /\bAKIA[0-9A-Z]{16}\b/u,
-  /\bhttps?:\/\/[^\s/:@]{1,128}:[^\s/@]{4,256}@/iu,
-] as const);
+/* —— Launch safeguards and activity —— */
 
 export interface ProviderArgumentOptions {
   readonly model: string;
@@ -443,8 +444,11 @@ export function configText(value: string, label: string, maximum: number): strin
   return value;
 }
 
+// Rejection, not redaction: this refuses the whole prompt, context or provider
+// output rather than rewriting a span, so it uses the rejection set (same
+// credential shapes, prose-safe length floors) from server/shared/redact.ts.
 export function assertCredentialSafe(value: string, label: string): void {
-  if (SECRET_PATTERNS.some((pattern) => pattern.test(value)))
+  if (Object.values(CREDENTIAL_REJECTION_PATTERNS).some((pattern) => pattern.test(value)))
     throw new AgentProcessError(`${label} failed the credential-safety filter`);
 }
 
@@ -459,6 +463,8 @@ export function agentRole(request: AgentLaunchRequest): AgentRole {
   }
   return value as AgentRole;
 }
+
+/* —— Prompt assembly —— */
 
 function promptBlock(prompts: PromptRegistry, name: string, vars: Readonly<Record<string, string>> = {}): string {
   const rendered = prompts.render(name, vars);
@@ -658,6 +664,8 @@ export function agentPrompt(request: AgentLaunchRequest, prompts: PromptRegistry
     trailer,
   ].join("\n");
 }
+
+/* —— Provider output —— */
 
 function outputObject(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))

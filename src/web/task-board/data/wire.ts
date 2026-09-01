@@ -11,11 +11,15 @@
  *     WakeupReason and AgentTypeEvaluatorProfile; the web calls them
  *     WakeReason and AutomationEvaluatorProfile.
  */
+
+/* —— Shared contract imports —— */
+
 import {
   ACTOR_TYPES,
   AGENT_ROLES,
   AGENT_STATUSES,
   AUTOMATION_CONFIGURATION_MAX_BYTES,
+  AUTOMATION_STAGE_ALLOWED_ROLES,
   EVALUATOR_PROFILES,
   GATE_KINDS,
   IDENTIFIER_PATTERN,
@@ -54,6 +58,8 @@ import {
   type WorkflowStage,
 } from "@shared/task-board-contract";
 
+/* —— Wire vocabulary aliases —— */
+
 // Prefixed because ./types.ts exports different types under these same three
 // names. Importing the wrong one compiles but is silently incorrect.
 export type WireAgentStatus = AgentStatus;
@@ -87,6 +93,7 @@ export const workItemStateValues = WORK_ITEM_STATES;
 export const workItemPhaseValues = WORK_ITEM_PHASES;
 export const workItemTaskTypeValues = WORK_ITEM_TASK_TYPES;
 export const workItemStageValues = WORK_ITEM_STAGES;
+export const automationStageAllowedRoles = AUTOMATION_STAGE_ALLOWED_ROLES;
 export const evaluatorProfileValues = EVALUATOR_PROFILES;
 export const planRevisionStateValues = PLAN_REVISION_STATES;
 export const workNodeStateValues = WORK_NODE_STATES;
@@ -94,6 +101,8 @@ export const stageHandoffOutcomeValues = STAGE_HANDOFF_OUTCOMES;
 export const notificationKindValues = NOTIFICATION_KINDS;
 export const parkCategoryValues = PARK_CATEGORIES;
 export const gateKindValues = GATE_KINDS;
+
+/* —— Runtime validator sets —— */
 
 /** Runtime validators, derived so a contract change reaches parsing automatically. */
 export const rawAgentStatuses = new Set(AGENT_STATUSES);

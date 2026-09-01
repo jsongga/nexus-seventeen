@@ -184,6 +184,16 @@ inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
 repositories as their own records (project → repositories), let a declared
 child target a repository, and migrate `repo_path` into it.
 
+**9.10. Credential filter precision at the agent boundary** _(queued
+2026-08-31)_ — `assertCredentialSafe` rejects a whole prompt, context or
+provider output fail-closed, and it is handed `JSON.stringify(request.context)`,
+which carries the work item's own words. Campaign 11 restored the length floors
+that keep "add Bearer auth" out of it, but a long prose word still trips the
+rule: "Bearer authentication" (14 characters) fails a run today, and did before
+campaign 11 as well. Recognize a credential by shape rather than length alone
+(a real token carries digits or separators; a dictionary word does not), or move
+the boundary from rejection to redaction so prose costs a marker, not a run.
+
 **10. Decomposition + cross-repo** _(shipped 2026-08-29)_ — parent/child work
 items (`coordinating` parent, children created pre-confirmed at plan confirm),
 the independently-mergeable split rule by change shape, Expand → Migrate →
