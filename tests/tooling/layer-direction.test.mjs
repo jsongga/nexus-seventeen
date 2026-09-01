@@ -9,6 +9,7 @@ import ts from "typescript";
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDirectory, "../..");
 const taskBoardRoot = resolve(repositoryRoot, "src/server/task-board");
+const contractValidateRoot = resolve(repositoryRoot, "src/shared/task-board-contract/validate");
 const moduleExtensions = new Set([".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]);
 
 async function collectModules(directory) {
@@ -175,6 +176,61 @@ function pathLayer(root, path) {
  * including modules outside the root, which is where a laundering re-export
  * would naturally live.
  */
+/**
+ * Reports an import cycle for each back edge reachable from the modules directly
+ * under `root` — enough to prove none exists, which is what the callers assert.
+ * A façade split into modules that import each other in a loop has moved the
+ * tangle rather than removed it, and a loop that leaves the directory and comes
+ * back is still a loop, so the walk follows edges out of `root` too.
+ */
+export async function findModuleCycles(root, options = {}) {
+  const packageRoot = await realpath(options.packageRoot ?? repositoryRoot);
+  const emitDirectory = options.emitDirectory ?? "build";
+  const sourceDirectory = options.sourceDirectory ?? "src";
+  const context = {
+    packageRoot,
+    subpathImports: await readSubpathImports(packageRoot, emitDirectory, sourceDirectory),
+  };
+  const searchRoot = await realpath(options.searchRoot ?? resolve(packageRoot, sourceDirectory));
+  const resolvedRoot = await realpath(root);
+  const modules = new Set(await collectModules(resolvedRoot));
+
+  // Parsed on demand and bounded by `searchRoot`, so a loop that leaves the
+  // directory and returns is followed rather than dropped at the boundary.
+  const edges = new Map();
+  const edgesFor = async (path) => {
+    const cached = edges.get(path);
+    if (cached !== undefined) return cached;
+    const targets = [];
+    edges.set(path, targets);
+    for (const specifier of moduleSpecifiers(path, await readFile(path, "utf8"))) {
+      const target = await resolveSpecifier(path, specifier, context);
+      if (target !== null && within(searchRoot, target)) targets.push(target);
+    }
+    return targets;
+  };
+
+  const cycles = [];
+  const state = new Map();
+  const stack = [];
+  const walk = async (path) => {
+    state.set(path, "open");
+    stack.push(path);
+    for (const target of await edgesFor(path)) {
+      if (state.get(target) === "open") {
+        const loop = [...stack.slice(stack.indexOf(target)), target];
+        // A cycle living entirely outside the directory under review is real,
+        // but it is not this check's business.
+        if (loop.some((p) => modules.has(p))) cycles.push(loop.map((p) => pathFrom(resolvedRoot, p)).join(" -> "));
+      } else if (state.get(target) === undefined) await walk(target);
+    }
+    stack.pop();
+    state.set(path, "closed");
+  };
+  for (const modulePath of modules) if (state.get(modulePath) === undefined) await walk(modulePath);
+  return { moduleCount: modules.size, cycles: [...new Set(cycles)].sort() };
+}
+
 export async function checkTaskBoardLayerDirection(root, options = {}) {
   const packageRoot = await realpath(options.packageRoot ?? repositoryRoot);
   const emitDirectory = options.emitDirectory ?? "build";
@@ -314,6 +370,37 @@ test("no layer directory is nested inside another layer", async () => {
   };
   await walk(taskBoardRoot);
   assert.deepEqual(nested, [], "a layer directory nested inside another layer defeats the direction rule");
+});
+
+test("the contract's validation modules import each other acyclically", async () => {
+  const result = await findModuleCycles(contractValidateRoot);
+  assert.ok(result.moduleCount >= 6, `expected the split validation modules, found ${result.moduleCount}`);
+  assert.deepEqual(result.cycles, [], "validate/ modules must not import each other in a loop");
+});
+
+test("the cycle finder reports a planted loop", async (t) => {
+  const root = await createFixture(t, {
+    "package.json": FIXTURE_MANIFEST,
+    "src/a.ts": 'export { b } from "./b.js";\n',
+    "src/b.ts": 'export { c } from "./c.js";\nexport const b = 1;\n',
+    "src/c.ts": 'export { b } from "./a.js";\nexport const c = 1;\n',
+    "src/loner.ts": "export const loner = 1;\n",
+  });
+  const result = await findModuleCycles(resolve(root, "src"), fixtureOptions(root));
+  assert.equal(result.moduleCount, 4);
+  assert.deepEqual(result.cycles, ["a.ts -> b.ts -> c.ts -> a.ts"]);
+});
+
+test("the cycle finder follows a loop that leaves the directory and returns", async (t) => {
+  const root = await createFixture(t, {
+    "package.json": FIXTURE_MANIFEST,
+    "src/inner/a.ts": 'export { b } from "./b.js";\n',
+    "src/inner/b.ts": 'export { a } from "../outside.js";\nexport const b = 1;\n',
+    "src/outside.ts": 'export { a } from "./inner/a.js";\nexport const a = 1;\n',
+  });
+  const result = await findModuleCycles(resolve(root, "src/inner"), fixtureOptions(root));
+  assert.equal(result.moduleCount, 2);
+  assert.deepEqual(result.cycles, ["a.ts -> b.ts -> ../outside.ts -> a.ts"]);
 });
 
 test("layer checker reports every planted violation by file and specifier", async (t) => {
