@@ -4,18 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { Modal } from "../components/ui";
 import type { TaskBoardClient } from "../data/client";
 import type { BoardChildWorkItem, BoardQuestion, BoardTask, BoardWorkItem } from "../types";
-import {
-  AttestDeploymentForm,
-  ChildrenSection,
-  ContractAttestationGate,
-  FinalApprovalActions,
-  FinalRejectionForm,
-  GapReportSection,
-  ParentWorkItemLink,
-  WorkItemFooterActions,
-  WorkItemDetail,
-  familyNotParentAfterSnapshot,
-} from "./WorkItemDetail";
+import { WorkItemDetail } from "./WorkItemDetail";
+import { FinalApprovalActions, FinalRejectionForm, WorkItemFooterActions } from "./work-item/approval";
+import { AttestDeploymentForm, ContractAttestationGate } from "./work-item/deployment";
+import { GapReportSection } from "./work-item/evidence";
+import { ChildrenSection, ParentWorkItemLink, familyNotParentAfterSnapshot } from "./work-item/family";
 
 vi.mock("../components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../components/ui")>();

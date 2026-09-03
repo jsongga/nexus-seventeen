@@ -1,12 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { BoardPauseBanner, NotificationsBlock, markNotificationReadAndRefresh } from "../BoardApp";
+import { markNotificationReadAndRefresh } from "../BoardApp";
+import { NotificationsBlock } from "../board/notifications";
+import { BoardPauseBanner } from "../board/pause";
 import type { BoardNotifications, TaskBoardClient } from "../data/client";
 import type { RawBoardNotification, RawBoardPause, RawWorkItemAudit } from "../data/parse";
 import type { BoardSnapshot, BoardWorkItem, BoardWorkItemTransition } from "../types";
 import { WorkItemRow } from "./TaskList";
-import { AuditSection, StatusTimeline } from "./WorkItemDetail";
+import { AuditSection, StatusTimeline } from "./work-item/observability";
 import { WorkspaceFrame } from "./WorkspaceSidebar";
 
 const now = "2026-08-21T12:00:00.000Z";

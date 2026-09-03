@@ -3,13 +3,11 @@ import {
   BoardPauseVersionGuard,
   WorkItemDetailLoadCoordinator,
   changeBoardPause,
-  routedWorkItemSelection,
-  pausePopoverShouldClose,
   refreshBoardSnapshot,
-  resolveDialogTriggerAction,
-  snapshotLostSelectedWorkItem,
-  workItemDetailReloadPending,
 } from "./BoardApp";
+import { resolveDialogTriggerAction } from "./board/dialog-triggers";
+import { pausePopoverShouldClose } from "./board/pause";
+import { routedWorkItemSelection, snapshotLostSelectedWorkItem, workItemDetailReloadPending } from "./board/selection";
 import { BoardApiError, type TaskBoardClient } from "./data/client";
 import type { RawBoardPause } from "./data/parse";
 import { NotificationLoadCoordinator } from "./model/notification-load";

@@ -2,14 +2,9 @@ import { createElement, createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { PipelineSummary } from "@shared/task-board-contract";
-import { pipelineFileReview, pipelineAssumptionReview } from "../model/work-item-detail";
-import {
-  DesignRecordDetails,
-  FinalApprovalActions,
-  FinalRejectionForm,
-  PipelineSummaryDetails,
-  ReviewFindingsPanel,
-} from "./WorkItemDetail";
+import { pipelineFileReview, pipelineAssumptionReview } from "../../model/work-item-detail";
+import { FinalApprovalActions, FinalRejectionForm } from "./approval";
+import { DesignRecordDetails, PipelineSummaryDetails, ReviewFindingsPanel } from "./evidence";
 
 const summary: PipelineSummary = {
   commits: [{ sha: "0123456789abcdef0123456789abcdef01234567", subject: "Add the approval view" }],

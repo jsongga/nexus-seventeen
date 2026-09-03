@@ -5,14 +5,7 @@ import { Button, cn } from "../components/ui";
 import type { BoardAgent, BoardSnapshot } from "../types";
 import type { RawBoardPause } from "../data/parse";
 import { agentWorkLabel, taskNeedsHumanAction } from "../model/workspace-model";
-
-export type BoardPage =
-  | { kind: "tasks"; taskId?: string }
-  | { kind: "intake"; workItemId: string }
-  | { kind: "automation" }
-  | { kind: "ledgers" }
-  | { kind: "project"; projectId: string }
-  | { kind: "agent"; agentId: string };
+import type { BoardPage } from "../routing/routing";
 
 function pageIs(page: BoardPage, kind: BoardPage["kind"], id?: string): boolean {
   if (kind === "tasks" && page.kind === "intake") return true;

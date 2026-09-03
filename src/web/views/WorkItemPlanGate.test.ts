@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runWorkItemDetailMutation } from "../BoardApp";
 import { BoardApiError } from "../data/client";
 import type { DetailedWorkflowPlan } from "../model/work-item-detail";
-import { PlanApprovalActions, PlanRecordDetails, PlanRejectionForm } from "./WorkItemDetail";
+import { PlanApprovalActions, PlanRecordDetails, PlanRejectionForm } from "./work-item/plan";
 
 const timestamp = "2026-08-19T12:00:00.000Z";
 

@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -15,12 +15,11 @@ import { Button, Card, cn } from "./components/ui";
 import { AutomationPage } from "./views/AutomationPage";
 import { emptyAutomationEditorState } from "./model/automation-model";
 import { BoardApiError, createTaskBoardClient, type BoardNotifications, type TaskBoardClient } from "./data/client";
-import { formatShortDateTime } from "./data/date-format";
-import type { RawBoardNotification, RawBoardPause } from "./data/parse";
-import { missingRouteFallback, pageToHash } from "./routing/routing";
+import { type RawBoardNotification, type RawBoardPause } from "./data/parse";
+import { missingRouteFallback, pageToHash, type BoardPage } from "./routing/routing";
 import { useHashRoute } from "./routing/useHashRoute";
 import { AgentPage, ProjectPage } from "./views/WorkspacePages";
-import { WorkspaceFrame, type BoardPage } from "./views/WorkspaceSidebar";
+import { WorkspaceFrame } from "./views/WorkspaceSidebar";
 import { WorkItemDetail } from "./views/WorkItemDetail";
 import { LedgersPage } from "./views/LedgersPage";
 import { CREATE_DIALOG_SWITCH_TARGET, CreateDialogs, type DialogName } from "./views/CreateDialogs";
@@ -47,7 +46,6 @@ import {
 import { createTaskDetailDraftState, taskDetailDraftReducer } from "./model/task-detail-drafts";
 import { signInFailure } from "./model/sign-in-failure";
 import { NotificationLoadCoordinator } from "./model/notification-load";
-import { notificationKindLabel } from "./model/work-item-labels";
 import { groupWorkItems } from "./model/work-item-tree";
 import { decompositionFamilyVersionKey } from "./model/work-item-detail";
 import type {
@@ -57,126 +55,15 @@ import type {
   CreateProjectInput,
   CreateWorkItemInput,
 } from "./types";
-
-type DialogOpenOptions = Readonly<{
-  anchor?: RefObject<HTMLElement | null>;
-  projectId?: string;
-}>;
-
-type DialogTriggerState = Readonly<{
-  name: Exclude<DialogName, null>;
-  anchor: RefObject<HTMLElement | null> | null;
-  dirty: boolean;
-}>;
-
-type DialogTriggerRequest = Readonly<{
-  name: Exclude<DialogName, null>;
-  anchor: RefObject<HTMLElement | null> | null;
-}>;
-
-export type DialogTriggerAction = "toggle-close" | "re-anchor" | "switch-clean" | "switch-dirty";
-
-export function resolveDialogTriggerAction(
-  current: DialogTriggerState,
-  requested: DialogTriggerRequest
-): DialogTriggerAction {
-  if (current.name !== requested.name) {
-    return current.dirty ? "switch-dirty" : "switch-clean";
-  }
-  return current.anchor === requested.anchor ? "toggle-close" : "re-anchor";
-}
-
-type PendingDialogAction =
-  | Readonly<{ kind: "open"; name: Exclude<DialogName, null>; options: DialogOpenOptions }>
-  | Readonly<{ kind: "navigate"; page: BoardPage; mode: "push" | "replace" }>;
-
-export function NotificationsBlock({
-  notifications,
-  loading,
-  error,
-  markingId,
-  onMarkRead,
-  onOpenWorkItem,
-  onRetry,
-}: {
-  notifications: BoardNotifications | null;
-  loading: boolean;
-  error: string | null;
-  markingId: string | null;
-  onMarkRead: (notification: RawBoardNotification) => void;
-  onOpenWorkItem: (workItemId: string) => void;
-  onRetry: () => void;
-}) {
-  const unread = notifications?.unread ?? [];
-  return (
-    <section aria-labelledby="notifications-heading" aria-live="polite">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Bell size={15} className="text-muted" aria-hidden="true" />
-          <h2 id="notifications-heading" className="font-display text-lg font-light tracking-[0.01em] text-ink">
-            Notifications
-          </h2>
-        </div>
-        <span className="text-xs text-muted">{unread.length} unread</span>
-      </div>
-      {error === null ? null : (
-        <div
-          className="mb-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-urgent/20 bg-urgent-soft px-3.5 py-3 text-sm text-urgent"
-          role="alert"
-        >
-          <span>{error}</span>
-          <Button size="sm" onClick={onRetry}>
-            Retry
-          </Button>
-        </div>
-      )}
-      {loading && notifications === null ? (
-        <div
-          className="flex min-h-20 items-center justify-center gap-2 rounded-md border border-line bg-muted-surface text-sm text-muted"
-          role="status"
-        >
-          <RefreshCw size={15} className="animate-spin" /> Loading notifications…
-        </div>
-      ) : unread.length === 0 ? (
-        <p className="rounded-md border border-line bg-muted-surface px-3.5 py-4 text-sm text-muted">
-          No unread notifications.
-        </p>
-      ) : (
-        <ol className="divide-y divide-line rounded-md border border-line bg-card">
-          {unread.map((notification) => {
-            return (
-              <li
-                key={notification.notificationId}
-                className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between"
-              >
-                <div className="min-w-0 flex-1">
-                  {notification.workItemId === null ? (
-                    <p className="text-sm leading-6 text-ink">{notification.summary}</p>
-                  ) : (
-                    <button
-                      type="button"
-                      className="text-left text-sm leading-6 text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
-                      onClick={() => onOpenWorkItem(notification.workItemId!)}
-                    >
-                      {notification.summary}
-                    </button>
-                  )}
-                  <p className="mt-1 text-[11px] text-muted">
-                    {notificationKindLabel[notification.kind]} ·{" "}
-                    <time dateTime={notification.createdAt}>{formatShortDateTime(notification.createdAt)}</time>
-                  </p>
-                </div>
-                <Button size="sm" disabled={markingId !== null} onClick={() => onMarkRead(notification)}>
-                  {markingId === notification.notificationId ? "Marking…" : "Mark read"}
-                </Button>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </section>
-  );
-}
+import { type DialogOpenOptions, type PendingDialogAction, resolveDialogTriggerAction } from "./board/dialog-triggers";
+import { NotificationsBlock } from "./board/notifications";
+import { BoardPauseBanner, pausePopoverShouldClose } from "./board/pause";
+import {
+  type WorkItemDetailLoadResult,
+  routedWorkItemSelection,
+  snapshotLostSelectedWorkItem,
+  workItemDetailReloadPending,
+} from "./board/selection";
 
 export async function markNotificationReadAndRefresh(
   client: TaskBoardClient,
@@ -218,25 +105,6 @@ export async function runWorkItemDetailMutation(
   }
 }
 
-export function BoardPauseBanner({ boardPause }: { boardPause: RawBoardPause | null }) {
-  if (boardPause?.paused !== true) return null;
-  return (
-    <div
-      className="border-b border-caution-border bg-caution-soft px-4 py-3 text-caution sm:px-8 lg:px-12"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-2.5">
-        <CirclePause className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
-        <div>
-          <p className="text-sm font-semibold">Board paused</p>
-          <p className="mt-0.5 text-xs leading-5">{boardPause.reason ?? "No reason was provided."}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export async function changeBoardPause(
   client: TaskBoardClient,
   boardPause: RawBoardPause,
@@ -251,10 +119,6 @@ export async function changeBoardPause(
   });
 }
 
-export function pausePopoverShouldClose(boardPause: RawBoardPause | null): boolean {
-  return boardPause === null || boardPause.paused;
-}
-
 /** Keeps delayed reads from replacing a newer pause mutation response. */
 export class BoardPauseVersionGuard {
   #latestVersion: number | null = null;
@@ -265,12 +129,6 @@ export class BoardPauseVersionGuard {
     return true;
   }
 }
-
-export type WorkItemDetailLoadResult =
-  | Readonly<{ kind: "loaded"; detail: BoardWorkItemDetail }>
-  | Readonly<{ kind: "not-found" }>
-  | Readonly<{ kind: "failed"; error: unknown }>
-  | Readonly<{ kind: "stale" }>;
 
 /** Aborts superseded detail reads and rejects responses from older navigation intents. */
 export class WorkItemDetailLoadCoordinator {
@@ -307,35 +165,6 @@ export class WorkItemDetailLoadCoordinator {
   #isCurrent(generation: number, controller: AbortController): boolean {
     return generation === this.#generation && controller === this.#controller && !controller.signal.aborted;
   }
-}
-
-export function snapshotLostSelectedWorkItem(
-  workItemId: string,
-  previous: readonly Pick<BoardWorkItem, "id">[],
-  current: readonly Pick<BoardWorkItem, "id">[]
-): boolean {
-  return (
-    previous.some((workItem) => workItem.id === workItemId) && !current.some((workItem) => workItem.id === workItemId)
-  );
-}
-
-export function workItemDetailReloadPending(page: BoardPage, sourceHash: string | null): boolean {
-  return page.kind === "intake" && sourceHash === pageToHash(page);
-}
-
-export function routedWorkItemSelection(
-  page: BoardPage,
-  snapshotWorkItems: readonly BoardWorkItem[],
-  loadedDetail: BoardWorkItemDetail | null,
-  previousSnapshotWorkItems: readonly Pick<BoardWorkItem, "id">[]
-): BoardWorkItem | BoardWorkItemDetail | undefined {
-  if (page.kind !== "intake") return undefined;
-  const selected = snapshotWorkItems.find((workItem) => workItem.id === page.workItemId);
-  const cachedSelectionWasRemoved =
-    selected === undefined &&
-    loadedDetail?.id === page.workItemId &&
-    snapshotLostSelectedWorkItem(page.workItemId, previousSnapshotWorkItems, snapshotWorkItems);
-  return selected ?? (loadedDetail?.id === page.workItemId && !cachedSelectionWasRemoved ? loadedDetail : undefined);
 }
 
 export async function refreshBoardSnapshot(

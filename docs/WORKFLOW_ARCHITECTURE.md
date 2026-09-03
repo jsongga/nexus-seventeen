@@ -259,7 +259,7 @@ Catalog paths are container paths under `/var/lib/steward/repos`. Operators must
 | Readiness, merge policy, and attestation        | [`decomposition-readiness.ts`](../src/server/task-board/collaborators/decomposition-readiness.ts), [`projects.ts`](../src/server/task-board/collaborators/projects.ts)                                    |
 | Published-interface reads and claim context     | [`interface-context.ts`](../src/server/task-board/collaborators/interface-context.ts), [`runs.ts`](../src/server/task-board/collaborators/runs.ts)                                                        |
 | Recovery, cancellation, and request diagnostics | [`work-items.ts`](../src/server/task-board/collaborators/work-items.ts), [`verify-attempts.ts`](../src/server/task-board/collaborators/verify-attempts.ts), [`http.ts`](../src/server/task-board/http.ts) |
-| Parent/child operator controls                  | [`WorkItemDetail.tsx`](../src/web/views/WorkItemDetail.tsx), [`work-item-detail.ts`](../src/web/model/work-item-detail.ts)                                                                                |
+| Parent/child operator controls                  | [`family.tsx`](../src/web/views/work-item/family.tsx), [`work-item-detail.ts`](../src/web/model/work-item-detail.ts)                                                                                      |
 
 ## Editable skills
 

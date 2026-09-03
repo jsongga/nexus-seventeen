@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BoardPage } from "../views/WorkspaceSidebar";
-import { hashToPage, missingRouteFallback, pageToHash } from "./routing";
+import { hashToPage, missingRouteFallback, pageToHash, type BoardPage } from "./routing";
 
 const pages: BoardPage[] = [
   { kind: "tasks" },

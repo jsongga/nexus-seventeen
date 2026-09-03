@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { hashToPage, pageToHash } from "./routing";
-import type { BoardPage } from "../views/WorkspaceSidebar";
+import { hashToPage, pageToHash, type BoardPage } from "./routing";
 
 type HashNavigationMode = "push" | "replace";
 

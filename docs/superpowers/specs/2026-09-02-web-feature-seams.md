@@ -127,6 +127,35 @@ verifiable by construction — declaration text is unchanged and Playwright prov
 mounts. Z needs its own review budget and its own arcs, and bundling it here would spend that
 budget on the same commit as 30 mechanical moves.
 
+## The banner pass is not possible, and campaign 14 gets a table instead
+
+Task 1 tried to leave `/* —— Section —— */` banners inside the two shells, marking where a
+hooks extraction would cut. **Prettier and the comment ratchet are jointly incompatible with
+that**, and neither can be blamed: a banner inside a function body gets indented by Prettier to
+match its surroundings, and `tests/tooling/code-style.test.mjs` requires the banner form at
+column zero. Any marker carrying the `——` pair in a comment is checked, so a `//` variant fails
+too. Banners are therefore a top-level-only convention in this repository — worth knowing before
+some future campaign rediscovers it.
+
+The cut points go here instead, named by the symbols that bound them rather than by line —
+campaign 11 established that convention precisely because these two files are about to be
+edited:
+
+| Shell                | Region                     | Runs from             | Contains                                                    |
+| -------------------- | -------------------------- | --------------------- | ----------------------------------------------------------- |
+| `WorkItemDetail.tsx` | state                      | `seededFamily`        | 28 `useState`, 9 `useRef`                                   |
+|                      | derived                    | `detailHeadingId`     | ids, `actionContexts`, `affordances`, the family predicates |
+|                      | loads and effects          | the first `useEffect` | 10 `useEffect`                                              |
+|                      | actions                    | `save`                | the `submit*` handlers                                      |
+|                      | render                     | `return (`            | JSX                                                         |
+| `BoardApp.tsx`       | state                      | `client`              | 21 `useState`, 19 `useRef`, 8 `useMemo`                     |
+|                      | loads, effects and actions | the first `useEffect` | 11 `useEffect` and every handler                            |
+|                      | render                     | `return (`            | JSX                                                         |
+
+`BoardApp`'s middle region is 984 lines and mixes effects with handlers — it is not one seam
+but several, and finding them is campaign 14's first job rather than something this spec can
+assert from the outside.
+
 ## Alternatives considered
 
 **Split `WorkItemDetail.tsx` by test file, as the roadmap says.** Rejected on measurement: the

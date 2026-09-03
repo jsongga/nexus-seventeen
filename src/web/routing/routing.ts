@@ -1,4 +1,12 @@
-import type { BoardPage } from "../views/WorkspaceSidebar";
+/* —— Route shape —— */
+
+export type BoardPage =
+  | { kind: "tasks"; taskId?: string }
+  | { kind: "intake"; workItemId: string }
+  | { kind: "automation" }
+  | { kind: "ledgers" }
+  | { kind: "project"; projectId: string }
+  | { kind: "agent"; agentId: string };
 
 interface RouteSnapshotIds {
   tasks: readonly { id: string }[];

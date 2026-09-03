@@ -62,13 +62,10 @@ vi.mock("react", async (importOriginal) => {
   };
 });
 
-import {
-  AuditSection,
-  ChildrenSection,
-  PipelineSummaryDetails,
-  StatusTimeline,
-  WorkItemDetail,
-} from "./WorkItemDetail";
+import { WorkItemDetail } from "./WorkItemDetail";
+import { PipelineSummaryDetails } from "./work-item/evidence";
+import { ChildrenSection } from "./work-item/family";
+import { AuditSection, StatusTimeline } from "./work-item/observability";
 
 const timestamp = "2026-08-19T12:00:00.000Z";
 const summary: PipelineSummary = {

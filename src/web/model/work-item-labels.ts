@@ -98,3 +98,14 @@ export function prettyStatus(value: string): string {
 export function workItemStatusLabel(workItem: BoardWorkItem): string {
   return workItemStateLabel[workItem.state];
 }
+
+export function planValueLabel(value: string): string {
+  const label = prettyStatus(value);
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
+
+export function phaseDisplayLabel(phase: BoardWorkItem["phase"]): string {
+  if (phase === null) return "Unphased";
+  if (phase === "unrecognized") return unknownStateLabel;
+  return planValueLabel(phase);
+}
