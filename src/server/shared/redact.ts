@@ -33,6 +33,27 @@ const REJECTED_TOKEN_CHARACTERS = String.raw`[A-Za-z0-9._-]`;
 const REJECTED_BEARER_MINIMUM = 12;
 const REJECTED_TOKEN_MINIMUM = 8;
 
+// Length alone is not enough for the bearer rule: "Bearer authentication" is
+// fourteen characters of ordinary prose, and rejecting it kills an agent run.
+// Neither is "contains a non-letter", which was the first attempt: `.` `-` `/`
+// `_` are all inside the token character class, so a sentence-final full stop
+// turns "Bearer authentication." into a credential — the same bug, one keystroke
+// away. What actually separates them is a **digit**. English words have none,
+// and neither do the CamelCase identifiers a work item is full of
+// (`AuthenticationMiddleware`, `JwtBearerAuthenticationHandler`), while a JWT, a
+// hex token and a base62 token essentially always do.
+//
+// Two gaps, both decisions rather than oversights:
+//   - An all-letter token is not rejected at any length. That is 0.36% of
+//     32-character base62 strings, and roughly one in eight at twelve — but
+//     tokens that short are themselves uncommon, and the persistence path still
+//     redacts every one of them.
+//   - An identifier that does carry a digit ("Bearer OAuth2Middleware") is still
+//     rejected. Rarer than the prose above, and the failure is visible.
+// A length-based safety net was tried and removed: at any threshold low enough
+// to catch a digit-free token it also catches a real class name.
+const REJECTED_BEARER_DIGIT = String.raw`(?=[A-Za-z0-9._~+/=-]*[0-9])`;
+
 /** Recognizes credentials for rewriting. Global: every occurrence is replaced. */
 export const CREDENTIAL_PATTERNS = Object.freeze({
   privateKey: /-----BEGIN ((?:[A-Z0-9 ]+ )?PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/giu,
@@ -51,7 +72,10 @@ const withoutGlobalFlag = (pattern: RegExp): RegExp => new RegExp(pattern.source
 export const CREDENTIAL_REJECTION_PATTERNS = Object.freeze({
   privateKey: withoutGlobalFlag(CREDENTIAL_PATTERNS.privateKey),
   urlCredential: withoutGlobalFlag(CREDENTIAL_PATTERNS.urlCredential),
-  bearer: new RegExp(String.raw`\bBearer\s+${BEARER_CHARACTERS}{${REJECTED_BEARER_MINIMUM},}`, "iu"),
+  bearer: new RegExp(
+    String.raw`\bBearer\s+${REJECTED_BEARER_DIGIT}${BEARER_CHARACTERS}{${REJECTED_BEARER_MINIMUM},}`,
+    "iu"
+  ),
   prefixedToken: new RegExp(
     String.raw`\b${VENDOR_TOKEN_PREFIX}${REJECTED_TOKEN_CHARACTERS}{${REJECTED_TOKEN_MINIMUM},}`,
     "u"

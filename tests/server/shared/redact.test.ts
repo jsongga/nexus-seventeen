@@ -32,6 +32,48 @@ test("the rejection set covers the same shapes and narrows only where documented
   }
 });
 
+test("the bearer rule rejects on a digit, so prose and identifiers survive", () => {
+  const matches = (pattern: RegExp, value: string) =>
+    new RegExp(pattern.source, pattern.flags.replace("g", "")).test(value);
+  const rejects = (value: string) => matches(CREDENTIAL_REJECTION_PATTERNS.bearer, value);
+
+  for (const prose of [
+    "Bearer authentication",
+    // Every one of these was rejected by a "contains a non-letter" rule: the
+    // token character class holds `.` `-` `/` `_`, so ordinary punctuation
+    // satisfied it. This is the regression the digit rule exists to prevent.
+    "Bearer authentication.",
+    "Bearer credentials.",
+    "Bearer authentication-related",
+    "Bearer authentication/authorization",
+    "Bearer authentication.md",
+    "Bearer authorization_header_name",
+    // And these were rejected by a 24-character safety net, which cannot tell a
+    // long token from a long class name.
+    "Bearer AuthenticationMiddleware",
+    "Bearer JwtBearerAuthenticationHandler",
+  ]) {
+    assert.equal(rejects(prose), false, `${prose} must reach the agent`);
+    // Redaction still covers everything rejection lets through, so none of this
+    // can be persisted even though it can be sent.
+    assert.equal(matches(CREDENTIAL_PATTERNS.bearer, prose), true, `${prose} must still redact`);
+  }
+
+  for (const [name, credential] of [
+    ["JWT", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.c2ln"],
+    ["hex", "Bearer 0123456789abcdef0123456789abcdef"],
+    ["Google", "Bearer ya29.a0AfH6SMBx7kQ2mN"],
+    ["base64 HMAC", "Bearer AQIC5wM2LY4Sfcy+RmoNbW9uZA=="],
+  ] as const) {
+    assert.equal(rejects(credential), true, `${name} must be rejected`);
+  }
+
+  // The two gaps, asserted so they stay decisions: an all-letter token of any
+  // length passes, and an identifier carrying a digit does not.
+  assert.equal(rejects("Bearer QwertyUiopAsdfghJklZxcvbnm"), false);
+  assert.equal(rejects("Bearer OAuth2Middleware"), true);
+});
+
 test("rejection narrows exactly three axes, and redaction still covers all of them", () => {
   // Tested through non-global clones so these assertions cannot leave
   // `lastIndex` behind on a pattern the redaction path shares.

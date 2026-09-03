@@ -50,7 +50,8 @@ test("credential-safety rejects the shared recognition shapes without weakening 
     ["Anthropic key", "sk-ant-api03-examplekey0123"],
     ["GitHub token", "ghp_abcdefghijklmnop"],
     ["generic Slack prefix", "xoxz-examplekey0123"],
-    ["Bearer token", "Bearer abc._~+/=abcdefgh"],
+    // A digit is what makes this a token rather than a phrase.
+    ["Bearer token", "Bearer abc._~+/=abcdefg1"],
     ["multiline PEM", "-----BEGIN pkcs8 PRIVATE KEY-----\nlowercase material\n-----END pkcs8 PRIVATE KEY-----"],
     ["AWS access key", "AKIA1234567890ABCDEF"],
     ["URL credential", "https://user:supersecret@example.com/repo.git"],
@@ -86,6 +87,20 @@ test("credential-safety passes prose and paths that merely look credential-adjac
     "packages/sk-utils/index.ts",
     "tools/sk-lint/config.json",
     "Docs live at https://cdn.example.com/sk-SK/guide.html",
+    // Length alone cannot separate these from a token; a digit can. The
+    // punctuated forms are the ones a first attempt at "contains a non-letter"
+    // rejected, because `.` `-` `/` `_` are all token characters.
+    "Switch the proxy from Basic to Bearer authentication",
+    "Switch the proxy from Basic to Bearer authentication.",
+    "Bearer credentials.",
+    "Refactor Bearer authentication-related helpers",
+    "We use Bearer authentication/authorization on the edge",
+    "See docs: Bearer authentication.md",
+    "Bearer authorization_header_name",
+    "Add Bearer AuthenticationMiddleware to the pipeline",
+    "Bearer JwtBearerAuthenticationHandler",
+    "Document the Bearer authorization header",
+    "Explain when Bearer credentials expire",
   ]) {
     assert.doesNotThrow(() => assertCredentialSafe(value, "Agent context"), value);
   }

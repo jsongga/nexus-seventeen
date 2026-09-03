@@ -184,15 +184,32 @@ inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
 repositories as their own records (project → repositories), let a declared
 child target a repository, and migrate `repo_path` into it.
 
-**9.10. Credential filter precision at the agent boundary** _(queued
-2026-08-31)_ — `assertCredentialSafe` rejects a whole prompt, context or
-provider output fail-closed, and it is handed `JSON.stringify(request.context)`,
-which carries the work item's own words. Campaign 11 restored the length floors
-that keep "add Bearer auth" out of it, but a long prose word still trips the
-rule: "Bearer authentication" (14 characters) fails a run today, and did before
-campaign 11 as well. Recognize a credential by shape rather than length alone
-(a real token carries digits or separators; a dictionary word does not), or move
-the boundary from rejection to redaction so prose costs a marker, not a run.
+**9.10. Credential filter precision at the agent boundary** _(shipped
+2026-09-02; queued 2026-08-31)_ — `assertCredentialSafe` rejects a whole prompt,
+context, provider output or diagnostic fail-closed, and the context carries the
+work item's own words, so "Bearer authentication" — fourteen characters of
+ordinary prose — killed an agent run. The bearer rule now requires a **digit**
+within twelve or more token characters. Not "a non-letter": `.` `-` `/` `_` are
+all token characters, so that rule rejected "Bearer authentication." — the same
+bug, one keystroke away — and review caught it before it shipped. Not a length
+net either: at any threshold low enough to catch a digit-free token it also
+catches `AuthenticationMiddleware`. Two gaps kept as decisions: an all-letter
+token passes at any length (0.36% of 32-character base62, ~1 in 8 at twelve,
+where tokens are uncommon anyway), and an identifier carrying a digit
+("OAuth2Middleware") is still rejected. Persistence redacts in every one of these
+cases; only the send path is affected.
+
+**9.11. Move the agent credential boundary from rejection to redaction**
+_(proposed 2026-09-02)_ — 9.10 is the third attempt to make a fail-closed filter
+precise enough for prose, and each attempt has had a false-positive class found
+by review rather than by testing: a length floor rejected "Bearer
+authentication", a non-letter rule rejected it with a full stop, a length net
+rejected class names. The pattern says the axis is wrong: any rule that guesses
+must sometimes guess fatally, because rejection kills a run. Redaction cannot —
+a false positive costs the agent one word, replaced by a marker it can see. The
+work is not the switch itself but what makes it honest: the agent must be told
+its input was altered, and the human must see it in the run's activity, or a
+redacted prompt becomes a confusing failure instead of a loud one. Own spec.
 
 **10. Decomposition + cross-repo** _(shipped 2026-08-29)_ — parent/child work
 items (`coordinating` parent, children created pre-confirmed at plan confirm),
