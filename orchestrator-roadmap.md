@@ -249,12 +249,30 @@ mechanical shape as this task; `persistence/workflow.ts` (3,040) is now the
 largest file in the repository; and `collaborators/projects.ts` (2,451) still has
 undrawn seams.
 
-**13. Web feature seams** _(proposed 2026-08-29; revised 2026-08-31)_ — the
-flatten this item opened with shipped in campaign 11 (`src/web/task-board/*` →
-`src/web/*`, `project/` → `views/`). What remains: move `BoardPage` to routing
-ownership, split `WorkItemDetail.tsx` (2,544 lines) along the seam its five test
-files already use, split `BoardApp.tsx` (1,551), then slice model/views into
-feature folders. Exit: no file over ~600 lines in `src/web`.
+**13. Web feature seams** _(specced 2026-09-02; spec
+`docs/superpowers/specs/2026-09-02-web-feature-seams.md`)_ — `src/web` has eight
+files over 600 lines and two over 1,500. The roadmap's premise for this item was
+wrong: `WorkItemDetail.tsx` cannot be split "along the seam its five test files
+already use", because those five overlap on four symbol groups — a test file
+names a scenario, not a module. The seam comes from the components instead:
+`BoardPage` moves to routing ownership, and 27 prop-driven helpers become six
+`views/work-item/*` modules, with `BoardApp`'s helpers moved likewise and a
+banner pass marking where the next campaign cuts. Then the six mid-tier files
+(`client.ts`, `AutomationPage`, `WorkspacePages`, `CreateDialogs`, `parse.ts`,
+`WorkspaceSidebar`) each divide into what they already are. Exit, restated
+honestly: every file in `src/web` under 600 **except** the two shells. Extracting
+every helper leaves `WorkItemDetail` at ~1,250 and `BoardApp` at ~1,250, so the
+audit's original criterion is not reachable by moving components — it needs
+custom-hook extraction, which decides where state lives (→ 14).
+
+**14. The two web shells** _(proposed 2026-09-02)_ — `WorkItemDetail` (1,169
+lines, 40 hook calls, 46 local declarations before ~676 lines of JSX) and
+`BoardApp` (1,184, same shape) reduce to composition over extracted hooks. This
+is the only part of the web work where a mistake is invisible: moving a
+prop-driven component cannot change what renders, but moving a `useState` between
+components changes when it resets, and a `useEffect` dependency array can start
+firing on a different schedule. Own review budget, own Playwright arcs.
+Exit: the audit's original bar — no file in `src/web` over ~600 lines.
 
 ## Migration risks
 
