@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { TaskBoardClient } from "../data/client";
 import type { AutomationConfiguration, AutomationStageExecutor } from "../types";
-import { AutomationPage, automationExecutorFromValue } from "./AutomationPage";
+import { AutomationPage } from "./AutomationPage";
+import { automationExecutorFromValue } from "./automation/executors";
 
 const timestamp = "2026-08-18T12:00:00.000Z";
 

@@ -105,14 +105,10 @@ src/web/model/workspace-model.ts
 src/web/routing/routing.ts
 src/web/routing/useHashRoute.ts
 src/web/views/ActivityFeed.tsx
-src/web/views/AutomationPage.tsx
 src/web/views/ContextSidebar.tsx
-src/web/views/CreateDialogs.tsx
 src/web/views/LedgersPage.tsx
 src/web/views/TaskDetail.tsx
 src/web/views/TaskList.tsx
 src/web/views/ThreadPipelineTable.tsx
 src/web/views/WorkItemDetail.tsx
 src/web/views/WorkspaceHeader.tsx
-src/web/views/WorkspacePages.tsx
-src/web/views/WorkspaceSidebar.tsx

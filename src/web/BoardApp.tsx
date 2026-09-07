@@ -18,7 +18,8 @@ import { BoardApiError, createTaskBoardClient, type BoardNotifications, type Tas
 import { type RawBoardNotification, type RawBoardPause } from "./data/parse";
 import { missingRouteFallback, pageToHash, type BoardPage } from "./routing/routing";
 import { useHashRoute } from "./routing/useHashRoute";
-import { AgentPage, ProjectPage } from "./views/WorkspacePages";
+import { AgentPage } from "./views/workspace/AgentPage";
+import { ProjectPage } from "./views/workspace/ProjectPage";
 import { WorkspaceFrame } from "./views/WorkspaceSidebar";
 import { WorkItemDetail } from "./views/WorkItemDetail";
 import { LedgersPage } from "./views/LedgersPage";
