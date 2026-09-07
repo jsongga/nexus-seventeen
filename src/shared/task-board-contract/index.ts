@@ -1251,6 +1251,11 @@ export interface CreateProjectRequest {
   readonly repoPath?: string;
 }
 
+export interface CreateRepositoryRequest {
+  readonly name: string;
+  readonly path: string;
+}
+
 export interface UpdateProjectRequest {
   readonly name?: string;
   readonly description?: string;

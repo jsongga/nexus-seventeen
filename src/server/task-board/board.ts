@@ -1,3 +1,7 @@
+/** Composes task-board collaborators behind the in-process board API. */
+
+/* —— Imports —— */
+
 import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
@@ -26,6 +30,7 @@ import {
   type CreatePlanRevisionRequest,
   type CreateProjectArtifactRequest,
   type CreateProjectRequest,
+  type CreateRepositoryRequest,
   type UpdateProjectRequest,
   type CreateTaskMessageRequest,
   type CreateTaskPhaseRequest,
@@ -38,6 +43,7 @@ import {
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type Repository,
   type PipelineSummary,
   type ParksLedger,
   type RejectFinalApprovalRequest,
@@ -415,6 +421,10 @@ export class TaskBoard {
 
   createProject(request: CreateProjectRequest): Project {
     return this.#projects.createProject(request);
+  }
+
+  addRepository(projectId: string, request: CreateRepositoryRequest): Repository {
+    return this.#projects.addRepository(projectId, request);
   }
 
   updateProject(projectId: string, request: UpdateProjectRequest): Project {

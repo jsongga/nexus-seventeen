@@ -438,6 +438,7 @@ interface PipelineRepositoryTarget {
   readonly key: string;
   readonly path: string;
   readonly projectName: string;
+  readonly repositoryId: string;
 }
 
 export interface RejectWorkflowTransactionResult extends RejectPlanRevisionResponse {
@@ -1022,16 +1023,14 @@ export class TransparentWorkflow {
     if (target === undefined) {
       throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     }
+    if (target.resolved_repository_id === null) {
+      throw new Error("TASK_BOARD_DATABASE_CORRUPT:primary_repository");
+    }
     return Object.freeze({
       key: String(target.repository_key),
       path: String(target.repository_path),
       projectName: String(target.name),
-      // The id actually resolved, as opposed to the one declared. Not yet what
-      // materialization stores: pinning every child to its resolved repository
-      // would make `repository_id` non-null for children in single-repository
-      // projects too, changing what null means. That is a semantic decision,
-      // not a fix, so it is recorded in the plan rather than absorbed here.
-      repositoryId: target.resolved_repository_id === null ? null : String(target.resolved_repository_id),
+      repositoryId: String(target.resolved_repository_id),
     });
   }
 
@@ -1138,12 +1137,13 @@ export class TransparentWorkflow {
         planRevisionId: `plan_${randomUUID()}`,
         nodeId: `node_${randomUUID()}`,
         baseSha: resolvedBaseSha,
+        repositoryId: repositoryTarget.repositoryId,
       });
     });
     const byKey = new Map(childRecords.map((record) => [record.child.key, record] as const));
 
     for (const [ordinal, record] of childRecords.entries()) {
-      const { child, workItemId, planRevisionId, nodeId, baseSha } = record;
+      const { child, workItemId, planRevisionId, nodeId, baseSha, repositoryId } = record;
       const idempotencyKey = `decomposition:${parentWorkItemId}:${child.key}`;
       this.db
         .prepare(
@@ -1167,7 +1167,7 @@ export class TransparentWorkflow {
           String(parent.priority),
           child.projectId,
           child.projectId,
-          child.repositoryId ?? null,
+          repositoryId,
           parentWorkItemId,
           child.phase ?? null,
           ordinal,

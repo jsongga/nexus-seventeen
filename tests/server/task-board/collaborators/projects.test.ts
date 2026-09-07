@@ -1,3 +1,7 @@
+/** Verifies transactional project and repository writers. */
+
+/* —— Imports —— */
+
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -92,6 +96,85 @@ test("a failing repository write rolls the project back with it", async () => {
     } finally {
       reader.close();
     }
+  } finally {
+    board.close();
+  }
+});
+
+test("addRepository adds a secondary without changing the primary mirror", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path, () => new Date(NOW)));
+  try {
+    const project = board.createProject({
+      name: "Catalog",
+      description: "Owns the catalog repositories.",
+      repoPath: "/repos/catalog-api",
+    });
+    const repository = board.addRepository(project.projectId, {
+      name: "Catalog worker",
+      path: "/repos/catalog-worker",
+    });
+
+    assert.deepEqual(
+      {
+        projectId: repository.projectId,
+        name: repository.name,
+        path: repository.path,
+        isPrimary: repository.isPrimary,
+        version: repository.version,
+      },
+      {
+        projectId: project.projectId,
+        name: "Catalog worker",
+        path: "/repos/catalog-worker",
+        isPrimary: false,
+        version: 1,
+      }
+    );
+    const rows = repositoryRows(path, project.projectId);
+    assert.equal(rows.length, 2);
+    assert.equal(rows.filter((row) => row.is_primary === 1).length, 1);
+    assert.equal(rows.find((row) => row.is_primary === 1)?.path, project.repoPath);
+    assert.equal(
+      board.listProjects().find((candidate) => candidate.projectId === project.projectId)?.repoPath,
+      project.repoPath
+    );
+  } finally {
+    board.close();
+  }
+});
+
+test("a failing addRepository event rolls the repository insert back", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path, () => new Date(NOW)));
+  try {
+    const project = board.createProject({
+      name: "Catalog",
+      description: "Keeps a single primary after a failed add.",
+      repoPath: "/repos/catalog-api",
+    });
+    const injector = new DatabaseSync(path);
+    try {
+      injector.exec(`
+        CREATE TRIGGER reject_repository_event BEFORE INSERT ON task_events
+        WHEN NEW.event_type = 'repository_added'
+        BEGIN SELECT RAISE(ABORT, 'injected repository event failure'); END;
+      `);
+    } finally {
+      injector.close();
+    }
+
+    assert.throws(() =>
+      board.addRepository(project.projectId, { name: "Catalog worker", path: "/repos/catalog-worker" })
+    );
+    const rows = repositoryRows(path, project.projectId);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.is_primary, 1);
+    assert.equal(rows[0]?.path, project.repoPath);
+    assert.equal(
+      board.listProjects().find((candidate) => candidate.projectId === project.projectId)?.repoPath,
+      project.repoPath
+    );
   } finally {
     board.close();
   }

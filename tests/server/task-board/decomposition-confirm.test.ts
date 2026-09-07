@@ -1,3 +1,7 @@
+/** Verifies decomposition confirmation, materialization, and repository targeting. */
+
+/* —— Imports —— */
+
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -306,12 +310,16 @@ test("confirming a feature split creates independently claimable children with m
     assert.equal(materialized.length, 2);
     const storedChildren = new DatabaseSync(fixture.path, { readOnly: true });
     try {
+      const primaryRepositoryId = storedChildren
+        .prepare("SELECT repository_id FROM repositories WHERE project_id=? AND is_primary=1")
+        .get(fixture.project.projectId)?.repository_id;
+      assert.equal(typeof primaryRepositoryId, "string");
       assert.deepEqual(
         storedChildren
           .prepare("SELECT repository_id FROM work_items WHERE parent_work_item_id=? ORDER BY child_ordinal")
           .all(parent.workItemId)
           .map((row) => row.repository_id),
-        [null, null]
+        [primaryRepositoryId, primaryRepositoryId]
       );
     } finally {
       storedChildren.close();

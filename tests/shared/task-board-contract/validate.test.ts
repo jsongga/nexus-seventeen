@@ -1103,6 +1103,63 @@ test("pipeline plan-record fields round-trip through board and worker draft vali
   assert.throws(() => parseWorkerAgentRunOutcome(outcome(null, invalid)), /repositoryId is invalid/u);
 });
 
+test("phased children may share a project when they name different repositories", () => {
+  // Campaign 10 could treat "different repository" as "different project",
+  // because a project had exactly one. Campaign 16's whole premise is that a
+  // product may span repositories inside one project, so the rule has to
+  // discriminate on the (project, repository) pair — and a migrate child that
+  // shares both with the provider is still a violation.
+  const child = (key: string, phase: string, repositoryId: string | undefined, extra: object = {}) => ({
+    key,
+    objective: `Phase ${key}.`,
+    projectId: "one-project",
+    ...(repositoryId === undefined ? {} : { repositoryId }),
+    declaredScope: [`src/${key}`, "docs/interface.md"],
+    acceptanceCriteria: ["The phase completes."],
+    phase,
+    splitBy: "phase",
+    ...extra,
+  });
+  const plan = (migrateRepositoryId: string | undefined) => ({
+    objective: "Coordinate the phased change.",
+    assumptions: [],
+    acceptanceCriteria: ["Every phase merges."],
+    changeShape: "blast_radius",
+    declaredScope: ["coordination"],
+    criterionChecks: [],
+    children: [
+      child("expand", "expand", "repository-primary"),
+      child("migrate", "migrate", migrateRepositoryId, { dependsOn: ["expand"] }),
+      child("contract", "contract", "repository-primary", { dependsOn: ["migrate"] }),
+    ],
+    nodes: [
+      {
+        nodeId: "coordinate",
+        title: "Coordinate",
+        objective: "Coordinate the phases.",
+        acceptanceCriteria: ["The parent records each outcome."],
+        dependencyNodeIds: [],
+        stageTemplate: ["verification"],
+      },
+    ],
+  });
+
+  // A second repository in the same project is the case the campaign exists for.
+  assert.doesNotThrow(() =>
+    parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan("repository-secondary") })
+  );
+  // Naming the provider's own repository is still rejected.
+  assert.throws(
+    () => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan("repository-primary") }),
+    /migrate children must use a repository other than the provider's/u
+  );
+  // Omitting the id resolves to the same primary the provider named, so this is
+  // the same collision — but the contract has no database and cannot see it.
+  // Asserted rather than implied, so the limit is visible and materialization is
+  // known to own the case.
+  assert.doesNotThrow(() => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan(undefined) }));
+});
+
 test("phased plans require Expand and Contract scope to cover docs/interface.md", () => {
   const children = [
     {

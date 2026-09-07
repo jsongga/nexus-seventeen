@@ -146,7 +146,37 @@ byte count and `estimate.digest`. Every Migrate node blocked before this change 
 residual `interfaceContextDigest` that no longer matches, so those nodes un-block and retry once
 on deploy, and a context within ~50 bytes of budget can flip to `over_budget`.
 
-## Task 4b — the exit arc
+## Task 4b — the exit arc (partially delivered; the arc itself is outstanding)
+
+**What 4b established, and it is the campaign's premise.** Building the arc found that the
+phased-declaration rules were keyed on _project_ identity:
+`migrate children must use projects other than the parent project`. Campaign 10 could equate
+"different repository" with "different project" because a project had exactly one — and that
+assumption forbids exactly the case this campaign exists to enable. The rules now discriminate on
+the `(projectId, repositoryId)` pair. A contract test covers it, including the limit: a child
+omitting `repositoryId` beside one naming the primary explicitly is the same checkout after
+resolution but indistinguishable in a validator with no database, so materialization owns that
+case.
+
+Children are also now **pinned** to the repository resolved at confirmation, which was 4a's open
+question. Pinning keeps repository identity and base sha stable together; the alternative left a
+primary-resolving child unpinned while its base sha was pinned. `TaskBoard.addRepository` is the
+supported writer, with rollback coverage.
+
+**The arc is not delivered.** It was written, run, and observed asserting the core claim — two
+children of one project resolving to two repositories with distinct base shas from their own
+trees — and it reaches the contract gate correctly. It cannot yet carry the contract child to
+merge, because the fake provider CLI has no contract implementation for a one-project arc. That
+is fixture work. It was reverted rather than committed skipped, after an edit intended for it
+damaged campaign 10's arc instead — the two share assertion shapes, and a first-match edit hit
+the wrong one.
+
+**Next session:** re-add the arc against `campaign 10 exit: a blast-radius change lands as phased
+children across two repos` as the template, extend the fake CLI's provider mode with a contract
+implementation for `joinProjectIndex` fixtures, and edit by line range rather than by matching
+text that both arcs share.
+
+## Task 4b (original brief) — the exit arc
 
 Readiness (`decomposition-readiness.ts`) and the merge policy must treat two children in one
 project and two repositories exactly as they treat two children in two projects today — campaign 10 keyed that on

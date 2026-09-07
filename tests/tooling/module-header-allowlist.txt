@@ -47,7 +47,6 @@ src/server/docs-publish/retry.ts
 src/server/docs-publish/sink.ts
 src/server/shared/claim-context.ts
 src/server/shared/sections.ts
-src/server/task-board/board.ts
 src/server/task-board/canonical.ts
 src/server/task-board/collaborators/agent-identities.ts
 src/server/task-board/collaborators/agents.ts

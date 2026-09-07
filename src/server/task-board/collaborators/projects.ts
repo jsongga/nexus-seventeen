@@ -17,10 +17,12 @@ import {
   type CreatePlanRevisionRequest,
   type CreateProjectArtifactRequest,
   type CreateProjectRequest,
+  type CreateRepositoryRequest,
   type UpdateProjectRequest,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
+  type Repository,
   type PipelineSummary,
   type RejectFinalApprovalRequest,
   type RejectPlanRevisionRequest,
@@ -39,7 +41,13 @@ import { sha256 } from "../canonical.js";
 import { claimContextInputForDigest, projectClaimContext } from "../../shared/claim-context.js";
 import { ArtifactStore } from "../persistence/artifacts.js";
 import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
-import { projectFromRow, questionFromRow, reviewFindingFromRow, type Row } from "../persistence/rows.js";
+import {
+  projectFromRow,
+  questionFromRow,
+  repositoryFromRow,
+  reviewFindingFromRow,
+  type Row,
+} from "../persistence/rows.js";
 import {
   TransparentWorkflow,
   type AttemptScopeCheckResult,
@@ -1256,6 +1264,34 @@ export class ProjectsCollaborator {
       );
     });
     return this.runtime.requireProject(projectId);
+  }
+
+  addRepository(projectId: string, request: CreateRepositoryRequest): Repository {
+    this.runtime.requireProject(projectId);
+    const repositoryId = randomUUID();
+    const now = exactNow(this.runtime.config.now);
+    this.runtime.store.transaction(() => {
+      this.runtime.store.db
+        .prepare(
+          `
+        INSERT INTO repositories(
+          repository_id, project_id, name, path, is_primary, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, 1, ?, ?)
+      `
+        )
+        .run(repositoryId, projectId, request.name, request.path, now, now);
+      this.runtime.insertEvent(
+        projectId,
+        null,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "repository_added",
+        { repositoryId, name: request.name },
+        now
+      );
+    });
+    const row = this.runtime.store.db.prepare("SELECT * FROM repositories WHERE repository_id=?").get(repositoryId);
+    if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:repository_missing_after_insert");
+    return repositoryFromRow(row);
   }
 
   updateProject(projectId: string, request: UpdateProjectRequest): Project {

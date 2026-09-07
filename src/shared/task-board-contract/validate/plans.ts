@@ -237,6 +237,25 @@ function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPo
   });
 }
 
+/**
+ * Two children share a checkout when they name the same project *and* the same
+ * repository within it.
+ *
+ * Campaign 10 could equate "different repository" with "different project",
+ * because a project had exactly one. Campaign 16 breaks that: a product may span
+ * repositories inside one project, so the phased rules below have to discriminate
+ * on the pair. `undefined` here means "the project's primary", which two children
+ * of one project genuinely do share — so absent-vs-absent still collides, and
+ * that keeps every pre-campaign plan meaning what it meant.
+ *
+ * What this cannot see is a child naming the primary explicitly beside one that
+ * omits it: equal after resolution, distinct here. The contract has no database,
+ * so materialization owns that case.
+ */
+function sharesCheckout(a: DeclaredChild, b: DeclaredChild): boolean {
+  return a.projectId === b.projectId && (a.repositoryId ?? null) === (b.repositoryId ?? null);
+}
+
 export function validateWorkflowPlanChildren(
   plan: Pick<WorkflowPlanDraft, "changeShape" | "children">,
   parentProjectId?: string,
@@ -302,11 +321,7 @@ export function validateWorkflowPlanChildren(
       const b = children[right]!;
       const requiresDisjointScopes =
         (a.phase === undefined && b.phase === undefined) || (a.phase === "migrate" && b.phase === "migrate");
-      if (
-        requiresDisjointScopes &&
-        a.projectId === b.projectId &&
-        declaredScopesOverlap(a.declaredScope, b.declaredScope)
-      ) {
+      if (requiresDisjointScopes && sharesCheckout(a, b) && declaredScopesOverlap(a.declaredScope, b.declaredScope)) {
         throw new ContractValidationError(`workflowPlan child scopes overlap in project ${a.projectId}`);
       }
     }
@@ -336,8 +351,8 @@ export function validateWorkflowPlanChildren(
   if (expand.projectId !== providerProjectId || contract.projectId !== providerProjectId) {
     throw new ContractValidationError("expand and contract children must use the parent project");
   }
-  if (migrates.some((child) => child.projectId === providerProjectId)) {
-    throw new ContractValidationError("migrate children must use projects other than the parent project");
+  if (migrates.some((child) => sharesCheckout(child, expand))) {
+    throw new ContractValidationError("migrate children must use a repository other than the provider's");
   }
   if (migrates.some((child) => !(child.dependsOn ?? []).includes(expand.key))) {
     throw new ContractValidationError("every migrate child must depend on the expand child");
