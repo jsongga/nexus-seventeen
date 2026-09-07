@@ -706,7 +706,11 @@ export class WorkItemsCollaborator {
       .prepare("SELECT task_id FROM work_item_design_tasks WHERE work_item_id=?")
       .get(workItemId);
     if (existing !== undefined) return this.runtime.requireTask(String(existing.task_id));
-    const manager = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
+    const manager = createLazyManagerInTransaction(
+      this.runtime,
+      workItem.resolvedProjectId,
+      this.runtime.workItemRepositoryId(workItem.workItemId)
+    );
     const confirmed = this.runtime.store.db
       .prepare(
         `
@@ -824,7 +828,11 @@ export class WorkItemsCollaborator {
       }
       this.runtime.store.db.prepare("DELETE FROM work_item_planning_tasks WHERE work_item_id=?").run(workItemId);
     }
-    const manager = createLazyManagerInTransaction(this.runtime, workItem.resolvedProjectId);
+    const manager = createLazyManagerInTransaction(
+      this.runtime,
+      workItem.resolvedProjectId,
+      this.runtime.workItemRepositoryId(workItem.workItemId)
+    );
     const managerId = manager.agentId;
     const onboarding = requestedTaskType === "onboarding" || workItem.taskType === "onboarding";
     const project = onboarding ? this.runtime.requireProject(workItem.resolvedProjectId) : null;

@@ -420,6 +420,7 @@ export class RunsCollaborator {
       if (task.requiredRole !== null && task.requiredRole !== agent.role) {
         throw conflict("TASK_REQUIRED_ROLE_MISMATCH", `This task requires the ${task.requiredRole} role`);
       }
+      this.runtime.assertTaskRepository(task.taskId, agentId);
       requestedTask = task;
     }
     const sourceKey = `${agentId}:${idempotencyKey}`;
@@ -684,6 +685,11 @@ export class RunsCollaborator {
       return wakeupRow === undefined ? null : wakeupFromRow(wakeupRow);
     });
     if (candidate === null) return null;
+
+    // Dispatch filters by repository, but a wakeup queued before this rollout — or any future
+    // path that assigns without going through it — could still name a tree this agent does not
+    // hold. Refusing the claim is the last point before a worker checks anything out.
+    if (candidate.taskId !== null) this.runtime.assertTaskRepository(candidate.taskId, agentId);
 
     // Review Git inspection may spawn several bounded subprocesses. It must run
     // after candidate resolution and before the write transaction below.

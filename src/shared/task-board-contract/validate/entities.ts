@@ -770,6 +770,7 @@ export function parseAgentEntity(value: unknown, label: string, options: ShapePa
     "apiVersion",
     "agentId",
     "projectId",
+    "repositoryId",
     "role",
     "area",
     "mission",
@@ -780,12 +781,15 @@ export function parseAgentEntity(value: unknown, label: string, options: ShapePa
     "version",
     "createdAt",
   ];
-  const required = fields.filter((field) => field !== "workerConnection" && field !== "lastError");
+  const optional = new Set(["workerConnection", "lastError", "repositoryId"]);
+  const required = fields.filter((field) => !optional.has(field));
   const item = entity(value, label, fields, required, options);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     agentId: shapeIdentifier(item.agentId, `${label}.agentId`, options),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
+    repositoryId:
+      item.repositoryId === undefined ? null : nullableIdentifier(item.repositoryId, `${label}.repositoryId`, options),
     role: entityMember(item.role, AGENT_ROLES, `${label}.role`, options),
     area: stringValue(item.area, `${label}.area`),
     mission: stringValue(item.mission, `${label}.mission`),

@@ -1005,6 +1005,8 @@ export interface AgentProfile {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly agentId: string;
   readonly projectId: string;
+  /** The repository this agent's worker holds. Null means the project's primary, never "any". */
+  readonly repositoryId: string | null;
   readonly role: AgentRole;
   readonly area: string;
   readonly mission: string;
@@ -1306,6 +1308,8 @@ export interface CreateAgentRequest {
   readonly mission: string;
   readonly model: string;
   readonly token: string;
+  /** Omitted scopes the agent to the project's primary repository. */
+  readonly repositoryId?: string;
 }
 
 export interface RotateAgentTokenRequest {

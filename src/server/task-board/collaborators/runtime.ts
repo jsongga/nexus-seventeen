@@ -45,6 +45,7 @@ import {
   workItemFromRow,
   type Row,
 } from "../persistence/rows.js";
+import { AGENT_REPOSITORY_ID_SQL, WORK_ITEM_REPOSITORY_ID_SQL } from "../persistence/repository-path.js";
 import type { TaskBoardStore } from "../persistence/store.js";
 import { GateActionWriter, type GateActionInput } from "../persistence/gate-actions.js";
 import {
@@ -124,6 +125,7 @@ export class TaskBoardRuntime {
       apiVersion: TASK_BOARD_API_VERSION,
       agentId,
       projectId: stringValue(row, "project_id"),
+      repositoryId: nullableString(row, "repository_id"),
       role: stringValue(row, "role") as AgentRole,
       area: stringValue(row, "area"),
       mission: stringValue(row, "mission"),
@@ -558,6 +560,41 @@ export class TaskBoardRuntime {
       throw conflict("TASK_REQUIRED_ROLE_MISMATCH", `This task requires the ${task.requiredRole} role`);
     }
     this.assertAssignment(task.projectId, agentId, role);
+    this.assertTaskRepository(task.taskId, agentId);
+  }
+
+  /**
+   * Rejects handing a task to an agent whose checkout is a different repository. Dispatch already
+   * filters, so this guards the human paths — reassignment and resume — that put a task in front
+   * of a chosen agent. A task with no stage attempt has no repository and is left alone.
+   */
+  /** A work item's repository, resolving null to its project's primary. */
+  workItemRepositoryId(workItemId: string): string | null {
+    const row = this.store.db
+      .prepare(`SELECT ${WORK_ITEM_REPOSITORY_ID_SQL} AS repository_id FROM work_items work_item WHERE work_item_id=?`)
+      .get(workItemId);
+    return row === undefined ? null : nullableString(row, "repository_id");
+  }
+
+  assertTaskRepository(taskId: string, agentId: string): void {
+    const mismatched = this.store.db
+      .prepare(
+        `
+      SELECT 1
+      FROM stage_attempts attempt
+      JOIN work_nodes node ON node.node_id=attempt.node_id
+      JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
+      JOIN agents agent ON agent.agent_id=?
+      WHERE attempt.task_id=?
+        AND ${WORK_ITEM_REPOSITORY_ID_SQL} IS NOT ${AGENT_REPOSITORY_ID_SQL}
+      LIMIT 1
+    `
+      )
+      .get(agentId, taskId);
+    if (mismatched !== undefined) {
+      throw conflict("AGENT_REPOSITORY_MISMATCH", "Agent holds a different repository than this task targets");
+    }
   }
 
   createReviewFollowup(parent: BoardTask, now: string): ReviewFollowupResult | null {

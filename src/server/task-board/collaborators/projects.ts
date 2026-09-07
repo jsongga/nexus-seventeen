@@ -40,8 +40,13 @@ import {
 import { sha256 } from "../canonical.js";
 import { claimContextInputForDigest, projectClaimContext } from "../../shared/claim-context.js";
 import { ArtifactStore } from "../persistence/artifacts.js";
-import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import {
+  AGENT_REPOSITORY_ID_SQL,
+  WORK_ITEM_REPOSITORY_ID_SQL,
+  WORK_ITEM_REPOSITORY_PATH_SQL,
+} from "../persistence/repository-path.js";
+import {
+  nullableString,
   projectFromRow,
   questionFromRow,
   repositoryFromRow,
@@ -2147,6 +2152,25 @@ export class ProjectsCollaborator {
       | undefined;
   }
 
+  /**
+   * The repository a node's work targets, resolving null to the project's primary. Null only
+   * when the node has no work item or the project has no repository row.
+   */
+  private nodeRepositoryIdInTransaction(nodeId: string): string | null {
+    const row = this.runtime.store.db
+      .prepare(
+        `
+        SELECT ${WORK_ITEM_REPOSITORY_ID_SQL} AS repository_id
+        FROM work_nodes node
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
+        WHERE node.node_id=?
+      `
+      )
+      .get(nodeId);
+    return row === undefined ? null : nullableString(row, "repository_id");
+  }
+
   private activateWorkflowNode(node: WorkNode): void {
     // A phased child's default-branch head is resolved before the activation
     // transaction so no Git process runs while SQLite holds a transaction.
@@ -2401,34 +2425,54 @@ export class ProjectsCollaborator {
         this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} executor is unavailable`);
         return;
       }
+      // An agent holds one checkout, so only one scoped to this node's repository can do the
+      // work. Filtering here — rather than rejecting at assignment — is what lets mis-scoped work
+      // block visibly instead of committing into the wrong tree.
+      const nodeRepositoryId = this.nodeRepositoryIdInTransaction(current.nodeId);
+      const scopedTo = `(? IS NULL OR ${AGENT_REPOSITORY_ID_SQL} = ?)`;
       let agent = this.runtime.store.db
         .prepare(
           `
         SELECT *
-        FROM agents
+        FROM agents agent
         WHERE project_id=? AND role=?
+          AND ${scopedTo}
           AND NOT EXISTS (
             SELECT 1 FROM runs
-            WHERE runs.agent_id=agents.agent_id AND runs.status='active'
+            WHERE runs.agent_id=agent.agent_id AND runs.status='active'
           )
           AND NOT EXISTS (
             SELECT 1 FROM wakeups AS wakeup
-            WHERE wakeup.agent_id=agents.agent_id
+            WHERE wakeup.agent_id=agent.agent_id
               AND ${PENDING_LIVE_WAKEUP_PREDICATE_SQL}
           )
         ORDER BY created_at,agent_id
         LIMIT 1
       `
         )
-        .get(current.projectId, agentType.role, RETIRED_WAKEUP_EVENT_PREFIX);
-      agent ??= this.runtime.store.db
-        .prepare("SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1")
-        .get(current.projectId, agentType.role);
+        .get(current.projectId, agentType.role, nodeRepositoryId, nodeRepositoryId, RETIRED_WAKEUP_EVENT_PREFIX);
+      const anyScopedAgent = this.runtime.store.db.prepare(
+        `SELECT * FROM agents agent WHERE project_id=? AND role=? AND ${scopedTo} ORDER BY created_at,agent_id LIMIT 1`
+      );
+      agent ??= anyScopedAgent.get(current.projectId, agentType.role, nodeRepositoryId, nodeRepositoryId);
       if (!agent) {
-        createLazyExecutorInTransaction(this.runtime, current.projectId, agentType);
-        agent = this.runtime.store.db
-          .prepare("SELECT * FROM agents WHERE project_id=? AND role=? ORDER BY created_at,agent_id LIMIT 1")
-          .get(current.projectId, agentType.role);
+        // Minting covers a project with no agent of this role at all — the original
+        // single-repository behaviour. When the role exists but every one of them serves another
+        // repository, minting would bury the mismatch under an identity whose generated token no
+        // worker holds: the node would look active forever. Block instead, so the wait is legible.
+        const roleServesAnotherRepository =
+          this.runtime.store.db
+            .prepare("SELECT 1 FROM agents WHERE project_id=? AND role=? LIMIT 1")
+            .get(current.projectId, agentType.role) !== undefined;
+        if (roleServesAnotherRepository) {
+          this.#workflow.blockNodeInTransaction(
+            current.nodeId,
+            `${current.title} has no ${agentType.role} for this repository`
+          );
+          return;
+        }
+        createLazyExecutorInTransaction(this.runtime, current.projectId, agentType, nodeRepositoryId);
+        agent = anyScopedAgent.get(current.projectId, agentType.role, nodeRepositoryId, nodeRepositoryId);
         if (!agent) {
           this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} has no compatible agent`);
           return;

@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { AgentProfile, AgentRole, AutomationAgentType } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
+import { conflict } from "../errors.js";
+import { AGENT_REPOSITORY_ID_SQL } from "../persistence/repository-path.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { TaskBoardRuntime } from "./runtime.js";
 
@@ -15,6 +17,8 @@ interface AgentIdentityInput {
   readonly mission: string;
   readonly model: string;
   readonly token: string;
+  /** Omitted or null scopes the agent to its project's primary repository. */
+  readonly repositoryId?: string | null;
 }
 
 export function generatedToken(runtime: TaskBoardRuntime): string {
@@ -56,14 +60,36 @@ export function insertAgentIdentityInTransaction(
   actor: IdentityActor
 ): AgentProfile {
   const now = exactNow(runtime.config.now);
+  const repositoryId = input.repositoryId ?? null;
+  // An agent scoped to a repository its project does not own could never reach that checkout.
+  if (
+    repositoryId !== null &&
+    runtime.store.db
+      .prepare("SELECT 1 FROM repositories WHERE repository_id=? AND project_id=?")
+      .get(repositoryId, projectId) === undefined
+  ) {
+    throw conflict("AGENT_REPOSITORY_PROJECT_MISMATCH", "Repository belongs to another project");
+  }
   runtime.store.db
     .prepare(
       `
-    INSERT INTO agents(agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)
+    INSERT INTO agents(
+      agent_id, project_id, repository_id, role, area, mission, model, token_hash, last_error, version, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)
   `
     )
-    .run(input.agentId, projectId, input.role, input.area, input.mission, input.model, sha256(input.token), now);
+    .run(
+      input.agentId,
+      projectId,
+      repositoryId,
+      input.role,
+      input.area,
+      input.mission,
+      input.model,
+      sha256(input.token),
+      now
+    );
   runtime.insertEvent(
     projectId,
     null,
@@ -71,6 +97,7 @@ export function insertAgentIdentityInTransaction(
     "agent_profile_created",
     {
       agentId: input.agentId,
+      repositoryId,
       role: input.role,
       area: input.area,
       model: input.model,
@@ -80,10 +107,26 @@ export function insertAgentIdentityInTransaction(
   return runtime.requireAgent(input.agentId);
 }
 
-export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projectId: string): AgentProfile {
+export function createLazyManagerInTransaction(
+  runtime: TaskBoardRuntime,
+  projectId: string,
+  repositoryId: string | null = null
+): AgentProfile {
+  // A manager plans against a checkout, so it must be the checkout the work targets. Null on
+  // either side resolves to the project's primary, which is what a single-repository project has
+  // always meant.
   const existing = runtime.store.db
-    .prepare("SELECT * FROM agents WHERE project_id=? AND role='manager' ORDER BY created_at,agent_id LIMIT 1")
-    .get(projectId);
+    .prepare(
+      `
+      SELECT *
+      FROM agents agent
+      WHERE project_id=? AND role='manager'
+        AND (? IS NULL OR ${AGENT_REPOSITORY_ID_SQL} = ?)
+      ORDER BY created_at,agent_id
+      LIMIT 1
+    `
+    )
+    .get(projectId, repositoryId, repositoryId);
   if (existing !== undefined) return runtime.agentFromRow(existing);
   const project = runtime.requireProject(projectId);
   return insertAgentIdentityInTransaction(
@@ -96,6 +139,7 @@ export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projec
       mission: `Refine incoming ${project.name} work, plan durable workflows, and prepare completed work for human review.`,
       model: "auto",
       token: generatedToken(runtime),
+      repositoryId,
     },
     { type: "system", id: LAZY_IDENTITY_ACTOR }
   );
@@ -104,7 +148,8 @@ export function createLazyManagerInTransaction(runtime: TaskBoardRuntime, projec
 export function createLazyExecutorInTransaction(
   runtime: TaskBoardRuntime,
   projectId: string,
-  agentType: AutomationAgentType
+  agentType: AutomationAgentType,
+  repositoryId: string | null = null
 ): AgentProfile {
   const project = runtime.requireProject(projectId);
   const mission = [agentType.description, agentType.supplementalInstructions].filter(Boolean).join(" ").slice(0, 4_000);
@@ -118,6 +163,7 @@ export function createLazyExecutorInTransaction(
       mission,
       model: "auto",
       token: generatedToken(runtime),
+      repositoryId,
     },
     { type: "system", id: LAZY_IDENTITY_ACTOR }
   );

@@ -10073,3 +10073,135 @@ test("schema version 17 adds agent credential versions without changing existing
     verified.close();
   }
 });
+
+test("an agent may be scoped to a repository, and null still means the project's primary", async () => {
+  const fixture = await boardFixture();
+  const root = dirname(fixture.path);
+  const second = fixture.board.addRepository(fixture.project.projectId, {
+    name: "second",
+    path: join(root, "second-repo"),
+  });
+
+  const scoped = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "scoped-engineer",
+    role: "engineer",
+    area: "second repository",
+    mission: "Implement work in the second repository.",
+    model: "codex-mini",
+    token: "task-board-scoped-engineer-token-0123456789ab",
+    repositoryId: second.repositoryId,
+  });
+  assert.equal(scoped.repositoryId, second.repositoryId);
+
+  // Omitting it is how every pre-v28 agent was created, and it must stay the primary rather
+  // than becoming "any repository".
+  const unscoped = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "unscoped-engineer",
+    role: "engineer",
+    area: "primary repository",
+    mission: "Implement work in the primary repository.",
+    model: "codex-mini",
+    token: "task-board-unscoped-engineer-token-0123456789",
+  });
+  assert.equal(unscoped.repositoryId, null);
+  assert.equal(
+    fixture.board.authenticateAgent("task-board-scoped-engineer-token-0123456789ab").repositoryId,
+    second.repositoryId
+  );
+});
+
+test("an agent cannot be scoped to a repository its project does not own", async () => {
+  const fixture = await boardFixture();
+  const root = dirname(fixture.path);
+  const other = fixture.board.createProject({
+    name: "Other product",
+    description: "Owns a repository this project's agents must never hold.",
+    repoPath: join(root, "other-repo"),
+  });
+  const foreign = fixture.board.addRepository(other.projectId, {
+    name: "foreign",
+    path: join(root, "other-repo"),
+  });
+
+  assert.throws(
+    () =>
+      fixture.board.createAgent(fixture.project.projectId, {
+        agentId: "cross-project-engineer",
+        role: "engineer",
+        area: "someone else's tree",
+        mission: "Should never be created.",
+        model: "codex-mini",
+        token: "task-board-cross-project-token-0123456789abc",
+        repositoryId: foreign.repositoryId,
+      }),
+    (error: unknown) =>
+      error instanceof TaskBoardError && error.status === 409 && error.code === "AGENT_REPOSITORY_PROJECT_MISMATCH"
+  );
+  // The rejected agent must not exist at all, so its credential authenticates as nothing.
+  assert.throws(
+    () => fixture.board.authenticateAgent("task-board-cross-project-token-0123456789abc"),
+    (error: unknown) => error instanceof TaskBoardError && error.status === 401
+  );
+});
+
+test("resume cannot hand a workflow task to an agent holding a different repository", async () => {
+  const fixture = await activeSettlementWorkflow("repository-guard");
+  const root = dirname(fixture.path);
+  const second = fixture.board.addRepository(fixture.project.projectId, {
+    name: "second",
+    path: join(root, "second-repo"),
+  });
+  const taskId = fixture.claim.run.taskId;
+  assert.ok(taskId);
+
+  const elsewhere = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "elsewhere-verifier",
+    role: "verifier",
+    area: "second repository",
+    mission: "Verify work in the second repository.",
+    model: "codex-mini",
+    token: "task-board-elsewhere-verifier-token-01234567",
+    repositoryId: second.repositoryId,
+  });
+  assert.equal(elsewhere.repositoryId, second.repositoryId);
+
+  // Same project, same role — every pre-v28 check passes. Only the repository separates them.
+  assert.throws(
+    () => fixture.board.resumeAgent(elsewhere.agentId, { taskId, reason: "Pick this up." }, "resume-wrong-repo"),
+    (error: unknown) =>
+      error instanceof TaskBoardError && error.status === 409 && error.code === "AGENT_REPOSITORY_MISMATCH"
+  );
+
+  // The primary-scoped verifier that already holds the tree is unaffected.
+  assert.doesNotThrow(() =>
+    fixture.board.resumeAgent(fixture.verifier.agentId, { taskId, reason: "Continue." }, "resume-right-repo")
+  );
+});
+
+test("the repository guard leaves a task with no workflow stage alone", async () => {
+  const fixture = await boardFixture();
+  const root = dirname(fixture.path);
+  const second = fixture.board.addRepository(fixture.project.projectId, {
+    name: "second",
+    path: join(root, "second-repo"),
+  });
+  const elsewhere = fixture.board.createAgent(fixture.project.projectId, {
+    agentId: "unstaged-engineer",
+    role: "engineer",
+    area: "second repository",
+    mission: "Implement work in the second repository.",
+    model: "codex-mini",
+    token: "task-board-unstaged-engineer-token-012345678",
+    repositoryId: second.repositoryId,
+  });
+
+  // A directly created task has no stage attempt and therefore no repository. Guarding it would
+  // break every existing reassignment, so the guard must be a no-op here.
+  const plain = fixture.board.createTask(fixture.project.projectId, taskRequest());
+  const reassigned = fixture.board.updateTask(
+    plain.taskId,
+    { version: plain.version, assignedAgentId: elsewhere.agentId, assignedRole: "engineer" },
+    { type: "human", id: "human:test" }
+  );
+  assert.equal(reassigned.assignedAgentId, elsewhere.agentId);
+});

@@ -389,7 +389,12 @@ export function parseBoardAutomationUpdate(value: unknown): UpdateAutomationConf
 }
 
 export function parseBoardCreateAgent(value: unknown): CreateAgentRequest {
-  const item = boardExact(value, ["agentId", "role", "area", "mission", "model", "token"], "Agent profile");
+  const item = boardAllowed(
+    value,
+    ["agentId", "role", "area", "mission", "model", "token", "repositoryId"],
+    ["agentId", "role", "area", "mission", "model", "token"],
+    "Agent profile"
+  );
   if (
     typeof item.token !== "string" ||
     item.token.length < 32 ||
@@ -406,6 +411,9 @@ export function parseBoardCreateAgent(value: unknown): CreateAgentRequest {
     mission: boardText(item.mission, "mission", 4_000),
     model: parseBoardIdentifier(item.model, "model"),
     token: item.token,
+    ...(item.repositoryId === undefined
+      ? {}
+      : { repositoryId: parseBoardIdentifier(item.repositoryId, "repositoryId") }),
   });
 }
 
