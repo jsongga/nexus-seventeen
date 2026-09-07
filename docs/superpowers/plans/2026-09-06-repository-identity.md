@@ -44,8 +44,21 @@ shape as a migrated one; `board.test.ts`'s schema block covers the new table.
 Optional means absent keeps its current meaning — the project's primary repository — so every
 plan written before this change still validates and still means what it meant.
 
+**Reconciliation, not just a forward dual-write.** Review of task 1 established that the
+backfill runs only during 26 → 27 and never again, while `createProject`
+(`collaborators/projects.ts:1202`) inserts into `projects` alone and `updateProject` changes
+`repo_path` without touching the primary. So every project created between task 1 and this task
+has no repository row **permanently**. Task 2 must therefore backfill missing primaries and
+resync drifted paths on open, not merely start writing both from now on.
+
+Note while there: `createProject` stores `request.repoPath ?? request.description`, so a project
+can be born with its description as its repository path. That is campaign 10's documented shim,
+not a new bug — but the reconciliation will copy it into a repository record, so decide
+deliberately whether to carry it or reject it.
+
 **Exit:** the contract round-trips a repository through both the board and worker boundaries; a
-declared child without `repositoryId` still parses; `contract-drift.test.ts` passes.
+declared child without `repositoryId` still parses; a project created without a repository row
+gains one; `contract-drift.test.ts` passes.
 
 ## Task 3 — one resolution helper
 
@@ -54,9 +67,12 @@ tree to operate on: `collaborators/{runs, merge-executor, base-branch-poll, inte
 onboarding-check}.ts`, `pipeline-inspection.ts`, `persistence/workflow.ts`,
 `docs-publish/enumerate.ts`.
 
-Introduce one helper that resolves a checkout **from a work item**, not from a project, falling
-back to the project's primary repository when `repository_id` is null. Convert all eight in the
-same task.
+Introduce one helper that resolves a checkout **from a work item**, not from a project. The
+fallback chain is `work_items.repository_id` → the project's primary repository →
+`projects.repo_path`. **The last step is not optional.** `repo_path` is `NOT NULL` and always
+present, while "the project's primary repository" can be absent for any project created before
+task 2's reconciliation runs — so a fallback that stops at the primary throws on exactly the
+rows this campaign introduced. Convert all eight call sites in the same task.
 
 **The helper must not accept a project.** If it does, a caller can pass the project of a work
 item whose repository differs and get the wrong tree with no error. Making the wrong call

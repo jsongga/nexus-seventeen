@@ -38,7 +38,7 @@ import { TaskBoardError } from "../errors.js";
 
 /* —— Current schema —— */
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 export function workItemPriorityCases(indentation: string): string {
   return WORK_ITEM_PRIORITIES.map((priority, rank) => `WHEN '${priority}' THEN ${rank}`).join(`\n${indentation}`);
@@ -443,6 +443,73 @@ CREATE TABLE work_items (
   ended_at TEXT,
   cancelled_reason TEXT,
   archived_at TEXT,
+  repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT,
+  UNIQUE(created_by, idempotency_key),
+  CHECK (
+    (project_target_mode = 'auto' AND target_project_id IS NULL) OR
+    (project_target_mode = 'explicit' AND target_project_id IS NOT NULL)
+  ),
+  CHECK (project_target_mode = 'auto' OR resolved_project_id IS target_project_id),
+  CHECK (
+    (state IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NOT NULL) OR
+    (state NOT IN (${sqlStringList(WORK_ITEM_TERMINAL_STATES)}) AND ended_at IS NULL)
+  )
+) STRICT;
+CREATE INDEX work_items_updated ON work_items(updated_at DESC, work_item_id);
+CREATE INDEX work_items_display_order ON work_items(
+  (ended_at IS NOT NULL),
+  CASE priority
+    ${workItemPriorityCases("    ")}
+  END,
+  created_at,
+  work_item_id
+);
+CREATE INDEX work_items_unarchived_display_order ON work_items(
+  (ended_at IS NOT NULL),
+  CASE priority
+    ${workItemPriorityCases("    ")}
+  END,
+  created_at,
+  work_item_id
+) WHERE archived_at IS NULL;
+CREATE TRIGGER work_items_original_request_immutable
+BEFORE UPDATE OF original_request ON work_items
+WHEN NEW.original_request IS NOT OLD.original_request
+BEGIN
+  SELECT RAISE(ABORT, 'WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE');
+END;
+`;
+
+// The work_items shape as it stood through v26. Applied migrations must emit
+// their own era's schema: interpolating the live constant made v9 and v26
+// commit a foreign key to `repositories`, a table those versions do not have,
+// which wedges a database interrupted mid-ladder — work items can then be
+// neither inserted nor deleted, and rolling the binary back does not help.
+const WORK_ITEM_SCHEMA_THROUGH_V26 = `
+CREATE TABLE work_items (
+  work_item_id TEXT PRIMARY KEY,
+  original_request TEXT NOT NULL,
+  refined_objective TEXT,
+  priority TEXT NOT NULL CHECK (priority IN (${sqlStringList(WORK_ITEM_PRIORITIES)})),
+  project_target_mode TEXT NOT NULL CHECK (project_target_mode IN ('auto', 'explicit')),
+  target_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  resolved_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  parent_work_item_id TEXT NULL REFERENCES work_items(work_item_id) ON DELETE RESTRICT,
+  phase TEXT NULL CHECK (phase IS NULL OR phase IN (${sqlStringList(WORK_ITEM_PHASES)})),
+  child_ordinal INTEGER NULL,
+  pipeline_branch TEXT NULL,
+  base_sha TEXT NULL,
+  state TEXT NOT NULL CHECK (state IN (${sqlStringList(WORK_ITEM_STATES)})),
+  current_stage TEXT CHECK (current_stage IS NULL OR current_stage IN (${sqlStringList(WORK_ITEM_STAGES)})),
+  created_by TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  ended_at TEXT,
+  cancelled_reason TEXT,
+  archived_at TEXT,
   UNIQUE(created_by, idempotency_key),
   CHECK (
     (project_target_mode = 'auto' AND target_project_id IS NULL) OR
@@ -541,6 +608,27 @@ CREATE TABLE projects (
 ) STRICT;
 `;
 
+const REPOSITORIES_TABLE_SCHEMA = `
+CREATE TABLE repositories (
+  repository_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  is_primary INTEGER NOT NULL CHECK (is_primary IN (0, 1)),
+  version INTEGER NOT NULL CHECK (version >= 1),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+`;
+
+const REPOSITORIES_PROJECT_INDEX_SCHEMA = `
+CREATE INDEX repositories_project ON repositories(project_id, created_at, repository_id);
+`;
+
+const REPOSITORIES_PRIMARY_INDEX_SCHEMA = `
+CREATE UNIQUE INDEX repositories_one_primary ON repositories(project_id) WHERE is_primary = 1;
+`;
+
 const TASKS_SCHEMA = `
 CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
@@ -586,6 +674,9 @@ CREATE UNIQUE INDEX tasks_one_review_stage
 
 const SCHEMA = `
 ${PROJECTS_SCHEMA}
+${REPOSITORIES_TABLE_SCHEMA}
+${REPOSITORIES_PROJECT_INDEX_SCHEMA}
+${REPOSITORIES_PRIMARY_INDEX_SCHEMA}
 
 ${WORK_ITEM_SCHEMA}
 ${WORK_ITEM_TRANSITIONS_SCHEMA}
@@ -1115,7 +1206,7 @@ function migrateVersion18To19(db: DatabaseSync): void {
   }
 }
 
-/* —— Migrations 19–26 —— */
+/* —— Migrations 19–27 —— */
 
 function migrateVersion19To20(db: DatabaseSync): void {
   const hasWorkItems =
@@ -1552,7 +1643,7 @@ export function migrateVersion25To26(db: DatabaseSync): void {
       FROM projects_v25
       ORDER BY rowid;
 
-      ${WORK_ITEM_SCHEMA}
+      ${WORK_ITEM_SCHEMA_THROUGH_V26}
       INSERT INTO work_items(
         work_item_id, original_request, refined_objective, priority,
         project_target_mode, target_project_id, resolved_project_id,
@@ -1645,6 +1736,75 @@ export function migrateVersion25To26(db: DatabaseSync): void {
   }
 }
 
+export function migrateVersion26To27(db: DatabaseSync): void {
+  const hasProjects =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get() !== undefined;
+  const hasWorkItems =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_items'").get() !== undefined;
+  const hasRepositories =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repositories'").get() !== undefined;
+  const hasRepositoriesProjectIndex =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='repositories_project'").get() !== undefined;
+  const hasRepositoriesPrimaryIndex =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='repositories_one_primary'").get() !==
+    undefined;
+  const createRepositories = hasRepositories ? "" : REPOSITORIES_TABLE_SCHEMA;
+  const createRepositoriesProjectIndex = hasRepositoriesProjectIndex ? "" : REPOSITORIES_PROJECT_INDEX_SCHEMA;
+  const createRepositoriesPrimaryIndex = hasRepositoriesPrimaryIndex ? "" : REPOSITORIES_PRIMARY_INDEX_SCHEMA;
+  const addWorkItemRepositoryId =
+    !hasWorkItems || hasColumns(db, "work_items", ["repository_id"])
+      ? ""
+      : "ALTER TABLE work_items ADD COLUMN repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT;";
+  const backfillRepositories = hasProjects
+    ? `
+      INSERT INTO repositories(
+        repository_id, project_id, name, path, is_primary, version, created_at, updated_at
+      )
+      SELECT
+        'repository_' || project_id, project_id, name, repo_path, 1, 1, created_at, updated_at
+      FROM projects
+      WHERE NOT EXISTS (
+        SELECT 1 FROM repositories WHERE repositories.project_id = projects.project_id AND is_primary = 1
+      )
+      ORDER BY projects.rowid;
+    `
+    : "";
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      ${createRepositories}
+      ${createRepositoriesProjectIndex}
+      ${createRepositoriesPrimaryIndex}
+      ${addWorkItemRepositoryId}
+      ${backfillRepositories}
+    `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length !== 0) {
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_FOREIGN_KEY_FAILED",
+        "Task board migration failed its foreign-key check"
+      );
+    }
+    const integrity = db.prepare("PRAGMA quick_check").get();
+    if (integrity?.quick_check !== "ok") {
+      throw new TaskBoardError(
+        500,
+        "DATABASE_MIGRATION_INTEGRITY_FAILED",
+        "Task board migration failed its integrity check"
+      );
+    }
+    db.exec("PRAGMA user_version = 27; COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure.
+    }
+    throw error;
+  }
+}
+
 /* —— Migrations 6–12 —— */
 
 function migrateVersion9To10(db: DatabaseSync): void {
@@ -1684,7 +1844,7 @@ function migrateVersion11To12(db: DatabaseSync): void {
 function migrateVersion8To9(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {
-    db.exec(`${WORK_ITEM_SCHEMA} PRAGMA user_version = 9;`);
+    db.exec(`${WORK_ITEM_SCHEMA_THROUGH_V26} PRAGMA user_version = 9;`);
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length !== 0) {
       throw new TaskBoardError(
@@ -2007,6 +2167,8 @@ export class TaskBoardStore {
         // Pen-document storage is retired below.
       } else if (version === 25) {
         // Work-item decomposition and durable project repository paths are added below.
+      } else if (version === 26) {
+        // Repository records and work-item repository targets are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -2034,6 +2196,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 23) migrateVersion23To24(db);
       if (version >= 1 && version <= 24) migrateVersion24To25(db);
       if (version >= 1 && version <= 25) migrateVersion25To26(db);
+      if (version >= 1 && version <= 26) migrateVersion26To27(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

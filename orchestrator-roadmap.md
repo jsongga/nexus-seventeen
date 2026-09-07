@@ -192,7 +192,11 @@ the wrong tree silently. Migration v26 → v27 is additive: one repository per
 existing project, `work_items.repository_id` null everywhere, and
 `projects.repo_path` kept as a maintained mirror so a v26 worker still reads
 something true. Exit: a `pipeline-e2e` arc lands two children in one project and
-two repositories.
+two repositories. Rollout, from review of the v27 migration: take a copy before
+upgrading. A pre-existing foreign-key violation in a v26 database now fails
+`open()` permanently where the v26 build opened it fine, because reaching
+`SCHEMA_VERSION` skips the ladder entirely — and if the ladder is interrupted
+mid-climb, rolling the binary back does **not** rescue the database.
 
 **9.10. Credential filter precision at the agent boundary** _(shipped
 2026-09-02; queued 2026-08-31)_ — `assertCredentialSafe` rejects a whole prompt,
