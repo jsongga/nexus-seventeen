@@ -98,6 +98,16 @@ repositories exactly as they treat two children in two projects today — campai
 phases, not location, so this should be a narrowing of an existing rule rather than a new one.
 Verify that claim before relying on it.
 
+**A third debt, from task 3's review.** `runs.ts` evicts the published-interface cache using the
+_project_ chain on `crossRepoContext.providerProjectId`, while the entry is populated using the
+_work-item_ chain via `decomposition-readiness.ts`. Identical today; once a provider Expand item
+carries a `repository_id`, the eviction targets a key that was never inserted and the poisoned
+entry survives. The shape fix is to carry the provider's resolved path (or its owner work-item
+id) on `CrossRepoContext` — `prepareCrossRepoContext` already has `owner.work_item_id`. Also:
+`decomposition-readiness.ts` now pairs a repository path with `projects.name` as `repoName`, so
+the agent is told the project's name for a tree that may not be the project's, and
+`verify-attempts.ts`'s `JOIN projects` is now dead.
+
 **Two debts from task 2's review land here, not later.** `DeclaredChild.repositoryId` is
 currently accepted, shape-validated, and then discarded — `materializeDeclaredChildrenInTransaction`
 (`persistence/workflow.ts:973`) drops it, and nothing in `src/` writes

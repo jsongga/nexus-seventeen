@@ -13,6 +13,7 @@ import {
   automationConfigurationRequest,
   automationStages,
   boardFixture,
+  pointProjectAtRepository,
   taskRequest,
   workItemRequest,
 } from "./helpers.js";
@@ -121,7 +122,7 @@ async function reviewFixture(
     token: `review-verifier-token-${suffix}-0123456789abcdef`,
   });
   const db = new DatabaseSync(fixture.path);
-  db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
+  pointProjectAtRepository(db, fixture.project.projectId, repo);
   db.close();
   completeTask(
     fixture.board,

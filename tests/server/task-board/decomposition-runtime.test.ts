@@ -34,6 +34,7 @@ import {
   config,
   gateActions,
   latestParkRecord,
+  pointProjectAtRepository,
   taskRequest,
   workItemRequest,
 } from "./helpers.js";
@@ -5302,7 +5303,7 @@ ${JSON.stringify(
   try {
     const db = new DatabaseSync(fixture.path);
     try {
-      db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
+      pointProjectAtRepository(db, fixture.project.projectId, repo);
     } finally {
       db.close();
     }

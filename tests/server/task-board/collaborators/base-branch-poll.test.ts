@@ -13,6 +13,7 @@ import {
   automationStages,
   boardFixture,
   latestParkRecord,
+  pointProjectAtRepository,
   workItemRequest,
 } from "../helpers.js";
 
@@ -85,10 +86,7 @@ async function finalApprovalFixture(suffix: string) {
   const fixture = await boardFixture(undefined, () => new Date(NOW), { git: fakeGit(control) });
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(
-      `/fixture/${suffix}`,
-      fixture.project.projectId
-    );
+    pointProjectAtRepository(db, fixture.project.projectId, `/fixture/${suffix}`);
   } finally {
     db.close();
   }
@@ -458,7 +456,7 @@ test("a fixture pipeline rebases after withdrawal and merges both the base and t
   try {
     const database = new DatabaseSync(fixture.path);
     try {
-      database.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
+      pointProjectAtRepository(database, fixture.project.projectId, repo);
     } finally {
       database.close();
     }

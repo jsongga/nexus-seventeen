@@ -49,6 +49,7 @@ import {
   type ExpandInterfacePublicationFailure,
 } from "../persistence/workflow.js";
 import { claimMessageCursor, claimRequestHash, legacyClaimRequestHash } from "../persistence/run-claims.js";
+import { PROJECT_REPOSITORY_PATH_SQL, WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import {
   interruptFromRow,
   messageFromRow,
@@ -175,14 +176,14 @@ export class RunsCollaborator {
         `
       SELECT
         attempt.stage,
-        project.repo_path,
-        item.base_sha,
-        item.pipeline_branch,
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
+        work_item.base_sha,
+        work_item.pipeline_branch,
         plan.declared_scope_json
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE attempt.task_id=?
     `
@@ -191,7 +192,7 @@ export class RunsCollaborator {
     if (row === undefined || row.stage !== "implementation") return null;
     if (row.pipeline_branch === null && row.base_sha === null) return null;
     if (
-      typeof row.repo_path !== "string" ||
+      typeof row.repository_path !== "string" ||
       typeof row.base_sha !== "string" ||
       typeof row.pipeline_branch !== "string" ||
       typeof row.declared_scope_json !== "string"
@@ -208,7 +209,7 @@ export class RunsCollaborator {
     }
     try {
       return checkDeclaredScope({
-        repoPath: row.repo_path,
+        repoPath: row.repository_path,
         baseSha: row.base_sha,
         branch: row.pipeline_branch,
         declaredScope,
@@ -229,23 +230,23 @@ export class RunsCollaborator {
       .prepare(
         `
       SELECT
-        item.work_item_id,
+        work_item.work_item_id,
         project.project_id,
-        project.repo_path,
-        item.pipeline_branch,
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
+        work_item.pipeline_branch,
         node.node_id
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
-      JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=item.work_item_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
+      JOIN work_item_onboarding_tasks onboarding ON onboarding.work_item_id=work_item.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE attempt.task_id=? AND attempt.stage='implementation'
     `
       )
       .get(taskId);
     if (row === undefined) return null;
-    const repoPath = typeof row.repo_path === "string" ? row.repo_path : "";
+    const repoPath = typeof row.repository_path === "string" ? row.repository_path : "";
     const branch = typeof row.pipeline_branch === "string" ? row.pipeline_branch : "";
     const check = onboardingDeliverablesCheck(repoPath, branch, gapReport, this.#git);
     if (!check.ok) {
@@ -284,7 +285,7 @@ export class RunsCollaborator {
     const row = this.runtime.store.db
       .prepare(
         `
-      SELECT project.repo_path,
+      SELECT ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
         (
           SELECT verify.detail
           FROM verify_attempts verify
@@ -295,14 +296,14 @@ export class RunsCollaborator {
       FROM stage_attempts attempt
       JOIN work_nodes node ON node.node_id=attempt.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
-      JOIN projects project ON project.project_id=item.resolved_project_id
-      WHERE attempt.task_id=? AND attempt.stage='verification' AND item.phase='expand'
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
+      JOIN projects project ON project.project_id=work_item.resolved_project_id
+      WHERE attempt.task_id=? AND attempt.stage='verification' AND work_item.phase='expand'
     `
       )
       .get(current.taskId) as
       | Readonly<{
-          repo_path: string;
+          repository_path: string;
           verified_detail: string | null;
         }>
       | undefined;
@@ -311,7 +312,7 @@ export class RunsCollaborator {
     if (match?.[1] === undefined) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_verified_sha_missing");
     }
-    const published = readPublishedInterface(row.repo_path, match[1], PUBLISHED_INTERFACE_PATH, this.#git);
+    const published = readPublishedInterface(row.repository_path, match[1], PUBLISHED_INTERFACE_PATH, this.#git);
     if (published.kind === "present") return null;
     if (published.reason === "read_error") {
       throw new TaskBoardError(
@@ -885,9 +886,16 @@ export class RunsCollaborator {
             if (reason === null || projectedContext === null) throw error;
             const usage = workerAgentContextUsage(projectedContext);
             const providerRow = this.runtime.store.db
-              .prepare("SELECT repo_path FROM projects WHERE project_id=?")
-              .get(crossRepoContext.providerProjectId) as Readonly<{ repo_path?: unknown }> | undefined;
-            const providerRepoPath = typeof providerRow?.repo_path === "string" ? providerRow.repo_path : null;
+              .prepare(
+                `
+                SELECT ${PROJECT_REPOSITORY_PATH_SQL} AS repository_path
+                FROM projects project
+                WHERE project.project_id=?
+              `
+              )
+              .get(crossRepoContext.providerProjectId) as Readonly<{ repository_path?: unknown }> | undefined;
+            const providerRepoPath =
+              typeof providerRow?.repository_path === "string" ? providerRow.repository_path : null;
             throw new MigrateInterfaceClaimError(
               publishedInterfaceReasonSummary(reason, crossRepoContext.sha, usage.bytes, usage.budget),
               crossRepoContext.sha,
@@ -1941,9 +1949,9 @@ export class RunsCollaborator {
         this.runtime.store.db
           .prepare(
             `
-      SELECT project_id,name,repo_path
-      FROM projects
-      ORDER BY CASE WHEN project_id=? THEN 0 ELSE 1 END,created_at,project_id
+      SELECT project.project_id,project.name,${PROJECT_REPOSITORY_PATH_SQL} AS repository_path
+      FROM projects project
+      ORDER BY CASE WHEN project.project_id=? THEN 0 ELSE 1 END,project.created_at,project.project_id
       LIMIT 64
     `
           )
@@ -1952,7 +1960,7 @@ export class RunsCollaborator {
         Object.freeze({
           projectId: stringValue(row, "project_id"),
           name: stringValue(row, "name"),
-          repoName: basename(stringValue(row, "repo_path")),
+          repoName: basename(stringValue(row, "repository_path")),
         })
       )
     );

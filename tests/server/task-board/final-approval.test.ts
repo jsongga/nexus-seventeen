@@ -31,6 +31,7 @@ import {
   boardFixture,
   config,
   gateActions,
+  pointProjectAtRepository,
   workItemRequest,
 } from "./helpers.js";
 
@@ -161,7 +162,7 @@ function configurePipeline(fixture: Fixture, suffix: string): void {
 function setProjectRepository(fixture: Fixture, repo: string): void {
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repo, fixture.project.projectId);
+    pointProjectAtRepository(db, fixture.project.projectId, repo);
   } finally {
     db.close();
   }

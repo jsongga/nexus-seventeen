@@ -14,6 +14,7 @@ import {
   automationConfigurationRequest,
   automationStages,
   boardFixture,
+  pointProjectAtRepository,
   taskRequest,
   workItemRequest,
 } from "./helpers.js";
@@ -103,7 +104,7 @@ async function onboardingFixture(suffix: string): Promise<OnboardingFixture> {
   const repository = await fixtureRepo();
   const writable = new DatabaseSync(fixture.path);
   try {
-    writable.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repository, fixture.project.projectId);
+    pointProjectAtRepository(writable, fixture.project.projectId, repository);
   } finally {
     writable.close();
   }

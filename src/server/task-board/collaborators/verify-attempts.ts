@@ -12,6 +12,7 @@ import { TaskWorkspaceManager, removeRecordedTaskWorkspace } from "#server/agent
 import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
 import { GIT_OBJECT_ID_PATTERN, VERIFY_WORKSPACE_SUFFIX } from "#shared/task-board-contract";
 import { redactForPersistence } from "../../shared/redact.js";
+import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
 import type { TaskBoardRuntime } from "./runtime.js";
@@ -587,13 +588,13 @@ export class VerifyAttemptsCollaborator {
         verify.*,
         plan.work_item_id,
         plan.criterion_checks_json,
-        item.base_sha,
+        work_item.base_sha,
         node.project_id,
-        project.repo_path AS repository_path
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
       FROM verify_attempts verify
       JOIN work_nodes node ON node.node_id=verify.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=node.project_id
       WHERE verify.verify_attempt_id=?
     `

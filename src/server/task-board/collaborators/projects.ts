@@ -38,6 +38,7 @@ import {
 import { sha256 } from "../canonical.js";
 import { claimContextInputForDigest, projectClaimContext } from "../../shared/claim-context.js";
 import { ArtifactStore } from "../persistence/artifacts.js";
+import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { projectFromRow, questionFromRow, reviewFindingFromRow, type Row } from "../persistence/rows.js";
 import {
   TransparentWorkflow,
@@ -310,16 +311,16 @@ export class ProjectsCollaborator {
       .prepare(
         `
       SELECT
-        item.pipeline_branch,item.base_sha,project.repo_path,
+        work_item.pipeline_branch,work_item.base_sha,${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
         plan.assumptions_json,plan.acceptance_criteria_json,plan.declared_scope_json,
         plan.criterion_checks_json,
         (SELECT design.payload_json FROM design_records design
-          WHERE design.work_item_id=item.work_item_id
+          WHERE design.work_item_id=work_item.work_item_id
         ) AS design_record_json
-      FROM work_items item
-      JOIN plan_revisions plan ON plan.work_item_id=item.work_item_id AND plan.state='confirmed'
+      FROM work_items work_item
+      JOIN plan_revisions plan ON plan.work_item_id=work_item.work_item_id AND plan.state='confirmed'
       JOIN projects project ON project.project_id=plan.project_id
-      WHERE item.work_item_id=?
+      WHERE work_item.work_item_id=?
       ORDER BY plan.revision DESC
       LIMIT 1
     `
@@ -335,7 +336,7 @@ export class ProjectsCollaborator {
     if (row.declared_scope_json === null) {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_plan_record");
     }
-    const repoPath = String(row.repo_path);
+    const repoPath = String(row.repository_path);
     const branch = String(row.pipeline_branch);
     const baseSha = String(row.base_sha);
     const declaredScope = Object.freeze(JSON.parse(String(row.declared_scope_json)) as string[]);
@@ -1190,9 +1191,30 @@ export class ProjectsCollaborator {
       latestGreen?.detail === null || latestGreen?.detail === undefined
         ? null
         : (VERIFIED_SHA_DETAIL.exec(String(latestGreen.detail))?.[1] ?? null);
+    // Not project.repoPath. This context feeds every git write in the
+    // final-approval path — branch tip, merge, base advance — and a work item
+    // may target a repository its project is not primary for. Resolving from
+    // the project here while base-branch-poll resolves from the work item is
+    // how a merge lands in the wrong tree with nothing failing.
+    const repoPath = this.runtime.store.db
+      .prepare(
+        `
+      SELECT ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
+      FROM work_items work_item
+      WHERE work_item.work_item_id=?
+    `
+      )
+      .get(workItemId) as Readonly<{ repository_path?: unknown }> | undefined;
+    if (typeof repoPath?.repository_path !== "string") {
+      throw new TaskBoardError(
+        409,
+        TASK_BOARD_ERROR_CODES.TASK_BOARD_PIPELINE_REPO_UNAVAILABLE,
+        "The pipeline repository is unavailable"
+      );
+    }
     return Object.freeze({
       projectId: project.projectId,
-      repoPath: project.repoPath,
+      repoPath: repoPath.repository_path,
       branch: workItem.pipelineBranch,
       baseSha: workItem.baseSha,
       verifiedSha,

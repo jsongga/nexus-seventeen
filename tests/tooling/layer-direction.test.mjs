@@ -8,9 +8,15 @@ import ts from "typescript";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDirectory, "../..");
+const serverRoot = resolve(repositoryRoot, "src/server");
 const taskBoardRoot = resolve(repositoryRoot, "src/server/task-board");
 const contractValidateRoot = resolve(repositoryRoot, "src/shared/task-board-contract/validate");
 const moduleExtensions = new Set([".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]);
+const workItemRepositorySqlAllowedModules = new Set([
+  "task-board/persistence/repository-path.ts",
+  "task-board/persistence/rows.ts",
+  "task-board/persistence/store.ts",
+]);
 
 async function collectModules(directory) {
   const modules = [];
@@ -80,6 +86,57 @@ function moduleSpecifiers(path, source) {
   };
   visit(sourceFile);
   return specifiers;
+}
+
+function staticStrings(path, source) {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const strings = [];
+  const add = (node, text) => {
+    const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+    strings.push({ line: line + 1, text });
+  };
+  const visit = (node) => {
+    if (ts.isTemplateExpression(node)) {
+      add(node, node.head.text + node.templateSpans.map((span) => span.literal.text).join(""));
+      for (const span of node.templateSpans) visit(span.expression);
+      return;
+    }
+    if (ts.isStringLiteralLike(node)) {
+      add(node, node.text);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return strings;
+}
+
+export async function findWorkItemRepositorySqlViolations(root) {
+  const resolvedRoot = await realpath(root);
+  const modules = await collectModules(resolvedRoot);
+  const violations = [];
+  for (const modulePath of modules) {
+    const file = pathFrom(resolvedRoot, modulePath);
+    if (workItemRepositorySqlAllowedModules.has(file)) continue;
+    for (const string of staticStrings(modulePath, await readFile(modulePath, "utf8"))) {
+      // Deliberately NOT "mentions repo_path AND work_items". The two shapes
+      // this campaign removed reached a work item's checkout through
+      // plan.project_id and node.project_id, never naming work_items at all —
+      // so a co-occurrence rule cannot see a regression to either. The only
+      // legitimate remaining mentions are the two writes that maintain the
+      // mirror, so everything else is a violation.
+      if (!/\brepo_path\b/iu.test(string.text)) continue;
+      // `"repo_path is missing or empty"` is a message, not a query.
+      if (!/\b(?:SELECT|FROM|INSERT|UPDATE|DELETE)\b/iu.test(string.text)) continue;
+      const maintainsMirror =
+        /INSERT\s+INTO\s+projects\b/iu.test(string.text) || /UPDATE\s+projects\s+SET\b/iu.test(string.text);
+      if (!maintainsMirror) violations.push({ file, line: string.line });
+    }
+  }
+  return {
+    moduleCount: modules.length,
+    violations: violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
+  };
 }
 
 /**
@@ -323,6 +380,15 @@ function assertLayerDirection(result) {
   );
 }
 
+function assertWorkItemRepositorySql(result) {
+  const details = result.violations.map(({ file, line }) => `${file}:${line}`).join("\n");
+  assert.deepEqual(
+    result.violations,
+    [],
+    `work-item SQL must use the shared repository path fragment${details === "" ? "" : `:\n${details}`}`
+  );
+}
+
 async function createFixture(t, files) {
   const root = await mkdtemp(resolve(tmpdir(), "nexus-layer-direction-"));
   t.after(() => rm(root, { force: true, recursive: true }));
@@ -352,6 +418,59 @@ test("task-board persistence does not import collaborators", async () => {
   assert.deepEqual(result.unresolved, [], "every specifier under the task-board tree must resolve to a real file");
   assert.equal(result.persistenceToCollaboratorsEdgeCount, 0);
   assertLayerDirection(result);
+});
+
+test("server work-item SQL uses the shared repository path fragment", async () => {
+  const result = await findWorkItemRepositorySqlViolations(serverRoot);
+  assert.ok(result.moduleCount > 80, `repository SQL checker examined only ${result.moduleCount} modules`);
+  assertWorkItemRepositorySql(result);
+});
+
+test("repository SQL checker reports a planted legacy work-item resolver", async (t) => {
+  const root = await createFixture(t, {
+    "src/server/task-board/collaborators/legacy.ts":
+      'export const query = "SELECT project.repo_path FROM work_items work_item";\n',
+    "src/server/task-board/persistence/repository-path.ts":
+      'export const allowed = "SELECT project.repo_path FROM work_items work_item";\n',
+    "src/server/task-board/persistence/rows.ts":
+      'export const allowed = "SELECT project.repo_path FROM work_items work_item";\n',
+    "src/server/task-board/persistence/store.ts":
+      'export const allowed = "SELECT project.repo_path FROM work_items work_item";\n',
+  });
+  const result = await findWorkItemRepositorySqlViolations(resolve(root, "src/server"));
+  assert.equal(result.moduleCount, 4);
+  assert.deepEqual(result.violations, [{ file: "task-board/collaborators/legacy.ts", line: 1 }]);
+  assert.throws(
+    () => assertWorkItemRepositorySql(result),
+    (error) => {
+      assert.match(error.message, /task-board\/collaborators\/legacy\.ts:1/u);
+      return true;
+    }
+  );
+});
+
+test("the repository SQL guard catches the shapes this campaign removed", async (t) => {
+  // Both of these reached a work item's checkout without ever naming
+  // work_items — through plan.project_id and node.project_id. A rule keyed on
+  // repo_path AND work_items co-occurring could not see either, which is why
+  // the rule is keyed on repo_path alone.
+  const root = await createFixture(t, {
+    "task-board/collaborators/via-plan.ts":
+      'export const q = "SELECT project.repo_path FROM plan_revisions plan JOIN projects project ON project.project_id=plan.project_id WHERE plan.work_item_id=?";\n',
+    "task-board/collaborators/via-node.ts":
+      'export const q = "SELECT project.repo_path FROM work_nodes node JOIN projects project ON project.project_id=node.project_id";\n',
+    "task-board/collaborators/message.ts": 'export const m = "repo_path is missing or empty";\n',
+    "task-board/collaborators/writer.ts": 'export const w = "UPDATE projects SET repo_path=? WHERE project_id=?";\n',
+  });
+  const result = await findWorkItemRepositorySqlViolations(root);
+  assert.deepEqual(
+    result.violations,
+    [
+      { file: "task-board/collaborators/via-node.ts", line: 1 },
+      { file: "task-board/collaborators/via-plan.ts", line: 1 },
+    ],
+    "both project-joined shapes are violations; a message and a mirror write are not"
+  );
 });
 
 test("no layer directory is nested inside another layer", async () => {

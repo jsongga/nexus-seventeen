@@ -49,6 +49,7 @@ import { redactForPersistence } from "../../shared/redact.js";
 import { sha256 } from "../canonical.js";
 import { TaskBoardError } from "../errors.js";
 import { GateActionWriter, type GateActionInput } from "./gate-actions.js";
+import { PROJECT_REPOSITORY_PATH_SQL, WORK_ITEM_REPOSITORY_PATH_SQL } from "./repository-path.js";
 import { SkillRegistry } from "../skills.js";
 import {
   assertParentTerminationCascadeRegistered,
@@ -688,13 +689,13 @@ export class TransparentWorkflow {
       SELECT
         a.stage,
         plan.declared_scope_json,
-        item.pipeline_branch,
-        item.base_sha,
-        project.repo_path
+        work_item.pipeline_branch,
+        work_item.base_sha,
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
       FROM stage_attempts a
       JOIN work_nodes n ON n.node_id=a.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=plan.project_id
       WHERE a.task_id=?
     `
@@ -706,7 +707,7 @@ export class TransparentWorkflow {
     }
     try {
       return inspectPipelineBranchSync({
-        repoPath: String(row.repo_path),
+        repoPath: String(row.repository_path),
         baseSha: String(row.base_sha),
         branch: String(row.pipeline_branch),
         declaredScope: Object.freeze(json<string[]>(row.declared_scope_json)),
@@ -765,15 +766,15 @@ export class TransparentWorkflow {
         plan.declared_scope_json,
         plan.non_goals_json,
         plan.mechanical_portions_json,
-        item.pipeline_branch,
-        item.base_sha,
-        project.repo_path,
+        work_item.pipeline_branch,
+        work_item.base_sha,
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
         (SELECT payload_json FROM design_records design
           WHERE design.work_item_id=plan.work_item_id AND design.plan_revision_id=plan.plan_revision_id
         ) AS design_record_json
       FROM work_nodes n
       JOIN plan_revisions plan ON plan.plan_revision_id=n.plan_revision_id
-      JOIN work_items item ON item.work_item_id=plan.work_item_id
+      JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
       JOIN projects project ON project.project_id=plan.project_id
       WHERE n.node_id=? AND plan.state='confirmed'
     `
@@ -918,11 +919,19 @@ export class TransparentWorkflow {
   }
 
   pipelineBaseShaForProject(projectId: string): string {
-    const project = this.db.prepare("SELECT name,repo_path FROM projects WHERE project_id=?").get(projectId);
+    const project = this.db
+      .prepare(
+        `
+        SELECT project.name,${PROJECT_REPOSITORY_PATH_SQL} AS repository_path
+        FROM projects project
+        WHERE project.project_id=?
+      `
+      )
+      .get(projectId);
     if (project === undefined) {
       throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     }
-    return pipelineBaseSha(String(project.repo_path), String(project.name), this.git);
+    return pipelineBaseSha(String(project.repository_path), String(project.name), this.git);
   }
 
   pipelineBaseShasForConfirm(planId: string, request: ConfirmPlanRevisionRequest): ConfirmPipelineBaseShas {

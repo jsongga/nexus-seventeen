@@ -1,4 +1,5 @@
 import type { Row } from "../persistence/rows.js";
+import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
 import type { GitTextRunner } from "../../shared/git.js";
 import type { TaskBoardRuntime } from "./runtime.js";
@@ -24,7 +25,7 @@ function candidateFromRow(row: Row): BaseBranchCandidate {
     typeof row.version !== "number" ||
     typeof row.pipeline_branch !== "string" ||
     typeof row.base_sha !== "string" ||
-    typeof row.repo_path !== "string"
+    typeof row.repository_path !== "string"
   ) {
     throw new Error("TASK_BOARD_DATABASE_CORRUPT:base_branch_poll_candidate");
   }
@@ -33,7 +34,7 @@ function candidateFromRow(row: Row): BaseBranchCandidate {
     version: row.version,
     pipelineBranch: row.pipeline_branch,
     baseSha: row.base_sha,
-    repoPath: row.repo_path,
+    repoPath: row.repository_path,
   });
 }
 
@@ -50,15 +51,15 @@ export class BaseBranchPollCollaborator {
       .prepare(
         `
       SELECT
-        item.work_item_id,
-        item.version,
-        item.pipeline_branch,
-        item.base_sha,
-        project.repo_path
-      FROM work_items item
-      LEFT JOIN projects project ON project.project_id=item.resolved_project_id
-      WHERE item.state='final_approval' AND item.pipeline_branch IS NOT NULL
-      ORDER BY item.created_at,item.work_item_id
+        work_item.work_item_id,
+        work_item.version,
+        work_item.pipeline_branch,
+        work_item.base_sha,
+        ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
+      FROM work_items work_item
+      LEFT JOIN projects project ON project.project_id=work_item.resolved_project_id
+      WHERE work_item.state='final_approval' AND work_item.pipeline_branch IS NOT NULL
+      ORDER BY work_item.created_at,work_item.work_item_id
     `
       )
       .all() as Row[];

@@ -8,7 +8,13 @@ import test from "node:test";
 import { TaskBoardError } from "#server/task-board";
 import { sha256 } from "#server/task-board/canonical";
 import type { CreateWorkItemRequest, WorkflowPlanDraft } from "#shared/task-board-contract";
-import { automationConfigurationRequest, automationStages, boardFixture, workItemRequest } from "./helpers.js";
+import {
+  automationConfigurationRequest,
+  automationStages,
+  boardFixture,
+  pointProjectAtRepository,
+  workItemRequest,
+} from "./helpers.js";
 
 const ONBOARDING_ACCEPTANCE_CRITERIA =
   'Return a single-node v2 workflowPlan with stageTemplate ["implementation","testing","verification"], declaredScope covering README.md, the prefix "docs" (covering everything under docs/), and Dockerfile, and acceptance criteria naming the five documentation slots, a dated onboarding ADR, a valid VerifyContract defining the three test tiers and source-to-test mapping, an agent Dockerfile target when a Dockerfile exists, and a gap report that always includes deferred branch protection.';
@@ -110,7 +116,7 @@ test("onboarding intake links one planning task per project and exposes onboardi
     const repository = await onboardingRepository();
     const writable = new DatabaseSync(fixture.path);
     try {
-      writable.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repository, fixture.project.projectId);
+      pointProjectAtRepository(writable, fixture.project.projectId, repository);
     } finally {
       writable.close();
     }

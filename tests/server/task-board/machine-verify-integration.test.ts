@@ -13,7 +13,13 @@ import {
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
 import { TaskBoardError } from "#server/task-board";
-import { automationConfigurationRequest, automationStages, boardFixture, workItemRequest } from "./helpers.js";
+import {
+  automationConfigurationRequest,
+  automationStages,
+  boardFixture,
+  pointProjectAtRepository,
+  workItemRequest,
+} from "./helpers.js";
 
 type Fixture = Awaited<ReturnType<typeof boardFixture>>;
 
@@ -61,7 +67,7 @@ async function fixtureRepo(verifyPasses: boolean): Promise<string> {
 function updateProjectPath(fixture: Fixture, repositoryPath: string): void {
   const db = new DatabaseSync(fixture.path);
   try {
-    db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repositoryPath, fixture.project.projectId);
+    pointProjectAtRepository(db, fixture.project.projectId, repositoryPath);
   } finally {
     db.close();
   }

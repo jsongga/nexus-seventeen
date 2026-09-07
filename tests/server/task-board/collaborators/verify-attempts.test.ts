@@ -28,6 +28,7 @@ import {
   automationStages,
   boardFixture,
   config,
+  pointProjectAtRepository,
   workItemRequest,
 } from "../helpers.js";
 
@@ -207,9 +208,7 @@ async function attemptFixture(
   const verifyAttemptId = `verify-attempt-${suffix}`;
   const workspacePath = join(await mkdtemp(join(tmpdir(), "machine-verify-workspace-")), "checkout");
   store.transaction(() => {
-    store.db
-      .prepare("UPDATE projects SET repo_path=? WHERE project_id=?")
-      .run("/target/repository", fixture.project.projectId);
+    pointProjectAtRepository(store.db, fixture.project.projectId, "/target/repository");
     store.db
       .prepare(
         `

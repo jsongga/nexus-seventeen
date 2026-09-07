@@ -8,6 +8,7 @@ import type {
   WorkItemState,
 } from "#shared/task-board-contract";
 import { WORK_ITEM_TERMINAL_STATES, isTerminalWorkItemState } from "#shared/task-board-contract";
+import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { PUBLISHED_INTERFACE_PATH, type PublishedInterfaceReadResult } from "./interface-context.js";
 
 export interface DecompositionReadinessBlocker {
@@ -172,12 +173,12 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
   const provider = db
     .prepare(
       `
-    SELECT predecessor.work_item_id,predecessor.state,
-      project.project_id,project.name,project.repo_path,
+    SELECT work_item.work_item_id,work_item.state,
+      project.project_id,project.name,${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
       (
         SELECT action.merge_sha
         FROM gate_actions action
-        WHERE action.work_item_id=predecessor.work_item_id
+        WHERE action.work_item_id=work_item.work_item_id
           AND action.gate='final_approve'
           AND action.merge_sha IS NOT NULL
         ORDER BY action.created_at DESC,action.rowid DESC
@@ -185,12 +186,12 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
       ) AS merge_sha
     FROM work_item_dependencies dependency
     JOIN work_items owner ON owner.work_item_id=dependency.work_item_id AND owner.phase='migrate'
-    JOIN work_items predecessor
-      ON predecessor.work_item_id=dependency.depends_on_work_item_id
-      AND predecessor.phase='expand'
-    JOIN projects project ON project.project_id=predecessor.resolved_project_id
+    JOIN work_items work_item
+      ON work_item.work_item_id=dependency.depends_on_work_item_id
+      AND work_item.phase='expand'
+    JOIN projects project ON project.project_id=work_item.resolved_project_id
     WHERE dependency.work_item_id=?
-    ORDER BY predecessor.child_ordinal,predecessor.work_item_id
+    ORDER BY work_item.child_ordinal,work_item.work_item_id
     LIMIT 1
   `
     )
@@ -200,7 +201,7 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
         state: WorkItemState;
         project_id: string;
         name: string;
-        repo_path: string;
+        repository_path: string;
         merge_sha: string | null;
       }>
     | undefined;
@@ -209,7 +210,7 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
     workItemId: provider.work_item_id,
     projectId: provider.project_id,
     repoName: provider.name,
-    repoPath: provider.repo_path,
+    repoPath: provider.repository_path,
     sha: provider.merge_sha,
   });
 }

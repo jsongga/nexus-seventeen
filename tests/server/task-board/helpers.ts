@@ -223,3 +223,24 @@ export function automationConfigurationRequest(
     ...overrides,
   };
 }
+
+/**
+ * Points a fixture project at a repository the way the application does.
+ *
+ * Writing `projects.repo_path` alone used to be enough, because it was the only
+ * place a checkout came from. Since campaign 16 the primary repository row is
+ * the first thing a resolver consults, so a fixture that updates only the
+ * project row exercises a write path the board no longer supports.
+ */
+export function pointProjectAtRepository(db: DatabaseSync, projectId: string, repositoryPath: string): void {
+  db.prepare("UPDATE projects SET repo_path=? WHERE project_id=?").run(repositoryPath, projectId);
+  const moved = db
+    .prepare("UPDATE repositories SET path=? WHERE project_id=? AND is_primary=1")
+    .run(repositoryPath, projectId);
+  // Without this, a project with no primary row updates only repo_path and the
+  // fixture passes through the legacy fallback — quietly not testing what it
+  // says it tests.
+  if (moved.changes !== 1) {
+    throw new Error(`expected exactly one primary repository for ${projectId}, moved ${moved.changes}`);
+  }
+}
