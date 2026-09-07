@@ -18,7 +18,6 @@ import type {
   CreateWorkItemInput,
   DeployAttestationResult,
   HostDirectoryListing,
-  HostProjectEntry,
   HostProjectRoot,
   ProjectArtifact,
   ProjectWorkflow,
@@ -28,56 +27,67 @@ import type {
   WorkflowEvent,
 } from "../types";
 import {
-  array,
-  automationAgentTypeWire,
-  automationStageWire,
-  boolean,
-  boundedText,
-  exactRecord,
-  integer,
-  maximumRawWorkItems,
-  maximumTaskMessages,
-  maximumWorkItemCursorBytes,
-  maximumWorkItemPages,
-  parseAutomationAgentType,
-  parseAutomationConfiguration,
-  parseAutomationStage,
-  parseAgent,
   parseBoardNotification,
   parseBoardPause,
-  parseChildWorkItem,
   parseDeployAttestationResult,
   parseFindingsLedger,
-  parseInterrupt,
   parseMessage,
   parseParksLedger,
-  parseProjectArtifact,
-  parsePipelineSummary,
-  parseProjectWorkflow,
   parseProject,
-  parseRawBoard,
-  parseWorkItem,
   parseWorkItemAudit,
-  parseWorkItemDetail,
-  parseWorkItemDependency,
-  parseWorkflowEvent,
-  record,
-  string,
-  validateAutomationParts,
-  validateAutomationPayloadSize,
-  type JsonRecord,
+} from "./parse/entities";
+import { array, boundedText, integer, record } from "./parse/scalars";
+import {
+  maximumRawWorkItems,
+  maximumTaskMessages,
+  maximumWorkItemPages,
   type RawBoardNotification,
   type RawBoardPause,
   type RawFindingsLedger,
   type RawMessage,
   type RawParksLedger,
   type RawTask,
-  type RawWorkItemAudit,
   type RawWorkItem,
-} from "./parse";
-import { childWorkItemProjection, normalize, projectProjection, workItemDetailProjection } from "../model/project";
-import { taskMessagePageSize, workItemPageSize } from "./wire";
+  type RawWorkItemAudit,
+} from "./parse/types";
+import { parsePipelineSummary, parseProjectArtifact, parseRawBoard, parseWorkflowEvent } from "./parse/workflow";
+import { normalize } from "../model/project";
+import { taskMessagePageSize } from "./wire";
+import type { InterruptRunResult } from "./client/envelopes";
 import { SseFrameParser } from "./sse";
+import {
+  agentQueryConversationContextMarker,
+  agentQueryRoutingContextMarker,
+  appendAgentQuerySection,
+  maximumAgentQueryObjectiveCharacters,
+  recentAgentQueryConversation,
+} from "./client/agent-query";
+import {
+  automationConfigurationFromEnvelope,
+  automationConfigurationUpdateBody,
+  childrenFromEnvelope,
+  dependenciesFromEnvelope,
+  interruptRunFromEnvelope,
+  parseHostDirectoryListing,
+  parseHostProjectRoot,
+  planRejectionFromEnvelope,
+  projectFromEnvelope,
+  tokenRotationFromEnvelope,
+  workItemFromEnvelope,
+  workItemPageFromEnvelope,
+  workflowFromEnvelope,
+} from "./client/envelopes";
+
+/* —— Moved modules —— */
+
+// These moved out of this file but stay part of its public surface, so no
+// caller has to know where they went.
+export {
+  agentQueryConversationContextMarker,
+  agentQueryPromptFromObjective,
+  agentQueryRoutingContextMarker,
+} from "./client/agent-query";
+export { parseBoardSnapshot, type InterruptRunResult } from "./client/envelopes";
 
 /* —— Browser utilities —— */
 
@@ -112,215 +122,6 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
-/* —— Agent query prompts —— */
-
-const maximumAgentQueryObjectiveCharacters = 8_000;
-const maximumAgentQueryConversationCharacters = 2_400;
-const maximumAgentQueryConversationTurns = 12;
-const maximumAgentQueryTurnCharacters = 480;
-
-function taskCommandVersion(value: unknown, path: string): number {
-  const version = integer(value, path);
-  if (version < 1) throw new Error(`${path} must be a positive safe integer`);
-  return version;
-}
-
-export const agentQueryConversationContextMarker =
-  "\n\nRecent POC conversation (context only; newest request is above):\n";
-export const agentQueryRoutingContextMarker =
-  "\n\nCompany routing map (use this only to identify the best project or agent):\n";
-
-export function parseBoardSnapshot(value: unknown): BoardSnapshot {
-  const board = parseRawBoard(value);
-  return normalize([board], [board.project], [], []);
-}
-
-export function agentQueryPromptFromObjective(objective: string): string {
-  const sectionIndexes = [
-    objective.indexOf(agentQueryConversationContextMarker),
-    objective.indexOf(agentQueryRoutingContextMarker),
-  ].filter((index) => index >= 0);
-  const promptEnd = sectionIndexes.length > 0 ? Math.min(...sectionIndexes) : objective.length;
-  return objective.slice(0, promptEnd).trim();
-}
-
-function compactAgentQueryText(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
-}
-
-function truncateAgentQueryText(value: string, maximumCharacters: number): string {
-  if (value.length <= maximumCharacters) return value;
-  if (maximumCharacters <= 1) return "…".slice(0, maximumCharacters);
-  return `${value.slice(0, maximumCharacters - 1).trimEnd()}…`;
-}
-
-function recentAgentQueryConversation(turns: AgentQueryConversationTurn[], newestPrompt: string): string {
-  const newestPromptKey = compactAgentQueryText(newestPrompt);
-  const selected: string[] = [];
-  const seen = new Set<string>();
-  let characters = 0;
-
-  for (let index = turns.length - 1; index >= 0 && selected.length < maximumAgentQueryConversationTurns; index -= 1) {
-    const turn = turns[index];
-    if (!turn) continue;
-    const body = compactAgentQueryText(turn.body);
-    if (!body || (turn.role === "human" && body === newestPromptKey)) continue;
-    const key = `${turn.role}\u0000${body}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const label = turn.role === "human" ? "Human" : "Agent";
-    const line = `${label}: ${truncateAgentQueryText(body, maximumAgentQueryTurnCharacters)}`;
-    const separatorCharacters = selected.length > 0 ? 1 : 0;
-    if (characters + separatorCharacters + line.length > maximumAgentQueryConversationCharacters) break;
-    selected.unshift(line);
-    characters += separatorCharacters + line.length;
-  }
-
-  return selected.join("\n");
-}
-
-function appendAgentQuerySection(objective: string, marker: string, content: string): string {
-  if (!content) return objective;
-  const availableCharacters = maximumAgentQueryObjectiveCharacters - objective.length - marker.length;
-  if (availableCharacters <= 0) return objective;
-  return `${objective}${marker}${truncateAgentQueryText(content, availableCharacters)}`;
-}
-
-/* —— Response envelopes —— */
-
-function automationConfigurationFromEnvelope(value: unknown, path: string): AutomationConfiguration {
-  const envelope = exactRecord(value, path, ["configuration"]);
-  return parseAutomationConfiguration(envelope.configuration, `${path}.configuration`);
-}
-
-function automationConfigurationUpdateBody(input: SaveAutomationConfigurationInput): JsonRecord {
-  const version = integer(input.version, "automation configuration update.version", 1);
-  const rawAgentTypes = input.agentTypes.map(automationAgentTypeWire);
-  const agentTypes = rawAgentTypes.map((agentType, index) =>
-    parseAutomationAgentType(agentType, `automation configuration update.agentTypes[${index}]`)
-  );
-  const rawStages = input.stages.map(automationStageWire);
-  const stages = rawStages.map((entry, index) =>
-    parseAutomationStage(entry, `automation configuration update.stages[${index}]`)
-  );
-  validateAutomationParts(agentTypes, stages, "automation configuration update");
-  validateAutomationPayloadSize(agentTypes, stages, "automation configuration update");
-  return { version, agentTypes: rawAgentTypes, stages: rawStages };
-}
-
-function projectFromEnvelope(value: unknown, path: string): BoardProject {
-  const envelope = record(value, path);
-  return projectProjection(parseProject(envelope.project, `${path}.project`));
-}
-
-function parseHostProjectEntry(value: unknown, path: string): HostProjectEntry {
-  const item = record(value, path);
-  const modifiedAtMs = item.modifiedAtMs;
-  if (typeof modifiedAtMs !== "number" || !Number.isFinite(modifiedAtMs))
-    throw new Error(`${path}.modifiedAtMs must be a finite number`);
-  return {
-    name: string(item.name, `${path}.name`),
-    path: string(item.path, `${path}.path`),
-    hasGit: boolean(item.hasGit, `${path}.hasGit`),
-    modifiedAtMs,
-  };
-}
-
-function parseHostProjectRoot(value: unknown, path: string): HostProjectRoot {
-  const item = record(value, path);
-  return {
-    name: string(item.name, `${path}.name`),
-    path: string(item.path, `${path}.path`),
-    projects: array(item.projects, `${path}.projects`, parseHostProjectEntry),
-    truncated: boolean(item.truncated, `${path}.truncated`),
-  };
-}
-
-function parseHostDirectoryListing(value: unknown, path: string): HostDirectoryListing {
-  const item = record(value, path);
-  const parent = item.parent;
-  if (parent !== null && typeof parent !== "string") throw new Error(`${path}.parent must be a string or null`);
-  return {
-    path: string(item.path, `${path}.path`),
-    parent,
-    entries: array(item.entries, `${path}.entries`, (entry, entryPath) => {
-      const node = record(entry, entryPath);
-      return {
-        name: string(node.name, `${entryPath}.name`),
-        path: string(node.path, `${entryPath}.path`),
-        hasGit: boolean(node.hasGit, `${entryPath}.hasGit`),
-      };
-    }),
-    truncated: boolean(item.truncated, `${path}.truncated`),
-  };
-}
-
-function workItemFromEnvelope(value: unknown, path: string): BoardWorkItemDetail {
-  const envelope = record(value, path);
-  return workItemDetailProjection(parseWorkItemDetail(envelope.workItem, `${path}.workItem`));
-}
-
-function childrenFromEnvelope(value: unknown, path: string): BoardChildWorkItem[] {
-  const envelope = record(value, path);
-  return array(envelope.children, `${path}.children`, parseChildWorkItem).map(childWorkItemProjection);
-}
-
-function dependenciesFromEnvelope(value: unknown, path: string): BoardWorkItemDependency[] {
-  const envelope = record(value, path);
-  return array(envelope.dependencies, `${path}.dependencies`, parseWorkItemDependency);
-}
-
-function tokenRotationFromEnvelope(value: unknown, path: string): RotateAgentTokenResult {
-  const envelope = exactRecord(value, path, ["agent", "token"]);
-  const agent = parseAgent(envelope.agent, `${path}.agent`);
-  const token = boundedText(envelope.token, `${path}.token`, 512);
-  if (token.length < 32) throw new Error(`${path}.token must contain at least 32 characters`);
-  return { agentId: agent.agentId, version: agent.version, token };
-}
-
-function interruptRunFromEnvelope(value: unknown, path: string): InterruptRunResult {
-  const envelope = record(value, path);
-  const interrupt = parseInterrupt(envelope.interrupt, `${path}.interrupt`);
-  return { runId: interrupt.runId };
-}
-
-function workflowFromEnvelope(value: unknown, path: string): ProjectWorkflow {
-  const envelope = record(value, path);
-  return parseProjectWorkflow(envelope.workflow, `${path}.workflow`);
-}
-
-function planRejectionFromEnvelope(value: unknown, path: string): RejectPlanRevisionResponse {
-  const envelope = exactRecord(value, path, ["outcome"]);
-  if (envelope.outcome !== "revising" && envelope.outcome !== "parked") {
-    throw new Error(`${path}.outcome must be revising or parked`);
-  }
-  return { outcome: envelope.outcome };
-}
-
-function workItemPageFromEnvelope(
-  value: unknown,
-  path: string
-): {
-  workItems: RawWorkItem[];
-  nextCursor: string | null;
-} {
-  const envelope = record(value, path);
-  if (!Array.isArray(envelope.workItems)) throw new Error(`${path}.workItems must be an array`);
-  if (envelope.workItems.length > workItemPageSize) {
-    throw new Error(`${path}.workItems cannot contain more than ${workItemPageSize} records`);
-  }
-  const workItems = envelope.workItems.map((item, index) => parseWorkItem(item, `${path}.workItems[${index}]`));
-  if (!("nextCursor" in envelope)) return { workItems, nextCursor: null };
-  const nextCursor = string(envelope.nextCursor, `${path}.nextCursor`);
-  if (nextCursor.length === 0 || new TextEncoder().encode(nextCursor).byteLength > maximumWorkItemCursorBytes) {
-    throw new Error(
-      `${path}.nextCursor must be a nonempty string no larger than ${maximumWorkItemCursorBytes} UTF-8 bytes`
-    );
-  }
-  return { workItems, nextCursor };
-}
-
 /* —— Public client contract —— */
 
 export class BoardApiError extends Error {
@@ -332,10 +133,6 @@ export class BoardApiError extends Error {
     super(message);
     this.name = "BoardApiError";
   }
-}
-
-export interface InterruptRunResult {
-  readonly runId: string | null;
 }
 
 export interface BoardNotifications {
@@ -408,6 +205,12 @@ export interface TaskBoardClient {
 }
 
 /* —— Transport boundary —— */
+
+function taskCommandVersion(value: unknown, path: string): number {
+  const version = integer(value, path);
+  if (version < 1) throw new Error(`${path} must be a positive safe integer`);
+  return version;
+}
 
 async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;

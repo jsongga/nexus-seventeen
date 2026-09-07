@@ -266,21 +266,24 @@ mechanical shape as this task; `persistence/workflow.ts` (3,040) is now the
 largest file in the repository; and `collaborators/projects.ts` (2,451) still has
 undrawn seams.
 
-**13. Web feature seams** _(specced 2026-09-02; spec
-`docs/superpowers/specs/2026-09-02-web-feature-seams.md`)_ — `src/web` has eight
-files over 600 lines and two over 1,500. The roadmap's premise for this item was
-wrong: `WorkItemDetail.tsx` cannot be split "along the seam its five test files
-already use", because those five overlap on four symbol groups — a test file
-names a scenario, not a module. The seam comes from the components instead:
-`BoardPage` moves to routing ownership, and 27 prop-driven helpers become six
-`views/work-item/*` modules, with `BoardApp`'s helpers moved likewise and a
-banner pass marking where the next campaign cuts. Then the six mid-tier files
-(`client.ts`, `AutomationPage`, `WorkspacePages`, `CreateDialogs`, `parse.ts`,
-`WorkspaceSidebar`) each divide into what they already are. Exit, restated
-honestly: every file in `src/web` under 600 **except** the two shells. Extracting
-every helper leaves `WorkItemDetail` at ~1,250 and `BoardApp` at ~1,250, so the
-audit's original criterion is not reachable by moving components — it needs
-custom-hook extraction, which decides where state lives (→ 14).
+**13. Web feature seams** _(shipped 2026-09-06; spec
+`docs/superpowers/specs/2026-09-02-web-feature-seams.md`)_ — `BoardPage` moved to
+routing ownership; 27 prop-driven helpers became six `views/work-item/*` modules
+and seven became four `board/*`; the four oversized view files split, with
+`WorkspacePages.tsx` deleting itself once its two pages moved out; and
+`data/parse.ts` (717) became a 104-line façade over five acyclic modules with
+zero caller edits. Every task held to declaration identity — text unchanged
+except where a commit says otherwise. Exit, as restated when the campaign was
+specced: every file in `src/web` under 600 **except** the shells. Three
+exceptions rather than two — `BoardApp.tsx` 1,381, `WorkItemDetail.tsx` 1,237,
+and `data/client.ts` 832, whose factory is the same shape of problem (→ 15).
+Follow-up the review surfaced: 13 of `parse.ts`'s 15 importers are type-only
+and want nothing but `Raw*`, so `parse/types` is the real import target and
+the façade is two edits from removable — unlike `validate.ts`, whose caller
+migration genuinely may never happen.
+The roadmap's original premise for this item was wrong and the split proved it:
+`WorkItemDetail`'s five test files overlap on four symbol groups, so the "seam
+they already use" does not exist — a test file names a scenario, not a module.
 
 **14. The two web shells** _(proposed 2026-09-02)_ — `WorkItemDetail` (1,169
 lines, 40 hook calls, 46 local declarations before ~676 lines of JSX) and
@@ -290,6 +293,16 @@ prop-driven component cannot change what renders, but moving a `useState` betwee
 components changes when it resets, and a `useEffect` dependency array can start
 firing on a different schedule. Own review budget, own Playwright arcs.
 Exit: the audit's original bar — no file in `src/web` over ~600 lines.
+
+**15. The task-board client factory** _(proposed 2026-09-06)_ —
+`createTaskBoardClient` is 582 of `data/client.ts`'s 832 lines: one factory, 48
+methods, all closing over five mutable `Map`s and a shared `request`. Campaign 13
+extracted what was mechanical (agent-query prompts, response envelopes) and
+stopped, because getting under 600 means giving those methods an explicit context
+object instead of a closure. That is a harder core than `validate.ts`'s shared
+helpers were: a mistake produces two contexts where there was one and breaks
+caching invisibly rather than failing to compile. Same reason campaign 14 exists,
+different technique — a context object, not custom hooks.
 
 ## Migration risks
 

@@ -1,717 +1,84 @@
-/** Browser adapter for the shared task-board runtime contract. */
-import { GIT_OBJECT_ID_PATTERN } from "@shared/task-board-contract";
-import type {
-  AgentInterrupt,
-  AgentProfile,
-  AgentRun,
-  BoardPause,
-  BoardSnapshot,
-  HumanQuestion,
-  PipelineSummary,
-  PlanRecordFields,
-  PlanRevision,
-  Project,
-  TaskEvent,
-  TaskMessage,
-  TaskPhase,
-} from "@shared/task-board-contract";
-import {
-  BROWSER_SCALAR_MESSAGES,
-  PATH_EXACT_MESSAGES,
-  arrayOf,
-  automationConfigurationPartsBytes,
-  booleanValue,
-  contractSetMember,
-  exact,
-  identifier as contractIdentifier,
-  integer as contractInteger,
-  parseAgentEntity,
-  parseAutomationAgentTypeEntity,
-  parseAutomationConfigurationEntity,
-  parseAutomationExecutorEntity,
-  parseAutomationStageEntity,
-  parseBoardNotification as parseBoardNotificationContract,
-  parseBoardPause as parseBoardPauseContract,
-  parseBoardSnapshotEntity,
-  parseDesignRecordEntity,
-  parseEventEntity,
-  parseFindingsLedger as parseFindingsLedgerContract,
-  parseGateAction as parseGateActionContract,
-  parseHandoffEntity,
-  parseInterruptEntity,
-  parseMessageEntity,
-  parseNodeEntity,
-  parsePlanEntity,
-  parsePipelineSummaryEntity,
-  parseParkRecord as parseParkRecordContract,
-  parseParksLedger as parseParksLedgerContract,
-  parseProjectArtifactEntity,
-  parseProjectEntity,
-  parseProjectEventEntity,
-  parseQuestionEntity,
-  parseReviewFindingEntity,
-  parseRunEntity,
-  parseTaskEntity,
-  parseWorkItemAudit as parseWorkItemAuditContract,
-  parseWorkItemEntity,
-  parseWorkItemTransitionEntity,
-  prose,
-  record as contractRecord,
-  skillIdentifier as contractSkillIdentifier,
-  stringValue,
-  timestamp as contractTimestamp,
-  validateAutomationConfigurationParts,
-  type JsonRecord,
-  type ParsedWorkItemTransition,
-  type TolerantBoardNotification,
-  type TolerantDesignRecordEntity,
-  type TolerantGateAction,
-  type TolerantFindingsLedger,
-  type TolerantParkRecord,
-  type TolerantParksLedger,
-  type TolerantReviewFindingEntity,
-  type TolerantTaskEntity,
-  type TolerantWorkItemAudit,
-  type TolerantWorkItemEntity,
-} from "@shared/task-board-contract/validate";
-import type {
-  AutomationAgentType,
-  AutomationConfiguration,
-  AutomationStageConfiguration,
-  AutomationStageExecutor,
-  BoardWorkItemDependency,
-  DeployAttestationResult,
-  ParkCategory,
-  ProjectArtifact,
-  ProjectWorkflow,
-  WorkflowEvent,
-  WorkflowHandoff,
-  WorkflowNode,
-  WorkflowPlan,
-} from "../types";
-import { maximumAutomationConfigurationBytes, maximumWorkItemCursorBytes, parkCategories } from "./wire";
+/** The browser's wire-record vocabulary and the parsers that produce it. Each concern lives in its own module; this is the door. */
 
-export { maximumWorkItemCursorBytes };
-export type { JsonRecord };
-export const maximumTaskMessages = 10_000;
-export const maximumWorkItemPages = 50;
-export const maximumRawWorkItems = 10_000;
+/* —— Pass-through —— */
 
-type WithMs<T, K extends string> = T & Record<`${K}Ms`, number>;
-type WithNullableMs<T, K extends string> = T & Record<`${K}Ms`, number | null>;
-type WithOptionalNullableMs<T, K extends string> = T & Partial<Record<`${K}Ms`, number | null>>;
-type WithoutApi<T> = Omit<T, "apiVersion">;
-export type RawProject = WithMs<WithMs<WithoutApi<Project>, "createdAt">, "updatedAt">;
-export type RawWorkItem = WithOptionalNullableMs<
-  WithOptionalNullableMs<
-    WithNullableMs<
-      WithNullableMs<WithMs<WithMs<WithoutApi<TolerantWorkItemEntity>, "createdAt">, "updatedAt">, "endedAt">,
-      "archivedAt"
-    >,
-    "stateSince"
-  >,
-  "heartbeatAt"
->;
-export type RawChildWorkItem = RawWorkItem &
-  Readonly<{
-    deployAttested: boolean;
-    mergeSha: string | null;
-  }>;
-type RawWorkItemTransition = WithMs<ParsedWorkItemTransition, "createdAt">;
-export type RawWorkItemDetail = RawWorkItem &
-  Readonly<{
-    transitions: RawWorkItemTransition[];
-    gapReportArtifactId: string | null;
-    parkCategory?: ParkCategory | null;
-  }>;
-type RawGateAction = WithMs<TolerantGateAction, "createdAt">;
-export interface RawWorkItemAudit {
-  gateActions: RawGateAction[];
-  transitions: RawWorkItemTransition[];
-}
-type RawReviewFinding = WithMs<TolerantReviewFindingEntity, "createdAt">;
-export interface RawFindingsLedger extends Omit<TolerantFindingsLedger, "recent"> {
-  recent: Array<RawReviewFinding & Readonly<{ workItemId: string }>>;
-}
-type RawParkRecord = WithNullableMs<WithMs<TolerantParkRecord, "parkedAt">, "resolvedAt">;
-type RawLedgerParkRecord = RawParkRecord & Readonly<{ workItemTitle: string }>;
-export interface RawParksLedger extends Omit<TolerantParksLedger, "open" | "resolved"> {
-  open: RawLedgerParkRecord[];
-  resolved: RawLedgerParkRecord[];
-}
-export type RawBoardNotification = WithNullableMs<WithMs<TolerantBoardNotification, "createdAt">, "readAt">;
-export type RawBoardPause = WithMs<BoardPause, "updatedAt">;
-type RawAgent = WithMs<WithoutApi<AgentProfile>, "createdAt">;
-type RawTaskPhase = WithMs<
-  WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, "startedAt">, "endedAt">, "createdAt">,
-  "updatedAt"
->;
-export type RawTask = WithMs<
-  WithMs<
-    WithNullableMs<
-      WithNullableMs<
-        WithNullableMs<
-          WithNullableMs<
-            Omit<WithoutApi<TolerantTaskEntity>, "phases" | "workspaceRefs"> & {
-              phases: RawTaskPhase[];
-              workspaceRefs: string[];
-            },
-            "estimateRecordedAt"
-          >,
-          "startedAt"
-        >,
-        "expectedCompletedAt"
-      >,
-      "endedAt"
-    >,
-    "createdAt"
-  >,
-  "updatedAt"
->;
-type RawQuestion = WithMs<
-  WithNullableMs<Omit<WithoutApi<HumanQuestion>, "runId" | "answeredBy">, "answeredAt">,
-  "askedAt"
->;
-export type RawRun = WithNullableMs<
-  WithMs<WithNullableMs<Omit<WithoutApi<AgentRun>, "claimId" | "wakeupId" | "result">, "endedAt">, "startedAt">,
-  "heartbeatAt"
->;
-type RawInterrupt = WithMs<Pick<AgentInterrupt, "sequence" | "agentId" | "runId" | "requestedAt">, "requestedAt">;
-export type RawEvent = WithMs<WithoutApi<TaskEvent>, "createdAt">;
-export type RawMessage = WithMs<Omit<WithoutApi<TaskMessage>, "runId">, "createdAt">;
-export interface RawBoard {
-  project: RawProject;
-  agents: RawAgent[];
-  tasks: RawTask[];
-  questions: RawQuestion[];
-  runs: RawRun[];
-  interrupts: RawInterrupt[];
-  events: RawEvent[];
-}
+// Declared elsewhere; re-exported here because callers have always taken
+// them from this door.
+export { maximumWorkItemCursorBytes } from "./wire";
+export type { JsonRecord } from "@shared/task-board-contract/validate";
 
-const loose = {
-  exact: false,
-  identifiers: "string",
-  projection: "browser",
-  scalarMessages: BROWSER_SCALAR_MESSAGES,
-  tolerantEnums: true,
-} as const;
-const strict = {
-  exact: PATH_EXACT_MESSAGES,
-  identifierMessages: "valid-identifier",
-  projection: "browser",
-  scalarMessages: BROWSER_SCALAR_MESSAGES,
-} as const;
-const ms = (value: string): number => Date.parse(value);
-const nullableMs = (value: string | null): number | null => (value === null ? null : ms(value));
-const withoutApiVersion = <T extends { apiVersion: unknown }>(item: T): Omit<T, "apiVersion"> => {
-  const { apiVersion: _apiVersion, ...value } = item;
-  return value;
-};
+/* —— Modules —— */
 
-export function record(value: unknown, path: string): JsonRecord {
-  return contractRecord(value, path);
-}
-export function exactRecord(value: unknown, path: string, fields: readonly string[]): JsonRecord {
-  return exact(value, fields, path, { messages: PATH_EXACT_MESSAGES });
-}
-export function string(value: unknown, path: string): string {
-  return stringValue(value, path);
-}
-export function boundedText(value: unknown, path: string, maximum: number, allowEmpty = false): string {
-  return prose(value, path, {
-    maximum,
-    allowEmpty,
-    message: `${path} must ${allowEmpty ? "" : "not be empty and "}contain at most ${maximum.toLocaleString()} characters`,
-    scalarMessages: BROWSER_SCALAR_MESSAGES,
-  });
-}
-export function integer(value: unknown, path: string, minimum = 0): number {
-  return contractInteger(value, path, minimum);
-}
-export function array<T>(value: unknown, path: string, parse: (item: unknown, path: string) => T): T[] {
-  return arrayOf(value, path, parse);
-}
-function identifier(value: unknown, path: string): string {
-  return contractIdentifier(value, path, `${path} must be a valid identifier`, BROWSER_SCALAR_MESSAGES);
-}
-export function skillIdentifier(value: unknown, path: string): string {
-  return contractSkillIdentifier(value, path, BROWSER_SCALAR_MESSAGES);
-}
-export function boolean(value: unknown, path: string): boolean {
-  return booleanValue(value, path);
-}
-export function nullableString(value: unknown, path: string): string | null {
-  return value === null ? null : stringValue(value, path);
-}
-export function timestamp(value: unknown, path: string): string {
-  return contractTimestamp(value, path, `${path} must be a timestamp`, false, BROWSER_SCALAR_MESSAGES);
-}
-export function member<T extends string>(value: unknown, values: ReadonlySet<T>, path: string): T {
-  return contractSetMember(value, values, path);
-}
-function projectProject(item: Project): RawProject {
-  return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt) };
-}
-export function parseProject(value: unknown, path: string): RawProject {
-  return projectProject(parseProjectEntity(value, path, loose));
-}
-function projectWorkItem(item: TolerantWorkItemEntity): RawWorkItem {
-  return {
-    ...withoutApiVersion(item),
-    ...(item.stateSince === undefined ? {} : { stateSinceMs: nullableMs(item.stateSince) }),
-    ...(item.heartbeatAt === undefined ? {} : { heartbeatAtMs: nullableMs(item.heartbeatAt) }),
-    createdAtMs: ms(item.createdAt),
-    updatedAtMs: ms(item.updatedAt),
-    endedAtMs: nullableMs(item.endedAt),
-    archivedAtMs: nullableMs(item.archivedAt),
-  };
-}
-export function parseWorkItem(value: unknown, path: string): RawWorkItem {
-  return projectWorkItem(parseWorkItemEntity(value, path, loose));
-}
-export function parseChildWorkItem(value: unknown, path: string): RawChildWorkItem {
-  const item = contractRecord(value, path);
-  const mergeSha = item.mergeSha === null ? null : stringValue(item.mergeSha, `${path}.mergeSha`);
-  if (mergeSha !== null && !GIT_OBJECT_ID_PATTERN.test(mergeSha)) {
-    throw new Error(`${path}.mergeSha must be a Git object id or null`);
-  }
-  return {
-    ...projectWorkItem(parseWorkItemEntity(item, path, loose)),
-    deployAttested: booleanValue(item.deployAttested, `${path}.deployAttested`),
-    mergeSha,
-  };
-}
-
-export function parseWorkItemDependency(value: unknown, path: string): BoardWorkItemDependency {
-  const item = contractRecord(value, path);
-  return {
-    workItemId: stringValue(item.workItemId, `${path}.workItemId`),
-    dependsOnWorkItemId: stringValue(item.dependsOnWorkItemId, `${path}.dependsOnWorkItemId`),
-  };
-}
-function parseWorkItemTransitions(value: unknown, path: string): RawWorkItemTransition[] {
-  return arrayOf(value, path, (entry, entryPath) => {
-    const transition = parseWorkItemTransitionEntity(entry, entryPath, loose);
-    return { ...transition, createdAtMs: ms(transition.createdAt) };
-  });
-}
-export function parseWorkItemDetail(value: unknown, path: string): RawWorkItemDetail {
-  const item = contractRecord(value, path);
-  return {
-    ...projectWorkItem(parseWorkItemEntity(item, path, loose)),
-    transitions: parseWorkItemTransitions(item.transitions, `${path}.transitions`),
-    gapReportArtifactId:
-      item.gapReportArtifactId === undefined || item.gapReportArtifactId === null
-        ? null
-        : identifier(item.gapReportArtifactId, `${path}.gapReportArtifactId`),
-    parkCategory:
-      item.parkCategory === undefined || item.parkCategory === null
-        ? null
-        : member(item.parkCategory, parkCategories, `${path}.parkCategory`),
-  };
-}
-function projectAgent(item: AgentProfile): RawAgent {
-  return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt) };
-}
-export function parseAgent(value: unknown, path: string): RawAgent {
-  return projectAgent(parseAgentEntity(value, path, loose));
-}
-function projectTaskPhase(item: TaskPhase): RawTaskPhase {
-  return {
-    ...withoutApiVersion(item),
-    startedAtMs: nullableMs(item.startedAt),
-    endedAtMs: nullableMs(item.endedAt),
-    createdAtMs: ms(item.createdAt),
-    updatedAtMs: ms(item.updatedAt),
-  };
-}
-function projectTask(item: TolerantTaskEntity): RawTask {
-  return {
-    ...withoutApiVersion(item),
-    workspaceRefs: [...item.workspaceRefs],
-    phases: item.phases.map(projectTaskPhase),
-    estimateRecordedAtMs: nullableMs(item.estimateRecordedAt),
-    startedAtMs: nullableMs(item.startedAt),
-    expectedCompletedAtMs: nullableMs(item.expectedCompletedAt),
-    endedAtMs: nullableMs(item.endedAt),
-    createdAtMs: ms(item.createdAt),
-    updatedAtMs: ms(item.updatedAt),
-  };
-}
-export function parseTask(value: unknown, path: string): RawTask {
-  return projectTask(parseTaskEntity(value, path, loose));
-}
-function projectQuestion(value: HumanQuestion): RawQuestion {
-  const { apiVersion: _apiVersion, runId: _runId, answeredBy: _answeredBy, ...item } = value;
-  return { ...item, askedAtMs: ms(item.askedAt), answeredAtMs: nullableMs(item.answeredAt) };
-}
-export function parseQuestion(value: unknown, path: string): RawQuestion {
-  return projectQuestion(parseQuestionEntity(value, path, loose));
-}
-function projectRun(value: AgentRun): RawRun {
-  const { apiVersion: _apiVersion, claimId: _claimId, wakeupId: _wakeupId, result: _result, ...item } = value;
-  return {
-    ...item,
-    startedAtMs: ms(item.startedAt),
-    heartbeatAtMs: nullableMs(item.heartbeatAt),
-    endedAtMs: nullableMs(item.endedAt),
-  };
-}
-export function parseRun(value: unknown, path: string): RawRun {
-  return projectRun(parseRunEntity(value, path, loose));
-}
-function projectInterrupt(item: AgentInterrupt): RawInterrupt {
-  return {
-    sequence: item.sequence,
-    agentId: item.agentId,
-    runId: item.runId,
-    requestedAt: item.requestedAt,
-    requestedAtMs: ms(item.requestedAt),
-  };
-}
-export function parseInterrupt(value: unknown, path: string): RawInterrupt {
-  return projectInterrupt(parseInterruptEntity(value, path, loose));
-}
-function projectEvent(item: TaskEvent): RawEvent {
-  return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt) };
-}
-export function parseEvent(value: unknown, path: string): RawEvent {
-  return projectEvent(parseEventEntity(value, path, loose));
-}
-function projectMessage(value: TaskMessage): RawMessage {
-  const { apiVersion: _apiVersion, runId: _runId, ...item } = value;
-  return { ...item, createdAtMs: ms(item.createdAt) };
-}
-export function parseMessage(value: unknown, path: string): RawMessage {
-  return projectMessage(parseMessageEntity(value, path, loose));
-}
-
-function projectParkRecord(item: TolerantParkRecord): RawParkRecord {
-  return {
-    ...item,
-    parkedAtMs: ms(item.parkedAt),
-    resolvedAtMs: nullableMs(item.resolvedAt),
-  };
-}
-
-export function parseParkRecord(value: unknown, path: string): RawParkRecord {
-  return projectParkRecord(parseParkRecordContract(value, path, loose));
-}
-
-function projectReviewFinding(item: TolerantReviewFindingEntity): RawReviewFinding {
-  return { ...item, createdAtMs: ms(item.createdAt) };
-}
-
-export function parseFindingsLedger(value: unknown, path: string): RawFindingsLedger {
-  const item = parseFindingsLedgerContract(value, path, loose);
-  return {
-    ...item,
-    recent: item.recent.map((finding) => ({
-      ...projectReviewFinding(finding),
-      workItemId: finding.workItemId,
-    })),
-  };
-}
-
-export function parseParksLedger(value: unknown, path: string): RawParksLedger {
-  const item = parseParksLedgerContract(value, path, loose);
-  return {
-    ...item,
-    open: item.open.map((park) => ({ ...projectParkRecord(park), workItemTitle: park.workItemTitle })),
-    resolved: item.resolved.map((park) => ({ ...projectParkRecord(park), workItemTitle: park.workItemTitle })),
-  };
-}
-
-export function parseBoardNotification(value: unknown, path: string): RawBoardNotification {
-  const item = parseBoardNotificationContract(value, path, loose);
-  return {
-    ...item,
-    createdAtMs: ms(item.createdAt),
-    readAtMs: nullableMs(item.readAt),
-  };
-}
-
-export function parseBoardPause(value: unknown, path: string): RawBoardPause {
-  const item = parseBoardPauseContract(value, path, loose);
-  return { ...item, updatedAtMs: ms(item.updatedAt) };
-}
-
-export function parseGateAction(value: unknown, path: string): TolerantGateAction {
-  return parseGateActionContract(value, path, loose);
-}
-
-export function parseDeployAttestationResult(value: unknown, path: string): DeployAttestationResult {
-  const item = contractRecord(value, path);
-  const action = parseGateActionContract(item.gateAction, `${path}.gateAction`, loose);
-  return {
-    gateAction: {
-      id: action.gateActionId,
-      workItemId: action.workItemId,
-      gate: action.gate,
-      actorId: action.actorId,
-      planRevisionId: action.planRevisionId,
-      verifiedSha: action.verifiedSha,
-      mergeSha: action.mergeSha,
-      refId: action.refId,
-      note: action.note,
-      createdAt: action.createdAt,
-      createdAtMs: ms(action.createdAt),
-    },
-    duplicate: booleanValue(item.duplicate, `${path}.duplicate`),
-  };
-}
-
-export function parseWorkItemAudit(value: unknown, path: string): RawWorkItemAudit {
-  const item: TolerantWorkItemAudit = parseWorkItemAuditContract(value, path, loose);
-  return {
-    gateActions: item.gateActions.map((action) => ({
-      ...action,
-      createdAtMs: ms(action.createdAt),
-    })),
-    transitions: item.transitions.map((transition) => ({
-      ...transition,
-      createdAtMs: ms(transition.createdAt),
-    })),
-  };
-}
-
-export function parseReviewFinding(value: unknown, path: string): RawReviewFinding {
-  return projectReviewFinding(parseReviewFindingEntity(value, path, loose));
-}
-
-export function parseDesignRecord(value: unknown, path: string): TolerantDesignRecordEntity {
-  const item = parseDesignRecordEntity(value, path, loose);
-  return {
-    ...item,
-    states: [...item.states],
-    transitions: item.transitions.map((transition) => ({ ...transition })),
-    failurePoints: item.failurePoints.map((failurePoint) => ({ ...failurePoint })),
-    idempotencyKeys: item.idempotencyKeys.map((key) => ({ ...key })),
-    faultInjectionCases: item.faultInjectionCases.map((faultCase) => ({ ...faultCase })),
-  };
-}
-
-const uiAgentType = (item: ReturnType<typeof parseAutomationAgentTypeEntity>): AutomationAgentType => ({
-  id: item.agentTypeId,
-  name: item.name,
-  description: item.description,
-  role: item.role,
-  supplementalInstructions: item.supplementalInstructions,
-  skillIds: [...item.skillIds],
-  evaluatorProfile: item.evaluatorProfile,
-  enabled: item.enabled,
-});
-export function parseAutomationAgentType(value: unknown, path: string): AutomationAgentType {
-  return uiAgentType(parseAutomationAgentTypeEntity(value, path, strict));
-}
-export function parseAutomationExecutor(value: unknown, path: string): AutomationStageExecutor {
-  return { ...parseAutomationExecutorEntity(value, path, strict) };
-}
-export function parseAutomationStage(value: unknown, path: string): AutomationStageConfiguration {
-  const item = parseAutomationStageEntity(value, path, strict);
-  return { stage: item.stage, executor: { ...item.executor } };
-}
-export function automationAgentTypeWire(item: AutomationAgentType): JsonRecord {
-  return {
-    agentTypeId: item.id,
-    name: item.name,
-    description: item.description,
-    role: item.role,
-    supplementalInstructions: item.supplementalInstructions,
-    skillIds: [...item.skillIds],
-    evaluatorProfile: item.evaluatorProfile,
-    enabled: item.enabled,
-  };
-}
-export function automationStageWire(item: AutomationStageConfiguration): JsonRecord {
-  return {
-    stage: item.stage,
-    executor: item.executor.kind === "agent_type" ? { ...item.executor } : { kind: item.executor.kind },
-  };
-}
-const canonicalAutomation = (agentTypes: AutomationAgentType[], stages: AutomationStageConfiguration[]) => ({
-  agentTypes: agentTypes.map((item, index) =>
-    parseAutomationAgentTypeEntity(automationAgentTypeWire(item), `agentTypes[${index}]`, strict)
-  ),
-  stages: stages.map((item, index) =>
-    parseAutomationStageEntity(automationStageWire(item), `stages[${index}]`, strict)
-  ),
-});
-export function validateAutomationParts(
-  agentTypes: AutomationAgentType[],
-  stages: AutomationStageConfiguration[],
-  path: string
-): void {
-  const value = canonicalAutomation(agentTypes, stages);
-  validateAutomationConfigurationParts(value.agentTypes, value.stages, path);
-}
-export function validateAutomationPayloadSize(
-  agentTypes: AutomationAgentType[],
-  stages: AutomationStageConfiguration[],
-  path: string
-): void {
-  const value = canonicalAutomation(agentTypes, stages);
-  if (automationConfigurationPartsBytes(value.agentTypes, value.stages) > maximumAutomationConfigurationBytes)
-    throw new Error(`${path} agent types and stages cannot exceed 48 KiB of UTF-8 JSON`);
-}
-export function parseAutomationConfiguration(value: unknown, path: string): AutomationConfiguration {
-  const item = parseAutomationConfigurationEntity(value, path, strict);
-  const agentTypes = item.agentTypes.map(uiAgentType);
-  const stages = item.stages.map((entry) => ({ stage: entry.stage, executor: { ...entry.executor } }));
-  validateAutomationPayloadSize(agentTypes, stages, path);
-  return {
-    id: "company-default",
-    agentTypes,
-    stages,
-    version: item.version,
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-    updatedAt: item.updatedAt,
-    updatedAtMs: ms(item.updatedAt),
-    updatedBy: item.updatedBy,
-  };
-}
-
-function parseWorkflowPlan(
-  value: unknown,
-  path: string
-): WorkflowPlan & PlanRecordFields & Pick<PlanRevision, "rejectedNote"> {
-  const item = parsePlanEntity(value, path, loose);
-  return {
-    planRevisionId: item.planRevisionId,
-    workItemId: item.workItemId,
-    revision: item.revision,
-    objective: item.objective,
-    assumptions: [...item.assumptions],
-    acceptanceCriteria: [...item.acceptanceCriteria],
-    children:
-      item.children === null
-        ? null
-        : item.children.map((child) => ({
-            ...child,
-            declaredScope: [...child.declaredScope],
-            acceptanceCriteria: [...child.acceptanceCriteria],
-            ...(child.dependsOn === undefined ? {} : { dependsOn: [...child.dependsOn] }),
-          })),
-    ...(item.changeShape === undefined ? {} : { changeShape: item.changeShape }),
-    ...(item.tier === undefined ? {} : { tier: item.tier }),
-    ...(item.declaredScope === undefined ? {} : { declaredScope: [...item.declaredScope] }),
-    ...(item.nonGoals === undefined ? {} : { nonGoals: [...item.nonGoals] }),
-    ...(item.mechanicalPortions === undefined ? {} : { mechanicalPortions: [...item.mechanicalPortions] }),
-    ...(item.blockingQuestions === undefined
-      ? {}
-      : {
-          blockingQuestions: item.blockingQuestions.map((question) => ({ ...question })),
-        }),
-    ...(item.criterionChecks === undefined
-      ? {}
-      : {
-          criterionChecks: item.criterionChecks.map((criterion) => ({ ...criterion })),
-        }),
-    state: item.state,
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-    confirmedAt: item.confirmedAt,
-    confirmedAtMs: nullableMs(item.confirmedAt),
-    ...(item.rejectedNote === undefined ? {} : { rejectedNote: item.rejectedNote }),
-  };
-}
-function parseWorkflowNode(value: unknown, path: string): WorkflowNode {
-  const item = parseNodeEntity(value, path, loose);
-  return {
-    nodeId: item.nodeId,
-    planRevisionId: item.planRevisionId,
-    title: item.title,
-    objective: item.objective,
-    acceptanceCriteria: [...item.acceptanceCriteria],
-    dependencyNodeIds: [...item.dependencyNodeIds],
-    stageTemplate: [...item.stageTemplate],
-    currentStage: item.currentStage,
-    state: item.state,
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-    updatedAt: item.updatedAt,
-    updatedAtMs: ms(item.updatedAt),
-  };
-}
-function parseWorkflowHandoff(value: unknown, path: string): WorkflowHandoff {
-  const item = parseHandoffEntity(value, path, loose);
-  return {
-    handoffId: item.handoffId,
-    nodeId: item.nodeId,
-    taskId: item.taskId,
-    stage: item.stage,
-    outcome: item.outcome,
-    summary: item.summary,
-    evidence: [...item.evidence],
-    artifactIds: [...item.artifactIds],
-    blockers: [...item.blockers],
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-  };
-}
-export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent {
-  const item = parseProjectEventEntity(value, path, loose);
-  return {
-    sequence: item.sequence,
-    eventId: item.eventId,
-    nodeId: item.nodeId,
-    taskId: item.taskId,
-    eventType: item.eventType,
-    summary: item.summary,
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-  };
-}
-export function parseProjectWorkflow(value: unknown, path: string): ProjectWorkflow {
-  const item = record(value, path);
-  return {
-    plans: array(item.plans, `${path}.plans`, parseWorkflowPlan),
-    nodes: array(item.nodes, `${path}.nodes`, parseWorkflowNode),
-    handoffs: array(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff),
-    events: array(item.events, `${path}.events`, parseWorkflowEvent),
-  };
-}
-export function parsePipelineSummary(value: unknown, path: string): PipelineSummary {
-  const item = contractRecord(value, path);
-  return parsePipelineSummaryEntity(
-    {
-      ...item,
-      ...(item.findings === undefined ? { findings: [] } : {}),
-      ...(item.designRecord === undefined ? { designRecord: null } : {}),
-    },
-    path,
-    loose
-  );
-}
-export function parseProjectArtifact(value: unknown, path: string): ProjectArtifact {
-  const item = parseProjectArtifactEntity(value, path, loose);
-  return {
-    artifactId: item.artifactId,
-    nodeId: item.nodeId,
-    taskId: item.taskId,
-    mediaType: item.mediaType,
-    byteSize: item.byteSize,
-    caption: item.caption,
-    createdAt: item.createdAt,
-    createdAtMs: ms(item.createdAt),
-  };
-}
-
-export function parseRawBoard(value: unknown): RawBoard {
-  const item: BoardSnapshot = parseBoardSnapshotEntity(value, loose);
-  const open = item.openQuestions.map(projectQuestion);
-  const recent = item.recentQuestions.map(projectQuestion);
-  const questions = new Map(recent.map((question) => [question.questionId, question]));
-  for (const question of open) questions.set(question.questionId, question);
-  return {
-    project: projectProject(item.project),
-    agents: item.agents.map(projectAgent),
-    tasks: item.tasks.map(projectTask),
-    questions: [...questions.values()],
-    runs: item.recentRuns.map(projectRun),
-    interrupts: item.recentInterrupts.map(projectInterrupt),
-    events: item.recentEvents.map(projectEvent),
-  };
-}
+export {
+  automationAgentTypeWire,
+  automationStageWire,
+  parseAutomationAgentType,
+  parseAutomationConfiguration,
+  parseAutomationExecutor,
+  parseAutomationStage,
+  validateAutomationParts,
+  validateAutomationPayloadSize,
+} from "./parse/automation";
+export {
+  parseAgent,
+  parseBoardNotification,
+  parseBoardPause,
+  parseChildWorkItem,
+  parseDeployAttestationResult,
+  parseDesignRecord,
+  parseEvent,
+  parseFindingsLedger,
+  parseGateAction,
+  parseInterrupt,
+  parseMessage,
+  parseParkRecord,
+  parseParksLedger,
+  parseProject,
+  parseQuestion,
+  parseReviewFinding,
+  parseRun,
+  parseTask,
+  parseWorkItem,
+  parseWorkItemAudit,
+  parseWorkItemDependency,
+  parseWorkItemDetail,
+} from "./parse/entities";
+export {
+  array,
+  boolean,
+  boundedText,
+  exactRecord,
+  integer,
+  member,
+  nullableString,
+  record,
+  skillIdentifier,
+  string,
+  timestamp,
+} from "./parse/scalars";
+export {
+  maximumRawWorkItems,
+  maximumTaskMessages,
+  maximumWorkItemPages,
+  type RawBoard,
+  type RawBoardNotification,
+  type RawBoardPause,
+  type RawChildWorkItem,
+  type RawEvent,
+  type RawFindingsLedger,
+  type RawMessage,
+  type RawParksLedger,
+  type RawProject,
+  type RawRun,
+  type RawTask,
+  type RawWorkItem,
+  type RawWorkItemAudit,
+  type RawWorkItemDetail,
+} from "./parse/types";
+export {
+  parsePipelineSummary,
+  parseProjectArtifact,
+  parseProjectWorkflow,
+  parseRawBoard,
+  parseWorkflowEvent,
+} from "./parse/workflow";
