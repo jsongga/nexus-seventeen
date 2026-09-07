@@ -48,6 +48,7 @@ import {
   type ProjectArtifact,
   type ProjectEvent,
   QUESTION_STATUSES,
+  type Repository,
   REVIEW_FINDING_CATEGORIES,
   REVIEW_FINDING_DRAFT_MAX_ITEMS,
   REVIEW_FINDING_DRAFT_TEXT_MAX_LENGTH,
@@ -334,6 +335,32 @@ export function parseProjectEntity(value: unknown, label: string, options: Shape
     name: stringValue(item.name, `${label}.name`),
     description,
     repoPath: item.repoPath === undefined ? description : stringValue(item.repoPath, `${label}.repoPath`),
+    version: integer(item.version, `${label}.version`, 1),
+    createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
+    updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
+  });
+}
+
+export function parseRepositoryEntity(value: unknown, label: string, options: ShapeParserOptions = {}): Repository {
+  const fields = [
+    "apiVersion",
+    "repositoryId",
+    "projectId",
+    "name",
+    "path",
+    "isPrimary",
+    "version",
+    "createdAt",
+    "updatedAt",
+  ];
+  const item = entity(value, label, fields, fields, options);
+  return Object.freeze({
+    apiVersion: TASK_BOARD_API_VERSION,
+    repositoryId: shapeIdentifier(item.repositoryId, `${label}.repositoryId`, options),
+    projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
+    name: stringValue(item.name, `${label}.name`),
+    path: stringValue(item.path, `${label}.path`),
+    isPrimary: booleanValue(item.isPrimary, `${label}.isPrimary`),
     version: integer(item.version, `${label}.version`, 1),
     createdAt: entityTimestamp(item.createdAt, `${label}.createdAt`, options),
     updatedAt: entityTimestamp(item.updatedAt, `${label}.updatedAt`, options),
@@ -1756,11 +1783,14 @@ function parsePlanRecordEntity(item: JsonRecord, label: string, options: ShapePa
 
 function parseDeclaredChildEntity(value: unknown, label: string, options: ShapeParserOptions): TolerantDeclaredChild {
   const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
-  const item = shape(value, label, [...required, "phase", "dependsOn", "splitBy"], required, options);
+  const item = shape(value, label, [...required, "repositoryId", "phase", "dependsOn", "splitBy"], required, options);
   return Object.freeze({
     key: shapeIdentifier(item.key, `${label}.key`, options),
     objective: planRecordText(item.objective, `${label}.objective`, 4_000),
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
+    ...(item.repositoryId === undefined
+      ? {}
+      : { repositoryId: shapeIdentifier(item.repositoryId, `${label}.repositoryId`, options) }),
     declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
       planScopeEntry(entry, entryLabel, planRecordText)
     ),

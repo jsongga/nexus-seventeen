@@ -459,6 +459,8 @@ export interface DeclaredChild {
   readonly key: string;
   readonly objective: string;
   readonly projectId: string;
+  /** Absent targets the project's primary repository. */
+  readonly repositoryId?: string;
   readonly declaredScope: readonly string[];
   readonly acceptanceCriteria: readonly string[];
   readonly phase?: WorkItemPhase;
@@ -982,6 +984,18 @@ export interface Project {
   readonly name: string;
   readonly description: string;
   readonly repoPath: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface Repository {
+  readonly apiVersion: typeof TASK_BOARD_API_VERSION;
+  readonly repositoryId: string;
+  readonly projectId: string;
+  readonly name: string;
+  readonly path: string;
+  readonly isPrimary: boolean;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;

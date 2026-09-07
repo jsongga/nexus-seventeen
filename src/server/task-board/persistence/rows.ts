@@ -8,6 +8,7 @@ import {
   type BoardTask,
   type HumanQuestion,
   type Project,
+  type Repository,
   type ReviewFinding,
   type TaskEvent,
   type TaskKind,
@@ -90,6 +91,22 @@ export function projectFromRow(row: Row): Project {
     name: stringValue(row, "name"),
     description: stringValue(row, "description"),
     repoPath: stringValue(row, "repo_path"),
+    version: numberValue(row, "version"),
+    createdAt: stringValue(row, "created_at"),
+    updatedAt: stringValue(row, "updated_at"),
+  });
+}
+
+export function repositoryFromRow(row: Row): Repository {
+  const isPrimary = numberValue(row, "is_primary");
+  if (isPrimary !== 0 && isPrimary !== 1) throw new Error("TASK_BOARD_DATABASE_CORRUPT:is_primary");
+  return Object.freeze({
+    apiVersion: TASK_BOARD_API_VERSION,
+    repositoryId: stringValue(row, "repository_id"),
+    projectId: stringValue(row, "project_id"),
+    name: stringValue(row, "name"),
+    path: stringValue(row, "path"),
+    isPrimary: isPrimary === 1,
     version: numberValue(row, "version"),
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),

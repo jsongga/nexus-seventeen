@@ -91,6 +91,18 @@ repositories exactly as they treat two children in two projects today — campai
 phases, not location, so this should be a narrowing of an existing rule rather than a new one.
 Verify that claim before relying on it.
 
+**Two debts from task 2's review land here, not later.** `DeclaredChild.repositoryId` is
+currently accepted, shape-validated, and then discarded — `materializeDeclaredChildrenInTransaction`
+(`persistence/workflow.ts:973`) drops it, and nothing in `src/` writes
+`work_items.repository_id`. So today a `repositoryId` naming a repository in a _different_ project
+than the child's `projectId` is silently accepted. That is harmless only while nothing reads it.
+**The task that starts reading it is this one**, so it must also reject a cross-project target —
+a child must not be able to check out a tree its project does not own.
+
+Also note for task 5: `updateProject` moves the primary repository's `path` but never its `name`,
+while reconciliation seeds `name` from the project. Rename a project and two repositories end up
+named differently depending on which writer created them. Cosmetic, but the UI will show it.
+
 **Exit:** a `pipeline-e2e` arc lands a blast-radius change as two children in one project and two
 repositories, with real git and fake CLIs, and Playwright stays green.
 

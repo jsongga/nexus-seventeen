@@ -1202,6 +1202,8 @@ export class ProjectsCollaborator {
   createProject(request: CreateProjectRequest): Project {
     const now = exactNow(this.runtime.config.now);
     const projectId = randomUUID();
+    const repositoryId = randomUUID();
+    const repoPath = request.repoPath ?? request.description;
     this.runtime.store.transaction(() => {
       this.runtime.store.db
         .prepare(
@@ -1210,7 +1212,16 @@ export class ProjectsCollaborator {
         VALUES (?, ?, ?, ?, 1, ?, ?)
       `
         )
-        .run(projectId, request.name, request.description, request.repoPath ?? request.description, now, now);
+        .run(projectId, request.name, request.description, repoPath, now, now);
+      this.runtime.store.db
+        .prepare(
+          `
+        INSERT INTO repositories(
+          repository_id, project_id, name, path, is_primary, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 1, 1, ?, ?)
+      `
+        )
+        .run(repositoryId, projectId, request.name, repoPath, now, now);
       this.runtime.insertEvent(
         projectId,
         null,
@@ -1242,6 +1253,23 @@ export class ProjectsCollaborator {
       `
         )
         .run(request.name ?? null, request.description ?? null, request.repoPath ?? null, now, projectId);
+      // The project UPDATE two lines up uses COALESCE, so a null repoPath is a
+      // no-op there. Guarding on `!== undefined` would send that null on to a
+      // NOT NULL column and turn a legal no-op into a failed transaction.
+      if (typeof request.repoPath === "string") {
+        const updatedPrimary = this.runtime.store.db
+          .prepare(
+            `
+          UPDATE repositories
+          SET path=?, version=version+1, updated_at=?
+          WHERE project_id=? AND is_primary=1
+        `
+          )
+          .run(request.repoPath, now, projectId);
+        if (Number(updatedPrimary.changes) !== 1) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:primary_repository");
+        }
+      }
       this.runtime.insertEvent(
         projectId,
         null,

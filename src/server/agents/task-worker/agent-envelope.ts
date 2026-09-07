@@ -308,6 +308,11 @@ export const RESULT_SCHEMA = Object.freeze({
                     items: { type: "string", minLength: 1, maxLength: 2_000 },
                   },
                   phase: { type: "string", enum: WORK_ITEM_PHASES },
+                  // Optional, like phase: absent means the target project's
+                  // primary repository. Without it here, additionalProperties:
+                  // false rejects the whole provider result before the contract
+                  // validator ever sees the field.
+                  repositoryId: { type: "string", pattern: IDENTIFIER_PATTERN },
                   dependsOn: {
                     type: "array",
                     maxItems: 64,

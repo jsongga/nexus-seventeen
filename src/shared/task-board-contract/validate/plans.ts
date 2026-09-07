@@ -193,7 +193,7 @@ export function parseHandoffDraft(value: unknown, policy: DraftParserPolicy): St
 
 function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPolicy): DeclaredChild {
   const required = ["key", "objective", "projectId", "declaredScope", "acceptanceCriteria"];
-  const item = exact(value, [...required, "phase", "dependsOn", "splitBy"], label, {
+  const item = exact(value, [...required, "repositoryId", "phase", "dependsOn", "splitBy"], label, {
     messages: policy.exactMessages,
     required,
   });
@@ -203,6 +203,9 @@ function parseDeclaredChild(value: unknown, label: string, policy: DraftParserPo
     key: identifier(item.key, `${label}.key`),
     objective: draftText(item.objective, `${label}.objective`, 4_000, policy),
     projectId: identifier(item.projectId, `${label}.projectId`),
+    ...(item.repositoryId === undefined
+      ? {}
+      : { repositoryId: identifier(item.repositoryId, `${label}.repositoryId`) }),
     declaredScope: boundedPlanArray(item.declaredScope, `${label}.declaredScope`, 1, 64, (entry, entryLabel) =>
       planScopeEntry(entry, entryLabel, parseText)
     ),

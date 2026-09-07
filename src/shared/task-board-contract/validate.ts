@@ -49,6 +49,7 @@ export {
   parsePlanEntity,
   parseProjectArtifactEntity,
   parseProjectEntity,
+  parseRepositoryEntity,
   parseProjectEventEntity,
   parseQuestionEntity,
   parseReviewFindingDraft,

@@ -1805,6 +1805,56 @@ export function migrateVersion26To27(db: DatabaseSync): void {
   }
 }
 
+function reconcileMissingPrimaryRepositories(db: DatabaseSync): void {
+  const hasProjects =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get() !== undefined;
+  const hasRepositories =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repositories'").get() !== undefined;
+  if (!hasProjects || !hasRepositories) return;
+  const missing = db
+    .prepare(
+      `
+      SELECT 1
+      FROM projects
+      WHERE NOT EXISTS (
+        SELECT 1 FROM repositories WHERE repositories.project_id = projects.project_id AND is_primary = 1
+      )
+      LIMIT 1
+    `
+    )
+    .get();
+  if (missing === undefined) return;
+
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    db.exec(`
+      INSERT INTO repositories(
+        repository_id, project_id, name, path, is_primary, version, created_at, updated_at
+      )
+      SELECT
+        -- Not 'repository_' || project_id. That is the id the 26 -> 27 backfill
+        -- mints, so once anything can demote a primary, a project can hold that
+        -- id as a non-primary row — and this INSERT would then fail the
+        -- repository_id uniqueness constraint on every open, leaving the board
+        -- permanently unopenable rather than merely inconsistent.
+        'repository_' || lower(hex(randomblob(16))), project_id, name, repo_path, 1, 1, created_at, updated_at
+      FROM projects
+      WHERE NOT EXISTS (
+        SELECT 1 FROM repositories WHERE repositories.project_id = projects.project_id AND is_primary = 1
+      )
+      ORDER BY projects.rowid;
+    `);
+    db.exec("COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the reconciliation failure.
+    }
+    throw error;
+  }
+}
+
 /* —— Migrations 6–12 —— */
 
 function migrateVersion9To10(db: DatabaseSync): void {
@@ -2197,6 +2247,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 24) migrateVersion24To25(db);
       if (version >= 1 && version <= 25) migrateVersion25To26(db);
       if (version >= 1 && version <= 26) migrateVersion26To27(db);
+      reconcileMissingPrimaryRepositories(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {
         throw new TaskBoardError(500, "DATABASE_CORRUPT", "Task board database integrity check failed");

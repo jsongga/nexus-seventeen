@@ -1068,9 +1068,39 @@ test("review finding drafts round-trip through board and worker settlement field
 });
 
 test("pipeline plan-record fields round-trip through board and worker draft validators", () => {
-  const plan = pipelinePlan();
-  assert.deepEqual(parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan }).workflowPlan, plan);
-  assert.deepEqual(parseWorkerAgentRunOutcome(outcome(null, plan)).workflowPlan, plan);
+  const children = [
+    {
+      key: "legacy-child",
+      objective: "Keep a pre-repository declaration valid.",
+      projectId: "project-one",
+      declaredScope: ["src/legacy"],
+      acceptanceCriteria: ["The declaration keeps its primary-repository meaning."],
+    },
+    {
+      key: "repository-child",
+      objective: "Target a repository explicitly.",
+      projectId: "project-one",
+      repositoryId: "repository-one",
+      declaredScope: ["tests/repository"],
+      acceptanceCriteria: ["The repository target round-trips."],
+    },
+  ] as const;
+  const plan = pipelinePlan({ children });
+  const boardPlan = parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: plan }).workflowPlan;
+  const workerPlan = parseWorkerAgentRunOutcome(outcome(null, plan)).workflowPlan;
+  assert.deepEqual(boardPlan, plan);
+  assert.deepEqual(workerPlan, plan);
+  assert.equal(boardPlan?.children?.[0]?.repositoryId, undefined);
+  assert.equal(workerPlan?.children?.[1]?.repositoryId, "repository-one");
+
+  const invalid = pipelinePlan({
+    children: [{ ...children[1], repositoryId: "-invalid-repository" }],
+  });
+  assert.throws(
+    () => parseBoardSettle({ outcome: "completed", result: "Done.", workflowPlan: invalid }),
+    /repositoryId is invalid/u
+  );
+  assert.throws(() => parseWorkerAgentRunOutcome(outcome(null, invalid)), /repositoryId is invalid/u);
 });
 
 test("phased plans require Expand and Contract scope to cover docs/interface.md", () => {
@@ -1150,6 +1180,7 @@ test("plan-record enums, revision entities, and verify-attempt types expose the 
         key: "provider-child",
         objective: "Publish the provider change.",
         projectId: "project-one",
+        repositoryId: "repository-one",
         declaredScope: ["src/provider"],
         acceptanceCriteria: ["The provider change is verified."],
       },
