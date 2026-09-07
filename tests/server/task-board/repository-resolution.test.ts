@@ -5,7 +5,10 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { WORK_ITEM_REPOSITORY_PATH_SQL } from "#server/task-board/persistence/repository-path";
+import {
+  WORK_ITEM_REPOSITORY_NAME_SQL,
+  WORK_ITEM_REPOSITORY_PATH_SQL,
+} from "#server/task-board/persistence/repository-path";
 
 /* —— Fixture —— */
 
@@ -14,11 +17,13 @@ function resolutionDatabase(): DatabaseSync {
   db.exec(`
     CREATE TABLE projects (
       project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
       repo_path TEXT NOT NULL
     ) STRICT;
     CREATE TABLE repositories (
       repository_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      name TEXT NOT NULL,
       path TEXT NOT NULL,
       is_primary INTEGER NOT NULL
     ) STRICT;
@@ -35,7 +40,9 @@ function resolvedPaths(db: DatabaseSync): readonly Record<string, unknown>[] {
   return db
     .prepare(
       `
-        SELECT work_item.work_item_id,${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
+        SELECT work_item.work_item_id,
+          ${WORK_ITEM_REPOSITORY_NAME_SQL} AS repository_name,
+          ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
         FROM work_items work_item
         ORDER BY work_item.work_item_id
       `
@@ -49,16 +56,18 @@ function resolvedPaths(db: DatabaseSync): readonly Record<string, unknown>[] {
 test("an explicit repository wins while a sibling resolves to the project primary", () => {
   const db = resolutionDatabase();
   try {
-    db.prepare("INSERT INTO projects VALUES (?,?)").run("project-one", "/repos/legacy");
-    db.prepare("INSERT INTO repositories VALUES (?,?,?,?)").run(
+    db.prepare("INSERT INTO projects VALUES (?,?,?)").run("project-one", "Project one", "/repos/legacy");
+    db.prepare("INSERT INTO repositories VALUES (?,?,?,?,?)").run(
       "repository-primary",
       "project-one",
+      "Primary repository",
       "/repos/primary",
       1
     );
-    db.prepare("INSERT INTO repositories VALUES (?,?,?,?)").run(
+    db.prepare("INSERT INTO repositories VALUES (?,?,?,?,?)").run(
       "repository-secondary",
       "project-one",
+      "Secondary repository",
       "/repos/secondary",
       0
     );
@@ -66,8 +75,16 @@ test("an explicit repository wins while a sibling resolves to the project primar
     db.prepare("INSERT INTO work_items VALUES (?,?,?)").run("item-primary", "project-one", null);
 
     assert.deepEqual(resolvedPaths(db), [
-      { work_item_id: "item-explicit", repository_path: "/repos/secondary" },
-      { work_item_id: "item-primary", repository_path: "/repos/primary" },
+      {
+        work_item_id: "item-explicit",
+        repository_name: "Secondary repository",
+        repository_path: "/repos/secondary",
+      },
+      {
+        work_item_id: "item-primary",
+        repository_name: "Primary repository",
+        repository_path: "/repos/primary",
+      },
     ]);
   } finally {
     db.close();
@@ -77,10 +94,16 @@ test("an explicit repository wins while a sibling resolves to the project primar
 test("a work item falls back to projects.repo_path when no primary exists", () => {
   const db = resolutionDatabase();
   try {
-    db.prepare("INSERT INTO projects VALUES (?,?)").run("project-legacy", "/repos/legacy-only");
+    db.prepare("INSERT INTO projects VALUES (?,?,?)").run("project-legacy", "Legacy project", "/repos/legacy-only");
     db.prepare("INSERT INTO work_items VALUES (?,?,?)").run("item-legacy", "project-legacy", null);
 
-    assert.deepEqual(resolvedPaths(db), [{ work_item_id: "item-legacy", repository_path: "/repos/legacy-only" }]);
+    assert.deepEqual(resolvedPaths(db), [
+      {
+        work_item_id: "item-legacy",
+        repository_name: "Legacy project",
+        repository_path: "/repos/legacy-only",
+      },
+    ]);
   } finally {
     db.close();
   }

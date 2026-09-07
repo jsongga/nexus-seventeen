@@ -595,7 +595,6 @@ export class VerifyAttemptsCollaborator {
       JOIN work_nodes node ON node.node_id=verify.node_id
       JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
       JOIN work_items work_item ON work_item.work_item_id=plan.work_item_id
-      JOIN projects project ON project.project_id=node.project_id
       WHERE verify.verify_attempt_id=?
     `
       )

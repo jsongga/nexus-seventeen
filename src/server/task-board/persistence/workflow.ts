@@ -434,6 +434,12 @@ interface ConfirmPipelineBaseShas {
   readonly childBaseShas: ReadonlyMap<string, string>;
 }
 
+interface PipelineRepositoryTarget {
+  readonly key: string;
+  readonly path: string;
+  readonly projectName: string;
+}
+
 export interface RejectWorkflowTransactionResult extends RejectPlanRevisionResponse {
   readonly workItemId: string;
   readonly projectId: string;
@@ -918,6 +924,31 @@ export class TransparentWorkflow {
     return this.pipelineBaseShasForConfirm(planId, request).parentBaseSha;
   }
 
+  /**
+   * Resolves a base sha for an existing work item through its own repository.
+   *
+   * `pipelineBaseShaForProject` answers "this project's tree", which is the
+   * wrong question for a work item that targets a non-primary repository — it
+   * bases a branch on the primary's HEAD while every reader of that work item
+   * resolves the work-item chain.
+   */
+  pipelineBaseShaForWorkItem(workItemId: string): string {
+    const row = this.db
+      .prepare(
+        `
+        SELECT project.name,${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
+        FROM work_items work_item
+        JOIN projects project ON project.project_id=work_item.resolved_project_id
+        WHERE work_item.work_item_id=?
+      `
+      )
+      .get(workItemId);
+    if (row === undefined) {
+      throw new TaskBoardError(404, "WORK_ITEM_NOT_FOUND", "Work item was not found");
+    }
+    return pipelineBaseSha(String(row.repository_path), String(row.name), this.git);
+  }
+
   pipelineBaseShaForProject(projectId: string): string {
     const project = this.db
       .prepare(
@@ -932,6 +963,76 @@ export class TransparentWorkflow {
       throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
     }
     return pipelineBaseSha(String(project.repository_path), String(project.name), this.git);
+  }
+
+  private validateDeclaredChildRepositoryOwnership(plan: WorkflowPlanDraft): void {
+    const ownedRepository = this.db.prepare("SELECT 1 FROM repositories WHERE repository_id=? AND project_id=?");
+    for (const child of plan.children ?? []) {
+      if (child.repositoryId === undefined) continue;
+      if (ownedRepository.get(child.repositoryId, child.projectId) === undefined) {
+        throw new ContractValidationError(
+          `workflowPlan child ${child.key} repositoryId does not belong to project ${child.projectId}`
+        );
+      }
+    }
+  }
+
+  private pipelineRepositoryTarget(projectId: string, repositoryId: string | undefined): PipelineRepositoryTarget {
+    const target = this.db
+      .prepare(
+        `
+        SELECT
+          project.name,
+          ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
+          COALESCE(
+            (
+              SELECT 'repository:' || selected_repository.repository_id
+              FROM repositories selected_repository
+              WHERE selected_repository.repository_id=work_item.repository_id
+            ),
+            (
+              SELECT 'repository:' || primary_repository.repository_id
+              FROM repositories primary_repository
+              WHERE primary_repository.project_id=project.project_id
+                AND primary_repository.is_primary=1
+            ),
+            'legacy-project:' || project.project_id
+          ) AS repository_key,
+          COALESCE(
+            (
+              SELECT selected_repository.repository_id
+              FROM repositories selected_repository
+              WHERE selected_repository.repository_id=work_item.repository_id
+            ),
+            (
+              SELECT primary_repository.repository_id
+              FROM repositories primary_repository
+              WHERE primary_repository.project_id=project.project_id
+                AND primary_repository.is_primary=1
+            )
+          ) AS resolved_repository_id
+        FROM projects project
+        CROSS JOIN (
+          SELECT ? AS repository_id,? AS resolved_project_id
+        ) work_item
+        WHERE project.project_id=?
+      `
+      )
+      .get(repositoryId ?? null, projectId, projectId);
+    if (target === undefined) {
+      throw new TaskBoardError(404, "PROJECT_NOT_FOUND", "Project was not found");
+    }
+    return Object.freeze({
+      key: String(target.repository_key),
+      path: String(target.repository_path),
+      projectName: String(target.name),
+      // The id actually resolved, as opposed to the one declared. Not yet what
+      // materialization stores: pinning every child to its resolved repository
+      // would make `repository_id` non-null for children in single-repository
+      // projects too, changing what null means. That is a semantic decision,
+      // not a fix, so it is recorded in the plan rather than absorbed here.
+      repositoryId: target.resolved_repository_id === null ? null : String(target.resolved_repository_id),
+    });
   }
 
   pipelineBaseShasForConfirm(planId: string, request: ConfirmPlanRevisionRequest): ConfirmPipelineBaseShas {
@@ -949,6 +1050,7 @@ export class TransparentWorkflow {
         .get(String(row.work_item_id)) as Readonly<{ parent_work_item_id: string | null }> | undefined;
       if (owner === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:plan_owner_missing");
       validateWorkflowPlanChildren(parsedPlan, String(row.project_id), owner.parent_work_item_id);
+      this.validateDeclaredChildRepositoryOwnership(parsedPlan);
     } catch (error) {
       if (error instanceof ContractValidationError) {
         throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });
@@ -966,15 +1068,26 @@ export class TransparentWorkflow {
         : pipelineShape !== null && !pipelineExecutorsAreCompatible(this.db, pipelineShape)
     )
       throw pipelineExecutorDrift();
-    const childProjectIds = (parsedPlan.children ?? []).map((child) => child.projectId);
-    const projectIds = new Set(childProjectIds);
-    if (hasPipelineShape && !hasDeclaredChildren) projectIds.add(String(row.project_id));
     const baseShas = new Map<string, string>();
-    for (const projectId of projectIds) {
-      baseShas.set(projectId, this.pipelineBaseShaForProject(projectId));
+    for (const child of parsedPlan.children ?? []) {
+      const target = this.pipelineRepositoryTarget(child.projectId, child.repositoryId);
+      if (!baseShas.has(target.key)) {
+        baseShas.set(target.key, pipelineBaseSha(target.path, target.projectName, this.git));
+      }
     }
     return Object.freeze({
-      parentBaseSha: hasPipelineShape && !hasDeclaredChildren ? (baseShas.get(String(row.project_id)) ?? null) : null,
+      parentBaseSha:
+        hasPipelineShape && !hasDeclaredChildren
+          ? (() => {
+              // Was pipelineBaseShaForProject, the last place a work item's tree
+              // was reached through the project chain. Identical answer today —
+              // a parent declares no repository — but it is one plan-revision
+              // path away from basing a branch on the primary while the work
+              // item executes against its own repository.
+              const parentTarget = this.pipelineRepositoryTarget(String(row.project_id), undefined);
+              return pipelineBaseSha(parentTarget.path, parentTarget.projectName, this.git);
+            })()
+          : null,
       childBaseShas: baseShas,
     });
   }
@@ -1003,7 +1116,8 @@ export class TransparentWorkflow {
     }
 
     const childRecords = children.map((child) => {
-      const resolvedBaseSha = resolvedBaseShas.get(child.projectId);
+      const repositoryTarget = this.pipelineRepositoryTarget(child.projectId, child.repositoryId);
+      const resolvedBaseSha = resolvedBaseShas.get(repositoryTarget.key);
       if (resolvedBaseSha === undefined) {
         throw new TaskBoardError(
           409,
@@ -1036,12 +1150,12 @@ export class TransparentWorkflow {
           `
         INSERT INTO work_items(
           work_item_id,original_request,refined_objective,priority,
-          project_target_mode,target_project_id,resolved_project_id,
+          project_target_mode,target_project_id,resolved_project_id,repository_id,
           parent_work_item_id,phase,child_ordinal,pipeline_branch,base_sha,
           state,current_stage,created_by,idempotency_key,request_hash,
           version,created_at,updated_at,ended_at,cancelled_reason,archived_at
         ) VALUES (
-          ?,?,?,?,'explicit',?,?,?,?,?,?,?,
+          ?,?,?,?,'explicit',?,?,?,?,?,?,?,?,
           'queued',NULL,?,?,?,1,?,?,NULL,NULL,NULL
         )
       `
@@ -1053,6 +1167,7 @@ export class TransparentWorkflow {
           String(parent.priority),
           child.projectId,
           child.projectId,
+          child.repositoryId ?? null,
           parentWorkItemId,
           child.phase ?? null,
           ordinal,
@@ -1183,6 +1298,7 @@ export class TransparentWorkflow {
           .get(String(row.work_item_id)) as Readonly<{ parent_work_item_id: string | null }> | undefined;
         if (owner === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:plan_owner_missing");
         validateWorkflowPlanChildren(parsedPlan, String(row.project_id), owner.parent_work_item_id);
+        this.validateDeclaredChildRepositoryOwnership(parsedPlan);
       } catch (error) {
         if (error instanceof ContractValidationError) {
           throw new TaskBoardError(400, "WORKFLOW_INVALID", error.message, { cause: error });

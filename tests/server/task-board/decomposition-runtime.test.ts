@@ -440,25 +440,27 @@ async function waitForQueuedRoleTask(
 
 type InterfaceGitOperation = "ls-tree" | "cat-file" | "show";
 
-function crossRepoGit(readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer) {
+function crossRepoGit(
+  readInterface: (operation: InterfaceGitOperation, sha: string, repositoryPath: string | null) => string | Buffer
+) {
   const run = (arguments_: readonly string[]): string | Buffer => {
     const target = arguments_.at(-1) ?? "";
+    const repositoryIndex = arguments_.indexOf("-C");
+    const repository = repositoryIndex < 0 ? null : (arguments_[repositoryIndex + 1] ?? null);
     if (arguments_.includes("ls-tree") && target === "docs/interface.md") {
-      return readInterface("ls-tree", arguments_[arguments_.indexOf("-z") + 1] ?? "");
+      return readInterface("ls-tree", arguments_[arguments_.indexOf("-z") + 1] ?? "", repository);
     }
     if (arguments_.includes("cat-file") && arguments_.includes("-s") && target.endsWith(":docs/interface.md")) {
-      return readInterface("cat-file", target.slice(0, -":docs/interface.md".length));
+      return readInterface("cat-file", target.slice(0, -":docs/interface.md".length), repository);
     }
     if (arguments_.includes("show") && target.endsWith(":docs/interface.md")) {
-      return readInterface("show", target.slice(0, -":docs/interface.md".length));
+      return readInterface("show", target.slice(0, -":docs/interface.md".length), repository);
     }
     if (arguments_.includes("--abbrev-ref")) return "main\n";
     if (arguments_.includes("--porcelain")) return "";
     if (arguments_.includes("merge-base")) return "";
     if (arguments_.includes("diff") || arguments_.includes("log")) return "";
     if (arguments_.some((argument) => argument.endsWith("^{commit}"))) return `${VERIFIED_SHAS[0]}\n`;
-    const repositoryIndex = arguments_.indexOf("-C");
-    const repository = repositoryIndex < 0 ? null : arguments_[repositoryIndex + 1];
     return `${repository === "/repos/claim-consumer" ? CONSUMER_BASE_SHA : BASE_SHA}\n`;
   };
   const text = (arguments_: readonly string[]): string => {
@@ -475,8 +477,9 @@ function crossRepoGit(readInterface: (operation: InterfaceGitOperation, sha: str
 
 async function migrateReadinessFixture(
   suffix: string,
-  readInterface: (operation: InterfaceGitOperation, sha: string) => string | Buffer,
-  skillIds: readonly string[] = []
+  readInterface: (operation: InterfaceGitOperation, sha: string, repositoryPath: string | null) => string | Buffer,
+  skillIds: readonly string[] = [],
+  providerRepository?: Readonly<{ repositoryId: string; name: string; path: string }>
 ) {
   const fixture = await boardFixture(undefined, undefined, {
     git: crossRepoGit(readInterface),
@@ -492,10 +495,36 @@ async function migrateReadinessFixture(
     description: "Consumes the published provider interface.",
     repoPath: "/repos/claim-consumer",
   });
+  if (providerRepository !== undefined) {
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(
+        `
+        INSERT INTO repositories(
+          repository_id,project_id,name,path,is_primary,version,created_at,updated_at
+        ) VALUES (?,?,?,?,0,1,?,?)
+      `
+      ).run(
+        providerRepository.repositoryId,
+        provider.projectId,
+        providerRepository.name,
+        providerRepository.path,
+        NOW,
+        NOW
+      );
+    } finally {
+      db.close();
+    }
+  }
+  const children = phasedChildren(provider.projectId, consumer.projectId, suffix).map((child) =>
+    providerRepository !== undefined && child.projectId === provider.projectId
+      ? { ...child, repositoryId: providerRepository.repositoryId }
+      : child
+  );
   const decomposition = proposeParent(
     fixture.board,
     provider.projectId,
-    phasedChildren(provider.projectId, consumer.projectId, suffix),
+    children,
     suffix,
     "blast_radius",
     "standard",
@@ -2374,6 +2403,7 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
     assert.equal((migrateClaim.context as { phase?: string | null }).phase, "migrate");
     assert.deepEqual(migrateClaim.context.crossRepoContext, {
       providerProjectId: provider.projectId,
+      providerWorkItemId: expand.workItemId,
       providerRepoName: provider.name,
       interfacePath: "docs/interface.md",
       sha: MERGE_SHAS[0],
@@ -2408,6 +2438,40 @@ test("a Migrate claim reads the provider interface at the Expand merge SHA only"
       migrateClaim
     );
     assert.equal(showCalls.length, 2);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("Migrate context identifies the selected provider repository", async () => {
+  const interfaceMarkdown = "# Selected provider repository interface\n";
+  const selectedRepository = {
+    repositoryId: "repository-selected-provider",
+    name: "Provider SDK",
+    path: "/repos/claim-provider-sdk",
+  } as const;
+  const fixture = await migrateReadinessFixture(
+    "selected-provider-repository",
+    (operation) => {
+      if (operation === "ls-tree") return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    },
+    [],
+    selectedRepository
+  );
+
+  try {
+    const implementationTask = await waitForQueuedRoleTask(fixture.board, fixture.consumer.projectId, "engineer");
+    assert.ok(implementationTask.assignedAgentId);
+    const claim = fixture.board.claimRun(implementationTask.assignedAgentId, {
+      claimId: "claim-selected-provider-repository",
+      messageCursor: null,
+    });
+    assert.ok(claim?.context.crossRepoContext);
+    assert.equal(claim.context.crossRepoContext.providerWorkItemId, fixture.expand.workItemId);
+    assert.equal(claim.context.crossRepoContext.providerRepoName, selectedRepository.name);
+    assert.equal(claim.context.crossRepoContext.markdown, interfaceMarkdown);
   } finally {
     fixture.board.close();
   }
@@ -3359,6 +3423,69 @@ test("a claim-side provider outage evicts readiness success and retries without 
       .tasks.filter((task) => task.assignedRole === "engineer" && task.taskId !== firstTask.taskId);
     assert.equal(replacement.length, 1);
     assert.equal(replacement[0]?.status, "queued");
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("claim rejection evicts the provider Expand repository cache entry", async () => {
+  const interfaceMarkdown = "# Secondary provider cache key\n";
+  const selectedRepository = {
+    repositoryId: "repository-cache-provider",
+    name: "Provider cache repository",
+    path: "/repos/claim-provider-cache",
+  } as const;
+  let selectedTreeReads = 0;
+  const fixture = await migrateReadinessFixture(
+    "selected-provider-cache-key",
+    (operation, _sha, repositoryPath) => {
+      if (operation === "ls-tree") {
+        assert.equal(repositoryPath, selectedRepository.path);
+        selectedTreeReads += 1;
+        return `100644 blob ${"f".repeat(40)}\tdocs/interface.md\0`;
+      }
+      if (operation === "cat-file") return `${Buffer.byteLength(interfaceMarkdown, "utf8")}\n`;
+      return interfaceMarkdown;
+    },
+    [],
+    selectedRepository
+  );
+
+  try {
+    const implementationTask = await waitForQueuedRoleTask(fixture.board, fixture.consumer.projectId, "engineer");
+    assert.ok(implementationTask.assignedAgentId);
+    const db = new DatabaseSync(fixture.path);
+    try {
+      db.prepare(
+        `
+        UPDATE plan_revisions
+        SET assumptions_json=?
+        WHERE work_item_id=? AND state='confirmed'
+      `
+      ).run(JSON.stringify(Array.from({ length: 54 }, () => "a".repeat(5_000))), fixture.migrate.workItemId);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () =>
+        fixture.board.claimRun(implementationTask.assignedAgentId!, {
+          claimId: "claim-selected-provider-cache-key",
+          messageCursor: null,
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 409 &&
+        error.code === "TASK_BOARD_PUBLISHED_INTERFACE_UNAVAILABLE"
+    );
+    const readsAfterRejectedClaim = selectedTreeReads;
+    for (let pass = 0; pass < 3; pass += 1) {
+      fixture.board.reconcileWorkflows(fixture.consumer.projectId);
+    }
+    assert.ok(
+      selectedTreeReads > readsAfterRejectedClaim,
+      `expected ${selectedRepository.path} to be read again after eviction`
+    );
   } finally {
     fixture.board.close();
   }

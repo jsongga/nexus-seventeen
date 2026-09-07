@@ -304,6 +304,18 @@ test("confirming a feature split creates independently claimable children with m
 
     const materialized = fixture.board.listChildren(parent.workItemId);
     assert.equal(materialized.length, 2);
+    const storedChildren = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.deepEqual(
+        storedChildren
+          .prepare("SELECT repository_id FROM work_items WHERE parent_work_item_id=? ORDER BY child_ordinal")
+          .all(parent.workItemId)
+          .map((row) => row.repository_id),
+        [null, null]
+      );
+    } finally {
+      storedChildren.close();
+    }
     assert.deepEqual(
       materialized.map((child) => ({
         originalRequest: child.originalRequest,
@@ -428,6 +440,172 @@ test("confirming a feature split creates independently claimable children with m
         },
       ]
     );
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("children in one project use their declared repositories and repository HEADs", async () => {
+  const primaryPath = "/repos/catalog-api";
+  const secondaryPath = "/repos/catalog-worker";
+  const gitCalls: string[][] = [];
+  const fixture = await boardFixture(undefined, undefined, {
+    git: (arguments_) => {
+      gitCalls.push([...arguments_]);
+      const repositoryIndex = arguments_.indexOf("-C");
+      return `${arguments_[repositoryIndex + 1] === secondaryPath ? CONSUMER_SHA : PROVIDER_SHA}\n`;
+    },
+  });
+  const project = fixture.board.createProject({
+    name: "Catalog",
+    description: "Owns two independently deployable repositories.",
+    repoPath: primaryPath,
+  });
+  const secondaryRepositoryId = "repository-catalog-worker";
+  const repositoryDb = new DatabaseSync(fixture.path);
+  let primaryRepositoryId: string;
+  try {
+    primaryRepositoryId = String(
+      repositoryDb
+        .prepare("SELECT repository_id FROM repositories WHERE project_id=? AND is_primary=1")
+        .get(project.projectId)?.repository_id
+    );
+    repositoryDb
+      .prepare(
+        `
+      INSERT INTO repositories(
+        repository_id,project_id,name,path,is_primary,version,created_at,updated_at
+      ) VALUES (?,?,?, ?,0,1,?,?)
+    `
+      )
+      .run(
+        secondaryRepositoryId,
+        project.projectId,
+        "Catalog worker",
+        secondaryPath,
+        "2026-09-07T12:00:00.000Z",
+        "2026-09-07T12:00:00.000Z"
+      );
+  } finally {
+    repositoryDb.close();
+  }
+  const children: readonly DeclaredChild[] = [
+    {
+      key: "catalog-api",
+      objective: "Change the catalog API.",
+      projectId: project.projectId,
+      repositoryId: primaryRepositoryId,
+      declaredScope: ["src/api"],
+      acceptanceCriteria: ["The API change is independently mergeable."],
+    },
+    {
+      key: "catalog-worker",
+      objective: "Change the catalog worker.",
+      projectId: project.projectId,
+      repositoryId: secondaryRepositoryId,
+      declaredScope: ["src/worker"],
+      acceptanceCriteria: ["The worker change is independently mergeable."],
+    },
+  ];
+  const { parent, revision } = proposeDecomposedPlan(
+    fixture.board,
+    project.projectId,
+    children,
+    "feature",
+    "same-project-multiple-repositories"
+  );
+
+  try {
+    fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" });
+    const materialized = fixture.board.listChildren(parent.workItemId);
+    assert.equal(materialized[0]?.baseSha, PROVIDER_SHA);
+    assert.equal(materialized[1]?.baseSha, CONSUMER_SHA);
+    assert.notEqual(materialized[0]?.baseSha, materialized[1]?.baseSha);
+    const stored = new DatabaseSync(fixture.path, { readOnly: true });
+    try {
+      assert.deepEqual(
+        stored
+          .prepare(
+            `
+          SELECT repository_id,base_sha
+          FROM work_items
+          WHERE parent_work_item_id=?
+          ORDER BY child_ordinal
+        `
+          )
+          .all(parent.workItemId)
+          .map((row) => ({ ...row })),
+        [
+          { repository_id: primaryRepositoryId, base_sha: PROVIDER_SHA },
+          { repository_id: secondaryRepositoryId, base_sha: CONSUMER_SHA },
+        ]
+      );
+    } finally {
+      stored.close();
+    }
+    assert.deepEqual(gitCalls.map((arguments_) => arguments_[arguments_.indexOf("-C") + 1]).toSorted(), [
+      primaryPath,
+      secondaryPath,
+    ]);
+  } finally {
+    fixture.board.close();
+  }
+});
+
+test("confirmation rejects a child repository owned by another project", async () => {
+  let gitCalls = 0;
+  const fixture = await boardFixture(undefined, undefined, {
+    git: () => {
+      gitCalls += 1;
+      return `${PROVIDER_SHA}\n`;
+    },
+  });
+  const otherProject = fixture.board.createProject({
+    name: "Foreign repository owner",
+    description: "Owns a repository the child must not target.",
+    repoPath: "/repos/foreign-owner",
+  });
+  const repositoryDb = new DatabaseSync(fixture.path, { readOnly: true });
+  let foreignRepositoryId: string;
+  try {
+    foreignRepositoryId = String(
+      repositoryDb
+        .prepare("SELECT repository_id FROM repositories WHERE project_id=? AND is_primary=1")
+        .get(otherProject.projectId)?.repository_id
+    );
+  } finally {
+    repositoryDb.close();
+  }
+  const { parent, revision } = proposeDecomposedPlan(
+    fixture.board,
+    fixture.project.projectId,
+    [
+      {
+        key: "foreign-target",
+        objective: "Attempt to use another project's repository.",
+        projectId: fixture.project.projectId,
+        repositoryId: foreignRepositoryId,
+        declaredScope: ["src/foreign-target"],
+        acceptanceCriteria: ["Cross-project repository targeting is rejected."],
+      },
+    ],
+    "feature",
+    "cross-project-repository-rejected"
+  );
+
+  try {
+    assert.throws(
+      () => fixture.board.confirmWorkflow(revision.planRevisionId, { expectedState: "proposed" }),
+      (error: unknown) =>
+        error instanceof TaskBoardError &&
+        error.status === 400 &&
+        error.code === "WORKFLOW_INVALID" &&
+        error.message ===
+          `workflowPlan child foreign-target repositoryId does not belong to project ${fixture.project.projectId}`
+    );
+    assert.equal(gitCalls, 0);
+    assert.equal(fixture.board.listChildren(parent.workItemId).length, 0);
+    assert.equal(fixture.board.requireWorkItem(parent.workItemId).state, "plan_approval");
   } finally {
     fixture.board.close();
   }

@@ -8,7 +8,7 @@ import type {
   WorkItemState,
 } from "#shared/task-board-contract";
 import { WORK_ITEM_TERMINAL_STATES, isTerminalWorkItemState } from "#shared/task-board-contract";
-import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
+import { WORK_ITEM_REPOSITORY_NAME_SQL, WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { PUBLISHED_INTERFACE_PATH, type PublishedInterfaceReadResult } from "./interface-context.js";
 
 export interface DecompositionReadinessBlocker {
@@ -174,7 +174,9 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
     .prepare(
       `
     SELECT work_item.work_item_id,work_item.state,
-      project.project_id,project.name,${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
+      work_item.resolved_project_id AS project_id,
+      ${WORK_ITEM_REPOSITORY_NAME_SQL} AS repository_name,
+      ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path,
       (
         SELECT action.merge_sha
         FROM gate_actions action
@@ -189,7 +191,6 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
     JOIN work_items work_item
       ON work_item.work_item_id=dependency.depends_on_work_item_id
       AND work_item.phase='expand'
-    JOIN projects project ON project.project_id=work_item.resolved_project_id
     WHERE dependency.work_item_id=?
     ORDER BY work_item.child_ordinal,work_item.work_item_id
     LIMIT 1
@@ -200,7 +201,7 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
         work_item_id: string;
         state: WorkItemState;
         project_id: string;
-        name: string;
+        repository_name: string;
         repository_path: string;
         merge_sha: string | null;
       }>
@@ -209,7 +210,7 @@ export function migrateInterfaceProvider(db: DatabaseSync, workItemId: string): 
   return Object.freeze({
     workItemId: provider.work_item_id,
     projectId: provider.project_id,
-    repoName: provider.name,
+    repoName: provider.repository_name,
     repoPath: provider.repository_path,
     sha: provider.merge_sha,
   });
@@ -287,6 +288,7 @@ export function migrateInterfaceReadiness(
     kind: "ready",
     context: Object.freeze({
       providerProjectId: provider.projectId,
+      providerWorkItemId: provider.workItemId,
       providerRepoName: provider.repoName,
       interfacePath: PUBLISHED_INTERFACE_PATH,
       sha: provider.sha,

@@ -1078,7 +1078,7 @@ export class ProjectsCollaborator {
         "Only a pipeline work item parked after base divergence can be resumed"
       );
     }
-    const baseSha = this.#workflow.pipelineBaseShaForProject(current.resolvedProjectId);
+    const baseSha = this.#workflow.pipelineBaseShaForWorkItem(workItemId);
     const readyNodes = this.runtime.store.transaction(() =>
       this.#workflow.returnFinalApprovalToImplementationInTransaction(
         workItemId,
@@ -1899,7 +1899,7 @@ export class ProjectsCollaborator {
       interfaceRequired,
       baseSha:
         candidate.state === "queued" && interfaceReadiness?.kind !== "blocked"
-          ? this.#workflow.pipelineBaseShaForProject(projectId)
+          ? this.#workflow.pipelineBaseShaForWorkItem(workItemId)
           : null,
       interfaceReadiness,
     });

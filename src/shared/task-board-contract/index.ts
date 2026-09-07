@@ -1177,6 +1177,8 @@ export interface BoardSnapshot {
 
 export interface CrossRepoContext {
   readonly providerProjectId: string;
+  /** Present on new claims; absent from claim results persisted before repository targeting. */
+  readonly providerWorkItemId?: string;
   readonly providerRepoName: string;
   readonly interfacePath: "docs/interface.md";
   readonly sha: string;

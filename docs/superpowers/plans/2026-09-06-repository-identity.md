@@ -121,6 +121,31 @@ Then the three debts the reviews recorded:
 `repository_id` and distinct base shas; a cross-project `repositoryId` is rejected; the three
 debts are closed.
 
+### Decisions 4a surfaced rather than absorbed
+
+**Pin a child to its resolved repository, or leave it unpinned?** Today materialization stores
+`child.repositoryId ?? null`, so a child that resolved to the primary is stored _unpinned_ while
+its `base_sha` is pinned. Re-pointing the primary's path, or moving `is_primary`, then gives that
+child one tree and another tree's sha — the campaign's own failure mode, and likelier now that a
+project can hold several repositories. Storing the resolved id fixes it, and `pipelineRepositoryTarget`
+already returns that id.
+
+It was tried and reverted: it makes `repository_id` non-null for every child, including those in
+single-repository projects, which changes what null means and fails eight existing decomposition
+tests. That is a semantic decision with its own test updates, not something to absorb inside a
+fix round. Decide it deliberately here.
+
+**`WorkItem` has no `repositoryId`.** `workItemFromRow` drops the column, so a child's repository
+target is invisible in every API projection and to the human confirming a decomposition. Task 5
+needs it on the wire; deciding the pinning question first avoids exposing a field whose meaning
+is about to change.
+
+**Rollout note for whoever deploys 4a.** `CrossRepoContext` gained `providerWorkItemId`. It is
+never rendered to the agent, but it travels on the wire and so enters `migrateContextEstimate`'s
+byte count and `estimate.digest`. Every Migrate node blocked before this change carries a
+residual `interfaceContextDigest` that no longer matches, so those nodes un-block and retry once
+on deploy, and a context within ~50 bytes of budget can flip to `over_budget`.
+
 ## Task 4b — the exit arc
 
 Readiness (`decomposition-readiness.ts`) and the merge policy must treat two children in one

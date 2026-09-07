@@ -191,7 +191,12 @@ replaces all eight git call sites at once — a half-converted caller operates o
 the wrong tree silently. Migration v26 → v27 is additive: one repository per
 existing project, `work_items.repository_id` null everywhere, and
 `projects.repo_path` kept as a maintained mirror so a v26 worker still reads
-something true. Exit: a `pipeline-e2e` arc lands two children in one project and
+something true. **The rollout order is still workers-first, and the earlier note
+here saying otherwise conflated two things.** The schema migration is order-
+independent; the claim payload is not — task 4a adds `providerWorkItemId` to
+`crossRepoContext`, and `docs/WORKFLOW_ARCHITECTURE.md` records that older
+workers use a closed claim schema and reject any claim carrying an unknown
+field. Same constraint campaign 10 documented, for the same reason. Exit: a `pipeline-e2e` arc lands two children in one project and
 two repositories. Rollout, from review of the v27 migration: take a copy before
 upgrading. A pre-existing foreign-key violation in a v26 database now fails
 `open()` permanently where the v26 build opened it fine, because reaching

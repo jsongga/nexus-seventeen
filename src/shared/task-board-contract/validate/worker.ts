@@ -257,7 +257,12 @@ export function boundedJsonValue(value: unknown, maximum: number, label: string)
 }
 
 export function parseCrossRepoContext(value: unknown, label: string): CrossRepoContext {
-  const item = exact(value, ["providerProjectId", "providerRepoName", "interfacePath", "sha", "markdown"], label);
+  const item = exact(
+    value,
+    ["providerProjectId", "providerWorkItemId", "providerRepoName", "interfacePath", "sha", "markdown"],
+    label,
+    { required: ["providerProjectId", "providerRepoName", "interfacePath", "sha", "markdown"] }
+  );
   if (item.interfacePath !== "docs/interface.md") {
     throw new ContractValidationError(`${label}.interfacePath is invalid`);
   }
@@ -278,6 +283,9 @@ export function parseCrossRepoContext(value: unknown, label: string): CrossRepoC
   }
   return Object.freeze({
     providerProjectId: identifier(item.providerProjectId, `${label}.providerProjectId`),
+    ...(item.providerWorkItemId === undefined
+      ? {}
+      : { providerWorkItemId: identifier(item.providerWorkItemId, `${label}.providerWorkItemId`) }),
     providerRepoName: prose(item.providerRepoName, `${label}.providerRepoName`, { maximum: 256 }),
     interfacePath: "docs/interface.md",
     sha: item.sha,

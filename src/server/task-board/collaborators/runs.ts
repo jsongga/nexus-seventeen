@@ -885,15 +885,18 @@ export class RunsCollaborator {
             const reason = publishedInterfaceValidationReason(error);
             if (reason === null || projectedContext === null) throw error;
             const usage = workerAgentContextUsage(projectedContext);
-            const providerRow = this.runtime.store.db
-              .prepare(
-                `
-                SELECT ${PROJECT_REPOSITORY_PATH_SQL} AS repository_path
-                FROM projects project
-                WHERE project.project_id=?
-              `
-              )
-              .get(crossRepoContext.providerProjectId) as Readonly<{ repository_path?: unknown }> | undefined;
+            const providerRow =
+              crossRepoContext.providerWorkItemId === undefined
+                ? undefined
+                : (this.runtime.store.db
+                    .prepare(
+                      `
+                      SELECT ${WORK_ITEM_REPOSITORY_PATH_SQL} AS repository_path
+                      FROM work_items work_item
+                      WHERE work_item.work_item_id=?
+                    `
+                    )
+                    .get(crossRepoContext.providerWorkItemId) as Readonly<{ repository_path?: unknown }> | undefined);
             const providerRepoPath =
               typeof providerRow?.repository_path === "string" ? providerRow.repository_path : null;
             throw new MigrateInterfaceClaimError(
