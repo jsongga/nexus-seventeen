@@ -143,6 +143,12 @@ interface FixtureRepositoryOptions {
   readonly engineerMode?: EngineerMode;
   readonly reviewerMode?: ReviewerMode;
   readonly omitInterfaceOnFirstExpand?: boolean;
+  /**
+   * Join an earlier entry's project instead of creating one, so a fixture can
+   * model several repositories inside a single project — the shape campaign 16
+   * exists to support.
+   */
+  readonly joinProjectIndex?: number;
 }
 
 interface FixtureProject extends Project {
@@ -236,6 +242,9 @@ function managerCliSource(
     ownProjectId: string;
     providerProjectId: string;
     consumerProjectId: string | null;
+    // Non-null only when the consumer joined the provider's project, which is
+    // exactly when the plan has to name a repository to be unambiguous.
+    consumerRepositoryId: string | null;
   }>
 ): string {
   return `
@@ -333,6 +342,9 @@ process.stdin.on("end", () => {
         key: "migrate",
         objective: "Migrate the consumer against the published provider interface.",
         projectId: projectRoutes.consumerProjectId,
+        ...(projectRoutes.consumerRepositoryId === null
+          ? {}
+          : { repositoryId: projectRoutes.consumerRepositoryId }),
         declaredScope: ["src/consumer"],
         acceptanceCriteria: ["The consumer records and uses the exact published interface."],
         phase: "migrate",
@@ -700,7 +712,20 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
       project: Project;
     }>
   > = [];
+  const declaredRepositoryIds = new Map<number, string>();
   for (const repository of repositories) {
+    const joinIndex = repository.options.joinProjectIndex;
+    if (joinIndex !== undefined) {
+      const host = projectRows[joinIndex];
+      if (host === undefined) throw new Error(`joinProjectIndex ${joinIndex} has no earlier project`);
+      const added = sweepBoard.addRepository(host.project.projectId, {
+        name: repository.options.name,
+        path: repository.repo,
+      });
+      declaredRepositoryIds.set(repository.index, added.repositoryId);
+      projectRows.push({ ...repository, project: host.project });
+      continue;
+    }
     const { project } = await jsonRequest<{ project: Project }>(address.url, "/v1/projects", "POST", 201, {
       body: {
         name: `Pipeline fixture ${options.suffix} ${repository.options.name}`,
@@ -791,6 +816,7 @@ async function createFixture(options: FixtureOptions): Promise<PipelineFixture> 
         ownProjectId: row.project.projectId,
         providerProjectId: provider.project.projectId,
         consumerProjectId: consumer?.project.projectId ?? null,
+        consumerRepositoryId: consumer == null ? null : (declaredRepositoryIds.get(consumer.index) ?? null),
       })
     );
     const engineerCli = await fakeCodex(
@@ -2401,6 +2427,235 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
     await closeFixture(fixture);
   }
 });
+
+// Skipped because it cannot pass, and the reason is the campaign's finding
+// rather than a gap in this fixture.
+//
+// The arc reaches the migrate child and stops: `consumer.engineerWorker` never
+// claims it. A worker's repository comes from its own static configuration
+// (`task-fleet/runtime.ts` sets `repositoryPath: config.workingDirectory`), and
+// a claim carries no repository at all — the board routes work by agent
+// identity, and an agent belongs to a project. That was sufficient while a
+// project had exactly one repository: project determined repository.
+//
+// Campaign 16 breaks that correspondence on the board side and not on the
+// worker side. Nothing stops a worker configured for repository A from claiming
+// a child targeting repository B and committing into the wrong tree. The board
+// model is complete; execution cannot yet honour it. Roadmap 17 carries the fix.
+test(
+  "campaign 16 exit: a blast-radius change lands across two repositories of one project",
+  { skip: "roadmap 17: agent identity is project-scoped, so a claim cannot route to a repository" },
+  async () => {
+    const fixture = await createFixture({
+      suffix: "exit-one-project-two-repos",
+      originalRequest: `Deliver the ${BLAST_RADIUS_MARKER} across two repositories of one project.`,
+      engineerMode: "scoped",
+      verifyPasses: true,
+      repos: [
+        {
+          name: "provider",
+          verifyPasses: true,
+          engineerMode: "phased_provider",
+          omitInterfaceOnFirstExpand: true,
+        },
+        {
+          name: "consumer",
+          verifyPasses: true,
+          engineerMode: "phased_consumer",
+          joinProjectIndex: 0,
+        },
+      ],
+    });
+    try {
+      const [provider, consumer] = fixture.projects;
+      assert.ok(provider);
+      assert.ok(consumer);
+      assert.equal(provider.projectId, consumer.projectId);
+      assert.notEqual(provider.repo, consumer.repo);
+      assert.notEqual(provider.managerId, consumer.managerId);
+      assert.notEqual(provider.engineerId, consumer.engineerId);
+      assert.notEqual(provider.verifierId, consumer.verifierId);
+
+      const decomposition = await proposeAndConfirmDecomposition(fixture, "blast_radius", [
+        "expand",
+        "migrate",
+        "contract",
+      ]);
+      const [expand, migrate, contract] = decomposition.children;
+      assert.ok(expand);
+      assert.ok(migrate);
+      assert.ok(contract);
+      assert.equal(expand.resolvedProjectId, provider.projectId);
+      assert.equal(migrate.resolvedProjectId, provider.projectId);
+      assert.equal(contract.resolvedProjectId, provider.projectId);
+      assert.deepEqual(
+        decomposition.plan.children?.map((child) => child.dependsOn ?? []),
+        [[], ["expand"], ["migrate"]]
+      );
+      assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "implementing");
+      assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "queued");
+      assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+      assert.equal(await consumer.engineerWorker.dispatchOnce(), false);
+
+      assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+      assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "verifying");
+      await driveVerifyItem(fixture, expand.workItemId, "reviewing");
+      assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+      assert.equal((await currentWorkItem(fixture, expand.workItemId)).state, "fixing");
+      assert.equal(await consumer.engineerWorker.dispatchOnce(), false);
+      const publicationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const verificationHandoffs = publicationDb
+          .prepare(
+            `
+        SELECT handoff.payload_json
+        FROM stage_handoffs handoff
+        JOIN work_nodes node ON node.node_id=handoff.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND handoff.stage='verification'
+        ORDER BY handoff.created_at,handoff.rowid
+      `
+          )
+          .all(expand.workItemId)
+          .map((row) => JSON.parse(String(row.payload_json))) as Array<{
+          outcome: string;
+          summary: string;
+          blockers: string[];
+        }>;
+        assert.equal(verificationHandoffs[0]?.outcome, "passed");
+        assert.equal(verificationHandoffs[0]?.summary, "Independent verification passed.");
+        assert.equal(verificationHandoffs[1]?.outcome, "failed");
+        assert.equal(verificationHandoffs[1]?.blockers.at(-1), "publish docs/interface.md (absent)");
+        assert.equal(
+          publicationDb
+            .prepare(
+              `
+        SELECT event.actor_id
+        FROM task_events event
+        JOIN stage_handoffs handoff ON handoff.task_id=event.task_id
+        JOIN work_nodes node ON node.node_id=handoff.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=?
+          AND event.actor_id='system:interface-publication'
+          AND event.event_type='task_created'
+        ORDER BY event.created_at DESC,event.rowid DESC
+        LIMIT 1
+      `
+            )
+            .get(expand.workItemId)?.actor_id,
+          "system:interface-publication"
+        );
+        assert.equal(
+          publicationDb
+            .prepare(
+              `
+        SELECT expected
+        FROM review_findings finding
+        JOIN work_nodes node ON node.node_id=finding.node_id
+        JOIN plan_revisions plan ON plan.plan_revision_id=node.plan_revision_id
+        WHERE plan.work_item_id=? AND finding.file='docs/interface.md'
+        ORDER BY finding.created_at DESC,finding.rowid DESC
+        LIMIT 1
+      `
+            )
+            .get(expand.workItemId)?.expected,
+          "publish docs/interface.md (absent)"
+        );
+      } finally {
+        publicationDb.close();
+      }
+
+      assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+      assert.equal(await readFile(join(provider.repo, "docs", "interface.md"), "utf8").catch(() => null), null);
+      await driveVerifyItem(fixture, expand.workItemId, "reviewing");
+      assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+      const mergedExpand = await currentWorkItem(fixture, expand.workItemId);
+      assert.equal(mergedExpand.state, "merged");
+      const parentPlanConfirm = gateActions(fixture.dbPath, fixture.workItem.workItemId).find(
+        (action) => action.gate === "plan_confirm"
+      );
+      assert.ok(parentPlanConfirm);
+      const expandApproval = singleFinalApproval(fixture, expand.workItemId);
+      const expandMainSha = (await git(provider.repo, ["rev-parse", "main"])).trim();
+      assert.equal(expandApproval.mergeSha, expandMainSha);
+      assert.equal(expandApproval.actorId, "system:parent-plan-authorization");
+      assert.equal(expandApproval.refId, parentPlanConfirm.gateActionId);
+      assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "implementing");
+
+      assert.equal(await consumer.engineerWorker.dispatchOnce(), true);
+      await driveVerifyItem(fixture, migrate.workItemId, "reviewing");
+      assert.equal(await consumer.verifierWorker.dispatchOnce(), true);
+      assert.equal((await currentWorkItem(fixture, migrate.workItemId)).state, "merged");
+      const migrateApproval = singleFinalApproval(fixture, migrate.workItemId);
+      const migrateMainSha = (await git(consumer.repo, ["rev-parse", "main"])).trim();
+      assert.equal(migrateApproval.mergeSha, migrateMainSha);
+      assert.equal(migrateApproval.actorId, "system:parent-plan-authorization");
+      assert.equal(migrateApproval.refId, parentPlanConfirm.gateActionId);
+      assert.equal(
+        await readFile(join(consumer.repo, "src", "consumer", "provider-interface.md"), "utf8"),
+        PUBLISHED_INTERFACE
+      );
+      assert.equal(
+        JSON.parse(await readFile(join(consumer.repo, "src", "consumer", "provider-context.json"), "utf8")).sha,
+        expandApproval.mergeSha
+      );
+      assert.equal(
+        await git(provider.repo, ["show", `${expandApproval.mergeSha}:docs/interface.md`]),
+        PUBLISHED_INTERFACE
+      );
+
+      assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+      assert.equal(
+        latestNodeBlock(fixture, contract.workItemId),
+        `waits for ${expand.workItemId} (expand) deploy attestation`
+      );
+      await jsonRequest(fixture.origin, `/v1/work-items/${migrate.workItemId}/attest-deploy`, "POST", 200, {
+        body: { note: "The consumer migration is deployed." },
+      });
+      assert.equal((await currentWorkItem(fixture, contract.workItemId)).state, "queued");
+      assert.equal(
+        latestNodeBlock(fixture, contract.workItemId),
+        `waits for ${expand.workItemId} (expand) deploy attestation`
+      );
+      await jsonRequest(fixture.origin, `/v1/work-items/${expand.workItemId}/attest-deploy`, "POST", 200, {
+        body: { note: "The additive provider interface is deployed." },
+      });
+      const activeContract = await currentWorkItem(fixture, contract.workItemId);
+      assert.equal(activeContract.state, "implementing");
+      assert.equal(activeContract.baseSha, (await git(provider.repo, ["rev-parse", "HEAD"])).trim());
+
+      assert.equal(await provider.engineerWorker.dispatchOnce(), true);
+      await driveVerifyItem(fixture, contract.workItemId, "reviewing");
+      assert.equal(await provider.verifierWorker.dispatchOnce(), true);
+      const contractFinalApproval = await currentWorkItem(fixture, contract.workItemId);
+      assert.equal(contractFinalApproval.state, "final_approval");
+      const contractMerged = await jsonRequest<{ workItem: WorkItem }>(
+        fixture.origin,
+        `/v1/work-items/${contract.workItemId}/approve-merge`,
+        "POST",
+        200,
+        { body: { version: contractFinalApproval.version } }
+      );
+      assert.equal(contractMerged.workItem.state, "merged");
+      assert.equal((await currentWorkItem(fixture)).state, "merged");
+      const contractApproval = singleFinalApproval(fixture, contract.workItemId);
+      const contractMainSha = (await git(provider.repo, ["rev-parse", "main"])).trim();
+      assert.equal(contractApproval.mergeSha, contractMainSha);
+      assert.equal(contractApproval.actorId, "human:pipeline-reviewer");
+      const parentApproval = singleFinalApproval(fixture, fixture.workItem.workItemId, false);
+      assert.equal(parentApproval.refId, decomposition.plan.planRevisionId);
+      assert.equal(parentApproval.mergeSha, null);
+      assert.equal(parentApproval.note, "3 children merged, 0 abandoned");
+      assert.deepEqual(fixture.sweepBoard.parentCompletion(fixture.workItem.workItemId).children, [
+        { workItemId: expand.workItemId, mergeSha: expandMainSha },
+        { workItemId: migrate.workItemId, mergeSha: migrateMainSha },
+        { workItemId: contract.workItemId, mergeSha: contractMainSha },
+      ]);
+    } finally {
+      await closeFixture(fixture);
+    }
+  }
+);
 
 test("campaign 10 exit: a same-repository feature split re-verifies after the first parent approval", async () => {
   const fixture = await createFixture({

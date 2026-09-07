@@ -313,6 +313,24 @@ components changes when it resets, and a `useEffect` dependency array can start
 firing on a different schedule. Own review budget, own Playwright arcs.
 Exit: the audit's original bar — no file in `src/web` over ~600 lines.
 
+**17. Repository-aware agent identity** _(proposed 2026-09-07; found by campaign
+16's exit arc)_ — campaign 16 gives a work item a repository on the board side,
+and the worker side cannot honour it. A worker's repository comes from its own
+static configuration (`task-fleet/runtime.ts` sets
+`repositoryPath: config.workingDirectory`) and a claim carries no repository at
+all: the board routes work by agent identity, and an agent belongs to a
+**project**. That was sufficient while a project had exactly one repository,
+because project determined repository. It no longer does — nothing stops a
+worker configured for repository A from claiming a child targeting repository B
+and committing into the wrong tree. The likely shape is to scope an agent to a
+repository rather than a project, so routing by agent identity determines the
+checkout again and campaign 10's model generalizes; the alternative is to put
+the resolved path on the claim and let a worker refuse work it cannot reach.
+Until this ships, decomposition across repositories **within one project** is
+modelled but not executable — across projects it works, because a project still
+determines a repository there. Exit: the campaign 16 arc in `pipeline-e2e`
+un-skips and passes.
+
 **15. The task-board client factory** _(proposed 2026-09-06)_ —
 `createTaskBoardClient` is 582 of `data/client.ts`'s 832 lines: one factory, 48
 methods, all closing over five mutable `Map`s and a shared `request`. Campaign 13

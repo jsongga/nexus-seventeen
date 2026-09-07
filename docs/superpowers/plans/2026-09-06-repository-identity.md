@@ -171,6 +171,13 @@ is fixture work. It was reverted rather than committed skipped, after an edit in
 damaged campaign 10's arc instead — the two share assertion shapes, and a first-match edit hit
 the wrong one.
 
+**The arc found something better than a pass.** It is committed skipped, with the reason in the
+code: the migrate child is never claimed, because a worker's repository is its own static
+configuration and a claim carries no repository. Routing is by agent identity, and an agent
+belongs to a project — which determined a repository right up until this campaign. Roadmap 17
+carries the fix. Until then this campaign's model is complete and its execution is not, and that
+sentence belongs in the rollout note rather than in a footnote.
+
 **Next session:** re-add the arc against `campaign 10 exit: a blast-radius change lands as phased
 children across two repos` as the template, extend the fake CLI's provider mode with a contract
 implementation for `joinProjectIndex` fixtures, and edit by line range rather than by matching
