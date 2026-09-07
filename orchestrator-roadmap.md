@@ -177,12 +177,22 @@ arc is intermittent under load too (0/5 failures isolated, 1/3 loaded). Make the
 observed sweep latency (or gate on state transitions instead of elapsed
 time) so a loaded machine cannot fake a regression.
 
-**9.9. Repository identity separate from the product project** _(queued
-2026-08-29)_ — a board Project has exactly one `repo_path`, and decomposition
-assigns one child per project, so a product that spans several repositories
-inside one project (Cicada Sense/HomeDots) cannot be split across them. Model
-repositories as their own records (project → repositories), let a declared
-child target a repository, and migrate `repo_path` into it.
+**9.9. Repository identity separate from the product project** _(specced
+2026-09-06 as campaign 16; spec
+`docs/superpowers/specs/2026-09-06-repository-identity.md`)_ — a Project has
+exactly one `repo_path` and a declared child targets a Project, so the unit of
+grouping and the unit of checkout are the same thing. A product whose code spans
+several repositories — Cicada Sense/HomeDots is exactly this shape — can either
+be one Project it cannot decompose, or several Projects that fragment its agents
+and threads. Repositories become records, a Project has many, and a declared
+child names one. The seam is that all thirty `repoPath` mentions resolve the same
+way today, so one helper that takes a **work item** rather than a project
+replaces all eight git call sites at once — a half-converted caller operates on
+the wrong tree silently. Migration v26 → v27 is additive: one repository per
+existing project, `work_items.repository_id` null everywhere, and
+`projects.repo_path` kept as a maintained mirror so a v26 worker still reads
+something true. Exit: a `pipeline-e2e` arc lands two children in one project and
+two repositories.
 
 **9.10. Credential filter precision at the agent boundary** _(shipped
 2026-09-02; queued 2026-08-31)_ — `assertCredentialSafe` rejects a whole prompt,
