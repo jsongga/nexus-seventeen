@@ -313,8 +313,9 @@ components changes when it resets, and a `useEffect` dependency array can start
 firing on a different schedule. Own review budget, own Playwright arcs.
 Exit: the audit's original bar — no file in `src/web` over ~600 lines.
 
-**17. Repository-aware agent identity** _(proposed 2026-09-07; found by campaign
-16's exit arc)_ — campaign 16 gives a work item a repository on the board side,
+**17. Repository-aware agent identity** _(specced 2026-09-07 as campaign 18;
+spec `docs/superpowers/specs/2026-09-07-repository-aware-agents.md`; found by
+campaign 16's exit arc)_ — campaign 16 gives a work item a repository on the board side,
 and the worker side cannot honour it. A worker's repository comes from its own
 static configuration (`task-fleet/runtime.ts` sets
 `repositoryPath: config.workingDirectory`) and a claim carries no repository at
