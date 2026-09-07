@@ -90,11 +90,41 @@ task and not eight.
 work item; a test proves a work item with a non-primary `repository_id` resolves to that
 repository while its siblings resolve to the primary.
 
-## Task 4 — decomposition across repositories
+## Task 4a — children target repositories
 
-Declared children carry `repositoryId`; materialization stores it; readiness
-(`decomposition-readiness.ts`) and the merge policy treat two children in one project and two
-repositories exactly as they treat two children in two projects today — campaign 10 keyed that on
+**Base shas are keyed by project and must become keyed by repository.**
+`pipelineBaseShasForConfirm` (`persistence/workflow.ts:972`) builds
+`Map<projectId, baseSha>` from `pipelineBaseShaForProject`. Two children in one project and two
+repositories would therefore share a base sha taken from the project's primary — each child's
+branch based on the wrong tree's HEAD. Nothing in the campaign's reviews caught this because it
+is not a `repo_path` read; it is a correct read of the wrong key. Key by resolved repository.
+
+Materialization (`workflow.ts:1037`) must store `child.repositoryId` into
+`work_items.repository_id`, and must **reject a `repositoryId` belonging to a project other than
+the child's `projectId`** — task 2 accepts and discards it today, so a cross-project target is
+silently allowed. This is the task that starts reading it, so this is where that check lands.
+
+Then the three debts the reviews recorded:
+
+1. The published-interface cache is populated with the work-item chain
+   (`decomposition-readiness.ts`) and evicted with the project chain (`runs.ts`, keyed on
+   `crossRepoContext.providerProjectId`). Identical today; diverges the moment a provider Expand
+   item carries a `repository_id`, leaving a poisoned entry alive. Carry the provider's resolved
+   path or its owner work-item id on `CrossRepoContext` — `prepareCrossRepoContext` already has
+   `owner.work_item_id`.
+2. `decomposition-readiness.ts` pairs a repository path with `projects.name` as `repoName`, so an
+   agent is told the project's name for a tree that may not be the project's. `repositories` has
+   its own `name`.
+3. `verify-attempts.ts`'s `JOIN projects` is dead after task 3.
+
+**Exit:** two children in one project and two repositories materialize with distinct
+`repository_id` and distinct base shas; a cross-project `repositoryId` is rejected; the three
+debts are closed.
+
+## Task 4b — the exit arc
+
+Readiness (`decomposition-readiness.ts`) and the merge policy must treat two children in one
+project and two repositories exactly as they treat two children in two projects today — campaign 10 keyed that on
 phases, not location, so this should be a narrowing of an existing rule rather than a new one.
 Verify that claim before relying on it.
 
