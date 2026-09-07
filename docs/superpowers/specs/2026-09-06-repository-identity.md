@@ -47,18 +47,19 @@ graph LR
 
 ## Where `repo_path` is read today
 
-Thirty files mention `repoPath`. They fall into three groups, and only the first is load-bearing
-for this change:
+Thirty files mention `repoPath`, but that count misleads, and the spec's first version drew the
+wrong list from it. Measured against what each file actually does:
 
-| Group                       | Files                                                                                                                                                                              | What it needs                                             |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| **Checkout and git**        | `collaborators/{runs, merge-executor, base-branch-poll, interface-context, onboarding-check}.ts`, `pipeline-inspection.ts`, `persistence/workflow.ts`, `docs-publish/enumerate.ts` | "which working tree do I operate on for _this_ work item" |
-| **Contract and projection** | `contract/index.ts`, `validate/{entities,requests}.ts`, `persistence/rows.ts`                                                                                                      | carries the value through                                 |
-| **Display and choice**      | `web/{types.ts, model/project.ts, model/project-picker.ts, views/workspace/ProjectPage.tsx}`                                                                                       | shows it, and picks one at creation                       |
+| Group                                                                     | Files                                                                                                                           | What it needs                             |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **Resolvers** — join `projects` and read `repo_path` to decide a checkout | `collaborators/{runs, projects, base-branch-poll, verify-attempts, decomposition-readiness}.ts`, `persistence/workflow.ts`      | to ask the _work item_ for its repository |
+| **Consumers** — already take a path as a parameter                        | `collaborators/{merge-executor, interface-context, onboarding-check}.ts`, `pipeline-inspection.ts`, `docs-publish/enumerate.ts` | **nothing**; they are already agnostic    |
+| **Contract, projection and display**                                      | `contract/index.ts`, `validate/{entities,requests}.ts`, `persistence/rows.ts`, `web/*`                                          | carries or shows the value                |
 
-Every one of them resolves the same way — read the project row, take `repo_path`. That single
-resolution point is the seam: after this change they ask a work item for its repository, and
-the answer falls back to the project's primary repository when nothing more specific is set.
+The correction matters more than the count. The first version of this table named the five
+consumers as call sites to convert and omitted three of the six real resolvers — converting that
+list would have changed files that needed nothing while leaving half the resolvers reading the
+project row, which is precisely the silent-wrong-tree failure the design is built to prevent.
 
 ## Model
 

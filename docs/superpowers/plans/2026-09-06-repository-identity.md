@@ -62,10 +62,17 @@ gains one; `contract-drift.test.ts` passes.
 
 ## Task 3 — one resolution helper
 
-The correctness core. Today eight call sites read `project.repo_path` to decide which working
-tree to operate on: `collaborators/{runs, merge-executor, base-branch-poll, interface-context,
-onboarding-check}.ts`, `pipeline-inspection.ts`, `persistence/workflow.ts`,
-`docs-publish/enumerate.ts`.
+The correctness core. **Measured, not assumed** — the first version of this list was wrong in
+both directions. Six files resolve a checkout by joining `projects` and reading `repo_path`:
+
+`collaborators/runs.ts` (lines 178, 234, 287, 888, 1944), `collaborators/projects.ts` (313),
+`collaborators/base-branch-poll.ts` (57), `collaborators/verify-attempts.ts` (592),
+`collaborators/decomposition-readiness.ts` (176), `persistence/workflow.ts` (693, 770, 921).
+
+Five files the earlier list named — `merge-executor`, `interface-context`, `onboarding-check`,
+`pipeline-inspection`, `docs-publish/enumerate` — take a path as a parameter and need **no
+change at all**. Converting those while missing three real resolvers is exactly the silent
+wrong-tree failure this task exists to prevent.
 
 Introduce one helper that resolves a checkout **from a work item**, not from a project. The
 fallback chain is `work_items.repository_id` → the project's primary repository →
