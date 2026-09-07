@@ -38,7 +38,7 @@ import { TaskBoardError } from "../errors.js";
 
 /* —— Current schema —— */
 
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 export function workItemPriorityCases(indentation: string): string {
   return WORK_ITEM_PRIORITIES.map((priority, rank) => `WHEN '${priority}' THEN ${rank}`).join(`\n${indentation}`);
@@ -697,7 +697,8 @@ CREATE TABLE agents (
   token_hash TEXT NOT NULL UNIQUE,
   last_error TEXT,
   version INTEGER NOT NULL CHECK (version >= 1),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT /* NULL means the project's primary repository, not any repository. */
 ) STRICT;
 CREATE INDEX agents_project ON agents(project_id, created_at, agent_id);
 
@@ -1805,6 +1806,15 @@ export function migrateVersion26To27(db: DatabaseSync): void {
   }
 }
 
+export function migrateVersion27To28(db: DatabaseSync): void {
+  const hasAgents = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents'").get() !== undefined;
+  const addRepositoryId =
+    !hasAgents || hasColumns(db, "agents", ["repository_id"])
+      ? ""
+      : "ALTER TABLE agents ADD COLUMN repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT /* NULL means the project's primary repository, not any repository. */;";
+  db.exec(`BEGIN IMMEDIATE; ${addRepositoryId} PRAGMA user_version = 28; COMMIT;`);
+}
+
 function reconcileMissingPrimaryRepositories(db: DatabaseSync): void {
   const hasProjects =
     db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get() !== undefined;
@@ -2219,6 +2229,8 @@ export class TaskBoardStore {
         // Work-item decomposition and durable project repository paths are added below.
       } else if (version === 26) {
         // Repository records and work-item repository targets are added below.
+      } else if (version === 27) {
+        // Agent repository targets are added below.
       } else if (version !== SCHEMA_VERSION) {
         throw new TaskBoardError(
           500,
@@ -2247,6 +2259,7 @@ export class TaskBoardStore {
       if (version >= 1 && version <= 24) migrateVersion24To25(db);
       if (version >= 1 && version <= 25) migrateVersion25To26(db);
       if (version >= 1 && version <= 26) migrateVersion26To27(db);
+      if (version >= 1 && version <= 27) migrateVersion27To28(db);
       reconcileMissingPrimaryRepositories(db);
       const integrity = db.prepare("PRAGMA quick_check").get();
       if (integrity?.quick_check !== "ok") {

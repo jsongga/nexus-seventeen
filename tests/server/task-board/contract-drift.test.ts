@@ -38,6 +38,7 @@ import {
   migrateVersion13To14,
   migrateVersion25To26,
   migrateVersion26To27,
+  migrateVersion27To28,
 } from "#server/task-board/persistence/store";
 import { boardFixture, databasePath, workItemRequest } from "./helpers.js";
 
@@ -133,6 +134,8 @@ const V25_GATE_KINDS = [
   "cancel",
   "question_answer",
 ] as const;
+const AGENT_REPOSITORY_COLUMN_SQL =
+  "repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT /* NULL means the project's primary repository, not any repository. */";
 
 /**
  * SQLite's ALTER TABLE ADD COLUMN appends the definition onto the last column's
@@ -147,7 +150,22 @@ function normalizeAlteredWorkItems(sql: string): string {
   );
 }
 
-function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27): string {
+/**
+ * The v27-to-v28 ALTER leaves a different artifact on `agents`, and the reason
+ * is the table's shape rather than any SQLite build: the definition is spliced
+ * in at the table-constraint list, or at the closing paren when there is none.
+ * `work_items` ends in `UNIQUE`/`CHECK` constraints, so its column lands
+ * mid-table; `agents` has none, so SQLite writes `\n, <column>) STRICT` and
+ * pulls the closing paren up. Normalizing exactly that keeps every other byte.
+ */
+function normalizeAlteredAgents(sql: string): string {
+  return sql.replace(
+    `  created_at TEXT NOT NULL\n, ${AGENT_REPOSITORY_COLUMN_SQL}) STRICT`,
+    `  created_at TEXT NOT NULL,\n  ${AGENT_REPOSITORY_COLUMN_SQL}\n) STRICT`
+  );
+}
+
+function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28): string {
   const rows = store.db
     .prepare(
       `
@@ -175,6 +193,12 @@ function frozenProjection(store: TaskBoardStore, version: 19 | 20 | 21 | 22 | 23
     )
     .map((row) => {
       let sql = row.sql;
+      if (row.name === "agents") {
+        sql = normalizeAlteredAgents(sql);
+        if (version <= 27) {
+          sql = sql.replace(`,\n  ${AGENT_REPOSITORY_COLUMN_SQL}`, "");
+        }
+      }
       if (version <= 25 && row.name === "projects") {
         sql = sql.replace("  repo_path TEXT NOT NULL,\n", "");
       }
@@ -371,6 +395,21 @@ function rowsJson(db: DatabaseSync, table: string): string {
   );
 }
 
+function agentRowsThroughV27Json(db: DatabaseSync): string {
+  return JSON.stringify(
+    db
+      .prepare(
+        `
+      SELECT agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at
+      FROM agents
+      ORDER BY rowid
+    `
+      )
+      .all()
+      .map((row) => ({ ...row }))
+  );
+}
+
 function taskTableObjects(db: DatabaseSync, table: "tasks" | "wakeups"): string {
   return JSON.stringify(
     db
@@ -402,10 +441,10 @@ function migrationLeftovers(db: DatabaseSync): readonly unknown[] {
     .all();
 }
 
-test("fresh v27 DDL preserves the byte-identical non-document v19 through v25 schemas", async () => {
+test("fresh v28 DDL preserves the byte-identical non-document v19 through v25 schemas", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     for (const version of [19, 20, 21, 22, 23, 24, 25] as const) {
       const fixturePath = join(process.cwd(), `tests/server/task-board/fixtures/v${version}-schema.sql`);
       // v25-schema.sql was generated before the version bump with the same mechanism as v24:
@@ -437,14 +476,14 @@ test("fresh v27 DDL preserves the byte-identical non-document v19 through v25 sc
   }
 });
 
-test("v23 fixture migrates through v27 to the same schema as a fresh database", async () => {
+test("v23 fixture migrates through v28 to the same schema as a fresh database", async () => {
   const path = await databasePath();
   await installFrozenSchema(path, 23);
 
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     const onboardingColumns = upgraded.db.prepare("PRAGMA table_info(work_item_onboarding_tasks)").all();
     assert.deepEqual(
       onboardingColumns.map((row) => String(row.name)),
@@ -473,7 +512,7 @@ test("v23 fixture migrates through v27 to the same schema as a fresh database", 
       );
       assert.equal(fresh.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name)?.sql, sql);
     }
-    assert.equal(frozenProjection(upgraded, 27), frozenProjection(fresh, 27));
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     fresh.close();
@@ -481,7 +520,7 @@ test("v23 fixture migrates through v27 to the same schema as a fresh database", 
   }
 });
 
-test("v24 fixture migrates to the same v27 schema as a fresh database and retires document tables", async () => {
+test("v24 fixture migrates to the same v28 schema as a fresh database and retires document tables", async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   await installFrozenSchema(path, 24);
@@ -516,7 +555,7 @@ test("v24 fixture migrates to the same v27 schema as a fresh database and retire
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
     for (const store of [upgraded, fresh]) {
-      assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+      assert.equal(store.db.prepare("PRAGMA user_version").get()?.user_version, 28);
       for (const table of ["document_events", "documents"]) {
         assert.equal(
           store.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
@@ -528,7 +567,7 @@ test("v24 fixture migrates to the same v27 schema as a fresh database and retire
       upgraded.db.prepare("SELECT name FROM projects WHERE project_id = 'migration-project'").get()?.name,
       "Migration project"
     );
-    assert.equal(frozenProjection(upgraded, 27), frozenProjection(fresh, 27));
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     fresh.close();
@@ -536,14 +575,14 @@ test("v24 fixture migrates to the same v27 schema as a fresh database and retire
   }
 });
 
-test("v25 fixture migrates to byte-identical fresh v27 DDL", async () => {
+test("v25 fixture migrates to byte-identical fresh v28 DDL", async () => {
   const path = await databasePath();
   await installFrozenSchema(path, 25);
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
-    assert.equal(frozenProjection(upgraded, 27), frozenProjection(fresh, 27));
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
   } finally {
@@ -603,7 +642,7 @@ test("the v26 intermediate genuinely lacks repository_id, so the ALTER branch st
   }
 });
 
-test("a real v26 database migrates every project to one primary repository and matches fresh v27 shape", async () => {
+test("a real v26 database migrates every project to one primary repository and matches fresh v28 shape", async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   await installFrozenSchema(path, 25);
@@ -627,7 +666,7 @@ test("a real v26 database migrates every project to one primary repository and m
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(
       upgraded.db
         .prepare(
@@ -719,8 +758,184 @@ test("a real v26 database migrates every project to one primary repository and m
       `
         )
         .all()
-        .map((row) => ({ ...row, sql: typeof row.sql === "string" ? normalizeAlteredWorkItems(row.sql) : row.sql }));
+        .map((row) => {
+          if (typeof row.sql !== "string") return { ...row };
+          const sql =
+            row.name === "work_items"
+              ? normalizeAlteredWorkItems(row.sql)
+              : row.name === "agents"
+                ? normalizeAlteredAgents(row.sql)
+                : row.sql;
+          return { ...row, sql };
+        });
     assert.deepEqual(schema(upgraded), schema(fresh));
+    assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
+  } finally {
+    fresh.close();
+    upgraded.close();
+  }
+});
+
+test("a real v27 database migrates agents to nullable repository scope and matches fresh v28 shape", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = await databasePath();
+  await installFrozenSchema(path, 25);
+  const legacy = new DatabaseSync(path);
+  const createdAt = "2026-09-07T12:00:00.000Z";
+  let columnsAtV27 = "";
+  let agentsAtV27 = "";
+  try {
+    migrateVersion25To26(legacy);
+    legacy.exec(`
+      INSERT INTO projects(project_id, name, description, repo_path, version, created_at, updated_at)
+      VALUES
+        ('v27-api', 'API project', 'Owns two repositories.', '/repos/api', 3, '${createdAt}', '${createdAt}'),
+        ('v27-web', 'Web project', 'Owns its primary repository.', '/repos/web', 2, '${createdAt}', '${createdAt}');
+    `);
+    migrateVersion26To27(legacy);
+    assert.equal(legacy.prepare("PRAGMA user_version").get()?.user_version, 27);
+
+    const v27ColumnRows = legacy
+      .prepare("PRAGMA table_info(agents)")
+      .all()
+      .map((row) => ({ ...row }));
+    assert.equal(
+      v27ColumnRows.some((row) => row.name === "repository_id"),
+      false,
+      "v27 must not already have agents.repository_id"
+    );
+    columnsAtV27 = JSON.stringify(v27ColumnRows);
+
+    legacy.exec(`
+      INSERT INTO repositories(
+        repository_id, project_id, name, path, is_primary, version, created_at, updated_at
+      ) VALUES (
+        'v27-api-secondary', 'v27-api', 'API secondary', '/repos/api-secondary', 0, 1,
+        '${createdAt}', '${createdAt}'
+      );
+      INSERT INTO agents(
+        agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at
+      ) VALUES
+        ('v27-engineer', 'v27-api', 'engineer', 'API', 'Preserve this agent.', 'gpt-test',
+          'v27-engineer-token', NULL, 4, '${createdAt}'),
+        ('v27-verifier', 'v27-web', 'verifier', 'Web', 'Preserve this verifier.', 'gpt-test',
+          'v27-verifier-token', 'Recovered before migration.', 2, '${createdAt}');
+    `);
+    agentsAtV27 = JSON.stringify(
+      legacy
+        .prepare(
+          `
+        SELECT agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at
+        FROM agents
+        ORDER BY agent_id
+      `
+        )
+        .all()
+        .map((row) => ({ ...row }))
+    );
+  } finally {
+    legacy.close();
+  }
+
+  const upgraded = await TaskBoardStore.open(path);
+  const fresh = await TaskBoardStore.open(await databasePath());
+  try {
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
+    const migratedColumns = upgraded.db
+      .prepare("PRAGMA table_info(agents)")
+      .all()
+      .map((row) => ({ ...row }));
+    assert.equal(JSON.stringify(migratedColumns.slice(0, -1)), columnsAtV27, "v28 changed a pre-existing column");
+    assert.deepEqual(
+      migratedColumns,
+      fresh.db
+        .prepare("PRAGMA table_info(agents)")
+        .all()
+        .map((row) => ({ ...row }))
+    );
+    assert.deepEqual(
+      {
+        name: migratedColumns.at(-1)?.name,
+        type: migratedColumns.at(-1)?.type,
+        notnull: migratedColumns.at(-1)?.notnull,
+        defaultValue: migratedColumns.at(-1)?.dflt_value,
+      },
+      { name: "repository_id", type: "TEXT", notnull: 0, defaultValue: null }
+    );
+    assert.equal(
+      JSON.stringify(
+        upgraded.db
+          .prepare(
+            `
+          SELECT agent_id, project_id, role, area, mission, model, token_hash, last_error, version, created_at
+          FROM agents
+          ORDER BY agent_id
+        `
+          )
+          .all()
+          .map((row) => ({ ...row }))
+      ),
+      agentsAtV27
+    );
+    assert.deepEqual(
+      upgraded.db
+        .prepare("SELECT agent_id, repository_id FROM agents ORDER BY agent_id")
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { agent_id: "v27-engineer", repository_id: null },
+        { agent_id: "v27-verifier", repository_id: null },
+      ]
+    );
+
+    const migratedAgentsSql = String(
+      upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get()?.sql
+    );
+    const freshAgentsSql = String(
+      fresh.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get()?.sql
+    );
+    assert.notEqual(migratedAgentsSql, freshAgentsSql, "the migration must exercise SQLite's ALTER rendering");
+    assert.equal(normalizeAlteredAgents(migratedAgentsSql), freshAgentsSql);
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
+    assert.deepEqual(
+      upgraded.db
+        .prepare(
+          `
+        SELECT project_id, COUNT(*) AS repository_count, SUM(is_primary) AS primary_count
+        FROM repositories
+        GROUP BY project_id
+        ORDER BY project_id
+      `
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { project_id: "v27-api", repository_count: 2, primary_count: 1 },
+        { project_id: "v27-web", repository_count: 1, primary_count: 1 },
+      ]
+    );
+
+    const afterFirstMigration = JSON.stringify({
+      agents: upgraded.db.prepare("SELECT * FROM agents ORDER BY agent_id").all(),
+      columns: migratedColumns,
+      repositories: upgraded.db.prepare("SELECT * FROM repositories ORDER BY repository_id").all(),
+    });
+    upgraded.db.exec("PRAGMA user_version = 27;");
+    migrateVersion27To28(upgraded.db);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
+    assert.equal(
+      JSON.stringify({
+        agents: upgraded.db.prepare("SELECT * FROM agents ORDER BY agent_id").all(),
+        columns: upgraded.db
+          .prepare("PRAGMA table_info(agents)")
+          .all()
+          .map((row) => ({ ...row })),
+        repositories: upgraded.db.prepare("SELECT * FROM repositories ORDER BY repository_id").all(),
+      }),
+      afterFirstMigration,
+      "the guarded migration must be idempotent"
+    );
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
   } finally {
@@ -807,7 +1022,7 @@ test("repositories reject a second primary for the same project", async () => {
   }
 });
 
-test("v10 workflow creation migrates through v27 to byte-identical fresh DDL", async () => {
+test("v10 workflow creation migrates through v28 to byte-identical fresh DDL", async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const path = await databasePath();
   await installVersion10Schema(path);
@@ -825,10 +1040,10 @@ test("v10 workflow creation migrates through v27 to byte-identical fresh DDL", a
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
-    assert.equal(frozenProjection(upgraded, 27), frozenProjection(fresh, 27));
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
   } finally {
     fresh.close();
     upgraded.close();
@@ -919,7 +1134,12 @@ test("populated v14-quoted task tables migrate without changing rows, references
           'wakeup-assignment', 'task-root', 'completed', '${createdAt}', '${createdAt}', 'Terminé — 東京', '${createdAt}',
           NULL, NULL, NULL, NULL);
     `);
-    rowsBefore = Object.fromEntries(preservedTables.map((table) => [table, rowsJson(legacy, table)]));
+    rowsBefore = Object.fromEntries(
+      preservedTables.map((table) => [
+        table,
+        table === "agents" ? agentRowsThroughV27Json(legacy) : rowsJson(legacy, table),
+      ])
+    );
     objectsBefore = {
       tasks: taskTableObjects(legacy, "tasks"),
       wakeups: taskTableObjects(legacy, "wakeups"),
@@ -931,8 +1151,15 @@ test("populated v14-quoted task tables migrate without changing rows, references
   const upgraded = await TaskBoardStore.open(path);
   const fresh = await TaskBoardStore.open(await databasePath());
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
-    for (const table of preservedTables) assert.equal(rowsJson(upgraded.db, table), rowsBefore[table], table);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
+    for (const table of preservedTables) {
+      const rows = table === "agents" ? agentRowsThroughV27Json(upgraded.db) : rowsJson(upgraded.db, table);
+      assert.equal(rows, rowsBefore[table], table);
+    }
+    assert.equal(
+      upgraded.db.prepare("SELECT COUNT(*) AS count FROM agents WHERE repository_id IS NOT NULL").get()?.count,
+      0
+    );
     for (const table of ["tasks", "wakeups"] as const) {
       assert.equal(taskTableObjects(upgraded.db, table), objectsBefore[table]);
       assert.equal(taskTableObjects(upgraded.db, table), taskTableObjects(fresh.db, table));
@@ -994,7 +1221,7 @@ test("populated v14-quoted task tables migrate without changing rows, references
     assert.deepEqual(upgraded.db.prepare("SELECT type, name FROM sqlite_temp_master ORDER BY type, name").all(), []);
     assert.deepEqual(upgraded.db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(upgraded.db.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
-    assert.equal(frozenProjection(upgraded, 27), frozenProjection(fresh, 27));
+    assert.equal(frozenProjection(upgraded, 28), frozenProjection(fresh, 28));
   } finally {
     fresh.close();
     upgraded.close();
@@ -1018,7 +1245,7 @@ test("v25-to-v26 canonicalizes a lone legacy tasks table without requiring wakeu
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.match(
       String(upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
       /^CREATE TABLE tasks \(/u
@@ -1203,7 +1430,7 @@ Workspace: /repos/catalog-provider',
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(
       upgraded.db
         .prepare(
@@ -1407,7 +1634,7 @@ Workspace: /repos/catalog-provider',
   }
 });
 
-test("v27 schema contains the contract-derived checks and repository storage", async () => {
+test("v28 schema contains the contract-derived checks and repository storage", async () => {
   const store = await TaskBoardStore.open(await databasePath());
   try {
     const tableSql = (name: string): string => {
@@ -1457,6 +1684,11 @@ test("v27 schema contains the contract-derived checks and repository storage", a
     ];
     for (const [table, fragment] of expected) assert.ok(tableSql(table).includes(fragment), `${table}: ${fragment}`);
     assert.ok(tableSql("projects").includes("repo_path TEXT NOT NULL"));
+    assert.ok(
+      tableSql("agents").includes(
+        "repository_id TEXT NULL REFERENCES repositories(repository_id) ON DELETE RESTRICT /* NULL means the project's primary repository, not any repository. */"
+      )
+    );
     assert.equal(
       tableSql("repositories"),
       `CREATE TABLE repositories (
@@ -1564,7 +1796,7 @@ test("v19 migrates through v22 with pipeline columns and durable verify attempts
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     const columns = (table: string): string[] =>
       upgraded.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -1767,7 +1999,7 @@ test("v20 migrates to v21 with review findings, design records, and design-task 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     const columns = (table: string): string[] =>
       upgraded.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -1937,7 +2169,7 @@ test("v21 migrates to v22 with park records, notifications, and gate actions", a
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     const columns = (table: string): string[] =>
       upgraded.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -2151,7 +2383,7 @@ test("v22 migrates to v23 without changing old ledger bytes and widens both enum
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(
       upgraded.db
         .prepare("SELECT rowid, * FROM park_records ORDER BY rowid")
@@ -2342,7 +2574,7 @@ test("v18 work-item states migrate to v19 with an initial transition per item", 
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(
       upgraded.db
         .prepare(
@@ -2469,7 +2701,7 @@ test("reopening an already-v19-shaped store at version 18 preserves states and t
 
   const reopened = await TaskBoardStore.open(path);
   try {
-    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.deepEqual(
       reopened.db
         .prepare("SELECT work_item_id, state FROM work_items ORDER BY work_item_id")
@@ -2559,7 +2791,7 @@ test("v17 migrates through v19 while preserving the node-event lookup index", as
 
   const upgraded = await TaskBoardStore.open(path);
   try {
-    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 27);
+    assert.equal(upgraded.db.prepare("PRAGMA user_version").get()?.user_version, 28);
     assert.equal(
       upgraded.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='project_events_node'").get()?.sql,
       "CREATE INDEX project_events_node ON project_events(node_id, sequence)"

@@ -145,7 +145,7 @@ Version 26 keeps coordination separate from the existing node graph.
 | `park_records`           | Adds the `child_failed` category.                                                                                                                                                                                                                                                                                                                                 |
 | `verify_attempts`        | Adds terminal state `retired`, used when cancellation owns verifier shutdown and workspace cleanup.                                                                                                                                                                                                                                                               |
 
-Fresh databases and every supported migration path finish at schema version 26. The v25 schema golden remains frozen.
+Fresh databases and every supported migration path finish at schema version 28. The v25 schema golden remains frozen.
 
 ### Readiness and published interfaces
 

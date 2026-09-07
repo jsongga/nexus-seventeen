@@ -3659,7 +3659,7 @@ test("work items preserve explicit intake and enforce idempotent CAS updates", a
           .run("Replace the accepted request.", created.workItem.workItemId),
       /WORK_ITEM_ORIGINAL_REQUEST_IMMUTABLE/u
     );
-    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(direct.prepare("PRAGMA user_version").get()?.user_version), 28);
   } finally {
     direct.close();
   }
@@ -9298,7 +9298,7 @@ test("schema version 9 migration adds dormant automation configuration without c
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM automation_configuration").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM tasks").get()?.count, 1);
@@ -9361,7 +9361,7 @@ test("schema version 8 migration adds every v19 work-item and run dependency", a
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_items").get()?.count, 1);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM work_item_transitions").get()?.count, 1);
@@ -9421,7 +9421,7 @@ test("schema version 7 migration backfills durable review scope for work and age
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     verified.close();
@@ -9541,7 +9541,7 @@ test("schema version 6 migration preserves claimed runs, pending wakes, and sema
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM runs").get()?.count, 2);
     assert.equal(verified.prepare("SELECT COUNT(*) AS count FROM wakeups").get()?.count, 2);
@@ -9636,7 +9636,7 @@ test("schema version 5 migrates project-local order keys into the existing globa
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_global_order'").get()
         ?.name,
@@ -9682,7 +9682,7 @@ test("schema version 1 upgrades in place and preserves the run-to-task projectio
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT task_id FROM runs WHERE run_id = ?").get("run-legacy")?.task_id,
       "task-legacy"
@@ -9730,7 +9730,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     const task = verified
       .prepare(
         "SELECT task_kind, required_role, expected_agent_minutes, agent_estimate_minutes, order_key FROM tasks WHERE task_id = ?"
@@ -9755,7 +9755,7 @@ test("schema version 2 adds review fields in place and defaults existing tasks t
   }
 });
 
-test("schema version 3 upgrades through v27, preserves existing board data, and retires document tables", async () => {
+test("schema version 3 upgrades through v28, preserves existing board data, and retires document tables", async () => {
   const path = await databasePath();
   await installV24Schema(path);
   const { DatabaseSync } = await import("node:sqlite");
@@ -9785,7 +9785,7 @@ test("schema version 3 upgrades through v27, preserves existing board data, and 
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     for (const table of ["document_events", "documents"]) {
       assert.equal(
         verified.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
@@ -9843,7 +9843,7 @@ test("schema version 11 adds durable work-item planning links", async () => {
   upgraded.close();
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_item_planning_tasks'").get()
         ?.name,
@@ -9883,7 +9883,7 @@ test("schema version 12 adds durable claim results while preserving active legac
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('runs') WHERE name = 'claim_result_json'").get()?.name,
       "claim_result_json"
@@ -9932,7 +9932,7 @@ test("schema version 13 adds recoverable interruption and recovery wakeup values
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.deepEqual(verified.prepare("PRAGMA foreign_key_check").all(), []);
     assert.match(
       String(verified.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.sql),
@@ -9968,7 +9968,7 @@ test("schema version 14 adds nullable agent lane errors without changing existin
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'last_error'").get()?.name,
       "last_error"
@@ -10014,7 +10014,7 @@ test("schema version 16 adds nullable work-item cancellation and archival fields
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('work_items') WHERE name = 'archived_at'").get()?.name,
       "archived_at"
@@ -10060,7 +10060,7 @@ test("schema version 17 adds agent credential versions without changing existing
 
   const verified = new DatabaseSync(path);
   try {
-    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 27);
+    assert.equal(Number(verified.prepare("PRAGMA user_version").get()?.user_version), 28);
     assert.equal(
       verified.prepare("SELECT name FROM pragma_table_info('agents') WHERE name='version'").get()?.name,
       "version"
