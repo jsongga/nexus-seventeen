@@ -10,6 +10,7 @@ import {
   parseBoardClaim,
   parseBoardConfirmPlan,
   parseBoardCreateAgent,
+  parseBoardCreateRepository,
   parseBoardCreateProject,
   parseBoardUpdateProject,
   parseBoardCreateTask,
@@ -42,6 +43,7 @@ import type {
   ClaimRunRequest,
   ConfirmPlanRevisionRequest,
   CreateAgentRequest,
+  CreateRepositoryRequest,
   CreateHumanQuestionRequest,
   CreateHumanTaskMessageRequest,
   CreateProjectRequest,
@@ -115,6 +117,9 @@ export function parseUpdateAutomationConfiguration(value: unknown): UpdateAutoma
 }
 export function parseCreateAgent(value: unknown): CreateAgentRequest {
   return adapt(() => parseBoardCreateAgent(value));
+}
+export function parseCreateRepository(value: unknown): CreateRepositoryRequest {
+  return adapt(() => parseBoardCreateRepository(value));
 }
 export function parseRotateAgentToken(value: unknown): RotateAgentTokenRequest {
   return adapt(() => parseBoardRotateAgentToken(value));

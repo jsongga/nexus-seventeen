@@ -36,6 +36,19 @@ This separation follows the composable workflow patterns in Anthropic's [Buildin
 
 Cicada Sense has several workspace roots by design. Intake must resolve the responsible repository from evidence instead of treating the primary root as the only writable repository. Archived `HDotsFrontend`, generated certificates, and unverified Intelligent Dots sources are not catalog projects.
 
+## Repository-scoped workers
+
+An agent profile serves one repository. [`AgentProfile.repositoryId`](../src/shared/task-board-contract/index.ts) identifies it; null retains the single-repository default by resolving to the project's primary repository, never to every repository.
+
+For a project with several repositories:
+
+1. Add each repository beyond the primary with `POST /v1/projects/{projectId}/repositories`, then read the ids from `GET /v1/projects/{projectId}/repositories`. Creating the project already made its primary, so the list is never empty.
+2. Create one board agent per repository **per role its stages use** with `POST /v1/projects/{projectId}/agents`, including the matching `repositoryId`. Dispatch matches on role and repository together, so a repository with only an engineer implements and then blocks at verification.
+3. Add one lane per agent to [`fleet.json`](../src/server/agents/task-fleet/fleet.example.json). Match its `agentId`, and set `workingDirectory` to that repository's absolute path.
+4. Start the fleet with `node build/server/agents/task-fleet/main.js /absolute/path/to/fleet.json`.
+
+The board-to-worker pairing is a convention, not an enforced invariant. The claim names an agent, while [`task-fleet/runtime.ts`](../src/server/agents/task-fleet/runtime.ts) independently builds the workspace from `workingDirectory`. If the board agent names repository B and the lane points at repository A, B's task can be committed in A's tree while the board records B as its target.
+
 ## Diagram mapping
 
 ```mermaid

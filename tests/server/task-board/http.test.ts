@@ -1778,3 +1778,89 @@ test("document routes are retired", async () => {
     await service.close();
   }
 });
+
+test("repositories are human-only, listed primary first, and creatable over HTTP", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    reconcileIntervalSeconds: 0,
+  });
+  const address = await service.start();
+  try {
+    const project = (
+      (await (
+        await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+          name: "Two-repository product",
+          description: "Spans a provider and a consumer.",
+          repoPath: "/var/lib/steward/repos/provider",
+        })
+      ).json()) as { project: { projectId: string } }
+    ).project;
+
+    // Creating the project created its primary, so the list is never empty and an operator can
+    // discover the id an agent must be scoped to.
+    const listed = (await (
+      await request(address.url, `/v1/projects/${project.projectId}/repositories`, "GET", HUMAN_TOKEN)
+    ).json()) as { repositories: readonly { repositoryId: string; name: string; isPrimary: boolean }[] };
+    assert.equal(listed.repositories.length, 1);
+    assert.equal(listed.repositories[0]?.isPrimary, true);
+
+    const addResponse = await request(
+      address.url,
+      `/v1/projects/${project.projectId}/repositories`,
+      "POST",
+      HUMAN_TOKEN,
+      { name: "consumer", path: "/var/lib/steward/repos/consumer" }
+    );
+    assert.equal(addResponse.status, 201);
+    const added = ((await addResponse.json()) as { repository: { repositoryId: string; isPrimary: boolean } })
+      .repository;
+    assert.equal(added.isPrimary, false);
+
+    const after = (await (
+      await request(address.url, `/v1/projects/${project.projectId}/repositories`, "GET", HUMAN_TOKEN)
+    ).json()) as { repositories: readonly { repositoryId: string; isPrimary: boolean }[] };
+    assert.deepEqual(
+      after.repositories.map((repository) => repository.isPrimary),
+      [true, false],
+      "the primary must sort first so an operator reads the default checkout at a glance"
+    );
+
+    // An agent can then be scoped to the id this route returned — the pairing the docs describe.
+    const agentResponse = await request(address.url, `/v1/projects/${project.projectId}/agents`, "POST", HUMAN_TOKEN, {
+      agentId: "consumer-engineer",
+      role: "engineer",
+      area: "consumer",
+      mission: "Implement work in the consumer repository.",
+      model: "codex-mini",
+      token: "task-board-consumer-engineer-token-0123456789",
+      repositoryId: added.repositoryId,
+    });
+    assert.equal(agentResponse.status, 201);
+    assert.equal(
+      ((await agentResponse.json()) as { agent: { repositoryId: string | null } }).agent.repositoryId,
+      added.repositoryId
+    );
+
+    // A registered agent credential is rejected as a human one: these routes are operator-only.
+    // `requireHuman` answers 401 for a non-human credential, matching every other human route.
+    const agentToken = "task-board-consumer-engineer-token-0123456789";
+    assert.equal(
+      (await request(address.url, `/v1/projects/${project.projectId}/repositories`, "GET", agentToken)).status,
+      401
+    );
+    assert.equal(
+      (
+        await request(address.url, `/v1/projects/${project.projectId}/repositories`, "POST", agentToken, {
+          name: "sneaky",
+          path: "/var/lib/steward/repos/sneaky",
+        })
+      ).status,
+      401
+    );
+  } finally {
+    await service.close();
+  }
+});

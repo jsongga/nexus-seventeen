@@ -25,6 +25,7 @@ import {
   parseConfirmPlanRevisionRequest,
   parseCreateAgent,
   parseCreateProject,
+  parseCreateRepository,
   parseCreateTask,
   parseCreateTaskPhase,
   parseCreateWorkItem,
@@ -595,6 +596,25 @@ export class TaskBoardService {
         parseCreateAgent(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 201, { agent });
+      return;
+    }
+    const repositoryMatch = /^\/v1\/projects\/([^/]+)\/repositories$/u.exec(url.pathname);
+    if (repositoryMatch && request.method === "GET") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const projectId = parseRouteIdentifier(repositoryMatch[1], "projectId");
+      sendJson(response, 200, { repositories: this.#board.listRepositories(projectId) });
+      return;
+    }
+    if (repositoryMatch && request.method === "POST") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const projectId = parseRouteIdentifier(repositoryMatch[1], "projectId");
+      const repository = this.#board.addRepository(
+        projectId,
+        parseCreateRepository(await readJsonBody(request, this.config.maxBodyBytes))
+      );
+      sendJson(response, 201, { repository });
       return;
     }
     const agentTokenRotateMatch = /^\/v1\/agents\/([^/]+)\/rotate-token$/u.exec(url.pathname);

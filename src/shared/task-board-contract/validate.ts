@@ -108,6 +108,7 @@ export {
   parseBoardClaim,
   parseBoardConfirmPlan,
   parseBoardCreateAgent,
+  parseBoardCreateRepository,
   parseBoardCreateProject,
   parseBoardCreateTask,
   parseBoardCreateTaskPhase,

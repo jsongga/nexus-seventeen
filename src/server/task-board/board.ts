@@ -423,6 +423,10 @@ export class TaskBoard {
     return this.#projects.createProject(request);
   }
 
+  listRepositories(projectId: string): readonly Repository[] {
+    return this.#projects.listRepositories(projectId);
+  }
+
   addRepository(projectId: string, request: CreateRepositoryRequest): Repository {
     return this.#projects.addRepository(projectId, request);
   }

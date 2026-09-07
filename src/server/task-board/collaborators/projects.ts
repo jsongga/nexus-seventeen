@@ -1271,6 +1271,16 @@ export class ProjectsCollaborator {
     return this.runtime.requireProject(projectId);
   }
 
+  listRepositories(projectId: string): readonly Repository[] {
+    this.runtime.requireProject(projectId);
+    return Object.freeze(
+      this.runtime.store.db
+        .prepare("SELECT * FROM repositories WHERE project_id=? ORDER BY is_primary DESC, created_at, repository_id")
+        .all(projectId)
+        .map((row) => repositoryFromRow(row))
+    );
+  }
+
   addRepository(projectId: string, request: CreateRepositoryRequest): Repository {
     this.runtime.requireProject(projectId);
     const repositoryId = randomUUID();

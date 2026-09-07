@@ -28,7 +28,7 @@ The product deliberately has no deployment endpoint. Agents can implement and re
 
 A request can stay as one executable work item or become a **coordination family**: a branchless parent plus independently mergeable child work items. Each child owns one project, repository, branch, and merge; the parent preserves the overall request, approved split, dependency order, and completion state.
 
-One board Project has one `repoPath`, and decomposition assigns each child to one Project. A product grouped into one Project but spread across several repositories—such as Cicada Sense/HomeDots—therefore cannot decompose work across those repositories yet. Repository identity must first become separate from the product Project; see [roadmap item 9.9](orchestrator-roadmap.md#99-repository-identity-separate-from-the-product-project).
+One board Project can own several repositories. A decomposed child selects one with `repositoryId`; an omitted value resolves to the project's primary repository. Repository-scoped agent identities then keep each child's execution on a worker configured for that repository.
 
 The proposed plan declares each child’s objective, project, scope, acceptance criteria, dependencies, and optional phase before the human confirms it.
 
@@ -112,7 +112,7 @@ The commands use the ignored `.steward-data/` directory; keeping `fleet.json` in
 
 The task fleet runs multiple existing board agents from one private JSON file. Each lane uses the existing held claim, so an idle fleet has no model process and spends no model tokens. Its timer only backs off after transient board failures; it never creates work or wakes an agent.
 
-The example shows two lanes. Delete the second agent object for a single lane. The file has this shape:
+The example shows two engineer lanes for two repositories in one project. Delete the second agent object for a single-repository project. The file has this shape:
 
 ```json
 {
@@ -126,14 +126,24 @@ The example shows two lanes. Delete the second agent object for a single lane. T
   },
   "agents": [
     {
-      "workerId": "worker-platform-engineer",
-      "agentId": "platform-engineer",
+      "workerId": "worker-platform-api-engineer",
+      "agentId": "platform-api-engineer",
       "token": "replace-with-the-one-time-agent-token-0000000001",
       "provider": "codex",
       "role": "engineer",
       "model": "replace-with-a-codex-model-id",
-      "workingDirectory": "/absolute/path/to/repository",
-      "statePath": "/absolute/path/to/.steward-data/workers/platform-engineer.json"
+      "workingDirectory": "/absolute/path/to/platform-api",
+      "statePath": "/absolute/path/to/.steward-data/workers/platform-api-engineer.json"
+    },
+    {
+      "workerId": "worker-platform-worker-engineer",
+      "agentId": "platform-worker-engineer",
+      "token": "replace-with-the-one-time-agent-token-0000000002",
+      "provider": "codex",
+      "role": "engineer",
+      "model": "replace-with-a-codex-model-id",
+      "workingDirectory": "/absolute/path/to/platform-worker",
+      "statePath": "/absolute/path/to/.steward-data/workers/platform-worker-engineer.json"
     }
   ]
 }
@@ -141,9 +151,17 @@ The example shows two lanes. Delete the second agent object for a single lane. T
 
 Every lane needs a distinct `workerId`, `agentId`, token of at least 32 characters, and `statePath`. Agent tokens stay in this local file and never enter the frontend. Closing or updating the frontend does not affect the fleet. Set `STEWARD_TASK_FLEET_CONFIG` instead of passing a positional path if preferred.
 
+For several repositories in one project, add each extra repository with `POST /v1/projects/{projectId}/repositories` (`{"name", "path"}`); creating the project already made its primary. `GET /v1/projects/{projectId}/repositories` lists them, primary first, and is where the `repositoryId` values below come from. Both routes are human-only.
+
+Then create one board agent per repository with `POST /v1/projects/{projectId}/agents`, including that repository's `repositoryId` in each request. Use the same `agentId` in `fleet.json`, and set its `workingDirectory` to that repository's absolute path. `repositoryId` belongs only on the board agent; it is not a fleet config field.
+
+Give every repository a full set of the roles its stages use, not just an engineer. Stage dispatch matches on role **and** repository, so a repository with only an engineer implements its child and then blocks at verification with `has no verifier for this repository`. The checked-in pipeline uses `engineer` for implementation and `verifier` for verification, so each repository needs both.
+
+This pairing is not enforced. Claims identify the board agent but do not declare the worker's tree. If an agent's `repositoryId` names repository B while its fleet lane points `workingDirectory` at repository A, the board can route B's task to a worker that commits in A.
+
 The top-level runtime and prompt keys are optional. Their defaults, `config/runtimes.json` and `config/prompts.md`, are resolved from the process's current working directory—not from the fleet file's directory. Use absolute `runtimesConfigPath` and `promptsFile` values when starting the fleet outside this repository. The standalone task-worker entrypoint uses the same cwd-relative defaults; override them with `STEWARD_TASK_WORKER_RUNTIMES_CONFIG` and `STEWARD_TASK_WORKER_PROMPTS_FILE`.
 
-Each agent may declare `role` as `manager`, `engineer`, or `verifier`. When present, the fleet validates the runtime profile's role and sandbox before the lane can claim work. If omitted, it checks each claimed role immediately before model launch. `workingDirectory` is the absolute repository path for the lane; optional local-process `workspaceRoot` creates a separate task workspace per pipeline work item.
+Each agent may declare `role` as `manager`, `engineer`, or `verifier`. When present, the fleet validates the runtime profile's role and sandbox before the lane can claim work. If omitted, it checks each claimed role immediately before model launch. [`workingDirectory`](src/server/agents/task-fleet/types.ts) is the absolute repository path for the lane; optional local-process `workspaceRoot` creates a separate task workspace per pipeline work item.
 
 Claude lanes use bare mode when `ANTHROPIC_API_KEY` is present. Without an explicit key, safe mode leaves OAuth and Keychain authentication available. Project customizations, session persistence, MCP servers, and slash commands stay disabled in either case.
 

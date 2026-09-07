@@ -19,6 +19,7 @@ import {
   type ConfirmPlanRevisionRequest,
   ContractValidationError,
   type CreateAgentRequest,
+  type CreateRepositoryRequest,
   type CreateHumanQuestionRequest,
   type CreateHumanTaskMessageRequest,
   type CreateProjectRequest,
@@ -414,6 +415,14 @@ export function parseBoardCreateAgent(value: unknown): CreateAgentRequest {
     ...(item.repositoryId === undefined
       ? {}
       : { repositoryId: parseBoardIdentifier(item.repositoryId, "repositoryId") }),
+  });
+}
+
+export function parseBoardCreateRepository(value: unknown): CreateRepositoryRequest {
+  const item = boardExact(value, ["name", "path"], "Repository");
+  return Object.freeze({
+    name: boardText(item.name, "name", 256),
+    path: boardText(item.path, "path", 4_000),
   });
 }
 
