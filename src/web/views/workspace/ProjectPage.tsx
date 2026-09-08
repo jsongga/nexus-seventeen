@@ -235,8 +235,8 @@ export function ProjectPage({
               ref={addTaskAnchorRef}
               type="button"
               className="flex size-8 items-center justify-center rounded-[99px] border-0 bg-canvas text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
-              aria-label="Add task"
-              title="Add task"
+              aria-label="Add request"
+              title="Add request"
               data-dialog-trigger="task"
               disabled={!connected}
               onClick={(event) => onAddTask(addTaskAnchorRef, event.nativeEvent)}

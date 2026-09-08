@@ -354,7 +354,7 @@ describe("work-item labels", () => {
     });
     expect(notificationKindLabel).toEqual({
       park_aged: "Park aged",
-      park_auto_abandoned: "Park auto-abandoned",
+      park_auto_abandoned: "Automatically abandoned",
       cap_parked: "Cap parked",
       final_approval_withdrawn: "Final approval withdrawn",
       parent_ready_for_approval: "Parent ready for approval",
@@ -377,8 +377,8 @@ describe("work-item labels", () => {
       final_approval: "Final review",
       merged: "Done",
       parked: "Parked",
-      abandoned: "Cancelled",
-      dead_letter: "Failed",
+      abandoned: "Abandoned",
+      dead_letter: "Dead letter",
       unrecognized: "Unknown state — refresh the app",
     } satisfies Record<WorkItemState | "unrecognized", string>;
 

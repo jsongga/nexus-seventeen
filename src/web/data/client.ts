@@ -680,11 +680,11 @@ export function createTaskBoardClient(
     },
     async createWorkItem(input) {
       const originalRequest = input.originalRequest.trim();
-      if (originalRequest.length === 0) throw new Error("Enter a task");
-      if (originalRequest.length > 16_000) throw new Error("Tasks cannot exceed 16,000 characters");
+      if (originalRequest.length === 0) throw new Error("Enter a request");
+      if (originalRequest.length > 16_000) throw new Error("Requests cannot exceed 16,000 characters");
       const idempotencyKey = input.idempotencyKey.trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(idempotencyKey)) {
-        throw new Error("Task submission has an invalid idempotency key");
+        throw new Error("Request submission has an invalid idempotency key");
       }
       const projectId = input.projectId.trim();
       if (projectId.length === 0) throw new Error("Choose a project");
@@ -704,8 +704,8 @@ export function createTaskBoardClient(
     },
     async cancelWorkItem(workItemId, input) {
       const reason = input.reason.trim();
-      if (reason.length === 0) throw new Error("A cancellation reason is required");
-      if (reason.length > 16_000) throw new Error("Cancellation reasons cannot exceed 16,000 characters");
+      if (reason.length === 0) throw new Error("An abandonment reason is required");
+      if (reason.length > 16_000) throw new Error("Abandonment reasons cannot exceed 16,000 characters");
       return workItemFromEnvelope(
         await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
           method: "PATCH",

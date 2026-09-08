@@ -195,7 +195,7 @@ describe("final approval summary and controls", () => {
 
     expect(markup).toContain("Approve &amp; merge");
     expect(markup).toContain("Request changes");
-    expect(markup).toContain("returns the work item to implementation with conflict details");
+    expect(markup).toContain("returns the request to implementation with conflict details");
     expect(markup).not.toContain("parked");
   });
 
@@ -217,6 +217,6 @@ describe("final approval summary and controls", () => {
     expect(markup).toContain('maxLength="2000"');
     expect(markup).toContain("Send back to implementation");
     expect(markup).toContain("Keep in final review");
-    expect(markup).not.toContain("Cancel work item");
+    expect(markup).not.toContain("Abandon request");
   });
 });

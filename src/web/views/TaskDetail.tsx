@@ -349,7 +349,7 @@ export function TaskDetail({
               </select>
               {selectedWorkerOffline ? (
                 <p id={offlineNoticeId} className="mt-2 text-xs leading-5 text-caution" role="status">
-                  Worker offline — the task will wait until its lane connects
+                  Worker offline — the task will wait until it reconnects
                 </p>
               ) : null}
             </div>
@@ -401,7 +401,7 @@ export function TaskDetail({
                   </select>
                   {selectedWorkerOffline ? (
                     <p id={offlineNoticeId} className="mt-2 text-xs leading-5 text-caution" role="status">
-                      Worker offline — the task will wait until its lane connects
+                      Worker offline — the task will wait until it reconnects
                     </p>
                   ) : null}
                 </div>

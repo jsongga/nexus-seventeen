@@ -245,7 +245,7 @@ export function AutomationPage({
           <div>
             <h1 className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]">Automation</h1>
             <p className="mt-1.5 max-w-2xl text-sm font-light leading-6 text-muted">
-              Define reusable specialist profiles and the desired handoff path for durable task intake.
+              Define reusable specialist profiles and the desired handoff path for durable requests.
             </p>
           </div>
           {saved ? (

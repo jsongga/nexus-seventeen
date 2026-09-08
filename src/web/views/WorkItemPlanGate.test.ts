@@ -110,7 +110,7 @@ describe("plan approval record and controls", () => {
     expect(markup).toContain("Hazardous tier: confirming enters the Design stage before implementation.");
     expect(markup).toContain("Confirm plan");
     expect(markup).toContain("Reject plan");
-    expect(markup).not.toContain("Cancel work item");
+    expect(markup).not.toContain("Abandon request");
   });
 
   it("renders declared children and the phased merge authorization at the plan gate", () => {

@@ -634,7 +634,7 @@ test("outside-click closing the pause popover does not restore focus to the rail
   const pausePopover = companyRail.getByRole("dialog", { name: "Pause board", exact: true });
   await expect(pausePopover).toBeVisible();
 
-  await page.getByRole("heading", { name: "Task List", exact: true }).click();
+  await page.getByRole("heading", { name: "Requests", exact: true }).click();
   await expect(pausePopover).toHaveCount(0);
   await expect(pause).not.toBeFocused();
 });
@@ -932,7 +932,7 @@ test("a project deep link survives a reload and the back button returns to it", 
 
   // Going elsewhere and back returns to it.
   companyRail = await openCompanyRail(page);
-  await companyRail.getByRole("button", { name: "Task List" }).click();
+  await companyRail.getByRole("button", { name: "Requests" }).click();
   await expect(page).toHaveURL(/#\/tasks$/u);
   await page.goBack();
   await expect(page).toHaveURL(deepLink);
@@ -942,7 +942,7 @@ test("a project deep link survives a reload and the back button returns to it", 
 test("an unknown hash falls back to the task list instead of blanking the page", async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto("/#/nonsense/value");
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Improve invoice recovery/u })).toBeVisible();
 });
 
@@ -959,7 +959,7 @@ test("a deep link to a project missing from the snapshot does not trap Back", as
 
   await page.goto("/#/project/project-missing-from-snapshot");
   await expect(page).toHaveURL(/#\/tasks$/u);
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   const historyLengthAfterReconciliation = await page.evaluate(() => window.history.length);
 
   await page.goBack();
@@ -973,7 +973,7 @@ test("a cold task deep link that was never observed canonicalizes to the task li
   await page.goto("/#/tasks/task-never-observed");
 
   await expect(page).toHaveURL(/#\/tasks$/u);
-  await expect(page.getByRole("heading", { name: "Task List", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Task removed", exact: true })).toHaveCount(0);
 });
 
@@ -1095,17 +1095,17 @@ test("task routes preserve operator context across polling, removal, and dirty-d
   await expect(answerDraft).toHaveValue("Retain the focused test results and the customer-impact review.");
 
   if (belowXl) {
-    await page.getByRole("button", { name: "Back to task list", exact: true }).click();
+    await page.getByRole("button", { name: "Back to requests", exact: true }).click();
   } else {
     await page.goBack();
   }
   await expect(page).toHaveURL(/#\/tasks$/u);
 
-  const addTask = page.getByRole("button", { name: "Add task", exact: true });
+  const addTask = page.getByRole("button", { name: "Add request", exact: true });
   await expect(addTask).toHaveCount(1);
   await addTask.click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  const prompt = taskDialog.getByLabel("Task", { exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  const prompt = taskDialog.getByLabel("Request", { exact: true });
   await prompt.fill("Keep this draft through the discard decision.");
   await page.keyboard.press("Escape");
   const discardConfirmation = page.getByRole("dialog", { name: "Discard draft?", exact: true });
@@ -1124,12 +1124,12 @@ test("desktop outside-click on a dirty add-task draft asks for confirmation", as
   await installDefaultBoard(page);
   await page.goto("/");
 
-  const taskListActions = page.getByRole("group", { name: "Task list actions" });
-  await taskListActions.getByRole("button", { name: "Add task" }).click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  await taskDialog.getByLabel("Task", { exact: true }).fill("Protect this outside-click draft.");
+  const taskListActions = page.getByRole("group", { name: "Request list actions" });
+  await taskListActions.getByRole("button", { name: "Add request" }).click();
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  await taskDialog.getByLabel("Request", { exact: true }).fill("Protect this outside-click draft.");
 
-  await page.getByRole("heading", { name: "Task List", exact: true }).click();
+  await page.getByRole("heading", { name: "Requests", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Discard draft?", exact: true })).toBeVisible();
 });
 
@@ -1139,11 +1139,11 @@ test("an anchored add-task trigger preserves a dirty draft and does not trap Tab
   await page.goto("/");
 
   const addTask = page
-    .getByRole("group", { name: "Task list actions" })
-    .getByRole("button", { name: "Add task", exact: true });
+    .getByRole("group", { name: "Request list actions" })
+    .getByRole("button", { name: "Add request", exact: true });
   await addTask.click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  const prompt = taskDialog.getByLabel("Task", { exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  const prompt = taskDialog.getByLabel("Request", { exact: true });
   const backgroundPrompt = page.locator("#task-prompt");
   await prompt.fill("Keep this draft when its trigger is clicked again.");
 
@@ -1169,9 +1169,9 @@ test("a clean add-task switches to add-project exactly once", async ({ page }) =
   await installDefaultBoard(page, { emptyProjectList: true });
   await page.goto("/");
 
-  const taskActions = page.getByRole("group", { name: "Task list actions" });
-  const addTask = taskActions.getByRole("button", { name: "Add task", exact: true });
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
+  const taskActions = page.getByRole("group", { name: "Request list actions" });
+  const addTask = taskActions.getByRole("button", { name: "Add request", exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
   const projectDialog = page.getByRole("dialog", { name: "Add project from disk", exact: true });
 
   await addTask.click();
@@ -1208,15 +1208,15 @@ test("the other add-task trigger re-anchors the open form without losing its dra
   await page.goto("/");
 
   const headerAddTask = page
-    .getByRole("group", { name: "Task list actions" })
-    .getByRole("button", { name: "Add task", exact: true });
-  const emptyStateAddTask = page.getByRole("main").getByRole("button", { name: "Add task", exact: true });
+    .getByRole("group", { name: "Request list actions" })
+    .getByRole("button", { name: "Add request", exact: true });
+  const emptyStateAddTask = page.getByRole("main").getByRole("button", { name: "Add request", exact: true });
   await expect(headerAddTask).toBeVisible();
   await expect(emptyStateAddTask).toBeVisible();
   await headerAddTask.click();
 
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  const prompt = taskDialog.getByLabel("Task", { exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  const prompt = taskDialog.getByLabel("Request", { exact: true });
   await prompt.fill("Preserve this draft while moving the panel.");
   const initialPromptElement = await prompt.elementHandle();
   if (initialPromptElement === null) throw new Error("The task prompt did not mount.");
@@ -1259,12 +1259,12 @@ test("switching dialogs and navigating wait for a dirty add-task decision", asyn
   await installDefaultBoard(page);
   await page.goto("/");
 
-  const taskActions = page.getByRole("group", { name: "Task list actions" });
-  const addTask = taskActions.getByRole("button", { name: "Add task", exact: true });
+  const taskActions = page.getByRole("group", { name: "Request list actions" });
+  const addTask = taskActions.getByRole("button", { name: "Add request", exact: true });
   const addProject = taskActions.getByRole("button", { name: "Add project", exact: true });
   await addTask.click();
-  let taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  let prompt = taskDialog.getByLabel("Task", { exact: true });
+  let taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  let prompt = taskDialog.getByLabel("Request", { exact: true });
   const backgroundPrompt = page.locator("#task-prompt");
   await prompt.fill("Choose whether this dialog may be replaced.");
 
@@ -1285,8 +1285,8 @@ test("switching dialogs and navigating wait for a dirty add-task decision", asyn
   await projectDialog.getByRole("button", { name: "Close dialog", exact: true }).click();
 
   await addTask.click();
-  taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  prompt = taskDialog.getByLabel("Task", { exact: true });
+  taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  prompt = taskDialog.getByLabel("Request", { exact: true });
   await prompt.fill("Choose whether navigation may continue.");
   const companyRail = await openCompanyRail(page);
   const automation = companyRail.getByRole("button", { name: "Automation", exact: true });
@@ -1359,14 +1359,14 @@ test("a successful task creation drops a pending dialog switch", async ({ page }
   });
   await page.goto("/");
 
-  const taskActions = page.getByRole("group", { name: "Task list actions" });
-  const addTask = taskActions.getByRole("button", { name: "Add task", exact: true });
+  const taskActions = page.getByRole("group", { name: "Request list actions" });
+  const addTask = taskActions.getByRole("button", { name: "Add request", exact: true });
   const addProject = taskActions.getByRole("button", { name: "Add project", exact: true });
   await addTask.click();
-  let taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  await taskDialog.getByLabel("Task", { exact: true }).fill("Create this task while the confirmation is open.");
+  let taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  await taskDialog.getByLabel("Request", { exact: true }).fill("Create this task while the confirmation is open.");
   await taskDialog.getByLabel("Project", { exact: true }).selectOption(project.projectId);
-  await taskDialog.getByRole("button", { name: "Submit task", exact: true }).click();
+  await taskDialog.getByRole("button", { name: "Submit request", exact: true }).click();
   await createStarted;
 
   await addProject.click();
@@ -1380,7 +1380,7 @@ test("a successful task creation drops a pending dialog switch", async ({ page }
   await expect(projectDialog).toHaveCount(0);
 
   await addTask.click();
-  taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
+  taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
   await taskDialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(taskDialog).toHaveCount(0);
   await expect(projectDialog).toHaveCount(0);
@@ -1394,11 +1394,11 @@ test("an add-task draft survives desktop and mobile layout transitions", async (
   await page.goto("/");
 
   await page
-    .getByRole("group", { name: "Task list actions" })
-    .getByRole("button", { name: "Add task", exact: true })
+    .getByRole("group", { name: "Request list actions" })
+    .getByRole("button", { name: "Add request", exact: true })
     .click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
-  const prompt = taskDialog.getByLabel("Task", { exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
+  const prompt = taskDialog.getByLabel("Request", { exact: true });
   await prompt.fill("Keep this prompt while the dialog changes layouts.");
 
   await page.setViewportSize({ width: 500, height: initialViewport.height });
@@ -1657,11 +1657,11 @@ async function openTokenRotationDialog(
   expect(fixture.createdProject()).toEqual({ name: "payment-tools", description: "/workspace/payment-tools" });
   expect(fixture.agentCreateRequests()).toBe(0);
 
-  await page.getByRole("button", { name: "Add task" }).click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task" });
-  await taskDialog.getByRole("textbox", { name: "Task", exact: true }).fill(fixture.createdWorkItem.originalRequest);
+  await page.getByRole("button", { name: "Add request" }).click();
+  const taskDialog = page.getByRole("dialog", { name: "Add a request" });
+  await taskDialog.getByRole("textbox", { name: "Request", exact: true }).fill(fixture.createdWorkItem.originalRequest);
   await taskDialog.getByLabel("Project").selectOption(fixture.importedProject.projectId);
-  await taskDialog.getByRole("button", { name: "Submit task" }).click();
+  await taskDialog.getByRole("button", { name: "Submit request" }).click();
   await expect.poll(fixture.createdWorkItemRequest).not.toBeNull();
   expect(fixture.createdWorkItemRequest()).toEqual({
     originalRequest: fixture.createdWorkItem.originalRequest,
@@ -1770,7 +1770,7 @@ test("mobile Back from a task opened on a project focuses the project heading", 
   await expect(projectHeading).toBeVisible();
 
   await page
-    .getByRole("table", { name: "Active Thread Pipeline" })
+    .getByRole("table", { name: "Active Task Pipeline" })
     .getByRole("button", { name: task.title, exact: true })
     .click();
   await expect(page).toHaveURL(/#\/tasks\/task-recovery$/u);
@@ -1784,7 +1784,7 @@ test("mobile Back from a task opened on a project focuses the project heading", 
 test("editing the hash directly updates the view", async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
 
   await page.evaluate((projectId) => {
     window.location.hash = `#/project/${encodeURIComponent(projectId)}`;
@@ -1810,7 +1810,7 @@ test("canonicalising an unknown hash preserves backward and forward history", as
   });
 
   await expect(page).toHaveURL(/#\/tasks$/u);
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   const historyLengthAfterCanonicalisation = await page.evaluate(() => window.history.length);
   expect(historyLengthAfterCanonicalisation).toBe(historyLengthBeforeHashEdit + 1);
 
@@ -1821,20 +1821,20 @@ test("canonicalising an unknown hash preserves backward and forward history", as
 
   await page.goForward();
   await expect(page).toHaveURL(/#\/tasks$/u);
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
 });
 
 test("a missing project route is corrected immediately against the loaded snapshot", async ({ page }) => {
   await installDefaultBoard(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
 
   await page.evaluate(() => {
     window.location.hash = "#/project/project-absent-from-loaded-snapshot";
   });
 
   await expect(page).toHaveURL(/#\/tasks$/u, { timeout: 1_000 });
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   await expect(page.getByRole("heading", { name: project.name, exact: true })).toHaveCount(0);
 });
 
@@ -1867,11 +1867,11 @@ test("the default app reads real board state and assignment is an explicit human
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   await expect(page.getByText("Improve invoice recovery", { exact: true }).first()).toBeVisible();
   let companyRail = await openCompanyRail(page);
   await expect(companyRail.getByText("Cicada Tech Systems LLC.", { exact: true })).toBeVisible();
-  await expect(companyRail.getByRole("button", { name: "Task List" })).toBeVisible();
+  await expect(companyRail.getByRole("button", { name: "Requests" })).toBeVisible();
   await expect(companyRail.getByRole("button", { name: "Automation" })).toBeVisible();
   await expect(companyRail.getByRole("button", { name: "Ledgers" })).toBeVisible();
   await expect(companyRail.getByRole("button", { name: "Documents" })).toHaveCount(0);
@@ -1881,7 +1881,7 @@ test("the default app reads real board state and assignment is an explicit human
       .getByRole("navigation", { name: "Projects and agents" })
       .getByRole("button", { name: /billing-engineer/u })
   ).toHaveCount(0);
-  await companyRail.getByRole("button", { name: "Task List" }).click();
+  await companyRail.getByRole("button", { name: "Requests" }).click();
   await page.getByRole("button", { name: /Improve invoice recovery/u }).click();
   await page.getByRole("button", { name: "Assign and wake agent" }).click();
 
@@ -1933,7 +1933,7 @@ test("a failed assignment stays actionable while successful polls keep the board
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task List", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests", exact: true })).toBeVisible();
   await expect.poll(() => projectReads).toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: /Improve invoice recovery backlog/u }).click();
 
@@ -2031,15 +2031,15 @@ test("creating a task requires and records one explicit project with priority", 
   });
 
   await page.goto("/");
-  const taskListActions = page.getByRole("group", { name: "Task list actions" });
-  await taskListActions.getByRole("button", { name: "Add task" }).click();
-  const dialog = page.getByRole("dialog", { name: "Add a task" });
+  const taskListActions = page.getByRole("group", { name: "Request list actions" });
+  await taskListActions.getByRole("button", { name: "Add request" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add a request" });
   if ((page.viewportSize()?.width ?? 0) >= 640) {
     await expect(taskListActions).toBeVisible();
     await expect(page.getByTestId("modal-scrim")).toHaveCount(0);
   }
-  const taskPrompt = dialog.getByRole("textbox", { name: "Task", exact: true });
-  const taskType = dialog.getByLabel("Task type", { exact: true });
+  const taskPrompt = dialog.getByRole("textbox", { name: "Request", exact: true });
+  const taskType = dialog.getByLabel("Request type", { exact: true });
   await expect(taskPrompt).toHaveCount(1);
   await expect(taskType).toHaveCount(1);
   await expect(taskType).toHaveValue("standard");
@@ -2050,7 +2050,7 @@ test("creating a task requires and records one explicit project with priority", 
   await taskPrompt.fill("Make invoice recovery clear\nCustomers should know what to do after a failed payment.");
   await expect(dialog.getByRole("button", { name: "Choose a project" })).toBeDisabled();
   await dialog.getByLabel("Project").selectOption(project.projectId);
-  await dialog.getByRole("button", { name: "Submit task" }).click();
+  await dialog.getByRole("button", { name: "Submit request" }).click();
   await expect(dialog.getByRole("alert")).toContainText("Check this change: Choose the project again.");
   await expect(dialog.getByRole("button", { name: "Dismiss error" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Action errors" })).toHaveCount(0);
@@ -2061,11 +2061,11 @@ test("creating a task requires and records one explicit project with priority", 
   );
   await expect(page.getByRole("region", { name: "Action errors" })).toHaveCount(0);
 
-  await taskListActions.getByRole("button", { name: "Add task" }).click();
+  await taskListActions.getByRole("button", { name: "Add request" }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   await taskPrompt.fill("Make invoice recovery clear\nCustomers should know what to do after a failed payment.");
   await dialog.getByLabel("Project").selectOption(project.projectId);
-  await dialog.getByRole("button", { name: "Submit task" }).click();
+  await dialog.getByRole("button", { name: "Submit request" }).click();
   await expect.poll(() => createdRequest).not.toBeNull();
 
   expect(createdRequest).toEqual({
@@ -2075,7 +2075,7 @@ test("creating a task requires and records one explicit project with priority", 
     projectTarget: { mode: "explicit", projectId: project.projectId },
   });
   expect(createdIdempotencyKey).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u);
-  await expect(page.getByRole("heading", { name: "Automation intake" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Request handling", exact: true })).toBeVisible();
   const intakeRow = page.getByRole("button", { name: /Make invoice recovery clear/u });
   await expect(intakeRow.getByText("Queued", { exact: true })).toBeVisible();
   await expect(intakeRow.getByText(project.name, { exact: true })).toBeVisible();
@@ -2086,7 +2086,7 @@ test("desktop final approval opens an anchored in-viewport merge confirmation th
   const workItem = await installFinalApprovalBoard(page);
   await page.goto("/");
 
-  const row = page.getByRole("article", { name: `Work item: ${workItem.refinedObjective}` });
+  const row = page.getByRole("article", { name: `Request: ${workItem.refinedObjective}` });
   await row.getByRole("button").click();
   const finalActions = page.getByRole("group", { name: "Final approval actions", exact: true });
   const approve = finalActions.getByRole("button", { name: "Approve & merge", exact: true });
@@ -2114,10 +2114,10 @@ test("desktop final approval opens an anchored in-viewport merge confirmation th
   await approve.click();
   await expect(confirmation).toBeVisible();
   await page
-    .getByRole("group", { name: "Task list actions", exact: true })
-    .getByRole("button", { name: "Add task", exact: true })
+    .getByRole("group", { name: "Request list actions", exact: true })
+    .getByRole("button", { name: "Add request", exact: true })
     .click();
-  const taskDialog = page.getByRole("dialog", { name: "Add a task", exact: true });
+  const taskDialog = page.getByRole("dialog", { name: "Add a request", exact: true });
   await expect(taskDialog).toBeVisible();
   await expect(confirmation).toHaveCount(0);
   await taskDialog.getByRole("button", { name: "Close dialog", exact: true }).click();
@@ -2126,22 +2126,22 @@ test("desktop final approval opens an anchored in-viewport merge confirmation th
 });
 
 async function openDecompositionWorkItem(page: Page, objective: string): Promise<void> {
-  const back = page.getByRole("button", { name: "Back to task list", exact: true });
+  const back = page.getByRole("button", { name: "Back to requests", exact: true });
   if (await back.isVisible()) await back.click();
-  const row = page.getByRole("article", { name: `Work item: ${objective}`, exact: true });
+  const row = page.getByRole("article", { name: `Request: ${objective}`, exact: true });
   await row.getByRole("button").click();
-  await expect(page.getByRole("heading", { name: "Work-item details", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Request details", exact: true })).toBeVisible();
 }
 
 test("decomposition families render as parent rows with ordered phase children", async ({ page }) => {
   await installDecompositionBoard(page);
   await page.goto("/");
 
-  const parent = page.getByRole("article", { name: "Work item: Coordinate the phased rollout.", exact: true });
+  const parent = page.getByRole("article", { name: "Request: Coordinate the phased rollout.", exact: true });
   await expect(parent.getByText("2 of 3 children merged", { exact: true })).toBeVisible();
-  const expand = page.getByRole("article", { name: "Work item: Expand the provider interface.", exact: true });
-  const migrate = page.getByRole("article", { name: "Work item: Migrate the consumer.", exact: true });
-  const contract = page.getByRole("article", { name: "Work item: Contract the compatibility path.", exact: true });
+  const expand = page.getByRole("article", { name: "Request: Expand the provider interface.", exact: true });
+  const migrate = page.getByRole("article", { name: "Request: Migrate the consumer.", exact: true });
+  const contract = page.getByRole("article", { name: "Request: Contract the compatibility path.", exact: true });
   await expect(expand.getByText("Expand", { exact: true })).toBeVisible();
   await expect(migrate.getByText("Migrate", { exact: true })).toBeVisible();
   await expect(migrate.getByText("after Expand", { exact: true })).toBeVisible();
@@ -2149,11 +2149,11 @@ test("decomposition families render as parent rows with ordered phase children",
   const rowOrder = await page
     .getByRole("article")
     .evaluateAll((articles) => articles.map((article) => article.getAttribute("aria-label")));
-  expect(rowOrder.indexOf("Work item: Expand the provider interface.")).toBeLessThan(
-    rowOrder.indexOf("Work item: Migrate the consumer.")
+  expect(rowOrder.indexOf("Request: Expand the provider interface.")).toBeLessThan(
+    rowOrder.indexOf("Request: Migrate the consumer.")
   );
-  expect(rowOrder.indexOf("Work item: Migrate the consumer.")).toBeLessThan(
-    rowOrder.indexOf("Work item: Contract the compatibility path.")
+  expect(rowOrder.indexOf("Request: Migrate the consumer.")).toBeLessThan(
+    rowOrder.indexOf("Request: Contract the compatibility path.")
   );
 });
 
@@ -2671,21 +2671,21 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
   });
 
   await page.goto("/");
-  const taskListActions = page.getByRole("group", { name: "Task list actions" });
-  await taskListActions.getByRole("button", { name: "Add task" }).click();
-  let dialog = page.getByRole("dialog", { name: "Add a task" });
-  await dialog.getByLabel("Task", { exact: true }).fill("Prepare a customer recovery workflow");
+  const taskListActions = page.getByRole("group", { name: "Request list actions" });
+  await taskListActions.getByRole("button", { name: "Add request" }).click();
+  let dialog = page.getByRole("dialog", { name: "Add a request" });
+  await dialog.getByLabel("Request", { exact: true }).fill("Prepare a customer recovery workflow");
   await dialog.getByLabel("Project").selectOption(project.projectId);
-  await dialog.getByRole("button", { name: "Submit task" }).click();
+  await dialog.getByRole("button", { name: "Submit request" }).click();
 
   const primaryRow = page.getByRole("article", {
-    name: "Work item: Preserve retry copy while making recovery observable.",
+    name: "Request: Preserve retry copy while making recovery observable.",
   });
   const primaryRowButton = primaryRow.getByRole("button", { name: /Parked/u });
   await primaryRowButton.click();
   await expect(page).toHaveURL(/#\/intake\/work-item-detail-primary$/u);
-  const pane = page.getByRole("region", { name: "Work-item details" });
-  const paneHeading = pane.getByRole("heading", { name: "Work-item details" });
+  const pane = page.getByRole("region", { name: "Request details" });
+  const paneHeading = pane.getByRole("heading", { name: "Request details" });
   const belowXl = (page.viewportSize()?.width ?? 1_280) < 1_280;
   if (belowXl) await expect(paneHeading).toBeFocused();
   else await expect(primaryRowButton).toBeFocused();
@@ -2697,7 +2697,7 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
 
   await page.goBack();
   await expect(page).toHaveURL(/#\/tasks$/u);
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   if (belowXl) await expect(primaryRowButton).toBeFocused();
   await page.goForward();
   await expect(page).toHaveURL(/#\/intake\/work-item-detail-primary$/u);
@@ -2723,7 +2723,7 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
   await dialog.getByLabel("Revision note").fill("The dependency ordering needs another pass.");
   await dialog.getByRole("button", { name: "Reject and revise" }).click();
   await expect(dialog.getByRole("alert")).toContainText(
-    "This work item or plan changed in another session. Refresh before trying again."
+    "This request or plan changed in another session. Refresh before trying again."
   );
   await expect
     .poll(() => rejectRequest)
@@ -2737,7 +2737,7 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
   await expect(
     page
       .getByRole("alert")
-      .filter({ hasText: "This work item or plan changed in another session. Refresh before trying again." })
+      .filter({ hasText: "This request or plan changed in another session. Refresh before trying again." })
   ).toHaveCount(0);
   await pane.getByRole("button", { name: "Reject plan" }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
@@ -2746,7 +2746,7 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
   const requestsBeforeConflict = workItemListRequests;
   await pane.getByRole("button", { name: "Confirm plan" }).click();
   await expect(
-    pane.getByRole("alert").filter({ hasText: "This work item ended before the plan could be confirmed." })
+    pane.getByRole("alert").filter({ hasText: "This request ended before the plan could be confirmed." })
   ).toBeVisible();
   await expect.poll(() => workItemListRequests).toBeGreaterThan(requestsBeforeConflict);
   await pane.getByRole("button", { name: "Confirm plan" }).click();
@@ -2760,53 +2760,53 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(pane.getByRole("group", { name: "Current status" }).getByText("Done", { exact: true })).toBeVisible();
   await pane.getByRole("button", { name: "Archive", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "Archive work item" });
+  dialog = page.getByRole("dialog", { name: "Archive request" });
   if ((page.viewportSize()?.width ?? 0) >= 640) {
     await expect(page.getByTestId("modal-scrim")).toHaveCount(0);
   }
-  await dialog.getByRole("button", { name: "Archive work item" }).click();
+  await dialog.getByRole("button", { name: "Archive request" }).click();
   await expect(dialog.getByRole("alert")).toContainText(
-    "This work item or plan changed in another session. Refresh before trying again."
+    "This request or plan changed in another session. Refresh before trying again."
   );
   await dialog.getByRole("button", { name: "Keep visible" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(
     page
       .getByRole("alert")
-      .filter({ hasText: "This work item or plan changed in another session. Refresh before trying again." })
+      .filter({ hasText: "This request or plan changed in another session. Refresh before trying again." })
   ).toHaveCount(0);
   await pane.getByRole("button", { name: "Archive", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Archive work item" }).click();
+  await dialog.getByRole("button", { name: "Archive request" }).click();
   await expect.poll(() => archiveRequest).toEqual({ version: 11, action: "archive" });
   await expect(page).toHaveURL(/#\/tasks$/u);
   await expect(primaryRow).toHaveCount(0);
 
-  await taskListActions.getByRole("button", { name: "Add task" }).click();
-  dialog = page.getByRole("dialog", { name: "Add a task" });
-  await dialog.getByLabel("Task", { exact: true }).fill("Cancel this superseded intake");
+  await taskListActions.getByRole("button", { name: "Add request" }).click();
+  dialog = page.getByRole("dialog", { name: "Add a request" });
+  await dialog.getByLabel("Request", { exact: true }).fill("Cancel this superseded intake");
   await dialog.getByLabel("Project").selectOption(project.projectId);
-  await dialog.getByRole("button", { name: "Submit task" }).click();
-  const cancellableRow = page.getByRole("article", { name: "Work item: Cancel this superseded intake" });
+  await dialog.getByRole("button", { name: "Submit request" }).click();
+  const cancellableRow = page.getByRole("article", { name: "Request: Cancel this superseded intake" });
   await cancellableRow.getByRole("button", { name: /Queued/u }).click();
-  await pane.getByRole("button", { name: "Cancel work item" }).click();
-  dialog = page.getByRole("dialog", { name: "Cancel work item" });
+  await pane.getByRole("button", { name: "Abandon request" }).click();
+  dialog = page.getByRole("dialog", { name: "Abandon request" });
   await dialog.getByLabel("Reason").fill("A newer request supersedes this intake.");
-  await dialog.getByRole("button", { name: "Cancel work item" }).click();
+  await dialog.getByRole("button", { name: "Abandon request" }).click();
   await expect(dialog.getByRole("alert")).toContainText(
-    "This work item or plan changed in another session. Refresh before trying again."
+    "This request or plan changed in another session. Refresh before trying again."
   );
   await dialog.getByRole("button", { name: "Close dialog" }).click();
   await discardDirtyDialog(page);
   await expect(
     page
       .getByRole("alert")
-      .filter({ hasText: "This work item or plan changed in another session. Refresh before trying again." })
+      .filter({ hasText: "This request or plan changed in another session. Refresh before trying again." })
   ).toHaveCount(0);
-  await pane.getByRole("button", { name: "Cancel work item" }).click();
+  await pane.getByRole("button", { name: "Abandon request" }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   await dialog.getByLabel("Reason").fill("A newer request supersedes this intake.");
-  await dialog.getByRole("button", { name: "Cancel work item" }).click();
+  await dialog.getByRole("button", { name: "Abandon request" }).click();
   await expect
     .poll(() => cancelRequest)
     .toEqual({
@@ -2815,9 +2815,9 @@ test("work-item detail resolves planning input, confirms a workflow, archives co
       reason: "A newer request supersedes this intake.",
     });
   await expect(
-    pane.getByRole("group", { name: "Current status" }).getByText("Cancelled", { exact: true })
+    pane.getByRole("group", { name: "Current status" }).getByText("Abandoned", { exact: true })
   ).toBeVisible();
-  await expect(pane.getByRole("heading", { name: "Cancellation reason" })).toBeVisible();
+  await expect(pane.getByRole("heading", { name: "Abandonment reason" })).toBeVisible();
   await expect(pane.getByText("A newer request supersedes this intake.", { exact: true })).toBeVisible();
 });
 
@@ -3197,7 +3197,7 @@ test("agent pages stay chat-first while unavailable assignments remain durable",
   await expect(page.getByRole("button", { name: "Interrupt" })).toHaveCount(0);
 
   companyRail = await openCompanyRail(page);
-  await companyRail.getByRole("button", { name: "Task List" }).click();
+  await companyRail.getByRole("button", { name: "Requests" }).click();
   await page.getByRole("button", { name: /Improve invoice recovery backlog/u }).click();
   await page.getByLabel("Assign agent").selectOption(workingAgent.agentId);
   await page.getByLabel("Assign agent").selectOption(unavailableAgent.agentId);
@@ -3647,7 +3647,7 @@ test("a failed task offers retry, reassign, and an explained backlog rejection",
   expect(retryPosts[0]).toEqual({ version: 4 });
   await expect(page.getByRole("region", { name: "Task recovery actions" })).toHaveCount(0);
   const belowXl = (page.viewportSize()?.width ?? 1_280) < 1_280;
-  if (belowXl) await page.getByRole("button", { name: "Back to task list" }).click();
+  if (belowXl) await page.getByRole("button", { name: "Back to requests" }).click();
   await expect(page.getByRole("button", { name: /Improve invoice recovery queued/u })).toBeVisible();
 
   await page.getByRole("button", { name: /Restore webhook retries failed/u }).click();
@@ -3667,7 +3667,7 @@ test("a failed task offers retry, reassign, and an explained backlog rejection",
     assignedRole: "engineer",
     status: "queued",
   });
-  if (belowXl) await page.getByRole("button", { name: "Back to task list" }).click();
+  if (belowXl) await page.getByRole("button", { name: "Back to requests" }).click();
   await expect(page.getByRole("button", { name: /Restore webhook retries queued/u })).toBeVisible();
 });
 
@@ -3808,10 +3808,10 @@ test("the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await expect(page.getByRole("heading", { name: "Cicada platform" })).toBeVisible();
   const contextSidebar = page.getByRole("heading", { name: "Context & Materials" }).locator("..");
   await expect(contextSidebar).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Active Thread Pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Active Task Pipeline" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent Activity & Visuals" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Team" })).toHaveCount(0);
-  const threadPipeline = page.getByRole("table", { name: "Active Thread Pipeline" });
+  const threadPipeline = page.getByRole("table", { name: "Active Task Pipeline" });
   await expect(threadPipeline.getByRole("columnheader", { name: "Task Objective" })).toBeVisible();
   await expect(threadPipeline.getByText("completed", { exact: true }).first()).toBeVisible();
   await expect(threadPipeline.getByText("backlog", { exact: true }).first()).toBeVisible();
@@ -3829,7 +3829,7 @@ test("the Cicada sidebar keeps the POC as a durable chat and sends one atomic wa
   await moveGitHubLater.focus();
   await moveGitHubLater.press("Enter");
   await expect(page.getByRole("button", { name: "Move GitHub earlier" })).toBeVisible();
-  const pipelineRows = page.getByRole("region", { name: "Active thread pipeline rows" });
+  const pipelineRows = page.getByRole("region", { name: "Active task pipeline rows" });
   await expect(pipelineRows).toBeVisible();
   expect(await pipelineRows.evaluate((element) => element.scrollHeight)).toBeGreaterThan(
     await pipelineRows.evaluate((element) => element.clientHeight)
@@ -4317,7 +4317,7 @@ test("automation configuration is edited as one dormant, versioned draft on desk
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   expect(automationRequests).toEqual([]);
 
   let companyRail = await openCompanyRail(page);
@@ -4362,8 +4362,8 @@ test("automation configuration is edited as one dormant, versioned draft on desk
   await expect(page.getByText("Implementation engineer", { exact: true }).first()).toBeVisible();
   await page.getByLabel("Implementation executor").selectOption("implementation-engineer");
   companyRail = await openCompanyRail(page);
-  await companyRail.getByRole("button", { name: "Task List" }).click();
-  await expect(page.getByRole("heading", { name: "Task List" })).toBeVisible();
+  await companyRail.getByRole("button", { name: "Requests" }).click();
+  await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole("button", { name: "Automation" }).click();
   await expect(page.getByRole("heading", { name: "Automation", exact: true })).toBeVisible();
@@ -4431,7 +4431,7 @@ test("automation configuration is edited as one dormant, versioned draft on desk
     updatedBy: "human:another-operator",
   };
   companyRail = await openCompanyRail(page);
-  await companyRail.getByRole("button", { name: "Task List" }).click();
+  await companyRail.getByRole("button", { name: "Requests" }).click();
   companyRail = await openCompanyRail(page);
   await companyRail.getByRole("button", { name: "Automation" }).click();
   await expect(page.getByText("Saved configuration changed", { exact: true })).toBeVisible();

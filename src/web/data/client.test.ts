@@ -1176,7 +1176,7 @@ describe("task-board HTTP client", () => {
         projectId: project.projectId,
         idempotencyKey: "work-item:create:one",
       })
-    ).rejects.toThrow(/enter a task/iu);
+    ).rejects.toThrow(/enter a request/iu);
     await expect(
       client.createWorkItem({
         originalRequest: "A valid task",

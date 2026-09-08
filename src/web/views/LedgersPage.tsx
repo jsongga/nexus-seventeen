@@ -173,7 +173,7 @@ export function FindingsLedgerSection({ ledger }: { ledger: RawFindingsLedger })
                               className="mt-3 inline-flex min-h-9 items-center text-xs font-medium text-ink underline decoration-line underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
                               href={workItemHref(finding.workItemId)}
                             >
-                              Open work item {finding.workItemId}
+                              Open request {finding.workItemId}
                             </a>
                           </li>
                         );
@@ -211,14 +211,14 @@ export function ParksLedgerSection({ ledger, nowMs = Date.now() }: { ledger: Raw
         <h3 className="text-xs font-semibold text-ink">Open parks</h3>
         {open.length === 0 ? (
           <p className="mt-2 rounded-md border border-line bg-muted-surface px-3.5 py-4 text-sm text-muted">
-            No work items are currently parked.
+            No requests are currently parked.
           </p>
         ) : (
           <div className="mt-3 overflow-x-auto rounded-md border border-line">
             <table className="min-w-full border-collapse text-left text-xs">
               <thead className="bg-muted-surface text-[11px] text-muted">
                 <tr>
-                  {["Work item", "Category", "Age", "Reason", "Parked"].map((heading) => (
+                  {["Request", "Category", "Age", "Reason", "Parked"].map((heading) => (
                     <th
                       key={heading}
                       scope="col"
@@ -269,7 +269,7 @@ export function ParksLedgerSection({ ledger, nowMs = Date.now() }: { ledger: Raw
             <table className="min-w-full border-collapse text-left text-xs">
               <thead className="bg-muted-surface text-[11px] text-muted">
                 <tr>
-                  {["Work item", "Category", "Resolution", "Reason", "Resolved"].map((heading) => (
+                  {["Request", "Category", "Resolution", "Reason", "Resolved"].map((heading) => (
                     <th
                       key={heading}
                       scope="col"

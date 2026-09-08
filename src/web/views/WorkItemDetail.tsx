@@ -590,7 +590,7 @@ export function WorkItemDetail({
                 type="button"
                 className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-muted-surface hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-taupe-hover"
                 onClick={onClose}
-                aria-label="Close work-item details"
+                aria-label="Close request details"
               >
                 <X size={18} />
               </button>
@@ -601,11 +601,11 @@ export function WorkItemDetail({
               tabIndex={-1}
               className="mt-4 break-words font-display text-xl font-light tracking-[0.01em] text-ink"
             >
-              Work-item details
+              Request details
             </h2>
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-xs font-medium text-muted">Task type</dt>
+                <dt className="text-xs font-medium text-muted">Request type</dt>
                 <dd className="mt-1 break-words text-ink">{workItem.taskType}</dd>
               </div>
               <div>
@@ -634,7 +634,7 @@ export function WorkItemDetail({
               </div>
               {workItem.parentWorkItemId === null ? null : (
                 <div className="sm:col-span-2">
-                  <dt className="text-xs font-medium text-muted">Parent work item</dt>
+                  <dt className="text-xs font-medium text-muted">Parent request</dt>
                   <dd className="mt-1">
                     <ParentWorkItemLink
                       parentWorkItemId={workItem.parentWorkItemId}
@@ -753,7 +753,7 @@ export function WorkItemDetail({
           {workItem.cancelledReason !== null ? (
             <section className="border-b border-line px-4 py-4 sm:px-5" aria-labelledby="cancellation-reason-heading">
               <h3 id="cancellation-reason-heading" className="text-xs font-semibold text-ink">
-                Cancellation reason
+                Abandonment reason
               </h3>
               <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">
                 {workItem.cancelledReason}
@@ -880,7 +880,7 @@ export function WorkItemDetail({
                   <CirclePause size={18} className="text-muted" />
                   <p className="mt-2 text-sm font-medium text-ink">No proposed plan</p>
                   <p className="mt-1 text-xs leading-5 text-muted">
-                    The workflow snapshot has no proposed revision for this work item.
+                    The workflow snapshot has no proposed revision for this request.
                   </p>
                 </div>
               ) : proposedPlan ? (
@@ -1018,7 +1018,7 @@ export function WorkItemDetail({
               showArchive={affordances.archive}
               archiveDisabled={archiveRequiresAttestation}
               archiveHintId={archiveHintId}
-              cancelHint={phasedChildFailure ? "A phase failed — cancel the coordination to abandon it" : null}
+              cancelHint={phasedChildFailure ? "A phase stopped — abandon the coordination request" : null}
               resumeAnchorRef={resumeConfirmationAnchorRef}
               archiveAnchorRef={archiveConfirmationAnchorRef}
               onResume={() => openConfirmation("resume")}
@@ -1033,8 +1033,8 @@ export function WorkItemDetail({
         open={confirmation === "cancel"}
         onClose={closeConfirmation}
         isDirty={() => fieldsAreDirty([cancelReason])}
-        title="Cancel work item"
-        description="This stops the intake and its live planning task. This action cannot be undone."
+        title="Abandon request"
+        description="This abandons the request and stops its live planning task. This action cannot be undone."
       >
         {(requestClose) => (
           <form
@@ -1054,7 +1054,7 @@ export function WorkItemDetail({
                 maxLength={16_000}
                 value={cancelReason}
                 onChange={(event) => setCancelReason(event.target.value)}
-                placeholder="Why is this work item being cancelled?"
+                placeholder="Why is this request being abandoned?"
               />
             </div>
             <InlineActionErrors
@@ -1063,10 +1063,10 @@ export function WorkItemDetail({
             />
             <div className="grid gap-2 sm:grid-cols-2">
               <Button type="submit" variant="danger" disabled={busy || cancelReason.trim().length === 0}>
-                Cancel work item
+                Abandon request
               </Button>
               <Button disabled={busy} onClick={requestClose}>
-                Keep work item
+                Keep request
               </Button>
             </div>
           </form>
@@ -1078,7 +1078,7 @@ export function WorkItemDetail({
         onClose={closeConfirmation}
         isDirty={() => fieldsAreDirty([rejectionNote])}
         title="Reject proposed plan"
-        description="Send one bounded revision note back to planning. Rejecting a second proposed revision parks the work item."
+        description="Send one bounded revision note back to planning. Rejecting a second proposed revision parks the request."
       >
         {(requestClose) => (
           <PlanRejectionForm
@@ -1105,7 +1105,7 @@ export function WorkItemDetail({
         description={
           isDecomposedParent
             ? "This merges every unmerged child in dependency order, then completes the parent. A conflict returns that child to implementation."
-            : "This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the work item to implementation with conflict details."
+            : "This creates a local no-fast-forward merge commit on the clean checked-out merge target. It does not push anything. A conflict returns the request to implementation with conflict details."
         }
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
@@ -1138,7 +1138,7 @@ export function WorkItemDetail({
         description={
           isDecomposedParent
             ? "Every unmerged child in final approval returns to implementation with this note. The parent returns to coordination."
-            : "The work item returns to implementation with this note attached to the next engineering round."
+            : "The request returns to implementation with this note attached to the next engineering round."
         }
       >
         {(requestClose) => (
@@ -1191,7 +1191,7 @@ export function WorkItemDetail({
         title={
           resumeAfterBaseChange
             ? workItem.parentWorkItemId === null
-              ? "Resume work item"
+              ? "Resume request"
               : "Resume child"
             : "Resume coordination"
         }
@@ -1227,8 +1227,8 @@ export function WorkItemDetail({
         onClose={closeConfirmation}
         variant="anchored"
         anchorRef={archiveConfirmationAnchorRef}
-        title="Archive work item"
-        description="Archived work items leave the default intake list but remain stored and retrievable."
+        title="Archive request"
+        description="Archived requests leave the default request list but remain stored and retrievable."
       >
         <div className="grid gap-2 p-5 sm:grid-cols-2 sm:p-6">
           <Button
@@ -1237,7 +1237,7 @@ export function WorkItemDetail({
             disabled={busy}
             onClick={() => void save(actionContexts.archive, onArchive, closeConfirmation)}
           >
-            Archive work item
+            Archive request
           </Button>
           <Button disabled={busy} onClick={closeConfirmation}>
             Keep visible

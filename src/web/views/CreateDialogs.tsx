@@ -87,8 +87,8 @@ export function CreateDialogs({
         variant="anchored"
         anchorRef={taskAnchorRef}
         dialogTrigger="task"
-        title={dialogProject ? `Add a task to ${dialogProject.name}` : "Add a task"}
-        description="Records a durable intake request. This step does not wake an agent yet."
+        title={dialogProject ? `Add a request to ${dialogProject.name}` : "Add a request"}
+        description="Records a durable request. This step does not wake an agent yet."
       >
         {(requestClose) => (
           <WorkItemForm

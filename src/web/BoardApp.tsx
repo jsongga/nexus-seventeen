@@ -150,7 +150,7 @@ export class WorkItemDetailLoadCoordinator {
       const detail = await read(controller.signal);
       if (!this.#isCurrent(generation, controller)) return { kind: "stale" };
       if (detail.id !== workItemId)
-        return { kind: "failed", error: new Error("The loaded work item did not match the requested child.") };
+        return { kind: "failed", error: new Error("The loaded request did not match the requested child.") };
       return { kind: "loaded", detail };
     } catch (caught) {
       if (!this.#isCurrent(generation, controller)) return { kind: "stale" };
@@ -629,7 +629,7 @@ export function BoardApp() {
     dispatchErrorPipeline({
       type: "action-failed",
       context,
-      error: result.kind === "not-found" ? "This work item is no longer available." : actionErrorMessage(result.error),
+      error: result.kind === "not-found" ? "This request is no longer available." : actionErrorMessage(result.error),
     });
   }
 
@@ -838,7 +838,7 @@ export function BoardApp() {
           <EmptyState
             icon={<RefreshCw className="animate-spin" size={20} />}
             title="Locating your agents"
-            body="Reading durable projects, tasks, questions, and progress from the task board."
+            body="Reading durable projects, requests, tasks, questions, and progress from the task board."
           />
         </Card>
       </main>
@@ -943,13 +943,11 @@ export function BoardApp() {
               tabIndex={-1}
               className="font-display text-2xl font-light tracking-[0.02em] sm:text-[28px]"
             >
-              Task List
+              Requests
             </h1>
-            <p className="mt-1.5 text-sm font-light text-muted">
-              New requests enter durable intake for refinement and planning.
-            </p>
+            <p className="mt-1.5 text-sm font-light text-muted">New requests enter refinement and planning.</p>
           </div>
-          <div className="flex flex-wrap gap-2.5" role="group" aria-label="Task list actions">
+          <div className="flex flex-wrap gap-2.5" role="group" aria-label="Request list actions">
             <Button
               ref={headerAddTaskRef}
               data-dialog-trigger="task"
@@ -957,8 +955,8 @@ export function BoardApp() {
               size="sm"
               variant="primary"
               icon={<Plus size={18} strokeWidth={1.6} />}
-              aria-label="Add task"
-              title="Add task"
+              aria-label="Add request"
+              title="Add request"
               disabled={!connected}
               onClick={(event) => openDialog("task", { anchor: headerAddTaskRef }, event.nativeEvent)}
             />
@@ -1011,7 +1009,7 @@ export function BoardApp() {
                         id="automation-intake-heading"
                         className="font-display text-lg font-light tracking-[0.01em] text-ink"
                       >
-                        Automation intake
+                        Request handling
                       </h2>
                       <span className="text-xs text-muted">{allWorkItems.length}</span>
                     </div>
@@ -1123,8 +1121,8 @@ export function BoardApp() {
                   ) : (
                     <EmptyState
                       icon={<ListTodo size={19} />}
-                      title="Task list is empty"
-                      body="Submit an outcome to record it in durable intake."
+                      title="Request list is empty"
+                      body="Submit a request to begin refinement and planning."
                       action={
                         <Button
                           ref={emptyStateAddTaskRef}
@@ -1134,7 +1132,7 @@ export function BoardApp() {
                           disabled={!connected}
                           onClick={(event) => openDialog("task", { anchor: emptyStateAddTaskRef }, event.nativeEvent)}
                         >
-                          Add task
+                          Add request
                         </Button>
                       }
                     />
@@ -1150,7 +1148,7 @@ export function BoardApp() {
                     icon={<ArrowLeft size={15} />}
                     onClick={workItemDetailOpen ? closeWorkItem : closeTask}
                   >
-                    Back to task list
+                    Back to requests
                   </Button>
                   <Button
                     size="sm"

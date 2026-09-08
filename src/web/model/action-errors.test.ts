@@ -161,9 +161,9 @@ describe("action error taxonomy", () => {
     ["TASK_UNASSIGNED", "This task has no assigned agent. Reassign it before retrying."],
     ["TASK_VERSION_CONFLICT", "This task changed in another session. Refresh before trying again."],
     ["WORK_NODE_VERSION_CONFLICT", "This task changed in another session. Refresh before trying again."],
-    ["WORK_ITEM_ENDED", "This work item ended before the plan could be confirmed. Refresh to see its current state."],
-    ["WORK_ITEM_VERSION_CONFLICT", "This work item or plan changed in another session. Refresh before trying again."],
-    ["PLAN_NOT_PROPOSED", "This work item or plan changed in another session. Refresh before trying again."],
+    ["WORK_ITEM_ENDED", "This request ended before the plan could be confirmed. Refresh to see its current state."],
+    ["WORK_ITEM_VERSION_CONFLICT", "This request or plan changed in another session. Refresh before trying again."],
+    ["PLAN_NOT_PROPOSED", "This request or plan changed in another session. Refresh before trying again."],
   ])("maps conflict code %s", (code, expected) => {
     expect(actionErrorMessage(new BoardApiError("server wording", 409, code))).toBe(expected);
   });

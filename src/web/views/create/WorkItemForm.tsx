@@ -68,7 +68,7 @@ export function WorkItemForm({
       }}
     >
       <div>
-        <FieldLabel htmlFor="task-prompt">Task</FieldLabel>
+        <FieldLabel htmlFor="task-prompt">Request</FieldLabel>
         <textarea
           id="task-prompt"
           className={cn(inputClass, "min-h-32 resize-y py-3")}
@@ -86,7 +86,7 @@ export function WorkItemForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
-          <FieldLabel htmlFor="work-item-task-type">Task type</FieldLabel>
+          <FieldLabel htmlFor="work-item-task-type">Request type</FieldLabel>
           <select
             id="work-item-task-type"
             className={inputClass}
@@ -155,7 +155,7 @@ export function WorkItemForm({
       <InlineActionErrors errors={errors} onDismiss={onDismissError} />
       <div className="grid gap-2 sm:grid-cols-2">
         <Button type="submit" variant="primary" disabled={busy || !normalizedPrompt || !projectChosen}>
-          {projectChosen ? "Submit task" : "Choose a project"}
+          {projectChosen ? "Submit request" : "Choose a project"}
         </Button>
         <Button disabled={busy} onClick={onCancel}>
           Cancel

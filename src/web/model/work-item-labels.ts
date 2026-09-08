@@ -21,7 +21,7 @@ export const parkCategoryLabel: Record<ParkCategory | "unrecognized", string> = 
 
 export const notificationKindLabel: Record<(typeof NOTIFICATION_KINDS)[number] | "unrecognized", string> = {
   park_aged: "Park aged",
-  park_auto_abandoned: "Park auto-abandoned",
+  park_auto_abandoned: "Automatically abandoned",
   cap_parked: "Cap parked",
   final_approval_withdrawn: "Final approval withdrawn",
   parent_ready_for_approval: "Parent ready for approval",
@@ -60,8 +60,8 @@ export const workItemStateLabel: Record<WorkItemState | "unrecognized", string> 
   final_approval: "Final review",
   merged: "Done",
   parked: "Parked",
-  abandoned: "Cancelled",
-  dead_letter: "Failed",
+  abandoned: "Abandoned",
+  dead_letter: "Dead letter",
   unrecognized: unknownStateLabel,
 };
 
@@ -80,7 +80,7 @@ export const taskStatusTone: Record<TaskStatus, WorkItemTone> = {
 };
 
 export const workItemStageLabel: Record<WorkItemStage, string> = {
-  refinement: "Improving task",
+  refinement: "Improving request",
   project_resolution: "Resolving project",
   research: "Researching",
   planning: "Planning",

@@ -189,7 +189,7 @@ export function RailContent({
             className={cn(navRow, pageIs(page, "tasks") ? activeRow : inactiveRow)}
             onClick={(event) => onNavigate({ kind: "tasks" }, event.nativeEvent)}
           >
-            <span className="min-w-0 flex-1">Task List</span>
+            <span className="min-w-0 flex-1">Requests</span>
             <span className="ml-2 flex shrink-0 flex-wrap justify-end gap-1">
               {parkedCount > 0 ? (
                 <span
@@ -203,7 +203,7 @@ export function RailContent({
               ) : null}
               {finalApprovalCount > 0 ? (
                 <span
-                  aria-label={`${finalApprovalCount} ${finalApprovalCount === 1 ? "work item awaits" : "work items await"} final approval`}
+                  aria-label={`${finalApprovalCount} ${finalApprovalCount === 1 ? "request awaits" : "requests await"} final approval`}
                   className={cn(
                     "inline-flex items-center justify-center rounded-[99px] border border-line px-1.5 py-0.5 font-mono text-[9px] leading-4",
                     pageIs(page, "tasks") ? "bg-taupe text-white" : "bg-canvas text-muted"

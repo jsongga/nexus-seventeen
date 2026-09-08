@@ -188,7 +188,7 @@ describe("work-item confirmation surfaces", () => {
       variant: "anchored",
       anchorRef: { current: null },
     });
-    expect(modalProps.get("Archive work item")).toMatchObject({
+    expect(modalProps.get("Archive request")).toMatchObject({
       variant: "anchored",
       anchorRef: { current: null },
     });
@@ -200,7 +200,7 @@ describe("work-item confirmation surfaces", () => {
       variant: "anchored",
       anchorRef: { current: null },
     });
-    for (const takeoverTitle of ["Cancel work item", "Reject proposed plan", "Request implementation changes"]) {
+    for (const takeoverTitle of ["Abandon request", "Reject proposed plan", "Request implementation changes"]) {
       const takeoverProps = modalProps.get(takeoverTitle);
       expect(takeoverProps).toBeDefined();
       expect(takeoverProps).not.toHaveProperty("variant");
@@ -634,10 +634,10 @@ describe("decomposition detail sections", () => {
     const phased = renderFamily("expand");
     const unphased = renderFamily(null);
     expect(phased).not.toContain("Resume coordination");
-    expect(phased).toContain("A phase failed — cancel the coordination to abandon it");
-    expect(phased).toContain("Cancel work item");
+    expect(phased).toContain("A phase stopped — abandon the coordination request");
+    expect(phased).toContain("Abandon request");
     expect(unphased).toContain("Resume coordination");
-    expect(unphased).not.toContain("A phase failed — cancel the coordination to abandon it");
+    expect(unphased).not.toContain("A phase stopped — abandon the coordination request");
   });
 
   it("pins the anchored base-change resume action on a parked child detail", () => {

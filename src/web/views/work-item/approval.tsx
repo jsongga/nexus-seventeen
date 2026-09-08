@@ -44,7 +44,7 @@ export function FinalApprovalActions({
       <p className="mt-2 text-xs leading-5 text-muted">
         {mode === "parent"
           ? "One approval merges every unmerged child in dependency order. A conflict returns that child to implementation."
-          : "A merge conflict returns the work item to implementation with conflict details for the next engineering round."}
+          : "A merge conflict returns the request to implementation with conflict details for the next engineering round."}
       </p>
     </div>
   );
@@ -152,7 +152,7 @@ export function WorkItemFooterActions({
       {showCancel && cancelHint ? <p className="self-center text-xs text-urgent">{cancelHint}</p> : null}
       {showCancel ? (
         <Button variant="danger" disabled={busy} onClick={onCancel}>
-          Cancel work item
+          Abandon request
         </Button>
       ) : null}
       {showArchive ? (

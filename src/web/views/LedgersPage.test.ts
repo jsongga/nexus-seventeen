@@ -128,7 +128,7 @@ describe("ledgers page panels", () => {
       "Correctness findings",
       "The notification disappears immediately.",
       "src/web/task-board/BoardApp.tsx:42",
-      "Open work item work-item-one",
+      "Open request work-item-one",
     ])
       expect(markup).toContain(text);
     expect(markup).toContain('href="#/intake/work-item-one"');
@@ -166,7 +166,7 @@ describe("ledgers page panels", () => {
     );
 
     expect(findingsMarkup).toContain("No review findings have been recorded.");
-    expect(parksMarkup).toContain("No work items are currently parked.");
+    expect(parksMarkup).toContain("No requests are currently parked.");
     expect(parksMarkup).toContain("No park resolutions have been recorded.");
   });
 });

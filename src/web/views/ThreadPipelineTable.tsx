@@ -36,12 +36,12 @@ export function ThreadPipelineTable({
       aria-labelledby="active-thread-pipeline-heading"
     >
       <h2 id="active-thread-pipeline-heading" className="mb-4 text-xs font-semibold tracking-[0.2px] text-ink">
-        Active Thread Pipeline
+        Active Task Pipeline
       </h2>
       <div
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-taupe-hover [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-[99px] [&::-webkit-scrollbar-thumb]:bg-line [&::-webkit-scrollbar-track]:bg-transparent"
         role="region"
-        aria-label="Active thread pipeline rows"
+        aria-label="Active task pipeline rows"
         tabIndex={0}
       >
         <table
@@ -56,7 +56,7 @@ export function ThreadPipelineTable({
           </colgroup>
           <thead>
             <tr>
-              {["Task Objective", "Assigned Agent", "Stage", "Updated"].map((heading) => (
+              {["Task Objective", "Assigned Agent", "Status", "Updated"].map((heading) => (
                 <th
                   key={heading}
                   scope="col"

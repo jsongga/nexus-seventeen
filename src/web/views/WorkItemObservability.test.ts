@@ -155,9 +155,9 @@ describe("default observability view", () => {
 
     expect(markup).toContain("1 parked");
     expect(markup).toContain("1 final");
-    expect(markup).toContain('aria-label="1 work item awaits final approval"');
+    expect(markup).toContain('aria-label="1 request awaits final approval"');
     expect(markup).toContain('aria-label="4 unread notifications"');
-    expect(markup).toContain("Task List");
+    expect(markup).toContain("Requests");
     expect(markup).toContain("Automation");
     expect(markup).toContain("Ledgers");
     expect(markup).not.toContain("Documents");

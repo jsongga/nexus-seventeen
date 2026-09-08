@@ -114,7 +114,7 @@ export function WorkItemRow({
         : `${workItem.phase.charAt(0).toUpperCase()}${workItem.phase.slice(1)}`;
   return (
     <article
-      aria-label={`Work item: ${rowTitle}`}
+      aria-label={`Request: ${rowTitle}`}
       className={cn(
         "last:[&>button]:border-b-0",
         depth === 1 && "relative before:absolute before:bottom-2 before:left-5 before:top-2 before:w-px before:bg-line"
