@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { agentPrompt, assertCredentialSafe } from "#server/agents/task-worker/agent-envelope";
+import { agentPrompt, redactCredentials } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import { context } from "./helpers.js";
 
@@ -44,37 +44,40 @@ const CROSS_REPO_CONTEXT = {
   markdown: "# Published provider interface 😀 𠀀\n\n- `GET /v1/orders`\n",
 } as const;
 
-test("credential-safety rejects the shared recognition shapes without weakening AWS detection", () => {
+test("credential-safety redacts every shared boundary shape and reports only pattern names and counts", () => {
   const credentials = [
-    ["Stripe secret key", "sk_live_51H8examplekey0123"],
-    ["Anthropic key", "sk-ant-api03-examplekey0123"],
-    ["GitHub token", "ghp_abcdefghijklmnop"],
-    ["generic Slack prefix", "xoxz-examplekey0123"],
+    ["Stripe secret key", "sk_live_51H8examplekey0123", "prefixedToken", " after"],
+    ["Anthropic key", "sk-ant-api03-examplekey0123", "prefixedToken", " after"],
+    ["GitHub token", "ghp_abcdefghijklmnop", "prefixedToken", " after"],
+    ["generic Slack prefix", "xoxz-examplekey0123", "prefixedToken", " after"],
     // A digit is what makes this a token rather than a phrase.
-    ["Bearer token", "Bearer abc._~+/=abcdefg1"],
-    ["multiline PEM", "-----BEGIN pkcs8 PRIVATE KEY-----\nlowercase material\n-----END pkcs8 PRIVATE KEY-----"],
-    ["AWS access key", "AKIA1234567890ABCDEF"],
-    ["URL credential", "https://user:supersecret@example.com/repo.git"],
+    ["Bearer token", "Bearer abc._~+/=abcdefg1", "bearer", " after"],
+    [
+      "multiline PEM",
+      "-----BEGIN pkcs8 PRIVATE KEY-----\nlowercase material\n-----END pkcs8 PRIVATE KEY-----",
+      "privateKey",
+      " after",
+    ],
+    ["AWS access key", "AKIA1234567890ABCDEF", "awsAccessKey", " after"],
+    ["URL credential", "https://user:supersecret@example.com/repo.git", "urlCredential", "example.com/repo.git after"],
   ] as const;
 
-  for (const [name, credential] of credentials) {
-    assert.throws(
-      () => assertCredentialSafe(`Prompt containing ${credential}`, "Agent prompt"),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message === "Agent prompt failed the credential-safety filter" &&
-        error.name === "AgentProcessError",
+  for (const [name, credential, patternName, expectedSuffix] of credentials) {
+    assert.deepEqual(
+      redactCredentials(`Prompt containing ${credential} after`),
+      {
+        value: `Prompt containing [redacted: credential]${expectedSuffix}`,
+        redactions: [{ patternName, count: 1 }],
+      },
       name
     );
   }
 });
 
 // This filter is handed JSON.stringify(request.context), which carries the work
-// item's own words and, in workspaceRefs, a list of repository paths. Rejection
-// kills the run before any work happens, so prose and paths that merely look
-// credential-adjacent must survive it. Every narrowing in the rejection set
-// exists for one of these lines.
-test("credential-safety passes prose and paths that merely look credential-adjacent", () => {
+// item's own words and, in workspaceRefs, a list of repository paths. Every
+// narrowing in the boundary set exists for one of these lines.
+test("credential-safety preserves prose and paths that merely look credential-adjacent", () => {
   for (const value of [
     "Add Bearer auth to the orders API",
     "The client sends a Bearer token on every request",
@@ -102,17 +105,48 @@ test("credential-safety passes prose and paths that merely look credential-adjac
     "Document the Bearer authorization header",
     "Explain when Bearer credentials expire",
   ]) {
-    assert.doesNotThrow(() => assertCredentialSafe(value, "Agent context"), value);
+    assert.deepEqual(redactCredentials(value), { value, redactions: [] }, value);
   }
 });
 
-// Detection must not carry state between calls: a global pattern would resume
-// at the previous match offset and let the next value through.
-test("credential-safety gives the same answer on repeated calls", () => {
-  const value = "context with ghp_abcdefghijklmnop inside";
+test("credential-safety redacts every occurrence without carrying state between calls", () => {
+  const value = "ghp_abcdefghijklmnop then ghp_ponmlkjihgfedcba";
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    assert.throws(() => assertCredentialSafe(value, "Agent context"), `attempt ${attempt}`);
+    assert.deepEqual(
+      redactCredentials(value),
+      {
+        value: "[redacted: credential] then [redacted: credential]",
+        redactions: [{ patternName: "prefixedToken", count: 2 }],
+      },
+      `attempt ${attempt}`
+    );
   }
+});
+
+test("credential-safety redacts string leaves without matching across object structure", () => {
+  const value = {
+    objective: "Rotate the -----BEGIN PRIVATE KEY----- described in the runbook.",
+    scope: ["src/a"],
+    note: "keep this",
+    repoUrl: "https://github.com",
+    cloneUrl: "git@github.com:org/repo.git",
+    nested: { credential: "ghp_abcdefghijklmnop" },
+  };
+
+  assert.deepEqual(redactCredentials(value), {
+    value: {
+      objective: "Rotate the [redacted: credential]",
+      scope: ["src/a"],
+      note: "keep this",
+      repoUrl: "https://github.com",
+      cloneUrl: "git@github.com:org/repo.git",
+      nested: { credential: "[redacted: credential]" },
+    },
+    redactions: [
+      { patternName: "privateKey", count: 1 },
+      { patternName: "prefixedToken", count: 1 },
+    ],
+  });
 });
 
 function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {

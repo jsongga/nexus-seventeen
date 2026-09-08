@@ -12,10 +12,10 @@ import {
   ActivityChannel,
   agentPrompt,
   agentRole,
-  assertCredentialSafe,
   boundedInteger,
   configText,
   delay,
+  redactCredentials,
   structuredOutcome,
 } from "./agent-envelope.js";
 import type { PromptRegistry } from "./prompt-registry.js";
@@ -108,7 +108,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
 
   async launch(request: AgentLaunchRequest): Promise<AgentRunHandle> {
     if (this.#active) throw new AgentProcessError("This launcher already owns an active agent process");
-    assertCredentialSafe(JSON.stringify(request.context), "Agent context");
+    const contextRedaction = redactCredentials(request.context);
     const launchWorkingDirectory = workingDirectory(request.workspace?.path ?? this.#options.workingDirectory);
     const directory = await open(launchWorkingDirectory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
     await directory.close();
@@ -120,7 +120,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       bareApiKey: typeof this.#options.environment.ANTHROPIC_API_KEY === "string",
     };
     const args = this.#options.adapter.args(argumentOptions, fixedRole, this.#options.profile);
-    const stdin = agentPrompt(request, this.#options.prompts);
+    const stdin = agentPrompt({ ...request, context: contextRedaction.value }, this.#options.prompts);
     const command = this.#options.profile.binary;
     let child: ChildProcess;
     try {
@@ -159,11 +159,14 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       pendingLine = lines.pop() ?? "";
       for (const line of lines) observeLine(line);
     };
-    const finishActivity = (): void => {
+    const finishActivity = (diagnostic: string): void => {
       if (activityFinished) return;
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
+      if (diagnostic.length > 0) {
+        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic });
+      }
       activity.close();
     };
     let termination: Promise<void> | null = null;
@@ -218,7 +221,8 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       child.once("close", (code, signal) => {
         void (async () => {
           clearTimeout(timeout);
-          finishActivity();
+          const diagnostic = redactCredentials(Buffer.concat(stderr).toString("utf8"));
+          finishActivity(diagnostic.value);
           if (termination !== null) {
             try {
               await termination;
@@ -244,8 +248,6 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
           }
           try {
             const output = Buffer.concat(stdout).toString("utf8");
-            const diagnostic = Buffer.concat(stderr).toString("utf8");
-            assertCredentialSafe(diagnostic, "Agent diagnostics");
             resolve(structuredOutcome(this.#options.adapter.result(output)));
           } catch (error) {
             reject(error);

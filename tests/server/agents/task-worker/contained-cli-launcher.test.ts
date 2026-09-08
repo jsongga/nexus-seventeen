@@ -34,6 +34,7 @@ import { ContractValidationError, parseWorkflowPlanDraft } from "#shared/task-bo
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
+import { parseAgentRunOutcome } from "#server/agents/task-worker/schema";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
 
@@ -303,6 +304,48 @@ test("structured provider outcomes accept and thread an optional bounded gap rep
   );
 });
 
+test("structured provider outcomes retain completed work with credential spans redacted", () => {
+  const credential = "ghp_abcdefghijklmnop";
+  const outcome = structuredOutcome({
+    status: "completed",
+    progress: [`Removed ${credential} from the fixture.`],
+    result: `Completed after replacing ${credential} safely.`,
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    detail: `Verified without ${credential} present.`,
+  });
+
+  assert.deepEqual(outcome.outputs, [
+    { type: "progress", body: "Removed [redacted: credential] from the fixture." },
+    { type: "result", body: "Completed after replacing [redacted: credential] safely." },
+  ]);
+  assert.equal(outcome.detail, "Verified without [redacted: credential] present.");
+  assert.doesNotMatch(JSON.stringify(outcome), new RegExp(credential, "u"));
+});
+
+test("structured provider outcomes remain completed when redaction grows a field past its schema bound", () => {
+  const credential = "AKIA1234567890ABCDEF";
+  const resultPrefix = `${"x".repeat(4_000 - credential.length - 1)} `;
+  const result = `${resultPrefix}${credential}`;
+  const outcome = structuredOutcome({
+    status: "completed",
+    progress: [],
+    result,
+    proposedChildTasks: [],
+    expectedAgentMinutes: null,
+    phases: [],
+    humanQuestion: null,
+    detail: "Done.",
+  });
+
+  const completed = outcome.outputs.at(-1);
+  assert.equal(outcome.status, "completed");
+  assert.equal(completed?.type === "result" ? completed.body : null, `${resultPrefix.slice(2)}[redacted: credential]`);
+  assert.doesNotThrow(() => parseAgentRunOutcome(outcome));
+});
+
 test("manager planning prompt branches on intake rather than the task title", () => {
   const titlePrefixed = renderPrompt({
     runId: "run-title-prefix",
@@ -428,6 +471,83 @@ process.stdin.on("end", () => {
   assert.notEqual(outputSchema, -1);
   const codexSchema = JSON.parse(await readFile(args[outputSchema + 1]!, "utf8")) as { readonly $schema?: unknown };
   assert.equal(codexSchema.$schema, RESULT_SCHEMA.$schema);
+});
+
+test("redacts contained context and diagnostics without aborting the run", async () => {
+  const credential = "ghp_abcdefghijklmnop";
+  const baseContext = context();
+  const root = await tempRoot();
+  const fixture = await fakeCodex(
+    root,
+    `
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "redacted-prompt.txt"), input);
+  process.stderr.write(${JSON.stringify(`Diagnostic contained <${credential}>; keep this.`)});
+  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
+  console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
+  console.log(JSON.stringify({type:"turn.completed"}));
+});
+`
+  );
+  const launcher = new ContainedCliAgentLauncher({
+    adapter: codexAdapter,
+    profile: CODEX_PROFILE,
+    prompts: PROMPTS,
+    model: "codex-test-model",
+    workingDirectory: fixture.working,
+    environment: {
+      PATH: `${fixture.bin}${delimiter}${process.env.PATH ?? ""}`,
+      TMPDIR: fixture.scratch,
+    },
+    timeoutMs: 5_000,
+    terminationGraceMs: 10,
+    groupAbsenceTimeoutMs: 2_000,
+  });
+
+  const handle = await launcher.launch({
+    runId: "run-contained-redaction",
+    wakeReason: "human_assignment",
+    context: context({
+      projectMemory: "Reference https://github.com and keep this field.",
+      task: {
+        ...baseContext.task,
+        objective: "Rotate the -----BEGIN PRIVATE KEY----- described in the runbook.",
+        acceptanceCriteria: "Keep git@github.com:org/repo.git and this field intact.",
+      },
+      messages: [
+        ...baseContext.messages,
+        {
+          messageId: "message-three",
+          cursor: 3,
+          author: "human",
+          body: `Remove ${credential} from the fixture.`,
+          createdAt: "2026-07-19T20:00:00.000Z",
+        },
+      ],
+      nextMessageCursor: 3,
+    }),
+  });
+
+  assert.equal((await handle.completion).status, "completed");
+  const activity: RuntimeEvent[] = [];
+  for await (const event of handle.activity) activity.push(event);
+  const prompt = await readFile(join(fixture.scratch, "redacted-prompt.txt"), "utf8");
+  assert.match(prompt, /"objective":"Rotate the \[redacted: credential\]"/u);
+  assert.match(prompt, /"projectMemory":"Reference https:\/\/github\.com and keep this field\."/u);
+  assert.match(prompt, /"acceptanceCriteria":"Keep git@github\.com:org\/repo\.git and this field intact\."/u);
+  assert.match(prompt, /Remove \[redacted: credential\] from the fixture\./u);
+  assert.doesNotMatch(prompt, new RegExp(credential, "u"));
+  assert.deepEqual(
+    activity.find((event) => event.type === "tool_result" && event.name === "diagnostics"),
+    {
+      type: "tool_result",
+      name: "diagnostics",
+      output: "Diagnostic contained <[redacted: credential]>; keep this.",
+    }
+  );
 });
 
 test("spawns the binary selected by the runtime profile", async () => {

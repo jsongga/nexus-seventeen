@@ -2,12 +2,13 @@
 
 /* —— Credential vocabulary —— */
 
-// One vocabulary of credential shapes, two policies over it. Redaction rewrites
-// whatever it recognizes, so it over-matches on purpose — a redacted word costs
-// nothing. The task-worker boundary instead rejects the whole value fail-closed,
-// and it is handed user-authored work-item prose and workspace paths, so there a
-// false positive costs an agent run. The shapes below are shared; the rejection
-// set narrows three of them — a length floor, a character class, and the weak
+// One vocabulary of credential shapes, two policies over it. Persistence
+// redaction over-matches on purpose because it is the last defense before
+// durable storage and a false positive does not abort a run. The boundary is
+// handed user-authored work-item prose and workspace paths, so it rewrites with
+// the narrower set to preserve ordinary prose while still removing its
+// recognized credential shapes. The shapes below are shared; the boundary set
+// narrows three of them — a length floor, a character class, and the weak
 // prefixes — each for a reason stated where it is defined. Nothing else may
 // differ, and the tests assert that.
 const BEARER_CHARACTERS = String.raw`[A-Za-z0-9._~+/=-]`;
@@ -68,7 +69,7 @@ export const CREDENTIAL_PATTERNS = Object.freeze({
 // non-global copies removes that state rather than resetting it around each use.
 const withoutGlobalFlag = (pattern: RegExp): RegExp => new RegExp(pattern.source, pattern.flags.replace("g", ""));
 
-/** Recognizes credentials for rejection. Same shapes, narrowed so prose and paths survive. */
+/** Recognizes credentials at the agent boundary. Same shapes, narrowed so prose and paths survive. */
 export const CREDENTIAL_REJECTION_PATTERNS = Object.freeze({
   privateKey: withoutGlobalFlag(CREDENTIAL_PATTERNS.privateKey),
   urlCredential: withoutGlobalFlag(CREDENTIAL_PATTERNS.urlCredential),

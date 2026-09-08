@@ -449,12 +449,80 @@ export function configText(value: string, label: string, maximum: number): strin
   return value;
 }
 
-// Rejection, not redaction: this refuses the whole prompt, context or provider
-// output rather than rewriting a span, so it uses the rejection set (same
-// credential shapes, prose-safe length floors) from server/shared/redact.ts.
-export function assertCredentialSafe(value: string, label: string): void {
-  if (Object.values(CREDENTIAL_REJECTION_PATTERNS).some((pattern) => pattern.test(value)))
-    throw new AgentProcessError(`${label} failed the credential-safety filter`);
+const AGENT_BOUNDARY_CREDENTIAL_MARKER = "[redacted: credential]";
+
+export type CredentialPatternName = keyof typeof CREDENTIAL_REJECTION_PATTERNS;
+
+export interface CredentialRedaction {
+  readonly patternName: CredentialPatternName;
+  readonly count: number;
+}
+
+export interface CredentialRedactionResult<Value = string> {
+  readonly value: Value;
+  readonly redactions: readonly CredentialRedaction[];
+}
+
+interface CredentialRedactionOptions {
+  readonly preserveStringLengths?: boolean;
+}
+
+function fitCredentialMarkers(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  const parts = value.split(AGENT_BOUNDARY_CREDENTIAL_MARKER);
+  let excess = value.length - maximum;
+  const indexes = parts
+    .map((part, index) => ({ index, length: part.length }))
+    .sort((left, right) => right.length - left.length);
+  for (const { index } of indexes) {
+    const part = parts[index] ?? "";
+    const removed = Math.min(excess, part.length);
+    parts[index] = index === 0 ? part.slice(removed) : part.slice(0, part.length - removed);
+    excess -= removed;
+    if (excess === 0) break;
+  }
+  return parts.join(AGENT_BOUNDARY_CREDENTIAL_MARKER);
+}
+
+/** Redacts credential-shaped string leaves without retaining the matched text. */
+export function redactCredentials<Value>(
+  value: Value,
+  options: CredentialRedactionOptions = {}
+): CredentialRedactionResult<Value> {
+  const patternNames = Object.keys(CREDENTIAL_REJECTION_PATTERNS) as CredentialPatternName[];
+  const counts = new Map<CredentialPatternName, number>();
+  const visit = (entry: unknown): unknown => {
+    if (typeof entry === "string") {
+      let redacted = entry;
+      let stringRedactions = 0;
+      for (const patternName of patternNames) {
+        const source = CREDENTIAL_REJECTION_PATTERNS[patternName];
+        const pattern = new RegExp(source.source, source.flags.includes("g") ? source.flags : `${source.flags}g`);
+        redacted = redacted.replace(pattern, () => {
+          counts.set(patternName, (counts.get(patternName) ?? 0) + 1);
+          stringRedactions += 1;
+          return AGENT_BOUNDARY_CREDENTIAL_MARKER;
+        });
+      }
+      return options.preserveStringLengths === true && stringRedactions > 0
+        ? fitCredentialMarkers(
+            redacted,
+            Math.max(entry.length, stringRedactions * AGENT_BOUNDARY_CREDENTIAL_MARKER.length)
+          )
+        : redacted;
+    }
+    if (Array.isArray(entry)) return Object.freeze(entry.map(visit));
+    if (entry !== null && typeof entry === "object") {
+      return Object.freeze(Object.fromEntries(Object.entries(entry).map(([key, child]) => [key, visit(child)])));
+    }
+    return entry;
+  };
+  const redactedValue = visit(value) as Value;
+  const redactions = patternNames.flatMap((patternName) => {
+    const count = counts.get(patternName) ?? 0;
+    return count === 0 ? [] : [Object.freeze({ patternName, count })];
+  });
+  return Object.freeze({ value: redactedValue, redactions: Object.freeze(redactions) });
 }
 
 export function delay(milliseconds: number): Promise<void> {
@@ -728,6 +796,12 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
     ...(item.designRecord === undefined || item.designRecord === null ? {} : { designRecord: item.designRecord }),
     ...(item.gapReport === undefined ? {} : { gapReport: item.gapReport }),
   });
-  assertCredentialSafe(JSON.stringify(outcome), "Provider output");
-  return outcome;
+  // The provider result is validated before redaction. A post-redaction check
+  // can request length-preserving markers, but it must never reject valid work.
+  const redaction = redactCredentials(outcome);
+  try {
+    return parseAgentRunOutcome(redaction.value);
+  } catch {
+    return redactCredentials(outcome, { preserveStringLengths: true }).value;
+  }
 }

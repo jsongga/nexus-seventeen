@@ -103,6 +103,71 @@ test("constructor accepts an immutable image ID without allowing option injectio
   );
 });
 
+test("redacts container context and diagnostics without aborting the run", async () => {
+  const credential = "ghp_abcdefghijklmnop";
+  const baseContext = context();
+  const root = await tempRoot();
+  const promptPath = join(root, "redacted-prompt.txt");
+  const fixture = await fakeDocker(root, {
+    run: `
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { input += chunk; });
+      process.stdin.on("end", () => {
+        fs.writeFileSync(${JSON.stringify(promptPath)}, input);
+        process.stderr.write(${JSON.stringify(`Diagnostic contained <${credential}>; keep this.`)});
+        const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
+        process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}) + "\\n");
+        process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
+      });
+    `,
+    inspect: `process.stderr.write("Error: No such object\\n"); process.exit(1);`,
+  });
+
+  const handle = await launcher(fixture).launch({
+    runId: "run-container-redaction",
+    wakeReason: "human_assignment",
+    context: context({
+      projectMemory: "Reference https://github.com and keep this field.",
+      task: {
+        ...baseContext.task,
+        objective: "Rotate the -----BEGIN PRIVATE KEY----- described in the runbook.",
+        acceptanceCriteria: "Keep git@github.com:org/repo.git and this field intact.",
+      },
+      messages: [
+        ...baseContext.messages,
+        {
+          messageId: "message-three",
+          cursor: 3,
+          author: "human",
+          body: `Remove ${credential} from the fixture.`,
+          createdAt: "2026-07-19T20:00:00.000Z",
+        },
+      ],
+      nextMessageCursor: 3,
+    }),
+    workspace: { path: fixture.workspace },
+  });
+
+  assert.equal((await handle.completion).status, "completed");
+  const activity: RuntimeEvent[] = [];
+  for await (const event of handle.activity) activity.push(event);
+  const prompt = await readFile(promptPath, "utf8");
+  assert.match(prompt, /"objective":"Rotate the \[redacted: credential\]"/u);
+  assert.match(prompt, /"projectMemory":"Reference https:\/\/github\.com and keep this field\."/u);
+  assert.match(prompt, /"acceptanceCriteria":"Keep git@github\.com:org\/repo\.git and this field intact\."/u);
+  assert.match(prompt, /Remove \[redacted: credential\] from the fixture\./u);
+  assert.doesNotMatch(prompt, new RegExp(credential, "u"));
+  assert.deepEqual(
+    activity.find((event) => event.type === "tool_result" && event.name === "diagnostics"),
+    {
+      type: "tool_result",
+      name: "diagnostics",
+      output: "Diagnostic contained <[redacted: credential]>; keep this.",
+    }
+  );
+});
+
 test("interrupt rejects when daemon errors prevent confirming container absence", async () => {
   const root = await tempRoot();
   const fixture = await fakeDocker(root, {

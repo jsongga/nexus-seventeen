@@ -10,10 +10,10 @@ import {
   ActivityChannel,
   agentPrompt,
   agentRole,
-  assertCredentialSafe,
   boundedInteger,
   configText,
   delay,
+  redactCredentials,
   structuredOutcome,
 } from "#server/agents/task-worker/agent-envelope";
 import type { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
@@ -232,7 +232,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       throw new AgentProcessError("Container launches require a per-launch workspace");
     }
     if (this.#active) throw new AgentProcessError("This launcher already owns an active agent process");
-    assertCredentialSafe(JSON.stringify(request.context), "Agent context");
+    const contextRedaction = redactCredentials(request.context);
     const directory = await open(request.workspace.path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
     await directory.close();
     const plan = buildContainerRunPlan({
@@ -244,7 +244,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       bareApiKey: typeof this.#environment.ANTHROPIC_API_KEY === "string",
       runtimeEnvironment: this.#environment,
     });
-    const stdin = agentPrompt(request, this.#options.prompts);
+    const stdin = agentPrompt({ ...request, context: contextRedaction.value }, this.#options.prompts);
     let child: ChildProcess;
     try {
       child = spawn(this.#options.dockerBinary, [...plan.args], {
@@ -296,11 +296,14 @@ export class ContainerAgentLauncher implements AgentLauncher {
       pendingLine = lines.pop() ?? "";
       for (const line of lines) observeLine(line);
     };
-    const finishActivity = (): void => {
+    const finishActivity = (diagnostic: string): void => {
       if (activityFinished) return;
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
+      if (diagnostic.length > 0) {
+        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic });
+      }
       activity.close();
     };
     let termination: Promise<void> | null = null;
@@ -369,7 +372,8 @@ export class ContainerAgentLauncher implements AgentLauncher {
       const { code, signal } = await childClose;
       clearTimeout(timeout);
       if (termination === null && !spawnFailed && code !== 0) void terminate();
-      finishActivity();
+      const diagnostic = redactCredentials(Buffer.concat(stderr).toString("utf8"));
+      finishActivity(diagnostic.value);
       try {
         if (termination !== null) {
           try {
@@ -383,8 +387,6 @@ export class ContainerAgentLauncher implements AgentLauncher {
           throw new AgentProcessError(`Agent container exited unsuccessfully (${code ?? signal ?? "unknown"})`);
         }
         const output = Buffer.concat(stdout).toString("utf8");
-        const diagnostic = Buffer.concat(stderr).toString("utf8");
-        assertCredentialSafe(diagnostic, "Agent diagnostics");
         return structuredOutcome(this.#options.adapter.result(output));
       } finally {
         this.#active = false;
